@@ -1,0 +1,284 @@
+{
+  "schemaVersion": 1,
+  "id": "pal-project-tracker",
+  "title": "Example multi-wave workstream",
+  "summary": "Wave 1 is complete; this dogfood workstream now tracks the next project-tracker loop around keeping the local artifact current, restoring recent movement, and promoting later-wave nodes into fresh issues.",
+  "status": "active",
+  "attention": "focus",
+  "createdAt": "2026-03-31T21:15:35.691Z",
+  "updatedAt": "2026-04-01T18:22:14.400Z",
+  "trackingIssue": {
+    "owner": "lossyrob",
+    "repo": "personal-agent-layer",
+    "number": 124
+  },
+  "repos": [
+    {
+      "id": "pal",
+      "owner": "lossyrob",
+      "name": "personal-agent-layer",
+      "role": "primary"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "bootstrap-workstream-artifact",
+      "type": "task",
+      "title": "Bootstrap the local workstream artifact",
+      "summary": "Create the repo-local ignored workstream home and seed this project-tracker effort as the first durable dogfood workstream.",
+      "status": "completed",
+      "attention": "parked",
+      "repoIds": [
+        "pal"
+      ],
+      "issue": {
+        "owner": "lossyrob",
+        "repo": "personal-agent-layer",
+        "number": 125
+      },
+      "dependsOn": []
+    },
+    {
+      "id": "read-only-project-tracker-surface",
+      "type": "task",
+      "title": "Create the read-only project-tracker surface",
+      "summary": "Load the seeded artifact in a dedicated per-workstream surface without redefining the model in the UI layer.",
+      "status": "completed",
+      "attention": "parked",
+      "repoIds": [
+        "pal"
+      ],
+      "issue": {
+        "owner": "lossyrob",
+        "repo": "personal-agent-layer",
+        "number": 126
+      },
+      "dependsOn": [
+        "bootstrap-workstream-artifact"
+      ]
+    },
+    {
+      "id": "github-enrichment-derived-status",
+      "type": "task",
+      "title": "Enrich with GitHub state and derived status",
+      "summary": "Layer GitHub issue and PR state onto the seeded workstream so the command center can show ready, blocked, and review movement without manual synthesis.",
+      "status": "completed",
+      "attention": "parked",
+      "repoIds": [
+        "pal"
+      ],
+      "issue": {
+        "owner": "lossyrob",
+        "repo": "personal-agent-layer",
+        "number": 127
+      },
+      "dependsOn": [
+        "bootstrap-workstream-artifact",
+        "read-only-project-tracker-surface"
+      ]
+    },
+    {
+      "id": "first-dogfood-wave",
+      "type": "gate",
+      "title": "Complete the first dogfood wave",
+      "summary": "Treat the initial bootstrap, read-only surface, and GitHub enrichment as the first coherent loop before expanding into runtime overlays or richer graph UX.",
+      "status": "completed",
+      "attention": "parked",
+      "repoIds": [
+        "pal"
+      ],
+      "dependsOn": [
+        "bootstrap-workstream-artifact",
+        "read-only-project-tracker-surface",
+        "github-enrichment-derived-status"
+      ]
+    },
+    {
+      "id": "plugin-workstream-authoring-skill",
+      "type": "task",
+      "title": "Ship plugin-distributed workstream authoring skill",
+      "summary": "Let orchestrator agents create and update local .workstreams documents through repo-backed helpers and plugin distribution instead of tracked seeded workstream content.",
+      "status": "in-progress",
+      "attention": "focus",
+      "repoIds": [
+        "pal"
+      ],
+      "issue": {
+        "owner": "lossyrob",
+        "repo": "personal-agent-layer",
+        "number": 134
+      },
+      "dependsOn": [
+        "first-dogfood-wave"
+      ]
+    },
+    {
+      "id": "safe-local-update-workflow",
+      "type": "task",
+      "title": "Add a safe local update workflow for the workstream artifact",
+      "summary": "Establish a safe local update workflow for the command center, starting with a plugin-distributed authoring skill instead of tracked seeded workstream content.",
+      "status": "planned",
+      "attention": "watch",
+      "repoIds": [
+        "pal"
+      ],
+      "issue": {
+        "owner": "lossyrob",
+        "repo": "personal-agent-layer",
+        "number": 131
+      },
+      "dependsOn": [
+        "plugin-workstream-authoring-skill"
+      ]
+    },
+    {
+      "id": "recent-movement-local-history",
+      "type": "task",
+      "title": "Add recent movement and local history",
+      "summary": "Recover the missing movement timeline so the command center shows what changed since the last time the operator looked.",
+      "status": "planned",
+      "attention": "watch",
+      "repoIds": [
+        "pal"
+      ],
+      "issue": {
+        "owner": "lossyrob",
+        "repo": "personal-agent-layer",
+        "number": 132
+      },
+      "dependsOn": [
+        "safe-local-update-workflow"
+      ]
+    },
+    {
+      "id": "wave-based-issue-grounding",
+      "type": "task",
+      "title": "Support wave-based issue grounding and promotion",
+      "summary": "Let the graph hold future work durably, then promote selected nodes into fresh GitHub issues without rewriting the plan from scratch.",
+      "status": "planned",
+      "attention": "watch",
+      "repoIds": [
+        "pal"
+      ],
+      "issue": {
+        "owner": "lossyrob",
+        "repo": "personal-agent-layer",
+        "number": 133
+      },
+      "dependsOn": [
+        "safe-local-update-workflow"
+      ]
+    },
+    {
+      "id": "second-dogfood-wave",
+      "type": "gate",
+      "title": "Complete the second dogfood wave",
+      "summary": "Treat safe local updates, recent movement, and wave-based issue promotion as the next coherent loop before session overlays or richer topology work.",
+      "status": "planned",
+      "attention": "watch",
+      "repoIds": [
+        "pal"
+      ],
+      "dependsOn": [
+        "safe-local-update-workflow",
+        "recent-movement-local-history",
+        "wave-based-issue-grounding"
+      ]
+    },
+    {
+      "id": "first-class-workstream-brief-support",
+      "type": "task",
+      "title": "Add first-class workstream brief support",
+      "summary": "Extend the workstream artifact contract so a workstream can explicitly reference narrative/context documents alongside JSON graph state and wave execution data.",
+      "status": "planned",
+      "attention": "watch",
+      "repoIds": [
+        "pal"
+      ],
+      "dependsOn": [
+        "second-dogfood-wave"
+      ]
+    }
+  ],
+  "checkpoints": [
+    {
+      "id": "shape-first-dogfood-wave",
+      "title": "Shape the first dogfood wave",
+      "summary": "Parent issue #124 and the workstream project-tracker note define the first artifact-first wave and keep runtime overlays out of scope.",
+      "status": "completed",
+      "nodeIds": []
+    },
+    {
+      "id": "bootstrap-local-home",
+      "title": "Bootstrap the local workstream home",
+      "summary": "Land the repo-local ignored artifact home and prove the project-tracker effort can be rehydrated from structured local state.",
+      "status": "completed",
+      "nodeIds": [
+        "bootstrap-workstream-artifact"
+      ]
+    },
+    {
+      "id": "prove-read-only-project-tracker",
+      "title": "Prove the read-only project-tracker loop",
+      "summary": "Use the seeded artifact to drive a separate workstream surface before adding runtime overlays or mutation paths.",
+      "status": "completed",
+      "nodeIds": [
+        "read-only-project-tracker-surface"
+      ]
+    },
+    {
+      "id": "derive-operational-state",
+      "title": "Derive GitHub-backed operational state",
+      "summary": "Enrich the seeded workstream with GitHub issue and PR state so later work can show what is active, blocked, or ready next.",
+      "status": "completed",
+      "nodeIds": [
+        "github-enrichment-derived-status",
+        "first-dogfood-wave"
+      ]
+    },
+    {
+      "id": "shape-second-dogfood-wave",
+      "title": "Shape the second dogfood wave",
+      "summary": "Close out wave 1 in the artifact, create the next execution issues, and keep parent issue #124 aligned with the new wave.",
+      "status": "completed",
+      "nodeIds": []
+    },
+    {
+      "id": "operationalize-local-updates",
+      "title": "Operationalize local workstream updates",
+      "summary": "Establish a supported local update path so the project-tracker artifact stays current through normal use.",
+      "status": "planned",
+      "nodeIds": [
+        "safe-local-update-workflow"
+      ]
+    },
+    {
+      "id": "ship-authoring-skill",
+      "title": "Ship the workstream authoring skill",
+      "summary": "Replace tracked seeded workstream content with an orchestrator-authored flow and package the authoring skill through plugin distribution.",
+      "status": "planned",
+      "nodeIds": [
+        "plugin-workstream-authoring-skill"
+      ]
+    },
+    {
+      "id": "restore-recent-movement",
+      "title": "Restore recent movement visibility",
+      "summary": "Make it obvious what changed, completed, or newly needs attention since the last project-tracker visit.",
+      "status": "planned",
+      "nodeIds": [
+        "recent-movement-local-history"
+      ]
+    },
+    {
+      "id": "promote-wave-based-issues",
+      "title": "Promote future nodes into fresh execution issues",
+      "summary": "Keep future work in the graph, then ground and promote the next wave without losing alignment to the broader workstream.",
+      "status": "planned",
+      "nodeIds": [
+        "wave-based-issue-grounding",
+        "second-dogfood-wave"
+      ]
+    }
+  ]
+}
