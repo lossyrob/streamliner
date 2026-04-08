@@ -247,7 +247,7 @@ body,
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
+  grid-template-columns: minmax(0, 1fr) 336px;
 }
 
 .sl-canvas {
@@ -262,6 +262,8 @@ body,
 }
 
 .sl-canvas .react-flow__minimap {
+  width: 164px;
+  height: 104px;
   border-radius: 14px;
   border: 1px solid var(--sl-card-border);
   box-shadow: 0 8px 30px rgba(31, 58, 105, 0.06);
@@ -303,7 +305,7 @@ body,
 .sl-sidebar {
   border-left: 1px solid var(--sl-card-border);
   background: rgba(255, 255, 255, 0.52);
-  padding: 18px;
+  padding: 20px 18px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -487,14 +489,14 @@ body,
 
 /* Graph nodes */
 .sl-node {
-  border-radius: 16px;
+  border-radius: 18px;
   background: rgba(255, 255, 255, 0.9);
   border: 1.5px solid rgba(20, 60, 130, 0.1);
   box-shadow: 0 8px 30px rgba(31, 58, 105, 0.08);
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 12px 14px;
+  gap: 8px;
+  padding: 14px 16px;
   width: 100%;
   box-sizing: border-box;
   cursor: grab;
@@ -505,11 +507,11 @@ body,
 }
 
 .sl-node.task {
-  min-height: 120px;
+  min-height: 152px;
 }
 
 .sl-node.gate {
-  min-height: 88px;
+  min-height: 108px;
   border-style: dashed;
 }
 
@@ -539,9 +541,9 @@ body,
 }
 
 .sl-node-title {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
-  line-height: 1.35;
+  line-height: 1.4;
   color: var(--sl-text);
   display: -webkit-box;
   overflow: hidden;
@@ -573,7 +575,7 @@ body,
 .sl-node-summary,
 .sl-node-meta {
   font-size: 12px;
-  line-height: 1.4;
+  line-height: 1.5;
   color: var(--sl-text-mid);
 }
 
@@ -581,10 +583,11 @@ body,
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 4;
 }
 
 .sl-node-meta {
+  margin-top: auto;
   display: flex;
   flex-wrap: wrap;
   gap: 8px 12px;

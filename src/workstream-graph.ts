@@ -5,10 +5,10 @@ import type {
   WorkstreamViewModel,
 } from "./workstream-view-model";
 
-const TASK_NODE_WIDTH = 248;
-const TASK_NODE_HEIGHT = 132;
-const GATE_NODE_WIDTH = 212;
-const GATE_NODE_HEIGHT = 92;
+const TASK_NODE_WIDTH = 304;
+const TASK_NODE_HEIGHT = 168;
+const GATE_NODE_WIDTH = 272;
+const GATE_NODE_HEIGHT = 116;
 
 export type WorkstreamGraphNodeHighlight =
   | "selected"
@@ -254,12 +254,12 @@ export function buildWorkstreamGraphLayout(
   const graph = new dagre.graphlib.Graph();
   graph.setGraph({
     rankdir: "TB",
-    ranker: "tight-tree",
-    ranksep: 64,
-    nodesep: 24,
-    edgesep: 18,
-    marginx: 28,
-    marginy: 28,
+    ranker: "network-simplex",
+    ranksep: 104,
+    nodesep: 72,
+    edgesep: 28,
+    marginx: 56,
+    marginy: 56,
   });
   graph.setDefaultEdgeLabel(() => ({}));
 
