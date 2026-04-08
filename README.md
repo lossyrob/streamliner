@@ -1,73 +1,55 @@
-# React + TypeScript + Vite
+<p align="center">
+  <img src="docs/streamliner.png" alt="Streamliner" width="600" />
+</p>
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+# Streamliner
 
-Currently, two official plugins are available:
+A command center for orchestrating multi-issue development work with AI coding agents. Streamliner provides an interactive dependency graph for planning, monitoring, and evolving bodies of work that span multiple GitHub issues and agent sessions.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## What it does
 
-## React Compiler
+Streamliner loads a **workstream** — a structured JSON artifact describing a dependency graph of work items — and renders it as an interactive visualization.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- **Dependency graph** — dagre-layouted, transitive-reduced React Flow graph showing the full shape of the work
+- **Selection highlighting** — click any node to see its ancestors and descendants highlighted, with everything else dimmed
+- **Node inspector** — sidebar panel showing details for the selected node: status, type, attention state, dependencies, dependents, linked issue, and repository
+- **Operational status strip** — at-a-glance counts of ready, in-flight, blocked, and review-pending items derived from the workstream view model
+- **File loading** — load any workstream JSON file via the built-in file picker; validation errors are surfaced clearly
 
-## Expanding the ESLint configuration
+## Architecture
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```
+workstream JSON → parseWorkstreamDocument() → buildWorkstreamViewModel() → buildWorkstreamGraphLayout() → React Flow
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+The data pipeline is fully layered:
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+| Layer | File | Responsibility |
+|-------|------|----------------|
+| **Schema** | `workstream-schema.ts` | TypeScript types and enums for the workstream document format |
+| **View Model** | `workstream-view-model.ts` | Strict parser/validator, operational queue derivation, freshness signals |
+| **Graph Layout** | `workstream-graph.ts` | Dagre auto-layout, transitive edge reduction, selection highlighting |
+| **Components** | `src/components/` | React Flow canvas, node renderers, inspector, header, status strip |
+| **Theme** | `streamliner-theme.css` | Light Deep Ocean design system with `sl-` prefixed CSS classes |
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Tech stack
+
+- [Vite](https://vite.dev/) + [React](https://react.dev/) + [TypeScript](https://www.typescriptlang.org/)
+- [React Flow](https://reactflow.dev/) (`@xyflow/react`) — graph rendering
+- [dagre](https://github.com/dagrejs/dagre) (`@dagrejs/dagre`) — directed graph auto-layout
+- [Vitest](https://vitest.dev/) — testing
+
+## Quick start
+
+```bash
+npm install
+npm run dev
 ```
+
+Open [http://localhost:5173](http://localhost:5173) to see the example workstream graph.
+
+See [DEVELOPING.md](DEVELOPING.md) for full development setup and workflow.
+
+## License
+
+Private — not yet licensed for distribution.
