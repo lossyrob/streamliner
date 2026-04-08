@@ -94,6 +94,7 @@ export function WorkstreamCanvas({
         fitViewOptions={{ padding: 0.15 }}
         nodesConnectable={false}
         nodesDraggable={false}
+        elementsSelectable={false}
       >
         <Background variant={BackgroundVariant.Dots} />
         <Controls />

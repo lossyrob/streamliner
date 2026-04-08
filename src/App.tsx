@@ -20,7 +20,10 @@ export default function App() {
 
   useEffect(() => {
     fetch("/example-project.json")
-      .then((res) => res.text())
+      .then((res) => {
+        if (!res.ok) throw new Error(`Failed to fetch example workstream (${res.status})`);
+        return res.text();
+      })
       .then((text) => {
         setWorkstream(parseWorkstreamDocument(text));
         setError(null);
