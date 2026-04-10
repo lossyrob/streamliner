@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "workstreamsDir": "workstreams",
+  "repos": {
+    "streamliner": {
+      "path": ".."
+    }
+  }
+}

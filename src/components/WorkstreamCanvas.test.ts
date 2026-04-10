@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { WorkstreamGraphLayoutResult } from "../workstream-graph";
-import { collectViewportFocusIds } from "./WorkstreamCanvas";
+import { collectViewportFocusIds } from "./workstream-canvas-focus";
 
 function buildLayout(): WorkstreamGraphLayoutResult {
   return {

@@ -1,0 +1,160 @@
+{
+  "schemaVersion": 1,
+  "id": "session-launching-and-tracking",
+  "projectKey": "streamliner",
+  "title": "Session launching and tracking",
+  "summary": "Wave 1: bootstrap design docs and define the PAW launch contract.",
+  "status": "active",
+  "attention": "focus",
+  "createdAt": "2026-04-10T15:37:14.125Z",
+  "updatedAt": "2026-04-10T15:51:18.239Z",
+  "repos": [
+    {
+      "id": "streamliner",
+      "owner": "lossyrob",
+      "name": "streamliner",
+      "role": "primary"
+    }
+  ],
+  "designRefs": [
+    {
+      "repoId": "streamliner",
+      "path": "DESIGN-DOCS.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "DOCTRINE.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "PRODUCT-SPEC.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "WORKSTREAM-FORMAT.md"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "bootstrap-design-docs",
+      "type": "task",
+      "title": "Bootstrap design docs",
+      "summary": "Create Streamliner's repo-scoped docs/design set from the current root docs and switch this workstream to reference that design layer.",
+      "status": "ready",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/bootstrap-design-docs.md"
+      },
+      "dependsOn": []
+    },
+    {
+      "id": "define-launch-contract",
+      "type": "research",
+      "title": "Define launch contract",
+      "summary": "Specify what the graph UI collects, what backend artifacts are created, and what guarantees a launched PAW session must satisfy.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/define-launch-contract.md"
+      },
+      "dependsOn": ["bootstrap-design-docs"]
+    },
+    {
+      "id": "wave-1-gate",
+      "type": "gate",
+      "title": "Wave 1: design foundation aligned",
+      "summary": "Repo-scoped design docs exist and the PAW launch contract is explicit enough to guide implementation without relying on root-doc drift.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["bootstrap-design-docs", "define-launch-contract"]
+    },
+    {
+      "id": "backend-context-assembly",
+      "type": "task",
+      "title": "Backend context assembly",
+      "summary": "Assemble the Layer 0-3 launch payload on the backend using design references, brief state, graph node context, and tracker-backed node specs.",
+      "status": "planned",
+      "attention": "watch",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["wave-1-gate"]
+    },
+    {
+      "id": "copilot-sdk-paw-init",
+      "type": "task",
+      "title": "Copilot SDK paw-init plumbing",
+      "summary": "Use Copilot SDK on the backend to run paw-init in the target repo and prepare the PAW work directory before terminal launch.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["backend-context-assembly"]
+    },
+    {
+      "id": "terminal-launch-integration",
+      "type": "task",
+      "title": "Terminal launch integration",
+      "summary": "Launch a visible terminal session from the graph so the operator can watch and intervene in the PAW session as needed.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["copilot-sdk-paw-init"]
+    },
+    {
+      "id": "session-tracking-model",
+      "type": "research",
+      "title": "Session tracking model",
+      "summary": "Define the local runtime snapshot model for Copilot session discovery, heartbeats, tracker snapshots, and node-to-session binding.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["wave-1-gate"]
+    },
+    {
+      "id": "runtime-overlay-ui",
+      "type": "task",
+      "title": "Runtime overlay in UI",
+      "summary": "Overlay live session and tracker state onto the committed graph without writing ephemeral operational changes back into graph.json.",
+      "status": "planned",
+      "attention": "watch",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["terminal-launch-integration", "session-tracking-model"]
+    },
+    {
+      "id": "launch-and-tracking-gate",
+      "type": "gate",
+      "title": "Launch and tracking usable",
+      "summary": "A node can launch a PAW session into a visible terminal and Streamliner can show live runtime state for that node without committing telemetry into the workstream artifacts.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["runtime-overlay-ui"]
+    }
+  ],
+  "checkpoints": [
+    {
+      "id": "design-foundation",
+      "title": "Design foundation aligned",
+      "summary": "Repo-scoped design docs exist and the launch contract is explicit.",
+      "status": "planned",
+      "nodeIds": ["bootstrap-design-docs", "define-launch-contract", "wave-1-gate"]
+    },
+    {
+      "id": "launch-from-graph",
+      "title": "Launch from graph works",
+      "summary": "Streamliner assembles context, runs paw-init, and launches a visible terminal session from a node.",
+      "status": "planned",
+      "nodeIds": ["backend-context-assembly", "copilot-sdk-paw-init", "terminal-launch-integration"]
+    },
+    {
+      "id": "tracking-visible",
+      "title": "Tracking visible in UI",
+      "summary": "Streamliner overlays runtime session and tracker state on the graph without turning graph.json into a telemetry log.",
+      "status": "planned",
+      "nodeIds": ["session-tracking-model", "runtime-overlay-ui", "launch-and-tracking-gate"]
+    }
+  ]
+}

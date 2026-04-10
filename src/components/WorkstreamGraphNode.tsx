@@ -14,6 +14,14 @@ function issueLabel(issue?: WorkstreamIssue): string | null {
   return `${issue.owner}/${issue.repo}#${issue.number}`;
 }
 
+function issueUrl(issue?: WorkstreamIssue): string | null {
+  if (!issue) {
+    return null;
+  }
+
+  return `https://github.com/${issue.owner}/${issue.repo}/issues/${issue.number}`;
+}
+
 function highlightClassName(highlight: WorkstreamGraphNodeData["highlight"]) {
   switch (highlight) {
     case "selected":
@@ -74,6 +82,7 @@ function NodeShell({
   gate: boolean;
 }) {
   const issue = issueLabel(data.entry.node.issue);
+  const issueHref = issueUrl(data.entry.node.issue);
   const rootClassName = [
     "sl-node",
     gate ? "gate" : "task",
@@ -95,7 +104,7 @@ function NodeShell({
       <div className="sl-node-summary">{data.entry.node.summary}</div>
       <div className="sl-node-meta">
         <span>{data.repoLabel}</span>
-        {issue ? <span>{issue}</span> : null}
+        {issue ? <a href={issueHref!} target="_blank" rel="noopener noreferrer" className="sl-node-issue-link">{issue}</a> : null}
       </div>
     </div>
   );

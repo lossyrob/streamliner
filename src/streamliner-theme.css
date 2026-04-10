@@ -123,6 +123,88 @@ body,
   justify-content: flex-end;
 }
 
+.sl-recents-container {
+  position: relative;
+}
+
+.sl-recents-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 100;
+  min-width: 280px;
+  max-height: 360px;
+  overflow-y: auto;
+  background: var(--sl-surface);
+  border: 1px solid rgba(20, 60, 130, 0.15);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  padding: 4px;
+}
+
+.sl-recents-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s ease;
+}
+
+.sl-recents-item:hover {
+  background: var(--sl-accent-bg);
+}
+
+.sl-recents-item.active {
+  background: var(--sl-accent-bg);
+  border-left: 3px solid var(--sl-accent);
+}
+
+.sl-recents-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--sl-text);
+}
+
+.sl-recents-id {
+  font-size: 11px;
+  color: var(--sl-text-dim);
+}
+
+.sl-recents-empty {
+  padding: 12px 16px;
+  font-size: 12px;
+  color: var(--sl-text-dim);
+  text-align: center;
+}
+
+.sl-path-input {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.sl-path-field {
+  border: 1px solid rgba(20, 60, 130, 0.12);
+  background: rgba(255, 255, 255, 0.84);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--sl-text);
+  min-width: 280px;
+  outline: none;
+}
+
+.sl-path-field:focus {
+  border-color: var(--sl-accent);
+  box-shadow: 0 0 0 2px var(--sl-accent-bg);
+}
+
 /* Buttons */
 .sl-action-btn,
 .sl-link-btn,
@@ -592,6 +674,16 @@ body,
   flex-wrap: wrap;
   gap: 8px 12px;
   color: var(--sl-text-dim);
+}
+
+.sl-node-issue-link {
+  color: var(--sl-accent);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.sl-node-issue-link:hover {
+  text-decoration: underline;
 }
 
 /* Status screen */
