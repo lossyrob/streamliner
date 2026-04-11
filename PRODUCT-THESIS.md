@@ -23,15 +23,43 @@ becomes immediate rather than diffuse.
 The bottleneck moves from execution to design — not the design of the system
 being built, but the design of the work itself.
 
+## What goes wrong
+
+When a developer runs parallel agent workstreams without designing the work
+well, specific failure modes appear:
+
+- **Conflicting assumptions.** Two workstreams both define the same runtime
+  contract or data model differently. Each one works in isolation. Integration
+  produces subtle bugs or requires one side to be reworked.
+
+- **Duplicated decisions.** Without a shared design layer, parallel workstreams
+  independently make the same architectural choice — sometimes differently.
+  Neither knows about the other's decision until review.
+
+- **Hidden dependencies.** Work that looked independent turns out to share a
+  critical integration point that neither workstream made explicit. One blocks
+  the other late, when the cost of redesign is highest.
+
+- **False completion.** A workstream finishes and passes its own tests, but its
+  output is not dependable enough for downstream workstreams to consume. The
+  checkpoint was implicit, so nobody verified it.
+
+- **Human overload.** The developer becomes a manual router — triaging agent
+  output, resolving conflicts, reconstructing context across sessions. The
+  speed of execution creates more decisions per hour, not fewer.
+
+These are not hypothetical. They are what happens when execution outruns the
+developer's ability to design the work that feeds it.
+
 ## The new skill
 
 There is a cognitive transition underway for developers who use agents
-seriously. It goes through recognizable stages:
+seriously. It moves through recognizable stages:
 
 **Stage 1: Task conductor.** The developer writes prompts, monitors sessions,
 decides what to do next after each one finishes. Planning happens in the gaps
 between executions. The developer is still close to every piece of work. This
-is where most agent-assisted development lives today.
+is where most agent-assisted development sits today.
 
 **Stage 2: Workstream architect.** The developer designs large autonomous chunks
 of work — workstreams — with explicit boundaries, exported contracts, and
@@ -43,12 +71,9 @@ not the task.
 **Stage 3: Portfolio operator.** The developer runs multiple concurrent
 workstreams across projects, coordinating them through public checkpoints and
 shared design layers. The cognitive load is almost entirely about boundary
-design, sequencing, and cross-workstream integration. Execution is autonomous
-by default.
+design, sequencing, and cross-workstream integration.
 
-The jump from stage 1 to stage 2 is where the most leverage sits right now. Most
-developers using agents are stuck in stage 1 because nothing in their tooling
-or practice supports the transition.
+The jump from stage 1 to stage 2 is where the most leverage sits right now.
 
 ## What the skill actually is
 
@@ -67,7 +92,7 @@ these contracts determines how much parallelism is actually achievable.
 **Attention allocation.** Where in the workstream does human judgment create
 irreplaceable value? Gates, wave transitions, design mismatches, and scope
 decisions are high-leverage moments. Everything else should run without the
-operator in the loop. The skill is knowing which is which before execution
+developer in the loop. The skill is knowing which is which before execution
 starts.
 
 **Pattern recognition.** An experienced workstream architect sees a new body of
@@ -76,82 +101,50 @@ contract in the middle" or "this needs a spike workstream before the real
 execution can begin." That recognition comes from feedback loops — shaping work,
 watching it execute, seeing where the boundaries were wrong, and doing it again.
 
-## Who is already good at this
-
-Nobody, exactly. The specific combination — designing work at high abstraction,
-having it executed by capable autonomous agents, at software-development speed,
-with artifact-based feedback loops — does not have a clean historical precedent.
-
-The closest analogues each contribute part of the picture:
-
-- **Engineering managers** face similar boundary and sequencing problems, but at
-  human pace. The feedback loop on "were my workstream boundaries good?" takes
-  a quarter. The skill develops slowly because execution is slow.
-
-- **Algorithmic trading designers** work at machine-speed execution with fast
-  feedback on design quality. The skill shape is similar: design the strategy,
-  deploy it, monitor at thresholds, intervene only when the strategy needs
-  changing. But the work being executed is narrow and quantitative.
-
-- **Film producers** coordinate parallel workstreams — VFX, photography,
-  editorial, scoring — with defined handoff points. The skill is exactly
-  workstream boundary design. But the pace is months.
-
-- **Startup founders** before they have a team combine architect, PM, and tech
-  lead in one person, making large bets about what to build and in what order.
-  The cognitive shape is close, but execution is still the founder doing the
-  work.
-
-What is genuinely new is the feedback loop speed. An engineering manager learns
-workstream design over years. A developer directing autonomous agents can shape
-a wave, watch it execute in days, see where the boundaries failed, and reshape.
-The skill develops faster because the feedback is faster.
+Parts of this skill exist in engineering management, production coordination,
+and systems design. What is new is the feedback loop speed. An engineering
+manager learns workstream design over years because execution takes quarters.
+A developer directing autonomous agents can shape a wave, watch it execute in
+days, see where the boundaries failed, and reshape. The skill develops faster
+because the consequences of good and bad design are visible faster.
 
 ## What Streamliner is for
 
 Streamliner exists to make workstream-level thinking the natural operating mode
 for a developer directing autonomous agents.
 
-That means:
+That means three things:
 
-1. **Making the workstream the primary unit of work.** Not the task, not the
-   session, not the issue. The workstream — with its brief, dependency graph,
-   design references, and wave structure — is the thing the developer designs,
-   launches, monitors, and reviews.
+1. **The workstream is the primary unit of work.** Not the task, not the session,
+   not the issue. The workstream — with its brief, dependency graph, design
+   references, and wave structure — is what the developer designs, monitors, and
+   reviews. The tool is organized around that unit.
 
-2. **Making workstream design quality visible.** When boundaries are wrong, the
-   operational picture should make that obvious: too many cross-workstream
-   blockers, unclear contracts, sessions that don't fit into the structure. The
-   developer should learn from each wave what makes a good workstream boundary.
+2. **Work design quality is visible.** When boundaries are wrong, the developer
+   should see it: too many cross-workstream blockers, unclear contracts, sessions
+   that don't fit the structure, outputs that can't be consumed downstream. Each
+   wave teaches the developer what makes a good workstream boundary and what
+   does not.
 
-3. **Compressing the feedback loop on work design.** The developer shapes a wave
-   of workstreams, watches execution through the operational picture, reviews at
-   gates, and shapes the next wave. The tool should make each cycle faster and
-   the learning more legible.
+3. **Attention goes to high-leverage moments by default.** Gates, wave
+   transitions, design mismatches, and scope decisions surface for review.
+   Everything else runs autonomously. The developer's presence is a deliberate
+   choice, not the normal mode.
 
-4. **Preserving attention for high-leverage moments.** The operational picture
-   should make it obvious where the developer's attention creates value and
-   where it does not. Autonomous execution is the default. Presence is a
-   deliberate choice.
-
-5. **Supporting the portfolio layer.** As the developer moves toward stage 3 —
-   running concurrent workstreams across projects — the tool should grow from a
-   workstream viewer into an operator cockpit. Navigation, cross-workstream
-   coordination, environment-aware session discovery, and ad-hoc session
-   handling all serve this transition.
+As the developer moves toward stage 3 — running concurrent workstreams across
+projects — Streamliner should grow with them. Cross-workstream coordination,
+cross-project navigation, environment-aware session visibility, and handling of
+sessions that exist outside any formal workstream all serve that transition.
 
 ## The bet
 
 Streamliner bets that the developer who learns to think at the workstream level
-will dramatically outperform the developer who stays in task-conductor mode —
-not by working harder, but by designing work that executes well autonomously.
+will be significantly more effective than the developer who stays in
+task-conductor mode — not by working harder, but by designing work that executes
+well autonomously.
 
 The tool's job is to make that transition learnable and the resulting operating
-mode sustainable. The workstream graph, the artifact system, the design layer,
-the session fabric, and the portfolio shell all serve the same purpose: they
+mode sustainable. Every surface in Streamliner — the dependency graph, the
+artifact system, the design layer, the session views — serves the same purpose:
 give the developer a place to think about work at the right level of
-abstraction, and fast feedback on whether their thinking was good.
-
-The scarcest resource is not compute, not agent capability, and not time. It is
-the developer's ability to design work well at scale. Streamliner should make
-that ability grow with practice.
+abstraction, and fast feedback on whether the design of that work was good.
