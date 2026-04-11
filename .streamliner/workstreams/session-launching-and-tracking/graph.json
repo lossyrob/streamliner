@@ -3,11 +3,16 @@
   "id": "session-launching-and-tracking",
   "projectKey": "streamliner",
   "title": "Session launching and tracking",
-  "summary": "Wave 1: bootstrap design docs and define the PAW launch contract.",
+  "summary": "Wave 1: bootstrap design docs and make the workstream design explicit.",
   "status": "active",
   "attention": "focus",
   "createdAt": "2026-04-10T15:37:14.125Z",
-  "updatedAt": "2026-04-10T15:51:18.239Z",
+  "updatedAt": "2026-04-11T01:27:49.926Z",
+  "trackingIssue": {
+    "owner": "lossyrob",
+    "repo": "streamliner",
+    "number": 3
+  },
   "repos": [
     {
       "id": "streamliner",
@@ -44,22 +49,26 @@
       "attention": "focus",
       "repoIds": ["streamliner"],
       "tracker": {
-        "type": "local",
-        "path": "tasks/bootstrap-design-docs.md"
+        "type": "github",
+        "owner": "lossyrob",
+        "repo": "streamliner",
+        "number": 4
       },
       "dependsOn": []
     },
     {
-      "id": "define-launch-contract",
+      "id": "make-workstream-design-explicit",
       "type": "research",
-      "title": "Define launch contract",
-      "summary": "Specify what the graph UI collects, what backend artifacts are created, and what guarantees a launched PAW session must satisfy.",
+      "title": "Make workstream design explicit",
+      "summary": "Run explicit design sessions for the full workstream so the launch contract, key design decisions, and downstream issue-graph adjustments are written down before more implementation issues are finalized.",
       "status": "planned",
       "attention": "focus",
       "repoIds": ["streamliner"],
       "tracker": {
-        "type": "local",
-        "path": "tasks/define-launch-contract.md"
+        "type": "github",
+        "owner": "lossyrob",
+        "repo": "streamliner",
+        "number": 5
       },
       "dependsOn": ["bootstrap-design-docs"]
     },
@@ -67,11 +76,11 @@
       "id": "wave-1-gate",
       "type": "gate",
       "title": "Wave 1: design foundation aligned",
-      "summary": "Repo-scoped design docs exist and the PAW launch contract is explicit enough to guide implementation without relying on root-doc drift.",
+      "summary": "Repo-scoped design docs exist and the workstream's explicit design direction is clear enough to guide implementation without relying on implicit brief-or-graph assumptions.",
       "status": "planned",
       "attention": "focus",
       "repoIds": ["streamliner"],
-      "dependsOn": ["bootstrap-design-docs", "define-launch-contract"]
+      "dependsOn": ["bootstrap-design-docs", "make-workstream-design-explicit"]
     },
     {
       "id": "backend-context-assembly",
@@ -138,9 +147,9 @@
     {
       "id": "design-foundation",
       "title": "Design foundation aligned",
-      "summary": "Repo-scoped design docs exist and the launch contract is explicit.",
+      "summary": "Repo-scoped design docs exist and the workstream's explicit design direction is captured.",
       "status": "planned",
-      "nodeIds": ["bootstrap-design-docs", "define-launch-contract", "wave-1-gate"]
+      "nodeIds": ["bootstrap-design-docs", "make-workstream-design-explicit", "wave-1-gate"]
     },
     {
       "id": "launch-from-graph",

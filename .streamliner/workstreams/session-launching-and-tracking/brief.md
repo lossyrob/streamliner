@@ -10,9 +10,12 @@ Bootstrap Streamliner's own `docs/design/` set from the current root docs first,
 so the launch and tracking work executes against a real project design layer
 rather than living forever on transitional documents.
 
-Build the feature in waves: define the launch contract and context assembly
-shape, add backend Copilot SDK plumbing to run `paw-init`, launch a visible
-terminal session, then layer session tracking and runtime overlay into the UI.
+Build the feature in waves: bootstrap the repo-scoped design layer, then run
+explicit design sessions for the workstream so the launch contract, runtime
+model, and key design decisions are written down before the downstream
+implementation issue graph is finalized. After that, add backend Copilot SDK
+plumbing to run `paw-init`, launch a visible terminal session, and layer
+session tracking and runtime overlay into the UI.
 
 Keep committed workstream artifacts limited to durable planning state.
 Session IDs, heartbeats, tracker snapshots, and launch metadata stay in
@@ -38,11 +41,12 @@ state rather than written back into `graph.json`.
   committed artifact state
 
 ## Current State
-This workstream is being initialized in-repo. The first execution node is
-`bootstrap-design-docs`, which will turn the current root docs into a
-repo-scoped `docs/design/` set. Wave 1 local task specs now exist under
-`tasks/`, so the first execution nodes have concrete tracker-backed specs before
-implementation begins.
+This workstream is now anchored by parent GitHub issue `lossyrob/streamliner#3`.
+The first execution issue is `lossyrob/streamliner#4` (`bootstrap-design-docs`),
+which will turn the current root docs into a repo-scoped `docs/design/` set.
+The second Wave 1 issue is `lossyrob/streamliner#5`, which expands the earlier
+launch-contract idea into explicit design sessions for the full workstream
+before the downstream implementation issue graph is finalized.
 
 ## Decisions
 - Use repo-local `.streamliner/workstreams/` for Streamliner's committed
@@ -58,6 +62,10 @@ implementation begins.
 - Keep node-specific design narrowing in tracker/spec and coordination-note
   context for now; defer a dedicated node-level `designRefs` field unless
   context assembly later proves it necessary.
+- Use a parent GitHub issue to represent the workstream when the child nodes are
+  GitHub-backed, so progress and grouping are visible in GitHub itself.
+- Treat explicit design sessions as a valid early Wave 1 node when the
+  workstream design is still implicit in the brief and graph.
 - Bootstrap `docs/design/` before building launch plumbing so later work uses
   real design references instead of transitional root documents.
 

@@ -295,7 +295,7 @@ The graph is the structured, machine-readable representation of the workstream's
 | `attention` | enum | ✓ | `"focus"`, `"watch"`, or `"parked"` |
 | `createdAt` | string | ✓ | ISO 8601 timestamp |
 | `updatedAt` | string | ✓ | ISO 8601 timestamp for the last committed edit to this `graph.json`. Bump it on any intentional committed graph change; never bump it for runtime-only overlays that are not written back into the artifact. |
-| `trackingIssue` | object | | Tracker reference anchoring the workstream itself (see Tracker Reference) |
+| `trackingIssue` | object | | Tracker reference anchoring the workstream itself (see Tracker Reference). When using GitHub-backed node trackers, this should typically be a parent GitHub issue for the workstream. |
 | `repos` | array | ✓ | Repositories involved in this workstream (see Repo) |
 | `designRefs` | array | ✓ | Project-level design docs and decision records relevant to this workstream (see Design Reference). Use an empty array if none exist yet. |
 | `nodes` | array | ✓ | Work items and gates (see Node) |
@@ -404,6 +404,8 @@ The tracker is a discriminated union keyed on `type`:
 | `number` | number | ✓ | Issue number (positive integer) |
 
 The issue body on GitHub is the spec. Streamliner reads from and writes to it.
+
+When a workstream uses GitHub-backed node trackers, create a parent GitHub issue for the workstream itself and record it in the top-level `trackingIssue` field. Use that parent issue to group child node issues, typically with a task list or issue references.
 
 #### Local tracker
 
@@ -680,8 +682,10 @@ The design docs describe the intended system from the operator's perspective. Th
 ## Notes for agents producing workstream artifacts
 
 - **The brief and graph are a pair.** Always produce both.
+- **When a workstream uses GitHub issues, create a parent workstream issue.** Record it in `trackingIssue` and use it to group the child node issues.
 - **Create specs for Wave 1 nodes during shaping.** Each Wave 1 task or research node should have a `tracker` — either a GitHub issue or a local spec file. Later-wave nodes are sketches with no tracker until promoted.
 - **Use `tracker.type: "github"` when creating GitHub issues.** Create the issue, then record the `owner`, `repo`, and `number` in the node's tracker field.
+- **If the workstream's design is still implicit, spend an early Wave 1 node making it explicit.** Use a design/research node to sketch the design, record decisions, and refine the downstream issue graph before finalizing more implementation issues.
 - **Do not write fast-moving session state into the brief or graph.** Session IDs, heartbeats, tracker snapshots, and launch claims belong in the local runtime store.
 - **Only update `graph.json` for durable plan or progress changes.** Runtime overlays should be recomputed, not committed.
 - **Use `tracker.type: "local"` when working without GitHub Issues.** Write the spec as a markdown file under `tasks/` in the workstream directory (e.g. `tasks/project-scaffold.md`).
