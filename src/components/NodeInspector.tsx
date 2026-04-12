@@ -2,6 +2,7 @@ import type { WorkstreamNode } from "../workstream-schema";
 import type { WorkstreamDerivedNode } from "../workstream-view-model";
 import type { WorkstreamGraphLayoutResult } from "../workstream-graph";
 import type { WorkstreamDocument } from "../workstream-schema";
+import { trackerLabel, trackerUrl } from "../workstream-links";
 
 interface NodeInspectorProps {
   entry: WorkstreamDerivedNode | null;
@@ -61,9 +62,9 @@ export function NodeInspector({ entry, layout, workstream }: NodeInspectorProps)
     .map((id) => nodeById.get(id))
     .filter((n): n is WorkstreamNode => n !== undefined);
 
-  const issueLabel = node.issue
-    ? `${node.issue.owner}/${node.issue.repo}#${node.issue.number}`
-    : null;
+  const tracker = trackerLabel(node.tracker);
+  const trackerHref = trackerUrl(node.tracker);
+  const trackerLabelText = node.tracker?.type === "github" ? "Issue" : "Tracker";
 
   const repoById = new Map(workstream.repos.map((r) => [r.id, r]));
   const repoLabels = node.repoIds.map((id) => {
@@ -86,9 +87,23 @@ export function NodeInspector({ entry, layout, workstream }: NodeInspectorProps)
             {node.attention}
           </span>
         </div>
-        {issueLabel && (
+        {tracker && (
           <div className="sl-sidebar-item-meta">
-            <span>Issue: {issueLabel}</span>
+            <span>
+              {trackerLabelText}:{" "}
+              {trackerHref ? (
+                <a
+                  href={trackerHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="sl-inline-link"
+                >
+                  {tracker}
+                </a>
+              ) : (
+                tracker
+              )}
+            </span>
           </div>
         )}
         {repoLabels.length > 0 && (

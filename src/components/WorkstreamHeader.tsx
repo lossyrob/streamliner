@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import type { WorkstreamDocument } from "../workstream-schema";
 import type { WorkstreamViewModel } from "../workstream-view-model";
+import { issueLabel, issueUrl } from "../workstream-links";
 
 interface RecentEntry {
   path: string;
@@ -74,9 +75,8 @@ export function WorkstreamHeader({
     return () => document.removeEventListener("mousedown", handler);
   }, [showRecents]);
 
-  const trackingIssue = workstream.trackingIssue
-    ? `${workstream.trackingIssue.owner}/${workstream.trackingIssue.repo}#${workstream.trackingIssue.number}`
-    : null;
+  const trackingIssue = issueLabel(workstream.trackingIssue);
+  const trackingIssueHref = issueUrl(workstream.trackingIssue);
 
   return (
     <header className="sl-header">
@@ -98,7 +98,23 @@ export function WorkstreamHeader({
         <p className="sl-summary">{workstream.summary}</p>
         <div className="sl-meta-row">
           <span>{viewModel.freshness.label}</span>
-          {trackingIssue && <span>Tracking: {trackingIssue}</span>}
+          {trackingIssue && (
+            <span>
+              Tracking:{" "}
+              {trackingIssueHref ? (
+                <a
+                  href={trackingIssueHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="sl-inline-link"
+                >
+                  {trackingIssue}
+                </a>
+              ) : (
+                trackingIssue
+              )}
+            </span>
+          )}
           <span>{workstream.nodes.length} nodes</span>
         </div>
       </div>

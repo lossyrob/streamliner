@@ -2,6 +2,7 @@ import type {
   WorkstreamAttention,
   WorkstreamCheckpoint,
   WorkstreamCheckpointStatus,
+  WorkstreamDesignReference,
   WorkstreamDocument,
   WorkstreamGithubIssueSnapshot,
   WorkstreamGithubPullRequestSnapshot,
@@ -9,6 +10,8 @@ import type {
   WorkstreamIssue,
   WorkstreamNode,
   WorkstreamNodeStatus,
+  WorkstreamTracker,
+  WorkstreamTrackerType,
   WorkstreamNodeType,
   WorkstreamRepo,
   WorkstreamStatus,
@@ -20,6 +23,7 @@ import {
   WORKSTREAM_NODE_TYPES,
   WORKSTREAM_SCHEMA_VERSION,
   WORKSTREAM_STATUSES,
+  WORKSTREAM_TRACKER_TYPES,
 } from "./workstream-schema";
 
 type JsonRecord = Record<string, unknown>;
@@ -132,6 +136,39 @@ function parseIssue(value: unknown, label: string): WorkstreamIssue {
   };
 }
 
+function parseDesignReference(
+  value: unknown,
+  label: string,
+): WorkstreamDesignReference {
+  const record = asObject(value, label);
+  return {
+    repoId: asKebabCaseId(record.repoId, `${label}.repoId`),
+    path: asNonEmptyString(record.path, `${label}.path`),
+  };
+}
+
+function parseTracker(value: unknown, label: string): WorkstreamTracker {
+  const record = asObject(value, label);
+  const type = asEnum<WorkstreamTrackerType>(
+    record.type,
+    `${label}.type`,
+    WORKSTREAM_TRACKER_TYPES,
+  );
+
+  switch (type) {
+    case "github":
+      return {
+        type,
+        ...parseIssue(record, label),
+      };
+    case "local":
+      return {
+        type,
+        path: asNonEmptyString(record.path, `${label}.path`),
+      };
+  }
+}
+
 function parseRepo(value: unknown, label: string): WorkstreamRepo {
   const record = asObject(value, label);
   const role = record.role;
@@ -149,7 +186,7 @@ function parseRepo(value: unknown, label: string): WorkstreamRepo {
 
 function parseNode(value: unknown, label: string): WorkstreamNode {
   const record = asObject(value, label);
-  const issue = record.issue;
+  const tracker = record.tracker;
 
   return {
     id: asKebabCaseId(record.id, `${label}.id`),
@@ -171,10 +208,10 @@ function parseNode(value: unknown, label: string): WorkstreamNode {
       WORKSTREAM_ATTENTION_STATES,
     ),
     repoIds: asIdArray(record.repoIds ?? [], `${label}.repoIds`),
-    issue:
-      typeof issue === "undefined"
+    tracker:
+      typeof tracker === "undefined"
         ? undefined
-        : parseIssue(issue, `${label}.issue`),
+        : parseTracker(tracker, `${label}.tracker`),
     dependsOn: asIdArray(record.dependsOn ?? [], `${label}.dependsOn`),
   };
 }
@@ -247,12 +284,28 @@ function assertSemanticallyValid(
       }
     }
 
-    if (node.issue) {
-      const issueRepo = `${node.issue.owner}/${node.issue.repo}`.toLowerCase();
-      if (!knownRepos.has(issueRepo)) {
-        throw new Error(`Issue repo '${issueRepo}' is not declared in repos`);
+    if (node.tracker?.type === "github") {
+      const trackerRepo =
+        `${node.tracker.owner}/${node.tracker.repo}`.toLowerCase();
+      if (!knownRepos.has(trackerRepo)) {
+        throw new Error(`Tracker repo '${trackerRepo}' is not declared in repos`);
       }
     }
+  }
+
+  const designRefKeys = new Set<string>();
+  for (const designRef of workstream.designRefs) {
+    if (!repoIds.has(designRef.repoId)) {
+      throw new Error(`Unknown design ref repo '${designRef.repoId}'`);
+    }
+
+    const designRefKey = `${designRef.repoId}:${designRef.path}`.toLowerCase();
+    if (designRefKeys.has(designRefKey)) {
+      throw new Error(
+        `Duplicate design ref '${designRef.repoId}:${designRef.path}'`,
+      );
+    }
+    designRefKeys.add(designRefKey);
   }
 
   for (const node of workstream.nodes) {
@@ -291,7 +344,9 @@ export function parseWorkstreamDocument(rawJson: string): WorkstreamDocument {
   }
 
   const record = asObject(parsed, "workstream");
+  const projectKey = record.projectKey;
   const trackingIssue = record.trackingIssue;
+  const designRefs = record.designRefs;
 
   return assertSemanticallyValid({
     schemaVersion:
@@ -303,6 +358,10 @@ export function parseWorkstreamDocument(rawJson: string): WorkstreamDocument {
             );
           })(),
     id: asKebabCaseId(record.id, "workstream.id"),
+    projectKey:
+      typeof projectKey === "undefined"
+        ? undefined
+        : asKebabCaseId(projectKey, "workstream.projectKey"),
     title: asNonEmptyString(record.title, "workstream.title"),
     summary: asNonEmptyString(record.summary, "workstream.summary"),
     status: asEnum<WorkstreamStatus>(
@@ -322,6 +381,14 @@ export function parseWorkstreamDocument(rawJson: string): WorkstreamDocument {
         ? undefined
         : parseIssue(trackingIssue, "workstream.trackingIssue"),
     repos: parseArray(record.repos, "workstream.repos", parseRepo),
+    designRefs:
+      typeof designRefs === "undefined"
+        ? []
+        : parseArray(
+            designRefs,
+            "workstream.designRefs",
+            parseDesignReference,
+          ),
     nodes: parseArray(record.nodes, "workstream.nodes", parseNode),
     checkpoints: parseArray(
       record.checkpoints,
@@ -376,6 +443,14 @@ export function describeFreshness(
 
 function issueKey(issue: WorkstreamIssue): string {
   return `${issue.owner}/${issue.repo}#${issue.number}`.toLowerCase();
+}
+
+function githubIssueOf(tracker?: WorkstreamTracker): WorkstreamIssue | undefined {
+  if (tracker?.type !== "github") {
+    return undefined;
+  }
+
+  return tracker;
 }
 
 function buildIssueSnapshotMap(
@@ -557,8 +632,9 @@ export function buildWorkstreamViewModel(
       return "artifact";
     }
 
-    const issueSnapshot = node.issue
-      ? issueSnapshots.get(issueKey(node.issue))
+    const issueRef = githubIssueOf(node.tracker);
+    const issueSnapshot = issueRef
+      ? issueSnapshots.get(issueKey(issueRef))
       : undefined;
     if (freshness.stale && isIssueCompleted(issueSnapshot)) {
       completionMemo.set(nodeId, "github");
@@ -570,8 +646,9 @@ export function buildWorkstreamViewModel(
   };
 
   const derivedNodes = workstream.nodes.map<WorkstreamDerivedNode>((node) => {
-    const githubIssue = node.issue
-      ? issueSnapshots.get(issueKey(node.issue))
+    const issueRef = githubIssueOf(node.tracker);
+    const githubIssue = issueRef
+      ? issueSnapshots.get(issueKey(issueRef))
       : undefined;
     const completionSource = completionSourceOf(node.id);
     const dependencyReady = node.dependsOn.every(

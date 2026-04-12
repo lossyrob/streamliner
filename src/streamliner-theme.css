@@ -676,12 +676,14 @@ body,
   color: var(--sl-text-dim);
 }
 
+.sl-inline-link,
 .sl-node-issue-link {
   color: var(--sl-accent);
   text-decoration: none;
   cursor: pointer;
 }
 
+.sl-inline-link:hover,
 .sl-node-issue-link:hover {
   text-decoration: underline;
 }

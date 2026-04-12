@@ -31,12 +31,13 @@
       "repoIds": [
         "pal"
       ],
-      "issue": {
+      "dependsOn": [],
+      "tracker": {
+        "type": "github",
         "owner": "lossyrob",
         "repo": "personal-agent-layer",
         "number": 125
-      },
-      "dependsOn": []
+      }
     },
     {
       "id": "read-only-project-tracker-surface",
@@ -48,14 +49,15 @@
       "repoIds": [
         "pal"
       ],
-      "issue": {
+      "dependsOn": [
+        "bootstrap-workstream-artifact"
+      ],
+      "tracker": {
+        "type": "github",
         "owner": "lossyrob",
         "repo": "personal-agent-layer",
         "number": 126
-      },
-      "dependsOn": [
-        "bootstrap-workstream-artifact"
-      ]
+      }
     },
     {
       "id": "github-enrichment-derived-status",
@@ -67,15 +69,16 @@
       "repoIds": [
         "pal"
       ],
-      "issue": {
-        "owner": "lossyrob",
-        "repo": "personal-agent-layer",
-        "number": 127
-      },
       "dependsOn": [
         "bootstrap-workstream-artifact",
         "read-only-project-tracker-surface"
-      ]
+      ],
+      "tracker": {
+        "type": "github",
+        "owner": "lossyrob",
+        "repo": "personal-agent-layer",
+        "number": 127
+      }
     },
     {
       "id": "first-dogfood-wave",
@@ -103,14 +106,15 @@
       "repoIds": [
         "pal"
       ],
-      "issue": {
+      "dependsOn": [
+        "first-dogfood-wave"
+      ],
+      "tracker": {
+        "type": "github",
         "owner": "lossyrob",
         "repo": "personal-agent-layer",
         "number": 134
-      },
-      "dependsOn": [
-        "first-dogfood-wave"
-      ]
+      }
     },
     {
       "id": "safe-local-update-workflow",
@@ -122,14 +126,15 @@
       "repoIds": [
         "pal"
       ],
-      "issue": {
+      "dependsOn": [
+        "plugin-workstream-authoring-skill"
+      ],
+      "tracker": {
+        "type": "github",
         "owner": "lossyrob",
         "repo": "personal-agent-layer",
         "number": 131
-      },
-      "dependsOn": [
-        "plugin-workstream-authoring-skill"
-      ]
+      }
     },
     {
       "id": "recent-movement-local-history",
@@ -141,14 +146,15 @@
       "repoIds": [
         "pal"
       ],
-      "issue": {
+      "dependsOn": [
+        "safe-local-update-workflow"
+      ],
+      "tracker": {
+        "type": "github",
         "owner": "lossyrob",
         "repo": "personal-agent-layer",
         "number": 132
-      },
-      "dependsOn": [
-        "safe-local-update-workflow"
-      ]
+      }
     },
     {
       "id": "wave-based-issue-grounding",
@@ -160,14 +166,15 @@
       "repoIds": [
         "pal"
       ],
-      "issue": {
+      "dependsOn": [
+        "safe-local-update-workflow"
+      ],
+      "tracker": {
+        "type": "github",
         "owner": "lossyrob",
         "repo": "personal-agent-layer",
         "number": 133
-      },
-      "dependsOn": [
-        "safe-local-update-workflow"
-      ]
+      }
     },
     {
       "id": "second-dogfood-wave",

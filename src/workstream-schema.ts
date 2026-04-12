@@ -22,6 +22,9 @@ export type WorkstreamAttention = (typeof WORKSTREAM_ATTENTION_STATES)[number];
 export const WORKSTREAM_NODE_TYPES = ["task", "research", "gate"] as const;
 export type WorkstreamNodeType = (typeof WORKSTREAM_NODE_TYPES)[number];
 
+export const WORKSTREAM_TRACKER_TYPES = ["github", "local"] as const;
+export type WorkstreamTrackerType = (typeof WORKSTREAM_TRACKER_TYPES)[number];
+
 export const WORKSTREAM_CHECKPOINT_STATUSES = ["planned", "completed"] as const;
 export type WorkstreamCheckpointStatus =
   (typeof WORKSTREAM_CHECKPOINT_STATUSES)[number];
@@ -40,6 +43,24 @@ export interface WorkstreamIssue {
   repo: string;
   number: number;
 }
+
+export interface WorkstreamDesignReference {
+  repoId: string;
+  path: string;
+}
+
+export interface WorkstreamGithubTracker extends WorkstreamIssue {
+  type: "github";
+}
+
+export interface WorkstreamLocalTracker {
+  type: "local";
+  path: string;
+}
+
+export type WorkstreamTracker =
+  | WorkstreamGithubTracker
+  | WorkstreamLocalTracker;
 
 export interface WorkstreamGithubPullRequestSnapshot {
   owner: string;
@@ -87,7 +108,7 @@ export interface WorkstreamNode {
   status: WorkstreamNodeStatus;
   attention: WorkstreamAttention;
   repoIds: string[];
-  issue?: WorkstreamIssue;
+  tracker?: WorkstreamTracker;
   dependsOn: string[];
 }
 
@@ -102,6 +123,7 @@ export interface WorkstreamCheckpoint {
 export interface WorkstreamDocument {
   schemaVersion: typeof WORKSTREAM_SCHEMA_VERSION;
   id: string;
+  projectKey?: string;
   title: string;
   summary: string;
   status: WorkstreamStatus;
@@ -110,6 +132,7 @@ export interface WorkstreamDocument {
   updatedAt: string;
   trackingIssue?: WorkstreamIssue;
   repos: WorkstreamRepo[];
+  designRefs: WorkstreamDesignReference[];
   nodes: WorkstreamNode[];
   checkpoints: WorkstreamCheckpoint[];
 }

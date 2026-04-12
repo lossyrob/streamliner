@@ -23,6 +23,7 @@ function buildFixture(nodes: WorkstreamDocument["nodes"]): WorkstreamDocument {
         name: "example-repo",
       },
     ],
+    designRefs: [],
     nodes,
     checkpoints: [],
   };

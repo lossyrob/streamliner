@@ -1,25 +1,9 @@
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
-import type { WorkstreamIssue } from "../workstream-schema";
 import type { WorkstreamGraphNodeData } from "../workstream-graph";
+import { trackerLabel, trackerUrl } from "../workstream-links";
 
 function formatLabel(value: string): string {
   return value.replace(/[_-]+/g, " ").toLowerCase();
-}
-
-function issueLabel(issue?: WorkstreamIssue): string | null {
-  if (!issue) {
-    return null;
-  }
-
-  return `${issue.owner}/${issue.repo}#${issue.number}`;
-}
-
-function issueUrl(issue?: WorkstreamIssue): string | null {
-  if (!issue) {
-    return null;
-  }
-
-  return `https://github.com/${issue.owner}/${issue.repo}/issues/${issue.number}`;
 }
 
 function highlightClassName(highlight: WorkstreamGraphNodeData["highlight"]) {
@@ -81,8 +65,8 @@ function NodeShell({
   data: WorkstreamGraphNodeData;
   gate: boolean;
 }) {
-  const issue = issueLabel(data.entry.node.issue);
-  const issueHref = issueUrl(data.entry.node.issue);
+  const tracker = trackerLabel(data.entry.node.tracker);
+  const trackerHref = trackerUrl(data.entry.node.tracker);
   const rootClassName = [
     "sl-node",
     gate ? "gate" : "task",
@@ -104,7 +88,20 @@ function NodeShell({
       <div className="sl-node-summary">{data.entry.node.summary}</div>
       <div className="sl-node-meta">
         <span>{data.repoLabel}</span>
-        {issue ? <a href={issueHref!} target="_blank" rel="noopener noreferrer" className="sl-node-issue-link">{issue}</a> : null}
+        {tracker ? (
+          trackerHref ? (
+            <a
+              href={trackerHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="sl-node-issue-link"
+            >
+              {tracker}
+            </a>
+          ) : (
+            <span>{tracker}</span>
+          )
+        ) : null}
       </div>
     </div>
   );
