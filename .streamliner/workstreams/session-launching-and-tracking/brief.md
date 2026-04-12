@@ -23,12 +23,11 @@ Streamliner's local runtime state and are projected onto the graph as derived UI
 state rather than written back into `graph.json`.
 
 ## Design References
-- `streamliner:DESIGN-DOCS.md` - design-layer model and migration target for
-  repo-scoped design docs
-- `streamliner:DOCTRINE.md` - operator, orchestrator, and worker operating model
-- `streamliner:PRODUCT-SPEC.md` - product scope and launch/tracking goals
-- `streamliner:WORKSTREAM-FORMAT.md` - committed artifact format and runtime
-  state separation
+- `streamliner:docs/design/index.md` - entry point for the project design set
+- `streamliner:docs/design/product.md` - product scope, architecture, and V1 goals
+- `streamliner:docs/design/operating-model.md` - operating model: roles, context package, and operating rhythm
+- `streamliner:docs/design/design-layer.md` - design-doc system: document families, format, and catalog
+- `streamliner:docs/design/workstream-format.md` - workstream artifact format and runtime state separation
 
 ## Boundaries
 - **In scope:** Repo-local Streamliner initialization, design-doc bootstrap,
