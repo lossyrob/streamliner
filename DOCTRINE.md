@@ -292,13 +292,14 @@ When the developer enters a session, the artifacts remain the source of truth:
 Presence augments execution. It does not create hidden dependencies on
 remembered conversation.
 
-### The anti-pattern: presence addiction
+### Visible autonomy
 
-Zero-cost presence creates a temptation to hover over everything. If the
-developer personally intervenes on every node, the whole point of workstream-
-level thinking collapses — the developer is back in task-conductor mode.
+The developer should not need to dig into sessions to know things are operating
+smoothly. Healthy autonomy must be visible from the graph: nodes progressing,
+PRs appearing, design-impact declarations arriving without escalation.
 
-The system should make healthy autonomy visible so presence stays deliberate.
+When the operational picture makes autonomous progress legible, the developer
+can trust it and reserve presence for moments where it creates real leverage.
 
 ---
 
