@@ -2,12 +2,13 @@
 
 > Working draft for the product layer above individual workstreams.
 
-Streamliner today is organized around a single workstream graph. That is the
-right primary surface for execution inside a workstream. But the operator's
-first question when opening Streamliner is usually not "which node is next in
-this one graph?" — it is "what is happening right now across my active work?"
+As a developer moves from workstream architect to portfolio operator — running
+multiple concurrent workstreams across projects — Streamliner needs a layer
+above any single workstream graph. The developer's first question when opening
+Streamliner is usually not "which node is next in this one graph?" — it is
+"what is happening right now across my active work?"
 
-The portfolio layer answers that question. It gives the operator a place to
+The portfolio layer answers that question. It gives the developer a place to
 stand above any single workstream: see concurrent workstreams across projects,
 see live sessions across environments, notice ad-hoc sessions, and then drill
 into the right graph or session.
@@ -26,23 +27,12 @@ into the right graph or session.
 
 ## What the portfolio layer does
 
-### Startup shell
-
-When Streamliner opens, the operator sees:
-
-- active projects and their workstreams
-- active and recent sessions across environments
-- ad-hoc sessions not yet attached to any workstream
-
-From there, the operator drills into a workstream graph, a specific session, or
-an environment view. The graph takes over once the operator is inside a
-workstream.
-
 ### Cross-workstream coordination
 
 Workstreams run in parallel. When they depend on each other, the dependency
-should target a public checkpoint — a named milestone or contract — rather than
-an arbitrary internal node.
+should target a public checkpoint — a named contract with a defined shape —
+rather than an arbitrary internal node. The quality of these exported contracts
+determines how much cross-workstream parallelism is actually achievable.
 
 A workstream's internal node structure stays internal. Cross-workstream coupling
 is visible through the small set of checkpoints each workstream exports. A node
@@ -53,17 +43,29 @@ This keeps the useful property that workstreams are large autonomous units of
 execution. If a project requires many fine-grained cross-workstream node
 dependencies, the workstream boundaries probably need rethinking.
 
+### Startup shell
+
+When Streamliner opens, the developer sees:
+
+- active projects and their workstreams
+- active and recent sessions across environments
+- ad-hoc sessions not yet attached to any workstream
+
+From there, the developer drills into a workstream graph, a specific session, or
+an environment view. The graph takes over once the developer is inside a
+workstream.
+
 ### Session visibility across environments
 
 The portfolio layer presents a unified session view across all registered
-environments. Observability comes first: the operator can see what is running
+environments. Observability comes first: the developer can see what is running
 on the dev box, in local WSL, or elsewhere before any launch or join capability
 exists for that environment.
 
 ### Ad-hoc sessions
 
 Sessions that were not launched by Streamliner are still visible. An ad-hoc
-session can stay ad hoc, or the operator can attach it to a project, workstream,
+session can stay ad hoc, or the developer can attach it to a project, workstream,
 or node when that becomes useful. Attachment is a gradual act, not a gate.
 
 ## Artifacts and runtime state

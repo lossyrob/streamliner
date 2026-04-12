@@ -1,12 +1,20 @@
 # Streamliner - Product Spec
 
-> A command center for orchestrating autonomous AI development across concurrent workstreams.
+> A tool for designing and operating autonomous AI development at the workstream level.
 
 ## What is Streamliner?
 
-Streamliner is a local-first web application for developers who use AI coding agents to execute multi-issue bodies of work. It gives the operator an operational picture of concurrent workstreams, a project-level design layer that survives any single session, an operator-presence system for engaging with agent sessions at any level, and a durable artifact system that keeps important context out of chat history.
+Streamliner is a local-first web application for developers who use AI coding
+agents to execute multi-issue bodies of work. It makes workstream-level thinking
+the natural operating mode: the developer designs workstreams with explicit
+boundaries, contracts, and gates, then monitors autonomous execution through an
+operational picture that surfaces work design quality and reserves attention for
+high-leverage moments.
 
-The core insight: when work is bigger than a single issue, autonomous execution only stays coherent if agents can ground themselves in both **project design** and **workstream intent**. The operator shapes the design and the workstream, then reserves attention for gates, wave transitions, and other high-leverage moments where judgment and taste matter most.
+The core insight: when execution is cheap, the bottleneck moves to the design
+of the work itself — not the design of the system being built, but the
+boundaries, contracts, and sequencing of the workstreams that build it. See
+[PRODUCT-THESIS.md](PRODUCT-THESIS.md) for the full thesis.
 
 See [DOCTRINE.md](DOCTRINE.md) for the operating model and [DESIGN-DOCS.md](DESIGN-DOCS.md) for the project-level design layer.
 
@@ -15,6 +23,7 @@ See [DOCTRINE.md](DOCTRINE.md) for the operating model and [DESIGN-DOCS.md](DESI
 A developer who:
 
 - uses AI coding agents to implement work
+- is moving beyond task-by-task agent direction toward designing large autonomous chunks of work
 - manages multiple concurrent workstreams, each with multiple issues
 - wants agents to execute autonomously by default, with human attention only at high-leverage moments
 - needs durable context that survives session crashes, conversation staleness, and machine restarts
@@ -83,7 +92,7 @@ Each node in the dependency graph represents a unit of work:
 
 - **Tasks** - concrete work items, typically backed by a tracker (GitHub issue, local spec file, or another platform)
 - **Research nodes** - investigation or spikes
-- **Gates** - validation checkpoints where the operator evaluates whether the workstream is on track
+- **Gates** - validation checkpoints where the developer evaluates whether the workstream is on track
 
 Nodes have:
 
@@ -120,44 +129,54 @@ This replaces the "years of shared doctrine" that human organizations rely on. E
 
 ### Attention level as engagement control
 
-A node's attention level controls the operator's engagement:
+A node's attention level controls the developer's engagement:
 
-- **focus** - operator wants to be involved in this node's lifecycle
-- **watch** - operator wants to see the output but trusts autonomous execution
+- **focus** - developer wants to be involved in this node's lifecycle
+- **watch** - developer wants to see the output but trusts autonomous execution
 - **parked** - fully autonomous unless flagged
 
-This creates a continuous engagement spectrum from full autonomy to full operator presence, controlled from the graph.
+This creates a continuous engagement spectrum from full autonomy to full developer presence, controlled from the graph.
 
 ## Three pillars
 
-### 1. Operational picture
+### 1. The workstream as the primary unit of work
 
-The **dependency graph is the primary interface**. It is where the operator can:
+The **dependency graph is the primary interface**. It is where the developer can:
 
 - see what is done, in flight, blocked, or next
 - inspect nodes, dependencies, dependents, issues, and active session state
 - see operational status derived from tracker state and local runtime state
-- view the engagement surface - which nodes are `focus`, `watch`, or `parked`
+- view the engagement surface — which nodes are `focus`, `watch`, or `parked`
 - filter by ready/in-flight/review/blocked state
 - inspect the workstream's current state without opening any session
 - see which design docs are relevant to the workstream or selected node
 
 The graph supports multiple concurrent workstreams, each in its own view.
 
-### 2. Operator presence
+### 2. Work design quality is visible
 
-The session system is the portal through which the operator exercises presence at any level of the hierarchy.
+When workstream boundaries are wrong, the developer should see it:
 
-Streamliner should let the operator:
+- too many cross-workstream blockers signal hidden dependencies
+- sessions that don't fit the structure signal unclear boundaries
+- outputs that can't be consumed downstream signal implicit contracts
+- `decision-needed` escalations signal design gaps
+
+Each wave teaches the developer what makes a good workstream boundary. The
+session system supports this by letting the developer:
 
 - see every active orchestrator or worker session across environments
 - understand whether each session is planning, implementing, blocked, waiting for review, or idle
-- join any session directly to review, redirect, co-pilot, or interrogate reasoning
+- join any session directly to review, redirect, or interrogate reasoning
 - withdraw cleanly, leaving artifacts as the durable source of truth
 
-The default remains autonomy. Presence is a superpower, not the normal mode.
+### 3. Attention goes to high-leverage moments by default
 
-### 3. Artifact system
+Gates, wave transitions, design mismatches, and scope decisions surface for
+review. Everything else runs autonomously. The developer's presence is a
+deliberate choice, not the normal mode.
+
+### The artifact system
 
 The durable backbone has **two coordinated artifact surfaces** whose physical locations are flexible:
 
@@ -220,7 +239,7 @@ Streamliner is designed for bursts of focused human attention interspersed with 
 
 ### Phase 1: Workstream shaping
 
-The operator works with an orchestrator session to produce:
+The developer works with an orchestrator session to produce:
 
 - the initial brief
 - the initial graph
@@ -241,7 +260,7 @@ Workers pick up nodes and execute:
 5. create the PR
 6. declare design impact: `none`, `updated-docs`, or `decision-needed`
 
-The operator's role during this phase is none unless flagged.
+The developer's role during this phase is none unless flagged.
 
 ### Phase 3: Wave transition
 
@@ -250,20 +269,20 @@ When a wave is mostly complete, the orchestrator reviews what shipped versus:
 - what the workstream planned
 - what the design layer says the system should become
 
-Then it updates the brief, refreshes the workstream's design references if needed, proposes the next wave, and presents the updated plan to the operator for review.
+Then it updates the brief, refreshes the workstream's design references if needed, proposes the next wave, and presents the updated plan to the developer for review.
 
 ### Phase 4: Gate review
 
-At gates, the operator evaluates whether the workstream is on track. This may include:
+At gates, the developer evaluates whether the workstream is on track. This may include:
 
 - testing the output
 - reviewing the approach
 - reviewing any design-doc changes associated with the wave
 - resolving `decision-needed` cases
 
-### Operator presence (any time)
+### Developer presence (any time)
 
-At any point during execution, wave transition, or review, the operator can enter a session, shape the work directly, then withdraw back to strategic oversight.
+At any point during execution, wave transition, or review, the developer can enter a session, shape the work directly, then withdraw back to strategic oversight.
 
 ## Architecture
 
@@ -276,7 +295,7 @@ At any point during execution, wave transition, or review, the operator can ente
 
 ### Registered repositories
 
-Streamliner works across registered repositories. The operator registers:
+Streamliner works across registered repositories. The developer registers:
 
 - where workstream artifacts live (a planning repo, the source repo, or elsewhere)
 - the participating source repositories

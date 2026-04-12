@@ -58,13 +58,13 @@ tail of the current workstream continues.
 ## Suggested Wave 1
 
 Wave 1 should turn Streamliner from a single-workstream viewer into the start of
-an operator cockpit. The hard priority is the dev box.
+a multi-workstream portfolio view. The hard priority is the dev box.
 
 | Workstream | Main outcome | Why it belongs in Wave 1 |
 |---|---|---|
 | **Dev box observability** | Streamliner can discover and normalize detectable Copilot sessions on the dev box, whether or not Streamliner launched them | This is the first unblocker for real usage; the product becomes useful on the machine that matters most |
 | **Portfolio shell** | Streamliner opens to a top-level surface that shows projects, workstreams, and ad-hoc sessions before the operator drills into a graph | The graph remains primary within a workstream, but startup needs a shell above any single graph |
-| **Graph session overlays and attachment UX** | A workstream graph can show attached sessions, unmatched sessions, and runtime overlays without turning artifacts into telemetry logs | This closes the gap between the top-level cockpit and the graph-first workstream experience |
+| **Graph session overlays and attachment UX** | A workstream graph can show attached sessions, unmatched sessions, and runtime overlays without turning artifacts into telemetry logs | This closes the gap between the portfolio view and the graph-first workstream experience |
 
 ### Wave 1 notes
 
@@ -94,7 +94,7 @@ This workstream should own:
 - the startup/home surface above any single workstream
 - project/workstream navigation
 - first-class presentation of ad-hoc sessions
-- a clean split between "operator cockpit" and "workstream graph"
+- a clean split between "portfolio view" and "workstream graph"
 
 It should deliberately avoid becoming a giant merged node graph. It is a
 portfolio view, not a universal DAG viewer.
@@ -204,5 +204,5 @@ Then expand outward through:
 4. **Cross-environment launch and recovery basics**
 
 That keeps the next wave aligned with your real operating environment while also
-moving the product toward a multi-workstream operator cockpit rather than a
+moving the product toward a multi-workstream portfolio view rather than a
 single-workstream graph viewer.
