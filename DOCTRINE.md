@@ -517,6 +517,27 @@ quarters. A developer directing autonomous agents gets it in days.
 
 ---
 
+## Design influences
+
+Several concepts in this operating model have roots in military command
+doctrine, adapted for a context where subordinates are stateless, communication
+is instant, and the developer can be present at any level at zero cost.
+
+| Military concept | How it appears here |
+|---|---|
+| Commander's Intent | Project design docs plus workstream Purpose, Approach, and Boundaries. The developer's intent is made durable and explicit so any new session can act on it. |
+| Mission-type orders | Outcome-oriented node specs rather than prescriptive implementation steps. Workers decide how to accomplish the mission. |
+| Nested intent | The Layer 0–3 context package. Each level receives the intent of the levels above it, progressively narrowed. |
+| Disciplined initiative | Workers adapt locally but flag consequential mismatches rather than silently diverging from intended design. |
+| Intent decay | A named risk. Alignment review and design-impact declarations exist specifically to catch it before it compounds. |
+
+The military analogy breaks down in important ways: sessions are ephemeral, not
+trained units; the developer can engage anywhere instantly; and feedback is
+cheap enough to make iterative learning the norm rather than the exception.
+These differences shaped the operating model as much as the similarities did.
+
+---
+
 ## The doctrine in one paragraph
 
 The developer owns the intended design and the high-level direction of work.
