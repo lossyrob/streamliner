@@ -62,7 +62,7 @@ Runtime state contracts:
 
 ### The separation principle
 
-**Design docs, committed workstream artifacts, and local runtime state are separate layers.** The graph uses `repoId` + `path` references so the operator can place shared artifacts wherever they make sense, while fast-moving operational state stays out of Git.
+**Design docs, committed workstream artifacts, and local runtime state are separate layers.** The graph uses `repoId` + `path` references so the builder can place shared artifacts wherever they make sense, while fast-moving operational state stays out of Git.
 
 ## Config file (`config.json`)
 
@@ -196,15 +196,15 @@ Each node is a unit of work in the dependency graph.
 
 - **task** — concrete work: implement a feature, write tests, set up infrastructure. Typically backed by a tracker.
 - **research** — investigation or spike: explore an approach, evaluate a library, prototype. May or may not produce code.
-- **gate** — validation checkpoint where the operator evaluates whether the workstream is on track. Gates block downstream work until passed.
+- **gate** — validation checkpoint where the builder evaluates whether the workstream is on track. Gates block downstream work until passed.
 
 ### Attention levels
 
-Attention levels control operator engagement:
+Attention levels control builder engagement:
 
-- **focus** — the operator wants to be involved: review the plan, review the PR, possibly co-pilot.
-- **watch** — the operator wants to see the output but trusts autonomous execution.
-- **parked** — fully autonomous. The operator does not need to see this unless flagged.
+- **focus** — the builder wants to be involved: review the plan, review the PR, possibly co-pilot.
+- **watch** — the builder wants to see the output but trusts autonomous execution.
+- **parked** — fully autonomous. The builder does not need to see this unless flagged.
 
 ### Artifact state vs. operational state
 
@@ -258,7 +258,7 @@ When a node has no `tracker` field, its `title` and `summary` are all the spec i
 #### When to use which
 
 - **GitHub** — the default for projects hosted on GitHub. Issues are created during shaping for the current wave's nodes.
-- **Local** — when there is no external tracker, for offline work, or when the operator wants specs version-controlled alongside workstream artifacts.
+- **Local** — when there is no external tracker, for offline work, or when the builder wants specs version-controlled alongside workstream artifacts.
 - **No tracker** — for sketch nodes in later waves and for gates. Specs are added when the node is promoted to a detailed wave.
 
 Future tracker types (e.g. `"azure-devops"`, `"linear"`) can be added without changing the node schema — they are new `type` values with their own fields.

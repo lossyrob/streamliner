@@ -27,6 +27,12 @@ export default defineConfig({
         ]
       },
       {
+        text: 'Concepts',
+        items: [
+          { text: 'Context Package', link: '/concepts/context-package' },
+        ]
+      },
+      {
         text: 'Decisions',
         items: [
           { text: 'Decision Records', link: '/decisions/' },

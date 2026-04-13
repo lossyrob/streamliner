@@ -29,6 +29,24 @@ Plus: `index.md` (entry point), `decisions/` (empty scaffolding with a README).
 
 ### Key decisions
 - Design docs describe *intended state* in declarative present tense per DESIGN-DOCS.md
-- Each doc gets proper YAML frontmatter per the format spec
+- Each doc gets proper YAML frontmatter per the format spec (kind, status, last_updated, update_semantics, plus domain-specific fields)
 - Root docs remain in place (they're transitional, not deleted by this issue)
 - PORTFOLIO-LAYER.md and PRODUCT-THESIS.md are not migrated (PORTFOLIO-LAYER is a working draft, PRODUCT-THESIS is foundational context, not design authority)
+
+### Status/uncertainty classification (from plan review)
+- product.md → `current` (PRODUCT-SPEC is well-established)
+- operating-model.md → `current` (DOCTRINE is stable)
+- workstream-format.md → `current` (WORKSTREAM-FORMAT is the reference spec)
+- design-layer.md → `current` (DESIGN-DOCS is the meta-spec; this doc describes how Streamliner's design-doc system works — it is a legitimate design concern even though DESIGN-DOCS.md didn't list itself as a "natural mapping." The design-doc system is part of Streamliner's intended architecture.)
+- Open questions and unstable areas captured in the index's Open Questions section
+
+### Scope exclusions
+- Root docs stay in place (transitional, removed by a future issue)
+- PORTFOLIO-LAYER.md not migrated (working draft, not design authority)
+- PRODUCT-THESIS.md not migrated (foundational thesis, not design authority)
+- No ADR corpus invented — just scaffolding with format guidance
+
+### Review-driven refinements
+- Index follows the full template: overview, reading order, satellite doc table, decision log, open questions
+- Decision scaffolding includes numbering convention, status expectations, and template shape
+- Verification is a concrete checklist: frontmatter fields, path consistency, brief/graph sync, no stale root-doc refs

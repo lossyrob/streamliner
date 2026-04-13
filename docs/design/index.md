@@ -1,31 +1,36 @@
 ---
 kind: design-index
 status: current
-last_updated: 2026-04-12
+last_updated: 2026-04-13
 update_semantics: rewrite-in-place
 ---
 
 # Streamliner — Design
 
-Streamliner is a local-first web application for developers who use AI coding agents to execute multi-issue bodies of work. It makes workstream-level thinking the natural operating mode: the developer designs workstreams with explicit boundaries, contracts, and gates, then monitors autonomous execution through an operational picture that surfaces work design quality and reserves attention for high-leverage moments.
+This is the entry point for Streamliner's project-level design documentation. Start here to understand the system, then follow the reading order into the detail pages.
 
-The core insight: when execution is cheap, the bottleneck moves to the design of the work itself — not the design of the system being built, but the boundaries, contracts, and sequencing of the workstreams that build it.
+Streamliner helps a single builder direct many concurrent AI coding agent workstreams. It makes workstream-level thinking the natural operating mode — designing work with explicit boundaries, contracts, and gates, then monitoring autonomous execution through an operational picture that surfaces work-design quality.
 
 ## Reading order
 
-1. **[product.md](product.md)** — What Streamliner is, who it's for, core concepts, architecture, and V1 scope.
-2. **[operating-model.md](operating-model.md)** — Roles, context package, information flow, presence, and operating rhythm.
-3. **[design-layer.md](design-layer.md)** — How design docs work: document families, format, status semantics, and catalog.
+1. **[product.md](product.md)** — What Streamliner is, who it's for, core concepts, and architecture.
+2. **[operating-model.md](operating-model.md)** — Roles, information flow, presence, and operating rhythm.
+3. **[design-layer.md](design-layer.md)** — How design docs work: document families, format, and status semantics.
 4. **[workstream-format.md](workstream-format.md)** — Workstream artifact format: brief, graph, config, and runtime state separation.
+
+### Concepts
+
+- **[Context Package](concepts/context-package.md)** — The layered context model that solves the blank-slate problem for agent sessions.
 
 ## Satellite documents
 
 | Document | Status | Authoritative for |
 |---|---|---|
-| [product.md](product.md) | current | Product scope, architecture, and V1 goals |
-| [operating-model.md](operating-model.md) | current | Operating model: roles, context package, information flow, and operating rhythm |
-| [design-layer.md](design-layer.md) | current | Design-doc system: document families, format, status semantics, and catalog |
+| [product.md](product.md) | current | Product scope and architecture |
+| [operating-model.md](operating-model.md) | current | Operating model: roles, information flow, and operating rhythm |
+| [design-layer.md](design-layer.md) | current | Design-doc system: document families, format, and status semantics |
 | [workstream-format.md](workstream-format.md) | current | Workstream artifact format: brief, graph, config, and runtime state separation |
+| [concepts/context-package.md](concepts/context-package.md) | current | Context package: layered context model for agent sessions |
 
 ## Decision log
 
@@ -40,6 +45,5 @@ _No decisions recorded yet. See [decisions/](decisions/) for the template and co
 - **Operator presence UX**: What does "joining" a session look like in practice?
 - **Auth and GitHub tokens**: How does Streamliner authenticate with GitHub for enrichment and issue management?
 - **Context package delivery**: How does Layer 0–3 context reach a worker session in practice?
-- **Orchestrator skill design**: What does the skill look like that manages wave progression and artifact updates?
-- **Design relevance heuristics**: How should Streamliner map changed files and nodes to design docs when explicit references are missing or too broad?
+- **Orchestrator execution model**: Should the orchestrator be a single persistent session, SDK-driven helpers that fork sessions for specific tasks, or a combination?
 - **Portfolio layer stability**: The portfolio layer concept (projects, cross-workstream coordination, session attachment) is still a working draft and not yet codified as design authority.

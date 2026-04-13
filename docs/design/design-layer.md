@@ -23,7 +23,7 @@ Streamliner's execution artifacts answer **what should happen now** inside a sin
 
 1. **Design drift** — parallel workstreams make locally correct but globally inconsistent choices.
 2. **Rationale loss** — important design decisions live in chats, notes, and summaries that are easy to lose.
-3. **Archaeology burden** — the operator searches transcripts, specs, and git history to answer "what is the current intended design?"
+3. **Archaeology burden** — the builder searches transcripts, specs, and git history to answer "what is the current intended design?"
 4. **Decision duplication** — briefs and node specs restate product decisions badly, then drift from the original source.
 
 The design layer fills that gap.
@@ -52,13 +52,13 @@ Temporary implementations are expected and marked as temporary in code. Design d
 
 Design docs describe the project in its entirety. Workstreams **reference**, **apply**, and **update** design docs — but they do not become the design authority themselves. This prevents the project from fragmenting into workstream-local truths.
 
-### The operator is the design authority
+### The builder is the design authority
 
-Orchestrators and workers draft design-doc changes. The operator is the final authority on intended design. The cognitive load is review, not blank-page authoring, but the authority is explicit: design docs reflect operator intent.
+Orchestrators and workers draft design-doc changes. The builder is the final authority on intended design. The cognitive load is review, not blank-page authoring, but the authority is explicit: design docs reflect builder intent.
 
 ### Draft docs are opt-in, not default truth
 
-`current` design docs are binding and load automatically for relevant work. `draft` design docs are visible to operator and orchestrator but are **not** loaded into worker context automatically — they only reach workers when a workstream explicitly references them because the work is shaping, validating, or implementing that draft.
+`current` design docs are binding and load automatically for relevant work. `draft` design docs are visible to builder and orchestrator but are **not** loaded into worker context automatically — they only reach workers when a workstream explicitly references them because the work is shaping, validating, or implementing that draft.
 
 ## Document families
 
@@ -221,8 +221,8 @@ supersedes: null
 
 | Status | Meaning | Default consumers |
 |---|---|---|
-| `current` | Binding design authority for its scope | Operator, orchestrator, worker |
-| `draft` | Proposed direction under active shaping | Operator, orchestrator |
+| `current` | Binding design authority for its scope | Builder, orchestrator, worker |
+| `draft` | Proposed direction under active shaping | Builder, orchestrator |
 | `superseded` | Historical reference only | Reference only |
 
 Workers receive a `draft` design doc only when the workstream or issue explicitly references that draft because the node is participating in the design process.
@@ -231,8 +231,8 @@ Workers receive a `draft` design doc only when the workstream or issue explicitl
 
 | Status | Meaning | Default consumers |
 |---|---|---|
-| `proposed` | Under consideration; not binding | Operator, orchestrator |
-| `accepted` | Binding rationale for current design direction | Operator, orchestrator, worker |
+| `proposed` | Under consideration; not binding | Builder, orchestrator |
+| `accepted` | Binding rationale for current design direction | Builder, orchestrator, worker |
 | `superseded` | Historical reference only | Reference only |
 
 ## Derived design catalog
@@ -311,7 +311,7 @@ Every completed node declares one of:
 |---|---|---|
 | `none` | The work matched existing design | No design diff required |
 | `updated-docs` | The work changed intended design and updated docs | Design diff must be present in review |
-| `decision-needed` | The work uncovered a mismatch or unresolved design choice | Explicit operator review required |
+| `decision-needed` | The work uncovered a mismatch or unresolved design choice | Explicit builder review required |
 
 Streamliner treats this declaration as first-class review data.
 
