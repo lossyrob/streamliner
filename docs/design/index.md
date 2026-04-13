@@ -8,7 +8,7 @@ Streamliner helps a single builder direct many concurrent AI coding agent workst
 
 1. **[product.md](product.md)** — What Streamliner is, who it's for, core concepts, and architecture.
 2. **[operating-model.md](operating-model.md)** — Roles, information flow, presence, and operating rhythm.
-3. **[design-layer.md](design-layer.md)** — How design docs work: document families, format, and status semantics.
+3. **[design-layer.md](design-layer.md)** — How design docs work: document families and interaction with workstreams.
 4. **[workstream-format.md](workstream-format.md)** — Workstream artifact format: brief, graph, config, and runtime state separation.
 
 ### Concepts

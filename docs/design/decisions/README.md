@@ -14,7 +14,7 @@ This directory holds architecturally significant decisions for Streamliner.
 |--------|---------|
 | `proposed` | Under consideration; not binding |
 | `accepted` | Binding rationale for current design direction |
-| `superseded` | Historical reference only — see `superseded_by` for the replacement |
+| `superseded` | Historical reference only — note the replacement in the decision body |
 
 ## Template
 
@@ -22,6 +22,8 @@ New decision records follow this structure:
 
 ```markdown
 # NNN. Title
+
+> Supersedes: [002-previous-decision](002-previous-decision.md) *(if applicable)*
 
 ## Context
 Why this decision is needed.

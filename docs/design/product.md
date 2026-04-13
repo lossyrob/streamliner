@@ -67,11 +67,11 @@ AI agents start every session as blank slates. The **context package** provides 
 
 ### 1. The workstream as the primary unit of work
 
-The dependency graph is the primary interface. It shows what is done, in flight, blocked, or next. The builder inspects nodes, dependencies, issues, and active session state; views the engagement surface; filters by status; and sees which design docs are relevant — all without opening any session.
+The dependency graph is the primary interface. It shows what is done, in flight, blocked, or next. The builder inspects nodes, dependencies, issues, and active session state; filters by status; and sees which design docs are relevant — all without opening any session.
 
 ### 2. Work-design quality is visible
 
-When workstream boundaries are wrong, the builder sees it: too many cross-workstream blockers signal hidden dependencies, sessions that don't fit the structure signal unclear boundaries, outputs that can't be consumed downstream signal implicit contracts, and `decision-needed` escalations signal design gaps.
+When workstream boundaries are wrong, the builder sees it: too many cross-workstream blockers signal hidden dependencies, sessions that don't fit the structure signal unclear boundaries, outputs that can't be consumed downstream signal implicit contracts, and unresolved design escalations signal design gaps.
 
 ### 3. Attention goes to high-leverage moments by default
 

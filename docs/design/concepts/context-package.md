@@ -35,4 +35,4 @@ The worker never reconstructs the whole workstream. It receives project design, 
 
 ## Progressive Disclosure
 
-The design index is small enough to include broadly. Only the design docs relevant to the current work need to load. Each successive layer narrows context further — from the entire project down to one node's mission.
+Agents read the full design set by default. The design index is small enough to include broadly, and the complete set of design docs gives any session the project-level context it needs. Each successive layer narrows context further — from the entire project down to one node's mission.

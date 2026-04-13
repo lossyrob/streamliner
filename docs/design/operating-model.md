@@ -54,7 +54,7 @@ An AI session that translates project design plus workstream intent into an exec
 - which nodes belong to which wave
 - which design docs and decisions are relevant to each node
 - when a worker proceeds autonomously vs. when review is needed
-- whether a discovered mismatch is a routine update or a `decision-needed` escalation
+- whether a discovered mismatch is a routine update or an escalation requiring builder judgment
 - how to update the brief and graph based on shipped reality
 
 **Does not decide:** project design direction, gate passage, or product-level architecture changes.
@@ -70,7 +70,7 @@ An AI session that executes one node: plan, implement, and produce reviewable ar
 - implementation approach inside issue boundaries
 - code structure, naming, and detailed execution
 - how to handle local technical realities
-- whether a design-doc update or `decision-needed` flag is warranted
+- whether an unresolved design choice warrants escalating to the builder
 
 **Does not decide:** scope expansion, project-wide architecture changes, or silent divergence from intended design.
 
@@ -154,7 +154,7 @@ The builder evaluates whether the workstream is on track. Gate review is not jus
 - **Hands-on testing** of the running system: does it work, does it feel right?
 - **UX validation**: is the user experience what was intended, or do interaction patterns need adjustment?
 - **Approach review**: were design-doc updates handled correctly?
-- **Decision resolution**: do any `decision-needed` cases require the builder's judgment?
+- **Decision resolution**: do any unresolved design choices require the builder's judgment?
 
 Gates are the primary moment when the builder uses the actual system rather than reviewing artifacts. When enough functionality exists that design decisions need to be validated against real usage, that is the right time for a gate.
 
