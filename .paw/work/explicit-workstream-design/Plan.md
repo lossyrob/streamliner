@@ -29,11 +29,11 @@ Create `docs/design/session-system.md` covering:
 - Terminal integration: how the operator sees and joins sessions
 
 ### 2. decision-records — Record key design decisions
-Create decision records under `docs/design/decisions/` for architecturally
-significant choices made during the design session. Candidates:
+Create decision records under `docs/design/decisions/` only for choices that
+are **accepted** (resolved with clear rationale). Unresolved options stay as
+open questions in the design doc. Candidates:
 - Session discovery mechanism (file-based heartbeat vs. process scanning)
 - Context package delivery strategy (file injection vs. skill context)
-- Launch orchestration model (SDK-driven vs. terminal command)
 
 ### 3. update-design-index — Update design index
 Add the new session-system.md to `docs/design/index.md` satellite documents
@@ -41,12 +41,15 @@ table and reading order. Add decision records to the decision log.
 
 ### 4. update-workstream — Update workstream artifacts
 - Update `brief.md`: switch design references to new docs/design/* paths,
-  update Current State to reflect completed design work
-- Update `graph.json`: refine downstream nodes (backend-context-assembly,
-  copilot-sdk-paw-init, terminal-launch-integration, session-tracking-model,
-  runtime-overlay-ui) based on what the design made explicit. Update designRefs
-  to point at docs/design/* paths.
+  update Current State to reflect completed design work. Reference the new
+  design doc; do not restate its content in the brief.
+- Update `graph.json`: refine downstream node summaries and designRefs to
+  point at docs/design/* paths. Keep refinement to what the design made
+  clear — do not over-detail later-wave nodes beyond sketch level.
 
 ### 5. process-learnings — Capture process learnings
-Add a note on how Streamliner should handle design-session nodes and workstream
-parent issues when shaping a GitHub-backed workstream (per issue success criteria).
+Update `docs/design/workstream-format.md` and `docs/design/operating-model.md`
+with durable learnings about how design-session nodes work in Streamliner
+workstreams (e.g., design nodes as valid early-wave work, incremental issue
+creation for GitHub-backed workstreams, parent issue as first-class artifact).
+Also update issue #5 body with the specific learnings captured.

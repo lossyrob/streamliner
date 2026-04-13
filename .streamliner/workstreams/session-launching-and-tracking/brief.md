@@ -28,6 +28,9 @@ state rather than written back into `graph.json`.
 - `streamliner:docs/design/operating-model.md` - operating model: roles, context package, and operating rhythm
 - `streamliner:docs/design/design-layer.md` - design-doc system: document families, format, and catalog
 - `streamliner:docs/design/workstream-format.md` - workstream artifact format and runtime state separation
+- `streamliner:docs/design/session-system.md` - session launching, lifecycle, tracking, and runtime overlay
+- `streamliner:docs/design/decisions/001-heartbeat-based-session-tracking.md` - rationale for file-based heartbeat tracking
+- `streamliner:docs/design/decisions/002-file-based-context-delivery.md` - rationale for file-based context delivery
 
 ## Boundaries
 - **In scope:** Repo-local Streamliner initialization, design-doc bootstrap,
@@ -40,12 +43,17 @@ state rather than written back into `graph.json`.
   committed artifact state
 
 ## Current State
-This workstream is now anchored by parent GitHub issue `lossyrob/streamliner#3`.
-The first execution issue is `lossyrob/streamliner#4` (`bootstrap-design-docs`),
-which will turn the current root docs into a repo-scoped `docs/design/` set.
-The second Wave 1 issue is `lossyrob/streamliner#5`, which expands the earlier
-launch-contract idea into explicit design sessions for the full workstream
-before the downstream implementation issue graph is finalized.
+Wave 1 design foundation is nearly complete. Issue #4 (`bootstrap-design-docs`)
+shipped the repo-scoped `docs/design/` set. Issue #5
+(`make-workstream-design-explicit`) has produced the session system design doc
+(`docs/design/session-system.md`) and two accepted decision records (heartbeat-
+based session tracking, file-based context delivery). The workstream's intended
+design is now explicit and written down.
+
+The downstream implementation graph is ready for review and refinement. The
+session system design doc defines the launch contract, context assembly model,
+session lifecycle, tracking model, and runtime overlay — enough to guide
+backend and UI implementation in subsequent waves.
 
 ## Decisions
 - Use repo-local `.streamliner/workstreams/` for Streamliner's committed
@@ -69,9 +77,10 @@ before the downstream implementation issue graph is finalized.
   real design references instead of transitional root documents.
 
 ## Open Questions
-- Should the runtime layer keep materialized summary files, per-session files,
-  or both as tracking gets more detailed?
-- What minimum runtime snapshot shape is needed before full session tracking is
-  implemented?
 - When should runtime-discovered progress be promoted into committed workstream
   artifact state?
+- How does the Copilot CLI session write heartbeats? Sidecar process or PAW
+  skill integration?
+- Should Streamliner manage terminal tabs directly, or delegate to tmux/screen/
+  IDE terminal APIs?
+- Can a node have multiple concurrent sessions (e.g., after crash and relaunch)?
