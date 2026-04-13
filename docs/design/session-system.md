@@ -79,8 +79,8 @@ Resolved from the workstream's `designRefs` and the repo's configured design doc
 
 - Read the design index (`docs/design/index.md`)
 - Read each `current` design doc referenced in `designRefs`
+- Include `draft` design docs that appear in the workstream's `designRefs` or the node's spec — a `designRefs` entry is an explicit reference
 - Read accepted decision records referenced by those design docs
-- Skip `draft` design docs unless the node's spec explicitly references them
 
 Design docs are already committed files. Context assembly reads them from the target repo (or registered design repo) at the current HEAD.
 

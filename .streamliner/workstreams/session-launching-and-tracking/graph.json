@@ -61,7 +61,7 @@
       "type": "task",
       "title": "Bootstrap design docs",
       "summary": "Create Streamliner's repo-scoped docs/design set from the current root docs and switch this workstream to reference that design layer.",
-      "status": "ready",
+      "status": "completed",
       "attention": "focus",
       "repoIds": ["streamliner"],
       "tracker": {
@@ -77,7 +77,7 @@
       "type": "research",
       "title": "Make workstream design explicit",
       "summary": "Run explicit design sessions for the full workstream so the launch contract, key design decisions, and downstream issue-graph adjustments are written down before more implementation issues are finalized.",
-      "status": "planned",
+      "status": "in-progress",
       "attention": "focus",
       "repoIds": ["streamliner"],
       "tracker": {

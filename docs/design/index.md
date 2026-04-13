@@ -38,9 +38,5 @@ Streamliner helps a single builder direct many concurrent AI coding agent workst
 
 ## Open questions
 
-- **Session tracking mechanism**: How does Streamliner discover and monitor Copilot CLI sessions across environments?
-- **Operator presence UX**: What does "joining" a session look like in practice?
-- **Auth and GitHub tokens**: How does Streamliner authenticate with GitHub for enrichment and issue management?
-- **Context package delivery**: How does Layer 0–3 context reach a worker session in practice?
 - **Orchestrator execution model**: Should the orchestrator be a single persistent session, SDK-driven helpers that fork sessions for specific tasks, or a combination?
 - **Portfolio layer stability**: The portfolio layer concept (projects, cross-workstream coordination, session attachment) is still a working draft and not yet codified as design authority.
