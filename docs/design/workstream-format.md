@@ -1,19 +1,3 @@
----
-kind: design-doc
-status: current
-last_updated: 2026-04-12
-update_semantics: rewrite-in-place
-authoritative_for: "Workstream artifact format: brief, graph, config, and runtime state separation"
-scope_tags:
-  - workstream-format
-  - brief
-  - graph
-  - artifacts
-code_paths:
-  - .streamliner/**
-references_decisions: []
----
-
 # Workstream Artifact Format
 
 A workstream consists of two committed artifacts — a **brief** (`brief.md`) and a **dependency graph** (`graph.json`) — stored together in a workstream directory. These artifacts describe durable plan and progress. Fast-moving operational state lives separately in a local runtime store.
@@ -137,7 +121,6 @@ The brief is the narrative companion to the graph. It captures intent, boundarie
 - **Target length:** Under 400 lines. Push detail to node specs.
 - **Edit in place.** The brief reads as a coherent whole at any point; Git provides history.
 - **Written for a cold reader.** A new session reading the brief, graph, and referenced design docs is immediately productive.
-- **Design References section is human-readable.** The graph's `designRefs` array is the machine-readable source of truth. Keep them in sync.
 - **Decisions are workstream-local only.** Project-wide architectural choices belong in design docs or decision records.
 - **Current State is a durable summary, not a heartbeat log.** Rewrite it on meaningful direction changes, not every session pulse.
 - **Runtime telemetry stays outside the brief.** Session IDs, heartbeats, and tracker caches belong in the local runtime store.
@@ -156,12 +139,11 @@ The graph is the structured, machine-readable representation of the workstream's
 | `title` | string | ✓ | Human-readable workstream title |
 | `summary` | string | ✓ | Brief description of the workstream's current focus |
 | `status` | enum | ✓ | `"active"`, `"blocked"`, or `"completed"` |
-| `attention` | enum | ✓ | `"focus"`, `"watch"`, or `"parked"` |
 | `createdAt` | string | ✓ | ISO 8601 timestamp |
 | `updatedAt` | string | ✓ | ISO 8601 timestamp of the last committed edit. Bump on intentional committed changes only. |
 | `trackingIssue` | object | | Tracker reference anchoring the workstream (see Tracker Reference) |
 | `repos` | array | ✓ | Repositories involved (see Repo) |
-| `designRefs` | array | ✓ | Project-level design docs relevant to this workstream (see Design Reference). Empty array if none exist yet. |
+| `designRefs` | array | | Optional. Project-level design docs relevant to this workstream (see Design Reference). Agents read the full design set by default; this field is a hint for targeted context assembly. |
 | `nodes` | array | ✓ | Work items and gates (see Node) |
 | `checkpoints` | array | ✓ | Progress milestones (see Checkpoint) |
 
@@ -187,7 +169,6 @@ Each node is a unit of work in the dependency graph.
 | `title` | string | ✓ | Human-readable title |
 | `summary` | string | ✓ | What this node accomplishes (1-2 sentences) |
 | `status` | enum | ✓ | `"planned"`, `"ready"`, `"in-progress"`, `"blocked"`, or `"completed"` |
-| `attention` | enum | ✓ | `"focus"`, `"watch"`, or `"parked"` |
 | `repoIds` | string[] | ✓ | References to declared repos (can be empty) |
 | `tracker` | object | | Where the node's spec lives (see Tracker Reference) |
 | `dependsOn` | string[] | ✓ | IDs of nodes that must complete before this one |
@@ -197,14 +178,6 @@ Each node is a unit of work in the dependency graph.
 - **task** — concrete work: implement a feature, write tests, set up infrastructure. Typically backed by a tracker.
 - **research** — investigation or spike: explore an approach, evaluate a library, prototype. May or may not produce code.
 - **gate** — validation checkpoint where the builder evaluates whether the workstream is on track. Gates block downstream work until passed.
-
-### Attention levels
-
-Attention levels control builder engagement:
-
-- **focus** — the builder wants to be involved: review the plan, review the PR, possibly co-pilot.
-- **watch** — the builder wants to see the output but trusts autonomous execution.
-- **parked** — fully autonomous. The builder does not need to see this unless flagged.
 
 ### Artifact state vs. operational state
 
@@ -297,4 +270,4 @@ These constraints are enforced at parse time. Violations cause errors.
 | 12 | `schemaVersion` must equal `1` |
 | 13 | `projectKey` is kebab-case when present |
 
-Runtime validation (design catalog cross-checks, tracker-cache freshness) is separate from parse-time schema validation.
+Runtime validation (tracker-cache freshness, cross-reference checks) is separate from parse-time schema validation.

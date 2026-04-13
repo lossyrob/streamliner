@@ -21,16 +21,6 @@ This directory holds architecturally significant decisions for Streamliner.
 New decision records follow this structure:
 
 ```markdown
----
-kind: decision
-number: N
-status: proposed
-date: YYYY-MM-DD
-update_semantics: append-only
-superseded_by: null
-supersedes: null
----
-
 # NNN. Title
 
 ## Context

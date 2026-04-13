@@ -1,16 +1,3 @@
----
-kind: design-doc
-status: current
-last_updated: 2026-04-13
-update_semantics: rewrite-in-place
-authoritative_for: "Operating model: roles, information flow, and operating rhythm"
-scope_tags:
-  - operating-model
-  - roles
-code_paths: []
-references_decisions: []
----
-
 # Operating Model
 
 A single builder manages many concurrent workstreams through stateless AI coding agents. Every agent session starts cold — no memory of previous sessions, no shared understanding, no continuity of identity. The builder is the sole authority on intended design. The artifact system is the sole source of truth.
@@ -72,11 +59,11 @@ An AI session that translates project design plus workstream intent into an exec
 
 **Does not decide:** project design direction, gate passage, or product-level architecture changes.
 
-The orchestrator is a session, not a daemon. Any new orchestrator session reads the design layer and workstream artifacts and becomes productive immediately.
+The orchestrator is a logical role, not necessarily a single persistent session. It may be fulfilled by a single AI session, by SDK-driven helpers that fork sessions for specific tasks like plan review or PR review, or by a combination. Any new orchestrator session reads the design layer and workstream artifacts and becomes productive immediately.
 
 ### Worker
 
-An AI session that executes one node: plan, implement, update or flag design impact, and produce reviewable artifacts.
+An AI session that executes one node: plan, implement, and produce reviewable artifacts.
 
 **Decides:**
 
@@ -120,19 +107,19 @@ The orchestrator communicates through graph structure, node specs, and design re
 
 There is no default worker-to-worker conversation channel. Coordination happens through graph dependencies, shared design docs, coordination notes in node context, and orchestrator updates to the workstream.
 
-## Presence and Engagement
+## Presence
 
 The builder can be present at any level — shaping a node, reviewing a plan, co-piloting an implementation, interrogating reasoning, or taking over a critical node — then withdraw without breaking the chain of execution.
 
-### Engagement Spectrum
+### When the Builder Enters
 
-Every node sits on a spectrum from full autonomy to full builder presence:
+The builder's most common engagement points are:
 
-- **parked** — run fully autonomously unless flagged
-- **watch** — let it run, but surface the result
-- **focus** — builder intends to engage directly at some point in the lifecycle
+- **Plan review** — reviewing the implementation plan before work proceeds
+- **Final PR review** — reviewing the completed work, asking questions, and requesting changes
+- **Gate review** — hands-on testing of the running system at checkpoints
 
-The graph is the engagement control surface.
+Mid-implementation interruption is rarely useful. The builder typically waits for a natural checkpoint — a plan to review, a PR to evaluate, or a gate to test.
 
 ### Presence Does Not Replace Artifacts
 

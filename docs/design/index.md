@@ -1,10 +1,3 @@
----
-kind: design-index
-status: current
-last_updated: 2026-04-13
-update_semantics: rewrite-in-place
----
-
 # Streamliner — Design
 
 This is the entry point for Streamliner's project-level design documentation. Start here to understand the system, then follow the reading order into the detail pages.
@@ -24,13 +17,13 @@ Streamliner helps a single builder direct many concurrent AI coding agent workst
 
 ## Satellite documents
 
-| Document | Status | Authoritative for |
-|---|---|---|
-| [product.md](product.md) | current | Product scope and architecture |
-| [operating-model.md](operating-model.md) | current | Operating model: roles, information flow, and operating rhythm |
-| [design-layer.md](design-layer.md) | current | Design-doc system: document families, format, and status semantics |
-| [workstream-format.md](workstream-format.md) | current | Workstream artifact format: brief, graph, config, and runtime state separation |
-| [concepts/context-package.md](concepts/context-package.md) | current | Context package: layered context model for agent sessions |
+| Document | Authoritative for |
+|---|---|
+| [product.md](product.md) | Product scope and architecture |
+| [operating-model.md](operating-model.md) | Operating model: roles, information flow, and operating rhythm |
+| [design-layer.md](design-layer.md) | Design-doc system: document families and interaction with workstreams |
+| [workstream-format.md](workstream-format.md) | Workstream artifact format: brief, graph, config, and runtime state separation |
+| [concepts/context-package.md](concepts/context-package.md) | Context package: layered context model for agent sessions |
 
 ## Decision log
 

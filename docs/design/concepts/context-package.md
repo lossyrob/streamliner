@@ -1,15 +1,3 @@
----
-kind: design-doc
-status: current
-last_updated: 2026-04-13
-update_semantics: rewrite-in-place
-authoritative_for: "Context package: layered context model for agent sessions"
-scope_tags:
-  - context-package
-code_paths: []
-references_decisions: []
----
-
 # Context Package
 
 AI agents start every session as blank slates. Human teams carry shared context in memory and habit. The context package replaces that with an explicit, layered set of committed artifacts.

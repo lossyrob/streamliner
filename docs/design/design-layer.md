@@ -1,18 +1,3 @@
----
-kind: design-doc
-status: current
-last_updated: 2026-04-12
-update_semantics: rewrite-in-place
-authoritative_for: "Design-doc system: document families, format, status semantics, and catalog"
-scope_tags:
-  - design-layer
-  - design-docs
-  - design-catalog
-code_paths:
-  - docs/design/**
-references_decisions: []
----
-
 # Design Layer
 
 The design layer is Streamliner's project-level design authority. It sits above execution artifacts (briefs, graphs, node specs) and describes the intended system so any human or agent can align to current design without re-deriving it from code or excavating chat history.
@@ -56,10 +41,6 @@ Design docs describe the project in its entirety. Workstreams **reference**, **a
 
 Orchestrators and workers draft design-doc changes. The builder is the final authority on intended design. The cognitive load is review, not blank-page authoring, but the authority is explicit: design docs reflect builder intent.
 
-### Draft docs are opt-in, not default truth
-
-`current` design docs are binding and load automatically for relevant work. `draft` design docs are visible to builder and orchestrator but are **not** loaded into worker context automatically — they only reach workers when a workstream explicitly references them because the work is shaping, validating, or implementing that draft.
-
 ## Document families
 
 The design layer has three document families.
@@ -70,7 +51,7 @@ One per project. The hub for cold readers. It provides:
 
 - A short project overview
 - Reading order through the design set
-- The list of living design docs with status
+- The list of living design docs
 - The list of decision records
 - Current open design questions
 
@@ -91,8 +72,8 @@ docs/design/
   index.md
   architecture.md
   session-system.md
-  context-package.md
-  ...
+  concepts/
+    context-package.md
   decisions/
     001-use-react-flow.md
     002-planning-repo-as-git.md
@@ -101,192 +82,7 @@ docs/design/
 
 Workstream artifacts live separately. The workstream references the design layer; it does not duplicate it.
 
-## Document format
-
-Every design document carries YAML frontmatter. Streamliner derives a machine-readable catalog from that frontmatter rather than asking authors to maintain a second artifact by hand.
-
-### Required fields — all design docs
-
-| Field | Type | Purpose |
-|---|---|---|
-| `kind` | `design-index` \| `design-doc` \| `decision` | Document family |
-| `status` | kind-specific enum | Whether the document is binding, draft, or historical |
-| `last_updated` | `YYYY-MM-DD` | Last substantive update |
-| `update_semantics` | `rewrite-in-place` \| `append-only` | How the document evolves |
-
-### Additional fields — living design docs
-
-| Field | Type | Purpose |
-|---|---|---|
-| `authoritative_for` | string | Human-readable statement of what this doc owns |
-| `scope_tags` | string[] | Short machine-readable labels for the design area |
-| `code_paths` | string[] | Repo-relative globs approximating which code areas this doc covers |
-| `references_decisions` | number[] | Accepted decision records this doc depends on |
-
-### Additional fields — decision records
-
-| Field | Type | Purpose |
-|---|---|---|
-| `number` | number | Sequential decision number |
-| `date` | `YYYY-MM-DD` | Decision date |
-| `superseded_by` | number \| null | Replacement decision, if any |
-| `supersedes` | number \| null | Earlier decision replaced by this one, if any |
-
-### Design index template
-
-```markdown
----
-kind: design-index
-status: current
-last_updated: YYYY-MM-DD
-update_semantics: rewrite-in-place
----
-
-# {Project Name} — Design
-
-{1–2 paragraph overview of the system being designed.}
-
-## Reading order
-1. **[architecture.md](architecture.md)** — System-level structure.
-2. **[context-package.md](context-package.md)** — Layered context design.
-
-## Satellite documents
-| Document | Status | Authoritative for |
-|---|---|---|
-| [architecture.md](architecture.md) | current | System architecture |
-
-## Decision log
-| # | Decision | Status | Date |
-|---|---|---|---|
-| 001 | [Use React Flow](decisions/001-use-react-flow.md) | accepted | 2026-03-15 |
-
-## Open questions
-- {Open design question}
-```
-
-### Living design doc template
-
-```markdown
----
-kind: design-doc
-status: current
-last_updated: YYYY-MM-DD
-update_semantics: rewrite-in-place
-authoritative_for: "Session lifecycle, launch, and crash recovery"
-scope_tags:
-  - sessions
-  - crash-recovery
-code_paths:
-  - src/session/**
-references_decisions:
-  - 3
----
-
-# {Title}
-
-{Write the intended design in declarative present tense.}
-```
-
-### Decision record template
-
-```markdown
----
-kind: decision
-number: 3
-status: accepted
-date: YYYY-MM-DD
-update_semantics: append-only
-superseded_by: null
-supersedes: null
----
-
-# 003. {Title}
-
-## Context
-{Why this decision was needed.}
-
-## Decision
-{What was chosen.}
-
-## Alternatives considered
-{What else was considered and why it lost.}
-
-## Consequences
-{What follows from this choice.}
-```
-
-## Status semantics
-
-### Design index and living design docs
-
-| Status | Meaning | Default consumers |
-|---|---|---|
-| `current` | Binding design authority for its scope | Builder, orchestrator, worker |
-| `draft` | Proposed direction under active shaping | Builder, orchestrator |
-| `superseded` | Historical reference only | Reference only |
-
-Workers receive a `draft` design doc only when the workstream or issue explicitly references that draft because the node is participating in the design process.
-
-### Decision records
-
-| Status | Meaning | Default consumers |
-|---|---|---|
-| `proposed` | Under consideration; not binding | Builder, orchestrator |
-| `accepted` | Binding rationale for current design direction | Builder, orchestrator, worker |
-| `superseded` | Historical reference only | Reference only |
-
-## Derived design catalog
-
-Streamliner derives a repo-scoped design catalog from frontmatter. The markdown remains authoritative; the catalog exists so context assembly and UI surfaces can be deterministic.
-
-```json
-{
-  "repoId": "streamliner",
-  "rootPath": "docs/design",
-  "indexPath": "docs/design/index.md",
-  "docs": [
-    {
-      "path": "docs/design/session-system.md",
-      "kind": "design-doc",
-      "status": "current",
-      "updateSemantics": "rewrite-in-place",
-      "authoritativeFor": "Session lifecycle, launch, and crash recovery",
-      "scopeTags": ["sessions", "crash-recovery"],
-      "codePaths": ["src/session/**"],
-      "referencesDecisions": [3, 8]
-    }
-  ]
-}
-```
-
-This catalog answers: which design docs are relevant to this workstream? Which docs cover the code touched by this node? Which accepted decisions travel with the context package?
-
 ## Interaction with workstreams
-
-### Workstreams reference design docs explicitly
-
-Workstreams carry both a **human-readable** list in the brief and a **machine-readable** list in the graph.
-
-The brief carries a `## Design References` section:
-
-```markdown
-## Design References
-- `streamliner:docs/design/index.md` — entry point for the project design set
-- `streamliner:docs/design/session-system.md` — authoritative session-system design
-```
-
-The graph carries `designRefs`:
-
-```json
-{
-  "designRefs": [
-    { "repoId": "streamliner", "path": "docs/design/index.md" },
-    { "repoId": "streamliner", "path": "docs/design/session-system.md" }
-  ]
-}
-```
-
-The brief is the readable surface. `designRefs` is the deterministic surface Streamliner uses for context assembly, node inspection, and design-aware review.
 
 ### Design docs do not reference workstreams
 
@@ -294,26 +90,11 @@ Design docs describe the project. Workstreams are transient execution vehicles. 
 
 ### Context package integration
 
-The design layer is **Layer 0** of the context package:
+The design layer is **Layer 0** of the [context package](concepts/context-package.md). Agents read the design docs directly as part of their context assembly.
 
-- **Layer 0 — Project Design Context**: relevant `current` design docs and accepted decisions
-- **Layer 1 — Workstream Intent**: purpose, approach, design references, boundaries
-- **Layer 2 — Operational State**: current state, decisions, open questions
-- **Layer 3 — Node Context**: wave context, node spec, coordination notes
+### Design changes surface through PRs
 
-Progressive disclosure: the design index is small enough to include broadly; only design docs relevant to the current work load automatically; draft docs are included only when explicitly referenced.
-
-### Design impact on completion
-
-Every completed node declares one of:
-
-| Value | Meaning | Required follow-through |
-|---|---|---|
-| `none` | The work matched existing design | No design diff required |
-| `updated-docs` | The work changed intended design and updated docs | Design diff must be present in review |
-| `decision-needed` | The work uncovered a mismatch or unresolved design choice | Explicit builder review required |
-
-Streamliner treats this declaration as first-class review data.
+When a worker's implementation changes the intended design, the design-doc updates appear in the PR diff. The reviewer — whether the orchestrator, a review agent, or the builder — sees those changes and evaluates whether they are consistent with the project's direction. No separate declaration mechanism is needed; the PR is the signal.
 
 ### What belongs in the brief vs. the design layer
 

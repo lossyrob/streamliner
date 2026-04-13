@@ -1,17 +1,3 @@
----
-kind: design-doc
-status: current
-last_updated: 2026-04-13
-update_semantics: rewrite-in-place
-authoritative_for: "Product scope and architecture"
-scope_tags:
-  - product
-  - architecture
-code_paths:
-  - src/**
-references_decisions: []
----
-
 # Streamliner — Product Design
 
 When AI coding agents compress execution time, the bottleneck moves from implementation to the design of the work itself — the boundaries, contracts, and sequencing of the workstreams that build a system. Streamliner exists for builders who have crossed that threshold.
@@ -61,7 +47,7 @@ Each node in the dependency graph represents a unit of work:
 - **Research nodes** — investigation or spikes
 - **Gates** — validation checkpoints where the builder evaluates whether the workstream is on track, including hands-on testing of the running system
 
-Nodes carry artifact status (`planned`, `ready`, `in-progress`, `blocked`, `completed`), attention level, dependencies, optional tracker references, and optional runtime-linked session state.
+Nodes carry artifact status (`planned`, `ready`, `in-progress`, `blocked`, `completed`), dependencies, optional tracker references, and optional runtime-linked session state.
 
 ### Waves
 
@@ -76,16 +62,6 @@ Waves are represented structurally through dependencies, checkpoints, and tracke
 ### Context Package
 
 AI agents start every session as blank slates. The **context package** provides layered context — from project-level design down to a specific node's mission — so any new session can be immediately productive. See [Context Package](concepts/context-package.md) for the full layer model.
-
-### Attention Levels
-
-A node's attention level controls the builder's engagement:
-
-- **focus** — builder is involved in the node's lifecycle
-- **watch** — builder sees the output but trusts autonomous execution
-- **parked** — fully autonomous unless flagged
-
-This creates a continuous engagement spectrum from full builder presence to full autonomy, controlled from the graph.
 
 ## Three Pillars
 
