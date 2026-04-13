@@ -137,6 +137,8 @@ The builder and orchestrator align on relevant project design, update design doc
 
 This is the most attention-intensive phase. Good workstream design here determines how much autonomous execution is possible later.
 
+Shaping can be incremental. A workstream can start with a provisional graph — the brief and graph do not need to be final before execution starts. For GitHub-backed workstreams, create the parent issue plus the first execution and design-session issues first, then create more node issues after the design is explicit and the graph is refined. The parent issue is a first-class artifact: it is the GitHub-visible grouping and progress surface for the workstream.
+
 ### Phase 2 — Autonomous Execution
 
 The worker reads the context package (Layers 0–3), plans the implementation, optionally receives alignment review, implements, creates the PR, and flags any design-doc changes for review.

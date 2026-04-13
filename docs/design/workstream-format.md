@@ -179,6 +179,8 @@ Each node is a unit of work in the dependency graph.
 - **research** — investigation or spike: explore an approach, evaluate a library, prototype. May or may not produce code.
 - **gate** — validation checkpoint where the builder evaluates whether the workstream is on track. Gates block downstream work until passed.
 
+Research nodes include **design sessions** — nodes whose purpose is to make implicit design explicit before downstream implementation begins. A design-session node is a valid early-wave node when the workstream's design is still implicit in the brief and graph. Its output is design documents and decision records, not code. After a design session completes, the downstream implementation graph can be refined because the intended design is now written down.
+
 ### Artifact state vs. operational state
 
 The `status` field on workstreams, nodes, and checkpoints is the **durable artifact view** — the latest committed understanding. Streamliner also derives a fresher **operational view** at runtime by combining the committed graph with local runtime state, tracker snapshots, and session activity.
