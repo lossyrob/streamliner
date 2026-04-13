@@ -7,7 +7,7 @@
   "status": "active",
   "attention": "focus",
   "createdAt": "2026-04-10T15:37:14.125Z",
-  "updatedAt": "2026-04-11T01:27:49.926Z",
+  "updatedAt": "2026-04-12T16:10:20.898Z",
   "trackingIssue": {
     "owner": "lossyrob",
     "repo": "streamliner",
@@ -24,19 +24,23 @@
   "designRefs": [
     {
       "repoId": "streamliner",
-      "path": "DESIGN-DOCS.md"
+      "path": "docs/design/index.md"
     },
     {
       "repoId": "streamliner",
-      "path": "DOCTRINE.md"
+      "path": "docs/design/product.md"
     },
     {
       "repoId": "streamliner",
-      "path": "PRODUCT-SPEC.md"
+      "path": "docs/design/operating-model.md"
     },
     {
       "repoId": "streamliner",
-      "path": "WORKSTREAM-FORMAT.md"
+      "path": "docs/design/design-layer.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/workstream-format.md"
     }
   ],
   "nodes": [

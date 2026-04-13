@@ -8,7 +8,10 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "docs:dev": "vitepress dev docs/design",
+    "docs:build": "vitepress build docs/design",
+    "docs:preview": "vitepress preview docs/design"
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",
@@ -30,6 +33,7 @@
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.58.0",
     "vite": "^8.0.4",
+    "vitepress": "^1.6.4",
     "vitest": "^4.1.3"
   }
 }
