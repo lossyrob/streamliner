@@ -24,6 +24,7 @@ export default defineConfig({
           { text: 'Operating Model', link: '/operating-model' },
           { text: 'Design Layer', link: '/design-layer' },
           { text: 'Workstream Format', link: '/workstream-format' },
+          { text: 'Session System', link: '/session-system' },
         ]
       },
       {
@@ -37,6 +38,8 @@ export default defineConfig({
         text: 'Decisions',
         items: [
           { text: 'Decision Records', link: '/decisions/' },
+          { text: '001 — Heartbeat Session Tracking', link: '/decisions/001-heartbeat-based-session-tracking' },
+          { text: '002 — File-Based Context Delivery', link: '/decisions/002-file-based-context-delivery' },
         ]
       }
     ],
