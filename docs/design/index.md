@@ -14,6 +14,7 @@ Streamliner helps a single builder direct many concurrent AI coding agent workst
 ### Concepts
 
 - **[Context Package](concepts/context-package.md)** — The layered context model that solves the blank-slate problem for agent sessions.
+- **[Waves](concepts/waves.md)** — Wave-based planning: promotion, checkpoints, and gate boundaries.
 
 ## Satellite documents
 
@@ -24,6 +25,7 @@ Streamliner helps a single builder direct many concurrent AI coding agent workst
 | [design-layer.md](design-layer.md) | Design-doc system: document families and interaction with workstreams |
 | [workstream-format.md](workstream-format.md) | Workstream artifact format: brief, graph, config, and runtime state separation |
 | [concepts/context-package.md](concepts/context-package.md) | Context package: layered context model for agent sessions |
+| [concepts/waves.md](concepts/waves.md) | Waves: wave-based planning, promotion, and gate boundaries |
 
 ## Decision log
 

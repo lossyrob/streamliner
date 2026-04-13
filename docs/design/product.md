@@ -51,13 +51,7 @@ Nodes carry artifact status (`planned`, `ready`, `in-progress`, `blocked`, `comp
 
 ### Waves
 
-Streamliner uses wave-based planning to keep later work from going stale:
-
-1. **Wave 1** — near-term nodes get fully detailed specs
-2. **Later waves** — nodes exist as sketches with rough dependencies
-3. As earlier waves complete, the orchestrator promotes the next wave based on what actually shipped
-
-Waves are represented structurally through dependencies, checkpoints, and tracker promotion rather than through an explicit `wave` field.
+Streamliner uses wave-based planning to keep later work from going stale. Near-term nodes get fully detailed specs; later nodes exist as sketches that get promoted as reality unfolds. See [Waves](concepts/waves.md) for how promotion, checkpoints, and gate boundaries work.
 
 ### Context Package
 

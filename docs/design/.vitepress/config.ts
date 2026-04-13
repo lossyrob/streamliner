@@ -30,6 +30,7 @@ export default defineConfig({
         text: 'Concepts',
         items: [
           { text: 'Context Package', link: '/concepts/context-package' },
+          { text: 'Waves', link: '/concepts/waves' },
         ]
       },
       {
