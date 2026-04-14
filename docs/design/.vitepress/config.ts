@@ -5,6 +5,9 @@ export default defineConfig({
   description: 'Streamliner project design documentation',
   srcDir: '.',
   outDir: '.vitepress/dist',
+  head: [
+    ['link', { rel: 'icon', type: 'image/png', href: '/favicon.png' }]
+  ],
 
   rewrites: {
     'decisions/README.md': 'decisions/index.md'
