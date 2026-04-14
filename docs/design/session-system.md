@@ -24,7 +24,7 @@ The session system is how Streamliner launches, monitors, and surfaces AI coding
 
 ## Launch Contract
 
-The launch contract is the interface between the graph UI (where the builder initiates work), the backend (which orchestrates an SDK preflight session), and the terminal (which runs the worker session).
+The launch contract is the interface between the graph UI (where the builder initiates work), the backend (which performs SDK-based preparation), and the terminal integration (which starts the worker session through Copilot CLI interactive mode). SDK preparation and worker launch are distinct: Streamliner uses Copilot SDK to prepare the work, but the visible worker session is always a Copilot CLI session.
 
 ### Launch Inputs
 
@@ -35,24 +35,30 @@ The launch contract is the interface between the graph UI (where the builder ini
 | Target repo | Graph `repos` + config | Where the code lives |
 | Branch strategy | Builder choice | New branch, existing branch, or worktree |
 | Execution mode | Builder choice or default | `current-checkout` or `worktree` |
-| Environment | Builder choice or default | `local` or `devbox` |
+| Environment | Builder choice or default | `local` in this design; remote environments are deferred |
+| Execution path | Builder choice or default | `full-paw`, `paw-lite`, or `just-do-it` |
+| Review policy | Execution path default or override | Which review gates the launched workflow should expect |
 
 The builder selects a node in the graph and initiates a launch. Streamliner resolves the node's workstream, target repository, and branch strategy. The builder may override the branch strategy or accept the default (new feature branch from the repo's main branch).
 
+This design specifies **local launches only**. The launch contract keeps an environment dimension so future remote execution can fit the same shape, but `devbox` launch and remote session observation are not defined here.
+
 ### Launch Sequence
 
-The launch is a two-phase process: an **SDK preflight** that prepares the execution environment, followed by a **terminal launch** that starts the visible worker session.
+The launch is a two-phase process: an **SDK preparation phase** that prepares the execution environment, followed by a **Copilot CLI interactive launch** that starts the visible worker session. The preparation phase is not the worker session itself; it exists to assemble the launch spec that the terminal integration needs.
 
-#### Phase 1 — SDK Preflight
+#### Phase 1 — SDK Preparation
 
 Streamliner runs a Copilot SDK session that:
 
 1. **Assembles context** — builds the Layer 0–3 context package for the node (LLM-driven; the SDK session reads design docs, extracts brief sections, resolves node specs)
 2. **Runs paw-init** — `paw-init` owns branch naming, worktree creation, and PAW work directory setup. Streamliner passes the intent (workstream, node, branch strategy, execution mode); `paw-init` decides the feature slug, worktree path, and branch details.
 3. **Places context files** — writes the assembled context package into the PAW work directory that `paw-init` created
-4. **Returns structured output** — the SDK session returns a result object that the terminal launcher needs
+4. **Generates launch claim data** — creates the launch nonce and expected binding metadata that Streamliner will record before starting Copilot CLI
+5. **Compiles kickoff prompt** — turns the execution path, review policy, work item identity, prepared context locations, and launch nonce into the initial instruction for the worker session
+6. **Returns structured output** — the SDK session returns the launch spec that the terminal launcher needs
 
-SDK preflight output:
+SDK preparation output:
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -60,16 +66,33 @@ SDK preflight output:
 | `cwd` | string | Worktree or checkout path where the session should run |
 | `branch` | string | Branch name created or checked out |
 | `pawWorkDir` | string | Full path to `.paw/work/<work-id>/` |
-| `environment` | string | `local` or `devbox` |
-| `sessionStateRoot` | string | Path to Copilot session state directory in the target environment |
+| `environment` | string | `local` in this design |
+| `sessionStateRoot` | string | Path to Copilot session state directory in the local environment |
+| `executionPath` | string | `full-paw`, `paw-lite`, or `just-do-it` |
+| `reviewPolicy` | string | Review behavior the worker session should follow |
+| `launchNonce` | string | Unique launch token used to bind the discovered session to the correct graph node |
+| `kickoffPrompt` | string | Initial prompt passed to Copilot CLI interactive mode |
 
-#### Phase 2 — Terminal Launch
+#### Phase 2 — Copilot CLI Interactive Launch
 
-After preflight completes, Streamliner:
+After SDK preparation completes, Streamliner:
 
-1. **Launches terminal** — opens a visible Copilot CLI session in the returned `cwd`
-2. **Records launch claim** — writes a launch claim to Streamliner's runtime state binding the node to the expected session location
-3. **Binds on discovery** — when the session watcher detects the new Copilot session (via its session state directory appearing), Streamliner binds it to the launch claim
+1. **Records launch claim** — writes a launch claim to Streamliner's runtime state binding the node to the expected session location before the worker session starts
+2. **Launches Copilot CLI** — opens a visible terminal in the returned `cwd` and starts Copilot CLI interactive mode
+3. **Passes the kickoff prompt** — launches the worker session with the initial prompt already populated, conceptually equivalent to `copilot -i "<kickoff prompt>" .`
+4. **Binds on discovery** — when the session watcher detects the new Copilot session (via its session state directory appearing), Streamliner binds it to the launch claim
+
+### Kickoff Prompt
+
+The kickoff prompt is a first-class launch artifact, not ad hoc terminal text. It tells the worker session what kind of run this is and how to begin. At minimum it must encode:
+
+- The execution path (`full-paw`, `paw-lite`, or `just-do-it`)
+- The work item identity (workstream, node, repo, branch/worktree)
+- Where the prepared context artifacts live
+- The launch nonce on a dedicated line so the watcher can confirm the intended binding
+- Any review-policy expectations or launch-time operating constraints
+
+Opening a terminal in the correct directory is not a launch. A launch is only complete once Streamliner has prepared the kickoff prompt and started Copilot CLI interactive mode with that prompt.
 
 ### Failure Modes
 
@@ -78,12 +101,12 @@ After preflight completes, Streamliner:
 | Node not launchable (wrong status, unmet deps) | Reject with explanation |
 | Target repo not registered or inaccessible | Reject with explanation |
 | Branch conflict (already exists, dirty state) | Prompt builder for resolution |
-| SDK preflight failure (paw-init error, context assembly error) | Report error, clean up partial state |
-| Terminal launch failure | Report error, clean up launch claim |
+| SDK preparation failure (`paw-init`, context assembly, prompt compilation) | Report error, clean up partial state |
+| Copilot CLI launch failure | Report error, clean up launch claim |
 
 ## Context Assembly
 
-Context assembly builds the Layer 0–3 context package that gives a worker session everything it needs to execute a node's mission. It runs inside the SDK preflight session so the LLM can make intelligent decisions about what context to include.
+Context assembly builds the Layer 0–3 context package that gives a worker session everything it needs to execute a node's mission. It runs inside the SDK preparation phase so the LLM can make intelligent decisions about what context to include before the worker session is launched.
 
 ### Layer 0 — Project Design Context
 
@@ -124,7 +147,7 @@ Assembled from the graph and tracker:
 
 ### Delivery Mechanism
 
-Context is delivered as files written into the PAW work directory that `paw-init` created. The worker session reads these files as part of its initialization. See [Decision 002](decisions/002-file-based-context-delivery.md) for the rationale.
+Context is delivered as files written into the PAW work directory that `paw-init` created. The kickoff prompt points the worker session at these files during initialization. See [Decision 002](decisions/002-file-based-context-delivery.md) for the rationale.
 
 The assembled context is written to:
 
@@ -151,7 +174,7 @@ launching → discovered → active ⇄ idle → ended
 
 | State | Meaning | How detected |
 |-------|---------|--------------|
-| `launching` | SDK preflight done, terminal starting | Launch claim recorded by Streamliner |
+| `launching` | SDK preparation done, Copilot CLI worker launch in progress | Launch claim recorded by Streamliner |
 | `discovered` | Session directory appeared, metadata being read | `workspace.yaml` exists in session state |
 | `active` | Agent turn in progress | `events.jsonl` recently modified |
 | `idle` | Agent turn completed, waiting for user input or next action | Turn boundary detected (no new `assistant.turn_start` after `assistant.turn_end` or `agentStop` hook) |
@@ -236,11 +259,13 @@ Hooks are **hints, not the source of truth**. If a hook fails to fire (plugin no
 
 Streamliner binds sessions to graph nodes through **launch claims**. When a launch is initiated:
 
-1. Streamliner records a launch claim in its runtime state: `{nodeId, workstreamId, expectedCwd, launchedAt}`
-2. When the session watcher discovers a new session whose `cwd` matches an open launch claim, it binds the session to that node
-3. The binding is stored in Streamliner's runtime state, not in the Copilot session files
+1. Streamliner records a launch claim in its runtime state: `{nodeId, workstreamId, launchNonce, expectedCwd, expectedBranch, launchedAt}`
+2. The kickoff prompt includes the `launchNonce` on a dedicated line so it appears in the session's early `user.message` events
+3. When the session watcher discovers a new session, it first narrows candidates by `cwd`, `branch`, and launch window, then confirms the match by finding the `launchNonce` in the session's early events
+4. If multiple claims remain plausible or the nonce has not appeared yet, the session stays unbound until more evidence arrives rather than guessing
+5. The binding is stored in Streamliner's runtime state, not in the Copilot session files
 
-This keeps the binding in Streamliner's domain while relying on Copilot's files for everything about the session itself.
+This keeps the binding in Streamliner's domain while relying on Copilot's files for everything about the session itself. `cwd` remains an important guardrail, but it is no longer treated as a sufficient identifier on its own.
 
 ## Runtime Overlay
 
@@ -280,7 +305,10 @@ Promotion happens when the orchestrator reviews the session's output (PR, code c
 Sessions run in visible terminals. The builder sees:
 
 - A terminal tab or window per session (in VS Code, iTerm, Windows Terminal, etc.)
+- Each launched session starts with a kickoff prompt already sent, rather than an idle shell in the target directory
 - Streamliner's UI shows a session list with node binding, status, and terminal reference
+
+Conceptually, the launch integration is doing the equivalent of `copilot -i "<kickoff prompt>" .` in the prepared `cwd`, even if the exact terminal adapter wraps that command differently for the local platform.
 
 ### Operator Presence
 
@@ -311,7 +339,7 @@ Clicking a session in the list focuses its terminal (when the terminal integrati
 
 ### In This Design
 
-- Launch from the graph with SDK preflight and context assembly
+- Launch from the graph with SDK preparation, kickoff-prompt compilation, and Copilot CLI interactive worker-session launch
 - Observation-based session tracking via Copilot state files
 - Plugin hook signals for low-latency status hints
 - Runtime overlay onto the committed graph
@@ -320,6 +348,7 @@ Clicking a session in the list focuses its terminal (when the terminal integrati
 
 ### Not In This Design
 
+- Using Copilot SDK as the worker-session runtime instead of Copilot CLI interactive mode
 - Multi-machine session tracking or remote session discovery (shape is compatible; implementation is deferred)
 - Automatic crash recovery or relaunch
 - Session-to-session communication

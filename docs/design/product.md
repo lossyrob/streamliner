@@ -37,7 +37,7 @@ A **workstream** is the execution layer for a body of work larger than a single 
 
 Together, the brief, graph, and referenced design docs give any new session enough context to operate without re-deriving the project from scratch.
 
-Workstream artifacts are committed files — versioned, diffable, portable, and resilient to session failure. Fast-changing operational data (session heartbeats, tracker snapshots) lives in a separate local runtime state surface.
+Workstream artifacts are committed files — versioned, diffable, portable, and resilient to session failure. Fast-changing operational data (session runtime state, tracker snapshots) lives in a separate local runtime state surface.
 
 ### Nodes
 
@@ -78,11 +78,11 @@ The durable backbone has two coordinated artifact surfaces whose physical locati
 1. **Project design docs** — in the source repo, a design repo, or the planning repo
 2. **Workstream artifacts** — in a planning repo, the source repo, or a dedicated workstream repo
 
-Alongside those committed artifacts, Streamliner keeps a **local runtime state surface** for fast-moving operational data such as session heartbeats and tracker snapshots.
+Alongside those committed artifacts, Streamliner keeps a **local runtime state surface** for fast-moving operational data such as session runtime state and tracker snapshots.
 
 **Artifacts:** design index, living design docs, decision records, workstream brief, dependency graph, node specs.
 
-**Not artifacts:** conversation history, status dashboards, session heartbeats, tracker caches, ad-hoc chat summaries.
+**Not artifacts:** conversation history, status dashboards, session runtime state, tracker caches, ad-hoc chat summaries.
 
 ## Architecture Direction
 

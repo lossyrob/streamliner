@@ -95,7 +95,7 @@ Workers report through artifacts, not through being remembered:
 
 Orchestrators report through workstream artifacts. Updates to the brief and graph are the orchestrator's communication to the builder.
 
-Fast operational telemetry (session IDs, heartbeats, tracker snapshots, launch claims) updates a machine-local runtime store. It informs the UI but does not rewrite the committed graph on every change.
+Fast operational telemetry (session IDs, observed session state, tracker snapshots, launch claims) updates a machine-local runtime store. It informs the UI but does not rewrite the committed graph on every change.
 
 ### Downward
 
@@ -179,9 +179,9 @@ Everything important is a committed file. Nothing important lives only in chat h
 
 **Workstream artifacts** — the execution layer: `brief.md`, `graph.json`, and supporting docs, living in the workstream directory.
 
-**Local runtime state** — fast-moving operational facts (session IDs, heartbeats, tracker snapshots, launch metadata) in Streamliner's machine-local runtime store. The UI derives its live picture by combining the committed artifact layer with this runtime layer.
+**Local runtime state** — fast-moving operational facts (session IDs, observed session state, tracker snapshots, launch metadata) in Streamliner's machine-local runtime store. The UI derives its live picture by combining the committed artifact layer with this runtime layer.
 
-**Not artifacts:** orchestrator or worker chat history, dashboard state, session heartbeats, tracker caches, or memory of what was "probably intended."
+**Not artifacts:** orchestrator or worker chat history, dashboard state, session runtime state, tracker caches, or memory of what was "probably intended."
 
 ## Feedback Loops
 

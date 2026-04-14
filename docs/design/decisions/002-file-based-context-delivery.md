@@ -16,7 +16,7 @@ When Streamliner launches a session to execute a node, the worker needs the Laye
 
 ## Decision
 
-Assemble context as files in the PAW work directory. During the SDK preflight phase, Streamliner writes context layers to `.paw/work/<work-id>/context/` — the work directory that `paw-init` created. The PAW workflow skill reads these files during initialization.
+Assemble context as files in the PAW work directory. During the SDK preparation phase, Streamliner writes context layers to `.paw/work/<work-id>/context/` — the work directory that `paw-init` created. The kickoff prompt points the Copilot CLI worker session at these files during initialization, and the PAW workflow skill reads them from there.
 
 ```
 .paw/work/<work-id>/

@@ -12,7 +12,7 @@ supersedes: null
 
 ## Context
 
-Streamliner needs to discover and monitor Copilot CLI sessions that are executing workstream nodes. The runtime tracking model must work across different terminal environments (VS Code, iTerm, Windows Terminal), detect when sessions need the builder's attention, and keep session state separate from committed workstream artifacts.
+Streamliner needs to discover and monitor Copilot CLI sessions that are executing workstream nodes. The runtime tracking model must work across different terminal environments (VS Code, iTerm, Windows Terminal), detect when sessions need the builder's attention, and keep session state separate from committed workstream artifacts. The accepted scope for this design is local launches on one machine; remote observation is deferred.
 
 Prior art: an earlier system originally required agents to call MCP tools to self-report status. Agents frequently skipped these calls, leaving the monitor blind to session activity. Moving to direct observation of Copilot CLI's own session state files proved far more reliable.
 
@@ -30,6 +30,7 @@ The observation model:
 - **Turn boundaries**: detect `assistant.turn_end` events and `agentStop` hook events to distinguish active (agent churning) from idle (agent turn complete, waiting for user)
 - **Pending input**: detect unresolved `ask_user` tool requests to surface "needs input" status
 - **Session end**: Copilot CLI plugin hooks write lightweight signal files (`{id}.end.json`) for fast detection; stale `events.jsonl` mtime (>30 min) is the fallback
+- **Binding**: use launch claims keyed by `launchNonce` plus `cwd`/branch/launch-window guardrails; confirm the match by finding the nonce in the session's early `user.message` events
 
 Hooks are supplementary, not required. They provide low-latency hints via signal files:
 
@@ -53,5 +54,6 @@ If hooks are not installed or fail, the watcher still derives the same state tra
 
 - Streamliner depends on Copilot CLI's undocumented session state file format. Changes to that format require updating the watcher. This is an accepted trade-off: the format has been stable enough for production use over months of observation, and the alternative (requiring agent cooperation) is less reliable.
 - Turn boundary detection requires reading the tail of `events.jsonl` and parsing event types. This is bounded (read last 64KB, grow to 512KB if needed) but is more complex than reading a simple status file.
-- Node-to-session binding requires a separate mechanism (launch claims based on `cwd` matching) since Copilot's session files do not know about Streamliner's graph model.
-- The observation model naturally extends to remote sessions by polling remote session state directories over SSH.
+- Node-to-session binding requires a separate mechanism (launch claims keyed by `launchNonce` with `cwd`/branch/window guardrails) since Copilot's session files do not know about Streamliner's graph model.
+- The kickoff prompt becomes part of the binding contract because it must carry the launch nonce into the session's early event stream.
+- Remote session observation remains out of scope for the accepted design. If Streamliner later supports remote launches, it will need a separate design for discovering and reading remote session-state roots.

@@ -25,7 +25,7 @@ This is how the builder narrows project-level design into a specific effort — 
 
 The current situation: Current State, Decisions, and Open Questions.
 
-This layer orients the orchestrator and builder to what just happened, what is in flight, and what comes next. It is a durable summary, not a telemetry feed. Session heartbeats, tracker caches, and launch metadata live outside the committed artifact layer.
+This layer orients the orchestrator and builder to what just happened, what is in flight, and what comes next. It is a durable summary, not a telemetry feed. Session runtime state, tracker caches, and launch metadata live outside the committed artifact layer.
 
 ## Layer 3 — Node Context
 

@@ -34,7 +34,7 @@ Fast-changing operational data is not part of the committed artifact set. Stream
   tracker-cache.json
 ```
 
-`projectKey` comes from `graph.json`. If omitted, it derives from the primary repo ID or the sole repo ID. Runtime state includes active session IDs, heartbeats, tracker snapshots, and transient node claims.
+`projectKey` comes from `graph.json`. If omitted, it derives from the primary repo ID or the sole repo ID. Runtime state includes active session IDs, observed session state, tracker snapshots, and transient node claims.
 
 Runtime state contracts:
 
@@ -122,8 +122,8 @@ The brief is the narrative companion to the graph. It captures intent, boundarie
 - **Edit in place.** The brief reads as a coherent whole at any point; Git provides history.
 - **Written for a cold reader.** A new session reading the brief, graph, and referenced design docs is immediately productive.
 - **Decisions are workstream-local only.** Project-wide architectural choices belong in design docs or decision records.
-- **Current State is a durable summary, not a heartbeat log.** Rewrite it on meaningful direction changes, not every session pulse.
-- **Runtime telemetry stays outside the brief.** Session IDs, heartbeats, and tracker caches belong in the local runtime store.
+- **Current State is a durable summary, not a runtime telemetry log.** Rewrite it on meaningful direction changes, not every session pulse.
+- **Runtime telemetry stays outside the brief.** Session IDs, observed session state, launch claims, and tracker caches belong in the local runtime store.
 
 ## The Dependency Graph (`graph.json`)
 
