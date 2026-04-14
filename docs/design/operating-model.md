@@ -52,7 +52,7 @@ An AI session that translates project design plus workstream intent into an exec
 
 - how to decompose the workstream into nodes and dependencies
 - which nodes belong to which wave
-- which design docs and decisions are relevant to each node
+- which design docs and decisions to surface first for each node
 - when a worker proceeds autonomously vs. when review is needed
 - whether a discovered mismatch is a routine update or an escalation requiring builder judgment
 - how to update the brief and graph based on shipped reality
@@ -101,7 +101,7 @@ Fast operational telemetry (session IDs, observed session state, tracker snapsho
 
 The builder communicates project direction through the design layer and workstream direction through the brief. If the intended system changes, the design docs change. If the execution strategy changes, the brief and graph change.
 
-The orchestrator communicates through graph structure, node specs, and design references. Workers need the artifacts, not the orchestrator's conversation history.
+The orchestrator communicates through graph structure, node specs, and design references as entry points into the broader design layer. Workers need the artifacts, not the orchestrator's conversation history.
 
 ### Lateral
 
@@ -166,7 +166,7 @@ The worker's plan is its alignment check. The reviewer — usually the orchestra
 
 1. Does the plan serve the workstream's purpose?
 2. Does it respect the workstream's boundaries?
-3. Does it align with referenced design docs and decisions?
+3. Does it align with the design layer, starting with referenced design docs and decisions?
 4. Does it conflict with parallel or downstream nodes?
 
 If those pass, the worker proceeds. If not, the reviewer gives targeted correction. Not every node needs alignment review — the more architectural, ambiguous, or high-coordination the node, the more valuable review becomes.

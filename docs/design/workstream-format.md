@@ -99,7 +99,7 @@ The brief is the narrative companion to the graph. It captures intent, boundarie
 
 ## Design References
 - `repoId:docs/design/index.md` - entry point for the design set
-- `repoId:docs/design/{domain}.md` - authoritative design for a domain
+- `repoId:docs/design/{domain}.md` - high-priority starting point for this workstream
 
 ## Boundaries
 - **In scope:** {what is included}
@@ -120,7 +120,7 @@ The brief is the narrative companion to the graph. It captures intent, boundarie
 
 - **Target length:** Under 400 lines. Push detail to node specs.
 - **Edit in place.** The brief reads as a coherent whole at any point; Git provides history.
-- **Written for a cold reader.** A new session reading the brief, graph, and referenced design docs is immediately productive.
+- **Written for a cold reader.** A new session reading the brief, graph, and design layer — starting with the referenced docs — is immediately productive.
 - **Decisions are workstream-local only.** Project-wide architectural choices belong in design docs or decision records.
 - **Current State is a durable summary, not a runtime telemetry log.** Rewrite it on meaningful direction changes, not every session pulse.
 - **Runtime telemetry stays outside the brief.** Session IDs, observed session state, launch claims, and tracker caches belong in the local runtime store.
@@ -143,20 +143,20 @@ The graph is the structured, machine-readable representation of the workstream's
 | `updatedAt` | string | ✓ | ISO 8601 timestamp of the last committed edit. Bump on intentional committed changes only. |
 | `trackingIssue` | object | | Tracker reference anchoring the workstream (see Tracker Reference) |
 | `repos` | array | ✓ | Repositories involved (see Repo) |
-| `designRefs` | array | | Optional. Project-level design docs relevant to this workstream (see Design Reference). Agents read the full design set by default; this field is a hint for targeted context assembly. |
+| `designRefs` | array | | Optional. Project-level design docs relevant to this workstream (see Design Reference). Workers retain access to the full design set; this field is a hint about what to surface first during context assembly and UI navigation. |
 | `nodes` | array | ✓ | Work items and gates (see Node) |
 | `checkpoints` | array | ✓ | Progress milestones (see Checkpoint) |
 
 ### Design Reference
 
-Each design reference points to a project-level design artifact in a declared repository.
+Each design reference points to a project-level design artifact in a declared repository that should be surfaced early for this workstream.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `repoId` | string | ✓ | Declared repository ID that owns the design doc |
 | `path` | string | ✓ | Path to the design doc, relative to the repo root |
 
-Include the repo's design index when it has a design set, plus the specific docs that materially constrain the workstream. Do not list every document in the design corpus.
+Include the repo's design index when it has a design set, plus the specific docs that are likely to matter first. Do not list every document in the design corpus, and do not treat this field as an allowlist over what a worker may read.
 
 ### Node
 

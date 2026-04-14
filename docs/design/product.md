@@ -35,7 +35,7 @@ A **workstream** is the execution layer for a body of work larger than a single 
 - A **brief** (`brief.md`) — narrative intent and operational state, edited in place so it always reads as a coherent whole
 - A **dependency graph** (`graph.json`) — structured work plan and operational picture
 
-Together, the brief, graph, and referenced design docs give any new session enough context to operate without re-deriving the project from scratch.
+Together, the brief, graph, and design layer — with Design References highlighting strong starting points — give any new session enough context to operate without re-deriving the project from scratch.
 
 Workstream artifacts are committed files — versioned, diffable, portable, and resilient to session failure. Fast-changing operational data (session runtime state, tracker snapshots) lives in a separate local runtime state surface.
 

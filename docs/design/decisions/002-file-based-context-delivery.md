@@ -39,7 +39,7 @@ The context directory is excluded from Git (via `.gitignore`) and regenerated on
 
 ## Consequences
 
-- Context assembly becomes a backend responsibility. The backend must know how to extract brief sections, resolve design references, and read node specs from trackers.
+- Context assembly becomes a backend responsibility. The backend must know how to extract brief sections, use design references as prioritization hints into the design layer, and read node specs from trackers.
 - Context files are snapshots at launch time. If the workstream state changes after launch, the session works from its original context. This is intentional: sessions should not silently drift as upstream state changes.
 - The PAW workflow skill needs to recognize and load the `context/` directory. This is a coordination point between Streamliner and the PAW skill system.
 - Generated context files should be clearly marked as generated (e.g., with a header comment) to prevent confusion with manually authored artifacts.

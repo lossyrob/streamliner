@@ -110,14 +110,14 @@ Context assembly builds the Layer 0–3 context package that gives a worker sess
 
 ### Layer 0 — Project Design Context
 
-Resolved from the workstream's `designRefs` and the repo's configured design docs path:
+Layer 0 starts from the repo's configured design docs path, using the workstream's `designRefs` as prioritization hints:
 
-- Read the design index (`docs/design/index.md`)
-- Read each `current` design doc referenced in `designRefs`
-- Include `draft` design docs that appear in the workstream's `designRefs` or the node's spec — a `designRefs` entry is an explicit reference
-- Read accepted decision records referenced by those design docs
+- Read the design index (`docs/design/index.md`) as the cold-reader entry point
+- Front-load each `current` design doc referenced in `designRefs`
+- Follow the index and those front-loaded docs into other `current` design docs and accepted decision records when they are relevant to the node
+- Include `draft` design docs when they are explicitly referenced in `designRefs` or the node's spec
 
-Design docs are already committed files. Context assembly reads them from the target repo (or registered design repo) at the current HEAD.
+Design docs are already committed files. Context assembly may prioritize a subset for the generated Layer 0 bundle, but the worker is not restricted to that subset; it can continue reading the broader design set from the target repo (or registered design repo) at the current HEAD.
 
 ### Layer 1 — Workstream Intent
 
@@ -154,7 +154,7 @@ The assembled context is written to:
 ```
 .paw/work/<work-id>/
   context/
-    layer-0-design.md       ← concatenated design docs
+    layer-0-design.md       ← front-loaded design docs + pointers into the wider design set
     layer-1-intent.md       ← extracted brief sections
     layer-2-state.md        ← extracted operational state
     layer-3-node.md         ← node spec + wave context
