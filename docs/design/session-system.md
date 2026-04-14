@@ -332,4 +332,4 @@ Clicking a session in the list focuses its terminal (when the terminal integrati
 - **Terminal multiplexer integration**: Should Streamliner manage terminal tabs directly, or delegate to tmux/screen/IDE terminal APIs? (See terminal note for tmux-based approach.)
 - **Multiple sessions per node**: Can a node have multiple concurrent sessions (e.g., after a crash and relaunch)? If so, how are they reconciled?
 - **Context staleness**: If a session runs long enough that the workstream state changes (brief updated, graph refined), should the session be notified or continue with its original context?
-- **Remote session observation**: When sessions run on a devbox, how does Streamliner observe the remote session state directory? SSH polling (as Donna does) or a forwarded watcher?
+- **Remote session observation**: When sessions run on a devbox, how does Streamliner observe the remote session state directory? SSH polling or a forwarded watcher?
