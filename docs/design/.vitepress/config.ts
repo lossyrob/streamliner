@@ -38,7 +38,7 @@ export default defineConfig({
         text: 'Decisions',
         items: [
           { text: 'Decision Records', link: '/decisions/' },
-          { text: '001 — Heartbeat Session Tracking', link: '/decisions/001-heartbeat-based-session-tracking' },
+          { text: '001 — Observation-Based Session Tracking', link: '/decisions/001-observation-based-session-tracking' },
           { text: '002 — File-Based Context Delivery', link: '/decisions/002-file-based-context-delivery' },
         ]
       }

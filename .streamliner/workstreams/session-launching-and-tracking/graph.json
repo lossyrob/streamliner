@@ -48,7 +48,7 @@
     },
     {
       "repoId": "streamliner",
-      "path": "docs/design/decisions/001-heartbeat-based-session-tracking.md"
+      "path": "docs/design/decisions/001-observation-based-session-tracking.md"
     },
     {
       "repoId": "streamliner",
@@ -131,8 +131,8 @@
     {
       "id": "session-tracking-model",
       "type": "task",
-      "title": "Session tracking implementation",
-      "summary": "Implement the heartbeat-based session tracking model defined in the session system design: heartbeat writer, polling reader, crash detection, and runtime state file management.",
+      "title": "Session state observation",
+      "summary": "Implement the observation-based session tracking model defined in the session system design: watch Copilot session state files, detect turn boundaries from events.jsonl, process hook signal files, and bind sessions to graph nodes via launch claims.",
       "status": "planned",
       "attention": "focus",
       "repoIds": ["streamliner"],

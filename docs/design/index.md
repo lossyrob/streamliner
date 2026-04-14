@@ -33,8 +33,8 @@ Streamliner helps a single builder direct many concurrent AI coding agent workst
 
 | # | Decision | Status | Date |
 |---|---|---|---|
-| 001 | [Heartbeat-based session tracking](decisions/001-heartbeat-based-session-tracking.md) | accepted | 2026-04-13 |
-| 002 | [File-based context delivery](decisions/002-file-based-context-delivery.md) | accepted | 2026-04-13 |
+| 001 | [Observation-based session tracking](decisions/001-observation-based-session-tracking.md) | accepted | 2026-04-14 |
+| 002 | [File-based context delivery](decisions/002-file-based-context-delivery.md) | accepted | 2026-04-14 |
 
 ## Open questions
 

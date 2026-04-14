@@ -29,7 +29,7 @@ state rather than written back into `graph.json`.
 - `streamliner:docs/design/design-layer.md` - design-doc system: document families, format, and catalog
 - `streamliner:docs/design/workstream-format.md` - workstream artifact format and runtime state separation
 - `streamliner:docs/design/session-system.md` - session launching, lifecycle, tracking, and runtime overlay
-- `streamliner:docs/design/decisions/001-heartbeat-based-session-tracking.md` - rationale for file-based heartbeat tracking
+- `streamliner:docs/design/decisions/001-observation-based-session-tracking.md` - rationale for observation-based session tracking
 - `streamliner:docs/design/decisions/002-file-based-context-delivery.md` - rationale for file-based context delivery
 
 ## Boundaries

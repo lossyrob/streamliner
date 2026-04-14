@@ -2,7 +2,7 @@
 kind: decision
 number: 2
 status: accepted
-date: 2026-04-13
+date: 2026-04-14
 update_semantics: append-only
 superseded_by: null
 supersedes: null
@@ -16,7 +16,7 @@ When Streamliner launches a session to execute a node, the worker needs the Laye
 
 ## Decision
 
-Assemble context as files in the PAW work directory. Streamliner writes context layers to `.paw/work/<work-id>/context/` before launching the session. The PAW workflow skill reads these files during initialization.
+Assemble context as files in the PAW work directory. During the SDK preflight phase, Streamliner writes context layers to `.paw/work/<work-id>/context/` — the work directory that `paw-init` created. The PAW workflow skill reads these files during initialization.
 
 ```
 .paw/work/<work-id>/
