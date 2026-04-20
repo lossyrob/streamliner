@@ -190,7 +190,7 @@ Beyond the core lifecycle state, the session watcher derives additional fields f
 | `phase` | Latest event types in `events.jsonl` | Human-readable: "reasoning", "tool-calling", "idle" |
 | `endReason` | Hook signal or inactivity | Why the session ended: "hook-signal", "idle-timeout", "user_exit" |
 | `turnCount` | Count of `user.message` events | How many user turns have occurred |
-| `pawWorkflow` | PAW work directory on disk | Work ID, work title, stage, and current phase from PAW artifacts |
+| `pawWorkflow` | PAW work directory on disk | Work ID, work title, current activity, and gate/procedure state read from `## Hardened State` in `WorkflowContext.md` / `ReviewContext.md` when present; legacy inference from artifact presence otherwise. See [Decision 003](decisions/003-paw-hardened-state-integration.md). |
 
 ### Key Distinction: Idle vs. Ended
 
@@ -239,7 +239,16 @@ The watcher polls `events.jsonl` modification times at a configurable interval (
 2. Extract metadata: repository, branch, turn count
 3. Detect turn boundaries: look for `assistant.turn_end` events or `agentStop` hook events without a subsequent `assistant.turn_start`
 4. Detect pending input: look for unresolved `ask_user` tool requests (an `ask_user` in `assistant.message.toolRequests` without a matching `tool.execution_complete`)
-5. Detect PAW workflow state: read `.paw/work/*/WorkflowContext.md` from the session's `cwd`
+5. Detect PAW workflow state: for each active `.paw/work/*/` directory reachable from the session's `cwd`, parse `WorkflowContext.md` (and `ReviewContext.md` for PAW Review sessions). When a `## Hardened State` section is present, use its required-item statuses, gate items, procedure items, and `Reconciliation` marker as the authoritative view of workflow progression. When absent, fall back to legacy inference from artifact presence. See [Decision 003](decisions/003-paw-hardened-state-integration.md).
+
+### Two Orthogonal State Sources
+
+Session tracking combines two independent sources that should not be collapsed:
+
+- **Copilot session state** (`~/.copilot/session-state/{id}/`) — liveness, turn boundaries, pending input requests, end reasons. Authoritative for *is the session alive and does it need attention?*
+- **PAW hardened state** (`.paw/work/<work-id>/*Context.md`) — required activities, gate items, procedure items, reconciliation markers. Authoritative for *where is the workflow and can decisions be trusted?*
+
+Streamliner overlays both onto the graph node. Neither subsumes the other: a session can be idle while the PAW workflow is mid-activity, and PAW state can advance across sessions that this watcher never observed.
 
 ### Hook Signals
 
