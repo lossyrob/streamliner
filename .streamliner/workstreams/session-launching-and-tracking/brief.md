@@ -10,13 +10,28 @@ Bootstrap Streamliner's own `docs/design/` set from the current root docs first,
 so the launch and tracking work executes against a real project design layer
 rather than living forever on transitional documents.
 
-Build the feature in waves: bootstrap the repo-scoped design layer, then run
-explicit design sessions for the workstream so the launch contract, runtime
-model, and key design decisions are written down before the downstream
-implementation issue graph is finalized. After that, add backend Copilot SDK
-plumbing to gather context, run `paw-init`, and compile the kickoff prompt,
-then launch a visible Copilot CLI interactive worker session and layer
-observation-based session tracking and runtime overlay into the UI.
+Build the feature in waves:
+
+- **Wave 1 — Design foundation (done):** bootstrap the repo-scoped design layer
+  and run explicit design sessions so the launch contract, runtime model, and
+  key design decisions are written down before the downstream implementation
+  issue graph is finalized.
+- **Wave 2 — Manual session registry (current focus):** ship a local-first,
+  graph-independent registry of Copilot CLI sessions. Persist per-session
+  metadata (title, description, color, cwd, repo, status, last-seen) under the
+  local runtime-state root, autosave on edit, import/discover existing sessions
+  by observing Copilot CLI session state files, and support "reopen this
+  session" across restarts. Delivers the highest near-term value — recovering
+  session context after a Windows restart — without needing the launch
+  pipeline. Treats the registry as the primary session surface; the graph
+  overlay is a later projection of it.
+- **Wave 3 — Launch from graph:** Copilot SDK launch prep (context assembly,
+  `paw-init`, kickoff-prompt compilation), launch-claim binding, and the
+  Copilot CLI interactive worker launch. Launches register into the Wave 2
+  registry rather than introducing a parallel tracking surface.
+- **Wave 4 — Runtime overlay on the graph:** extend observation with PAW
+  control state, turn boundaries, and hook signals, and project the registry
+  plus observed state onto graph nodes in the UI.
 
 Keep committed workstream artifacts limited to durable planning state.
 Session IDs, observed session state, tracker snapshots, and launch metadata
@@ -38,27 +53,36 @@ derived UI state rather than written back into `graph.json`.
 - **In scope:** Repo-local Streamliner initialization, design-doc bootstrap,
   launch contract, context assembly, Copilot SDK preparation (`paw-init`,
   context writing, kickoff-prompt compilation), Copilot CLI interactive
-  launch, session tracking model, runtime overlay in the UI
+  launch, manual session registry (local persistence, UI list/edit, color
+  assignment, relaunch at cwd), observation-based session tracking, runtime
+  overlay in the UI
 - **Out of scope:** Non-PAW launch modes, non-GitHub tracker integrations,
-  remote multi-machine tracking, a general orchestration platform
-- **Deferred:** Rich session control beyond launch and status, full tracker
-  abstraction across ADO/Linear, automatic promotion of runtime facts into
-  committed artifact state
+  remote multi-machine tracking, devbox session observation, a general
+  orchestration platform
+- **Deferred:** Rich session control beyond launch/relaunch/status, full
+  tracker abstraction across ADO/Linear, automatic promotion of runtime
+  facts into committed artifact state, automatic session-to-node binding,
+  multi-machine sync of the registry
 
 ## Current State
-Wave 1 design foundation is nearly complete. Issue #4 (`bootstrap-design-docs`)
+Wave 1 design foundation is complete. Issue #4 (`bootstrap-design-docs`)
 shipped the repo-scoped `docs/design/` set. Issue #5
-(`make-workstream-design-explicit`) has produced the session system design doc
-(`docs/design/session-system.md`) and two accepted decision records
-(observation-based session tracking, file-based context delivery). The
-workstream's intended design is now explicit and written down, including the
-split between SDK-based launch preparation and Copilot CLI interactive worker
-launch.
+(`make-workstream-design-explicit`, PR #8 merged) produced the session system
+design doc (`docs/design/session-system.md`) and three accepted decision
+records (observation-based session tracking, file-based context delivery, PAW
+control-state integration). The workstream's intended design is written down,
+including the split between SDK-based launch preparation and Copilot CLI
+interactive worker launch.
 
-The downstream implementation graph is ready for review and refinement. The
-session system design doc defines the launch contract, context assembly model,
-session lifecycle, tracking model, and runtime overlay — enough to guide
-backend and UI implementation in subsequent waves.
+Wave 2 is now the active focus, reoriented per issue #9 to deliver a
+**manual session registry** before the launch pipeline. This pivot is driven
+by the most acute near-term pain: losing track of active Copilot sessions
+across Windows restarts. The registry is graph-independent — sessions do not
+need to be tied to workstream nodes — and builds directly on the
+observation-based tracking decision (#001), so it does not require any of
+the launch plumbing to land first. Launch-from-graph and the graph runtime
+overlay follow in Waves 3 and 4 and register into / project from the Wave 2
+registry rather than introducing parallel surfaces.
 
 ## Decisions
 - Use repo-local `.streamliner/workstreams/` for Streamliner's committed
@@ -90,6 +114,10 @@ backend and UI implementation in subsequent waves.
   workflow progression in the runtime overlay, keeping session liveness
   (Copilot session state) and workflow progression (PAW control state) as
   two orthogonal observation sources.
+- Treat the **session registry as the primary session surface**; the graph
+  overlay is a projection of the registry. Pull manual tracking ahead of the
+  launch pipeline so restart recovery ships independently of launch work
+  (issue #9, pending decision record).
 
 ## Open Questions
 - When should runtime-discovered progress be promoted into committed workstream
@@ -98,3 +126,9 @@ backend and UI implementation in subsequent waves.
   IDE terminal APIs?
 - How should Streamliner observe remote session-state roots for devbox-launched
   sessions?
+- Registry persistence: per-session JSON files plus an index, or a single
+  SQLite store? (Leaning JSON for hand-editability and alignment with the
+  observation-based pattern.)
+- Windows Terminal tab color bridge: feasible via profile/tab title + tabColor,
+  or better deferred until a cross-platform strategy is clearer? (Spike inside
+  `session-registry-model`.)
