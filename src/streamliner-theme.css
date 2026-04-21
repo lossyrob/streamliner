@@ -897,3 +897,101 @@ body,
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+
+/* Swimlanes (checkpoint containers on the canvas) */
+.react-flow__node-workstreamSwimlane {
+  pointer-events: none;
+  cursor: default;
+}
+
+.react-flow__node-workstreamSwimlane .react-flow__handle {
+  display: none;
+}
+
+.sl-swimlane {
+  width: 100%;
+  height: 100%;
+  border-radius: 22px;
+  border: 1px dashed rgba(29, 110, 220, 0.25);
+  background: rgba(29, 110, 220, 0.04);
+  box-sizing: border-box;
+  padding: 16px 22px 0;
+  transition: background 160ms ease, border-color 160ms ease;
+}
+
+.sl-swimlane-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.sl-swimlane-index {
+  font-family: var(--sl-mono);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--sl-text);
+  background: rgba(255, 255, 255, 0.92);
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--sl-card-border);
+  flex-shrink: 0;
+}
+
+.sl-swimlane-titles {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+  min-width: 0;
+  gap: 2px;
+}
+
+.sl-swimlane-title {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--sl-text);
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sl-swimlane-subtitle {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--sl-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sl-swimlane--completed {
+  background: rgba(18, 148, 95, 0.05);
+  border-color: rgba(18, 148, 95, 0.28);
+}
+
+.sl-swimlane--completed .sl-swimlane-title {
+  color: var(--sl-green);
+}
+
+.sl-swimlane--current {
+  background: rgba(29, 110, 220, 0.07);
+  border-color: rgba(29, 110, 220, 0.45);
+  border-style: solid;
+  box-shadow: 0 6px 24px rgba(29, 110, 220, 0.08);
+}
+
+.sl-swimlane--current .sl-swimlane-title {
+  color: var(--sl-accent);
+}
+
+.sl-swimlane--upcoming {
+  background: rgba(107, 127, 160, 0.05);
+  border-color: rgba(107, 127, 160, 0.25);
+}
+
+.sl-swimlane--upcoming .sl-swimlane-title {
+  color: var(--sl-text-muted);
+}

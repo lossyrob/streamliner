@@ -10,6 +10,28 @@ const TASK_NODE_HEIGHT = 168;
 const GATE_NODE_WIDTH = 384;
 const GATE_NODE_HEIGHT = 96;
 
+const LANE_PADDING_X = 32;
+const LANE_PADDING_TOP = 72;
+const LANE_PADDING_BOTTOM = 32;
+
+export type WorkstreamCheckpointLaneState =
+  | "completed"
+  | "current"
+  | "upcoming";
+
+export interface WorkstreamGraphCheckpointLane {
+  id: string;
+  title: string;
+  subtitle: string;
+  nodeIds: string[];
+  index: number;
+  state: WorkstreamCheckpointLaneState;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export type WorkstreamGraphNodeHighlight =
   | "selected"
   | "ancestor"
@@ -55,6 +77,7 @@ export interface WorkstreamGraphLayoutEdge
 export interface WorkstreamGraphLayoutResult {
   nodes: WorkstreamGraphLayoutNode[];
   edges: WorkstreamGraphLayoutEdge[];
+  checkpointLanes: WorkstreamGraphCheckpointLane[];
   dependenciesByNode: Map<string, string[]>;
   dependentsByNode: Map<string, string[]>;
   ancestors: Set<string>;
@@ -274,8 +297,8 @@ export function buildWorkstreamGraphLayout(
 
   dagre.layout(graph);
 
-  return {
-    nodes: viewModel.derivedNodes.map((entry) => {
+  const layoutNodes: WorkstreamGraphLayoutNode[] = viewModel.derivedNodes.map(
+    (entry) => {
       const { width, height } = nodeSizeForType(entry.node.type);
       const position = graph.node(entry.node.id) as
         | { x: number; y: number }
@@ -296,7 +319,13 @@ export function buildWorkstreamGraphLayout(
         repoLabel: repoLabelForNode(workstream, entry),
         entry,
       };
-    }),
+    },
+  );
+
+  const checkpointLanes = buildCheckpointLanes(viewModel, layoutNodes);
+
+  return {
+    nodes: layoutNodes,
     edges: renderedEdges.map((edge) => ({
       ...edge,
       highlight: edgeHighlightFor(
@@ -307,9 +336,77 @@ export function buildWorkstreamGraphLayout(
         descendants,
       ),
     })),
+    checkpointLanes,
     dependenciesByNode,
     dependentsByNode,
     ancestors,
     descendants,
   };
+}
+
+function laneStateFor(
+  progress: WorkstreamViewModel["checkpoints"][number],
+): WorkstreamCheckpointLaneState {
+  if (progress.checkpoint.status === "completed") {
+    return "completed";
+  }
+  if (
+    progress.totalNodes > 0 &&
+    progress.completedNodes === progress.totalNodes
+  ) {
+    return "completed";
+  }
+  if (progress.isCurrent) {
+    return "current";
+  }
+  return "upcoming";
+}
+
+function buildCheckpointLanes(
+  viewModel: WorkstreamViewModel,
+  layoutNodes: WorkstreamGraphLayoutNode[],
+): WorkstreamGraphCheckpointLane[] {
+  const positionById = new Map(layoutNodes.map((ln) => [ln.id, ln]));
+
+  return viewModel.checkpoints
+    .map((progress, index) => {
+      const members = progress.checkpoint.nodeIds
+        .map((id) => positionById.get(id))
+        .filter((ln): ln is WorkstreamGraphLayoutNode => ln !== undefined);
+
+      if (members.length === 0) {
+        return null;
+      }
+
+      const minX = Math.min(...members.map((m) => m.x));
+      const minY = Math.min(...members.map((m) => m.y));
+      const maxX = Math.max(...members.map((m) => m.x + m.width));
+      const maxY = Math.max(...members.map((m) => m.y + m.height));
+
+      const x = minX - LANE_PADDING_X;
+      const y = minY - LANE_PADDING_TOP;
+      const width = maxX - minX + LANE_PADDING_X * 2;
+      const height = maxY - minY + LANE_PADDING_TOP + LANE_PADDING_BOTTOM;
+
+      const state = laneStateFor(progress);
+      const { totalNodes, completedNodes } = progress;
+      const subtitle =
+        totalNodes === 0
+          ? "No nodes"
+          : `${completedNodes} / ${totalNodes} complete`;
+
+      return {
+        id: progress.checkpoint.id,
+        title: progress.checkpoint.title,
+        subtitle,
+        nodeIds: members.map((m) => m.id),
+        index,
+        state,
+        x,
+        y,
+        width,
+        height,
+      };
+    })
+    .filter((lane): lane is WorkstreamGraphCheckpointLane => lane !== null);
 }

@@ -13,6 +13,8 @@ import {
   WorkstreamGraphNode,
   WorkstreamGraphGateNode,
 } from "./WorkstreamGraphNode";
+import { WorkstreamSwimlane } from "./WorkstreamSwimlane";
+import type { WorkstreamSwimlaneData } from "./WorkstreamSwimlane";
 import { collectViewportFocusIds } from "./workstream-canvas-focus";
 import type {
   WorkstreamGraphNodeData,
@@ -22,6 +24,7 @@ import type {
 const nodeTypes = {
   workstreamTask: WorkstreamGraphNode,
   workstreamGate: WorkstreamGraphGateNode,
+  workstreamSwimlane: WorkstreamSwimlane,
 };
 
 const EDGE_HIGHLIGHT_STYLES: Record<string, React.CSSProperties> = {
@@ -43,7 +46,27 @@ export function WorkstreamCanvas({
   onNodeSelect,
 }: WorkstreamCanvasProps) {
   const reactFlow = useReactFlow();
-  const nodes = useMemo<Node<WorkstreamGraphNodeData>[]>(
+  const laneNodes = useMemo<Node<WorkstreamSwimlaneData>[]>(
+    () =>
+      layout.checkpointLanes.map((lane) => ({
+        id: `lane:${lane.id}`,
+        type: "workstreamSwimlane",
+        position: { x: lane.x, y: lane.y },
+        data: {
+          title: lane.title,
+          subtitle: lane.subtitle,
+          index: lane.index,
+          state: lane.state,
+        },
+        style: { width: lane.width, height: lane.height },
+        draggable: false,
+        selectable: false,
+        focusable: false,
+        zIndex: -1,
+      })),
+    [layout],
+  );
+  const taskNodes = useMemo<Node<WorkstreamGraphNodeData>[]>(
     () =>
       layout.nodes.map((ln) => ({
         id: ln.id,
@@ -60,14 +83,29 @@ export function WorkstreamCanvas({
       })),
     [layout],
   );
+  const nodes = useMemo<Node[]>(
+    () => [...laneNodes, ...taskNodes],
+    [laneNodes, taskNodes],
+  );
   const viewportFocusIds = useMemo(
     () => collectViewportFocusIds(layout, selectedNodeId),
     [layout, selectedNodeId],
   );
-  const framedNodes = useMemo(
-    () => nodes.filter((node) => viewportFocusIds.has(node.id)),
-    [nodes, viewportFocusIds],
-  );
+  const framedNodes = useMemo(() => {
+    const currentLane = layout.checkpointLanes.find(
+      (lane) => lane.state === "current",
+    );
+    if (currentLane) {
+      const laneNode = laneNodes.find(
+        (node) => node.id === `lane:${currentLane.id}`,
+      );
+      if (laneNode) {
+        return [laneNode];
+      }
+    }
+    // Fallback: frame all focus tasks.
+    return taskNodes.filter((node) => viewportFocusIds.has(node.id));
+  }, [taskNodes, laneNodes, layout, viewportFocusIds]);
 
   const edges = useMemo<Edge[]>(
     () =>
@@ -84,6 +122,9 @@ export function WorkstreamCanvas({
 
   const handleNodeClick = useCallback(
     (_event: React.MouseEvent, node: Node) => {
+      if (node.id.startsWith("lane:")) {
+        return;
+      }
       onNodeSelect(node.id === selectedNodeId ? null : node.id);
     },
     [onNodeSelect, selectedNodeId],
@@ -95,23 +136,31 @@ export function WorkstreamCanvas({
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
-      void (async () => {
-        await reactFlow.fitView({
-          nodes: framedNodes,
-          padding: selectedNodeId ? 0.34 : 0.22,
-          minZoom: 0.64,
-          maxZoom: selectedNodeId ? 0.92 : 0.9,
-          duration: 240,
-        });
-
-        if (!selectedNodeId) {
-          const viewport = reactFlow.getViewport();
-          await reactFlow.setViewport(
-            { ...viewport, y: viewport.y - 48 },
-            { duration: 0 },
-          );
-        }
-      })();
+      if (framedNodes.length === 0) return;
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const node of framedNodes) {
+        const w = Number(node.style?.width ?? 0);
+        const h = Number(node.style?.height ?? 0);
+        minX = Math.min(minX, node.position.x);
+        minY = Math.min(minY, node.position.y);
+        maxX = Math.max(maxX, node.position.x + w);
+        maxY = Math.max(maxY, node.position.y + h);
+      }
+      void reactFlow.fitBounds(
+        {
+          x: minX,
+          y: minY,
+          width: maxX - minX,
+          height: maxY - minY,
+        },
+        {
+          padding: selectedNodeId ? 0.2 : 0.12,
+          duration: 0,
+        },
+      );
     }, 0);
 
     return () => {
@@ -132,7 +181,7 @@ export function WorkstreamCanvas({
         elementsSelectable={false}
       >
         <Background variant={BackgroundVariant.Dots} />
-        <Controls fitViewOptions={{ nodes, padding: 0.2, maxZoom: 0.7 }} />
+        <Controls fitViewOptions={{ nodes: taskNodes, padding: 0.2, maxZoom: 0.7 }} />
         <MiniMap pannable zoomable />
       </ReactFlow>
     </div>

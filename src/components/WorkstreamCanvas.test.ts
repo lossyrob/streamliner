@@ -103,6 +103,7 @@ function buildLayout(): WorkstreamGraphLayoutResult {
       },
     ],
     edges: [],
+    checkpointLanes: [],
     dependenciesByNode: new Map([
       ["completed-upstream", []],
       ["current-wave", ["completed-upstream"]],
