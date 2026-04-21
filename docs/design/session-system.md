@@ -1,15 +1,18 @@
 ---
 kind: design-doc
 status: draft
-last_updated: 2026-04-14
+last_updated: 2026-04-21
 update_semantics: rewrite-in-place
-authoritative_for: "Session launching, lifecycle, tracking, and runtime overlay"
+authoritative_for: "Session launching, lifecycle, registry contract, tracking, and runtime overlay"
 scope_tags:
   - sessions
+  - registry
   - launch
   - tracking
   - runtime-overlay
 code_paths:
+  - src/session-registry*.ts
+  - src/session-registry/**
   - src/server/session/**
   - src/server/context/**
   - src/components/session/**
@@ -18,6 +21,7 @@ references_decisions:
   - 2
   - 3
   - 4
+  - 5
 ---
 
 # Session System
@@ -231,31 +235,108 @@ Each Copilot CLI session maintains state at:
 
 ### Session Registry
 
-The **session registry** is Streamliner's authoritative, local-first record for tracked sessions. See [Decision 004](decisions/004-session-registry-primary-surface.md) for the rationale; the registry is graph-independent and exists so cross-session context survives restarts regardless of whether a session was launched from the graph.
+The **session registry** is Streamliner's authoritative, local-first record for tracked sessions. See [Decision 004](decisions/004-session-registry-primary-surface.md) for the product framing and [Decision 005](decisions/005-session-registry-storage-and-identity.md) for the concrete storage/identity contract. The registry is graph-independent and exists so cross-session context survives restarts regardless of whether a session was launched from the graph.
 
-Each registry entry carries:
+#### Record shape
 
-| Field | Source | Purpose |
-|-------|--------|---------|
-| `id` | Streamliner | Registry-scoped id, distinct from the Copilot session id |
-| `title`, `description` | Builder | Human-meaningful context, autosaved on change |
-| `color` | Builder | Single source of truth for platform color bridges (e.g., Windows Terminal tab color) |
-| `cwd`, `repo`, `branch` | Observation + builder override | Relaunch target and binding guardrails |
-| `copilotSessionId` | Observation | Links the entry to a live or historical Copilot CLI session when one is known |
-| `lifecycleStatus` | Builder + observation-driven transition to `ended` | Durable coarse lifecycle: `active | paused | ended | archived`. Carries across session ends and Streamliner restarts |
-| `lastSeenAt` | Observation | Drives staleness surfacing and sort order |
-| `tags` | Builder | Freeform; grouping semantics deferred |
-| `graphBinding` | Launch pipeline / builder | Optional `{ workstreamId, nodeId, launchClaimId }` — populated when the session is bound to a graph node |
+Each registry entry is a persisted `SessionRegistryRecord`. The stored lifecycle field is named **`lifecycleStatus`** rather than bare `status` so it cannot be confused with the observation-derived liveness states from [Observed States](#observed-states).
 
-`lifecycleStatus` is intentionally coarse and durable. The fine-grained, observation-derived liveness of a currently-live Copilot session (`launching`, `discovered`, `active`, `idle`, `ended`, see [Observed States](#observed-states) below) is an orthogonal derived view layered on top of the registry row at render time, not a field stored on the row. A single registry entry can be `lifecycleStatus: active` and observation-`idle` simultaneously — those are independent axes and the overlay composes them. Observation is the only writer of the transition from `active` to `ended` on `lifecycleStatus`; all other `lifecycleStatus` transitions are builder-driven.
+| Field | Type | Required | Source | Notes |
+|-------|------|----------|--------|-------|
+| `schemaVersion` | integer | yes | Streamliner | Record schema version. Starts at `1`. |
+| `id` | string | yes | Streamliner | Stable Streamliner-owned identifier. It is never the Copilot session id. |
+| `title` | string | yes | Builder | Short editable label. |
+| `description` | string | yes | Builder | Longer editable notes; empty string allowed. |
+| `color` | string or `null` | yes | Builder | Palette token or hex; single source of truth for terminal/UI color bridges. |
+| `cwd` | string | yes | Observation or builder | Absolute relaunch path and merge guardrail. |
+| `repo` | string or `null` | yes | Observation or builder | Normalized `owner/name` when known; otherwise the repo root path; `null` when unknown. |
+| `branch` | string or `null` | yes | Observation or builder | Last known branch when one is available. |
+| `copilotSessionId` | string or `null` | yes | Observation | Linked Copilot CLI session id when the row is tied to an observed session. |
+| `lifecycleStatus` | `active \| paused \| ended \| archived` | yes | Builder + observation | Durable coarse lifecycle. Observation only owns the transition into `ended`; archiving is builder-driven. |
+| `lastSeenAt` | ISO 8601 string or `null` | yes | Observation | Last observed activity timestamp; `null` for never-observed manual entries. |
+| `createdAt`, `updatedAt` | ISO 8601 string | yes | Streamliner | Record creation and last persisted update timestamps. |
+| `tags` | string[] | yes | Builder | Freeform labels; default `[]`. |
+| `origin.kind` | `manual \| observed \| launched` | yes | Streamliner | How the row first entered the registry. |
+| `origin.importedFromCopilotSessionId` | string or `null` | no | Observation | Present when the row was originally created from discovery import. |
+| `origin.launchClaimId` | string or `null` | no | Launch pipeline | Present when the row was created from or first linked through a launch/relaunch claim. |
+| `graphBinding` | object or `null` | yes | Launch pipeline or builder | Optional `{ workstreamId, nodeId, launchClaimId }` binding for graph projection. |
 
-Registry entries are created either by **observation import** (the watcher discovers a Copilot session without a matching registry row and creates one in `lifecycleStatus: active` with the metadata it has, which the builder can then edit) or as **manual entries** (the builder creates a row for a session Streamliner has not yet observed, or for a session running in an environment not yet watched). Manual entries become linked when observation later finds a matching Copilot session.
+`lifecycleStatus` is intentionally coarse and durable. The fine-grained, observation-derived liveness of a currently-live Copilot session (`launching`, `discovered`, `active`, `idle`, `ended`) is an orthogonal derived view layered on top of the registry row at render time, not a field stored on the row. A single registry entry can be `lifecycleStatus: active` and observation-`idle` simultaneously — those are independent axes and the overlay composes them.
 
-Observation is the authoritative source for observation-derived fields — the registry never fabricates `lastSeenAt`, the `active → ended` transition on `lifecycleStatus`, or session-end reasons that observation has not confirmed. Builder-editable fields (`title`, `description`, `color`, `tags`, non-`ended` `lifecycleStatus` transitions) are durable across session ends and Streamliner restarts.
+Registry entries are created in three ways:
 
-Storage shape is local-first under Streamliner's runtime-state root. The default direction is per-session JSON plus an index file, aligned with how Copilot CLI already persists state; that default is revisitable if query patterns make SQLite compelling. Entries carry a schema version; entries outside the supported range render with a "schema out of range" badge and are not mutated until reconciled.
+1. **Manual** — the builder explicitly creates a row before Streamliner has observed a session.
+2. **Observed** — the watcher discovers a Copilot session with no matching registry row and creates one from the observation metadata it has.
+3. **Launched** — the launch/relaunch pipeline creates or reserves a row first, then observation later links the live Copilot session onto that row.
 
-Launched-from-graph sessions (see Launch Contract above) register into the same store: the launch pipeline creates or updates a registry row and writes `graphBinding` onto it. There is no separate "launched sessions" table.
+#### Storage layout
+
+The registry lives under a global subtree of Streamliner's local runtime-state root:
+
+```text
+~/.streamliner/state/
+  session-registry/
+    index.json
+    entries/
+      {registry-id}.json
+    quarantine/
+      {timestamp}-{registry-id}.json
+    registry.lock
+  {projectKey}/{workstream-id}/
+    runtime.json
+    sessions.json
+    tracker-cache.json
+```
+
+- **`entries/{registry-id}.json` is authoritative.** Each file holds one full `SessionRegistryRecord`.
+- **`index.json` is a denormalized summary, not the source of truth.** It exists for fast list rendering and rebuilds from the entry files whenever it is missing, malformed, version-incompatible, or observably stale.
+- **`registry.lock` is an advisory single-writer lock.** Exactly one process is expected to mutate registry files at a time; readers never require the lock.
+- **`quarantine/` holds bad inputs.** Malformed JSON, unsupported schema versions, and partially written files are moved here and excluded from normal reads until the builder repairs or deletes them.
+
+Hand-edited files are tolerated when they still parse and match the supported schema version. Unknown extra fields are preserved on rewrite rather than dropped opportunistically. If an entry file and `index.json` disagree, the entry file wins: missing index rows are rebuilt from entries, and orphaned index rows are dropped on rebuild.
+
+#### Autosave and write semantics
+
+- UI edits to `title`, `description`, and `color` debounce for **500 ms** and flush immediately on blur, submit, or shutdown.
+- Writers update files with **write-then-rename** in the destination directory so readers never see a half-written JSON payload.
+- Mutation paths re-read the latest entry file before writing if `updatedAt` changed since the caller's read. The mutation is re-applied to the latest on-disk snapshot and resolves conflicts with **last-writer-wins on the fields explicitly being changed**; untouched fields are preserved.
+- Writers that cannot acquire `registry.lock` stay read-only rather than writing blind. This keeps the near-term concurrency model aligned with the runtime-state single-writer rule.
+
+#### Observation import and merge
+
+The observation hook defined by [Decision 001](decisions/001-observation-based-session-tracking.md) remains authoritative for discovery and liveness. The discovery source of truth is Copilot CLI's session-state root:
+
+- **`workspace.yaml`** — session id, cwd, repository, branch, timestamps
+- **`events.jsonl`** — activity and turn/event stream
+- **Hook signal files** (`{id}.start.json`, `{id}.turn.json`, `{id}.end.json`) — low-latency hints only, never the durable source of truth
+
+Discovery uses both a **startup scan** of the session-state root and **`fs.watch()`** for ongoing updates. Merge precedence is:
+
+1. If a registry row already has the same `copilotSessionId`, update that row.
+2. Else if an active launch/relaunch claim resolves to a known registry row, link the discovered session onto that row.
+3. Else create a new `origin.kind: observed` row.
+
+Observation may refresh `copilotSessionId`, `cwd`, `repo`, `branch`, `lastSeenAt`, and the transition from `lifecycleStatus: active | paused` to `ended`. It does **not** overwrite builder-edited `title`, `description`, `color`, `tags`, or an existing `graphBinding` unless a launch/relaunch claim explicitly owns that binding update.
+
+Observation never auto-archives. A linked row becomes `ended` when a clean end signal arrives or when the stale-session fallback fires after the watcher has not seen activity within the configured timeout. `archived` is only reached through an explicit builder action. Archived rows stay archived and are excluded from automatic rediscovery matching; a newly observed session creates a fresh row unless a relaunch flow explicitly reactivates the archived entry first.
+
+Registry import also inherits Decision 001's compatibility contract. If the Copilot compatibility probe cannot verify the expected event/file shapes, Streamliner may still create or update rows from `workspace.yaml`, but any observation-derived freshness or liveness that depends on unverified event parsing is surfaced as degraded confidence rather than fabricated certainty.
+
+#### Public surface
+
+The dashboard and future relaunch flows consume the registry through a shared in-process module that will live under `src/session-registry/`. This issue only defines the contract; it does not implement persistence.
+
+| Operation | Contract |
+|-----------|----------|
+| `listSessions(options?)` | Returns list items sorted by `lastSeenAt` then `updatedAt`; excludes archived rows by default. |
+| `getSession(id)` | Returns the full registry record or `null`. |
+| `upsertSession(input)` | Creates or replaces a row for manual, observed, or launched sources using the identity/merge rules above. |
+| `patchSession(id, patch)` | Applies builder-owned edits (`title`, `description`, `color`, `tags`, `graphBinding`, builder-driven lifecycle changes). Builder patches do not force `ended`. |
+| `archiveSession(id)` | Convenience mutation that sets `lifecycleStatus` to `archived`. |
+| `deleteSession(id)` | Explicit destructive cleanup for rows the builder intentionally wants removed; never used by observation. |
+| `subscribe(listener)` | Emits change notifications (`upsert`, `delete`, `rebuild`) so the UI can refresh without polling. |
+
+The public contract deliberately separates **persisted schema shapes** from **consumer-facing view/mutation shapes**. The persisted record/index types live in `src/session-registry-schema.ts`; the API-facing list, patch, upsert, event, and store-contract types live in `src/session-registry-contract.ts`.
 
 ### Discovery
 
@@ -421,7 +502,7 @@ Clicking a session in the list focuses its terminal (when the terminal integrati
 
 - Using Copilot SDK as the worker-session runtime instead of Copilot CLI interactive mode
 - Multi-machine session tracking or remote session discovery (shape is compatible; implementation is deferred)
-- Automatic crash recovery or relaunch
+- Automatic crash recovery or relaunch implementation (this doc defines the registry contract relaunch will consume, not the relaunch flow itself)
 - Session-to-session communication
 - Rich session control beyond launch and presence
 - Headless (non-terminal) session execution
@@ -434,4 +515,4 @@ Clicking a session in the list focuses its terminal (when the terminal integrati
 - **Context staleness**: If a session runs long enough that the workstream state changes (brief updated, graph refined), should the session be notified or continue with its original context?
 - **Remote session observation**: When sessions run on a devbox, how does Streamliner observe the remote session state directory? SSH polling or a forwarded watcher?
 - **Watcher restart rehydration**: On a cold watcher start against an active session, how far back does the incremental tool-request index need to be rebuilt to catch unresolved `ask_user` calls from before the restart? Options: re-scan the full log (bounded by an explicit budget), or treat pre-restart state as unknown until the next turn.
-- **Concurrent Streamliner instances**: What happens when two Streamliner processes (e.g., the UI and a background watcher, or two worktrees) observe the same `projectKey`? Coordination is deferred; see the runtime-state open question in [workstream-format](workstream-format.md).
+- **Cross-runtime coordination beyond the registry**: The registry now uses `registry.lock` plus record-authoritative rebuild rules. Should the rest of the per-workstream runtime cache converge on the same coordination pattern, or keep file-specific rules?

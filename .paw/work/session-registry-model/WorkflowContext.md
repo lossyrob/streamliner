@@ -48,12 +48,12 @@ Reconciliation: current
 
 ### Required Workflow Items
 - `init` | `resolved` | `activity`
-- `planning` | `in_progress` | `activity`
-- `planning-docs-review` | `pending` | `activity`
-- `implementation` | `pending` | `activity`
+- `planning` | `resolved` | `activity`
+- `planning-docs-review` | `resolved` | `activity`
+- `implementation` | `in_progress` | `activity`
 - `final-review` | `pending` | `activity`
 - `final-pr` | `pending` | `activity`
 
 ### Configured Procedure Items
-- `procedure:planning-review` | `pending` | `procedure`
+- `procedure:planning-review` | `resolved` | `procedure`
 - `procedure:final-review` | `pending` | `procedure`

@@ -44,6 +44,8 @@ export default defineConfig({
           { text: '001 — Observation-Based Session Tracking', link: '/decisions/001-observation-based-session-tracking' },
           { text: '002 — File-Based Context Delivery', link: '/decisions/002-file-based-context-delivery' },
           { text: '003 — PAW Control State Integration', link: '/decisions/003-paw-control-state-integration' },
+          { text: '004 — Session Registry as the Primary Session Surface', link: '/decisions/004-session-registry-primary-surface' },
+          { text: '005 — Session Registry Storage and Identity Model', link: '/decisions/005-session-registry-storage-and-identity' },
         ]
       }
     ],

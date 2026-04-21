@@ -1,3 +1,21 @@
+---
+kind: design-doc
+status: current
+last_updated: 2026-04-21
+update_semantics: rewrite-in-place
+authoritative_for: "Design documentation entry point, reading order, and decision log"
+scope_tags:
+  - design-docs
+  - navigation
+code_paths: []
+references_decisions:
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+---
+
 # Streamliner — Design
 
 This is the entry point for Streamliner's project-level design documentation. Start here to understand the system, then follow the reading order into the detail pages.
@@ -10,7 +28,7 @@ Streamliner helps a single builder direct many concurrent AI coding agent workst
 2. **[operating-model.md](operating-model.md)** — Roles, information flow, presence, and operating rhythm.
 3. **[design-layer.md](design-layer.md)** — How design docs work: document families and interaction with workstreams.
 4. **[workstream-format.md](workstream-format.md)** — Workstream artifact format: brief, graph, config, and runtime state separation.
-5. **[session-system.md](session-system.md)** — Session launching, lifecycle, tracking, and runtime overlay.
+5. **[session-system.md](session-system.md)** — Session launching, lifecycle, registry contract, tracking, and runtime overlay.
 
 ### Concepts
 
@@ -25,7 +43,7 @@ Streamliner helps a single builder direct many concurrent AI coding agent workst
 | [operating-model.md](operating-model.md) | Operating model: roles, information flow, and operating rhythm |
 | [design-layer.md](design-layer.md) | Design-doc system: document families and interaction with workstreams |
 | [workstream-format.md](workstream-format.md) | Workstream artifact format: brief, graph, config, and runtime state separation |
-| [session-system.md](session-system.md) | Session launching, lifecycle, tracking, and runtime overlay (draft) |
+| [session-system.md](session-system.md) | Session launching, lifecycle, registry contract, tracking, and runtime overlay (draft) |
 | [concepts/context-package.md](concepts/context-package.md) | Context package: layered context model for agent sessions |
 | [concepts/waves.md](concepts/waves.md) | Waves: wave-based planning, promotion, and gate boundaries |
 
@@ -37,6 +55,7 @@ Streamliner helps a single builder direct many concurrent AI coding agent workst
 | 002 | [File-based context delivery](decisions/002-file-based-context-delivery.md) | accepted | 2026-04-14 |
 | 003 | [PAW control state as the workflow progression source](decisions/003-paw-control-state-integration.md) | accepted | 2026-04-20 |
 | 004 | [Session registry as the primary session surface](decisions/004-session-registry-primary-surface.md) | accepted | 2026-04-21 |
+| 005 | [Session registry storage and identity model](decisions/005-session-registry-storage-and-identity.md) | accepted | 2026-04-21 |
 
 ## Open questions
 
