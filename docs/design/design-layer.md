@@ -92,6 +92,8 @@ Design docs describe the project. Workstreams are transient execution vehicles. 
 
 The design layer is **Layer 0** of the [context package](concepts/context-package.md). Agents read the design docs directly as part of their context assembly.
 
+Workstream `designRefs` point into this layer as starting points for attention and context assembly; they do not reduce the design layer to an allowlist.
+
 ### Design changes surface through PRs
 
 When a worker's implementation changes the intended design, the design-doc updates appear in the PR diff. The reviewer — whether the orchestrator, a review agent, or the builder — sees those changes and evaluates whether they are consistent with the project's direction. No separate declaration mechanism is needed; the PR is the signal.

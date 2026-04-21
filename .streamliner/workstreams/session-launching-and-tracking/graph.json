@@ -3,11 +3,11 @@
   "id": "session-launching-and-tracking",
   "projectKey": "streamliner",
   "title": "Session launching and tracking",
-  "summary": "Wave 1: bootstrap design docs and make the workstream design explicit.",
+  "summary": "Wave 1 design foundation nearing completion. Session system design now makes SDK launch preparation, Copilot CLI worker launch, and observation-based tracking explicit.",
   "status": "active",
   "attention": "focus",
   "createdAt": "2026-04-10T15:37:14.125Z",
-  "updatedAt": "2026-04-12T16:10:20.898Z",
+  "updatedAt": "2026-04-14T03:04:23.3497155Z",
   "trackingIssue": {
     "owner": "lossyrob",
     "repo": "streamliner",
@@ -41,6 +41,22 @@
     {
       "repoId": "streamliner",
       "path": "docs/design/workstream-format.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/session-system.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/001-observation-based-session-tracking.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/002-file-based-context-delivery.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/003-paw-control-state-integration.md"
     }
   ],
   "nodes": [
@@ -49,7 +65,7 @@
       "type": "task",
       "title": "Bootstrap design docs",
       "summary": "Create Streamliner's repo-scoped docs/design set from the current root docs and switch this workstream to reference that design layer.",
-      "status": "ready",
+      "status": "completed",
       "attention": "focus",
       "repoIds": ["streamliner"],
       "tracker": {
@@ -65,7 +81,7 @@
       "type": "research",
       "title": "Make workstream design explicit",
       "summary": "Run explicit design sessions for the full workstream so the launch contract, key design decisions, and downstream issue-graph adjustments are written down before more implementation issues are finalized.",
-      "status": "planned",
+      "status": "in-progress",
       "attention": "focus",
       "repoIds": ["streamliner"],
       "tracker": {
@@ -90,7 +106,7 @@
       "id": "backend-context-assembly",
       "type": "task",
       "title": "Backend context assembly",
-      "summary": "Assemble the Layer 0-3 launch payload on the backend using design references, brief state, graph node context, and tracker-backed node specs.",
+      "summary": "Assemble the Layer 0-3 launch payload inputs on the backend per the session system design: read design docs, extract brief sections, and resolve node specs so the SDK launch-prep step can write the context files after paw-init creates the PAW work directory.",
       "status": "planned",
       "attention": "watch",
       "repoIds": ["streamliner"],
@@ -99,38 +115,48 @@
     {
       "id": "copilot-sdk-paw-init",
       "type": "task",
-      "title": "Copilot SDK paw-init plumbing",
-      "summary": "Use Copilot SDK on the backend to run paw-init in the target repo and prepare the PAW work directory before terminal launch.",
+      "title": "Copilot SDK launch prep plumbing",
+      "summary": "Use Copilot SDK on the backend to gather context, run paw-init in the target repo, write context files, and return the launch spec before the Copilot CLI worker session starts.",
       "status": "planned",
       "attention": "focus",
       "repoIds": ["streamliner"],
       "dependsOn": ["backend-context-assembly"]
     },
     {
-      "id": "terminal-launch-integration",
+      "id": "launch-claim-binding",
       "type": "task",
-      "title": "Terminal launch integration",
-      "summary": "Launch a visible terminal session from the graph so the operator can watch and intervene in the PAW session as needed.",
+      "title": "Launch claim binding",
+      "summary": "Record launch claims before terminal startup and bind discovered sessions using a launch nonce plus cwd/branch/window guardrails so the visible Copilot CLI session attaches to the correct graph node.",
       "status": "planned",
       "attention": "focus",
       "repoIds": ["streamliner"],
       "dependsOn": ["copilot-sdk-paw-init"]
     },
     {
-      "id": "session-tracking-model",
-      "type": "research",
-      "title": "Session tracking model",
-      "summary": "Define the local runtime snapshot model for Copilot session discovery, heartbeats, tracker snapshots, and node-to-session binding.",
+      "id": "terminal-launch-integration",
+      "type": "task",
+      "title": "Terminal launch integration",
+      "summary": "Launch a visible Copilot CLI interactive session from the graph with the prepared kickoff prompt so the operator can watch and intervene in the PAW session as needed.",
       "status": "planned",
       "attention": "focus",
       "repoIds": ["streamliner"],
-      "dependsOn": ["wave-1-gate"]
+      "dependsOn": ["launch-claim-binding"]
+    },
+    {
+      "id": "session-tracking-model",
+      "type": "task",
+      "title": "Session state observation",
+      "summary": "Extend initial launch-claim binding into the full observation-based session tracking model: watch Copilot session state files, detect turn boundaries from events.jsonl, process hook signal files, derive idle/needs-input state, and read PAW `## Control State` (including `Workflow Identity`) from `WorkflowContext.md` / `ReviewContext.md` as the workflow progression source (with legacy artifact inference as fallback).",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["launch-claim-binding"]
     },
     {
       "id": "runtime-overlay-ui",
       "type": "task",
       "title": "Runtime overlay in UI",
-      "summary": "Overlay live session and tracker state onto the committed graph without writing ephemeral operational changes back into graph.json.",
+      "summary": "Overlay live observed session state and tracker snapshots onto the committed graph in the UI, combining committed node status with runtime session status per the overlay model in the session system design.",
       "status": "planned",
       "attention": "watch",
       "repoIds": ["streamliner"],
@@ -158,9 +184,9 @@
     {
       "id": "launch-from-graph",
       "title": "Launch from graph works",
-      "summary": "Streamliner assembles context, runs paw-init, and launches a visible terminal session from a node.",
+      "summary": "Streamliner assembles context, runs paw-init, establishes launch-claim support, compiles the kickoff prompt, and launches a visible Copilot CLI interactive session from a node.",
       "status": "planned",
-      "nodeIds": ["backend-context-assembly", "copilot-sdk-paw-init", "terminal-launch-integration"]
+      "nodeIds": ["backend-context-assembly", "copilot-sdk-paw-init", "launch-claim-binding", "terminal-launch-integration"]
     },
     {
       "id": "tracking-visible",

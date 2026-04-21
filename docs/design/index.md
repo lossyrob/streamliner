@@ -10,6 +10,7 @@ Streamliner helps a single builder direct many concurrent AI coding agent workst
 2. **[operating-model.md](operating-model.md)** — Roles, information flow, presence, and operating rhythm.
 3. **[design-layer.md](design-layer.md)** — How design docs work: document families and interaction with workstreams.
 4. **[workstream-format.md](workstream-format.md)** — Workstream artifact format: brief, graph, config, and runtime state separation.
+5. **[session-system.md](session-system.md)** — Session launching, lifecycle, tracking, and runtime overlay.
 
 ### Concepts
 
@@ -24,6 +25,7 @@ Streamliner helps a single builder direct many concurrent AI coding agent workst
 | [operating-model.md](operating-model.md) | Operating model: roles, information flow, and operating rhythm |
 | [design-layer.md](design-layer.md) | Design-doc system: document families and interaction with workstreams |
 | [workstream-format.md](workstream-format.md) | Workstream artifact format: brief, graph, config, and runtime state separation |
+| [session-system.md](session-system.md) | Session launching, lifecycle, tracking, and runtime overlay (draft) |
 | [concepts/context-package.md](concepts/context-package.md) | Context package: layered context model for agent sessions |
 | [concepts/waves.md](concepts/waves.md) | Waves: wave-based planning, promotion, and gate boundaries |
 
@@ -31,14 +33,11 @@ Streamliner helps a single builder direct many concurrent AI coding agent workst
 
 | # | Decision | Status | Date |
 |---|---|---|---|
-
-_No decisions recorded yet. See [decisions/](decisions/) for the template and conventions._
+| 001 | [Observation-based session tracking](decisions/001-observation-based-session-tracking.md) | accepted | 2026-04-14 |
+| 002 | [File-based context delivery](decisions/002-file-based-context-delivery.md) | accepted | 2026-04-14 |
+| 003 | [PAW control state as the workflow progression source](decisions/003-paw-control-state-integration.md) | accepted | 2026-04-20 |
 
 ## Open questions
 
-- **Session tracking mechanism**: How does Streamliner discover and monitor Copilot CLI sessions across environments?
-- **Operator presence UX**: What does "joining" a session look like in practice?
-- **Auth and GitHub tokens**: How does Streamliner authenticate with GitHub for enrichment and issue management?
-- **Context package delivery**: How does Layer 0–3 context reach a worker session in practice?
 - **Orchestrator execution model**: Should the orchestrator be a single persistent session, SDK-driven helpers that fork sessions for specific tasks, or a combination?
 - **Portfolio layer stability**: The portfolio layer concept (projects, cross-workstream coordination, session attachment) is still a working draft and not yet codified as design authority.

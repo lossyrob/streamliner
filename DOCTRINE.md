@@ -98,7 +98,7 @@ alignment, and updates workstream artifacts as reality unfolds.
 
 - how to decompose the workstream into nodes and dependencies
 - which nodes belong to which wave
-- which design docs and decisions are relevant to each node
+- which design docs and decisions to surface first for each node
 - when a worker can proceed autonomously vs. when review is needed
 - whether a discovered mismatch is a routine design-doc update or a
   `decision-needed` escalation
@@ -154,7 +154,7 @@ It is designed to be:
 
 This is the project's intended design:
 
-- relevant `current` design docs
+- the design index plus front-loaded `current` design docs
 - accepted decision records
 - the design index as the cold-reader entry point
 
@@ -328,7 +328,7 @@ The worker:
 2. plans the implementation
 3. optionally receives alignment review
 4. implements
-5. updates referenced design docs or flags a consequential mismatch
+5. updates the relevant design docs in the design layer — starting from the references, but not limited to them — or flags a consequential mismatch
 6. creates the PR
 7. declares design impact
 
@@ -365,7 +365,7 @@ things:
 
 1. Does the plan serve the workstream's purpose?
 2. Does it respect the workstream's boundaries?
-3. Does it align with the referenced design docs and decisions?
+3. Does it align with the design layer, starting with the referenced design docs and decisions?
 4. Does it conflict with parallel or downstream nodes?
 
 If those pass, the worker proceeds. If not, the reviewer gives targeted

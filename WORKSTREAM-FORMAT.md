@@ -240,9 +240,9 @@ effort. Do not restate the whole project architecture here.}
 ## Design References
 - `repoId:docs/design/index.md` - entry point for the relevant project design set
 - `repoId:docs/design/{domain}.md` - authoritative design for a domain this
-  workstream touches
-- `repoId:docs/design/decisions/00x-{slug}.md` - important rationale this
-  workstream must honor
+  workstream should look at early
+- `repoId:docs/design/decisions/00x-{slug}.md` - important rationale to
+  surface early for this workstream
 
 ## Boundaries
 - **In scope:** {what is included}
@@ -257,7 +257,8 @@ What the next action should be.}
 ## Decisions
 - {Workstream-local execution decision}: {rationale}
 {This section is for workstream-local choices only. Project-level design
-decisions belong in the referenced design docs and decision records.}
+decisions belong in the relevant design docs and decision records in the
+design layer, starting from the references but not limited to them.}
 
 ## Open Questions
 - {Question}
@@ -270,8 +271,8 @@ layer.}
 
 - **Target length:** Under 400 lines total. If longer, push detail down to node specs.
 - **Edit in place, don't append.** The brief reads as a coherent whole at any point. Git history provides the audit trail.
-- **Written for a cold reader.** A new session reading the brief, graph, and referenced design docs should be immediately productive.
-- **The `Design References` section is human-readable.** The graph's `designRefs` array is the machine-readable source of truth. Keep them in sync.
+- **Written for a cold reader.** A new session reading the brief, graph, and design layer — starting with the referenced docs — should be immediately productive.
+- **The `Design References` section is human-readable.** The graph's `designRefs` array is the machine-readable starting-point list. Keep them in sync.
 - **The brief's `Decisions` section is not a copy of the design docs.** Use it for workstream-local sequencing, decomposition, and execution choices.
 - **Current State is a durable summary, not a heartbeat log.** Rewrite it when the workstream meaningfully changes direction, ownership, or progress. Do not churn it for every session pulse, CI update, or tracker refresh.
 - **Runtime telemetry lives outside the brief.** Session IDs, heartbeats, node claims, and tracker caches belong in Streamliner's local runtime store.
@@ -297,13 +298,13 @@ The graph is the structured, machine-readable representation of the workstream's
 | `updatedAt` | string | ✓ | ISO 8601 timestamp for the last committed edit to this `graph.json`. Bump it on any intentional committed graph change; never bump it for runtime-only overlays that are not written back into the artifact. |
 | `trackingIssue` | object | | Tracker reference anchoring the workstream itself (see Tracker Reference). When using GitHub-backed node trackers, this should typically be a parent GitHub issue for the workstream. |
 | `repos` | array | ✓ | Repositories involved in this workstream (see Repo) |
-| `designRefs` | array | ✓ | Project-level design docs and decision records relevant to this workstream (see Design Reference). Use an empty array if none exist yet. |
+| `designRefs` | array | ✓ | Project-level design docs and decision records relevant to this workstream (see Design Reference). Workers retain access to the broader design layer; this field highlights what to surface first. Use an empty array if none exist yet. |
 | `nodes` | array | ✓ | Work items and gates (see Node) |
 | `checkpoints` | array | ✓ | Progress milestones (see Checkpoint) |
 
 ### Design Reference
 
-Each design reference points to a project-level design artifact in a declared repository.
+Each design reference points to a project-level design artifact in a declared repository that should be surfaced early for this workstream.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -313,7 +314,7 @@ Each design reference points to a project-level design artifact in a declared re
 Keep references lean:
 
 - include the repo's `docs/design/index.md` when that repo has a design set
-- include the specific living design docs and decision records that materially constrain the workstream
+- include the specific living design docs and decision records that are likely to matter first
 - do not list every document in the design corpus "just in case"
 
 ### Node

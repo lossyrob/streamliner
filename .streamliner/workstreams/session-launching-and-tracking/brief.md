@@ -14,13 +14,14 @@ Build the feature in waves: bootstrap the repo-scoped design layer, then run
 explicit design sessions for the workstream so the launch contract, runtime
 model, and key design decisions are written down before the downstream
 implementation issue graph is finalized. After that, add backend Copilot SDK
-plumbing to run `paw-init`, launch a visible terminal session, and layer
-session tracking and runtime overlay into the UI.
+plumbing to gather context, run `paw-init`, and compile the kickoff prompt,
+then launch a visible Copilot CLI interactive worker session and layer
+observation-based session tracking and runtime overlay into the UI.
 
 Keep committed workstream artifacts limited to durable planning state.
-Session IDs, heartbeats, tracker snapshots, and launch metadata stay in
-Streamliner's local runtime state and are projected onto the graph as derived UI
-state rather than written back into `graph.json`.
+Session IDs, observed session state, tracker snapshots, and launch metadata
+stay in Streamliner's local runtime state and are projected onto the graph as
+derived UI state rather than written back into `graph.json`.
 
 ## Design References
 - `streamliner:docs/design/index.md` - entry point for the project design set
@@ -28,11 +29,16 @@ state rather than written back into `graph.json`.
 - `streamliner:docs/design/operating-model.md` - operating model: roles, context package, and operating rhythm
 - `streamliner:docs/design/design-layer.md` - design-doc system: document families, format, and catalog
 - `streamliner:docs/design/workstream-format.md` - workstream artifact format and runtime state separation
+- `streamliner:docs/design/session-system.md` - session launching, lifecycle, tracking, and runtime overlay
+- `streamliner:docs/design/decisions/001-observation-based-session-tracking.md` - rationale for observation-based session tracking
+- `streamliner:docs/design/decisions/002-file-based-context-delivery.md` - rationale for file-based context delivery
+- `streamliner:docs/design/decisions/003-paw-control-state-integration.md` - rationale for reading PAW control state as the workflow progression source
 
 ## Boundaries
 - **In scope:** Repo-local Streamliner initialization, design-doc bootstrap,
-  launch contract, context assembly, Copilot SDK `paw-init`, terminal launch,
-  session tracking model, runtime overlay in the UI
+  launch contract, context assembly, Copilot SDK preparation (`paw-init`,
+  context writing, kickoff-prompt compilation), Copilot CLI interactive
+  launch, session tracking model, runtime overlay in the UI
 - **Out of scope:** Non-PAW launch modes, non-GitHub tracker integrations,
   remote multi-machine tracking, a general orchestration platform
 - **Deferred:** Rich session control beyond launch and status, full tracker
@@ -40,12 +46,19 @@ state rather than written back into `graph.json`.
   committed artifact state
 
 ## Current State
-This workstream is now anchored by parent GitHub issue `lossyrob/streamliner#3`.
-The first execution issue is `lossyrob/streamliner#4` (`bootstrap-design-docs`),
-which will turn the current root docs into a repo-scoped `docs/design/` set.
-The second Wave 1 issue is `lossyrob/streamliner#5`, which expands the earlier
-launch-contract idea into explicit design sessions for the full workstream
-before the downstream implementation issue graph is finalized.
+Wave 1 design foundation is nearly complete. Issue #4 (`bootstrap-design-docs`)
+shipped the repo-scoped `docs/design/` set. Issue #5
+(`make-workstream-design-explicit`) has produced the session system design doc
+(`docs/design/session-system.md`) and two accepted decision records
+(observation-based session tracking, file-based context delivery). The
+workstream's intended design is now explicit and written down, including the
+split between SDK-based launch preparation and Copilot CLI interactive worker
+launch.
+
+The downstream implementation graph is ready for review and refinement. The
+session system design doc defines the launch contract, context assembly model,
+session lifecycle, tracking model, and runtime overlay — enough to guide
+backend and UI implementation in subsequent waves.
 
 ## Decisions
 - Use repo-local `.streamliner/workstreams/` for Streamliner's committed
@@ -67,11 +80,21 @@ before the downstream implementation issue graph is finalized.
   workstream design is still implicit in the brief and graph.
 - Bootstrap `docs/design/` before building launch plumbing so later work uses
   real design references instead of transitional root documents.
+- Use Copilot SDK for launch preparation (context assembly, `paw-init`, kickoff
+  prompt compilation) and Copilot CLI interactive mode for the visible worker
+  session.
+- Bind launched sessions through a launch claim keyed by launch nonce plus
+  `cwd`/branch/window guardrails rather than `cwd` alone.
+- Read PAW `## Control State` (including `Workflow Identity`) from
+  `WorkflowContext.md` / `ReviewContext.md` as the authoritative source for
+  workflow progression in the runtime overlay, keeping session liveness
+  (Copilot session state) and workflow progression (PAW control state) as
+  two orthogonal observation sources.
 
 ## Open Questions
-- Should the runtime layer keep materialized summary files, per-session files,
-  or both as tracking gets more detailed?
-- What minimum runtime snapshot shape is needed before full session tracking is
-  implemented?
 - When should runtime-discovered progress be promoted into committed workstream
   artifact state?
+- Should Streamliner manage terminal tabs directly, or delegate to tmux/screen/
+  IDE terminal APIs?
+- How should Streamliner observe remote session-state roots for devbox-launched
+  sessions?

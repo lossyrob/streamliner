@@ -52,7 +52,7 @@ An AI session that translates project design plus workstream intent into an exec
 
 - how to decompose the workstream into nodes and dependencies
 - which nodes belong to which wave
-- which design docs and decisions are relevant to each node
+- which design docs and decisions to surface first for each node
 - when a worker proceeds autonomously vs. when review is needed
 - whether a discovered mismatch is a routine update or an escalation requiring builder judgment
 - how to update the brief and graph based on shipped reality
@@ -95,13 +95,13 @@ Workers report through artifacts, not through being remembered:
 
 Orchestrators report through workstream artifacts. Updates to the brief and graph are the orchestrator's communication to the builder.
 
-Fast operational telemetry (session IDs, heartbeats, tracker snapshots, launch claims) updates a machine-local runtime store. It informs the UI but does not rewrite the committed graph on every change.
+Fast operational telemetry (session IDs, observed session state, tracker snapshots, launch claims) updates a machine-local runtime store. It informs the UI but does not rewrite the committed graph on every change.
 
 ### Downward
 
 The builder communicates project direction through the design layer and workstream direction through the brief. If the intended system changes, the design docs change. If the execution strategy changes, the brief and graph change.
 
-The orchestrator communicates through graph structure, node specs, and design references. Workers need the artifacts, not the orchestrator's conversation history.
+The orchestrator communicates through graph structure, node specs, and design references as entry points into the broader design layer. Workers need the artifacts, not the orchestrator's conversation history.
 
 ### Lateral
 
@@ -137,6 +137,8 @@ The builder and orchestrator align on relevant project design, update design doc
 
 This is the most attention-intensive phase. Good workstream design here determines how much autonomous execution is possible later.
 
+Shaping can be incremental. A workstream can start with a provisional graph — the brief and graph do not need to be final before execution starts. For GitHub-backed workstreams, create the parent issue plus the first execution and design-session issues first, then create more node issues after the design is explicit and the graph is refined. The parent issue is a first-class artifact: it is the GitHub-visible grouping and progress surface for the workstream.
+
 ### Phase 2 — Autonomous Execution
 
 The worker reads the context package (Layers 0–3), plans the implementation, optionally receives alignment review, implements, creates the PR, and flags any design-doc changes for review.
@@ -164,7 +166,7 @@ The worker's plan is its alignment check. The reviewer — usually the orchestra
 
 1. Does the plan serve the workstream's purpose?
 2. Does it respect the workstream's boundaries?
-3. Does it align with referenced design docs and decisions?
+3. Does it align with the design layer, starting with referenced design docs and decisions?
 4. Does it conflict with parallel or downstream nodes?
 
 If those pass, the worker proceeds. If not, the reviewer gives targeted correction. Not every node needs alignment review — the more architectural, ambiguous, or high-coordination the node, the more valuable review becomes.
@@ -177,9 +179,9 @@ Everything important is a committed file. Nothing important lives only in chat h
 
 **Workstream artifacts** — the execution layer: `brief.md`, `graph.json`, and supporting docs, living in the workstream directory.
 
-**Local runtime state** — fast-moving operational facts (session IDs, heartbeats, tracker snapshots, launch metadata) in Streamliner's machine-local runtime store. The UI derives its live picture by combining the committed artifact layer with this runtime layer.
+**Local runtime state** — fast-moving operational facts (session IDs, observed session state, tracker snapshots, launch metadata) in Streamliner's machine-local runtime store. The UI derives its live picture by combining the committed artifact layer with this runtime layer.
 
-**Not artifacts:** orchestrator or worker chat history, dashboard state, session heartbeats, tracker caches, or memory of what was "probably intended."
+**Not artifacts:** orchestrator or worker chat history, dashboard state, session runtime state, tracker caches, or memory of what was "probably intended."
 
 ## Feedback Loops
 

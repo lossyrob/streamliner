@@ -62,7 +62,7 @@ Those artifacts do not duplicate the project design layer. Instead, they referen
 - a human-readable `## Design References` section in the brief
 - a machine-readable `designRefs` array in the graph
 
-Together, the brief, graph, and referenced design docs give any new session enough context to operate without re-deriving the project from scratch.
+Together, the brief, graph, and design layer — with Design References highlighting strong starting points — give any new session enough context to operate without re-deriving the project from scratch.
 
 Workstream artifacts are persisted as committed files — typically in a dedicated planning repository, though they can also live in the source repo or elsewhere. They are versioned, diffable, portable, and resilient to session failure.
 
@@ -76,7 +76,7 @@ The workstream brief is a single markdown file with defined sections and update 
 |---|---|---|
 | **Purpose** | Why the workstream exists; the end state it serves | Rarely changes |
 | **Approach** | How this workstream is approaching the problem | Rewritten as understanding deepens |
-| **Design References** | Project-level design docs and decisions this workstream must honor | Updated when the workstream's design surface changes |
+| **Design References** | High-priority design docs and decisions to surface first for this workstream | Updated when the workstream's design surface changes |
 | **Boundaries** | What's in scope, explicitly out, deferred | Refined each wave |
 | **Current State** | What just happened, what's active, what needs attention | Fully rewritten each update |
 | **Decisions** | Workstream-local execution choices and rationale | Edited; stale entries removed |
@@ -118,12 +118,12 @@ Waves are represented structurally for now through dependencies, checkpoints, an
 
 AI agents start every session as blank slates. The **context package** solves this with layered context:
 
-- **Layer 0 - Project Design Context**: relevant `current` design docs and accepted decisions
+- **Layer 0 - Project Design Context**: the design index, front-loaded `current` design docs, accepted decisions, and access to the broader design layer
 - **Layer 1 - Workstream Intent**: Purpose, Approach, Design References, Boundaries
 - **Layer 2 - Operational State**: Current State, Decisions, Open Questions
 - **Layer 3 - Node Context**: wave context, node spec, coordination notes, and any node-specific design narrowing carried in those node artifacts
 
-Only `current` design docs are included automatically. `draft` design docs are opt-in and only reach workers when the workstream or issue explicitly references them because the node is shaping or validating that draft.
+Layer 0 front-loads `current` design docs for initialization, but workers still retain access to the broader design layer in the repo. `draft` design docs are opt-in and only reach workers automatically when the workstream or issue explicitly references them because the node is shaping or validating that draft.
 
 This replaces the "years of shared doctrine" that human organizations rely on. Every session, regardless of where or when it starts, gets the same durable context surfaces.
 
@@ -231,7 +231,7 @@ See [WORKSTREAM-FORMAT.md](WORKSTREAM-FORMAT.md) for the full details on where a
 - tracker caches and PR snapshot overlays
 - ad hoc chat summaries used as de facto source of truth
 
-The orchestrator is not a built-in daemon. It is any AI session that reads the brief, graph, and referenced design docs, then updates artifacts when durable plan or progress changes are worth committing. Fast-moving runtime state is tracked separately and projected onto the UI.
+The orchestrator is not a built-in daemon. It is any AI session that reads the brief, graph, and design layer — starting with the referenced docs — then updates artifacts when durable plan or progress changes are worth committing. Fast-moving runtime state is tracked separately and projected onto the UI.
 
 ## The operating rhythm
 
@@ -256,7 +256,7 @@ Workers pick up nodes and execute:
 1. read Layer 0-3 context
 2. plan the implementation
 3. implement
-4. update referenced design docs or flag a design mismatch when needed
+4. update the relevant design docs in the design layer — starting from the references, but not limited to them — or flag a design mismatch when needed
 5. create the PR
 6. declare design impact: `none`, `updated-docs`, or `decision-needed`
 

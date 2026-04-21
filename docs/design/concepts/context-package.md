@@ -19,13 +19,13 @@ Answers: What system are we building? What constraints are in force? What ration
 
 The workstream's durable intent: Purpose, Approach, Design References, and Boundaries.
 
-This is how the builder narrows project-level design into a specific effort — defining the workstream's boundaries and design surface.
+This is how the builder narrows project-level design into a specific effort — defining the workstream's boundaries and design surface. Design References are navigation hints about where to start, not an exhaustive allowlist over the wider design layer.
 
 ## Layer 2 — Operational State
 
 The current situation: Current State, Decisions, and Open Questions.
 
-This layer orients the orchestrator and builder to what just happened, what is in flight, and what comes next. It is a durable summary, not a telemetry feed. Session heartbeats, tracker caches, and launch metadata live outside the committed artifact layer.
+This layer orients the orchestrator and builder to what just happened, what is in flight, and what comes next. It is a durable summary, not a telemetry feed. Session runtime state, tracker caches, and launch metadata live outside the committed artifact layer.
 
 ## Layer 3 — Node Context
 
@@ -35,4 +35,4 @@ The worker never reconstructs the whole workstream. It receives project design, 
 
 ## Progressive Disclosure
 
-Agents read the full design set by default. The design index is small enough to include broadly, and the complete set of design docs gives any session the project-level context it needs. Each successive layer narrows context further — from the entire project down to one node's mission.
+Workers retain access to the full design set through the repo. The generated Layer 0 bundle front-loads the design index plus the most relevant design docs for initialization, then the worker can keep reading deeper from the broader design layer as needed. Design References bias ordering and emphasis — they tell the session what to look at first, not what it is forbidden to read. Each successive layer narrows context further — from the entire project down to one node's mission.

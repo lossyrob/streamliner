@@ -372,7 +372,7 @@ The graph carries the same information structurally:
 }
 ```
 
-The brief is the readable surface. `designRefs` is the deterministic surface Streamliner uses for context assembly, node inspection, and design-aware review.
+The brief is the readable surface. `designRefs` is the deterministic surface Streamliner uses to point context assembly, node inspection, and design-aware review toward the right starting places. It is not an allowlist over the wider design layer.
 
 ### Design docs do not reference workstreams
 
@@ -396,7 +396,7 @@ The brief's `Decisions` section is still useful, but only for **workstream-local
 
 The design layer becomes **Layer 0** of the context package:
 
-- **Layer 0 - Project Design Context**: relevant `current` design docs and accepted decisions
+- **Layer 0 - Project Design Context**: the design index, front-loaded `current` design docs and accepted decisions, with access to the broader design layer
 - **Layer 1 - Workstream Intent**: Purpose, Approach, Design References, Boundaries
 - **Layer 2 - Operational State**: Current State, Decisions, Open Questions
 - **Layer 3 - Node Context**: wave context, node spec, coordination notes
@@ -404,7 +404,7 @@ The design layer becomes **Layer 0** of the context package:
 Progressive disclosure matters:
 
 - the design index is small enough to include broadly
-- only the design docs relevant to the current work should be loaded automatically
+- the initial bundle should front-load the design docs most relevant to the current work without turning `designRefs` into an allowlist
 - draft docs should only be included when explicitly referenced
 
 ### Design impact on completion
