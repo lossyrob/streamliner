@@ -43,7 +43,7 @@ export default defineConfig({
           { text: 'Decision Records', link: '/decisions/' },
           { text: '001 — Observation-Based Session Tracking', link: '/decisions/001-observation-based-session-tracking' },
           { text: '002 — File-Based Context Delivery', link: '/decisions/002-file-based-context-delivery' },
-          { text: '003 — PAW Hardened State Integration', link: '/decisions/003-paw-hardened-state-integration' },
+          { text: '003 — PAW Control State Integration', link: '/decisions/003-paw-control-state-integration' },
         ]
       }
     ],

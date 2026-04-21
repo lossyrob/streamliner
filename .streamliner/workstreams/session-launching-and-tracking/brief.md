@@ -32,7 +32,7 @@ derived UI state rather than written back into `graph.json`.
 - `streamliner:docs/design/session-system.md` - session launching, lifecycle, tracking, and runtime overlay
 - `streamliner:docs/design/decisions/001-observation-based-session-tracking.md` - rationale for observation-based session tracking
 - `streamliner:docs/design/decisions/002-file-based-context-delivery.md` - rationale for file-based context delivery
-- `streamliner:docs/design/decisions/003-paw-hardened-state-integration.md` - rationale for reading PAW hardened state as the workflow progression source
+- `streamliner:docs/design/decisions/003-paw-control-state-integration.md` - rationale for reading PAW control state as the workflow progression source
 
 ## Boundaries
 - **In scope:** Repo-local Streamliner initialization, design-doc bootstrap,
@@ -85,10 +85,11 @@ backend and UI implementation in subsequent waves.
   session.
 - Bind launched sessions through a launch claim keyed by launch nonce plus
   `cwd`/branch/window guardrails rather than `cwd` alone.
-- Read PAW `## Hardened State` from `WorkflowContext.md` / `ReviewContext.md` as
-  the authoritative source for workflow progression in the runtime overlay,
-  keeping session liveness (Copilot session state) and workflow progression
-  (PAW hardened state) as two orthogonal observation sources.
+- Read PAW `## Control State` (including `Workflow Identity`) from
+  `WorkflowContext.md` / `ReviewContext.md` as the authoritative source for
+  workflow progression in the runtime overlay, keeping session liveness
+  (Copilot session state) and workflow progression (PAW control state) as
+  two orthogonal observation sources.
 
 ## Open Questions
 - When should runtime-discovered progress be promoted into committed workstream

@@ -56,7 +56,7 @@
     },
     {
       "repoId": "streamliner",
-      "path": "docs/design/decisions/003-paw-hardened-state-integration.md"
+      "path": "docs/design/decisions/003-paw-control-state-integration.md"
     }
   ],
   "nodes": [
@@ -146,7 +146,7 @@
       "id": "session-tracking-model",
       "type": "task",
       "title": "Session state observation",
-      "summary": "Extend initial launch-claim binding into the full observation-based session tracking model: watch Copilot session state files, detect turn boundaries from events.jsonl, process hook signal files, derive idle/needs-input state, and read PAW `## Hardened State` from `WorkflowContext.md` / `ReviewContext.md` as the workflow progression source (with legacy artifact inference as fallback).",
+      "summary": "Extend initial launch-claim binding into the full observation-based session tracking model: watch Copilot session state files, detect turn boundaries from events.jsonl, process hook signal files, derive idle/needs-input state, and read PAW `## Control State` (including `Workflow Identity`) from `WorkflowContext.md` / `ReviewContext.md` as the workflow progression source (with legacy artifact inference as fallback).",
       "status": "planned",
       "attention": "focus",
       "repoIds": ["streamliner"],

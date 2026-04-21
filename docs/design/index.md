@@ -35,7 +35,7 @@ Streamliner helps a single builder direct many concurrent AI coding agent workst
 |---|---|---|---|
 | 001 | [Observation-based session tracking](decisions/001-observation-based-session-tracking.md) | accepted | 2026-04-14 |
 | 002 | [File-based context delivery](decisions/002-file-based-context-delivery.md) | accepted | 2026-04-14 |
-| 003 | [PAW hardened state as the workflow progression source](decisions/003-paw-hardened-state-integration.md) | accepted | 2026-04-20 |
+| 003 | [PAW control state as the workflow progression source](decisions/003-paw-control-state-integration.md) | accepted | 2026-04-20 |
 
 ## Open questions
 
