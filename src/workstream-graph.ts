@@ -7,8 +7,8 @@ import type {
 
 const TASK_NODE_WIDTH = 304;
 const TASK_NODE_HEIGHT = 168;
-const GATE_NODE_WIDTH = 272;
-const GATE_NODE_HEIGHT = 116;
+const GATE_NODE_WIDTH = 384;
+const GATE_NODE_HEIGHT = 96;
 
 export type WorkstreamGraphNodeHighlight =
   | "selected"

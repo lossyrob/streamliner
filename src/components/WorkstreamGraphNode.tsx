@@ -35,7 +35,13 @@ function statusClassName(value: string) {
   }
 }
 
-function NodeBadges({ data }: { data: WorkstreamGraphNodeData }) {
+function NodeBadges({
+  data,
+  gate,
+}: {
+  data: WorkstreamGraphNodeData;
+  gate: boolean;
+}) {
   const pullRequestCount =
     data.entry.githubIssue?.linkedPullRequests.length ??
     (data.entry.activePullRequest ? 1 : 0);
@@ -47,8 +53,14 @@ function NodeBadges({ data }: { data: WorkstreamGraphNodeData }) {
       >
         {formatLabel(data.entry.operationalStatus)}
       </span>
-      <span className="sl-node-pill muted">{data.entry.node.type}</span>
-      <span className="sl-node-pill muted">{data.entry.node.attention}</span>
+      {gate ? (
+        <span className="sl-node-pill muted">milestone</span>
+      ) : (
+        <>
+          <span className="sl-node-pill muted">{data.entry.node.type}</span>
+          <span className="sl-node-pill muted">{data.entry.node.attention}</span>
+        </>
+      )}
       {pullRequestCount > 0 ? (
         <span className="sl-node-pill muted">
           {pullRequestCount} PR{pullRequestCount === 1 ? "" : "s"}
@@ -84,7 +96,7 @@ function NodeShell({
       {data.showId ? (
         <div className="sl-node-id">{data.entry.node.id}</div>
       ) : null}
-      <NodeBadges data={data} />
+      <NodeBadges data={data} gate={gate} />
       <div className="sl-node-summary">{data.entry.node.summary}</div>
       <div className="sl-node-meta">
         <span>{data.repoLabel}</span>

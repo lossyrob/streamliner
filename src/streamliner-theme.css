@@ -593,8 +593,43 @@ body,
 }
 
 .sl-node.gate {
-  min-height: 108px;
-  border-style: dashed;
+  min-height: 80px;
+  padding: 10px 18px;
+  gap: 4px;
+  background: linear-gradient(
+    90deg,
+    var(--sl-accent-bg) 0%,
+    rgba(255, 255, 255, 0.92) 100%
+  );
+  border-style: solid;
+  border-width: 1px 1px 1px 4px;
+  border-color: var(--sl-accent-border);
+  border-left-color: var(--sl-accent);
+  border-radius: 10px;
+  box-shadow: 0 4px 14px rgba(31, 58, 105, 0.06);
+}
+
+.sl-node.gate .sl-node-title {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--sl-accent);
+  -webkit-line-clamp: 1;
+}
+
+.sl-node.gate .sl-node-summary {
+  font-size: 12px;
+  -webkit-line-clamp: 2;
+  color: var(--sl-text-mid);
+}
+
+.sl-node.gate .sl-node-badges {
+  gap: 4px;
+}
+
+.sl-node.gate .sl-node-meta {
+  display: none;
 }
 
 .sl-node.selected {
