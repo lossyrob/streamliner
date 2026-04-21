@@ -54,6 +54,13 @@ export interface WorkstreamDerivedNode {
   activePullRequest?: WorkstreamGithubPullRequestSnapshot;
 }
 
+export interface WorkstreamCheckpointProgress {
+  checkpoint: WorkstreamCheckpoint;
+  totalNodes: number;
+  completedNodes: number;
+  isCurrent: boolean;
+}
+
 export interface WorkstreamViewModel {
   readyNow: WorkstreamNode[];
   inFlight: WorkstreamNode[];
@@ -64,6 +71,7 @@ export interface WorkstreamViewModel {
   derivedNodes: WorkstreamDerivedNode[];
   freshness: WorkstreamFreshness;
   signals: WorkstreamSignal[];
+  checkpoints: WorkstreamCheckpointProgress[];
 }
 
 const STALE_ARTIFACT_MS = 7 * 24 * 60 * 60 * 1000;
@@ -510,6 +518,34 @@ function selectActionablePullRequest(
   );
 }
 
+function buildCheckpointProgress(
+  workstream: WorkstreamDocument,
+  completedNodeIds: Set<string>,
+): WorkstreamCheckpointProgress[] {
+  let currentAssigned = false;
+  return workstream.checkpoints.map((checkpoint) => {
+    const totalNodes = checkpoint.nodeIds.length;
+    const completedNodes = checkpoint.nodeIds.reduce(
+      (count, nodeId) => (completedNodeIds.has(nodeId) ? count + 1 : count),
+      0,
+    );
+    const isComplete =
+      checkpoint.status === "completed" ||
+      (totalNodes > 0 && completedNodes === totalNodes);
+    let isCurrent = false;
+    if (!currentAssigned && !isComplete) {
+      isCurrent = true;
+      currentAssigned = true;
+    }
+    return {
+      checkpoint,
+      totalNodes,
+      completedNodes,
+      isCurrent,
+    };
+  });
+}
+
 function buildArtifactOnlyViewModel(
   workstream: WorkstreamDocument,
   freshness: WorkstreamFreshness,
@@ -587,6 +623,15 @@ function buildArtifactOnlyViewModel(
         node.status === "completed" ? ("artifact" as const) : null,
     }),
   );
+  const artifactCompletedNodeIds = new Set(
+    derivedNodes
+      .filter((entry) => entry.node.status === "completed")
+      .map((entry) => entry.node.id),
+  );
+  const checkpoints = buildCheckpointProgress(
+    workstream,
+    artifactCompletedNodeIds,
+  );
 
   return {
     readyNow,
@@ -598,6 +643,7 @@ function buildArtifactOnlyViewModel(
     derivedNodes,
     freshness,
     signals,
+    checkpoints,
   };
 }
 
@@ -782,6 +828,8 @@ export function buildWorkstreamViewModel(
     },
   ];
 
+  const checkpoints = buildCheckpointProgress(workstream, completedNodeIds);
+
   return {
     readyNow,
     inFlight,
@@ -792,5 +840,6 @@ export function buildWorkstreamViewModel(
     derivedNodes,
     freshness,
     signals,
+    checkpoints,
   };
 }

@@ -11,6 +11,7 @@ import type { WorkstreamDocument } from "./workstream-schema";
 import { WorkstreamCanvas } from "./components/WorkstreamCanvas";
 import { NodeInspector } from "./components/NodeInspector";
 import { OperationalStatusStrip } from "./components/OperationalStatusStrip";
+import { CheckpointStepper } from "./components/CheckpointStepper";
 import { WorkstreamHeader } from "./components/WorkstreamHeader";
 
 const POLL_INTERVAL_MS = 2000;
@@ -210,6 +211,7 @@ export default function App() {
         onSwitchRecent={switchToRecent}
       />
       <OperationalStatusStrip viewModel={viewModel} />
+      <CheckpointStepper checkpoints={viewModel.checkpoints} />
       <div className="sl-body">
         <ReactFlowProvider>
           <WorkstreamCanvas
