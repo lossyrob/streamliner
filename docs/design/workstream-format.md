@@ -43,6 +43,12 @@ Runtime state contracts:
 - Writers update files atomically (write-then-rename)
 - Readers tolerate missing or stale files
 - Entries record originating cwd/worktree path for multi-worktree reconciliation
+- **Every materialized runtime-state file carries a top-level `schemaVersion` integer.** Readers that encounter an unknown `schemaVersion` treat the file as opaque and ignore it rather than partially parsing it. Writers only mutate files whose `schemaVersion` matches the writer's expected version; a mismatch triggers a quarantine-and-recreate path, never an in-place merge of incompatible shapes.
+
+### Runtime-state open questions
+
+- **Multi-process coordination**: When two Streamliner instances observe the same `projectKey` (e.g., a UI process plus a background watcher, or two worktrees against the same planning repo), who owns the single-writer role for each file? Near-term answer: treat one instance as primary via a process lock; longer-term answer deferred until concurrent-writer scenarios appear in practice.
+- **Schema migration**: When `schemaVersion` is bumped, is migration lazy (rewrite on first access) or eager (one-shot at startup)? Pick before shipping the first `schemaVersion: 2` change.
 
 ### The separation principle
 

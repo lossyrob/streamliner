@@ -53,7 +53,13 @@ If hooks are not installed or fail, the watcher still derives the same state tra
 ## Consequences
 
 - Streamliner depends on Copilot CLI's undocumented session state file format. Changes to that format require updating the watcher. This is an accepted trade-off: the format has been stable enough for production use over months of observation, and the alternative (requiring agent cooperation) is less reliable.
+- **Streamliner must run a startup compatibility probe** that asserts the presence and approximate shape of the event types it depends on (`assistant.turn_start`, `assistant.turn_end`, `tool.execution_start`, `tool.execution_complete`, `session.start`, hook signals) against a sample of recent session directories. If the probe finds an unknown event layout or a missing required type, Streamliner surfaces a "Copilot CLI compatibility unverified" diagnostic in the UI and degrades overlay confidence until the builder acknowledges or a new watcher release ships.
+- **The supported Copilot CLI version range is recorded in Streamliner's source** and surfaced on the same diagnostic surface as the PAW contract range. The probe uses `copilot --version` where available as an additional signal.
 - Turn boundary detection requires reading the tail of `events.jsonl` and parsing event types. This is bounded (read last 64KB, grow to 512KB if needed) but is more complex than reading a simple status file.
 - Node-to-session binding requires a separate mechanism (launch claims keyed by `launchNonce` with `cwd`/branch/window guardrails) since Copilot's session files do not know about Streamliner's graph model.
 - The kickoff prompt becomes part of the binding contract because it must carry the launch nonce into the session's early event stream.
 - Remote session observation remains out of scope for the accepted design. If Streamliner later supports remote launches, it will need a separate design for discovering and reading remote session-state roots.
+
+## Open questions
+
+- **CLI upgrade playbook**: What is the process when a new Copilot CLI version changes event shapes? Options include shipping watcher fixes before auto-upgrading, pinning a known-good CLI version at the Streamliner level, or accepting a grace period of degraded overlay confidence. Pick before the first production-impacting CLI change.

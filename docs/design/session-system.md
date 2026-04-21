@@ -235,10 +235,10 @@ Streamliner watches the session state root directory (`~/.copilot/session-state/
 
 The watcher polls `events.jsonl` modification times at a configurable interval (default: 30 seconds). When the file's mtime changes:
 
-1. Read the last N events from the file (tail read, bounded to avoid reading enormous logs)
+1. Read only the new bytes since the last read (incremental tail, anchored on the byte offset of the last parsed event) rather than a point-in-time tail window. This guarantees every event is seen exactly once regardless of log size.
 2. Extract metadata: repository, branch, turn count
 3. Detect turn boundaries: look for `assistant.turn_end` events or `agentStop` hook events without a subsequent `assistant.turn_start`
-4. Detect pending input: look for unresolved `ask_user` tool requests (an `ask_user` in `assistant.message.toolRequests` without a matching `tool.execution_complete`)
+4. Detect pending input: maintain a **per-session incremental index of open tool requests**. As each `assistant.message.toolRequests` entry is observed, record its tool-call ID in the session's open-requests set; as each `tool.execution_complete` is observed, remove the matching ID. `pendingInputRequest` is true iff the open-requests set contains an `ask_user` call. The index persists across watcher restarts (rehydrated from runtime state) so long-running sessions do not lose pending-input detection when an unresolved request falls outside any bounded tail window.
 5. Detect PAW workflow state: for each active `.paw/work/*/` directory reachable from the session's `cwd`, parse `WorkflowContext.md` (and `ReviewContext.md` for PAW Review sessions). When a `## Control State` section is present, use its `Workflow Identity`, required-item statuses, gate items, procedure items, and `Reconciliation` marker as the authoritative view of workflow progression. When absent, fall back to legacy inference from artifact presence. See [Decision 003](decisions/003-paw-control-state-integration.md).
 
 ### Two Orthogonal State Sources
@@ -276,6 +276,29 @@ Streamliner binds sessions to graph nodes through **launch claims**. When a laun
 
 This keeps the binding in Streamliner's domain while relying on Copilot's files for everything about the session itself. `cwd` remains an important guardrail, but it is no longer treated as a sufficient identifier on its own.
 
+### Launch Claim Lifecycle
+
+Launch claims are transient. They must be actively reconciled or aged out, or they become ambient noise that corrupts future bindings.
+
+- **Claim creation** writes the claim atomically to runtime state before the terminal launch command runs. If SDK preparation fails before the launch command is issued, the claim is deleted on the same failure path that cleans up context files.
+- **Binding window**: a claim is eligible for binding only while its launch window is open. The default window is 5 minutes from `launchedAt`. Inside the window, the watcher attempts to bind discovered sessions by nonce plus `cwd`/branch guardrails.
+- **Claim expiry**: if no session binds within the window, the claim transitions to `abandoned`. Abandoned claims are retained for a short inspection period (default: 1 hour) so the builder can see that a launch failed to attach, then pruned.
+- **Nonce tampering**: the kickoff prompt includes the launch nonce on a dedicated line. If the builder edits or deletes the nonce line before pressing Enter, the session's early events will not contain the expected nonce. The claim expires normally; the orphan session is surfaced in the UI (see below) so the builder can rebind it manually or discard it.
+- **Unbound-session surface**: sessions discovered by the watcher that match no claim within the binding window (or are deliberately launched outside Streamliner) appear in a dedicated "Unbound sessions" panel. The builder can bind them to a node explicitly, ignore them, or let them age out with the rest of the session history.
+- **Single session per claim**: a claim binds at most one session. Once bound, the claim is marked `bound` and subsequent discoveries matching the same nonce are logged as anomalies rather than rebinding.
+
+### Watcher Diagnostics
+
+Because session tracking combines several independent observation sources, the watcher exposes a per-session diagnostic record so operational disagreements between the UI and reality are debuggable without ad-hoc log archaeology.
+
+Each session carries:
+
+- **Last successful Copilot parse** — timestamp and byte offset of the last `events.jsonl` read that succeeded, plus the number of open tool requests in the incremental index.
+- **Last successful PAW parse** — timestamp of the last `WorkflowContext.md` / `ReviewContext.md` read, along with the derivation path used (`control-state`, `inferred`, or `unparsable`; see [Decision 003](decisions/003-paw-control-state-integration.md)).
+- **Hook signal counters** — count of `sessionStart`, `agentStop`, `sessionEnd` signals received vs. equivalent transitions inferred from polling, so "hooks silently stopped firing" is visible.
+
+In addition, the watcher emits structured diagnostic events (not free-form logs) for every degradation mode it recognizes: `hook-miss`, `tail-truncation`, `nonce-absent-after-window`, `legacy-inference-used`, `unknown-control-state-token`, `copilot-compatibility-probe-failed`, `paw-contract-version-out-of-range`. These events are retained alongside session history and surfaced in the diagnostic view. The UI shows a compact degradation badge on any session whose diagnostics are non-empty so the builder never has to guess whether the overlay can be trusted.
+
 ## Runtime Overlay
 
 The runtime overlay is how Streamliner presents live session and tracker state in the UI without modifying the committed graph.
@@ -300,6 +323,15 @@ Displayed state = committed graph status
 | `ready` | none | Ready |
 | `in-progress` | any | Session status takes precedence |
 | `completed` | any | Completed |
+
+### Control-State Trust Rendering
+
+The `pawWorkflow` field carries a derivation-path annotation (see [Decision 003](decisions/003-paw-control-state-integration.md)) and, when control state is present, a `Reconciliation` marker. Both drive UI trust:
+
+- **`control-state` + `Reconciliation: current`** — full confidence. All affordances rendered, including "ready to launch next activity."
+- **`control-state` + `Reconciliation: stale | external_unverified | not_run`** — overlay visibly downgrades confidence (muted colors, "reconciliation stale" badge). "Ready to launch next activity" affordances are suppressed until reconciliation is refreshed. The builder may still inspect state but cannot trigger mutation-affecting actions from the overlay.
+- **`inferred`** — legacy artifact-presence fallback. Overlay renders with a "legacy inference" badge. Mutation-affecting affordances are suppressed.
+- **`unparsable`** — control state present but rejected by the parser (unknown tokens, out-of-range contract version). Overlay shows an error badge and the underlying diagnostic. No activity-status rendering until the parser is updated or the builder acknowledges the condition.
 
 ### Artifact Promotion
 
@@ -371,3 +403,5 @@ Clicking a session in the list focuses its terminal (when the terminal integrati
 - **Multiple sessions per node**: Can a node have multiple concurrent sessions (e.g., after a crash and relaunch)? If so, how are they reconciled?
 - **Context staleness**: If a session runs long enough that the workstream state changes (brief updated, graph refined), should the session be notified or continue with its original context?
 - **Remote session observation**: When sessions run on a devbox, how does Streamliner observe the remote session state directory? SSH polling or a forwarded watcher?
+- **Watcher restart rehydration**: On a cold watcher start against an active session, how far back does the incremental tool-request index need to be rebuilt to catch unresolved `ask_user` calls from before the restart? Options: re-scan the full log (bounded by an explicit budget), or treat pre-restart state as unknown until the next turn.
+- **Concurrent Streamliner instances**: What happens when two Streamliner processes (e.g., the UI and a background watcher, or two worktrees) observe the same `projectKey`? Coordination is deferred; see the runtime-state open question in [workstream-format](workstream-format.md).

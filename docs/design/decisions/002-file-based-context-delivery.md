@@ -40,6 +40,14 @@ The context directory is excluded from Git (via `.gitignore`) and regenerated on
 ## Consequences
 
 - Context assembly becomes a backend responsibility. The backend must know how to extract brief sections, use design references as prioritization hints into the design layer, and read node specs from trackers.
-- Context files are snapshots at launch time. If the workstream state changes after launch, the session works from its original context. This is intentional: sessions should not silently drift as upstream state changes.
+- Context files are snapshots at launch time. If the workstream state changes after launch, the session works from its original context. This is intentional: sessions should not silently drift as upstream state changes. This trade-off becomes sharper as session duration grows; multi-day PAW workflows need an explicit freshness story (see open questions).
+- **Each launch's assembled context is archived to runtime state** at `~/.streamliner/state/{projectKey}/{workstream-id}/launches/{launchNonce}/context/` alongside a manifest recording the brief commit SHA, each source file's commit SHA or hash, the design-layer commit SHA, the Layer 0 selection the assembler made, and the launch timestamp. Archives are retained by policy (see open questions) so a post-incident builder can reconstruct exactly what a session saw.
+- **The generated context files in `.paw/work/<work-id>/context/` carry a generation header** naming the work ID, launch nonce, brief commit SHA, and "do not edit — regenerated on each launch" marker, so the worker and later reviewers can distinguish them from manually authored artifacts at a glance.
 - The PAW workflow skill needs to recognize and load the `context/` directory. This is a coordination point between Streamliner and the PAW skill system.
 - Generated context files should be clearly marked as generated (e.g., with a header comment) to prevent confusion with manually authored artifacts.
+
+## Open questions
+
+- **Archive retention policy**: How long are launch context archives kept? Options: last N launches per workstream, last N days, unbounded until manual clean. Resolve before launching multi-day PAW workflows routinely, because that is where forensic replay matters most.
+- **Brief drift during long sessions**: Should Streamliner compare the brief's current commit SHA against the launched snapshot and warn the worker or the builder when they diverge mid-session? A passive staleness banner is the near-term minimum; active notification is deferred. This open question must be resolved before multi-day PAW workflows are considered supported.
+- **LLM-chosen Layer 0 selection logging**: The Layer 0 assembler picks which design docs to front-load based on designRefs hints plus its own judgment. That selection is captured in the launch manifest so a later reviewer can see what was chosen and why.
