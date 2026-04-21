@@ -128,9 +128,6 @@ registry rather than introducing parallel surfaces.
   IDE terminal APIs?
 - How should Streamliner observe remote session-state roots for devbox-launched
   sessions?
-- Registry persistence: per-session JSON files plus an index, or a single
-  SQLite store? (Leaning JSON for hand-editability and alignment with the
-  observation-based pattern.)
 - Windows Terminal tab color bridge: feasible via profile/tab title + tabColor,
-  or better deferred until a cross-platform strategy is clearer? (Spike inside
-  `session-registry-model`.)
+  or better deferred until a cross-platform strategy is clearer? (Tracked by
+  the separate `terminal-tab-color-spike` node after `session-registry-model`.)

@@ -85,6 +85,15 @@ export interface LaunchedSessionRegistryUpsertInput
   graphBinding?: SessionRegistryGraphBinding | null;
 }
 
+export interface SessionRegistryObservedLinkInput {
+  copilotSessionId: string;
+  cwd: string;
+  repo?: string | null;
+  branch?: string | null;
+  lastSeenAt?: string | null;
+  lifecycleStatus?: Exclude<SessionRegistryLifecycleStatus, "archived">;
+}
+
 export type SessionRegistryUpsertInput =
   | ManualSessionRegistryUpsertInput
   | ObservedSessionRegistryUpsertInput
@@ -136,6 +145,10 @@ export interface SessionRegistryStore {
   listSessions(options?: SessionRegistryListOptions): SessionRegistryListItem[];
   getSession(id: string): SessionRegistryRecord | null;
   upsertSession(input: SessionRegistryUpsertInput): SessionRegistryRecord;
+  attachObservedSession(
+    id: string,
+    observation: SessionRegistryObservedLinkInput,
+  ): SessionRegistryRecord;
   patchSession(id: string, patch: SessionRegistryPatch): SessionRegistryRecord;
   archiveSession(id: string): SessionRegistryRecord;
   deleteSession(id: string): void;

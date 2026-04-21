@@ -245,7 +245,7 @@ Each registry entry is a persisted `SessionRegistryRecord`. The stored lifecycle
 |-------|------|----------|--------|-------|
 | `schemaVersion` | integer | yes | Streamliner | Record schema version. Starts at `1`. |
 | `id` | string | yes | Streamliner | Stable Streamliner-owned identifier. It is never the Copilot session id. |
-| `title` | string | yes | Builder | Short editable label. |
+| `title` | string | yes | Builder | Short editable label. Observation-created rows bootstrap this from `workspace.yaml.summary`, then fall back to repo/cwd naming until the builder edits it. |
 | `description` | string | yes | Builder | Longer editable notes; empty string allowed. |
 | `color` | string or `null` | yes | Builder | Palette token or hex; single source of truth for terminal/UI color bridges. |
 | `cwd` | string | yes | Observation or builder | Absolute relaunch path and merge guardrail. |
@@ -334,6 +334,7 @@ The dashboard and future relaunch flows consume the registry through a shared in
 | `listSessions(options?)` | Returns list items sorted by `lastSeenAt` then `updatedAt`; excludes archived rows by default; `options.text` matches `title`, `description`, and `tags`. |
 | `getSession(id)` | Returns the full registry record or `null`. |
 | `upsertSession(input)` | Creates or replaces a row for manual, observed, or launched sources using the identity/merge rules above. Lifecycle input is source-sensitive: observation may upsert rows that are already `ended`; caller-driven manual/launch upserts may not create `ended` or `archived` rows directly. |
+| `attachObservedSession(id, observation)` | Links a discovered Copilot session onto an existing manual or launched row without rewriting its original `origin.kind`. Observation-owned fields (`copilotSessionId`, `lastSeenAt`, `cwd`, `repo`, `branch`, observation-driven `ended`) flow through this operation. |
 | `patchSession(id, patch)` | Applies builder-owned edits (`title`, `description`, `color`, `tags`, `graphBinding`, builder-driven lifecycle changes). Builder patches do not force `ended`. |
 | `archiveSession(id)` | Convenience mutation that sets `lifecycleStatus` to `archived`. |
 | `deleteSession(id)` | Explicit destructive cleanup for rows the builder intentionally wants removed; never used by observation. |

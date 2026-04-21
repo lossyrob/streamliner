@@ -108,6 +108,17 @@ describe("session registry schema", () => {
         ...record,
         title: input.title,
       }),
+      attachObservedSession: (id, observation) => ({
+        ...record,
+        id,
+        copilotSessionId: observation.copilotSessionId,
+        cwd: observation.cwd,
+        repo: observation.repo ?? record.repo,
+        branch: observation.branch ?? record.branch,
+        lastSeenAt: observation.lastSeenAt ?? record.lastSeenAt,
+        lifecycleStatus:
+          observation.lifecycleStatus ?? record.lifecycleStatus,
+      }),
       patchSession: (id, nextPatch) => ({
         ...record,
         id,
@@ -138,6 +149,13 @@ describe("session registry schema", () => {
     expect(store.listSessions({ includeArchived: true })[0].originKind).toBe(
       "manual",
     );
+    expect(
+      store.attachObservedSession(record.id, {
+        copilotSessionId: "copilot-session-456",
+        cwd: record.cwd,
+        lifecycleStatus: "ended",
+      }).copilotSessionId,
+    ).toBe("copilot-session-456");
     expect(store.patchSession(record.id, patch).lifecycleStatus).toBe("paused");
     expect(store.archiveSession(record.id).lifecycleStatus).toBe("archived");
 
