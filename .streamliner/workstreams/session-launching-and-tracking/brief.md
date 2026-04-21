@@ -48,6 +48,7 @@ derived UI state rather than written back into `graph.json`.
 - `streamliner:docs/design/decisions/001-observation-based-session-tracking.md` - rationale for observation-based session tracking
 - `streamliner:docs/design/decisions/002-file-based-context-delivery.md` - rationale for file-based context delivery
 - `streamliner:docs/design/decisions/003-paw-control-state-integration.md` - rationale for reading PAW control state as the workflow progression source
+- `streamliner:docs/design/decisions/004-session-registry-primary-surface.md` - rationale for treating the session registry as the primary session surface
 
 ## Boundaries
 - **In scope:** Repo-local Streamliner initialization, design-doc bootstrap,
@@ -114,10 +115,11 @@ registry rather than introducing parallel surfaces.
   workflow progression in the runtime overlay, keeping session liveness
   (Copilot session state) and workflow progression (PAW control state) as
   two orthogonal observation sources.
-- Treat the **session registry as the primary session surface**; the graph
-  overlay is a projection of the registry. Pull manual tracking ahead of the
-  launch pipeline so restart recovery ships independently of launch work
-  (issue #9, pending decision record).
+- Treat the **session registry as the primary session surface** ([Decision
+  004](docs/design/decisions/004-session-registry-primary-surface.md)); the
+  graph overlay is a projection of the registry. Pull manual tracking ahead of
+  the launch pipeline so restart recovery ships independently of launch work
+  (issue #9).
 
 ## Open Questions
 - When should runtime-discovered progress be promoted into committed workstream

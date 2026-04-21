@@ -16,11 +16,13 @@ code_paths:
 references_decisions:
   - 1
   - 2
+  - 3
+  - 4
 ---
 
 # Session System
 
-The session system is how Streamliner launches, monitors, and surfaces AI coding agent sessions. A **session** is a Copilot CLI agent instance executing a specific node's work in a workstream. Streamliner launches sessions from the graph, tracks their lifecycle by observing Copilot CLI's own session state files, and overlays live session state onto the committed graph without writing ephemeral telemetry back into `graph.json`.
+The session system is how Streamliner launches, monitors, and surfaces AI coding agent sessions. A **session** is a Copilot CLI agent instance executing a specific node's work in a workstream — or, equivalently, any Copilot CLI instance the builder has chosen to track. Streamliner maintains a local, graph-independent **session registry** as the authoritative record for tracked sessions ([Decision 004](decisions/004-session-registry-primary-surface.md)), observes each session's Copilot CLI state files to populate liveness and workflow-progression fields, and projects that combined state onto the committed graph as a runtime overlay without writing ephemeral telemetry back into `graph.json`. Sessions launched from the graph and sessions the builder tracks manually are the same kind of record; the launch pipeline writes onto an existing or newly created registry row rather than maintaining a parallel store.
 
 ## Launch Contract
 
@@ -227,9 +229,35 @@ Each Copilot CLI session maintains state at:
   events.jsonl            ← append-only event log (turns, tool calls, hooks)
 ```
 
+### Session Registry
+
+The **session registry** is Streamliner's authoritative, local-first record for tracked sessions. See [Decision 004](decisions/004-session-registry-primary-surface.md) for the rationale; the registry is graph-independent and exists so cross-session context survives restarts regardless of whether a session was launched from the graph.
+
+Each registry entry carries:
+
+| Field | Source | Purpose |
+|-------|--------|---------|
+| `id` | Streamliner | Registry-scoped id, distinct from the Copilot session id |
+| `title`, `description` | Builder | Human-meaningful context, autosaved on change |
+| `color` | Builder | Single source of truth for platform color bridges (e.g., Windows Terminal tab color) |
+| `cwd`, `repo`, `branch` | Observation + builder override | Relaunch target and binding guardrails |
+| `copilotSessionId` | Observation | Links the entry to a live or historical Copilot CLI session when one is known |
+| `status` | Observation + builder override | `active | paused | ended | archived` |
+| `lastSeenAt` | Observation | Drives staleness surfacing and sort order |
+| `tags` | Builder | Freeform in Wave 2; grouping semantics are deferred |
+| `graphBinding` | Launch pipeline / builder | Optional `{ workstreamId, nodeId, launchClaimId }` — populated when the session is bound to a graph node |
+
+Registry entries are created either by **observation import** (the watcher discovers a Copilot session without a matching registry row and creates one in `active` state with the metadata it has, which the builder can then edit) or as **manual entries** (the builder creates a row for a session Streamliner has not yet observed, or for a session running in an environment not yet watched). Manual entries become linked when observation later finds a matching Copilot session.
+
+Observation is the authoritative source for liveness-derived fields — the registry never fabricates `lastSeenAt`, `status`, or session-end reasons that observation has not confirmed. Builder-editable fields (`title`, `description`, `color`, `tags`) are durable across session ends and Streamliner restarts.
+
+Storage shape is local-first under Streamliner's runtime-state root. The default direction is per-session JSON plus an index file (aligned with how Copilot CLI already persists state), with the choice revisited in the `session-registry-model` implementation node. Entries carry a schema version; entries outside the supported range render with a "schema out of range" badge and are not mutated until reconciled.
+
+Launched-from-graph sessions (see Launch Contract above) register into the same store: the launch pipeline creates or updates a registry row and writes `graphBinding` onto it. There is no separate "launched sessions" table.
+
 ### Discovery
 
-Streamliner watches the session state root directory (`~/.copilot/session-state/`) using filesystem notifications (`fs.watch`). When a new session directory appears, the watcher reads `workspace.yaml` for initial metadata and begins polling `events.jsonl` for activity.
+Streamliner watches the session state root directory (`~/.copilot/session-state/`) using filesystem notifications (`fs.watch`). When a new session directory appears, the watcher reads `workspace.yaml` for initial metadata, creates or updates the corresponding registry entry, and begins polling `events.jsonl` for activity.
 
 ### Activity Detection
 
@@ -272,7 +300,7 @@ Streamliner binds sessions to graph nodes through **launch claims**. When a laun
 2. The kickoff prompt includes the `launchNonce` on a dedicated line so it appears in the session's early `user.message` events
 3. When the session watcher discovers a new session, it first narrows candidates by `cwd`, `branch`, and launch window, then confirms the match by finding the `launchNonce` in the session's early events
 4. If multiple claims remain plausible or the nonce has not appeared yet, the session stays unbound until more evidence arrives rather than guessing
-5. The binding is stored in Streamliner's runtime state, not in the Copilot session files
+5. The binding is stored as `graphBinding` on the session's registry row ([Decision 004](decisions/004-session-registry-primary-surface.md)), not in the Copilot session files and not in a separate binding store
 
 This keeps the binding in Streamliner's domain while relying on Copilot's files for everything about the session itself. `cwd` remains an important guardrail, but it is no longer treated as a sufficient identifier on its own.
 
@@ -301,7 +329,7 @@ In addition, the watcher emits structured diagnostic events (not free-form logs)
 
 ## Runtime Overlay
 
-The runtime overlay is how Streamliner presents live session and tracker state in the UI without modifying the committed graph.
+The runtime overlay is how Streamliner presents live session and tracker state in the UI without modifying the committed graph. The overlay is a **projection of the session registry** ([Decision 004](decisions/004-session-registry-primary-surface.md)) filtered to entries whose `graphBinding` resolves to a visible node, joined with that node's committed status, observed liveness, and PAW control state. Sessions without `graphBinding` remain visible in the registry UI but do not render on the graph.
 
 ### Overlay Model
 

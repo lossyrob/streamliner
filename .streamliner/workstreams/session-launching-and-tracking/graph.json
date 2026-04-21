@@ -7,7 +7,7 @@
   "status": "active",
   "attention": "focus",
   "createdAt": "2026-04-10T15:37:14.125Z",
-  "updatedAt": "2026-04-21T16:35:00.000Z",
+  "updatedAt": "2026-04-21T17:35:00.000Z",
   "trackingIssue": {
     "owner": "lossyrob",
     "repo": "streamliner",
@@ -57,6 +57,10 @@
     {
       "repoId": "streamliner",
       "path": "docs/design/decisions/003-paw-control-state-integration.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/004-session-registry-primary-surface.md"
     }
   ],
   "nodes": [
@@ -96,8 +100,8 @@
       "id": "registry-first-reorientation",
       "type": "research",
       "title": "Registry-first reorientation",
-      "summary": "Reorient the workstream so a manual session registry ships before the launch pipeline. Captures the shift to treating the registry as the primary session surface (graph overlay becomes a projection of it) and reshapes the downstream nodes accordingly. Should land a decision record alongside the brief/graph updates.",
-      "status": "in-progress",
+      "summary": "Reorient the workstream so a manual session registry ships before the launch pipeline. Captures the shift to treating the registry as the primary session surface (graph overlay becomes a projection of it) and reshapes the downstream nodes accordingly. Landed Decision 004 (docs/design/decisions/004-session-registry-primary-surface.md) alongside the brief/graph updates.",
+      "status": "completed",
       "attention": "focus",
       "repoIds": ["streamliner"],
       "tracker": {
