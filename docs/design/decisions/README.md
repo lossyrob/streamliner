@@ -45,3 +45,4 @@ What follows from this choice.
 | 001 | [Observation-based session tracking](001-observation-based-session-tracking.md) | accepted | 2026-04-14 |
 | 002 | [File-based context delivery](002-file-based-context-delivery.md) | accepted | 2026-04-14 |
 | 003 | [PAW control state as the workflow progression source](003-paw-control-state-integration.md) | accepted | 2026-04-20 |
+| 004 | [Session registry as the primary session surface](004-session-registry-primary-surface.md) | accepted | 2026-04-21 |

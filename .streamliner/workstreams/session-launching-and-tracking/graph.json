@@ -3,11 +3,11 @@
   "id": "session-launching-and-tracking",
   "projectKey": "streamliner",
   "title": "Session launching and tracking",
-  "summary": "Wave 1 design foundation nearing completion. Session system design now makes SDK launch preparation, Copilot CLI worker launch, and observation-based tracking explicit.",
+  "summary": "Wave 1 design foundation complete. Wave 2 pivots to a local-first manual session registry (issue #9) to deliver restart-resilient session tracking ahead of the launch pipeline. Launch-from-graph and graph overlay follow in Waves 3-4.",
   "status": "active",
   "attention": "focus",
   "createdAt": "2026-04-10T15:37:14.125Z",
-  "updatedAt": "2026-04-14T03:04:23.3497155Z",
+  "updatedAt": "2026-04-21T18:05:00.000Z",
   "trackingIssue": {
     "owner": "lossyrob",
     "repo": "streamliner",
@@ -57,6 +57,10 @@
     {
       "repoId": "streamliner",
       "path": "docs/design/decisions/003-paw-control-state-integration.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/004-session-registry-primary-surface.md"
     }
   ],
   "nodes": [
@@ -81,7 +85,7 @@
       "type": "research",
       "title": "Make workstream design explicit",
       "summary": "Run explicit design sessions for the full workstream so the launch contract, key design decisions, and downstream issue-graph adjustments are written down before more implementation issues are finalized.",
-      "status": "in-progress",
+      "status": "completed",
       "attention": "focus",
       "repoIds": ["streamliner"],
       "tracker": {
@@ -93,14 +97,60 @@
       "dependsOn": ["bootstrap-design-docs"]
     },
     {
-      "id": "wave-1-gate",
-      "type": "gate",
-      "title": "Wave 1: design foundation aligned",
-      "summary": "Repo-scoped design docs exist and the workstream's explicit design direction is clear enough to guide implementation without relying on implicit brief-or-graph assumptions.",
+      "id": "registry-first-reorientation",
+      "type": "research",
+      "title": "Registry-first reorientation",
+      "summary": "Reorient the workstream so a manual session registry ships before the launch pipeline. Captures the shift to treating the registry as the primary session surface (graph overlay becomes a projection of it) and reshapes the downstream nodes accordingly. Landed Decision 004 (docs/design/decisions/004-session-registry-primary-surface.md) alongside the brief/graph updates.",
+      "status": "completed",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "tracker": {
+        "type": "github",
+        "owner": "lossyrob",
+        "repo": "streamliner",
+        "number": 9
+      },
+      "dependsOn": ["make-workstream-design-explicit"]
+    },
+    {
+      "id": "session-registry-model",
+      "type": "research",
+      "title": "Session registry model",
+      "summary": "Define the local-first session registry: persisted record shape (id, title, description, color, cwd, repo, status, last-seen, tags), storage layout under the runtime-state root (per-session JSON + index), autosave semantics, and the observation hook that imports existing Copilot CLI sessions from their session state files per decision #001.",
       "status": "planned",
       "attention": "focus",
       "repoIds": ["streamliner"],
-      "dependsOn": ["bootstrap-design-docs", "make-workstream-design-explicit"]
+      "dependsOn": ["registry-first-reorientation"]
+    },
+    {
+      "id": "manual-session-registry-ui",
+      "type": "task",
+      "title": "Manual session registry UI",
+      "summary": "Ship a flat 'my sessions' UI surface decoupled from the graph: list every tracked session, edit title/description, assign colors, mark paused/ended/archived, autosave on change. Imports are populated from the observation hook; manual entries are also supported for sessions not yet discoverable.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["session-registry-model"]
+    },
+    {
+      "id": "session-relaunch",
+      "type": "task",
+      "title": "Session relaunch",
+      "summary": "Reopen a tracked session after a restart: open a terminal at the recorded cwd and, when the Copilot CLI session id is still resolvable, resume that session directly. Minimum viable version just restores the tab at the right cwd with the assigned color; Copilot CLI resume is a stretch within the same node. Backend action is independent of the registry UI and can land in parallel.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["session-registry-model"]
+    },
+    {
+      "id": "terminal-tab-color-spike",
+      "type": "research",
+      "title": "Windows Terminal color bridge spike",
+      "summary": "Spike feasibility of reflecting the registry's assigned color into Windows Terminal (tab title + tabColor via profile or wt.exe args). Decide whether Wave 2 ships the bridge or defers it. Independent of the registry UI and relaunch work.",
+      "status": "planned",
+      "attention": "watch",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["session-registry-model"]
     },
     {
       "id": "backend-context-assembly",
@@ -110,7 +160,17 @@
       "status": "planned",
       "attention": "watch",
       "repoIds": ["streamliner"],
-      "dependsOn": ["wave-1-gate"]
+      "dependsOn": ["manual-session-registry-ui", "session-relaunch"]
+    },
+    {
+      "id": "launch-claim-binding",
+      "type": "task",
+      "title": "Launch claim binding",
+      "summary": "Record launch claims before terminal startup and bind discovered sessions using a launch nonce plus cwd/branch/window guardrails so the visible Copilot CLI session attaches to the correct graph node. Launched sessions also register into the Wave 2 session registry rather than introducing a parallel tracking surface. Independent of the SDK-prep chain and can land in parallel.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["manual-session-registry-ui", "session-relaunch"]
     },
     {
       "id": "copilot-sdk-paw-init",
@@ -123,50 +183,50 @@
       "dependsOn": ["backend-context-assembly"]
     },
     {
-      "id": "launch-claim-binding",
-      "type": "task",
-      "title": "Launch claim binding",
-      "summary": "Record launch claims before terminal startup and bind discovered sessions using a launch nonce plus cwd/branch/window guardrails so the visible Copilot CLI session attaches to the correct graph node.",
-      "status": "planned",
-      "attention": "focus",
-      "repoIds": ["streamliner"],
-      "dependsOn": ["copilot-sdk-paw-init"]
-    },
-    {
       "id": "terminal-launch-integration",
       "type": "task",
       "title": "Terminal launch integration",
-      "summary": "Launch a visible Copilot CLI interactive session from the graph with the prepared kickoff prompt so the operator can watch and intervene in the PAW session as needed.",
+      "summary": "Launch a visible Copilot CLI interactive session from the graph with the prepared kickoff prompt so the operator can watch and intervene in the PAW session as needed. Creates/updates the corresponding registry entry on launch and consumes the bound launch claim.",
       "status": "planned",
       "attention": "focus",
       "repoIds": ["streamliner"],
-      "dependsOn": ["launch-claim-binding"]
+      "dependsOn": ["copilot-sdk-paw-init", "launch-claim-binding"]
     },
     {
-      "id": "session-tracking-model",
+      "id": "session-event-observation",
       "type": "task",
-      "title": "Session state observation",
-      "summary": "Extend initial launch-claim binding into the full observation-based session tracking model: watch Copilot session state files, detect turn boundaries from events.jsonl, process hook signal files, derive idle/needs-input state, and read PAW `## Control State` (including `Workflow Identity`) from `WorkflowContext.md` / `ReviewContext.md` as the workflow progression source (with legacy artifact inference as fallback).",
+      "title": "Session event observation",
+      "summary": "Observe Copilot session runtime: turn boundaries from events.jsonl, hook signal files, and derived idle/needs-input state. Extends the registry's import hook with full lifecycle tracking; graph-independent per Decision 004 so it can land without the launch pipeline in place.",
       "status": "planned",
       "attention": "focus",
       "repoIds": ["streamliner"],
-      "dependsOn": ["launch-claim-binding"]
+      "dependsOn": ["session-registry-model"]
+    },
+    {
+      "id": "paw-control-state-observation",
+      "type": "task",
+      "title": "PAW control-state observation",
+      "summary": "Read PAW `## Control State` (including `Workflow Identity`) from `WorkflowContext.md` / `ReviewContext.md` as the workflow progression source per decision #003, with legacy artifact inference as fallback. Runs in parallel with event-based session observation; the two are orthogonal inputs into the overlay. Graph-independent per Decision 004 so it can land without the launch pipeline.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["session-registry-model"]
     },
     {
       "id": "runtime-overlay-ui",
       "type": "task",
       "title": "Runtime overlay in UI",
-      "summary": "Overlay live observed session state and tracker snapshots onto the committed graph in the UI, combining committed node status with runtime session status per the overlay model in the session system design.",
+      "summary": "Project registry entries, event observation state, and PAW control state onto the committed graph in the UI, combining committed node status with runtime session status per the overlay model in the session system design. The overlay is a view over the registry, not a parallel store.",
       "status": "planned",
       "attention": "watch",
       "repoIds": ["streamliner"],
-      "dependsOn": ["terminal-launch-integration", "session-tracking-model"]
+      "dependsOn": ["session-event-observation", "paw-control-state-observation", "terminal-launch-integration"]
     },
     {
       "id": "launch-and-tracking-gate",
       "type": "gate",
-      "title": "Launch and tracking usable",
-      "summary": "A node can launch a PAW session into a visible terminal and Streamliner can show live runtime state for that node without committing telemetry into the workstream artifacts.",
+      "title": "Launch and tracking usable on the graph",
+      "summary": "A node can launch a PAW session into a visible terminal and Streamliner can show live runtime state for that node on the graph by projecting the session registry plus observed state, without committing telemetry into the workstream artifacts.",
       "status": "planned",
       "attention": "focus",
       "repoIds": ["streamliner"],
@@ -178,22 +238,45 @@
       "id": "design-foundation",
       "title": "Design foundation aligned",
       "summary": "Repo-scoped design docs exist and the workstream's explicit design direction is captured.",
+      "status": "completed",
+      "nodeIds": ["bootstrap-design-docs", "make-workstream-design-explicit"]
+    },
+    {
+      "id": "manual-registry-usable",
+      "title": "Manual session registry usable",
+      "summary": "Streamliner persists a local, graph-independent registry of Copilot sessions with autosaved titles/descriptions/colors and can relaunch them after a restart.",
       "status": "planned",
-      "nodeIds": ["bootstrap-design-docs", "make-workstream-design-explicit", "wave-1-gate"]
+      "nodeIds": [
+        "registry-first-reorientation",
+        "session-registry-model",
+        "manual-session-registry-ui",
+        "session-relaunch",
+        "terminal-tab-color-spike"
+      ]
     },
     {
       "id": "launch-from-graph",
       "title": "Launch from graph works",
-      "summary": "Streamliner assembles context, runs paw-init, establishes launch-claim support, compiles the kickoff prompt, and launches a visible Copilot CLI interactive session from a node.",
+      "summary": "Streamliner assembles context, runs paw-init, binds a launch claim in parallel, compiles the kickoff prompt, and launches a visible Copilot CLI interactive session from a node, registering it into the Wave 2 registry.",
       "status": "planned",
-      "nodeIds": ["backend-context-assembly", "copilot-sdk-paw-init", "launch-claim-binding", "terminal-launch-integration"]
+      "nodeIds": [
+        "backend-context-assembly",
+        "launch-claim-binding",
+        "copilot-sdk-paw-init",
+        "terminal-launch-integration"
+      ]
     },
     {
       "id": "tracking-visible",
-      "title": "Tracking visible in UI",
-      "summary": "Streamliner overlays runtime session and tracker state on the graph without turning graph.json into a telemetry log.",
+      "title": "Tracking visible on the graph",
+      "summary": "Streamliner overlays the registry, event observation, and PAW control state onto the graph without turning graph.json into a telemetry log.",
       "status": "planned",
-      "nodeIds": ["session-tracking-model", "runtime-overlay-ui", "launch-and-tracking-gate"]
+      "nodeIds": [
+        "session-event-observation",
+        "paw-control-state-observation",
+        "runtime-overlay-ui",
+        "launch-and-tracking-gate"
+      ]
     }
   ]
 }
