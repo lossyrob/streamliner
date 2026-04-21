@@ -50,7 +50,7 @@ Fast-changing operational data is not part of the committed artifact set. Stream
   session-registry/
     index.json
     entries/
-      {session-id}.json
+      {registry-id}.json
     quarantine/
     registry.lock
   {projectKey}/{workstream-id}/

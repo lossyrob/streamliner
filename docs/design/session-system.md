@@ -289,7 +289,7 @@ The registry lives under a global subtree of Streamliner's local runtime-state r
 ```
 
 - **`entries/{registry-id}.json` is authoritative.** Each file holds one full `SessionRegistryRecord`.
-- **`index.json` is a denormalized summary, not the source of truth.** It exists for fast list rendering and rebuilds from the entry files whenever it is missing, malformed, version-incompatible, or observably stale.
+- **`index.json` is a denormalized summary, not the source of truth.** It exists for fast list rendering and rebuilds from the entry files whenever it is missing, malformed, version-incompatible, or observably stale. It carries the exact list-surface fields needed by `listSessions()`, including `title`, `description`, `tags`, lifecycle, origin, freshness, and graph-binding metadata.
 - **`registry.lock` is an advisory single-writer lock.** Exactly one process is expected to mutate registry files at a time; readers never require the lock.
 - **`quarantine/` holds bad inputs.** Malformed JSON, unsupported schema versions, and partially written files are moved here and excluded from normal reads until the builder repairs or deletes them.
 
@@ -328,13 +328,13 @@ The dashboard and future relaunch flows consume the registry through a shared in
 
 | Operation | Contract |
 |-----------|----------|
-| `listSessions(options?)` | Returns list items sorted by `lastSeenAt` then `updatedAt`; excludes archived rows by default. |
+| `listSessions(options?)` | Returns list items sorted by `lastSeenAt` then `updatedAt`; excludes archived rows by default; `options.text` matches `title`, `description`, and `tags`. |
 | `getSession(id)` | Returns the full registry record or `null`. |
-| `upsertSession(input)` | Creates or replaces a row for manual, observed, or launched sources using the identity/merge rules above. |
+| `upsertSession(input)` | Creates or replaces a row for manual, observed, or launched sources using the identity/merge rules above. Lifecycle input is source-sensitive: observation may upsert rows that are already `ended`; caller-driven manual/launch upserts may not create `ended` or `archived` rows directly. |
 | `patchSession(id, patch)` | Applies builder-owned edits (`title`, `description`, `color`, `tags`, `graphBinding`, builder-driven lifecycle changes). Builder patches do not force `ended`. |
 | `archiveSession(id)` | Convenience mutation that sets `lifecycleStatus` to `archived`. |
 | `deleteSession(id)` | Explicit destructive cleanup for rows the builder intentionally wants removed; never used by observation. |
-| `subscribe(listener)` | Emits change notifications (`upsert`, `delete`, `rebuild`) so the UI can refresh without polling. |
+| `subscribe(listener)` | Emits discriminated change notifications: `upsert` carries `{ registryId, snapshot }`, `delete` carries `{ registryId }`, and `rebuild` carries `{ registryIds }`. |
 
 The public contract deliberately separates **persisted schema shapes** from **consumer-facing view/mutation shapes**. The persisted record/index types live in `src/session-registry-schema.ts`; the API-facing list, patch, upsert, event, and store-contract types live in `src/session-registry-contract.ts`.
 

@@ -51,6 +51,7 @@ export interface SessionRegistryRecord {
 export interface SessionRegistryIndexEntry {
   id: string;
   title: string;
+  description: string;
   lifecycleStatus: SessionRegistryLifecycleStatus;
   lastSeenAt: string | null;
   updatedAt: string;
@@ -59,6 +60,7 @@ export interface SessionRegistryIndexEntry {
   repo: string | null;
   branch: string | null;
   copilotSessionId: string | null;
+  tags: string[];
   originKind: SessionRegistryOriginKind;
   graphBinding: SessionRegistryGraphBinding | null;
 }

@@ -38,7 +38,7 @@ export interface SessionRegistryListItem {
   copilotSessionId: string | null;
 }
 
-export interface SessionRegistryUpsertInput {
+interface SessionRegistryUpsertInputBase {
   id?: string;
   title: string;
   description?: string;
@@ -47,12 +47,41 @@ export interface SessionRegistryUpsertInput {
   repo?: string | null;
   branch?: string | null;
   copilotSessionId?: string | null;
-  lifecycleStatus?: SessionRegistryLifecycleStatus;
   lastSeenAt?: string | null;
   tags?: string[];
-  origin: SessionRegistryOrigin;
+}
+
+export interface ManualSessionRegistryUpsertInput
+  extends SessionRegistryUpsertInputBase {
+  origin: SessionRegistryOrigin & { kind: "manual" };
+  lifecycleStatus?: Exclude<
+    SessionRegistryLifecycleStatus,
+    "ended" | "archived"
+  >;
   graphBinding?: SessionRegistryGraphBinding | null;
 }
+
+export interface ObservedSessionRegistryUpsertInput
+  extends SessionRegistryUpsertInputBase {
+  origin: SessionRegistryOrigin & { kind: "observed" };
+  lifecycleStatus?: Exclude<SessionRegistryLifecycleStatus, "archived">;
+  graphBinding?: SessionRegistryGraphBinding | null;
+}
+
+export interface LaunchedSessionRegistryUpsertInput
+  extends SessionRegistryUpsertInputBase {
+  origin: SessionRegistryOrigin & { kind: "launched" };
+  lifecycleStatus?: Exclude<
+    SessionRegistryLifecycleStatus,
+    "ended" | "archived"
+  >;
+  graphBinding?: SessionRegistryGraphBinding | null;
+}
+
+export type SessionRegistryUpsertInput =
+  | ManualSessionRegistryUpsertInput
+  | ObservedSessionRegistryUpsertInput
+  | LaunchedSessionRegistryUpsertInput;
 
 export interface SessionRegistryPatch {
   title?: string;
@@ -71,11 +100,26 @@ export const SESSION_REGISTRY_CHANGE_EVENT_KINDS = [
 export type SessionRegistryChangeEventKind =
   (typeof SESSION_REGISTRY_CHANGE_EVENT_KINDS)[number];
 
-export interface SessionRegistryChangeEvent {
-  kind: SessionRegistryChangeEventKind;
-  sessionId?: string;
-  snapshot?: SessionRegistryRecord;
+export interface SessionRegistryUpsertChangeEvent {
+  kind: "upsert";
+  registryId: string;
+  snapshot: SessionRegistryRecord;
 }
+
+export interface SessionRegistryDeleteChangeEvent {
+  kind: "delete";
+  registryId: string;
+}
+
+export interface SessionRegistryRebuildChangeEvent {
+  kind: "rebuild";
+  registryIds: string[];
+}
+
+export type SessionRegistryChangeEvent =
+  | SessionRegistryUpsertChangeEvent
+  | SessionRegistryDeleteChangeEvent
+  | SessionRegistryRebuildChangeEvent;
 
 export type SessionRegistryChangeListener = (
   event: SessionRegistryChangeEvent,

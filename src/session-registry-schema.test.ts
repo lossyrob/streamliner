@@ -89,10 +89,12 @@ describe("session registry schema", () => {
       repo: record.repo,
       branch: record.branch,
       copilotSessionId: record.copilotSessionId,
-      lifecycleStatus: record.lifecycleStatus,
+      lifecycleStatus: "active",
       lastSeenAt: record.lastSeenAt,
       tags: record.tags,
-      origin: record.origin,
+      origin: {
+        kind: "manual",
+      },
       graphBinding: record.graphBinding,
     };
     const patch: SessionRegistryPatch = {
@@ -125,7 +127,7 @@ describe("session registry schema", () => {
       subscribe: (listener) => {
         const event: SessionRegistryChangeEvent = {
           kind: "upsert",
-          sessionId: record.id,
+          registryId: record.id,
           snapshot: record,
         };
         events.push(event);
