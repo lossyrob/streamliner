@@ -7,7 +7,7 @@
   "status": "active",
   "attention": "focus",
   "createdAt": "2026-04-10T15:37:14.125Z",
-  "updatedAt": "2026-04-21T17:35:00.000Z",
+  "updatedAt": "2026-04-21T18:05:00.000Z",
   "trackingIssue": {
     "owner": "lossyrob",
     "repo": "streamliner",
@@ -196,21 +196,21 @@
       "id": "session-event-observation",
       "type": "task",
       "title": "Session event observation",
-      "summary": "Observe Copilot session runtime: turn boundaries from events.jsonl, hook signal files, and derived idle/needs-input state. Extends the registry's import hook with full lifecycle tracking.",
+      "summary": "Observe Copilot session runtime: turn boundaries from events.jsonl, hook signal files, and derived idle/needs-input state. Extends the registry's import hook with full lifecycle tracking; graph-independent per Decision 004 so it can land without the launch pipeline in place.",
       "status": "planned",
       "attention": "focus",
       "repoIds": ["streamliner"],
-      "dependsOn": ["terminal-launch-integration"]
+      "dependsOn": ["session-registry-model"]
     },
     {
       "id": "paw-control-state-observation",
       "type": "task",
       "title": "PAW control-state observation",
-      "summary": "Read PAW `## Control State` (including `Workflow Identity`) from `WorkflowContext.md` / `ReviewContext.md` as the workflow progression source per decision #003, with legacy artifact inference as fallback. Runs in parallel with event-based session observation; the two are orthogonal inputs into the overlay.",
+      "summary": "Read PAW `## Control State` (including `Workflow Identity`) from `WorkflowContext.md` / `ReviewContext.md` as the workflow progression source per decision #003, with legacy artifact inference as fallback. Runs in parallel with event-based session observation; the two are orthogonal inputs into the overlay. Graph-independent per Decision 004 so it can land without the launch pipeline.",
       "status": "planned",
       "attention": "focus",
       "repoIds": ["streamliner"],
-      "dependsOn": ["terminal-launch-integration"]
+      "dependsOn": ["session-registry-model"]
     },
     {
       "id": "runtime-overlay-ui",
@@ -220,7 +220,7 @@
       "status": "planned",
       "attention": "watch",
       "repoIds": ["streamliner"],
-      "dependsOn": ["session-event-observation", "paw-control-state-observation"]
+      "dependsOn": ["session-event-observation", "paw-control-state-observation", "terminal-launch-integration"]
     },
     {
       "id": "launch-and-tracking-gate",

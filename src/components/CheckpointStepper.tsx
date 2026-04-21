@@ -6,6 +6,12 @@ interface CheckpointStepperProps {
 
 type StepState = "completed" | "current" | "upcoming";
 
+const STATE_LABELS: Record<StepState, string> = {
+  completed: "Completed",
+  current: "Current",
+  upcoming: "Upcoming",
+};
+
 function stepStateOf(progress: WorkstreamCheckpointProgress): StepState {
   if (progress.checkpoint.status === "completed") {
     return "completed";
@@ -32,11 +38,16 @@ export function CheckpointStepper({ checkpoints }: CheckpointStepperProps) {
       {checkpoints.map((progress, index) => {
         const state = stepStateOf(progress);
         const { checkpoint, completedNodes, totalNodes } = progress;
+        const progressLabel =
+          totalNodes === 0
+            ? "No nodes tracked"
+            : `${completedNodes} / ${totalNodes} nodes complete`;
         return (
           <li
             key={checkpoint.id}
             className={`sl-checkpoint-step sl-checkpoint-step--${state}`}
             title={checkpoint.summary}
+            aria-current={state === "current" ? "step" : undefined}
           >
             <div className="sl-checkpoint-marker" aria-hidden="true">
               <span className="sl-checkpoint-marker-index">
@@ -45,12 +56,11 @@ export function CheckpointStepper({ checkpoints }: CheckpointStepperProps) {
             </div>
             <div className="sl-checkpoint-body">
               <span className="sl-checkpoint-title">{checkpoint.title}</span>
-              <span className="sl-checkpoint-progress">
-                {totalNodes === 0
-                  ? "No nodes tracked"
-                  : `${completedNodes} / ${totalNodes} nodes complete`}
-              </span>
+              <span className="sl-checkpoint-progress">{progressLabel}</span>
             </div>
+            <span className="sl-visually-hidden">
+              {`${STATE_LABELS[state]}. ${progressLabel}.`}
+            </span>
           </li>
         );
       })}

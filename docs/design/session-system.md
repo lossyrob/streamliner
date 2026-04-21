@@ -242,16 +242,18 @@ Each registry entry carries:
 | `color` | Builder | Single source of truth for platform color bridges (e.g., Windows Terminal tab color) |
 | `cwd`, `repo`, `branch` | Observation + builder override | Relaunch target and binding guardrails |
 | `copilotSessionId` | Observation | Links the entry to a live or historical Copilot CLI session when one is known |
-| `status` | Observation + builder override | `active | paused | ended | archived` |
+| `lifecycleStatus` | Builder + observation-driven transition to `ended` | Durable coarse lifecycle: `active | paused | ended | archived`. Carries across session ends and Streamliner restarts |
 | `lastSeenAt` | Observation | Drives staleness surfacing and sort order |
-| `tags` | Builder | Freeform in Wave 2; grouping semantics are deferred |
+| `tags` | Builder | Freeform; grouping semantics deferred |
 | `graphBinding` | Launch pipeline / builder | Optional `{ workstreamId, nodeId, launchClaimId }` — populated when the session is bound to a graph node |
 
-Registry entries are created either by **observation import** (the watcher discovers a Copilot session without a matching registry row and creates one in `active` state with the metadata it has, which the builder can then edit) or as **manual entries** (the builder creates a row for a session Streamliner has not yet observed, or for a session running in an environment not yet watched). Manual entries become linked when observation later finds a matching Copilot session.
+`lifecycleStatus` is intentionally coarse and durable. The fine-grained, observation-derived liveness of a currently-live Copilot session (`launching`, `discovered`, `active`, `idle`, `ended`, see [Observed States](#observed-states) below) is an orthogonal derived view layered on top of the registry row at render time, not a field stored on the row. A single registry entry can be `lifecycleStatus: active` and observation-`idle` simultaneously — those are independent axes and the overlay composes them. Observation is the only writer of the transition from `active` to `ended` on `lifecycleStatus`; all other `lifecycleStatus` transitions are builder-driven.
 
-Observation is the authoritative source for liveness-derived fields — the registry never fabricates `lastSeenAt`, `status`, or session-end reasons that observation has not confirmed. Builder-editable fields (`title`, `description`, `color`, `tags`) are durable across session ends and Streamliner restarts.
+Registry entries are created either by **observation import** (the watcher discovers a Copilot session without a matching registry row and creates one in `lifecycleStatus: active` with the metadata it has, which the builder can then edit) or as **manual entries** (the builder creates a row for a session Streamliner has not yet observed, or for a session running in an environment not yet watched). Manual entries become linked when observation later finds a matching Copilot session.
 
-Storage shape is local-first under Streamliner's runtime-state root. The default direction is per-session JSON plus an index file (aligned with how Copilot CLI already persists state), with the choice revisited in the `session-registry-model` implementation node. Entries carry a schema version; entries outside the supported range render with a "schema out of range" badge and are not mutated until reconciled.
+Observation is the authoritative source for observation-derived fields — the registry never fabricates `lastSeenAt`, the `active → ended` transition on `lifecycleStatus`, or session-end reasons that observation has not confirmed. Builder-editable fields (`title`, `description`, `color`, `tags`, non-`ended` `lifecycleStatus` transitions) are durable across session ends and Streamliner restarts.
+
+Storage shape is local-first under Streamliner's runtime-state root. The default direction is per-session JSON plus an index file, aligned with how Copilot CLI already persists state; that default is revisitable if query patterns make SQLite compelling. Entries carry a schema version; entries outside the supported range render with a "schema out of range" badge and are not mutated until reconciled.
 
 Launched-from-graph sessions (see Launch Contract above) register into the same store: the launch pipeline creates or updates a registry row and writes `graphBinding` onto it. There is no separate "launched sessions" table.
 
