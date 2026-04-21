@@ -120,6 +120,12 @@
       "status": "planned",
       "attention": "focus",
       "repoIds": ["streamliner"],
+      "tracker": {
+        "type": "github",
+        "owner": "lossyrob",
+        "repo": "streamliner",
+        "number": 11
+      },
       "dependsOn": ["registry-first-reorientation"]
     },
     {
