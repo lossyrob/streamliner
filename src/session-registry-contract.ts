@@ -1,7 +1,6 @@
 import type {
   SessionRegistryGraphBinding,
   SessionRegistryLifecycleStatus,
-  SessionRegistryOrigin,
   SessionRegistryOriginKind,
   SessionRegistryRecord,
 } from "./session-registry-schema";
@@ -46,14 +45,14 @@ interface SessionRegistryUpsertInputBase {
   cwd: string;
   repo?: string | null;
   branch?: string | null;
-  copilotSessionId?: string | null;
-  lastSeenAt?: string | null;
   tags?: string[];
 }
 
 export interface ManualSessionRegistryUpsertInput
   extends SessionRegistryUpsertInputBase {
-  origin: SessionRegistryOrigin & { kind: "manual" };
+  origin: {
+    kind: "manual";
+  };
   lifecycleStatus?: Exclude<
     SessionRegistryLifecycleStatus,
     "ended" | "archived"
@@ -63,14 +62,22 @@ export interface ManualSessionRegistryUpsertInput
 
 export interface ObservedSessionRegistryUpsertInput
   extends SessionRegistryUpsertInputBase {
-  origin: SessionRegistryOrigin & { kind: "observed" };
+  origin: {
+    kind: "observed";
+    importedFromCopilotSessionId?: string | null;
+  };
+  copilotSessionId: string;
+  lastSeenAt?: string | null;
   lifecycleStatus?: Exclude<SessionRegistryLifecycleStatus, "archived">;
   graphBinding?: SessionRegistryGraphBinding | null;
 }
 
 export interface LaunchedSessionRegistryUpsertInput
   extends SessionRegistryUpsertInputBase {
-  origin: SessionRegistryOrigin & { kind: "launched" };
+  origin: {
+    kind: "launched";
+    launchClaimId?: string | null;
+  };
   lifecycleStatus?: Exclude<
     SessionRegistryLifecycleStatus,
     "ended" | "archived"

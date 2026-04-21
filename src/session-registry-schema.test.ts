@@ -88,9 +88,7 @@ describe("session registry schema", () => {
       cwd: record.cwd,
       repo: record.repo,
       branch: record.branch,
-      copilotSessionId: record.copilotSessionId,
       lifecycleStatus: "active",
-      lastSeenAt: record.lastSeenAt,
       tags: record.tags,
       origin: {
         kind: "manual",

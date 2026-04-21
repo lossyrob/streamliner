@@ -314,9 +314,12 @@ Discovery uses both a **startup scan** of the session-state root and **`fs.watch
 
 1. If a registry row already has the same `copilotSessionId`, update that row.
 2. Else if an active launch/relaunch claim resolves to a known registry row, link the discovered session onto that row.
-3. Else create a new `origin.kind: observed` row.
+3. Else if there is **exactly one** non-archived manual row with no `copilotSessionId`, `lastSeenAt: null`, and matching `cwd`, `repo`, and `branch` (ignoring fields that are `null` on both sides), attach the discovered session to that row and preserve the builder-owned fields already on it.
+4. Else create a new `origin.kind: observed` row.
 
 Observation may refresh `copilotSessionId`, `cwd`, `repo`, `branch`, `lastSeenAt`, and the transition from `lifecycleStatus: active | paused` to `ended`. It does **not** overwrite builder-edited `title`, `description`, `color`, `tags`, or an existing `graphBinding` unless a launch/relaunch claim explicitly owns that binding update.
+
+The manual-row attach rule is deliberately strict. Streamliner does **not** fuzzy-match by `cwd` alone, and it does not auto-attach when more than one manual row could plausibly match. Ambiguous cases fall back to a new observed row plus an explicit builder bind/reconcile step.
 
 Observation never auto-archives. A linked row becomes `ended` when a clean end signal arrives or when the stale-session fallback fires after the watcher has not seen activity within the configured timeout. `archived` is only reached through an explicit builder action. Archived rows stay archived and are excluded from automatic rediscovery matching; a newly observed session creates a fresh row unless a relaunch flow explicitly reactivates the archived entry first.
 
