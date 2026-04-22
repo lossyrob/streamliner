@@ -10,6 +10,7 @@ import {
   SESSION_REGISTRY_CHANGE_EVENT_KINDS,
   type SessionRegistryChangeEvent,
   type SessionRegistryListItem,
+  type SessionRegistryObservedLinkInput,
   type SessionRegistryPatch,
   type SessionRegistryStore,
   type SessionRegistryUpsertInput,
@@ -61,6 +62,24 @@ describe("session registry schema", () => {
       "delete",
       "rebuild",
     ]);
+
+    const observedUpsertInput: SessionRegistryUpsertInput = {
+      title: "Observed registry row",
+      cwd: "C:\\repo",
+      copilotSessionId: "copilot-session-999",
+      lifecycleStatus: "active",
+      origin: {
+        kind: "observed",
+        importedFromCopilotSessionId: "copilot-session-999",
+      },
+    };
+    const observedLinkInput: SessionRegistryObservedLinkInput = {
+      copilotSessionId: "copilot-session-999",
+      cwd: "C:\\repo",
+      lifecycleStatus: "ended",
+    };
+    expect(observedUpsertInput.origin.kind).toBe("observed");
+    expect(observedLinkInput.lifecycleStatus).toBe("ended");
   });
 
   it("provides stable record and contract shapes for downstream modules", () => {
@@ -162,5 +181,17 @@ describe("session registry schema", () => {
     const unsubscribe = store.subscribe((event) => events.push(event));
     unsubscribe();
     expect(events.map((event) => event.kind)).toEqual(["upsert", "upsert"]);
+  });
+
+  it("rejects observation-owned values that violate the design contract", () => {
+    const invalidObservedLink: SessionRegistryObservedLinkInput = {
+      copilotSessionId: "copilot-session-123",
+      cwd: "C:\\repo",
+      // @ts-expect-error observation attach may only promote a row into ended.
+      lifecycleStatus: "paused",
+    };
+
+    void invalidObservedLink;
+    expect(true).toBe(true);
   });
 });

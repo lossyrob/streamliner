@@ -1,4 +1,7 @@
 import type {
+  LaunchedSessionRegistryOrigin,
+  ManualSessionRegistryOrigin,
+  ObservedSessionRegistryOrigin,
   SessionRegistryGraphBinding,
   SessionRegistryLifecycleStatus,
   SessionRegistryOriginKind,
@@ -10,6 +13,11 @@ import type {
 export type SessionRegistryBuilderLifecycleStatus = Exclude<
   SessionRegistryLifecycleStatus,
   "ended"
+>;
+
+export type SessionRegistryObservedLifecycleStatus = Extract<
+  SessionRegistryLifecycleStatus,
+  "active" | "ended"
 >;
 
 export interface SessionRegistryListOptions {
@@ -50,9 +58,7 @@ interface SessionRegistryUpsertInputBase {
 
 export interface ManualSessionRegistryUpsertInput
   extends SessionRegistryUpsertInputBase {
-  origin: {
-    kind: "manual";
-  };
+  origin: ManualSessionRegistryOrigin;
   lifecycleStatus?: Exclude<
     SessionRegistryLifecycleStatus,
     "ended" | "archived"
@@ -62,22 +68,16 @@ export interface ManualSessionRegistryUpsertInput
 
 export interface ObservedSessionRegistryUpsertInput
   extends SessionRegistryUpsertInputBase {
-  origin: {
-    kind: "observed";
-    importedFromCopilotSessionId?: string | null;
-  };
+  origin: ObservedSessionRegistryOrigin;
   copilotSessionId: string;
   lastSeenAt?: string | null;
-  lifecycleStatus?: Exclude<SessionRegistryLifecycleStatus, "archived">;
+  lifecycleStatus?: SessionRegistryObservedLifecycleStatus;
   graphBinding?: SessionRegistryGraphBinding | null;
 }
 
 export interface LaunchedSessionRegistryUpsertInput
   extends SessionRegistryUpsertInputBase {
-  origin: {
-    kind: "launched";
-    launchClaimId?: string | null;
-  };
+  origin: LaunchedSessionRegistryOrigin;
   lifecycleStatus?: Exclude<
     SessionRegistryLifecycleStatus,
     "ended" | "archived"
@@ -91,7 +91,7 @@ export interface SessionRegistryObservedLinkInput {
   repo?: string | null;
   branch?: string | null;
   lastSeenAt?: string | null;
-  lifecycleStatus?: Exclude<SessionRegistryLifecycleStatus, "archived">;
+  lifecycleStatus?: Extract<SessionRegistryLifecycleStatus, "ended">;
 }
 
 export type SessionRegistryUpsertInput =

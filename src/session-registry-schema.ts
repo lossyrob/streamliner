@@ -23,11 +23,24 @@ export interface SessionRegistryGraphBinding {
   launchClaimId?: string | null;
 }
 
-export interface SessionRegistryOrigin {
-  kind: SessionRegistryOriginKind;
+export interface ManualSessionRegistryOrigin {
+  kind: "manual";
+}
+
+export interface ObservedSessionRegistryOrigin {
+  kind: "observed";
   importedFromCopilotSessionId?: string | null;
+}
+
+export interface LaunchedSessionRegistryOrigin {
+  kind: "launched";
   launchClaimId?: string | null;
 }
+
+export type SessionRegistryOrigin =
+  | ManualSessionRegistryOrigin
+  | ObservedSessionRegistryOrigin
+  | LaunchedSessionRegistryOrigin;
 
 export interface SessionRegistryRecord {
   schemaVersion: typeof SESSION_REGISTRY_SCHEMA_VERSION;
