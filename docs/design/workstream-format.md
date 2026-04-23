@@ -1,3 +1,21 @@
+---
+kind: design-doc
+status: current
+last_updated: 2026-04-21
+update_semantics: rewrite-in-place
+authoritative_for: "Workstream artifact format and runtime-state boundaries"
+scope_tags:
+  - workstreams
+  - runtime-state
+  - artifacts
+code_paths:
+  - src/workstream-schema.ts
+  - src/workstream-view-model.ts
+  - src/session-registry*.ts
+references_decisions:
+  - 5
+---
+
 # Workstream Artifact Format
 
 A workstream consists of two committed artifacts — a **brief** (`brief.md`) and a **dependency graph** (`graph.json`) — stored together in a workstream directory. These artifacts describe durable plan and progress. Fast-moving operational state lives separately in a local runtime store.
@@ -28,13 +46,22 @@ The `workstreams/` directory can live in the source repo (e.g. `.streamliner/wor
 Fast-changing operational data is not part of the committed artifact set. Streamliner stores it in a machine-local runtime store:
 
 ```text
-~/.streamliner/state/{projectKey}/{workstream-id}/
-  runtime.json
-  sessions.json
-  tracker-cache.json
+~/.streamliner/state/
+  session-registry/
+    index.json
+    entries/
+      {registry-id}.json
+    quarantine/
+    registry.lock
+  {projectKey}/{workstream-id}/
+    runtime.json
+    sessions.json
+    tracker-cache.json
 ```
 
-`projectKey` comes from `graph.json`. If omitted, it derives from the primary repo ID or the sole repo ID. Runtime state includes active session IDs, observed session state, tracker snapshots, and transient node claims.
+The global `session-registry/` subtree is graph-independent and persists the builder's tracked-session catalog. Its authoritative file rules, merge behavior, and API contract live in [session-system.md](session-system.md).
+
+`projectKey` comes from `graph.json`. If omitted, it derives from the primary repo ID or the sole repo ID. The per-workstream subtree holds runtime overlay data such as active session IDs, observed session state, tracker snapshots, and transient node claims.
 
 Runtime state contracts:
 
@@ -44,11 +71,12 @@ Runtime state contracts:
 - Readers tolerate missing or stale files
 - Entries record originating cwd/worktree path for multi-worktree reconciliation
 - **Every materialized runtime-state file carries a top-level `schemaVersion` integer.** Readers that encounter an unknown `schemaVersion` treat the file as opaque and ignore it rather than partially parsing it. Writers only mutate files whose `schemaVersion` matches the writer's expected version; a mismatch triggers a quarantine-and-recreate path, never an in-place merge of incompatible shapes.
+- Runtime consumers may define subtree-specific authoritative-file rules (for example, record-authoritative registry entries plus a derived index) so long as those rules are explicit in the owning design doc.
 
 ### Runtime-state open questions
 
-- **Multi-process coordination**: When two Streamliner instances observe the same `projectKey` (e.g., a UI process plus a background watcher, or two worktrees against the same planning repo), who owns the single-writer role for each file? Near-term answer: treat one instance as primary via a process lock; longer-term answer deferred until concurrent-writer scenarios appear in practice.
-- **Schema migration**: When `schemaVersion` is bumped, is migration lazy (rewrite on first access) or eager (one-shot at startup)? Pick before shipping the first `schemaVersion: 2` change.
+- **Multi-process coordination beyond the session registry**: The session registry now uses a registry-level advisory lock plus record-authoritative rebuilds. Should other runtime-state writers standardize on the same lock/election pattern, or keep file-specific coordination rules?
+- **Schema migration beyond the session registry**: Registry files quarantine-and-recreate on schema mismatch. Should other runtime-state files follow the same approach, or adopt a shared lazy/eager migration policy before the first broader `schemaVersion: 2` rollout?
 
 ### The separation principle
 
