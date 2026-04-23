@@ -60,10 +60,26 @@ function findButton(container: HTMLElement, label: string): HTMLButtonElement {
   return button;
 }
 
+function findSessionList(container: HTMLElement): HTMLElement {
+  const sessionList = container.querySelector(".sl-session-list");
+  if (!(sessionList instanceof HTMLElement)) {
+    throw new Error("Could not find the session list.");
+  }
+  return sessionList;
+}
+
 function findSessionEditorInputs(container: HTMLElement): HTMLInputElement[] {
   return [...container.querySelectorAll(".sl-session-editor input")].filter(
     (candidate): candidate is HTMLInputElement => candidate instanceof HTMLInputElement,
   );
+}
+
+function findNumberInput(container: HTMLElement): HTMLInputElement {
+  const input = container.querySelector('.sl-sessions-filters input[type="number"]');
+  if (!(input instanceof HTMLInputElement)) {
+    throw new Error("Could not find the stale-session number input.");
+  }
+  return input;
 }
 
 function setInputValue(
@@ -265,6 +281,56 @@ describe("App sessions route", () => {
           requestPath(input as RequestInfo | URL).startsWith("/api/graph.json"),
         ),
       ).toBe(false);
+    },
+    15_000,
+  );
+
+  it(
+    "hides stale sessions by default and lets the age threshold be adjusted",
+    async () => {
+      const now = Date.now();
+      const recentSession = buildSession({
+        id: "recent-session",
+        title: "Recent session",
+        lastSeenAt: new Date(now - 2 * 24 * 60 * 60 * 1000).toISOString(),
+        updatedAt: new Date(now - 2 * 24 * 60 * 60 * 1000).toISOString(),
+      });
+      const staleSession = buildSession({
+        id: "stale-session",
+        title: "Stale session",
+        lastSeenAt: new Date(now - 10 * 24 * 60 * 60 * 1000).toISOString(),
+        updatedAt: new Date(now - 10 * 24 * 60 * 60 * 1000).toISOString(),
+      });
+
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path.startsWith("/api/sessions")) {
+          return jsonResponse([recentSession, staleSession]);
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      window.history.pushState({}, "", "/?view=sessions");
+
+      act(() => {
+        root.render(<App />);
+      });
+
+      await settle();
+
+      const sessionList = findSessionList(container);
+      expect(sessionList.textContent).toContain("Recent session");
+      expect(sessionList.textContent).not.toContain("Stale session");
+      expect(container.textContent).toContain(
+        "Showing 1 of 2 sessions updated within 7 days.",
+      );
+
+      setInputValue(findNumberInput(container), "14");
+      await settle();
+
+      expect(sessionList.textContent).toContain("Stale session");
+      expect(findNumberInput(container).value).toBe("14");
     },
     15_000,
   );

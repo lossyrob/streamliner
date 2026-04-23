@@ -5,6 +5,8 @@ import type { SessionRegistryRecord } from "../session-registry-schema";
 
 const SESSION_POLL_INTERVAL_MS = 2000;
 const SESSION_AUTOSAVE_MS = 500;
+const DEFAULT_STALE_SESSION_DAYS = 7;
+const SESSION_STALE_DAYS_STORAGE_KEY = "streamliner:sessionsStaleDays";
 
 interface SessionDraft {
   title: string;
@@ -164,6 +166,32 @@ function formatTimestamp(value: string | null): string {
   return new Date(value).toLocaleString();
 }
 
+function getFreshnessTimestamp(session: SessionRegistryListItem): number {
+  const freshnessSource = session.lastSeenAt ?? session.updatedAt;
+  const freshnessTimestamp = Date.parse(freshnessSource);
+  return Number.isFinite(freshnessTimestamp) ? freshnessTimestamp : Number.NEGATIVE_INFINITY;
+}
+
+function isSessionStale(
+  session: SessionRegistryListItem,
+  staleSessionDays: number,
+): boolean {
+  const staleCutoff = Date.now() - staleSessionDays * 24 * 60 * 60 * 1000;
+  return getFreshnessTimestamp(session) < staleCutoff;
+}
+
+function readStaleSessionDays(): number {
+  if (typeof window === "undefined") {
+    return DEFAULT_STALE_SESSION_DAYS;
+  }
+
+  const persistedValue = Number(window.localStorage.getItem(SESSION_STALE_DAYS_STORAGE_KEY));
+  if (!Number.isFinite(persistedValue) || persistedValue < 1) {
+    return DEFAULT_STALE_SESSION_DAYS;
+  }
+  return Math.floor(persistedValue);
+}
+
 function useLatestValue<T>(value: T) {
   const ref = useRef(value);
   useEffect(() => {
@@ -185,6 +213,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
   const [sessions, setSessions] = useState<SessionRegistryListItem[]>([]);
   const [query, setQuery] = useState("");
   const [showArchived, setShowArchived] = useState(false);
+  const [staleSessionDays, setStaleSessionDays] = useState(readStaleSessionDays);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<SessionDraft>(createEmptyDraft);
   const [selectedSnapshot, setSelectedSnapshot] = useState<SessionRegistryListItem | null>(
@@ -267,11 +296,6 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
               setDraft(nextDraft);
             }
           }
-        } else if (nextSessions.length > 0) {
-          const first = nextSessions[0];
-          setSelectedId(first.id);
-          setSelectedSnapshot(first);
-          setDraft(draftFromSession(first));
         }
       } catch (nextError) {
         setError(nextError instanceof Error ? nextError.message : String(nextError));
@@ -295,6 +319,11 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
     [selectedId, selectedSnapshot, sessions],
   );
   const selectedSessionRef = useLatestValue(selectedSession);
+  const visibleSessions = useMemo(
+    () => sessions.filter((session) => !isSessionStale(session, staleSessionDays)),
+    [sessions, staleSessionDays],
+  );
+  const hiddenStaleSessionCount = sessions.length - visibleSessions.length;
 
   const existingDirty = useMemo(() => {
     if (!selectedSession || creating) {
@@ -420,6 +449,48 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
       void saveExistingSession({ background: true, keepalive: true });
     };
   }, [existingDirtyRef, saveExistingSession]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(
+        SESSION_STALE_DAYS_STORAGE_KEY,
+        String(staleSessionDays),
+      );
+    }
+  }, [staleSessionDays]);
+
+  useEffect(() => {
+    if (creating) {
+      return;
+    }
+
+    const selectedVisible =
+      selectedId !== null
+        ? visibleSessions.find((session) => session.id === selectedId) ?? null
+        : null;
+    if (selectedVisible) {
+      return;
+    }
+    if (selectedId && (existingDirty || saveState === "saving")) {
+      return;
+    }
+
+    const nextVisibleSession = visibleSessions[0] ?? null;
+    if (nextVisibleSession) {
+      setSelectedId(nextVisibleSession.id);
+      setSelectedSnapshot(nextVisibleSession);
+      setDraft(draftFromSession(nextVisibleSession));
+      setSaveState("idle");
+      return;
+    }
+
+    if (selectedId !== null) {
+      setSelectedId(null);
+      setSelectedSnapshot(null);
+      setDraft(createEmptyDraft());
+      setSaveState("idle");
+    }
+  }, [creating, existingDirty, saveState, selectedId, visibleSessions]);
 
   useEffect(() => {
     if (!selectedSession || creating || !existingDirty) {
@@ -599,7 +670,35 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search title, description, or tags"
           />
+          <label className="sl-session-stale-filter">
+            <span className="sl-field-label">Old after</span>
+            <div className="sl-session-stale-input">
+              <input
+                className="sl-text-field sl-session-stale-days"
+                type="number"
+                min={1}
+                step={1}
+                value={staleSessionDays}
+                onChange={(event) => {
+                  const nextValue = Number(event.target.value);
+                  setStaleSessionDays(
+                    Number.isFinite(nextValue) && nextValue >= 1
+                      ? Math.floor(nextValue)
+                      : DEFAULT_STALE_SESSION_DAYS,
+                  );
+                }}
+              />
+              <span className="sl-session-stale-suffix">days</span>
+            </div>
+          </label>
         </div>
+
+        {hiddenStaleSessionCount > 0 && (
+          <div className="sl-sessions-filter-note">
+            Showing {visibleSessions.length} of {sessions.length} sessions updated within{" "}
+            {staleSessionDays} day{staleSessionDays === 1 ? "" : "s"}.
+          </div>
+        )}
 
         {error && <div className="sl-action-error">{error}</div>}
 
@@ -610,8 +709,14 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
             <div className="sl-empty-state">
               No sessions yet. Create one manually to start tracking restart-safe context.
             </div>
+          ) : visibleSessions.length === 0 ? (
+            <div className="sl-empty-state">
+              No sessions updated in the last {staleSessionDays} day
+              {staleSessionDays === 1 ? "" : "s"}. Increase the stale window to show
+              older sessions.
+            </div>
           ) : (
-            sessions.map((session) => (
+            visibleSessions.map((session) => (
               <button
                 key={session.id}
                 className={`sl-session-card${session.id === selectedId ? " selected" : ""}`}
