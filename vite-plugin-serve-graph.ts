@@ -8,7 +8,7 @@ import {
   handleSessionRegistryApiRequest,
   SESSION_REGISTRY_API_BASE_PATH,
 } from "./src/session-registry/http-api";
-import { syncDiscoveredCopilotSessions } from "./src/session-registry/copilot-session-discovery";
+import { maybeSyncDiscoveredCopilotSessions } from "./src/session-registry/copilot-session-discovery";
 import { getSessionRegistryStore } from "./src/session-registry/runtime";
 
 const RECENTS_PATH = resolve(homedir(), ".streamliner", "recent-graphs.json");
@@ -154,7 +154,16 @@ function registerApiMiddleware(
     if (url.pathname.startsWith(SESSION_REGISTRY_API_BASE_PATH)) {
       try {
         const registryStore = getSessionRegistryStore();
-        syncDiscoveredCopilotSessions(registryStore);
+        // Only resync the Copilot session-state directory when the client
+        // requests the list endpoint. Item-scoped calls (GET/PATCH/DELETE on
+        // /api/sessions/<id>) don't benefit from a full filesystem scan, and
+        // the debounce prevents rapid polling from trashing disk I/O.
+        const method = (req.method ?? "GET").toUpperCase();
+        const isListRequest =
+          method === "GET" && url.pathname === SESSION_REGISTRY_API_BASE_PATH;
+        if (isListRequest) {
+          maybeSyncDiscoveredCopilotSessions(registryStore);
+        }
         const apiResponse = handleSessionRegistryApiRequest(
           registryStore,
           {

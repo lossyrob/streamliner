@@ -139,6 +139,27 @@ function isInUseLockFile(fileName: string): boolean {
   return /^inuse\..+\.lock$/i.test(fileName);
 }
 
+interface DiscoveryCacheEntry {
+  workspaceMtimeMs: number;
+  lockSignature: string;
+  session: DiscoveredCopilotSession;
+}
+
+// Per-directory cache keyed by absolute directory path. Entries are reused when
+// the workspace.yaml mtime and in-use lock-file signature are unchanged, which
+// keeps scans cheap even when ~/.copilot/session-state contains thousands of
+// historical sessions.
+const discoveryCache = new Map<string, DiscoveryCacheEntry>();
+
+export function __resetCopilotDiscoveryCacheForTests(): void {
+  discoveryCache.clear();
+  lastSyncAtMs = 0;
+}
+
+function computeLockSignature(directoryEntries: string[]): string {
+  return directoryEntries.filter(isInUseLockFile).sort().join("|");
+}
+
 function discoverSessionFromDirectory(
   sessionRoot: string,
   directoryName: string,
@@ -147,6 +168,18 @@ function discoverSessionFromDirectory(
   const workspacePath = join(directoryPath, "workspace.yaml");
   if (!existsSync(workspacePath)) {
     return null;
+  }
+
+  const workspaceStat = statSync(workspacePath);
+  const directoryEntries = readdirSync(directoryPath);
+  const lockSignature = computeLockSignature(directoryEntries);
+  const cached = discoveryCache.get(directoryPath);
+  if (
+    cached &&
+    cached.workspaceMtimeMs === workspaceStat.mtimeMs &&
+    cached.lockSignature === lockSignature
+  ) {
+    return cached.session;
   }
 
   const workspace = parseWorkspaceYaml(readFileSync(workspacePath, "utf8"));
@@ -159,14 +192,11 @@ function discoverSessionFromDirectory(
   const repo = workspace.repository?.trim() || null;
   const branch = workspace.branch?.trim() || null;
   const summary = normalizeSummary(workspace.summary);
-  const lastSeenAt = workspace.updated_at?.trim() || statSync(workspacePath).mtime.toISOString();
-  const lifecycleStatus: SessionRegistryObservedLifecycleStatus = readdirSync(directoryPath).some(
-    isInUseLockFile,
-  )
-    ? "active"
-    : "ended";
+  const lastSeenAt = workspace.updated_at?.trim() || workspaceStat.mtime.toISOString();
+  const lifecycleStatus: SessionRegistryObservedLifecycleStatus =
+    lockSignature.length > 0 ? "active" : "ended";
 
-  return {
+  const session: DiscoveredCopilotSession = {
     sessionId,
     title: deriveTitle(sessionId, summary, cwd, repo),
     description: deriveDescription(repo, branch, cwd),
@@ -176,19 +206,43 @@ function discoverSessionFromDirectory(
     lastSeenAt,
     lifecycleStatus,
   };
+
+  discoveryCache.set(directoryPath, {
+    workspaceMtimeMs: workspaceStat.mtimeMs,
+    lockSignature,
+    session,
+  });
+
+  return session;
 }
 
 export function discoverCopilotSessions(
   sessionRoot: string = getDefaultCopilotSessionStateRoot(),
 ): DiscoveredCopilotSession[] {
   if (!existsSync(sessionRoot)) {
+    discoveryCache.clear();
     return [];
   }
 
-  const discovered = readdirSync(sessionRoot, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => discoverSessionFromDirectory(sessionRoot, entry.name))
-    .filter((entry): entry is DiscoveredCopilotSession => entry !== null);
+  const entries = readdirSync(sessionRoot, { withFileTypes: true }).filter((entry) =>
+    entry.isDirectory(),
+  );
+  const visitedDirectories = new Set<string>();
+  const discovered: DiscoveredCopilotSession[] = [];
+  for (const entry of entries) {
+    visitedDirectories.add(join(sessionRoot, entry.name));
+    const session = discoverSessionFromDirectory(sessionRoot, entry.name);
+    if (session) {
+      discovered.push(session);
+    }
+  }
+
+  // Evict cache entries for directories that no longer exist under sessionRoot.
+  for (const cachedPath of [...discoveryCache.keys()]) {
+    if (!visitedDirectories.has(cachedPath)) {
+      discoveryCache.delete(cachedPath);
+    }
+  }
 
   discovered.sort((left, right) => {
     const leftSeen = left.lastSeenAt ? Date.parse(left.lastSeenAt) : Number.NEGATIVE_INFINITY;
@@ -285,4 +339,31 @@ export function syncDiscoveredCopilotSessions(
   }
 
   return changes;
+}
+
+// Module-level debounce timestamp used by maybeSyncDiscoveredCopilotSessions.
+let lastSyncAtMs = 0;
+
+export const COPILOT_SYNC_DEBOUNCE_MS = 5000;
+
+// Returns true if a sync ran. Callers can pass { force: true } to bypass the
+// debounce (e.g., on explicit user refresh actions in the future).
+export function maybeSyncDiscoveredCopilotSessions(
+  store: SessionRegistryFileStore,
+  options: {
+    sessionRoot?: string;
+    debounceMs?: number;
+    force?: boolean;
+    now?: () => number;
+  } = {},
+): boolean {
+  const now = options.now ?? (() => Date.now());
+  const debounceMs = options.debounceMs ?? COPILOT_SYNC_DEBOUNCE_MS;
+  const nowMs = now();
+  if (!options.force && nowMs - lastSyncAtMs < debounceMs) {
+    return false;
+  }
+  lastSyncAtMs = nowMs;
+  syncDiscoveredCopilotSessions(store, options.sessionRoot);
+  return true;
 }

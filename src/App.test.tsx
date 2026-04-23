@@ -246,7 +246,7 @@ describe("App sessions route", () => {
 
       expect(container.textContent).toContain("Manual session registry");
 
-      await settle(2_100);
+      await settle(15_100);
 
       expect(container.textContent).toContain(
         "Manual session registry (refreshed)",
@@ -263,7 +263,7 @@ describe("App sessions route", () => {
 
       expect(sessionsRequests).toBeGreaterThanOrEqual(2);
     },
-    15_000,
+    20_000,
   );
 
   it(
