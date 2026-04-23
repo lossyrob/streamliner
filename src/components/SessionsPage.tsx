@@ -7,6 +7,19 @@ const SESSION_POLL_INTERVAL_MS = 2000;
 const SESSION_AUTOSAVE_MS = 500;
 const DEFAULT_STALE_SESSION_DAYS = 7;
 const SESSION_STALE_DAYS_STORAGE_KEY = "streamliner:sessionsStaleDays";
+const SESSION_GROUP_MODE_STORAGE_KEY = "streamliner:sessionsGroupMode";
+
+type GroupMode = "recency" | "repo" | "folder" | "flat";
+type SheetTab = "overview" | "activity" | "settings";
+
+const GROUP_MODES: Array<{ mode: GroupMode; label: string }> = [
+  { mode: "recency", label: "Recency" },
+  { mode: "repo", label: "Repo" },
+  { mode: "folder", label: "Folder" },
+  { mode: "flat", label: "Flat" },
+];
+
+const DEFAULT_GROUP_MODE: GroupMode = "repo";
 
 interface SessionDraft {
   title: string;
@@ -172,6 +185,14 @@ function getFreshnessTimestamp(session: SessionRegistryListItem): number {
   return Number.isFinite(freshnessTimestamp) ? freshnessTimestamp : Number.NEGATIVE_INFINITY;
 }
 
+function getActivityTimestamp(session: SessionRegistryListItem): number | null {
+  if (!session.lastSeenAt) {
+    return null;
+  }
+  const parsed = Date.parse(session.lastSeenAt);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function isSessionStale(
   session: SessionRegistryListItem,
   staleSessionDays: number,
@@ -190,6 +211,226 @@ function readStaleSessionDays(): number {
     return DEFAULT_STALE_SESSION_DAYS;
   }
   return Math.floor(persistedValue);
+}
+
+function readGroupMode(): GroupMode {
+  if (typeof window === "undefined") {
+    return DEFAULT_GROUP_MODE;
+  }
+  const stored = window.localStorage.getItem(SESSION_GROUP_MODE_STORAGE_KEY);
+  if (stored === "recency" || stored === "repo" || stored === "folder" || stored === "flat") {
+    return stored;
+  }
+  return DEFAULT_GROUP_MODE;
+}
+
+// Parent directory of a cwd, robust to `/`, `\\`, trailing separators, and Windows roots.
+// Used as the grouping key for "Folder" mode and as a display label.
+function folderOf(cwd: string): string {
+  if (!cwd) {
+    return "";
+  }
+  // Normalize separators and collapse duplicates, preserving UNC `//` prefix.
+  const unc = /^[\\/]{2}/.test(cwd);
+  let normalized = cwd.replace(/\\/g, "/").replace(/\/+/g, "/");
+  if (unc && !normalized.startsWith("//")) {
+    normalized = "/" + normalized;
+  }
+  // Strip trailing separator, except for pure root markers.
+  if (normalized.length > 1 && normalized.endsWith("/")) {
+    normalized = normalized.replace(/\/+$/, "");
+  }
+
+  // UNC: "//server/share/..." — parent is one level up but never above "//server/share".
+  if (unc) {
+    const parts = normalized.slice(2).split("/").filter((part) => part.length > 0);
+    if (parts.length <= 2) {
+      return "//" + parts.join("/");
+    }
+    parts.pop();
+    return "//" + parts.join("/");
+  }
+
+  const lastSep = normalized.lastIndexOf("/");
+  if (lastSep < 0) {
+    return normalized;
+  }
+  const parent = normalized.slice(0, lastSep);
+  // Drive root like "C:" → return "C:/".
+  if (/^[A-Za-z]:$/.test(parent)) {
+    return parent + "/";
+  }
+  if (parent.length === 0) {
+    return "/";
+  }
+  return parent;
+}
+
+type RecencyBucketKey = "active" | "today" | "yesterday" | "week" | "older" | "never";
+
+interface RecencyBucketInfo {
+  key: RecencyBucketKey;
+  label: string;
+  order: number;
+}
+
+function recencyBucket(session: SessionRegistryListItem): RecencyBucketInfo {
+  const ts = getActivityTimestamp(session);
+  if (ts === null) {
+    return { key: "never", label: "Never observed", order: 5 };
+  }
+  const hours = (Date.now() - ts) / 3_600_000;
+  if (hours < 1) return { key: "active", label: "Active now", order: 0 };
+  if (hours < 24) return { key: "today", label: "Today", order: 1 };
+  if (hours < 48) return { key: "yesterday", label: "Yesterday", order: 2 };
+  if (hours < 168) return { key: "week", label: "This week", order: 3 };
+  return { key: "older", label: "Older", order: 4 };
+}
+
+interface SessionGroup {
+  key: string;
+  label: string;
+  code: string | null;
+  latestTs: number;
+  sessions: SessionRegistryListItem[];
+}
+
+function repoGroupKey(session: SessionRegistryListItem): string {
+  return session.repo ?? "__no_repo__";
+}
+
+function folderGroupKey(session: SessionRegistryListItem): string {
+  return folderOf(session.cwd) || "__no_cwd__";
+}
+
+function displayRepoLabel(repoKey: string): { label: string; code: string | null } {
+  if (repoKey === "__no_repo__") {
+    return { label: "(no repo)", code: null };
+  }
+  const shortName = repoKey.includes("/") ? repoKey.split("/").slice(-1)[0] : repoKey;
+  return { label: shortName, code: repoKey };
+}
+
+function displayFolderLabel(folderKey: string): { label: string; code: string | null } {
+  if (folderKey === "__no_cwd__") {
+    return { label: "(no cwd)", code: null };
+  }
+  // Show last one or two path segments for compact display.
+  const cleaned = folderKey.replace(/\\/g, "/").replace(/\/+$/, "");
+  const segments = cleaned.split("/").filter((seg) => seg.length > 0);
+  const short = segments.slice(-2).join("/") || cleaned;
+  return { label: short || folderKey, code: folderKey };
+}
+
+function groupSessions(
+  sessions: SessionRegistryListItem[],
+  mode: GroupMode,
+): SessionGroup[] {
+  if (mode === "flat") {
+    const sorted = [...sessions].sort(
+      (a, b) => getFreshnessTimestamp(b) - getFreshnessTimestamp(a),
+    );
+    const latestTs = sorted.length > 0 ? getFreshnessTimestamp(sorted[0]) : 0;
+    return [
+      {
+        key: "__all__",
+        label: "All sessions",
+        code: null,
+        latestTs,
+        sessions: sorted,
+      },
+    ];
+  }
+
+  const buckets = new Map<string, SessionRegistryListItem[]>();
+  for (const session of sessions) {
+    let key: string;
+    if (mode === "recency") {
+      key = recencyBucket(session).key;
+    } else if (mode === "repo") {
+      key = repoGroupKey(session);
+    } else {
+      key = folderGroupKey(session);
+    }
+    const existing = buckets.get(key);
+    if (existing) {
+      existing.push(session);
+    } else {
+      buckets.set(key, [session]);
+    }
+  }
+
+  const groups: SessionGroup[] = [];
+  for (const [key, list] of buckets) {
+    const sorted = [...list].sort(
+      (a, b) => getFreshnessTimestamp(b) - getFreshnessTimestamp(a),
+    );
+    const latestTs = getFreshnessTimestamp(sorted[0]);
+
+    let label = key;
+    let code: string | null = null;
+    if (mode === "recency") {
+      // label comes from the bucket metadata
+      const sample = sorted[0];
+      const info = recencyBucket(sample);
+      label = info.label;
+    } else if (mode === "repo") {
+      const display = displayRepoLabel(key);
+      label = display.label;
+      code = display.code;
+    } else {
+      const display = displayFolderLabel(key);
+      label = display.label;
+      code = display.code;
+    }
+
+    groups.push({ key, label, code, latestTs, sessions: sorted });
+  }
+
+  if (mode === "recency") {
+    // Semantic bucket ordering — not frozen.
+    const order: Record<RecencyBucketKey, number> = {
+      active: 0,
+      today: 1,
+      yesterday: 2,
+      week: 3,
+      older: 4,
+      never: 5,
+    };
+    groups.sort((a, b) => (order[a.key as RecencyBucketKey] ?? 99) - (order[b.key as RecencyBucketKey] ?? 99));
+  }
+  return groups;
+}
+
+// Apply a frozen group order (by key) to the computed groups.
+// Groups in `frozenOrder` that no longer exist are dropped; new groups are appended
+// in freshness-desc order.
+function applyFrozenOrder(groups: SessionGroup[], frozenOrder: string[]): SessionGroup[] {
+  const byKey = new Map(groups.map((group) => [group.key, group]));
+  const ordered: SessionGroup[] = [];
+  for (const key of frozenOrder) {
+    const group = byKey.get(key);
+    if (group) {
+      ordered.push(group);
+      byKey.delete(key);
+    }
+  }
+  const extras = [...byKey.values()].sort((a, b) => b.latestTs - a.latestTs);
+  return [...ordered, ...extras];
+}
+
+function computeFreshOrder(groups: SessionGroup[]): string[] {
+  return [...groups]
+    .sort((a, b) => b.latestTs - a.latestTs)
+    .map((group) => group.key);
+}
+
+function timeAgo(ts: number): string {
+  const diffSec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (diffSec < 60) return `${diffSec}s ago`;
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+  return `${Math.floor(diffSec / 86400)}d ago`;
 }
 
 function useLatestValue<T>(value: T) {
@@ -214,12 +455,15 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
   const [query, setQuery] = useState("");
   const [showArchived, setShowArchived] = useState(false);
   const [staleSessionDays, setStaleSessionDays] = useState(readStaleSessionDays);
+  const [groupMode, setGroupMode] = useState<GroupMode>(readGroupMode);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<SessionDraft>(createEmptyDraft);
   const [selectedSnapshot, setSelectedSnapshot] = useState<SessionRegistryListItem | null>(
     null,
   );
   const [creating, setCreating] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [sheetTab, setSheetTab] = useState<SheetTab>("overview");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
@@ -227,6 +471,8 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
   const [creatingState, setCreatingState] = useState<SaveState>("idle");
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipUnmountFlushRef = useRef(false);
+  // Frozen group order per mode. Filled lazily on first render for a mode; cleared by Resort.
+  const frozenOrderRef = useRef<Partial<Record<GroupMode, string[]>>>({});
   const creatingRef = useLatestValue(creating);
   const selectedIdRef = useLatestValue(selectedId);
   const draftRef = useLatestValue(draft);
@@ -274,6 +520,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
             setSelectedSnapshot(null);
             setDraft(createEmptyDraft());
             setSaveState("idle");
+            setSheetOpen(false);
             return;
           }
 
@@ -324,6 +571,25 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
     [sessions, staleSessionDays],
   );
   const hiddenStaleSessionCount = sessions.length - visibleSessions.length;
+
+  const computedGroups = useMemo(
+    () => groupSessions(visibleSessions, groupMode),
+    [visibleSessions, groupMode],
+  );
+
+  const orderedGroups = useMemo(() => {
+    if (groupMode === "recency" || groupMode === "flat") {
+      return computedGroups;
+    }
+    const frozen = frozenOrderRef.current[groupMode];
+    if (!frozen) {
+      // First time rendering this mode — freeze fresh order.
+      const fresh = computeFreshOrder(computedGroups);
+      frozenOrderRef.current[groupMode] = fresh;
+      return applyFrozenOrder(computedGroups, fresh);
+    }
+    return applyFrozenOrder(computedGroups, frozen);
+  }, [computedGroups, groupMode]);
 
   const existingDirty = useMemo(() => {
     if (!selectedSession || creating) {
@@ -460,40 +726,13 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
   }, [staleSessionDays]);
 
   useEffect(() => {
-    if (creating) {
-      return;
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(SESSION_GROUP_MODE_STORAGE_KEY, groupMode);
     }
-
-    const selectedVisible =
-      selectedId !== null
-        ? visibleSessions.find((session) => session.id === selectedId) ?? null
-        : null;
-    if (selectedVisible) {
-      return;
-    }
-    if (selectedId && (existingDirty || saveState === "saving")) {
-      return;
-    }
-
-    const nextVisibleSession = visibleSessions[0] ?? null;
-    if (nextVisibleSession) {
-      setSelectedId(nextVisibleSession.id);
-      setSelectedSnapshot(nextVisibleSession);
-      setDraft(draftFromSession(nextVisibleSession));
-      setSaveState("idle");
-      return;
-    }
-
-    if (selectedId !== null) {
-      setSelectedId(null);
-      setSelectedSnapshot(null);
-      setDraft(createEmptyDraft());
-      setSaveState("idle");
-    }
-  }, [creating, existingDirty, saveState, selectedId, visibleSessions]);
+  }, [groupMode]);
 
   useEffect(() => {
-    if (!selectedSession || creating || !existingDirty) {
+    if (creating || !sheetOpen || !selectedSession || !existingDirty) {
       return;
     }
 
@@ -503,10 +742,11 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
     }, SESSION_AUTOSAVE_MS);
 
     return clearAutosaveTimer;
-  }, [clearAutosaveTimer, creating, existingDirty, saveExistingSession, selectedSession]);
+  }, [clearAutosaveTimer, creating, existingDirty, saveExistingSession, selectedSession, sheetOpen]);
 
-  const handleSelectSession = useCallback(
+  const openSessionSheet = useCallback(
     async (session: SessionRegistryListItem) => {
+      // If another session is currently dirty, flush before swapping.
       if (!creating && existingDirty && !(await saveExistingSession())) {
         return;
       }
@@ -517,6 +757,8 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
       setDraft(draftFromSession(session));
       setSaveState("idle");
       setSaveError(null);
+      setSheetTab("overview");
+      setSheetOpen(true);
     },
     [creating, existingDirty, saveExistingSession],
   );
@@ -532,6 +774,25 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
     setCreatingState("idle");
     setSaveState("idle");
     setSaveError(null);
+    setSheetTab("settings"); // only settings is actionable while creating
+    setSheetOpen(true);
+  }, [creating, existingDirty, saveExistingSession]);
+
+  const closeSheet = useCallback(async () => {
+    // Close semantics: if we have unsaved edits on an existing session, await the save
+    // so close reliably flushes. If saving fails, keep the sheet open so the error stays visible.
+    if (!creating && existingDirty) {
+      const saved = await saveExistingSession();
+      if (!saved) {
+        return;
+      }
+    }
+    setSheetOpen(false);
+    if (creating) {
+      setCreating(false);
+      setCreatingState("idle");
+      setDraft(createEmptyDraft());
+    }
   }, [creating, existingDirty, saveExistingSession]);
 
   const handleCreate = useCallback(async () => {
@@ -573,6 +834,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
       setDraft(draftFromSession(created));
       setCreatingState("saved");
       setSaveError(null);
+      setSheetTab("overview");
       await fetchSessions();
     } catch (nextError) {
       setCreatingState("error");
@@ -625,6 +887,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
       setSelectedSnapshot(null);
       setDraft(createEmptyDraft());
       setSaveState("idle");
+      setSheetOpen(false);
       await fetchSessions(false);
     } catch (nextError) {
       setSaveState("error");
@@ -632,333 +895,589 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
     }
   }, [existingDirty, fetchSessions, saveExistingSession, selectedSession]);
 
+  // Close sheet on Escape.
+  useEffect(() => {
+    if (!sheetOpen) {
+      return;
+    }
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        void closeSheet();
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [closeSheet, sheetOpen]);
+
+  const handleResort = useCallback(() => {
+    if (groupMode === "recency" || groupMode === "flat") {
+      return;
+    }
+    delete frozenOrderRef.current[groupMode];
+    // Trigger re-render by flipping groupMode through itself.
+    setGroupMode(groupMode);
+    // Force the memo to recompute by updating a dependency — we flip state via a
+    // transient no-op by re-setting sessions to a new array reference.
+    setSessions((current) => current.slice());
+  }, [groupMode]);
+
   const detailStatus = creating ? creatingState : saveState;
   const showDetailStatus = detailStatus !== "idle";
+  const freezeNote =
+    groupMode === "recency"
+      ? "Recency buckets — order is semantic"
+      : groupMode === "flat"
+        ? "No grouping — rows sorted by most recent activity"
+        : "Group order frozen at page load · use ↻ Resort to refresh";
 
   return (
-    <div className="sl-sessions">
-      <div className="sl-sessions-list-panel">
-        <div className="sl-sessions-toolbar">
-          <div>
-            <span className="sl-eyebrow">SESSIONS</span>
-            <h2 className="sl-status-title">My Sessions</h2>
-            <p className="sl-status-message">
-              Track manual Copilot sessions that survive restarts, even before observation
-              or graph binding exists.
-            </p>
-          </div>
-          <div className="sl-header-actions">
-            <button
-              className={`sl-action-btn${showArchived ? " active" : ""}`}
-              onClick={() => setShowArchived((value) => !value)}
-            >
-              {showArchived ? "Hide archived" : "Show archived"}
-            </button>
-            <button
-              className={`sl-action-btn${creating ? " active" : ""}`}
-              onClick={() => void startCreating()}
-            >
-              New session
-            </button>
-          </div>
+    <div className="sl-sessions sl-sessions-v2">
+      <div className="sl-sessions-header">
+        <div>
+          <span className="sl-eyebrow">SESSIONS</span>
+          <h2 className="sl-status-title">My Sessions</h2>
+          <p className="sl-status-message">
+            Track manual Copilot sessions that survive restarts, even before observation
+            or graph binding exists.
+          </p>
         </div>
-
-        <div className="sl-sessions-filters">
-          <input
-            className="sl-text-field"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search title, description, or tags"
-          />
-          <label className="sl-session-stale-filter">
-            <span className="sl-field-label">Old after</span>
-            <div className="sl-session-stale-input">
-              <input
-                className="sl-text-field sl-session-stale-days"
-                type="number"
-                min={1}
-                step={1}
-                value={staleSessionDays}
-                onChange={(event) => {
-                  const nextValue = Number(event.target.value);
-                  setStaleSessionDays(
-                    Number.isFinite(nextValue) && nextValue >= 1
-                      ? Math.floor(nextValue)
-                      : DEFAULT_STALE_SESSION_DAYS,
-                  );
-                }}
-              />
-              <span className="sl-session-stale-suffix">days</span>
-            </div>
-          </label>
-        </div>
-
-        {hiddenStaleSessionCount > 0 && (
-          <div className="sl-sessions-filter-note">
-            Showing {visibleSessions.length} of {sessions.length} sessions updated within{" "}
-            {staleSessionDays} day{staleSessionDays === 1 ? "" : "s"}.
-          </div>
-        )}
-
-        {error && <div className="sl-action-error">{error}</div>}
-
-        <div className="sl-session-list">
-          {loading ? (
-            <div className="sl-empty-state">Loading sessions…</div>
-          ) : sessions.length === 0 ? (
-            <div className="sl-empty-state">
-              No sessions yet. Create one manually to start tracking restart-safe context.
-            </div>
-          ) : visibleSessions.length === 0 ? (
-            <div className="sl-empty-state">
-              No sessions updated in the last {staleSessionDays} day
-              {staleSessionDays === 1 ? "" : "s"}. Increase the stale window to show
-              older sessions.
-            </div>
-          ) : (
-            visibleSessions.map((session) => (
-              <button
-                key={session.id}
-                className={`sl-session-card${session.id === selectedId ? " selected" : ""}`}
-                onClick={() => void handleSelectSession(session)}
-              >
-                <div className="sl-session-card-header">
-                  <div>
-                    <div className="sl-session-title-row">
-                      {session.color && (
-                        <span
-                          className="sl-session-color"
-                          style={{ backgroundColor: session.color }}
-                        />
-                      )}
-                      <span className="sl-sidebar-item-title">{session.title}</span>
-                    </div>
-                    <div className="sl-session-path">{session.cwd}</div>
-                  </div>
-                  <span className={`sl-pill ${statusClass(session.lifecycleStatus)}`}>
-                    {session.lifecycleStatus}
-                  </span>
-                </div>
-                <p className="sl-sidebar-item-summary">{session.description || "No description yet."}</p>
-                <div className="sl-sidebar-item-meta">
-                  <span>{session.originKind}</span>
-                  <span>{session.repo ?? "repo unknown"}</span>
-                  <span>{formatTimestamp(session.lastSeenAt)}</span>
-                </div>
-              </button>
-            ))
-          )}
+        <div className="sl-header-actions">
+          <button
+            className={`sl-action-btn${showArchived ? " active" : ""}`}
+            onClick={() => setShowArchived((value) => !value)}
+          >
+            {showArchived ? "Hide archived" : "Show archived"}
+          </button>
+          <button
+            className="sl-action-btn primary"
+            onClick={() => void startCreating()}
+          >
+            + New session
+          </button>
         </div>
       </div>
 
-      <div className="sl-sessions-editor-panel">
-        <div className="sl-sessions-editor-card">
-          <div className="sl-session-card-header">
-            <div>
-              <span className="sl-eyebrow">{creating ? "NEW SESSION" : "DETAILS"}</span>
-              <h2 className="sl-status-title">
-                {creating
-                  ? "Create session"
-                  : selectedSession
-                    ? selectedSession.title
-                    : "Select a session"}
-              </h2>
-            </div>
-            {(creating || selectedSession) && showDetailStatus && (
-              <span className={`sl-pill ${detailStatus === "error" ? "red" : "accent"}`}>
-                {detailStatus}
-              </span>
-            )}
+      <div className="sl-sessions-filters">
+        <input
+          className="sl-text-field"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search sessions, repos, tags…"
+        />
+        <label className="sl-session-stale-filter">
+          <span className="sl-field-label">Old after</span>
+          <div className="sl-session-stale-input">
+            <input
+              className="sl-text-field sl-session-stale-days"
+              type="number"
+              min={1}
+              step={1}
+              value={staleSessionDays}
+              onChange={(event) => {
+                const nextValue = Number(event.target.value);
+                setStaleSessionDays(
+                  Number.isFinite(nextValue) && nextValue >= 1
+                    ? Math.floor(nextValue)
+                    : DEFAULT_STALE_SESSION_DAYS,
+                );
+              }}
+            />
+            <span className="sl-session-stale-suffix">days</span>
           </div>
+        </label>
+      </div>
 
-          {!creating && !selectedSession ? (
-            <div className="sl-empty-state">
-              Pick a session from the list to inspect it, or create a new manual entry.
-            </div>
-          ) : (
-            <div className="sl-session-editor">
-              <label className="sl-field">
-                <span className="sl-field-label">Title</span>
-                <input
-                  className="sl-text-field"
-                  value={draft.title}
-                  onChange={(event) =>
-                    setDraft((current) => ({ ...current, title: event.target.value }))
-                  }
-                  onBlur={() => {
-                    if (!creating) {
-                      void saveExistingSession();
-                    }
-                  }}
-                />
-              </label>
+      <div className="sl-sessions-group-bar">
+        <span className="sl-seg-label">Group by</span>
+        <div className="sl-seg" role="tablist">
+          {GROUP_MODES.map(({ mode, label }) => (
+            <button
+              key={mode}
+              role="tab"
+              aria-selected={mode === groupMode}
+              className={`sl-seg-btn${mode === groupMode ? " active" : ""}`}
+              onClick={() => setGroupMode(mode)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <button
+          className="sl-seg-resort"
+          disabled={groupMode === "recency" || groupMode === "flat"}
+          onClick={handleResort}
+          title="Re-sort groups by most recent activity"
+        >
+          ↻ Resort
+        </button>
+        <span className="sl-seg-note">{freezeNote}</span>
+      </div>
 
-              <label className="sl-field">
-                <span className="sl-field-label">Description</span>
-                <textarea
-                  className="sl-text-area"
-                  value={draft.description}
-                  onChange={(event) =>
-                    setDraft((current) => ({ ...current, description: event.target.value }))
-                  }
-                  onBlur={() => {
-                    if (!creating) {
-                      void saveExistingSession();
-                    }
-                  }}
-                />
-              </label>
+      {hiddenStaleSessionCount > 0 && (
+        <div className="sl-sessions-filter-note">
+          Hiding {hiddenStaleSessionCount} session
+          {hiddenStaleSessionCount === 1 ? "" : "s"} with no activity in the last{" "}
+          {staleSessionDays} day{staleSessionDays === 1 ? "" : "s"}.
+        </div>
+      )}
 
-              <div className="sl-field-grid">
-                <label className="sl-field">
-                  <span className="sl-field-label">Color</span>
-                  <input
-                    className="sl-text-field"
-                    value={draft.color}
-                    onChange={(event) =>
-                      setDraft((current) => ({ ...current, color: event.target.value }))
-                    }
-                    placeholder="#5b7fff"
-                    onBlur={() => {
-                      if (!creating) {
-                        void saveExistingSession();
-                      }
-                    }}
-                  />
-                </label>
-                <label className="sl-field">
-                  <span className="sl-field-label">Lifecycle</span>
-                  <select
-                    className="sl-select-field"
-                    value={draft.lifecycleStatus}
-                    disabled={selectedSession?.lifecycleStatus === "ended"}
-                    onChange={(event) =>
-                      setDraft((current) => ({
-                        ...current,
-                        lifecycleStatus: event.target.value as SessionDraft["lifecycleStatus"],
-                      }))
-                    }
-                    onBlur={() => {
-                      if (!creating) {
-                        void saveExistingSession();
-                      }
-                    }}
+      {error && <div className="sl-action-error">{error}</div>}
+
+      <div className="sl-sessions-groups">
+        {loading ? (
+          <div className="sl-empty-state">Loading sessions…</div>
+        ) : sessions.length === 0 ? (
+          <div className="sl-empty-state">
+            No sessions yet. Create one manually to start tracking restart-safe context.
+          </div>
+        ) : visibleSessions.length === 0 ? (
+          <div className="sl-empty-state">
+            No sessions updated in the last {staleSessionDays} day
+            {staleSessionDays === 1 ? "" : "s"}. Increase the stale window to show
+            older sessions.
+          </div>
+        ) : (
+          orderedGroups.map((group) => (
+            <section key={group.key} className="sl-session-group">
+              <div className="sl-session-group-head">
+                <span className="sl-session-group-title">
+                  {group.label}
+                  {group.code && group.code !== group.label && (
+                    <code className="sl-session-group-code">{group.code}</code>
+                  )}
+                </span>
+                <span className="sl-session-group-count">{group.sessions.length}</span>
+                <span className="sl-session-group-latest">
+                  latest: {timeAgo(group.latestTs)}
+                </span>
+              </div>
+              <div className="sl-session-rows">
+                {group.sessions.map((session) => (
+                  <button
+                    key={session.id}
+                    className={`sl-session-row${
+                      session.id === selectedId && sheetOpen ? " selected" : ""
+                    }`}
+                    onClick={() => void openSessionSheet(session)}
                   >
-                    <option value="active">active</option>
-                    <option value="paused">paused</option>
-                    {!creating && <option value="archived">archived</option>}
-                    {!creating && selectedSession?.lifecycleStatus === "ended" && (
-                      <option value="ended">ended</option>
-                    )}
-                  </select>
-                </label>
+                    <span
+                      className="sl-session-row-stripe"
+                      style={{ backgroundColor: session.color ?? "var(--sl-accent-border)" }}
+                    />
+                    <div className="sl-session-row-main">
+                      <div className="sl-session-row-title-line">
+                        <span
+                          className={`sl-session-row-dot ${
+                            session.lifecycleStatus === "active" ? "active" : "dim"
+                          }`}
+                        />
+                        <span className="sl-session-row-title">{session.title}</span>
+                      </div>
+                      <p className="sl-session-row-summary">
+                        {session.description || (
+                          <em className="sl-session-row-summary-empty">
+                            No description yet.
+                          </em>
+                        )}
+                      </p>
+                      <div className="sl-session-row-meta">
+                        <span className="sl-session-row-repo">
+                          {session.repo ?? "(no repo)"}
+                        </span>
+                        {session.branch && (
+                          <>
+                            <span className="sl-session-row-sep">·</span>
+                            <span className="sl-session-row-branch">{session.branch}</span>
+                          </>
+                        )}
+                        {session.tags.map((tag) => (
+                          <span key={tag} className="sl-session-row-tag">
+                            #{tag}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="sl-session-row-path">{session.cwd}</div>
+                    <div className="sl-session-row-status">
+                      <span className={`sl-pill ${statusClass(session.lifecycleStatus)}`}>
+                        {session.lifecycleStatus}
+                      </span>
+                      <span className="sl-session-row-origin">{session.originKind}</span>
+                    </div>
+                    <div className="sl-session-row-activity">
+                      {formatTimestamp(session.lastSeenAt)}
+                    </div>
+                  </button>
+                ))}
               </div>
+            </section>
+          ))
+        )}
+      </div>
 
-              <label className="sl-field">
-                <span className="sl-field-label">Cwd</span>
-                <input
-                  className="sl-text-field"
-                  value={draft.cwd}
-                  readOnly={!creating}
-                  onChange={(event) =>
-                    setDraft((current) => ({ ...current, cwd: event.target.value }))
-                  }
-                  placeholder="C:\\Users\\you\\proj\\repo"
-                />
-              </label>
-
-              <div className="sl-field-grid">
-                <label className="sl-field">
-                  <span className="sl-field-label">Repo</span>
-                  <input
-                    className="sl-text-field"
-                    value={draft.repo}
-                    readOnly={!creating}
-                    onChange={(event) =>
-                      setDraft((current) => ({ ...current, repo: event.target.value }))
-                    }
-                    placeholder="owner/name"
-                  />
-                </label>
-                <label className="sl-field">
-                  <span className="sl-field-label">Branch</span>
-                  <input
-                    className="sl-text-field"
-                    value={draft.branch}
-                    readOnly={!creating}
-                    onChange={(event) =>
-                      setDraft((current) => ({ ...current, branch: event.target.value }))
-                    }
-                    placeholder="feature/manual-session-registry"
-                  />
-                </label>
-              </div>
-
-              <label className="sl-field">
-                <span className="sl-field-label">Tags</span>
-                <input
-                  className="sl-text-field"
-                  value={draft.tagsText}
-                  onChange={(event) =>
-                    setDraft((current) => ({ ...current, tagsText: event.target.value }))
-                  }
-                  onBlur={() => {
-                    if (!creating) {
-                      void saveExistingSession();
-                    }
-                  }}
-                  placeholder="wave-2, registry"
-                />
-              </label>
-
-              {!creating && selectedSession && (
-                <div className="sl-session-facts">
-                  <span>Origin: {selectedSession.originKind}</span>
-                  <span>Last activity: {formatTimestamp(selectedSession.lastSeenAt)}</span>
-                  <span>
-                    Copilot session: {selectedSession.copilotSessionId ?? "Not linked yet"}
-                  </span>
+      {sheetOpen && (
+        <>
+          <div
+            className="sl-sheet-backdrop open"
+            onClick={() => void closeSheet()}
+          />
+          <div className="sl-sheet open" role="dialog" aria-modal="true">
+            <div className="sl-sheet-head">
+              <div>
+                <div className="sl-sheet-head-pills">
+                  {selectedSession && (
+                    <>
+                      <span className={`sl-pill ${statusClass(selectedSession.lifecycleStatus)}`}>
+                        {selectedSession.lifecycleStatus}
+                      </span>
+                      <span className="sl-pill muted">{selectedSession.originKind}</span>
+                    </>
+                  )}
+                  {creating && <span className="sl-pill accent">new</span>}
                 </div>
-              )}
-
-              {saveError && <div className="sl-action-error">{saveError}</div>}
-
-              <div className="sl-header-actions">
-                {creating ? (
-                  <>
-                    <button className="sl-action-btn" onClick={() => void handleCreate()}>
-                      Create session
-                    </button>
-                    <button
-                      className="sl-action-btn"
-                      onClick={() => {
-                        setCreating(false);
-                        setDraft(createEmptyDraft());
-                        setCreatingState("idle");
-                        setSaveError(null);
-                      }}
-                    >
-                      Cancel
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <button className="sl-action-btn" onClick={() => void saveExistingSession()}>
-                      Save now
-                    </button>
-                    <button className="sl-action-btn" onClick={() => void handleArchive()}>
-                      Archive
-                    </button>
-                    <button className="sl-action-btn" onClick={() => void handleDelete()}>
-                      Delete
-                    </button>
-                  </>
+                <h2 className="sl-sheet-title">
+                  {creating
+                    ? "Create session"
+                    : selectedSession
+                      ? selectedSession.title
+                      : "Session"}
+                </h2>
+                {selectedSession && !creating && (
+                  <div className="sl-session-path">{selectedSession.cwd}</div>
                 )}
               </div>
+              <div className="sl-sheet-head-right">
+                {showDetailStatus && (
+                  <span className={`sl-pill ${detailStatus === "error" ? "red" : "accent"}`}>
+                    {detailStatus}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  className="sl-sheet-close"
+                  onClick={() => void closeSheet()}
+                  aria-label="Close"
+                >
+                  ×
+                </button>
+              </div>
             </div>
+
+            <div className="sl-sheet-tabs" role="tablist">
+              <button
+                role="tab"
+                aria-selected={sheetTab === "overview"}
+                disabled={creating}
+                className={`sl-sheet-tab${sheetTab === "overview" ? " active" : ""}`}
+                onClick={() => setSheetTab("overview")}
+              >
+                Overview
+              </button>
+              <button
+                role="tab"
+                aria-selected={sheetTab === "activity"}
+                disabled={creating}
+                className={`sl-sheet-tab${sheetTab === "activity" ? " active" : ""}`}
+                onClick={() => setSheetTab("activity")}
+              >
+                Activity
+              </button>
+              <button
+                role="tab"
+                aria-selected={sheetTab === "settings"}
+                className={`sl-sheet-tab${sheetTab === "settings" ? " active" : ""}`}
+                onClick={() => setSheetTab("settings")}
+              >
+                Settings
+              </button>
+            </div>
+
+            <div className="sl-sheet-body">
+              {saveError && <div className="sl-action-error">{saveError}</div>}
+
+              {sheetTab === "overview" && selectedSession && !creating && (
+                <SessionOverview session={selectedSession} />
+              )}
+
+              {sheetTab === "activity" && selectedSession && !creating && (
+                <SessionActivity session={selectedSession} />
+              )}
+
+              {sheetTab === "settings" && (creating || selectedSession) && (
+                <SessionSettingsForm
+                  draft={draft}
+                  creating={creating}
+                  selectedSession={selectedSession}
+                  onChange={setDraft}
+                  onAutosave={() => {
+                    if (!creating) {
+                      void saveExistingSession();
+                    }
+                  }}
+                />
+              )}
+            </div>
+
+            <div className="sl-sheet-foot">
+              {creating ? (
+                <>
+                  <button
+                    className="sl-action-btn primary"
+                    onClick={() => void handleCreate()}
+                    disabled={creatingState === "saving"}
+                  >
+                    {creatingState === "saving" ? "Creating…" : "Create session"}
+                  </button>
+                  <button className="sl-action-btn" onClick={() => void closeSheet()}>
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                selectedSession && (
+                  <>
+                    {selectedSession.lifecycleStatus !== "archived" && (
+                      <button className="sl-action-btn" onClick={() => void handleArchive()}>
+                        Archive
+                      </button>
+                    )}
+                    <button
+                      className="sl-action-btn danger"
+                      onClick={() => void handleDelete()}
+                    >
+                      Delete
+                    </button>
+                    <button
+                      className="sl-action-btn primary"
+                      style={{ marginLeft: "auto" }}
+                      onClick={() => void closeSheet()}
+                    >
+                      Done
+                    </button>
+                  </>
+                )
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+interface SessionOverviewProps {
+  session: SessionRegistryListItem;
+}
+
+function SessionOverview({ session }: SessionOverviewProps) {
+  return (
+    <div className="sl-session-overview">
+      <section className="sl-session-overview-section">
+        <h3 className="sl-session-overview-heading">
+          <span className="sl-ai-badge">AI</span> Summary
+        </h3>
+        <div className="sl-session-overview-summary">
+          {session.description || (
+            <em className="sl-session-overview-empty">
+              No description yet. Add one in Settings, or wait for the Copilot SDK
+              summarizer to generate one from recent turns.
+            </em>
           )}
         </div>
+        <div className="sl-session-overview-note">
+          AI summarization is not wired up yet — showing the session description for now.
+        </div>
+      </section>
+
+      <section className="sl-session-overview-section">
+        <h3 className="sl-session-overview-heading">Details</h3>
+        <dl className="sl-session-kv">
+          <dt>Repo</dt>
+          <dd>{session.repo ?? "—"}</dd>
+          <dt>Branch</dt>
+          <dd>{session.branch ?? "—"}</dd>
+          <dt>Cwd</dt>
+          <dd>{session.cwd}</dd>
+          <dt>Parent folder</dt>
+          <dd>{folderOf(session.cwd) || "—"}</dd>
+          <dt>Session id</dt>
+          <dd>{session.id}</dd>
+          <dt>Origin</dt>
+          <dd>{session.originKind}</dd>
+          <dt>Lifecycle</dt>
+          <dd>{session.lifecycleStatus}</dd>
+          <dt>Last activity</dt>
+          <dd>{formatTimestamp(session.lastSeenAt)}</dd>
+          <dt>Updated</dt>
+          <dd>{formatTimestamp(session.updatedAt)}</dd>
+          <dt>Tags</dt>
+          <dd>{session.tags.length > 0 ? session.tags.map((t) => `#${t}`).join(" ") : "—"}</dd>
+          {session.copilotSessionId && (
+            <>
+              <dt>Copilot session</dt>
+              <dd>{session.copilotSessionId}</dd>
+            </>
+          )}
+        </dl>
+      </section>
+    </div>
+  );
+}
+
+interface SessionActivityProps {
+  session: SessionRegistryListItem;
+}
+
+function SessionActivity({ session }: SessionActivityProps) {
+  return (
+    <div className="sl-session-activity">
+      <p className="sl-session-activity-placeholder">
+        Turn-by-turn activity is not wired up yet. Once Copilot session transcripts are
+        piped in, we'll show the last few user prompts and assistant responses here for{" "}
+        <strong>{session.title}</strong>.
+      </p>
+      <div className="sl-session-activity-facts">
+        <div>
+          <span className="sl-field-label">Last observed</span>
+          <div>{formatTimestamp(session.lastSeenAt)}</div>
+        </div>
+        <div>
+          <span className="sl-field-label">Updated</span>
+          <div>{formatTimestamp(session.updatedAt)}</div>
+        </div>
       </div>
+    </div>
+  );
+}
+
+interface SessionSettingsFormProps {
+  draft: SessionDraft;
+  creating: boolean;
+  selectedSession: SessionRegistryListItem | null;
+  onChange: (updater: (current: SessionDraft) => SessionDraft) => void;
+  onAutosave: () => void;
+}
+
+function SessionSettingsForm({
+  draft,
+  creating,
+  selectedSession,
+  onChange,
+  onAutosave,
+}: SessionSettingsFormProps) {
+  const lifecycleLocked = selectedSession?.lifecycleStatus === "ended";
+  return (
+    <div className="sl-session-editor">
+      <label className="sl-field">
+        <span className="sl-field-label">Title</span>
+        <input
+          className="sl-text-field"
+          value={draft.title}
+          onChange={(event) =>
+            onChange((current) => ({ ...current, title: event.target.value }))
+          }
+          onBlur={onAutosave}
+        />
+      </label>
+
+      <label className="sl-field">
+        <span className="sl-field-label">Description</span>
+        <textarea
+          className="sl-text-area"
+          value={draft.description}
+          onChange={(event) =>
+            onChange((current) => ({ ...current, description: event.target.value }))
+          }
+          onBlur={onAutosave}
+        />
+      </label>
+
+      <div className="sl-field-grid">
+        <label className="sl-field">
+          <span className="sl-field-label">Color</span>
+          <input
+            className="sl-text-field"
+            value={draft.color}
+            onChange={(event) =>
+              onChange((current) => ({ ...current, color: event.target.value }))
+            }
+            placeholder="#5b7fff"
+            onBlur={onAutosave}
+          />
+        </label>
+        <label className="sl-field">
+          <span className="sl-field-label">Lifecycle</span>
+          <select
+            className="sl-select-field"
+            value={draft.lifecycleStatus}
+            disabled={lifecycleLocked}
+            onChange={(event) =>
+              onChange((current) => ({
+                ...current,
+                lifecycleStatus: event.target.value as SessionDraft["lifecycleStatus"],
+              }))
+            }
+            onBlur={onAutosave}
+          >
+            <option value="active">active</option>
+            <option value="paused">paused</option>
+            {!creating && <option value="archived">archived</option>}
+            {!creating && lifecycleLocked && <option value="ended">ended</option>}
+          </select>
+        </label>
+      </div>
+
+      <label className="sl-field">
+        <span className="sl-field-label">Cwd</span>
+        <input
+          className="sl-text-field"
+          value={draft.cwd}
+          readOnly={!creating}
+          onChange={(event) =>
+            onChange((current) => ({ ...current, cwd: event.target.value }))
+          }
+          placeholder="C:\\Users\\you\\proj\\repo"
+        />
+      </label>
+
+      <div className="sl-field-grid">
+        <label className="sl-field">
+          <span className="sl-field-label">Repo</span>
+          <input
+            className="sl-text-field"
+            value={draft.repo}
+            readOnly={!creating}
+            onChange={(event) =>
+              onChange((current) => ({ ...current, repo: event.target.value }))
+            }
+            placeholder="owner/name"
+          />
+        </label>
+        <label className="sl-field">
+          <span className="sl-field-label">Branch</span>
+          <input
+            className="sl-text-field"
+            value={draft.branch}
+            readOnly={!creating}
+            onChange={(event) =>
+              onChange((current) => ({ ...current, branch: event.target.value }))
+            }
+            placeholder="main"
+          />
+        </label>
+      </div>
+
+      <label className="sl-field">
+        <span className="sl-field-label">Tags (comma-separated)</span>
+        <input
+          className="sl-text-field"
+          value={draft.tagsText}
+          onChange={(event) =>
+            onChange((current) => ({ ...current, tagsText: event.target.value }))
+          }
+          onBlur={onAutosave}
+          placeholder="paw-lite, ui, session-registry"
+        />
+      </label>
     </div>
   );
 }

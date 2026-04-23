@@ -61,11 +61,42 @@ function findButton(container: HTMLElement, label: string): HTMLButtonElement {
 }
 
 function findSessionList(container: HTMLElement): HTMLElement {
-  const sessionList = container.querySelector(".sl-session-list");
+  const sessionList = container.querySelector(".sl-sessions-groups");
   if (!(sessionList instanceof HTMLElement)) {
     throw new Error("Could not find the session list.");
   }
   return sessionList;
+}
+
+function findSessionRow(container: HTMLElement, title: string): HTMLButtonElement {
+  const rows = [...container.querySelectorAll<HTMLButtonElement>(".sl-session-row")];
+  const match = rows.find((row) =>
+    row.querySelector(".sl-session-row-title")?.textContent?.trim() === title,
+  );
+  if (!match) {
+    throw new Error(`Could not find session row with title "${title}".`);
+  }
+  return match;
+}
+
+async function openSessionSettings(
+  container: HTMLElement,
+  title: string,
+): Promise<void> {
+  act(() => {
+    findSessionRow(container, title).click();
+  });
+  await settle();
+  const tab = [...container.querySelectorAll<HTMLButtonElement>(".sl-sheet-tab")].find(
+    (btn) => btn.textContent?.trim() === "Settings",
+  );
+  if (!tab) {
+    throw new Error("Could not find Settings tab.");
+  }
+  act(() => {
+    tab.click();
+  });
+  await settle();
 }
 
 function findSessionEditorInputs(container: HTMLElement): HTMLInputElement[] {
@@ -220,6 +251,7 @@ describe("App sessions route", () => {
       expect(container.textContent).toContain(
         "Manual session registry (refreshed)",
       );
+      await openSessionSettings(container, "Manual session registry (refreshed)");
       const [, , cwdInput, repoInput, branchInput] = findSessionEditorInputs(container);
       expect(cwdInput?.value).toBe(
         "C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry-refreshed",
@@ -265,6 +297,7 @@ describe("App sessions route", () => {
 
       await settle();
 
+      await openSessionSettings(container, "Manual session registry");
       const [titleInput] = findSessionEditorInputs(container);
       setInputValue(titleInput, "Manual session registry (dirty)");
 
@@ -323,7 +356,7 @@ describe("App sessions route", () => {
       expect(sessionList.textContent).toContain("Recent session");
       expect(sessionList.textContent).not.toContain("Stale session");
       expect(container.textContent).toContain(
-        "Showing 1 of 2 sessions updated within 7 days.",
+        "Hiding 1 session with no activity in the last 7 days.",
       );
 
       setInputValue(findNumberInput(container), "14");
