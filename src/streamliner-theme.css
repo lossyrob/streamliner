@@ -51,6 +51,31 @@ body,
     sans-serif;
 }
 
+.sl-shell-nav {
+  padding: 14px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--sl-card-border);
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(10px);
+}
+
+.sl-shell-nav-title {
+  margin-top: 4px;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--sl-text);
+}
+
+.sl-shell-panel {
+  min-height: 0;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
+
 /* Header */
 .sl-header {
   padding: 16px 20px;
@@ -240,6 +265,32 @@ body,
 .sl-link-btn:disabled {
   cursor: progress;
   opacity: 0.7;
+}
+
+.sl-text-field,
+.sl-text-area,
+.sl-select-field {
+  border: 1px solid rgba(20, 60, 130, 0.12);
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 13px;
+  color: var(--sl-text);
+  outline: none;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.sl-text-field:focus,
+.sl-text-area:focus,
+.sl-select-field:focus {
+  border-color: var(--sl-accent);
+  box-shadow: 0 0 0 2px var(--sl-accent-bg);
+}
+
+.sl-text-area {
+  min-height: 112px;
+  resize: vertical;
 }
 
 /* Pills / badges */
@@ -669,6 +720,177 @@ body,
   color: var(--sl-text-muted);
   font-size: 13px;
   line-height: 1.6;
+}
+
+.sl-sessions {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+}
+
+.sl-sessions-list-panel,
+.sl-sessions-editor-panel {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 18px 20px;
+  gap: 16px;
+}
+
+.sl-sessions-list-panel {
+  border-right: 1px solid var(--sl-card-border);
+}
+
+.sl-sessions-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.sl-sessions-filters {
+  display: flex;
+  gap: 10px;
+}
+
+.sl-session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.sl-session-card,
+.sl-sessions-editor-card {
+  border-radius: 18px;
+  border: 1px solid rgba(20, 60, 130, 0.08);
+  background: rgba(255, 255, 255, 0.84);
+  box-shadow: 0 18px 40px rgba(24, 56, 120, 0.08);
+}
+
+.sl-session-card {
+  padding: 14px 16px;
+  cursor: pointer;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition:
+    transform 0.15s ease,
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.sl-session-card:hover {
+  transform: translateY(-1px);
+  border-color: var(--sl-accent-border);
+}
+
+.sl-session-card.selected {
+  border-color: var(--sl-accent-border);
+  background: rgba(29, 110, 220, 0.08);
+}
+
+.sl-session-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.sl-session-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sl-session-color {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(20, 60, 130, 0.12);
+  flex-shrink: 0;
+}
+
+.sl-session-path {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--sl-text-dim);
+  font-family: var(--sl-mono);
+  word-break: break-all;
+}
+
+.sl-sessions-editor-card {
+  flex: 1;
+  min-height: 0;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.sl-session-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+}
+
+.sl-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sl-field-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--sl-text-dim);
+}
+
+.sl-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.sl-session-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  font-size: 12px;
+  color: var(--sl-text-dim);
+}
+
+@media (max-width: 1180px) {
+  .sl-sessions {
+    grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 900px) {
+  .sl-shell-nav,
+  .sl-sessions-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .sl-sessions {
+    grid-template-columns: 1fr;
+  }
+
+  .sl-sessions-list-panel {
+    border-right: none;
+    border-bottom: 1px solid var(--sl-card-border);
+  }
+
+  .sl-field-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .sl-action-error {
