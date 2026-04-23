@@ -8,6 +8,7 @@ import {
   handleSessionRegistryApiRequest,
   SESSION_REGISTRY_API_BASE_PATH,
 } from "./src/session-registry/http-api";
+import { syncDiscoveredCopilotSessions } from "./src/session-registry/copilot-session-discovery";
 import { getSessionRegistryStore } from "./src/session-registry/runtime";
 
 const RECENTS_PATH = resolve(homedir(), ".streamliner", "recent-graphs.json");
@@ -152,8 +153,10 @@ function registerApiMiddleware(
 
     if (url.pathname.startsWith(SESSION_REGISTRY_API_BASE_PATH)) {
       try {
+        const registryStore = getSessionRegistryStore();
+        syncDiscoveredCopilotSessions(registryStore);
         const apiResponse = handleSessionRegistryApiRequest(
-          getSessionRegistryStore(),
+          registryStore,
           {
             method: req.method,
             url: req.url ?? url.pathname,
