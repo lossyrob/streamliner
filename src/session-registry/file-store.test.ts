@@ -12,7 +12,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { SessionRegistryUpsertInput } from "../session-registry-contract";
+import type { SessionRegistryPatch, SessionRegistryUpsertInput } from "../session-registry-contract";
 import { SESSION_REGISTRY_SCHEMA_VERSION } from "../session-registry-schema";
 import { SessionRegistryFileStore } from "./file-store";
 
@@ -195,6 +195,7 @@ describe("SessionRegistryFileStore", () => {
     const rootDir = createRootDir();
     createdRoots.push(rootDir);
     const entriesDir = join(rootDir, "entries");
+    const indexPath = join(rootDir, "index.json");
     const quarantineDir = join(rootDir, "quarantine");
     mkdirSync(entriesDir, { recursive: true });
     writeFileSync(join(entriesDir, "broken.json"), "{not json", "utf8");
@@ -240,6 +241,9 @@ describe("SessionRegistryFileStore", () => {
 
     expect(store.listSessions().map((item) => item.id)).toEqual(["external-entry"]);
     expect(rebuilds).toEqual([["external-entry"]]);
+    expect(readJsonFile<{ entries: Array<{ id: string }> }>(indexPath).entries).toEqual([
+      expect.objectContaining({ id: "external-entry" }),
+    ]);
   });
 
   it("blocks writes when an advisory lock already exists", () => {
@@ -281,5 +285,22 @@ describe("SessionRegistryFileStore", () => {
         lifecycleStatus: "ended",
       }),
     ).not.toThrow();
+
+    const missingObservedCopilotSessionId = {
+      title: "Observed missing id",
+      cwd: "C:\\repo",
+      origin: { kind: "observed" },
+    } as unknown as SessionRegistryUpsertInput;
+    expect(() =>
+      store.upsertSession(missingObservedCopilotSessionId),
+    ).toThrow(/copilotSessionId/);
+
+    const manual = store.upsertSession({
+      title: "Manual row",
+      cwd: "C:\\repo",
+      origin: { kind: "manual" },
+    });
+    const invalidPatch = { title: "" } as unknown as SessionRegistryPatch;
+    expect(() => store.patchSession(manual.id, invalidPatch)).toThrow(/patch\.title/);
   });
 });

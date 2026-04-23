@@ -77,6 +77,9 @@ function draftKey(draft: SessionDraft): string {
     title: draft.title.trim(),
     description: draft.description,
     color: draft.color.trim(),
+    cwd: draft.cwd,
+    repo: draft.repo,
+    branch: draft.branch,
     tags: normalizeTags(draft.tagsText),
     lifecycleStatus: draft.lifecycleStatus,
   });
@@ -169,7 +172,16 @@ function useLatestValue<T>(value: T) {
   return ref;
 }
 
-export function SessionsPage() {
+interface SessionSaveOptions {
+  background?: boolean;
+  keepalive?: boolean;
+}
+
+interface SessionsPageProps {
+  registerBeforeLeave?: (handler: (() => Promise<boolean>) | null) => void;
+}
+
+export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
   const [sessions, setSessions] = useState<SessionRegistryListItem[]>([]);
   const [query, setQuery] = useState("");
   const [showArchived, setShowArchived] = useState(false);
@@ -185,6 +197,7 @@ export function SessionsPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [creatingState, setCreatingState] = useState<SaveState>("idle");
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const skipUnmountFlushRef = useRef(false);
   const creatingRef = useLatestValue(creating);
   const selectedIdRef = useLatestValue(selectedId);
   const draftRef = useLatestValue(draft);
@@ -281,6 +294,7 @@ export function SessionsPage() {
     () => sessions.find((session) => session.id === selectedId) ?? selectedSnapshot,
     [selectedId, selectedSnapshot, sessions],
   );
+  const selectedSessionRef = useLatestValue(selectedSession);
 
   const existingDirty = useMemo(() => {
     if (!selectedSession || creating) {
@@ -289,69 +303,141 @@ export function SessionsPage() {
     const patch = buildPatch(selectedSession, draft);
     return patch !== null;
   }, [creating, draft, selectedSession]);
+  const existingDirtyRef = useLatestValue(existingDirty);
+  const fetchSessionsRef = useLatestValue(fetchSessions);
 
-  const saveExistingSession = useCallback(async () => {
-    if (!selectedSession) {
-      return;
+  const clearAutosaveTimer = useCallback(() => {
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
     }
-    const patch = buildPatch(selectedSession, draft);
-    if (!patch) {
-      setSaveState("saved");
-      setSaveError(null);
-      return;
-    }
+  }, []);
 
-    if (draft.title.trim().length === 0) {
-      setSaveState("error");
-      setSaveError("Title is required.");
-      return;
-    }
+  const saveExistingSession = useCallback(
+    async (options: SessionSaveOptions = {}): Promise<boolean> => {
+      clearAutosaveTimer();
 
-    setSaveState("saving");
-    try {
-      const response = await fetch(`/api/sessions/${encodeURIComponent(selectedSession.id)}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(patch),
-      });
-      if (!response.ok) {
-        const payload = (await response.json().catch(() => ({}))) as { error?: string };
-        throw new Error(payload.error ?? `Failed to save session (${response.status})`);
+      const currentSelectedSession = selectedSessionRef.current;
+      if (!currentSelectedSession || creatingRef.current) {
+        return true;
       }
-      const updated = toListItem((await response.json()) as SessionRegistryRecord);
-      setSelectedSnapshot(updated);
-      setDraft(draftFromSession(updated));
-      setSaveState("saved");
-      setSaveError(null);
-      await fetchSessions();
-    } catch (nextError) {
-      setSaveState("error");
-      setSaveError(nextError instanceof Error ? nextError.message : String(nextError));
+
+      const currentDraft = draftRef.current;
+      const patch = buildPatch(currentSelectedSession, currentDraft);
+      if (!patch) {
+        if (!options.background) {
+          setSaveState("saved");
+          setSaveError(null);
+        }
+        return true;
+      }
+
+      if (currentDraft.title.trim().length === 0) {
+        if (!options.background) {
+          setSaveState("error");
+          setSaveError("Title is required.");
+        }
+        return false;
+      }
+
+      if (!options.background) {
+        setSaveState("saving");
+      }
+
+      try {
+        const response = await fetch(
+          `/api/sessions/${encodeURIComponent(currentSelectedSession.id)}`,
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(patch),
+            keepalive: options.keepalive,
+          },
+        );
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => ({}))) as { error?: string };
+          throw new Error(payload.error ?? `Failed to save session (${response.status})`);
+        }
+
+        if (options.background) {
+          return true;
+        }
+
+        const updated = toListItem((await response.json()) as SessionRegistryRecord);
+        setSelectedSnapshot(updated);
+        setDraft(draftFromSession(updated));
+        setSaveState("saved");
+        setSaveError(null);
+        await fetchSessionsRef.current();
+        return true;
+      } catch (nextError) {
+        if (!options.background) {
+          setSaveState("error");
+          setSaveError(nextError instanceof Error ? nextError.message : String(nextError));
+        }
+        return false;
+      }
+    },
+    [clearAutosaveTimer, creatingRef, draftRef, fetchSessionsRef, selectedSessionRef],
+  );
+
+  const handleBeforeLeave = useCallback(async () => {
+    if (!existingDirtyRef.current) {
+      return true;
     }
-  }, [draft, fetchSessions, selectedSession]);
+    const saved = await saveExistingSession({ keepalive: true });
+    if (saved) {
+      skipUnmountFlushRef.current = true;
+    }
+    return saved;
+  }, [existingDirtyRef, saveExistingSession]);
+
+  useEffect(() => {
+    if (!registerBeforeLeave) {
+      return;
+    }
+    registerBeforeLeave(handleBeforeLeave);
+    return () => registerBeforeLeave(null);
+  }, [handleBeforeLeave, registerBeforeLeave]);
+
+  useEffect(() => {
+    const handlePageHide = () => {
+      if (!existingDirtyRef.current) {
+        return;
+      }
+      void saveExistingSession({ background: true, keepalive: true });
+    };
+
+    window.addEventListener("pagehide", handlePageHide);
+    return () => {
+      window.removeEventListener("pagehide", handlePageHide);
+      if (skipUnmountFlushRef.current) {
+        skipUnmountFlushRef.current = false;
+        return;
+      }
+      void saveExistingSession({ background: true, keepalive: true });
+    };
+  }, [existingDirtyRef, saveExistingSession]);
 
   useEffect(() => {
     if (!selectedSession || creating || !existingDirty) {
       return;
     }
 
+    clearAutosaveTimer();
     autosaveTimerRef.current = setTimeout(() => {
       void saveExistingSession();
     }, SESSION_AUTOSAVE_MS);
 
-    return () => {
-      if (autosaveTimerRef.current) {
-        clearTimeout(autosaveTimerRef.current);
-      }
-    };
-  }, [creating, existingDirty, saveExistingSession, selectedSession]);
+    return clearAutosaveTimer;
+  }, [clearAutosaveTimer, creating, existingDirty, saveExistingSession, selectedSession]);
 
   const handleSelectSession = useCallback(
     async (session: SessionRegistryListItem) => {
-      if (!creating && existingDirty) {
-        await saveExistingSession();
+      if (!creating && existingDirty && !(await saveExistingSession())) {
+        return;
       }
       setCreating(false);
       setCreatingState("idle");
@@ -363,6 +449,19 @@ export function SessionsPage() {
     },
     [creating, existingDirty, saveExistingSession],
   );
+
+  const startCreating = useCallback(async () => {
+    if (!creating && existingDirty && !(await saveExistingSession())) {
+      return;
+    }
+    setCreating(true);
+    setSelectedId(null);
+    setSelectedSnapshot(null);
+    setDraft(createEmptyDraft());
+    setCreatingState("idle");
+    setSaveState("idle");
+    setSaveError(null);
+  }, [creating, existingDirty, saveExistingSession]);
 
   const handleCreate = useCallback(async () => {
     if (draft.title.trim().length === 0 || draft.cwd.trim().length === 0) {
@@ -414,6 +513,9 @@ export function SessionsPage() {
     if (!selectedSession) {
       return;
     }
+    if (existingDirty && !(await saveExistingSession())) {
+      return;
+    }
     setSaveState("saving");
     try {
       const response = await fetch(
@@ -430,10 +532,13 @@ export function SessionsPage() {
       setSaveState("error");
       setSaveError(nextError instanceof Error ? nextError.message : String(nextError));
     }
-  }, [fetchSessions, selectedSession]);
+  }, [existingDirty, fetchSessions, saveExistingSession, selectedSession]);
 
   const handleDelete = useCallback(async () => {
     if (!selectedSession || !window.confirm(`Delete "${selectedSession.title}"?`)) {
+      return;
+    }
+    if (existingDirty && !(await saveExistingSession())) {
       return;
     }
     setSaveState("saving");
@@ -454,7 +559,7 @@ export function SessionsPage() {
       setSaveState("error");
       setSaveError(nextError instanceof Error ? nextError.message : String(nextError));
     }
-  }, [fetchSessions, selectedSession]);
+  }, [existingDirty, fetchSessions, saveExistingSession, selectedSession]);
 
   const detailStatus = creating ? creatingState : saveState;
   const showDetailStatus = detailStatus !== "idle";
@@ -480,14 +585,7 @@ export function SessionsPage() {
             </button>
             <button
               className={`sl-action-btn${creating ? " active" : ""}`}
-              onClick={() => {
-                setCreating(true);
-                setSelectedId(null);
-                setSelectedSnapshot(null);
-                setDraft(createEmptyDraft());
-                setCreatingState("idle");
-                setSaveError(null);
-              }}
+              onClick={() => void startCreating()}
             >
               New session
             </button>

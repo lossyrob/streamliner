@@ -148,6 +148,41 @@ describe("handleSessionRegistryApiRequest", () => {
     expect(badBodyResponse?.statusCode).toBe(400);
   });
 
+  it("rejects invalid mutation bodies before they can corrupt stored rows", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+    const created = store.upsertSession({
+      title: "Created row",
+      cwd: "C:\\created",
+      origin: { kind: "manual" },
+    });
+
+    const invalidPatchResponse = handleSessionRegistryApiRequest(store, {
+      method: "PATCH",
+      url: `${SESSION_REGISTRY_API_BASE_PATH}/${created.id}`,
+      body: {
+        title: "",
+        lifecycleStatus: "ended",
+      },
+    });
+    const invalidObservedCreateResponse = handleSessionRegistryApiRequest(store, {
+      method: "POST",
+      url: SESSION_REGISTRY_API_BASE_PATH,
+      body: {
+        title: "Observed row",
+        cwd: "C:\\observed",
+        origin: { kind: "observed" },
+      },
+    });
+
+    expect(invalidPatchResponse?.statusCode).toBe(400);
+    expect(invalidObservedCreateResponse?.statusCode).toBe(400);
+    expect(store.getSession(created.id)).toEqual(
+      expect.objectContaining({ title: "Created row" }),
+    );
+  });
+
   it("passes through unknown-field preservation for externally written rows", () => {
     const rootDir = createRootDir();
     createdRoots.push(rootDir);

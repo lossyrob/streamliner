@@ -289,7 +289,7 @@ function DashboardNav({
   onViewChange,
 }: {
   view: DashboardView;
-  onViewChange: (view: DashboardView) => void;
+  onViewChange: (view: DashboardView) => void | Promise<void>;
 }) {
   return (
     <div className="sl-shell-nav">
@@ -300,13 +300,17 @@ function DashboardNav({
       <div className="sl-header-actions">
         <button
           className={`sl-action-btn${view === "graph" ? " active" : ""}`}
-          onClick={() => onViewChange("graph")}
+          onClick={() => {
+            void onViewChange("graph");
+          }}
         >
           Workstream
         </button>
         <button
           className={`sl-action-btn${view === "sessions" ? " active" : ""}`}
-          onClick={() => onViewChange("sessions")}
+          onClick={() => {
+            void onViewChange("sessions");
+          }}
         >
           My Sessions
         </button>
@@ -318,11 +322,36 @@ function DashboardNav({
 export default function App() {
   const { view, setView } = useDashboardView();
   const graphLoader = useGraphLoader(view === "graph");
+  const beforeLeaveRef = useRef<(() => Promise<boolean>) | null>(null);
+
+  const handleViewChange = useCallback(
+    async (nextView: DashboardView) => {
+      if (nextView === view) {
+        return;
+      }
+      if (view === "sessions") {
+        const beforeLeave = beforeLeaveRef.current;
+        if (beforeLeave && !(await beforeLeave())) {
+          return;
+        }
+      }
+      setView(nextView);
+    },
+    [setView, view],
+  );
+
+  const registerBeforeLeave = useCallback((handler: (() => Promise<boolean>) | null) => {
+    beforeLeaveRef.current = handler;
+  }, []);
 
   return (
     <div className="sl-root">
-      <DashboardNav view={view} onViewChange={setView} />
-      {view === "graph" ? <GraphDashboard {...graphLoader} /> : <SessionsPage />}
+      <DashboardNav view={view} onViewChange={handleViewChange} />
+      {view === "graph" ? (
+        <GraphDashboard {...graphLoader} />
+      ) : (
+        <SessionsPage registerBeforeLeave={registerBeforeLeave} />
+      )}
     </div>
   );
 }

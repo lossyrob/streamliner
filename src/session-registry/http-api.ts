@@ -1,4 +1,8 @@
-import type { SessionRegistryPatch, SessionRegistryStore, SessionRegistryUpsertInput } from "../session-registry-contract";
+import type { SessionRegistryStore } from "../session-registry-contract";
+import {
+  parseSessionRegistryPatch,
+  parseSessionRegistryUpsertInput,
+} from "./file-store";
 
 export const SESSION_REGISTRY_API_BASE_PATH = "/api/sessions";
 
@@ -99,9 +103,7 @@ export function handleSessionRegistryApiRequest(
         }
         return {
           statusCode: 200,
-          body: store.upsertSession(
-            request.body as unknown as SessionRegistryUpsertInput,
-          ),
+          body: store.upsertSession(parseSessionRegistryUpsertInput(request.body)),
         };
       }
     }
@@ -124,7 +126,7 @@ export function handleSessionRegistryApiRequest(
         }
         return {
           statusCode: 200,
-          body: store.patchSession(id, request.body as SessionRegistryPatch),
+          body: store.patchSession(id, parseSessionRegistryPatch(request.body)),
         };
       }
 
