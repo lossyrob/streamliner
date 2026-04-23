@@ -103,6 +103,7 @@ alignment, and updates workstream artifacts as reality unfolds.
 - whether a discovered mismatch is a routine design-doc update or a
   `decision-needed` escalation
 - how to update the brief and graph based on shipped reality
+- routine architectural calls scoped to the workstream — host process choice, module placement, integration sequencing — when no other workstream is constrained and the rationale fits in a paragraph; record them inline on the affected node spec rather than as ADRs (see [NODE-SPEC-FORMAT.md](NODE-SPEC-FORMAT.md))
 
 **What the orchestrator does not decide:**
 
@@ -409,6 +410,8 @@ workstreams/
 ```
 
 This is the execution layer.
+
+Node specs (the issue body, local spec file, or other tracker entry a worker session executes from) are the Layer 3 artifact in this layer. See [NODE-SPEC-FORMAT.md](NODE-SPEC-FORMAT.md) for the standard sections, mission-type-order rules, and where routine architectural calls are recorded.
 
 ### 3. Local runtime state
 
