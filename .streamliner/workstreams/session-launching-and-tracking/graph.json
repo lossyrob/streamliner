@@ -117,7 +117,7 @@
       "type": "research",
       "title": "Session registry model",
       "summary": "Define the local-first session registry: persisted record shape (id, title, description, color, cwd, repo, status, last-seen, tags), storage layout under the runtime-state root (per-session JSON + index), autosave semantics, and the observation hook that imports existing Copilot CLI sessions from their session state files per decision #001.",
-      "status": "planned",
+      "status": "completed",
       "attention": "focus",
       "repoIds": ["streamliner"],
       "tracker": {
@@ -136,6 +136,12 @@
       "status": "planned",
       "attention": "focus",
       "repoIds": ["streamliner"],
+      "tracker": {
+        "type": "github",
+        "owner": "lossyrob",
+        "repo": "streamliner",
+        "number": 13
+      },
       "dependsOn": ["session-registry-model"]
     },
     {
