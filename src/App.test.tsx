@@ -25,6 +25,12 @@ function buildSession(
     originKind: "manual",
     graphBinding: null,
     copilotSessionId: null,
+    aiSummary: null,
+    aiSummaryModel: null,
+    aiSummaryUpdatedAt: null,
+    aiSummaryEventsFingerprint: null,
+    aiSummaryStatus: "missing",
+    aiSummaryError: null,
     ...overrides,
   };
 }

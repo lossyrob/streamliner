@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  SESSION_REGISTRY_AI_SUMMARY_STATUSES,
   SESSION_REGISTRY_LIFECYCLE_STATUSES,
   SESSION_REGISTRY_ORIGIN_KINDS,
   SESSION_REGISTRY_SCHEMA_VERSION,
@@ -40,6 +41,12 @@ function buildRecord(): SessionRegistryRecord {
       nodeId: "session-registry-model",
       launchClaimId: "launch-claim-123",
     },
+    aiSummary: "Designing the session registry contract surface",
+    aiSummaryModel: "gpt-5.4-mini",
+    aiSummaryUpdatedAt: "2026-04-21T20:31:00.000Z",
+    aiSummaryEventsFingerprint: "1:100",
+    aiSummaryStatus: "ready",
+    aiSummaryError: null,
   };
 }
 
@@ -56,6 +63,12 @@ describe("session registry schema", () => {
       "manual",
       "observed",
       "launched",
+    ]);
+    expect(SESSION_REGISTRY_AI_SUMMARY_STATUSES).toEqual([
+      "missing",
+      "pending",
+      "ready",
+      "error",
     ]);
     expect(SESSION_REGISTRY_CHANGE_EVENT_KINDS).toEqual([
       "upsert",
@@ -99,6 +112,12 @@ describe("session registry schema", () => {
       originKind: record.origin.kind,
       graphBinding: record.graphBinding,
       copilotSessionId: record.copilotSessionId,
+      aiSummary: record.aiSummary,
+      aiSummaryModel: record.aiSummaryModel,
+      aiSummaryUpdatedAt: record.aiSummaryUpdatedAt,
+      aiSummaryEventsFingerprint: record.aiSummaryEventsFingerprint,
+      aiSummaryStatus: record.aiSummaryStatus,
+      aiSummaryError: record.aiSummaryError,
     };
     const upsertInput: SessionRegistryUpsertInput = {
       title: record.title,

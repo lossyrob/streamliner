@@ -6,6 +6,7 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -27,9 +28,11 @@ import {
   type SessionRegistryUpsertInput,
 } from "../session-registry-contract";
 import {
+  SESSION_REGISTRY_AI_SUMMARY_STATUSES,
   SESSION_REGISTRY_LIFECYCLE_STATUSES,
   SESSION_REGISTRY_ORIGIN_KINDS,
   SESSION_REGISTRY_SCHEMA_VERSION,
+  type SessionRegistryAiSummaryStatus,
   type SessionRegistryGraphBinding,
   type SessionRegistryIndex,
   type SessionRegistryIndexEntry,
@@ -76,6 +79,15 @@ type JsonObject = Record<string, unknown>;
 
 export interface SessionRegistryFileStoreOptions {
   rootDir?: string;
+}
+
+export interface SessionRegistryDerivedStatePatch {
+  aiSummary?: string | null;
+  aiSummaryModel?: string | null;
+  aiSummaryUpdatedAt?: string | null;
+  aiSummaryEventsFingerprint?: string | null;
+  aiSummaryStatus?: SessionRegistryAiSummaryStatus;
+  aiSummaryError?: string | null;
 }
 
 export function getDefaultSessionRegistryRoot(): string {
@@ -301,6 +313,10 @@ function isLifecycleStatus(value: string): value is SessionRegistryLifecycleStat
   return SESSION_REGISTRY_LIFECYCLE_STATUSES.includes(value as SessionRegistryLifecycleStatus);
 }
 
+function isAiSummaryStatus(value: string): value is SessionRegistryAiSummaryStatus {
+  return SESSION_REGISTRY_AI_SUMMARY_STATUSES.includes(value as SessionRegistryAiSummaryStatus);
+}
+
 function isObservedUpsertInput(
   input: SessionRegistryUpsertInput,
 ): input is ObservedSessionRegistryUpsertInput {
@@ -344,6 +360,20 @@ function parseCreateLifecycleStatus(
     );
   }
   return lifecycle;
+}
+
+function normalizeAiSummaryStatus(
+  value: unknown,
+  fieldName: string,
+): SessionRegistryAiSummaryStatus {
+  if (value === undefined || value === null) {
+    return "missing";
+  }
+  const status = ensureString(value, fieldName);
+  if (!isAiSummaryStatus(status)) {
+    throw new Error(`Unsupported ${fieldName} "${status}".`);
+  }
+  return status;
 }
 
 export function parseSessionRegistryPatch(value: unknown): SessionRegistryPatch {
@@ -543,8 +573,26 @@ function validateStoredRecord(
       return {
         ...(rawRecord.graphBinding as JsonObject),
         ...typedGraphBinding,
-      } as SessionRegistryGraphBinding;
-    })(),
+        } as SessionRegistryGraphBinding;
+      })(),
+    aiSummary: ensureOptionalString(rawRecord.aiSummary, `${filePath}.aiSummary`),
+    aiSummaryModel: ensureOptionalString(rawRecord.aiSummaryModel, `${filePath}.aiSummaryModel`),
+    aiSummaryUpdatedAt: ensureOptionalString(
+      rawRecord.aiSummaryUpdatedAt,
+      `${filePath}.aiSummaryUpdatedAt`,
+    ),
+    aiSummaryEventsFingerprint: ensureOptionalString(
+      rawRecord.aiSummaryEventsFingerprint,
+      `${filePath}.aiSummaryEventsFingerprint`,
+    ),
+    aiSummaryStatus: normalizeAiSummaryStatus(
+      rawRecord.aiSummaryStatus,
+      `${filePath}.aiSummaryStatus`,
+    ),
+    aiSummaryError: ensureOptionalString(
+      rawRecord.aiSummaryError,
+      `${filePath}.aiSummaryError`,
+    ),
   };
 
   return storedRecord;
@@ -586,6 +634,24 @@ function validateIndexEntry(
     tags: ensureStringArray(rawEntry.tags, `${fieldName}.tags`),
     originKind,
     graphBinding: ensureOptionalGraphBinding(rawEntry.graphBinding, `${fieldName}.graphBinding`),
+    aiSummary: ensureOptionalString(rawEntry.aiSummary, `${fieldName}.aiSummary`),
+    aiSummaryModel: ensureOptionalString(rawEntry.aiSummaryModel, `${fieldName}.aiSummaryModel`),
+    aiSummaryUpdatedAt: ensureOptionalString(
+      rawEntry.aiSummaryUpdatedAt,
+      `${fieldName}.aiSummaryUpdatedAt`,
+    ),
+    aiSummaryEventsFingerprint: ensureOptionalString(
+      rawEntry.aiSummaryEventsFingerprint,
+      `${fieldName}.aiSummaryEventsFingerprint`,
+    ),
+    aiSummaryStatus: normalizeAiSummaryStatus(
+      rawEntry.aiSummaryStatus,
+      `${fieldName}.aiSummaryStatus`,
+    ),
+    aiSummaryError: ensureOptionalString(
+      rawEntry.aiSummaryError,
+      `${fieldName}.aiSummaryError`,
+    ),
   };
 }
 
@@ -631,6 +697,12 @@ function buildIndex(records: Iterable<StoredSessionRegistryRecord>): SessionRegi
     tags: cloneValue(record.tags),
     originKind: record.origin.kind,
     graphBinding: record.graphBinding ? cloneValue(record.graphBinding) : null,
+    aiSummary: record.aiSummary,
+    aiSummaryModel: record.aiSummaryModel,
+    aiSummaryUpdatedAt: record.aiSummaryUpdatedAt,
+    aiSummaryEventsFingerprint: record.aiSummaryEventsFingerprint,
+    aiSummaryStatus: record.aiSummaryStatus,
+    aiSummaryError: record.aiSummaryError,
   }));
   entries.sort(compareByFreshness);
 
@@ -657,10 +729,10 @@ function compareByFreshness(
 }
 
 function matchesText(
-  record: Pick<SessionRegistryIndexEntry, "title" | "description" | "tags">,
+  record: Pick<SessionRegistryIndexEntry, "title" | "description" | "aiSummary" | "tags">,
   text: string,
 ): boolean {
-  const haystacks = [record.title, record.description, ...record.tags];
+  const haystacks = [record.title, record.description, record.aiSummary ?? "", ...record.tags];
   return haystacks.some((value) => value.toLowerCase().includes(text));
 }
 
@@ -713,6 +785,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
   private records = new Map<string, StoredSessionRegistryRecord>();
   private index: SessionRegistryIndex = buildIndex([]);
   private lastSignature = "";
+  private lastDiskFingerprint = "";
   private loaded = false;
 
   constructor(options?: SessionRegistryFileStoreOptions) {
@@ -798,6 +871,12 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         tags: nextTags,
         origin: cloneValue(validatedInput.origin),
         graphBinding: nextGraphBinding,
+        aiSummary: latestRecord?.aiSummary ?? null,
+        aiSummaryModel: latestRecord?.aiSummaryModel ?? null,
+        aiSummaryUpdatedAt: latestRecord?.aiSummaryUpdatedAt ?? null,
+        aiSummaryEventsFingerprint: latestRecord?.aiSummaryEventsFingerprint ?? null,
+        aiSummaryStatus: latestRecord?.aiSummaryStatus ?? "missing",
+        aiSummaryError: latestRecord?.aiSummaryError ?? null,
       };
 
       const storedRecord = mergeStoredRecord(latestRecord, nextRecord);
@@ -928,6 +1007,58 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
     return this.patchSession(id, { lifecycleStatus: "archived" });
   }
 
+  patchDerivedSessionState(
+    id: string,
+    patch: SessionRegistryDerivedStatePatch,
+  ): SessionRegistryRecord {
+    return this.withWriteLock(() => {
+      const records = this.loadEntriesFromDisk();
+      const existingRecord = records.get(id);
+      if (!existingRecord) {
+        throw new Error(`Session ${id} does not exist.`);
+      }
+
+      const nextRecord: SessionRegistryRecord = {
+        ...cloneValue(existingRecord),
+        aiSummary:
+          patch.aiSummary !== undefined ? patch.aiSummary : existingRecord.aiSummary,
+        aiSummaryModel:
+          patch.aiSummaryModel !== undefined
+            ? patch.aiSummaryModel
+            : existingRecord.aiSummaryModel,
+        aiSummaryUpdatedAt:
+          patch.aiSummaryUpdatedAt !== undefined
+            ? patch.aiSummaryUpdatedAt
+            : existingRecord.aiSummaryUpdatedAt,
+        aiSummaryEventsFingerprint:
+          patch.aiSummaryEventsFingerprint !== undefined
+            ? patch.aiSummaryEventsFingerprint
+            : existingRecord.aiSummaryEventsFingerprint,
+        aiSummaryStatus:
+          patch.aiSummaryStatus !== undefined
+            ? patch.aiSummaryStatus
+            : existingRecord.aiSummaryStatus,
+        aiSummaryError:
+          patch.aiSummaryError !== undefined
+            ? patch.aiSummaryError
+            : existingRecord.aiSummaryError,
+      };
+
+      const storedRecord = mergeStoredRecord(existingRecord, nextRecord);
+      records.set(id, storedRecord);
+      const nextIndex = buildIndex(records.values());
+      this.persistEntry(storedRecord);
+      this.persistIndex(records, nextIndex);
+      this.commitSnapshot(records, nextIndex);
+      this.emitChange({
+        kind: SESSION_REGISTRY_CHANGE_EVENT_KINDS[0],
+        registryId: id,
+        snapshot: cloneValue(storedRecord),
+      });
+      return cloneValue(storedRecord);
+    });
+  }
+
   deleteSession(id: string): void {
     this.withWriteLock(() => {
       const records = this.loadEntriesFromDisk();
@@ -961,17 +1092,22 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
   }
 
   private refreshFromDisk(): void {
+    const nextDiskFingerprint = this.readDiskFingerprint();
+    if (this.loaded && nextDiskFingerprint === this.lastDiskFingerprint) {
+      return;
+    }
+
     const records = this.loadEntriesFromDisk();
     const index = this.loadOrRebuildIndex(records);
     const nextSignature = this.computeSignature(records);
 
     if (!this.loaded) {
-      this.commitSnapshot(records, index);
+      this.commitSnapshot(records, index, nextDiskFingerprint);
       return;
     }
 
     const didChange = nextSignature !== this.lastSignature;
-    this.commitSnapshot(records, index);
+    this.commitSnapshot(records, index, nextDiskFingerprint);
     if (didChange) {
       this.emitChange({
         kind: SESSION_REGISTRY_CHANGE_EVENT_KINDS[2],
@@ -990,11 +1126,28 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
   private commitSnapshot(
     records: Map<string, StoredSessionRegistryRecord>,
     index: SessionRegistryIndex,
+    diskFingerprint: string = this.readDiskFingerprint(),
   ): void {
     this.records = records;
     this.index = index;
     this.lastSignature = this.computeSignature(records);
+    this.lastDiskFingerprint = diskFingerprint;
     this.loaded = true;
+  }
+
+  private readDiskFingerprint(): string {
+    this.ensureDirectories();
+
+    let indexFingerprint = "missing";
+    try {
+      const indexStat = statSync(this.indexPath);
+      indexFingerprint = `${indexStat.mtimeMs}:${indexStat.size}`;
+    } catch {
+      // Index is optional on first load; refreshFromDisk will rebuild it from entries.
+    }
+
+    const entriesStat = statSync(this.entriesDir);
+    return `${entriesStat.mtimeMs}|${indexFingerprint}`;
   }
 
   private loadEntriesFromDisk(): Map<string, StoredSessionRegistryRecord> {

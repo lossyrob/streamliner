@@ -191,6 +191,44 @@ describe("SessionRegistryFileStore", () => {
     expect(attached.copilotSessionId).toBe("copilot-123");
   });
 
+  it("patches derived AI summary state without changing updatedAt", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+
+    const manual = store.upsertSession({
+      title: "Manual row",
+      description: "Builder-owned description",
+      cwd: "C:\\repo",
+      origin: { kind: "manual" },
+    });
+
+    const patched = store.patchDerivedSessionState(manual.id, {
+      aiSummary: "Implementing a persistent session worker",
+      aiSummaryModel: "gpt-5.4-mini",
+      aiSummaryUpdatedAt: "2026-04-23T22:00:00.000Z",
+      aiSummaryEventsFingerprint: "10:2048",
+      aiSummaryStatus: "ready",
+      aiSummaryError: null,
+    });
+
+    expect(patched).toEqual(
+      expect.objectContaining({
+        description: "Builder-owned description",
+        aiSummary: "Implementing a persistent session worker",
+        aiSummaryModel: "gpt-5.4-mini",
+        aiSummaryStatus: "ready",
+        updatedAt: manual.updatedAt,
+      }),
+    );
+    expect(store.listSessions()[0]).toEqual(
+      expect.objectContaining({
+        aiSummary: "Implementing a persistent session worker",
+        aiSummaryStatus: "ready",
+      }),
+    );
+  });
+
   it("quarantines malformed entries and emits rebuild on external changes", () => {
     const rootDir = createRootDir();
     createdRoots.push(rootDir);

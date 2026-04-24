@@ -8,7 +8,10 @@ import {
   handleSessionRegistryApiRequest,
   SESSION_REGISTRY_API_BASE_PATH,
 } from "./src/session-registry/http-api";
-import { maybeSyncDiscoveredCopilotSessions } from "./src/session-registry/copilot-session-discovery";
+import {
+  ensureSessionRegistryBackgroundWorkerStarted,
+  stopSessionRegistryBackgroundWorker,
+} from "./src/session-registry/background-worker";
 import { getSessionRegistryStore } from "./src/session-registry/runtime";
 
 const RECENTS_PATH = resolve(homedir(), ".streamliner", "recent-graphs.json");
@@ -154,16 +157,6 @@ function registerApiMiddleware(
     if (url.pathname.startsWith(SESSION_REGISTRY_API_BASE_PATH)) {
       try {
         const registryStore = getSessionRegistryStore();
-        // Only resync the Copilot session-state directory when the client
-        // requests the list endpoint. Item-scoped calls (GET/PATCH/DELETE on
-        // /api/sessions/<id>) don't benefit from a full filesystem scan, and
-        // the debounce prevents rapid polling from trashing disk I/O.
-        const method = (req.method ?? "GET").toUpperCase();
-        const isListRequest =
-          method === "GET" && url.pathname === SESSION_REGISTRY_API_BASE_PATH;
-        if (isListRequest) {
-          maybeSyncDiscoveredCopilotSessions(registryStore);
-        }
         const apiResponse = handleSessionRegistryApiRequest(
           registryStore,
           {
@@ -235,9 +228,21 @@ export default function serveGraph(options?: { graphPath?: string }): Plugin {
   return {
     name: "streamliner-serve-graph",
     configureServer(server) {
+      const registryStore = getSessionRegistryStore();
+      registryStore.listSessions({ includeArchived: true });
+      ensureSessionRegistryBackgroundWorkerStarted(registryStore);
+      server.httpServer?.once("close", () => {
+        void stopSessionRegistryBackgroundWorker();
+      });
       registerApiMiddleware(server.middlewares.use.bind(server.middlewares), defaultGraphPath);
     },
     configurePreviewServer(server) {
+      const registryStore = getSessionRegistryStore();
+      registryStore.listSessions({ includeArchived: true });
+      ensureSessionRegistryBackgroundWorkerStarted(registryStore);
+      server.httpServer?.once("close", () => {
+        void stopSessionRegistryBackgroundWorker();
+      });
       registerApiMiddleware(server.middlewares.use.bind(server.middlewares), defaultGraphPath);
     },
   };

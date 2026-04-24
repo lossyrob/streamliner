@@ -76,6 +76,12 @@ function toListItem(record: SessionRegistryRecord): SessionRegistryListItem {
     originKind: record.origin.kind,
     graphBinding: record.graphBinding,
     copilotSessionId: record.copilotSessionId,
+    aiSummary: record.aiSummary,
+    aiSummaryModel: record.aiSummaryModel,
+    aiSummaryUpdatedAt: record.aiSummaryUpdatedAt,
+    aiSummaryEventsFingerprint: record.aiSummaryEventsFingerprint,
+    aiSummaryStatus: record.aiSummaryStatus,
+    aiSummaryError: record.aiSummaryError,
   };
 }
 
@@ -155,6 +161,12 @@ function sessionSnapshotKey(session: SessionRegistryListItem | null): string | n
     originKind: session.originKind,
     graphBinding: session.graphBinding,
     copilotSessionId: session.copilotSessionId,
+    aiSummary: session.aiSummary,
+    aiSummaryModel: session.aiSummaryModel,
+    aiSummaryUpdatedAt: session.aiSummaryUpdatedAt,
+    aiSummaryEventsFingerprint: session.aiSummaryEventsFingerprint,
+    aiSummaryStatus: session.aiSummaryStatus,
+    aiSummaryError: session.aiSummaryError,
   });
 }
 
@@ -177,6 +189,108 @@ function formatTimestamp(value: string | null): string {
     return "Never observed";
   }
   return new Date(value).toLocaleString();
+}
+
+function getRowFallbackTitle(session: SessionRegistryListItem): string {
+  const title = session.title.trim();
+  const looksLikePrompt =
+    title.startsWith("Repo:") ||
+    title.includes("Cwd:") ||
+    title.includes("Existing title:");
+  if (!session.copilotSessionId || (!looksLikePrompt && title.length <= 80)) {
+    return title;
+  }
+
+  const repoName = session.repo?.split("/").at(-1)?.trim();
+  if (repoName) {
+    return repoName;
+  }
+
+  const cwdLeaf = session.cwd.split(/[/\\]+/).filter(Boolean).at(-1);
+  return cwdLeaf || title;
+}
+
+interface SessionSummaryDisplay {
+  text: string | null;
+  source: "ai" | "manual" | null;
+  status: SessionRegistryListItem["aiSummaryStatus"];
+  note: string | null;
+}
+
+function getSessionSummaryDisplay(session: SessionRegistryListItem): SessionSummaryDisplay {
+  const aiSummary = session.aiSummary?.trim() ?? "";
+  const manualDescription = session.description.trim();
+
+  if (aiSummary.length > 0) {
+    if (session.aiSummaryStatus === "pending") {
+      return {
+        text: aiSummary,
+        source: "ai",
+        status: "pending",
+        note: "Refreshing from recent turns…",
+      };
+    }
+    if (session.aiSummaryStatus === "error") {
+      return {
+        text: aiSummary,
+        source: "ai",
+        status: "error",
+        note: session.aiSummaryError || "Last AI summary may be stale.",
+      };
+    }
+    return {
+      text: aiSummary,
+      source: "ai",
+      status: "ready",
+      note:
+        session.aiSummaryModel && session.aiSummaryUpdatedAt
+          ? `${session.aiSummaryModel} · ${formatTimestamp(session.aiSummaryUpdatedAt)}`
+          : session.aiSummaryModel,
+    };
+  }
+
+  if (session.aiSummaryStatus === "pending" && session.copilotSessionId) {
+    return {
+      text: "Generating AI summary…",
+      source: "ai",
+      status: "pending",
+      note: "Using recent user turns from the Copilot session log.",
+    };
+  }
+
+  if (manualDescription.length > 0) {
+    return {
+      text: manualDescription,
+      source: "manual",
+      status: session.aiSummaryStatus,
+      note: null,
+    };
+  }
+
+  if (session.aiSummaryStatus === "error") {
+    return {
+      text: "AI summary unavailable right now.",
+      source: "ai",
+      status: "error",
+      note: session.aiSummaryError || "The worker will retry in the background.",
+    };
+  }
+
+  if (session.copilotSessionId) {
+    return {
+      text: "Waiting for AI summary…",
+      source: "ai",
+      status: "missing",
+      note: "No recent user turns have been summarized yet.",
+    };
+  }
+
+  return {
+    text: null,
+    source: null,
+    status: "missing",
+    note: null,
+  };
 }
 
 function getFreshnessTimestamp(session: SessionRegistryListItem): number {
@@ -1051,65 +1165,85 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                   latest: {timeAgo(group.latestTs)}
                 </span>
               </div>
-              <div className="sl-session-rows">
-                {group.sessions.map((session) => (
-                  <button
-                    key={session.id}
-                    className={`sl-session-row${
-                      session.id === selectedId && sheetOpen ? " selected" : ""
-                    }`}
-                    onClick={() => void openSessionSheet(session)}
-                  >
-                    <span
-                      className="sl-session-row-stripe"
-                      style={{ backgroundColor: session.color ?? "var(--sl-accent-border)" }}
-                    />
-                    <div className="sl-session-row-main">
-                      <div className="sl-session-row-title-line">
+                <div className="sl-session-rows">
+                  {group.sessions.map((session) => {
+                    const summary = getSessionSummaryDisplay(session);
+                    const rowTitle =
+                      summary.source === "ai" && summary.text
+                        ? summary.text
+                        : getRowFallbackTitle(session);
+                    const rowDetail =
+                      summary.source === "ai"
+                        ? summary.note || session.description || null
+                        : summary.text;
+                    return (
+                      <button
+                        key={session.id}
+                        className={`sl-session-row${
+                          session.id === selectedId && sheetOpen ? " selected" : ""
+                        }`}
+                        onClick={() => void openSessionSheet(session)}
+                      >
                         <span
-                          className={`sl-session-row-dot ${
-                            session.lifecycleStatus === "active" ? "active" : "dim"
-                          }`}
+                          className="sl-session-row-stripe"
+                          style={{ backgroundColor: session.color ?? "var(--sl-accent-border)" }}
                         />
-                        <span className="sl-session-row-title">{session.title}</span>
-                      </div>
-                      <p className="sl-session-row-summary">
-                        {session.description || (
-                          <em className="sl-session-row-summary-empty">
-                            No description yet.
-                          </em>
-                        )}
-                      </p>
-                      <div className="sl-session-row-meta">
-                        <span className="sl-session-row-repo">
-                          {session.repo ?? "(no repo)"}
-                        </span>
-                        {session.branch && (
-                          <>
-                            <span className="sl-session-row-sep">·</span>
-                            <span className="sl-session-row-branch">{session.branch}</span>
-                          </>
-                        )}
-                        {session.tags.map((tag) => (
-                          <span key={tag} className="sl-session-row-tag">
-                            #{tag}
+                        <div className="sl-session-row-main">
+                          <div className="sl-session-row-title-line">
+                            <span
+                              className={`sl-session-row-dot ${
+                                session.lifecycleStatus === "active" ? "active" : "dim"
+                              }`}
+                            />
+                            {summary.source === "ai" && <span className="sl-ai-badge">AI</span>}
+                            <span className="sl-session-row-title">{rowTitle}</span>
+                          </div>
+                          <p className="sl-session-row-summary">
+                            {rowDetail ? (
+                              rowDetail
+                            ) : (
+                              <em className="sl-session-row-summary-empty">
+                                No description yet.
+                              </em>
+                            )}
+                          </p>
+                          <div className="sl-session-row-meta">
+                            <span className="sl-session-row-repo">
+                              {session.repo ?? "(no repo)"}
+                            </span>
+                            {session.branch && (
+                              <>
+                                <span className="sl-session-row-sep">·</span>
+                                <span className="sl-session-row-branch">{session.branch}</span>
+                              </>
+                            )}
+                            {session.tags.map((tag) => (
+                              <span key={tag} className="sl-session-row-tag">
+                                #{tag}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="sl-session-row-path">{session.cwd}</div>
+                        <div className="sl-session-row-status">
+                          <span className={`sl-pill ${statusClass(session.lifecycleStatus)}`}>
+                            {session.lifecycleStatus}
                           </span>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="sl-session-row-path">{session.cwd}</div>
-                    <div className="sl-session-row-status">
-                      <span className={`sl-pill ${statusClass(session.lifecycleStatus)}`}>
-                        {session.lifecycleStatus}
-                      </span>
-                      <span className="sl-session-row-origin">{session.originKind}</span>
-                    </div>
-                    <div className="sl-session-row-activity">
-                      {formatTimestamp(session.lastSeenAt)}
-                    </div>
-                  </button>
-                ))}
-              </div>
+                          <span className="sl-session-row-origin">
+                            {summary.status === "pending"
+                              ? "ai updating"
+                              : summary.status === "error"
+                                ? "ai retrying"
+                                : session.originKind}
+                          </span>
+                        </div>
+                        <div className="sl-session-row-activity">
+                          {formatTimestamp(session.lastSeenAt)}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
             </section>
           ))
         )}
@@ -1269,6 +1403,7 @@ interface SessionOverviewProps {
 }
 
 function SessionOverview({ session }: SessionOverviewProps) {
+  const summary = getSessionSummaryDisplay(session);
   return (
     <div className="sl-session-overview">
       <section className="sl-session-overview-section">
@@ -1276,16 +1411,14 @@ function SessionOverview({ session }: SessionOverviewProps) {
           <span className="sl-ai-badge">AI</span> Summary
         </h3>
         <div className="sl-session-overview-summary">
-          {session.description || (
+          {summary.text || (
             <em className="sl-session-overview-empty">
-              No description yet. Add one in Settings, or wait for the Copilot SDK
-              summarizer to generate one from recent turns.
+              No summary yet. Once the background worker sees recent user turns in the
+              Copilot session log, it will generate one here.
             </em>
           )}
         </div>
-        <div className="sl-session-overview-note">
-          AI summarization is not wired up yet — showing the session description for now.
-        </div>
+        {summary.note && <div className="sl-session-overview-note">{summary.note}</div>}
       </section>
 
       <section className="sl-session-overview-section">

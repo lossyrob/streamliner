@@ -2,6 +2,7 @@ import type {
   LaunchedSessionRegistryOrigin,
   ManualSessionRegistryOrigin,
   ObservedSessionRegistryOrigin,
+  SessionRegistryAiSummaryStatus,
   SessionRegistryGraphBinding,
   SessionRegistryLifecycleStatus,
   SessionRegistryOriginKind,
@@ -43,6 +44,12 @@ export interface SessionRegistryListItem {
   originKind: SessionRegistryOriginKind;
   graphBinding: SessionRegistryGraphBinding | null;
   copilotSessionId: string | null;
+  aiSummary: string | null;
+  aiSummaryModel: string | null;
+  aiSummaryUpdatedAt: string | null;
+  aiSummaryEventsFingerprint: string | null;
+  aiSummaryStatus: SessionRegistryAiSummaryStatus;
+  aiSummaryError: string | null;
 }
 
 interface SessionRegistryUpsertInputBase {

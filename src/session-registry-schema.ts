@@ -17,6 +17,15 @@ export const SESSION_REGISTRY_ORIGIN_KINDS = [
 export type SessionRegistryOriginKind =
   (typeof SESSION_REGISTRY_ORIGIN_KINDS)[number];
 
+export const SESSION_REGISTRY_AI_SUMMARY_STATUSES = [
+  "missing",
+  "pending",
+  "ready",
+  "error",
+] as const;
+export type SessionRegistryAiSummaryStatus =
+  (typeof SESSION_REGISTRY_AI_SUMMARY_STATUSES)[number];
+
 export interface SessionRegistryGraphBinding {
   workstreamId: string;
   nodeId: string;
@@ -59,6 +68,12 @@ export interface SessionRegistryRecord {
   tags: string[];
   origin: SessionRegistryOrigin;
   graphBinding: SessionRegistryGraphBinding | null;
+  aiSummary: string | null;
+  aiSummaryModel: string | null;
+  aiSummaryUpdatedAt: string | null;
+  aiSummaryEventsFingerprint: string | null;
+  aiSummaryStatus: SessionRegistryAiSummaryStatus;
+  aiSummaryError: string | null;
 }
 
 export interface SessionRegistryIndexEntry {
@@ -76,6 +91,12 @@ export interface SessionRegistryIndexEntry {
   tags: string[];
   originKind: SessionRegistryOriginKind;
   graphBinding: SessionRegistryGraphBinding | null;
+  aiSummary: string | null;
+  aiSummaryModel: string | null;
+  aiSummaryUpdatedAt: string | null;
+  aiSummaryEventsFingerprint: string | null;
+  aiSummaryStatus: SessionRegistryAiSummaryStatus;
+  aiSummaryError: string | null;
 }
 
 export interface SessionRegistryIndex {
