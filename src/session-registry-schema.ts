@@ -26,6 +26,52 @@ export const SESSION_REGISTRY_AI_SUMMARY_STATUSES = [
 export type SessionRegistryAiSummaryStatus =
   (typeof SESSION_REGISTRY_AI_SUMMARY_STATUSES)[number];
 
+export const SESSION_REGISTRY_OBSERVED_SESSION_KINDS = [
+  "interactive",
+  "helper",
+] as const;
+export type SessionRegistryObservedSessionKind =
+  (typeof SESSION_REGISTRY_OBSERVED_SESSION_KINDS)[number];
+
+export const SESSION_REGISTRY_COPILOT_PROCESS_STATES = [
+  "live",
+  "stale_lock",
+  "none",
+] as const;
+export type SessionRegistryCopilotProcessState =
+  (typeof SESSION_REGISTRY_COPILOT_PROCESS_STATES)[number];
+
+export const SESSION_REGISTRY_TRUSTED_SIGNAL_SOURCES = [
+  "copilot-cli-hook",
+] as const;
+export type SessionRegistryTrustedSignalSource =
+  (typeof SESSION_REGISTRY_TRUSTED_SIGNAL_SOURCES)[number];
+
+export const SESSION_REGISTRY_TRUSTED_START_SOURCES = [
+  "new",
+  "resume",
+  "startup",
+] as const;
+export type SessionRegistryTrustedStartSource =
+  (typeof SESSION_REGISTRY_TRUSTED_START_SOURCES)[number];
+
+export const SESSION_REGISTRY_TRUSTED_END_REASONS = [
+  "complete",
+  "error",
+  "abort",
+  "timeout",
+  "user_exit",
+] as const;
+export type SessionRegistryTrustedEndReason =
+  (typeof SESSION_REGISTRY_TRUSTED_END_REASONS)[number];
+
+export const SESSION_REGISTRY_TRUSTED_EXECUTION_KINDS = [
+  "copilot_cli",
+  "agency",
+] as const;
+export type SessionRegistryTrustedExecutionKind =
+  (typeof SESSION_REGISTRY_TRUSTED_EXECUTION_KINDS)[number];
+
 export interface SessionRegistryGraphBinding {
   workstreamId: string;
   nodeId: string;
@@ -74,6 +120,18 @@ export interface SessionRegistryRecord {
   aiSummaryEventsFingerprint: string | null;
   aiSummaryStatus: SessionRegistryAiSummaryStatus;
   aiSummaryError: string | null;
+  observedSessionKind: SessionRegistryObservedSessionKind | null;
+  copilotProcessState: SessionRegistryCopilotProcessState | null;
+  copilotProcessId: number | null;
+  trustedSignalSource: SessionRegistryTrustedSignalSource | null;
+  trustedStartedAt: string | null;
+  trustedEndedAt: string | null;
+  trustedLastSignalAt: string | null;
+  trustedStartSource: SessionRegistryTrustedStartSource | null;
+  trustedEndReason: SessionRegistryTrustedEndReason | null;
+  trustedExecutionKind: SessionRegistryTrustedExecutionKind | null;
+  trustedInitialPromptLength: number | null;
+  trustedLastPromptLength: number | null;
 }
 
 export interface SessionRegistryIndexEntry {
@@ -97,6 +155,18 @@ export interface SessionRegistryIndexEntry {
   aiSummaryEventsFingerprint: string | null;
   aiSummaryStatus: SessionRegistryAiSummaryStatus;
   aiSummaryError: string | null;
+  observedSessionKind: SessionRegistryObservedSessionKind | null;
+  copilotProcessState: SessionRegistryCopilotProcessState | null;
+  copilotProcessId: number | null;
+  trustedSignalSource: SessionRegistryTrustedSignalSource | null;
+  trustedStartedAt: string | null;
+  trustedEndedAt: string | null;
+  trustedLastSignalAt: string | null;
+  trustedStartSource: SessionRegistryTrustedStartSource | null;
+  trustedEndReason: SessionRegistryTrustedEndReason | null;
+  trustedExecutionKind: SessionRegistryTrustedExecutionKind | null;
+  trustedInitialPromptLength: number | null;
+  trustedLastPromptLength: number | null;
 }
 
 export interface SessionRegistryIndex {

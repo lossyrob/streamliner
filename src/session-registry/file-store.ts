@@ -25,21 +25,34 @@ import {
   type SessionRegistryObservedLinkInput,
   type SessionRegistryPatch,
   type SessionRegistryStore,
+  type SessionRegistryTrustedSignalInput,
   type SessionRegistryUpsertInput,
 } from "../session-registry-contract";
 import {
   SESSION_REGISTRY_AI_SUMMARY_STATUSES,
+  SESSION_REGISTRY_COPILOT_PROCESS_STATES,
   SESSION_REGISTRY_LIFECYCLE_STATUSES,
+  SESSION_REGISTRY_OBSERVED_SESSION_KINDS,
   SESSION_REGISTRY_ORIGIN_KINDS,
   SESSION_REGISTRY_SCHEMA_VERSION,
+  SESSION_REGISTRY_TRUSTED_END_REASONS,
+  SESSION_REGISTRY_TRUSTED_EXECUTION_KINDS,
+  SESSION_REGISTRY_TRUSTED_SIGNAL_SOURCES,
+  SESSION_REGISTRY_TRUSTED_START_SOURCES,
   type SessionRegistryAiSummaryStatus,
+  type SessionRegistryCopilotProcessState,
   type SessionRegistryGraphBinding,
   type SessionRegistryIndex,
   type SessionRegistryIndexEntry,
   type SessionRegistryLifecycleStatus,
+  type SessionRegistryObservedSessionKind,
   type SessionRegistryOrigin,
   type SessionRegistryOriginKind,
   type SessionRegistryRecord,
+  type SessionRegistryTrustedEndReason,
+  type SessionRegistryTrustedExecutionKind,
+  type SessionRegistryTrustedSignalSource,
+  type SessionRegistryTrustedStartSource,
 } from "../session-registry-schema";
 
 const DEFAULT_REGISTRY_ROOT = resolve(
@@ -73,9 +86,47 @@ const SESSION_REGISTRY_UPSERT_BASE_KEYS = [
   "lifecycleStatus",
   "graphBinding",
 ] as const;
+const OBSERVED_SESSION_UPSERT_KEYS = [
+  ...SESSION_REGISTRY_UPSERT_BASE_KEYS,
+  "copilotSessionId",
+  "lastSeenAt",
+  "observedSessionKind",
+  "copilotProcessState",
+  "copilotProcessId",
+  "trustedSignalSource",
+  "trustedStartedAt",
+  "trustedEndedAt",
+  "trustedLastSignalAt",
+  "trustedStartSource",
+  "trustedEndReason",
+  "trustedExecutionKind",
+  "trustedInitialPromptLength",
+  "trustedLastPromptLength",
+] as const;
 
 type StoredSessionRegistryRecord = SessionRegistryRecord & Record<string, unknown>;
 type JsonObject = Record<string, unknown>;
+
+export class SessionRegistryNotFoundError extends Error {
+  constructor(id: string) {
+    super(`Session ${id} does not exist.`);
+    this.name = "SessionRegistryNotFoundError";
+  }
+}
+
+export class SessionRegistryArchivedError extends Error {
+  constructor(id: string, action: string) {
+    super(`Archived session ${id} cannot ${action}.`);
+    this.name = "SessionRegistryArchivedError";
+  }
+}
+
+export class SessionRegistryLockedError extends Error {
+  constructor(lockPath: string) {
+    super(`Session registry is locked at ${lockPath}.`);
+    this.name = "SessionRegistryLockedError";
+  }
+}
 
 export interface SessionRegistryFileStoreOptions {
   rootDir?: string;
@@ -147,6 +198,16 @@ function ensureOptionalString(value: unknown, fieldName: string): string | null 
   return value;
 }
 
+function ensureOptionalInteger(value: unknown, fieldName: string): number | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new Error(`Expected ${fieldName} to be a non-negative integer or null.`);
+  }
+  return value;
+}
+
 function ensureStringField(value: unknown, fieldName: string): string {
   if (typeof value !== "string") {
     throw new Error(`Expected ${fieldName} to be a string.`);
@@ -156,6 +217,14 @@ function ensureStringField(value: unknown, fieldName: string): string {
 
 function hasOwn(value: JsonObject, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function isErrnoCode(error: unknown, code: string): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error as NodeJS.ErrnoException).code === code
+  );
 }
 
 function ensureAllowedKeys(
@@ -317,6 +386,42 @@ function isAiSummaryStatus(value: string): value is SessionRegistryAiSummaryStat
   return SESSION_REGISTRY_AI_SUMMARY_STATUSES.includes(value as SessionRegistryAiSummaryStatus);
 }
 
+function isObservedSessionKind(value: string): value is SessionRegistryObservedSessionKind {
+  return SESSION_REGISTRY_OBSERVED_SESSION_KINDS.includes(
+    value as SessionRegistryObservedSessionKind,
+  );
+}
+
+function isCopilotProcessState(value: string): value is SessionRegistryCopilotProcessState {
+  return SESSION_REGISTRY_COPILOT_PROCESS_STATES.includes(
+    value as SessionRegistryCopilotProcessState,
+  );
+}
+
+function isTrustedSignalSource(value: string): value is SessionRegistryTrustedSignalSource {
+  return SESSION_REGISTRY_TRUSTED_SIGNAL_SOURCES.includes(
+    value as SessionRegistryTrustedSignalSource,
+  );
+}
+
+function isTrustedStartSource(value: string): value is SessionRegistryTrustedStartSource {
+  return SESSION_REGISTRY_TRUSTED_START_SOURCES.includes(
+    value as SessionRegistryTrustedStartSource,
+  );
+}
+
+function isTrustedEndReason(value: string): value is SessionRegistryTrustedEndReason {
+  return SESSION_REGISTRY_TRUSTED_END_REASONS.includes(
+    value as SessionRegistryTrustedEndReason,
+  );
+}
+
+function isTrustedExecutionKind(value: string): value is SessionRegistryTrustedExecutionKind {
+  return SESSION_REGISTRY_TRUSTED_EXECUTION_KINDS.includes(
+    value as SessionRegistryTrustedExecutionKind,
+  );
+}
+
 function isObservedUpsertInput(
   input: SessionRegistryUpsertInput,
 ): input is ObservedSessionRegistryUpsertInput {
@@ -374,6 +479,90 @@ function normalizeAiSummaryStatus(
     throw new Error(`Unsupported ${fieldName} "${status}".`);
   }
   return status;
+}
+
+function normalizeObservedSessionKind(
+  value: unknown,
+  fieldName: string,
+): SessionRegistryObservedSessionKind | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const kind = ensureString(value, fieldName);
+  if (!isObservedSessionKind(kind)) {
+    throw new Error(`Unsupported ${fieldName} "${kind}".`);
+  }
+  return kind;
+}
+
+function normalizeCopilotProcessState(
+  value: unknown,
+  fieldName: string,
+): SessionRegistryCopilotProcessState | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const state = ensureString(value, fieldName);
+  if (!isCopilotProcessState(state)) {
+    throw new Error(`Unsupported ${fieldName} "${state}".`);
+  }
+  return state;
+}
+
+function normalizeTrustedSignalSource(
+  value: unknown,
+  fieldName: string,
+): SessionRegistryTrustedSignalSource | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const source = ensureString(value, fieldName);
+  if (!isTrustedSignalSource(source)) {
+    throw new Error(`Unsupported ${fieldName} "${source}".`);
+  }
+  return source;
+}
+
+function normalizeTrustedStartSource(
+  value: unknown,
+  fieldName: string,
+): SessionRegistryTrustedStartSource | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const source = ensureString(value, fieldName);
+  if (!isTrustedStartSource(source)) {
+    throw new Error(`Unsupported ${fieldName} "${source}".`);
+  }
+  return source;
+}
+
+function normalizeTrustedEndReason(
+  value: unknown,
+  fieldName: string,
+): SessionRegistryTrustedEndReason | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const reason = ensureString(value, fieldName);
+  if (!isTrustedEndReason(reason)) {
+    throw new Error(`Unsupported ${fieldName} "${reason}".`);
+  }
+  return reason;
+}
+
+function normalizeTrustedExecutionKind(
+  value: unknown,
+  fieldName: string,
+): SessionRegistryTrustedExecutionKind | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const kind = ensureString(value, fieldName);
+  if (!isTrustedExecutionKind(kind)) {
+    throw new Error(`Unsupported ${fieldName} "${kind}".`);
+  }
+  return kind;
 }
 
 export function parseSessionRegistryPatch(value: unknown): SessionRegistryPatch {
@@ -446,11 +635,7 @@ export function parseSessionRegistryUpsertInput(value: unknown): SessionRegistry
   };
 
   if (origin.kind === "observed") {
-    ensureAllowedKeys(value, "input", [
-      ...SESSION_REGISTRY_UPSERT_BASE_KEYS,
-      "copilotSessionId",
-      "lastSeenAt",
-    ]);
+    ensureAllowedKeys(value, "input", OBSERVED_SESSION_UPSERT_KEYS);
     return {
       ...common,
       origin,
@@ -463,6 +648,102 @@ export function parseSessionRegistryUpsertInput(value: unknown): SessionRegistry
             lifecycleStatus: parseObservedLifecycleStatus(
               value.lifecycleStatus,
               "input.lifecycleStatus",
+            ),
+          }
+        : {}),
+      ...(hasOwn(value, "observedSessionKind")
+        ? {
+            observedSessionKind: normalizeObservedSessionKind(
+              value.observedSessionKind,
+              "input.observedSessionKind",
+            ),
+          }
+        : {}),
+      ...(hasOwn(value, "copilotProcessState")
+        ? {
+            copilotProcessState: normalizeCopilotProcessState(
+              value.copilotProcessState,
+              "input.copilotProcessState",
+            ),
+          }
+        : {}),
+      ...(hasOwn(value, "copilotProcessId")
+        ? {
+            copilotProcessId: ensureOptionalInteger(
+              value.copilotProcessId,
+              "input.copilotProcessId",
+            ),
+          }
+        : {}),
+      ...(hasOwn(value, "trustedSignalSource")
+        ? {
+            trustedSignalSource: normalizeTrustedSignalSource(
+              value.trustedSignalSource,
+              "input.trustedSignalSource",
+            ),
+          }
+        : {}),
+      ...(hasOwn(value, "trustedStartedAt")
+        ? {
+            trustedStartedAt: ensureOptionalString(
+              value.trustedStartedAt,
+              "input.trustedStartedAt",
+            ),
+          }
+        : {}),
+      ...(hasOwn(value, "trustedEndedAt")
+        ? {
+            trustedEndedAt: ensureOptionalString(
+              value.trustedEndedAt,
+              "input.trustedEndedAt",
+            ),
+          }
+        : {}),
+      ...(hasOwn(value, "trustedLastSignalAt")
+        ? {
+            trustedLastSignalAt: ensureOptionalString(
+              value.trustedLastSignalAt,
+              "input.trustedLastSignalAt",
+            ),
+          }
+        : {}),
+      ...(hasOwn(value, "trustedStartSource")
+        ? {
+            trustedStartSource: normalizeTrustedStartSource(
+              value.trustedStartSource,
+              "input.trustedStartSource",
+            ),
+          }
+        : {}),
+      ...(hasOwn(value, "trustedEndReason")
+        ? {
+            trustedEndReason: normalizeTrustedEndReason(
+              value.trustedEndReason,
+              "input.trustedEndReason",
+            ),
+          }
+        : {}),
+      ...(hasOwn(value, "trustedExecutionKind")
+        ? {
+            trustedExecutionKind: normalizeTrustedExecutionKind(
+              value.trustedExecutionKind,
+              "input.trustedExecutionKind",
+            ),
+          }
+        : {}),
+      ...(hasOwn(value, "trustedInitialPromptLength")
+        ? {
+            trustedInitialPromptLength: ensureOptionalInteger(
+              value.trustedInitialPromptLength,
+              "input.trustedInitialPromptLength",
+            ),
+          }
+        : {}),
+      ...(hasOwn(value, "trustedLastPromptLength")
+        ? {
+            trustedLastPromptLength: ensureOptionalInteger(
+              value.trustedLastPromptLength,
+              "input.trustedLastPromptLength",
             ),
           }
         : {}),
@@ -593,6 +874,54 @@ function validateStoredRecord(
       rawRecord.aiSummaryError,
       `${filePath}.aiSummaryError`,
     ),
+    observedSessionKind: normalizeObservedSessionKind(
+      rawRecord.observedSessionKind,
+      `${filePath}.observedSessionKind`,
+    ),
+    copilotProcessState: normalizeCopilotProcessState(
+      rawRecord.copilotProcessState,
+      `${filePath}.copilotProcessState`,
+    ),
+    copilotProcessId: ensureOptionalInteger(
+      rawRecord.copilotProcessId,
+      `${filePath}.copilotProcessId`,
+    ),
+    trustedSignalSource: normalizeTrustedSignalSource(
+      rawRecord.trustedSignalSource,
+      `${filePath}.trustedSignalSource`,
+    ),
+    trustedStartedAt: ensureOptionalString(
+      rawRecord.trustedStartedAt,
+      `${filePath}.trustedStartedAt`,
+    ),
+    trustedEndedAt: ensureOptionalString(
+      rawRecord.trustedEndedAt,
+      `${filePath}.trustedEndedAt`,
+    ),
+    trustedLastSignalAt: ensureOptionalString(
+      rawRecord.trustedLastSignalAt,
+      `${filePath}.trustedLastSignalAt`,
+    ),
+    trustedStartSource: normalizeTrustedStartSource(
+      rawRecord.trustedStartSource,
+      `${filePath}.trustedStartSource`,
+    ),
+    trustedEndReason: normalizeTrustedEndReason(
+      rawRecord.trustedEndReason,
+      `${filePath}.trustedEndReason`,
+    ),
+    trustedExecutionKind: normalizeTrustedExecutionKind(
+      rawRecord.trustedExecutionKind,
+      `${filePath}.trustedExecutionKind`,
+    ),
+    trustedInitialPromptLength: ensureOptionalInteger(
+      rawRecord.trustedInitialPromptLength,
+      `${filePath}.trustedInitialPromptLength`,
+    ),
+    trustedLastPromptLength: ensureOptionalInteger(
+      rawRecord.trustedLastPromptLength,
+      `${filePath}.trustedLastPromptLength`,
+    ),
   };
 
   return storedRecord;
@@ -652,6 +981,54 @@ function validateIndexEntry(
       rawEntry.aiSummaryError,
       `${fieldName}.aiSummaryError`,
     ),
+    observedSessionKind: normalizeObservedSessionKind(
+      rawEntry.observedSessionKind,
+      `${fieldName}.observedSessionKind`,
+    ),
+    copilotProcessState: normalizeCopilotProcessState(
+      rawEntry.copilotProcessState,
+      `${fieldName}.copilotProcessState`,
+    ),
+    copilotProcessId: ensureOptionalInteger(
+      rawEntry.copilotProcessId,
+      `${fieldName}.copilotProcessId`,
+    ),
+    trustedSignalSource: normalizeTrustedSignalSource(
+      rawEntry.trustedSignalSource,
+      `${fieldName}.trustedSignalSource`,
+    ),
+    trustedStartedAt: ensureOptionalString(
+      rawEntry.trustedStartedAt,
+      `${fieldName}.trustedStartedAt`,
+    ),
+    trustedEndedAt: ensureOptionalString(
+      rawEntry.trustedEndedAt,
+      `${fieldName}.trustedEndedAt`,
+    ),
+    trustedLastSignalAt: ensureOptionalString(
+      rawEntry.trustedLastSignalAt,
+      `${fieldName}.trustedLastSignalAt`,
+    ),
+    trustedStartSource: normalizeTrustedStartSource(
+      rawEntry.trustedStartSource,
+      `${fieldName}.trustedStartSource`,
+    ),
+    trustedEndReason: normalizeTrustedEndReason(
+      rawEntry.trustedEndReason,
+      `${fieldName}.trustedEndReason`,
+    ),
+    trustedExecutionKind: normalizeTrustedExecutionKind(
+      rawEntry.trustedExecutionKind,
+      `${fieldName}.trustedExecutionKind`,
+    ),
+    trustedInitialPromptLength: ensureOptionalInteger(
+      rawEntry.trustedInitialPromptLength,
+      `${fieldName}.trustedInitialPromptLength`,
+    ),
+    trustedLastPromptLength: ensureOptionalInteger(
+      rawEntry.trustedLastPromptLength,
+      `${fieldName}.trustedLastPromptLength`,
+    ),
   };
 }
 
@@ -703,6 +1080,18 @@ function buildIndex(records: Iterable<StoredSessionRegistryRecord>): SessionRegi
     aiSummaryEventsFingerprint: record.aiSummaryEventsFingerprint,
     aiSummaryStatus: record.aiSummaryStatus,
     aiSummaryError: record.aiSummaryError,
+    observedSessionKind: record.observedSessionKind,
+    copilotProcessState: record.copilotProcessState,
+    copilotProcessId: record.copilotProcessId,
+    trustedSignalSource: record.trustedSignalSource,
+    trustedStartedAt: record.trustedStartedAt,
+    trustedEndedAt: record.trustedEndedAt,
+    trustedLastSignalAt: record.trustedLastSignalAt,
+    trustedStartSource: record.trustedStartSource,
+    trustedEndReason: record.trustedEndReason,
+    trustedExecutionKind: record.trustedExecutionKind,
+    trustedInitialPromptLength: record.trustedInitialPromptLength,
+    trustedLastPromptLength: record.trustedLastPromptLength,
   }));
   entries.sort(compareByFreshness);
 
@@ -839,6 +1228,20 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       let latestRecord = records.get(targetId);
       let nextCopilotSessionId = latestRecord?.copilotSessionId ?? null;
       let nextLastSeenAt = latestRecord?.lastSeenAt ?? null;
+      let nextObservedSessionKind = latestRecord?.observedSessionKind ?? null;
+      let nextCopilotProcessState = latestRecord?.copilotProcessState ?? null;
+      let nextCopilotProcessId = latestRecord?.copilotProcessId ?? null;
+      let nextTrustedSignalSource = latestRecord?.trustedSignalSource ?? null;
+      let nextTrustedStartedAt = latestRecord?.trustedStartedAt ?? null;
+      let nextTrustedEndedAt = latestRecord?.trustedEndedAt ?? null;
+      let nextTrustedLastSignalAt = latestRecord?.trustedLastSignalAt ?? null;
+      let nextTrustedStartSource = latestRecord?.trustedStartSource ?? null;
+      let nextTrustedEndReason = latestRecord?.trustedEndReason ?? null;
+      let nextTrustedExecutionKind = latestRecord?.trustedExecutionKind ?? null;
+      let nextTrustedInitialPromptLength =
+        latestRecord?.trustedInitialPromptLength ?? null;
+      let nextTrustedLastPromptLength =
+        latestRecord?.trustedLastPromptLength ?? null;
 
       if (isObservedUpsertInput(validatedInput)) {
         targetId =
@@ -851,6 +1254,73 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
           Object.prototype.hasOwnProperty.call(validatedInput, "lastSeenAt")
             ? validatedInput.lastSeenAt ?? null
             : latestRecord?.lastSeenAt ?? null;
+        nextObservedSessionKind =
+          Object.prototype.hasOwnProperty.call(validatedInput, "observedSessionKind")
+            ? validatedInput.observedSessionKind ?? null
+            : latestRecord?.observedSessionKind ?? null;
+        nextCopilotProcessState =
+          Object.prototype.hasOwnProperty.call(validatedInput, "copilotProcessState")
+            ? validatedInput.copilotProcessState ?? null
+            : latestRecord?.copilotProcessState ?? null;
+        nextCopilotProcessId =
+          Object.prototype.hasOwnProperty.call(validatedInput, "copilotProcessId")
+            ? validatedInput.copilotProcessId ?? null
+            : latestRecord?.copilotProcessId ?? null;
+        nextTrustedSignalSource =
+          Object.prototype.hasOwnProperty.call(validatedInput, "trustedSignalSource")
+            ? validatedInput.trustedSignalSource ?? null
+            : latestRecord?.trustedSignalSource ?? null;
+        nextTrustedStartedAt =
+          Object.prototype.hasOwnProperty.call(validatedInput, "trustedStartedAt")
+            ? validatedInput.trustedStartedAt ?? null
+            : latestRecord?.trustedStartedAt ?? null;
+        nextTrustedEndedAt =
+          Object.prototype.hasOwnProperty.call(validatedInput, "trustedEndedAt")
+            ? validatedInput.trustedEndedAt ?? null
+            : latestRecord?.trustedEndedAt ?? null;
+        nextTrustedLastSignalAt =
+          Object.prototype.hasOwnProperty.call(validatedInput, "trustedLastSignalAt")
+            ? validatedInput.trustedLastSignalAt ?? null
+            : latestRecord?.trustedLastSignalAt ?? null;
+        nextTrustedStartSource =
+          Object.prototype.hasOwnProperty.call(validatedInput, "trustedStartSource")
+            ? validatedInput.trustedStartSource ?? null
+            : latestRecord?.trustedStartSource ?? null;
+        nextTrustedEndReason =
+          Object.prototype.hasOwnProperty.call(validatedInput, "trustedEndReason")
+            ? validatedInput.trustedEndReason ?? null
+            : latestRecord?.trustedEndReason ?? null;
+        nextTrustedExecutionKind =
+          Object.prototype.hasOwnProperty.call(validatedInput, "trustedExecutionKind")
+            ? validatedInput.trustedExecutionKind ?? null
+            : latestRecord?.trustedExecutionKind ?? null;
+        nextTrustedInitialPromptLength =
+          Object.prototype.hasOwnProperty.call(
+            validatedInput,
+            "trustedInitialPromptLength",
+          )
+            ? validatedInput.trustedInitialPromptLength ?? null
+            : latestRecord?.trustedInitialPromptLength ?? null;
+        nextTrustedLastPromptLength =
+          Object.prototype.hasOwnProperty.call(
+            validatedInput,
+            "trustedLastPromptLength",
+          )
+            ? validatedInput.trustedLastPromptLength ?? null
+            : latestRecord?.trustedLastPromptLength ?? null;
+      } else {
+        nextObservedSessionKind = null;
+        nextCopilotProcessState = null;
+        nextCopilotProcessId = null;
+        nextTrustedSignalSource = null;
+        nextTrustedStartedAt = null;
+        nextTrustedEndedAt = null;
+        nextTrustedLastSignalAt = null;
+        nextTrustedStartSource = null;
+        nextTrustedEndReason = null;
+        nextTrustedExecutionKind = null;
+        nextTrustedInitialPromptLength = null;
+        nextTrustedLastPromptLength = null;
       }
 
       const nextLifecycle = this.resolveUpsertLifecycle(latestRecord, validatedInput);
@@ -877,6 +1347,18 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         aiSummaryEventsFingerprint: latestRecord?.aiSummaryEventsFingerprint ?? null,
         aiSummaryStatus: latestRecord?.aiSummaryStatus ?? "missing",
         aiSummaryError: latestRecord?.aiSummaryError ?? null,
+        observedSessionKind: nextObservedSessionKind,
+        copilotProcessState: nextCopilotProcessState,
+        copilotProcessId: nextCopilotProcessId,
+        trustedSignalSource: nextTrustedSignalSource,
+        trustedStartedAt: nextTrustedStartedAt,
+        trustedEndedAt: nextTrustedEndedAt,
+        trustedLastSignalAt: nextTrustedLastSignalAt,
+        trustedStartSource: nextTrustedStartSource,
+        trustedEndReason: nextTrustedEndReason,
+        trustedExecutionKind: nextTrustedExecutionKind,
+        trustedInitialPromptLength: nextTrustedInitialPromptLength,
+        trustedLastPromptLength: nextTrustedLastPromptLength,
       };
 
       const storedRecord = mergeStoredRecord(latestRecord, nextRecord);
@@ -912,21 +1394,127 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
     const lastSeenAt = Object.prototype.hasOwnProperty.call(observation, "lastSeenAt")
       ? ensureOptionalString(observation.lastSeenAt, "observation.lastSeenAt")
       : undefined;
+    const lifecycleStatus = Object.prototype.hasOwnProperty.call(
+      observation,
+      "lifecycleStatus",
+    )
+      ? parseObservedLifecycleStatus(
+          observation.lifecycleStatus,
+          "observation.lifecycleStatus",
+        )
+      : undefined;
+    const observedSessionKind = Object.prototype.hasOwnProperty.call(
+      observation,
+      "observedSessionKind",
+    )
+      ? normalizeObservedSessionKind(
+          observation.observedSessionKind,
+          "observation.observedSessionKind",
+        )
+      : undefined;
+    const copilotProcessState = Object.prototype.hasOwnProperty.call(
+      observation,
+      "copilotProcessState",
+    )
+      ? normalizeCopilotProcessState(
+          observation.copilotProcessState,
+          "observation.copilotProcessState",
+        )
+      : undefined;
+    const copilotProcessId = Object.prototype.hasOwnProperty.call(
+      observation,
+      "copilotProcessId",
+    )
+      ? ensureOptionalInteger(observation.copilotProcessId, "observation.copilotProcessId")
+      : undefined;
+    const trustedSignalSource = Object.prototype.hasOwnProperty.call(
+      observation,
+      "trustedSignalSource",
+    )
+      ? normalizeTrustedSignalSource(
+          observation.trustedSignalSource,
+          "observation.trustedSignalSource",
+        )
+      : undefined;
+    const trustedStartedAt = Object.prototype.hasOwnProperty.call(
+      observation,
+      "trustedStartedAt",
+    )
+      ? ensureOptionalString(observation.trustedStartedAt, "observation.trustedStartedAt")
+      : undefined;
+    const trustedEndedAt = Object.prototype.hasOwnProperty.call(
+      observation,
+      "trustedEndedAt",
+    )
+      ? ensureOptionalString(observation.trustedEndedAt, "observation.trustedEndedAt")
+      : undefined;
+    const trustedLastSignalAt = Object.prototype.hasOwnProperty.call(
+      observation,
+      "trustedLastSignalAt",
+    )
+      ? ensureOptionalString(
+          observation.trustedLastSignalAt,
+          "observation.trustedLastSignalAt",
+        )
+      : undefined;
+    const trustedStartSource = Object.prototype.hasOwnProperty.call(
+      observation,
+      "trustedStartSource",
+    )
+      ? normalizeTrustedStartSource(
+          observation.trustedStartSource,
+          "observation.trustedStartSource",
+        )
+      : undefined;
+    const trustedEndReason = Object.prototype.hasOwnProperty.call(
+      observation,
+      "trustedEndReason",
+    )
+      ? normalizeTrustedEndReason(
+          observation.trustedEndReason,
+          "observation.trustedEndReason",
+        )
+      : undefined;
+    const trustedExecutionKind = Object.prototype.hasOwnProperty.call(
+      observation,
+      "trustedExecutionKind",
+    )
+      ? normalizeTrustedExecutionKind(
+          observation.trustedExecutionKind,
+          "observation.trustedExecutionKind",
+        )
+      : undefined;
+    const trustedInitialPromptLength = Object.prototype.hasOwnProperty.call(
+      observation,
+      "trustedInitialPromptLength",
+    )
+      ? ensureOptionalInteger(
+          observation.trustedInitialPromptLength,
+          "observation.trustedInitialPromptLength",
+        )
+      : undefined;
+    const trustedLastPromptLength = Object.prototype.hasOwnProperty.call(
+      observation,
+      "trustedLastPromptLength",
+    )
+      ? ensureOptionalInteger(
+          observation.trustedLastPromptLength,
+          "observation.trustedLastPromptLength",
+        )
+      : undefined;
 
     return this.withWriteLock(() => {
       const records = this.loadEntriesFromDisk();
       const existingRecord = records.get(id);
       if (!existingRecord) {
-        throw new Error(`Session ${id} does not exist.`);
+        throw new SessionRegistryNotFoundError(id);
       }
       if (existingRecord.lifecycleStatus === "archived") {
-        throw new Error(`Archived session ${id} cannot be reattached by observation.`);
+        throw new SessionRegistryArchivedError(id, "be reattached by observation");
       }
 
       const nextLifecycle =
-        observation.lifecycleStatus === "ended"
-          ? "ended"
-          : existingRecord.lifecycleStatus;
+        lifecycleStatus ?? existingRecord.lifecycleStatus;
 
       const nextRecord: SessionRegistryRecord = {
         ...cloneValue(existingRecord),
@@ -937,6 +1525,54 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         lastSeenAt:
           lastSeenAt !== undefined ? lastSeenAt : existingRecord.lastSeenAt,
         lifecycleStatus: nextLifecycle,
+        observedSessionKind:
+          observedSessionKind !== undefined
+            ? observedSessionKind
+            : existingRecord.observedSessionKind,
+        copilotProcessState:
+          copilotProcessState !== undefined
+            ? copilotProcessState
+            : existingRecord.copilotProcessState,
+        copilotProcessId:
+          copilotProcessId !== undefined
+            ? copilotProcessId
+            : existingRecord.copilotProcessId,
+        trustedSignalSource:
+          trustedSignalSource !== undefined
+            ? trustedSignalSource
+            : existingRecord.trustedSignalSource,
+        trustedStartedAt:
+          trustedStartedAt !== undefined
+            ? trustedStartedAt
+            : existingRecord.trustedStartedAt,
+        trustedEndedAt:
+          trustedEndedAt !== undefined
+            ? trustedEndedAt
+            : existingRecord.trustedEndedAt,
+        trustedLastSignalAt:
+          trustedLastSignalAt !== undefined
+            ? trustedLastSignalAt
+            : existingRecord.trustedLastSignalAt,
+        trustedStartSource:
+          trustedStartSource !== undefined
+            ? trustedStartSource
+            : existingRecord.trustedStartSource,
+        trustedEndReason:
+          trustedEndReason !== undefined
+            ? trustedEndReason
+            : existingRecord.trustedEndReason,
+        trustedExecutionKind:
+          trustedExecutionKind !== undefined
+            ? trustedExecutionKind
+            : existingRecord.trustedExecutionKind,
+        trustedInitialPromptLength:
+          trustedInitialPromptLength !== undefined
+            ? trustedInitialPromptLength
+            : existingRecord.trustedInitialPromptLength,
+        trustedLastPromptLength:
+          trustedLastPromptLength !== undefined
+            ? trustedLastPromptLength
+            : existingRecord.trustedLastPromptLength,
         updatedAt: isoNow(),
       };
 
@@ -961,14 +1597,11 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       const records = this.loadEntriesFromDisk();
       const existingRecord = records.get(id);
       if (!existingRecord) {
-        throw new Error(`Session ${id} does not exist.`);
+        throw new SessionRegistryNotFoundError(id);
       }
 
       const nextLifecycle =
         validatedPatch.lifecycleStatus ?? existingRecord.lifecycleStatus;
-      if (nextLifecycle === "ended") {
-        throw new Error("Builder patches may not force lifecycleStatus to ended.");
-      }
 
       const nextRecord: SessionRegistryRecord = {
         ...cloneValue(existingRecord),
@@ -976,7 +1609,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         description: validatedPatch.description ?? existingRecord.description,
         color:
           validatedPatch.color !== undefined ? validatedPatch.color : existingRecord.color,
-        lifecycleStatus: nextLifecycle as SessionRegistryBuilderLifecycleStatus,
+        lifecycleStatus: nextLifecycle,
         tags:
           validatedPatch.tags !== undefined
             ? normalizeTags(validatedPatch.tags)
@@ -1007,6 +1640,145 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
     return this.patchSession(id, { lifecycleStatus: "archived" });
   }
 
+  recordTrustedSessionSignal(
+    input: SessionRegistryTrustedSignalInput,
+  ): SessionRegistryRecord {
+    const sessionId = ensureString(input.sessionId, "signal.sessionId");
+    const cwd = ensureString(input.cwd, "signal.cwd");
+    const timestamp = ensureString(input.timestamp, "signal.timestamp");
+    const signalSource = normalizeTrustedSignalSource(input.source, "signal.source");
+    if (!signalSource) {
+      throw new Error("Trusted session signal requires a source.");
+    }
+    const hookSource = normalizeTrustedStartSource(input.hookSource, "signal.hookSource");
+    const endReason = normalizeTrustedEndReason(input.endReason, "signal.endReason");
+    const executionKind = normalizeTrustedExecutionKind(
+      input.executionKind,
+      "signal.executionKind",
+    );
+    const initialPromptLength = ensureOptionalInteger(
+      input.initialPromptLength,
+      "signal.initialPromptLength",
+    );
+    const promptLength = ensureOptionalInteger(input.promptLength, "signal.promptLength");
+    const repo = Object.prototype.hasOwnProperty.call(input, "repo")
+      ? ensureOptionalString(input.repo, "signal.repo")
+      : undefined;
+    const branch = Object.prototype.hasOwnProperty.call(input, "branch")
+      ? ensureOptionalString(input.branch, "signal.branch")
+      : undefined;
+    if (
+      input.event !== "session.started" &&
+      input.event !== "session.ended" &&
+      input.event !== "prompt.submitted"
+    ) {
+      throw new Error(`Unsupported trusted session signal event "${input.event}".`);
+    }
+
+    return this.withWriteLock(() => {
+      const records = this.loadEntriesFromDisk();
+      const targetId = this.findRecordIdByCopilotSessionId(records, sessionId) ?? sessionId;
+      const existingRecord = records.get(targetId);
+      if (!existingRecord && input.event === "prompt.submitted") {
+        throw new SessionRegistryNotFoundError(sessionId);
+      }
+      if (existingRecord?.lifecycleStatus === "archived") {
+        throw new SessionRegistryArchivedError(targetId, "accept trusted signals");
+      }
+      const cwdName = basename(cwd).trim();
+      const lifecycleStatus: SessionRegistryLifecycleStatus =
+        input.event === "session.ended"
+          ? "ended"
+          : input.event === "session.started"
+            ? "active"
+            : existingRecord?.lifecycleStatus ?? "active";
+      const nextRecord: SessionRegistryRecord = {
+        schemaVersion: SESSION_REGISTRY_SCHEMA_VERSION,
+        id: targetId,
+        title: (existingRecord?.title ?? cwdName) || sessionId,
+        description:
+          existingRecord?.description ??
+          (executionKind === "agency" ? "Agency Copilot session" : "Copilot CLI session"),
+        color: existingRecord?.color ?? null,
+        cwd,
+        repo: repo !== undefined ? repo : existingRecord?.repo ?? null,
+        branch: branch !== undefined ? branch : existingRecord?.branch ?? null,
+        copilotSessionId: sessionId,
+        lifecycleStatus,
+        lastSeenAt: timestamp,
+        createdAt: existingRecord?.createdAt ?? timestamp,
+        updatedAt: isoNow(),
+        tags: existingRecord ? cloneValue(existingRecord.tags) : [],
+        origin: existingRecord?.origin ?? {
+          kind: "observed",
+          importedFromCopilotSessionId: sessionId,
+        },
+        graphBinding: existingRecord?.graphBinding
+          ? cloneValue(existingRecord.graphBinding)
+          : null,
+        aiSummary: existingRecord?.aiSummary ?? null,
+        aiSummaryModel: existingRecord?.aiSummaryModel ?? null,
+        aiSummaryUpdatedAt: existingRecord?.aiSummaryUpdatedAt ?? null,
+        aiSummaryEventsFingerprint:
+          existingRecord?.aiSummaryEventsFingerprint ?? null,
+        aiSummaryStatus: existingRecord?.aiSummaryStatus ?? "missing",
+        aiSummaryError: existingRecord?.aiSummaryError ?? null,
+        observedSessionKind: "interactive",
+        copilotProcessState:
+          input.event === "session.ended"
+            ? "none"
+            : input.event === "session.started"
+              ? "live"
+              : existingRecord?.copilotProcessState ?? "live",
+        copilotProcessId: existingRecord?.copilotProcessId ?? null,
+        trustedSignalSource: signalSource,
+        trustedStartedAt:
+          input.event === "session.started"
+            ? timestamp
+            : existingRecord?.trustedStartedAt ?? null,
+        trustedEndedAt:
+          input.event === "session.ended"
+            ? timestamp
+            : input.event === "session.started"
+              ? null
+              : existingRecord?.trustedEndedAt ?? null,
+        trustedLastSignalAt: timestamp,
+        trustedStartSource:
+          input.event === "session.started"
+            ? hookSource
+            : existingRecord?.trustedStartSource ?? null,
+        trustedEndReason:
+          input.event === "session.ended"
+            ? endReason
+            : input.event === "session.started"
+              ? null
+              : existingRecord?.trustedEndReason ?? null,
+        trustedExecutionKind: executionKind ?? existingRecord?.trustedExecutionKind ?? null,
+        trustedInitialPromptLength:
+          input.event === "session.started"
+            ? initialPromptLength ?? existingRecord?.trustedInitialPromptLength ?? null
+            : existingRecord?.trustedInitialPromptLength ?? null,
+        trustedLastPromptLength:
+          input.event === "prompt.submitted"
+            ? promptLength ?? existingRecord?.trustedLastPromptLength ?? null
+            : existingRecord?.trustedLastPromptLength ?? null,
+      };
+
+      const storedRecord = mergeStoredRecord(existingRecord, nextRecord);
+      records.set(targetId, storedRecord);
+      const nextIndex = buildIndex(records.values());
+      this.persistEntry(storedRecord);
+      this.persistIndex(records, nextIndex);
+      this.commitSnapshot(records, nextIndex);
+      this.emitChange({
+        kind: SESSION_REGISTRY_CHANGE_EVENT_KINDS[0],
+        registryId: targetId,
+        snapshot: cloneValue(storedRecord),
+      });
+      return cloneValue(storedRecord);
+    });
+  }
+
   patchDerivedSessionState(
     id: string,
     patch: SessionRegistryDerivedStatePatch,
@@ -1015,7 +1787,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       const records = this.loadEntriesFromDisk();
       const existingRecord = records.get(id);
       if (!existingRecord) {
-        throw new Error(`Session ${id} does not exist.`);
+        throw new SessionRegistryNotFoundError(id);
       }
 
       const nextRecord: SessionRegistryRecord = {
@@ -1063,7 +1835,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
     this.withWriteLock(() => {
       const records = this.loadEntriesFromDisk();
       if (!records.has(id)) {
-        throw new Error(`Session ${id} does not exist.`);
+        throw new SessionRegistryNotFoundError(id);
       }
 
       records.delete(id);
@@ -1167,7 +1939,10 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
           throw new Error(`Duplicate registry id ${record.id} detected.`);
         }
         records.set(record.id, record);
-      } catch {
+      } catch (error) {
+        if (isErrnoCode(error, "ENOENT")) {
+          continue;
+        }
         this.quarantineEntry(entryPath);
         continue;
       }
@@ -1204,7 +1979,14 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       this.quarantineDir,
       `${Date.now()}-${basename(entryPath)}`,
     );
-    renameWithRetries(entryPath, quarantinePath);
+    try {
+      renameWithRetries(entryPath, quarantinePath);
+    } catch (error) {
+      if (isErrnoCode(error, "ENOENT")) {
+        return;
+      }
+      throw error;
+    }
   }
 
   private persistEntry(record: StoredSessionRegistryRecord): void {
@@ -1238,7 +2020,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
           ? String((error as NodeJS.ErrnoException).code)
           : "";
       if (code === "EEXIST") {
-        throw new Error(`Session registry is locked at ${this.lockPath}.`);
+        throw new SessionRegistryLockedError(this.lockPath);
       }
       throw error;
     }

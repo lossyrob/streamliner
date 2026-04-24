@@ -31,6 +31,18 @@ function buildSession(
     aiSummaryEventsFingerprint: null,
     aiSummaryStatus: "missing",
     aiSummaryError: null,
+    observedSessionKind: null,
+    copilotProcessState: null,
+    copilotProcessId: null,
+    trustedSignalSource: null,
+    trustedStartedAt: null,
+    trustedEndedAt: null,
+    trustedLastSignalAt: null,
+    trustedStartSource: null,
+    trustedEndReason: null,
+    trustedExecutionKind: null,
+    trustedInitialPromptLength: null,
+    trustedLastPromptLength: null,
     ...overrides,
   };
 }
@@ -370,6 +382,112 @@ describe("App sessions route", () => {
 
       expect(sessionList.textContent).toContain("Stale session");
       expect(findNumberInput(container).value).toBe("14");
+    },
+    15_000,
+  );
+
+  it(
+    "shows only relevant observed sessions by default and can reveal helper history",
+    async () => {
+      const now = Date.now();
+      const activeObserved = buildSession({
+        id: "active-observed",
+        title: "Active observed",
+        originKind: "observed",
+        copilotSessionId: "active-observed",
+        lifecycleStatus: "active",
+        lastSeenAt: new Date(now - 5 * 60 * 1000).toISOString(),
+        updatedAt: new Date(now - 5 * 60 * 1000).toISOString(),
+        observedSessionKind: "interactive",
+        copilotProcessState: "live",
+        copilotProcessId: 4242,
+        trustedSignalSource: "copilot-cli-hook",
+        trustedStartedAt: new Date(now - 5 * 60 * 1000).toISOString(),
+        trustedEndedAt: null,
+        trustedLastSignalAt: new Date(now - 5 * 60 * 1000).toISOString(),
+        trustedStartSource: "new",
+        trustedExecutionKind: "copilot_cli",
+      });
+      const closedObserved = buildSession({
+        id: "closed-observed",
+        title: "Closed observed",
+        originKind: "observed",
+        copilotSessionId: "closed-observed",
+        lifecycleStatus: "ended",
+        lastSeenAt: new Date(now - 2 * 60 * 60 * 1000).toISOString(),
+        updatedAt: new Date(now - 2 * 60 * 60 * 1000).toISOString(),
+        observedSessionKind: "interactive",
+        copilotProcessState: "none",
+        trustedSignalSource: "copilot-cli-hook",
+        trustedStartedAt: new Date(now - 3 * 60 * 60 * 1000).toISOString(),
+        trustedEndedAt: new Date(now - 2 * 60 * 60 * 1000).toISOString(),
+        trustedLastSignalAt: new Date(now - 2 * 60 * 60 * 1000).toISOString(),
+        trustedStartSource: "resume",
+        trustedEndReason: "user_exit",
+        trustedExecutionKind: "agency",
+      });
+      const helperObserved = buildSession({
+        id: "helper-observed",
+        title:
+          "Repo: lossyrob/streamliner\nBranch: feature/manual-session-registry\nExisting title: Helper observed",
+        originKind: "observed",
+        copilotSessionId: "helper-observed",
+        lifecycleStatus: "ended",
+        lastSeenAt: new Date(now - 10 * 60 * 1000).toISOString(),
+        updatedAt: new Date(now - 10 * 60 * 1000).toISOString(),
+        observedSessionKind: null,
+        copilotProcessState: null,
+      });
+      const historicalObserved = buildSession({
+        id: "historical-observed",
+        title: "Historical observed",
+        originKind: "observed",
+        copilotSessionId: "historical-observed",
+        lifecycleStatus: "ended",
+        lastSeenAt: new Date(now - 24 * 60 * 60 * 1000).toISOString(),
+        updatedAt: new Date(now - 24 * 60 * 60 * 1000).toISOString(),
+        observedSessionKind: "interactive",
+        copilotProcessState: "none",
+      });
+
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path.startsWith("/api/sessions")) {
+          return jsonResponse([
+            activeObserved,
+            closedObserved,
+            helperObserved,
+            historicalObserved,
+          ]);
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      window.history.pushState({}, "", "/?view=sessions");
+
+      act(() => {
+        root.render(<App />);
+      });
+
+      await settle();
+
+      const sessionList = findSessionList(container);
+      expect(sessionList.textContent).toContain("Active observed");
+      expect(sessionList.textContent).toContain("Closed observed");
+      expect(sessionList.textContent).not.toContain("Helper observed");
+      expect(sessionList.textContent).not.toContain("Historical observed");
+      expect(container.textContent).toContain(
+        "Hiding 2 observed sessions without trusted Copilot CLI hook signals.",
+      );
+
+      act(() => {
+        findButton(container, "Show all observed").click();
+      });
+      await settle();
+
+      expect(sessionList.textContent).toContain("helper");
+      expect(sessionList.textContent).toContain("Historical observed");
     },
     15_000,
   );

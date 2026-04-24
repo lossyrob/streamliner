@@ -6,7 +6,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { SessionRegistryFileStore } from "./file-store";
 import {
+  __resetCopilotDiscoveryCacheForTests,
   discoverCopilotSessions,
+  rememberIgnoredObservedCopilotSessionId,
   syncDiscoveredCopilotSessions,
 } from "./copilot-session-discovery";
 
@@ -31,11 +33,12 @@ function writeWorkspaceFile(
   }
   writeFileSync(join(sessionDir, "workspace.yaml"), content, "utf8");
   if (active) {
-    writeFileSync(join(sessionDir, "inuse.12345.lock"), "", "utf8");
+    writeFileSync(join(sessionDir, `inuse.${process.pid}.lock`), "", "utf8");
   }
 }
 
 afterEach(() => {
+  __resetCopilotDiscoveryCacheForTests();
   for (const rootDir of createdRoots.splice(0)) {
     rmSync(rootDir, { recursive: true, force: true });
   }
@@ -80,12 +83,18 @@ describe("copilot session discovery", () => {
         title: "Follow Paw-Lite Process",
         description: "lossyrob/streamliner · feature/manual-session-registry",
         lifecycleStatus: "active",
+        observedSessionKind: "interactive",
+        copilotProcessState: "live",
+        copilotProcessId: process.pid,
       }),
       expect.objectContaining({
         sessionId: "session-2",
         title: "Edit Presentation Spec",
         description: "azure-data-database-platform/dbagent · main",
         lifecycleStatus: "ended",
+        observedSessionKind: "interactive",
+        copilotProcessState: "none",
+        copilotProcessId: null,
       }),
     ]);
 
@@ -102,6 +111,9 @@ describe("copilot session discovery", () => {
           repo: "lossyrob/streamliner",
           branch: "feature/manual-session-registry",
           lifecycleStatus: "active",
+          observedSessionKind: "interactive",
+          copilotProcessState: "live",
+          copilotProcessId: process.pid,
         }),
         expect.objectContaining({
           id: "session-2",
@@ -110,6 +122,8 @@ describe("copilot session discovery", () => {
           repo: "azure-data-database-platform/dbagent",
           branch: "main",
           lifecycleStatus: "ended",
+          observedSessionKind: "interactive",
+          copilotProcessState: "none",
         }),
       ]),
     );
@@ -135,6 +149,192 @@ describe("copilot session discovery", () => {
         branch: "main",
         lastSeenAt: "2026-04-23T19:00:00.000Z",
         lifecycleStatus: "ended",
+      }),
+    );
+  });
+
+  it("classifies summarizer helper sessions and stale locks", () => {
+    const sessionRoot = createRootDir("streamliner-copilot-session-state-");
+    createdRoots.push(sessionRoot);
+
+    writeWorkspaceFile(
+      sessionRoot,
+      "helper-session",
+      [
+        "id: helper-session",
+        "cwd: C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+        "repository: lossyrob/streamliner",
+        "branch: feature/manual-session-registry",
+        "summary: |-",
+        "  Repo: lossyrob/streamliner",
+        "  Branch: feature/manual-session-registry",
+        "  Existing title: Manual session registry",
+        "  ",
+        "  Based on the user's recent messages below, produce the summary phrase now.",
+        "  ",
+        "  --- User turn 1 ---",
+        "  Summarize this session.",
+        "updated_at: 2026-04-23T18:28:32.345Z",
+      ].join("\n"),
+    );
+    writeWorkspaceFile(
+      sessionRoot,
+      "stale-lock-session",
+      [
+        "id: stale-lock-session",
+        "cwd: C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+        "repository: lossyrob/streamliner",
+        "branch: feature/manual-session-registry",
+        "summary: Real session",
+        "updated_at: 2026-04-23T18:28:32.345Z",
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(sessionRoot, "stale-lock-session", "inuse.999999.lock"),
+      "",
+      "utf8",
+    );
+    rememberIgnoredObservedCopilotSessionId("helper-session");
+
+    expect(discoverCopilotSessions(sessionRoot)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sessionId: "helper-session",
+          observedSessionKind: "helper",
+          copilotProcessState: "none",
+          lifecycleStatus: "ended",
+        }),
+        expect.objectContaining({
+          sessionId: "stale-lock-session",
+          observedSessionKind: "interactive",
+          copilotProcessState: "stale_lock",
+          copilotProcessId: null,
+          lifecycleStatus: "ended",
+        }),
+      ]),
+    );
+  });
+
+  it("prunes persisted helper-like observed sessions even after the source folders are gone", () => {
+    const registryRoot = createRootDir("streamliner-session-registry-prune-");
+    const sessionRoot = createRootDir("streamliner-copilot-session-state-");
+    createdRoots.push(registryRoot, sessionRoot);
+
+    const store = new SessionRegistryFileStore({ rootDir: registryRoot });
+    store.upsertSession({
+      id: "legacy-helper",
+      title: [
+        "Repo: lossyrob/streamliner",
+        "Branch: feature/manual-session-registry",
+        "Cwd: C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+        "Existing title: Manual session registry",
+      ].join("\n"),
+      description: "lossyrob/streamliner · feature/manual-session-registry",
+      cwd: "C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+      repo: "lossyrob/streamliner",
+      branch: "feature/manual-session-registry",
+      copilotSessionId: "legacy-helper",
+      lastSeenAt: "2026-04-24T02:50:57.121Z",
+      lifecycleStatus: "ended",
+      origin: {
+        kind: "observed",
+        importedFromCopilotSessionId: "legacy-helper",
+      },
+    });
+
+    expect(syncDiscoveredCopilotSessions(store, sessionRoot)).toBe(1);
+    expect(store.getSession("legacy-helper")).toBeNull();
+  });
+
+  it("skips importing helper sessions into the persisted observed registry", () => {
+    const registryRoot = createRootDir("streamliner-session-registry-skip-helper-");
+    const sessionRoot = createRootDir("streamliner-copilot-session-state-");
+    createdRoots.push(registryRoot, sessionRoot);
+
+    writeWorkspaceFile(
+      sessionRoot,
+      "helper-session",
+      [
+        "id: helper-session",
+        "cwd: C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+        "repository: lossyrob/streamliner",
+        "branch: feature/manual-session-registry",
+        "summary: |-",
+        "  Repo: lossyrob/streamliner",
+        "  Branch: feature/manual-session-registry",
+        "  Cwd: C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+        "  Existing title: Manual session registry",
+        "  ",
+        "  Based on the user's recent messages below, produce the summary phrase now.",
+        "  ",
+        "  --- User turn 1 ---",
+        "  Summarize this session.",
+        "updated_at: 2026-04-23T18:28:32.345Z",
+      ].join("\n"),
+    );
+    writeWorkspaceFile(
+      sessionRoot,
+      "interactive-session",
+      [
+        "id: interactive-session",
+        "cwd: C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+        "repository: lossyrob/streamliner",
+        "branch: feature/manual-session-registry",
+        "summary: Real interactive session",
+        "updated_at: 2026-04-23T19:28:32.345Z",
+      ].join("\n"),
+      { active: true },
+    );
+
+    const store = new SessionRegistryFileStore({ rootDir: registryRoot });
+    expect(syncDiscoveredCopilotSessions(store, sessionRoot)).toBe(1);
+    expect(store.listSessions({ includeArchived: true })).toEqual([
+      expect.objectContaining({
+        id: "interactive-session",
+        title: "Real interactive session",
+        observedSessionKind: "interactive",
+        copilotSessionId: "interactive-session",
+      }),
+    ]);
+  });
+
+  it("keeps trusted sessions resumable when discovery sees no running process and no end signal", () => {
+    const registryRoot = createRootDir("streamliner-session-registry-trusted-");
+    const sessionRoot = createRootDir("streamliner-copilot-session-state-");
+    createdRoots.push(registryRoot, sessionRoot);
+
+    writeWorkspaceFile(
+      sessionRoot,
+      "trusted-interrupted",
+      [
+        "id: trusted-interrupted",
+        "cwd: C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+        "repository: lossyrob/streamliner",
+        "branch: feature/manual-session-registry",
+        "summary: Trusted session without end signal",
+        "updated_at: 2026-04-24T20:30:00.000Z",
+      ].join("\n"),
+    );
+
+    const store = new SessionRegistryFileStore({ rootDir: registryRoot });
+    store.recordTrustedSessionSignal({
+      event: "session.started",
+      source: "copilot-cli-hook",
+      sessionId: "trusted-interrupted",
+      timestamp: "2026-04-24T20:00:00.000Z",
+      cwd: "C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+      hookSource: "resume",
+      executionKind: "agency",
+    });
+
+    expect(syncDiscoveredCopilotSessions(store, sessionRoot)).toBe(1);
+    expect(store.getSession("trusted-interrupted")).toEqual(
+      expect.objectContaining({
+        lifecycleStatus: "active",
+        copilotProcessState: "none",
+        trustedStartedAt: "2026-04-24T20:00:00.000Z",
+        trustedEndedAt: null,
+        trustedExecutionKind: "agency",
       }),
     );
   });

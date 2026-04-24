@@ -6,6 +6,7 @@ import type { SessionRegistryRecord } from "../session-registry-schema";
 const SESSION_POLL_INTERVAL_MS = 15_000;
 const SESSION_AUTOSAVE_MS = 500;
 const DEFAULT_STALE_SESSION_DAYS = 7;
+const DEFAULT_RECENTLY_CLOSED_HOURS = 6;
 const SESSION_STALE_DAYS_STORAGE_KEY = "streamliner:sessionsStaleDays";
 const SESSION_GROUP_MODE_STORAGE_KEY = "streamliner:sessionsGroupMode";
 
@@ -19,7 +20,7 @@ const GROUP_MODES: Array<{ mode: GroupMode; label: string }> = [
   { mode: "flat", label: "Flat" },
 ];
 
-const DEFAULT_GROUP_MODE: GroupMode = "repo";
+const DEFAULT_GROUP_MODE: GroupMode = "recency";
 
 interface SessionDraft {
   title: string;
@@ -82,6 +83,18 @@ function toListItem(record: SessionRegistryRecord): SessionRegistryListItem {
     aiSummaryEventsFingerprint: record.aiSummaryEventsFingerprint,
     aiSummaryStatus: record.aiSummaryStatus,
     aiSummaryError: record.aiSummaryError,
+    observedSessionKind: record.observedSessionKind,
+    copilotProcessState: record.copilotProcessState,
+    copilotProcessId: record.copilotProcessId,
+    trustedSignalSource: record.trustedSignalSource,
+    trustedStartedAt: record.trustedStartedAt,
+    trustedEndedAt: record.trustedEndedAt,
+    trustedLastSignalAt: record.trustedLastSignalAt,
+    trustedStartSource: record.trustedStartSource,
+    trustedEndReason: record.trustedEndReason,
+    trustedExecutionKind: record.trustedExecutionKind,
+    trustedInitialPromptLength: record.trustedInitialPromptLength,
+    trustedLastPromptLength: record.trustedLastPromptLength,
   };
 }
 
@@ -167,6 +180,18 @@ function sessionSnapshotKey(session: SessionRegistryListItem | null): string | n
     aiSummaryEventsFingerprint: session.aiSummaryEventsFingerprint,
     aiSummaryStatus: session.aiSummaryStatus,
     aiSummaryError: session.aiSummaryError,
+    observedSessionKind: session.observedSessionKind,
+    copilotProcessState: session.copilotProcessState,
+    copilotProcessId: session.copilotProcessId,
+    trustedSignalSource: session.trustedSignalSource,
+    trustedStartedAt: session.trustedStartedAt,
+    trustedEndedAt: session.trustedEndedAt,
+    trustedLastSignalAt: session.trustedLastSignalAt,
+    trustedStartSource: session.trustedStartSource,
+    trustedEndReason: session.trustedEndReason,
+    trustedExecutionKind: session.trustedExecutionKind,
+    trustedInitialPromptLength: session.trustedInitialPromptLength,
+    trustedLastPromptLength: session.trustedLastPromptLength,
   });
 }
 
@@ -191,10 +216,45 @@ function formatTimestamp(value: string | null): string {
   return new Date(value).toLocaleString();
 }
 
+function looksLikeSummarizerPrompt(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed.startsWith("Repo:") && trimmed.includes("Existing title:");
+}
+
+function isHelperLikeObservedSession(session: SessionRegistryListItem): boolean {
+  return (
+    session.originKind === "observed" &&
+    (session.observedSessionKind === "helper" ||
+      looksLikeSummarizerPrompt(session.title) ||
+      session.description.startsWith("AI summary helper ·"))
+  );
+}
+
+function hasTrustedSignal(session: SessionRegistryListItem): boolean {
+  return session.trustedSignalSource !== null;
+}
+
+function isTrustedActiveSession(session: SessionRegistryListItem): boolean {
+  return (
+    hasTrustedSignal(session) &&
+    session.trustedEndedAt === null &&
+    session.copilotProcessState === "live"
+  );
+}
+
+function isTrustedInterruptedSession(session: SessionRegistryListItem): boolean {
+  return (
+    hasTrustedSignal(session) &&
+    session.trustedStartedAt !== null &&
+    session.trustedEndedAt === null &&
+    session.copilotProcessState !== "live"
+  );
+}
+
 function getRowFallbackTitle(session: SessionRegistryListItem): string {
   const title = session.title.trim();
   const looksLikePrompt =
-    title.startsWith("Repo:") ||
+    looksLikeSummarizerPrompt(title) ||
     title.includes("Cwd:") ||
     title.includes("Existing title:");
   if (!session.copilotSessionId || (!looksLikePrompt && title.length <= 80)) {
@@ -315,6 +375,76 @@ function isSessionStale(
   return getFreshnessTimestamp(session) < staleCutoff;
 }
 
+function isRecentlyClosedObservedSession(session: SessionRegistryListItem): boolean {
+  if (session.originKind !== "observed" || session.copilotProcessState === "live") {
+    return false;
+  }
+  const activityTimestamp = getActivityTimestamp(session);
+  if (activityTimestamp === null) {
+    return false;
+  }
+  return (
+    Date.now() - activityTimestamp <= DEFAULT_RECENTLY_CLOSED_HOURS * 60 * 60 * 1000
+  );
+}
+
+function isRelevantSession(session: SessionRegistryListItem): boolean {
+  if (session.originKind !== "observed") {
+    return true;
+  }
+  if (isHelperLikeObservedSession(session)) {
+    return false;
+  }
+  return hasTrustedSignal(session);
+}
+
+function isRecentlyEndedTrustedSession(session: SessionRegistryListItem): boolean {
+  if (!hasTrustedSignal(session) || !session.trustedEndedAt) {
+    return false;
+  }
+  const endedAt = Date.parse(session.trustedEndedAt);
+  if (!Number.isFinite(endedAt)) {
+    return false;
+  }
+  return Date.now() - endedAt <= DEFAULT_RECENTLY_CLOSED_HOURS * 60 * 60 * 1000;
+}
+
+function getObservedStatusLabel(session: SessionRegistryListItem): string | null {
+  if (session.originKind !== "observed") {
+    return null;
+  }
+  if (isHelperLikeObservedSession(session)) {
+    return "helper";
+  }
+  if (session.copilotProcessState === "live") {
+    return "open";
+  }
+  if (session.copilotProcessState === "stale_lock") {
+    return "stale lock";
+  }
+  if (isRecentlyClosedObservedSession(session)) {
+    return "closed";
+  }
+  return "historical";
+}
+
+function getTrustedStatusLabel(session: SessionRegistryListItem): string | null {
+  if (!hasTrustedSignal(session)) {
+    return null;
+  }
+  const runner = session.trustedExecutionKind === "agency" ? "agency" : "cli";
+  if (isTrustedActiveSession(session)) {
+    return `${runner} open`;
+  }
+  if (isTrustedInterruptedSession(session)) {
+    return `${runner} resumable`;
+  }
+  if (session.trustedEndedAt) {
+    return `${runner} ended`;
+  }
+  return `${runner} trusted`;
+}
+
 function readStaleSessionDays(): number {
   if (typeof window === "undefined") {
     return DEFAULT_STALE_SESSION_DAYS;
@@ -380,7 +510,18 @@ function folderOf(cwd: string): string {
   return parent;
 }
 
-type RecencyBucketKey = "active" | "today" | "yesterday" | "week" | "older" | "never";
+type RecencyBucketKey =
+  | "trusted-active"
+  | "trusted-interrupted"
+  | "trusted-recently-ended"
+  | "trusted-ended"
+  | "pinned"
+  | "diagnostic"
+  | "today"
+  | "yesterday"
+  | "week"
+  | "older"
+  | "never";
 
 interface RecencyBucketInfo {
   key: RecencyBucketKey;
@@ -389,16 +530,32 @@ interface RecencyBucketInfo {
 }
 
 function recencyBucket(session: SessionRegistryListItem): RecencyBucketInfo {
+  if (isTrustedActiveSession(session)) {
+    return { key: "trusted-active", label: "Active Copilot sessions", order: 0 };
+  }
+  if (isTrustedInterruptedSession(session)) {
+    return { key: "trusted-interrupted", label: "Interrupted / resumable", order: 1 };
+  }
+  if (hasTrustedSignal(session)) {
+    return isRecentlyEndedTrustedSession(session)
+      ? { key: "trusted-recently-ended", label: "Recently ended", order: 2 }
+      : { key: "trusted-ended", label: "Older trusted sessions", order: 3 };
+  }
+  if (session.originKind === "manual" || session.originKind === "launched") {
+    return { key: "pinned", label: "Pinned / launched", order: 4 };
+  }
+  if (session.originKind === "observed") {
+    return { key: "diagnostic", label: "Observed diagnostics", order: 5 };
+  }
   const ts = getActivityTimestamp(session);
   if (ts === null) {
-    return { key: "never", label: "Never observed", order: 5 };
+    return { key: "never", label: "Never observed", order: 10 };
   }
   const hours = (Date.now() - ts) / 3_600_000;
-  if (hours < 1) return { key: "active", label: "Active now", order: 0 };
-  if (hours < 24) return { key: "today", label: "Today", order: 1 };
-  if (hours < 48) return { key: "yesterday", label: "Yesterday", order: 2 };
-  if (hours < 168) return { key: "week", label: "This week", order: 3 };
-  return { key: "older", label: "Older", order: 4 };
+  if (hours < 24) return { key: "today", label: "Today", order: 6 };
+  if (hours < 48) return { key: "yesterday", label: "Yesterday", order: 7 };
+  if (hours < 168) return { key: "week", label: "This week", order: 8 };
+  return { key: "older", label: "Older", order: 9 };
 }
 
 interface SessionGroup {
@@ -504,12 +661,17 @@ function groupSessions(
   if (mode === "recency") {
     // Semantic bucket ordering — not frozen.
     const order: Record<RecencyBucketKey, number> = {
-      active: 0,
-      today: 1,
-      yesterday: 2,
-      week: 3,
-      older: 4,
-      never: 5,
+      "trusted-active": 0,
+      "trusted-interrupted": 1,
+      "trusted-recently-ended": 2,
+      "trusted-ended": 3,
+      pinned: 4,
+      diagnostic: 5,
+      today: 6,
+      yesterday: 7,
+      week: 8,
+      older: 9,
+      never: 10,
     };
     groups.sort((a, b) => (order[a.key as RecencyBucketKey] ?? 99) - (order[b.key as RecencyBucketKey] ?? 99));
   }
@@ -568,6 +730,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
   const [sessions, setSessions] = useState<SessionRegistryListItem[]>([]);
   const [query, setQuery] = useState("");
   const [showArchived, setShowArchived] = useState(false);
+  const [showAllObserved, setShowAllObserved] = useState(false);
   const [staleSessionDays, setStaleSessionDays] = useState(readStaleSessionDays);
   const [groupMode, setGroupMode] = useState<GroupMode>(readGroupMode);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -680,11 +843,21 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
     [selectedId, selectedSnapshot, sessions],
   );
   const selectedSessionRef = useLatestValue(selectedSession);
-  const visibleSessions = useMemo(
-    () => sessions.filter((session) => !isSessionStale(session, staleSessionDays)),
-    [sessions, staleSessionDays],
+  const relevanceFilteredSessions = useMemo(
+    () =>
+      showAllObserved ? sessions : sessions.filter((session) => isRelevantSession(session)),
+    [sessions, showAllObserved],
   );
-  const hiddenStaleSessionCount = sessions.length - visibleSessions.length;
+  const visibleSessions = useMemo(
+    () =>
+      relevanceFilteredSessions.filter(
+        (session) => !isSessionStale(session, staleSessionDays),
+      ),
+    [relevanceFilteredSessions, staleSessionDays],
+  );
+  const hiddenObservedSessionCount = sessions.length - relevanceFilteredSessions.length;
+  const hiddenStaleSessionCount =
+    relevanceFilteredSessions.length - visibleSessions.length;
 
   const computedGroups = useMemo(
     () => groupSessions(visibleSessions, groupMode),
@@ -1057,6 +1230,12 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
         </div>
         <div className="sl-header-actions">
           <button
+            className={`sl-action-btn${showAllObserved ? " active" : ""}`}
+            onClick={() => setShowAllObserved((value) => !value)}
+          >
+            {showAllObserved ? "Show relevant only" : "Show all observed"}
+          </button>
+          <button
             className={`sl-action-btn${showArchived ? " active" : ""}`}
             onClick={() => setShowArchived((value) => !value)}
           >
@@ -1127,6 +1306,14 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
         <span className="sl-seg-note">{freezeNote}</span>
       </div>
 
+      {hiddenObservedSessionCount > 0 && (
+        <div className="sl-sessions-filter-note">
+          Hiding {hiddenObservedSessionCount} observed session
+          {hiddenObservedSessionCount === 1 ? "" : "s"} without trusted Copilot CLI
+          hook signals. Use Show all observed to inspect diagnostics.
+        </div>
+      )}
+
       {hiddenStaleSessionCount > 0 && (
         <div className="sl-sessions-filter-note">
           Hiding {hiddenStaleSessionCount} session
@@ -1143,6 +1330,11 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
         ) : sessions.length === 0 ? (
           <div className="sl-empty-state">
             No sessions yet. Create one manually to start tracking restart-safe context.
+          </div>
+        ) : relevanceFilteredSessions.length === 0 ? (
+          <div className="sl-empty-state">
+            No active or recently closed Copilot CLI sessions right now. Show all observed
+            to inspect older or helper sessions.
           </div>
         ) : visibleSessions.length === 0 ? (
           <div className="sl-empty-state">
@@ -1168,6 +1360,8 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                 <div className="sl-session-rows">
                   {group.sessions.map((session) => {
                     const summary = getSessionSummaryDisplay(session);
+                    const observedStatus = getObservedStatusLabel(session);
+                    const trustedStatus = getTrustedStatusLabel(session);
                     const rowTitle =
                       summary.source === "ai" && summary.text
                         ? summary.text
@@ -1195,7 +1389,8 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                                 session.lifecycleStatus === "active" ? "active" : "dim"
                               }`}
                             />
-                            {summary.source === "ai" && <span className="sl-ai-badge">AI</span>}
+                             {summary.source === "ai" && <span className="sl-ai-badge">AI</span>}
+                            {hasTrustedSignal(session) && <span className="sl-ai-badge">CLI</span>}
                             <span className="sl-session-row-title">{rowTitle}</span>
                           </div>
                           <p className="sl-session-row-summary">
@@ -1230,12 +1425,12 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                             {session.lifecycleStatus}
                           </span>
                           <span className="sl-session-row-origin">
-                            {summary.status === "pending"
-                              ? "ai updating"
-                              : summary.status === "error"
-                                ? "ai retrying"
-                                : session.originKind}
-                          </span>
+                             {summary.status === "pending"
+                               ? "ai updating"
+                               : summary.status === "error"
+                                 ? "ai retrying"
+                                 : trustedStatus ?? observedStatus ?? session.originKind}
+                           </span>
                         </div>
                         <div className="sl-session-row-activity">
                           {formatTimestamp(session.lastSeenAt)}
@@ -1265,6 +1460,16 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                         {selectedSession.lifecycleStatus}
                       </span>
                       <span className="sl-pill muted">{selectedSession.originKind}</span>
+                      {getTrustedStatusLabel(selectedSession) && (
+                        <span className="sl-pill accent">
+                          {getTrustedStatusLabel(selectedSession)}
+                        </span>
+                      )}
+                      {getObservedStatusLabel(selectedSession) && (
+                        <span className="sl-pill muted">
+                          {getObservedStatusLabel(selectedSession)}
+                        </span>
+                      )}
                     </>
                   )}
                   {creating && <span className="sl-pill accent">new</span>}
@@ -1436,6 +1641,42 @@ function SessionOverview({ session }: SessionOverviewProps) {
           <dd>{session.id}</dd>
           <dt>Origin</dt>
           <dd>{session.originKind}</dd>
+          {hasTrustedSignal(session) && (
+            <>
+              <dt>Trusted signal</dt>
+              <dd>{getTrustedStatusLabel(session) ?? "trusted"}</dd>
+              <dt>Started</dt>
+              <dd>{formatTimestamp(session.trustedStartedAt)}</dd>
+              <dt>Last signal</dt>
+              <dd>{formatTimestamp(session.trustedLastSignalAt)}</dd>
+              {session.trustedEndedAt && (
+                <>
+                  <dt>Ended</dt>
+                  <dd>{formatTimestamp(session.trustedEndedAt)}</dd>
+                </>
+              )}
+              {session.trustedEndReason && (
+                <>
+                  <dt>End reason</dt>
+                  <dd>{session.trustedEndReason}</dd>
+                </>
+              )}
+            </>
+          )}
+          {session.originKind === "observed" && (
+            <>
+              <dt>Observed kind</dt>
+              <dd>{isHelperLikeObservedSession(session) ? "helper" : "interactive"}</dd>
+              <dt>CLI presence</dt>
+              <dd>{getObservedStatusLabel(session) ?? "—"}</dd>
+              {session.copilotProcessId && (
+                <>
+                  <dt>CLI pid</dt>
+                  <dd>{session.copilotProcessId}</dd>
+                </>
+              )}
+            </>
+          )}
           <dt>Lifecycle</dt>
           <dd>{session.lifecycleStatus}</dd>
           <dt>Last activity</dt>

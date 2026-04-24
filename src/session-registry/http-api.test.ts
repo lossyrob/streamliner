@@ -123,6 +123,38 @@ describe("handleSessionRegistryApiRequest", () => {
     expect(missingResponse?.statusCode).toBe(404);
   });
 
+  it("ingests trusted session signals", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+
+    const response = handleSessionRegistryApiRequest(store, {
+      method: "POST",
+      url: `${SESSION_REGISTRY_API_BASE_PATH}/signals`,
+      body: {
+        event: "session.started",
+        source: "copilot-cli-hook",
+        sessionId: "trusted-api-session",
+        timestamp: "2026-04-24T20:00:00.000Z",
+        cwd: "C:\\repo",
+        hookSource: "resume",
+        executionKind: "agency",
+      },
+    });
+
+    expect(response?.statusCode).toBe(200);
+    expect(response?.body).toEqual(
+      expect.objectContaining({
+        id: "trusted-api-session",
+        copilotSessionId: "trusted-api-session",
+        lifecycleStatus: "active",
+        trustedSignalSource: "copilot-cli-hook",
+        trustedStartSource: "resume",
+        trustedExecutionKind: "agency",
+      }),
+    );
+  });
+
   it("maps lock errors and bad request bodies", () => {
     const rootDir = createRootDir();
     createdRoots.push(rootDir);

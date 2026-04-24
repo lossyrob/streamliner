@@ -229,6 +229,157 @@ describe("SessionRegistryFileStore", () => {
     );
   });
 
+  it("records trusted hook signals idempotently and preserves prompt privacy", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+
+    const started = store.recordTrustedSessionSignal({
+      event: "session.started",
+      source: "copilot-cli-hook",
+      sessionId: "trusted-session-1",
+      timestamp: "2026-04-24T20:00:00.000Z",
+      cwd: "C:\\repo",
+      repo: "lossyrob/streamliner",
+      branch: "feature/manual-session-registry",
+      hookSource: "new",
+      executionKind: "copilot_cli",
+      initialPromptLength: 54,
+    });
+
+    expect(started).toEqual(
+      expect.objectContaining({
+        id: "trusted-session-1",
+        lifecycleStatus: "active",
+        observedSessionKind: "interactive",
+        copilotProcessState: "live",
+        trustedSignalSource: "copilot-cli-hook",
+        trustedStartedAt: "2026-04-24T20:00:00.000Z",
+        trustedLastSignalAt: "2026-04-24T20:00:00.000Z",
+        trustedStartSource: "new",
+        trustedExecutionKind: "copilot_cli",
+        trustedInitialPromptLength: 54,
+        trustedLastPromptLength: null,
+      }),
+    );
+
+    const prompted = store.recordTrustedSessionSignal({
+      event: "prompt.submitted",
+      source: "copilot-cli-hook",
+      sessionId: "trusted-session-1",
+      timestamp: "2026-04-24T20:01:00.000Z",
+      cwd: "C:\\repo",
+      promptLength: 1234,
+    });
+    const ended = store.recordTrustedSessionSignal({
+      event: "session.ended",
+      source: "copilot-cli-hook",
+      sessionId: "trusted-session-1",
+      timestamp: "2026-04-24T20:02:00.000Z",
+      cwd: "C:\\repo",
+      endReason: "user_exit",
+    });
+
+    expect(prompted).toEqual(
+      expect.objectContaining({
+        trustedLastSignalAt: "2026-04-24T20:01:00.000Z",
+        trustedStartedAt: "2026-04-24T20:00:00.000Z",
+        trustedInitialPromptLength: 54,
+        trustedLastPromptLength: 1234,
+      }),
+    );
+    expect(ended).toEqual(
+      expect.objectContaining({
+        lifecycleStatus: "ended",
+        copilotProcessState: "none",
+        trustedEndedAt: "2026-04-24T20:02:00.000Z",
+        trustedEndReason: "user_exit",
+      }),
+    );
+    expect(readJsonFile<Record<string, unknown>>(join(rootDir, "entries", "trusted-session-1.json"))).not.toHaveProperty(
+      "prompt",
+    );
+  });
+
+  it("rejects trusted prompt signals before a trusted session start exists", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+
+    expect(() =>
+      store.recordTrustedSessionSignal({
+        event: "prompt.submitted",
+        source: "copilot-cli-hook",
+        sessionId: "unknown-prompt-session",
+        timestamp: "2026-04-24T20:00:00.000Z",
+        cwd: "C:\\repo",
+        promptLength: 12,
+      }),
+    ).toThrow(/does not exist/);
+    expect(store.getSession("unknown-prompt-session")).toBeNull();
+  });
+
+  it("does not reactivate archived sessions from trusted signals", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+
+    store.recordTrustedSessionSignal({
+      event: "session.started",
+      source: "copilot-cli-hook",
+      sessionId: "archived-trusted-session",
+      timestamp: "2026-04-24T20:00:00.000Z",
+      cwd: "C:\\repo",
+    });
+    store.archiveSession("archived-trusted-session");
+
+    expect(() =>
+      store.recordTrustedSessionSignal({
+        event: "session.started",
+        source: "copilot-cli-hook",
+        sessionId: "archived-trusted-session",
+        timestamp: "2026-04-24T20:05:00.000Z",
+        cwd: "C:\\repo",
+      }),
+    ).toThrow(/Archived session archived-trusted-session/);
+    expect(store.getSession("archived-trusted-session")).toEqual(
+      expect.objectContaining({ lifecycleStatus: "archived" }),
+    );
+  });
+
+  it("allows builder-owned fields to be patched after a trusted session ends", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+
+    store.recordTrustedSessionSignal({
+      event: "session.started",
+      source: "copilot-cli-hook",
+      sessionId: "ended-trusted-session",
+      timestamp: "2026-04-24T20:00:00.000Z",
+      cwd: "C:\\repo",
+    });
+    store.recordTrustedSessionSignal({
+      event: "session.ended",
+      source: "copilot-cli-hook",
+      sessionId: "ended-trusted-session",
+      timestamp: "2026-04-24T20:05:00.000Z",
+      cwd: "C:\\repo",
+      endReason: "complete",
+    });
+
+    expect(
+      store.patchSession("ended-trusted-session", {
+        title: "Named after completion",
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        title: "Named after completion",
+        lifecycleStatus: "ended",
+      }),
+    );
+  });
+
   it("quarantines malformed entries and emits rebuild on external changes", () => {
     const rootDir = createRootDir();
     createdRoots.push(rootDir);
@@ -340,5 +491,15 @@ describe("SessionRegistryFileStore", () => {
     });
     const invalidPatch = { title: "" } as unknown as SessionRegistryPatch;
     expect(() => store.patchSession(manual.id, invalidPatch)).toThrow(/patch\.title/);
+
+    expect(() =>
+      store.upsertSession({
+        title: "Bad pid",
+        cwd: "C:\\repo",
+        origin: { kind: "observed" },
+        copilotSessionId: "bad-pid",
+        copilotProcessId: -1,
+      }),
+    ).toThrow(/non-negative integer/);
   });
 });

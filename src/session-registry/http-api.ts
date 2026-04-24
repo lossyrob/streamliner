@@ -1,8 +1,11 @@
 import type { SessionRegistryStore } from "../session-registry-contract";
 import {
+  SessionRegistryLockedError,
+  SessionRegistryNotFoundError,
   parseSessionRegistryPatch,
   parseSessionRegistryUpsertInput,
 } from "./file-store";
+import { parseTrustedSessionSignalInput } from "./trusted-session-signals";
 
 export const SESSION_REGISTRY_API_BASE_PATH = "/api/sessions";
 
@@ -23,13 +26,13 @@ function isJsonObject(value: unknown): value is Record<string, unknown> {
 
 function buildErrorResponse(error: unknown): SessionRegistryApiResponse {
   const message = error instanceof Error ? error.message : String(error);
-  if (message.includes("does not exist")) {
+  if (error instanceof SessionRegistryNotFoundError) {
     return {
       statusCode: 404,
       body: { error: message },
     };
   }
-  if (message.includes("locked")) {
+  if (error instanceof SessionRegistryLockedError) {
     return {
       statusCode: 423,
       body: { error: message },
@@ -79,6 +82,27 @@ export function handleSessionRegistryApiRequest(
   }
 
   try {
+    if (segments.length === 1 && segments[0] === "signals") {
+      if (method !== "POST") {
+        return {
+          statusCode: 405,
+          body: { error: `Unsupported ${method} ${url.pathname}.` },
+        };
+      }
+      if (!isJsonObject(request.body)) {
+        return {
+          statusCode: 400,
+          body: { error: "Expected a JSON object body for POST /api/sessions/signals." },
+        };
+      }
+      return {
+        statusCode: 200,
+        body: store.recordTrustedSessionSignal(
+          parseTrustedSessionSignalInput(request.body),
+        ),
+      };
+    }
+
     if (segments.length === 0) {
       if (method === "GET") {
         const repoFilter = parseNullableQuery(url, "repo");

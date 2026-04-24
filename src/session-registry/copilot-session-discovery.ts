@@ -4,6 +4,10 @@ import { basename, join, resolve } from "node:path";
 
 import type { SessionRegistryListItem, SessionRegistryObservedLinkInput } from "../session-registry-contract";
 import type { SessionRegistryObservedLifecycleStatus } from "../session-registry-contract";
+import type {
+  SessionRegistryCopilotProcessState,
+  SessionRegistryObservedSessionKind,
+} from "../session-registry-schema";
 import { SessionRegistryFileStore } from "./file-store";
 
 const DEFAULT_COPILOT_SESSION_STATE_ROOT = resolve(
@@ -21,7 +25,21 @@ interface DiscoveredCopilotSession {
   branch: string | null;
   lastSeenAt: string | null;
   lifecycleStatus: SessionRegistryObservedLifecycleStatus;
+  observedSessionKind: SessionRegistryObservedSessionKind;
+  copilotProcessState: SessionRegistryCopilotProcessState;
+  copilotProcessId: number | null;
 }
+
+interface CopilotProcessObservation {
+  state: SessionRegistryCopilotProcessState;
+  processId: number | null;
+  signature: string;
+}
+
+const SUMMARIZER_PROMPT_MARKER =
+  "Based on the user's recent messages below, produce the summary phrase now.";
+
+const ignoredObservedCopilotSessionIds = new Set<string>();
 
 function stripQuotes(value: string): string {
   const trimmed = value.trim();
@@ -107,25 +125,35 @@ function deriveTitle(
   summary: string | null,
   cwd: string,
   repo: string | null,
+  observedSessionKind: SessionRegistryObservedSessionKind,
 ): string {
-  if (summary) {
+  if (summary && observedSessionKind !== "helper") {
     return summary;
   }
   if (repo) {
     const repoName = repo.split("/").at(-1)?.trim();
     if (repoName) {
-      return repoName;
+      return observedSessionKind === "helper" ? `${repoName} helper session` : repoName;
     }
   }
   const cwdName = basename(cwd).trim();
-  return cwdName.length > 0 ? cwdName : sessionId;
+  if (cwdName.length > 0) {
+    return observedSessionKind === "helper" ? `${cwdName} helper session` : cwdName;
+  }
+  return observedSessionKind === "helper" ? "AI helper session" : sessionId;
 }
 
 function deriveDescription(
   repo: string | null,
   branch: string | null,
   cwd: string,
+  observedSessionKind: SessionRegistryObservedSessionKind,
 ): string {
+  if (observedSessionKind === "helper") {
+    const repoBranch =
+      repo && branch ? `${repo} · ${branch}` : repo ? repo : branch ? branch : cwd;
+    return `AI summary helper · ${repoBranch}`;
+  }
   if (repo && branch) {
     return `${repo} · ${branch}`;
   }
@@ -142,6 +170,8 @@ function isInUseLockFile(fileName: string): boolean {
 interface DiscoveryCacheEntry {
   workspaceMtimeMs: number;
   lockSignature: string;
+  processSignature: string;
+  ignoredBySessionId: boolean;
   session: DiscoveredCopilotSession;
 }
 
@@ -153,11 +183,119 @@ const discoveryCache = new Map<string, DiscoveryCacheEntry>();
 
 export function __resetCopilotDiscoveryCacheForTests(): void {
   discoveryCache.clear();
+  ignoredObservedCopilotSessionIds.clear();
   lastSyncAtMs = 0;
+}
+
+export function rememberIgnoredObservedCopilotSessionId(sessionId: string): void {
+  const trimmed = sessionId.trim();
+  if (trimmed.length > 0) {
+    ignoredObservedCopilotSessionIds.add(trimmed);
+  }
 }
 
 function computeLockSignature(directoryEntries: string[]): string {
   return directoryEntries.filter(isInUseLockFile).sort().join("|");
+}
+
+function extractLockPids(directoryEntries: string[]): number[] {
+  const pids: number[] = [];
+  for (const entry of directoryEntries) {
+    const match = entry.match(/^inuse\.(\d+)\.lock$/i);
+    if (!match) {
+      continue;
+    }
+    const pid = Number.parseInt(match[1], 10);
+    if (Number.isInteger(pid) && pid > 0) {
+      pids.push(pid);
+    }
+  }
+  return [...new Set(pids)].sort((left, right) => left - right);
+}
+
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error: unknown) {
+    if (
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as NodeJS.ErrnoException).code === "EPERM"
+    ) {
+      return true;
+    }
+    return false;
+  }
+}
+
+function observeCopilotProcess(directoryEntries: string[]): CopilotProcessObservation {
+  const lockPids = extractLockPids(directoryEntries);
+  const livePids = lockPids.filter(processExists);
+  if (livePids.length > 0) {
+    return {
+      state: "live",
+      processId: livePids[0],
+      signature: `live:${livePids.join(",")}`,
+    };
+  }
+  if (lockPids.length > 0) {
+    return {
+      state: "stale_lock",
+      processId: null,
+      signature: `stale:${lockPids.join(",")}`,
+    };
+  }
+  return {
+    state: "none",
+    processId: null,
+    signature: "none",
+  };
+}
+
+function isSummarizerPromptSummary(summary: string | null): boolean {
+  if (!summary) {
+    return false;
+  }
+  return (
+    summary.includes(SUMMARIZER_PROMPT_MARKER) &&
+    summary.includes("--- User turn") &&
+    summary.includes("Repo:")
+  );
+}
+
+function looksLikeSummarizerPromptTitle(title: string): boolean {
+  const trimmed = title.trim();
+  return (
+    trimmed.startsWith("Repo:") &&
+    trimmed.includes("Cwd:") &&
+    trimmed.includes("Existing title:")
+  );
+}
+
+function classifyObservedSessionKind(
+  sessionId: string,
+  summary: string | null,
+): SessionRegistryObservedSessionKind {
+  if (
+    ignoredObservedCopilotSessionIds.has(sessionId) ||
+    isSummarizerPromptSummary(summary)
+  ) {
+    return "helper";
+  }
+  return "interactive";
+}
+
+function isHelperLikeObservedRegistrySession(
+  session: SessionRegistryListItem,
+): boolean {
+  return (
+    session.originKind === "observed" &&
+    (session.observedSessionKind === "helper" ||
+      looksLikeSummarizerPromptTitle(session.title) ||
+      session.description.startsWith("AI summary helper ·"))
+  );
 }
 
 function discoverSessionFromDirectory(
@@ -173,11 +311,15 @@ function discoverSessionFromDirectory(
   const workspaceStat = statSync(workspacePath);
   const directoryEntries = readdirSync(directoryPath);
   const lockSignature = computeLockSignature(directoryEntries);
+  const processObservation = observeCopilotProcess(directoryEntries);
+  const ignoredBySessionId = ignoredObservedCopilotSessionIds.has(directoryName);
   const cached = discoveryCache.get(directoryPath);
   if (
     cached &&
     cached.workspaceMtimeMs === workspaceStat.mtimeMs &&
-    cached.lockSignature === lockSignature
+    cached.lockSignature === lockSignature &&
+    cached.processSignature === processObservation.signature &&
+    cached.ignoredBySessionId === ignoredBySessionId
   ) {
     return cached.session;
   }
@@ -192,24 +334,30 @@ function discoverSessionFromDirectory(
   const repo = workspace.repository?.trim() || null;
   const branch = workspace.branch?.trim() || null;
   const summary = normalizeSummary(workspace.summary);
+  const observedSessionKind = classifyObservedSessionKind(sessionId, summary);
   const lastSeenAt = workspace.updated_at?.trim() || workspaceStat.mtime.toISOString();
   const lifecycleStatus: SessionRegistryObservedLifecycleStatus =
-    lockSignature.length > 0 ? "active" : "ended";
+    processObservation.state === "live" ? "active" : "ended";
 
   const session: DiscoveredCopilotSession = {
     sessionId,
-    title: deriveTitle(sessionId, summary, cwd, repo),
-    description: deriveDescription(repo, branch, cwd),
+    title: deriveTitle(sessionId, summary, cwd, repo, observedSessionKind),
+    description: deriveDescription(repo, branch, cwd, observedSessionKind),
     cwd,
     repo,
     branch,
     lastSeenAt,
     lifecycleStatus,
+    observedSessionKind,
+    copilotProcessState: processObservation.state,
+    copilotProcessId: processObservation.processId,
   };
 
   discoveryCache.set(directoryPath, {
     workspaceMtimeMs: workspaceStat.mtimeMs,
     lockSignature,
+    processSignature: processObservation.signature,
+    ignoredBySessionId,
     session,
   });
 
@@ -256,13 +404,31 @@ function observationMatches(
   session: SessionRegistryListItem,
   discovered: DiscoveredCopilotSession,
 ): boolean {
+  const lifecycleStatus = getObservedLifecycleForRegistry(session, discovered);
   return (
     session.cwd === discovered.cwd &&
     session.repo === discovered.repo &&
     session.branch === discovered.branch &&
     session.lastSeenAt === discovered.lastSeenAt &&
-    session.lifecycleStatus === discovered.lifecycleStatus
+    session.lifecycleStatus === lifecycleStatus &&
+    session.observedSessionKind === discovered.observedSessionKind &&
+    session.copilotProcessState === discovered.copilotProcessState &&
+    session.copilotProcessId === discovered.copilotProcessId
   );
+}
+
+function getObservedLifecycleForRegistry(
+  session: SessionRegistryListItem,
+  discovered: DiscoveredCopilotSession,
+): SessionRegistryObservedLifecycleStatus {
+  if (
+    session.trustedStartedAt &&
+    !session.trustedEndedAt &&
+    discovered.copilotProcessState !== "live"
+  ) {
+    return "active";
+  }
+  return discovered.lifecycleStatus;
 }
 
 function isRegistryLockedError(error: unknown): boolean {
@@ -274,20 +440,34 @@ export function syncDiscoveredCopilotSessions(
   store: SessionRegistryFileStore,
   sessionRoot: string = getDefaultCopilotSessionStateRoot(),
 ): number {
-  const discovered = discoverCopilotSessions(sessionRoot);
-  if (discovered.length === 0) {
-    return 0;
-  }
-
   const existingSessions = store.listSessions({ includeArchived: true });
   const existingByCopilotSessionId = new Map<string, SessionRegistryListItem>();
+  let changes = 0;
   for (const session of existingSessions) {
+    if (isHelperLikeObservedRegistrySession(session)) {
+      try {
+        store.deleteSession(session.id);
+        changes += 1;
+      } catch (error: unknown) {
+        if (isRegistryLockedError(error)) {
+          return changes;
+        }
+        throw error;
+      }
+      continue;
+    }
     if (session.copilotSessionId) {
       existingByCopilotSessionId.set(session.copilotSessionId, session);
     }
   }
 
-  let changes = 0;
+  const discovered = discoverCopilotSessions(sessionRoot).filter(
+    (session) => session.observedSessionKind !== "helper",
+  );
+  if (discovered.length === 0) {
+    return changes;
+  }
+
   for (const observed of discovered) {
     const existing = existingByCopilotSessionId.get(observed.sessionId);
     try {
@@ -305,9 +485,10 @@ export function syncDiscoveredCopilotSessions(
           repo: observed.repo,
           branch: observed.branch,
           lastSeenAt: observed.lastSeenAt,
-          ...(observed.lifecycleStatus === "ended"
-            ? { lifecycleStatus: "ended" as const }
-            : {}),
+          lifecycleStatus: getObservedLifecycleForRegistry(existing, observed),
+          observedSessionKind: observed.observedSessionKind,
+          copilotProcessState: observed.copilotProcessState,
+          copilotProcessId: observed.copilotProcessId,
         };
         store.attachObservedSession(existing.id, link);
         changes += 1;
@@ -324,6 +505,9 @@ export function syncDiscoveredCopilotSessions(
         copilotSessionId: observed.sessionId,
         lastSeenAt: observed.lastSeenAt,
         lifecycleStatus: observed.lifecycleStatus,
+        observedSessionKind: observed.observedSessionKind,
+        copilotProcessState: observed.copilotProcessState,
+        copilotProcessId: observed.copilotProcessId,
         origin: {
           kind: "observed",
           importedFromCopilotSessionId: observed.sessionId,

@@ -2,13 +2,20 @@ import { describe, expect, it } from "vitest";
 
 import {
   SESSION_REGISTRY_AI_SUMMARY_STATUSES,
+  SESSION_REGISTRY_COPILOT_PROCESS_STATES,
   SESSION_REGISTRY_LIFECYCLE_STATUSES,
+  SESSION_REGISTRY_OBSERVED_SESSION_KINDS,
   SESSION_REGISTRY_ORIGIN_KINDS,
   SESSION_REGISTRY_SCHEMA_VERSION,
+  SESSION_REGISTRY_TRUSTED_END_REASONS,
+  SESSION_REGISTRY_TRUSTED_EXECUTION_KINDS,
+  SESSION_REGISTRY_TRUSTED_SIGNAL_SOURCES,
+  SESSION_REGISTRY_TRUSTED_START_SOURCES,
   type SessionRegistryRecord,
 } from "./session-registry-schema";
 import {
   SESSION_REGISTRY_CHANGE_EVENT_KINDS,
+  SESSION_REGISTRY_TRUSTED_SIGNAL_EVENTS,
   type SessionRegistryChangeEvent,
   type SessionRegistryListItem,
   type SessionRegistryObservedLinkInput,
@@ -47,6 +54,18 @@ function buildRecord(): SessionRegistryRecord {
     aiSummaryEventsFingerprint: "1:100",
     aiSummaryStatus: "ready",
     aiSummaryError: null,
+    observedSessionKind: null,
+    copilotProcessState: null,
+    copilotProcessId: null,
+    trustedSignalSource: null,
+    trustedStartedAt: null,
+    trustedEndedAt: null,
+    trustedLastSignalAt: null,
+    trustedStartSource: null,
+    trustedEndReason: null,
+    trustedExecutionKind: null,
+    trustedInitialPromptLength: null,
+    trustedLastPromptLength: null,
   };
 }
 
@@ -69,6 +88,39 @@ describe("session registry schema", () => {
       "pending",
       "ready",
       "error",
+    ]);
+    expect(SESSION_REGISTRY_OBSERVED_SESSION_KINDS).toEqual([
+      "interactive",
+      "helper",
+    ]);
+    expect(SESSION_REGISTRY_COPILOT_PROCESS_STATES).toEqual([
+      "live",
+      "stale_lock",
+      "none",
+    ]);
+    expect(SESSION_REGISTRY_TRUSTED_SIGNAL_SOURCES).toEqual([
+      "copilot-cli-hook",
+    ]);
+    expect(SESSION_REGISTRY_TRUSTED_START_SOURCES).toEqual([
+      "new",
+      "resume",
+      "startup",
+    ]);
+    expect(SESSION_REGISTRY_TRUSTED_END_REASONS).toEqual([
+      "complete",
+      "error",
+      "abort",
+      "timeout",
+      "user_exit",
+    ]);
+    expect(SESSION_REGISTRY_TRUSTED_EXECUTION_KINDS).toEqual([
+      "copilot_cli",
+      "agency",
+    ]);
+    expect(SESSION_REGISTRY_TRUSTED_SIGNAL_EVENTS).toEqual([
+      "session.started",
+      "session.ended",
+      "prompt.submitted",
     ]);
     expect(SESSION_REGISTRY_CHANGE_EVENT_KINDS).toEqual([
       "upsert",
@@ -118,6 +170,18 @@ describe("session registry schema", () => {
       aiSummaryEventsFingerprint: record.aiSummaryEventsFingerprint,
       aiSummaryStatus: record.aiSummaryStatus,
       aiSummaryError: record.aiSummaryError,
+      observedSessionKind: record.observedSessionKind,
+      copilotProcessState: record.copilotProcessState,
+      copilotProcessId: record.copilotProcessId,
+      trustedSignalSource: record.trustedSignalSource,
+      trustedStartedAt: record.trustedStartedAt,
+      trustedEndedAt: record.trustedEndedAt,
+      trustedLastSignalAt: record.trustedLastSignalAt,
+      trustedStartSource: record.trustedStartSource,
+      trustedEndReason: record.trustedEndReason,
+      trustedExecutionKind: record.trustedExecutionKind,
+      trustedInitialPromptLength: record.trustedInitialPromptLength,
+      trustedLastPromptLength: record.trustedLastPromptLength,
     };
     const upsertInput: SessionRegistryUpsertInput = {
       title: record.title,
@@ -156,6 +220,55 @@ describe("session registry schema", () => {
         lastSeenAt: observation.lastSeenAt ?? record.lastSeenAt,
         lifecycleStatus:
           observation.lifecycleStatus ?? record.lifecycleStatus,
+        observedSessionKind:
+          observation.observedSessionKind ?? record.observedSessionKind,
+        copilotProcessState:
+          observation.copilotProcessState ?? record.copilotProcessState,
+        copilotProcessId:
+          observation.copilotProcessId ?? record.copilotProcessId,
+        trustedSignalSource:
+          observation.trustedSignalSource ?? record.trustedSignalSource,
+        trustedStartedAt:
+          observation.trustedStartedAt ?? record.trustedStartedAt,
+        trustedEndedAt: observation.trustedEndedAt ?? record.trustedEndedAt,
+        trustedLastSignalAt:
+          observation.trustedLastSignalAt ?? record.trustedLastSignalAt,
+        trustedStartSource:
+          observation.trustedStartSource ?? record.trustedStartSource,
+        trustedEndReason:
+          observation.trustedEndReason ?? record.trustedEndReason,
+        trustedExecutionKind:
+          observation.trustedExecutionKind ?? record.trustedExecutionKind,
+        trustedInitialPromptLength:
+          observation.trustedInitialPromptLength ?? record.trustedInitialPromptLength,
+        trustedLastPromptLength:
+          observation.trustedLastPromptLength ?? record.trustedLastPromptLength,
+      }),
+      recordTrustedSessionSignal: (signal) => ({
+        ...record,
+        copilotSessionId: signal.sessionId,
+        cwd: signal.cwd,
+        lastSeenAt: signal.timestamp,
+        lifecycleStatus:
+          signal.event === "session.ended" ? "ended" : record.lifecycleStatus,
+        trustedSignalSource: signal.source,
+        trustedLastSignalAt: signal.timestamp,
+        trustedStartedAt:
+          signal.event === "session.started"
+            ? signal.timestamp
+            : record.trustedStartedAt,
+        trustedEndedAt:
+          signal.event === "session.ended"
+            ? signal.timestamp
+            : record.trustedEndedAt,
+        trustedStartSource: signal.hookSource ?? record.trustedStartSource,
+        trustedEndReason: signal.endReason ?? record.trustedEndReason,
+        trustedExecutionKind:
+          signal.executionKind ?? record.trustedExecutionKind,
+        trustedInitialPromptLength:
+          signal.initialPromptLength ?? record.trustedInitialPromptLength,
+        trustedLastPromptLength:
+          signal.promptLength ?? record.trustedLastPromptLength,
       }),
       patchSession: (id, nextPatch) => ({
         ...record,
@@ -206,7 +319,7 @@ describe("session registry schema", () => {
     const invalidObservedLink: SessionRegistryObservedLinkInput = {
       copilotSessionId: "copilot-session-123",
       cwd: "C:\\repo",
-      // @ts-expect-error observation attach may only promote a row into ended.
+      // @ts-expect-error observation attach may only use observed lifecycle states.
       lifecycleStatus: "paused",
     };
 

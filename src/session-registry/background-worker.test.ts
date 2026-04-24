@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { __resetCopilotDiscoveryCacheForTests } from "./copilot-session-discovery";
 import { SessionRegistryFileStore } from "./file-store";
 import { SessionRegistryBackgroundWorker } from "./background-worker";
+import { writeTrustedSessionSignalSpoolFile } from "./trusted-session-signals";
 
 const createdRoots: string[] = [];
 
@@ -40,6 +41,74 @@ afterEach(() => {
 });
 
 describe("SessionRegistryBackgroundWorker", () => {
+  it("drains trusted signal spool files before discovery and summarization", async () => {
+    const registryRoot = createRootDir("streamliner-session-worker-registry-");
+    const sessionRoot = createRootDir("streamliner-session-worker-state-");
+    const signalRoot = createRootDir("streamliner-session-worker-signals-");
+
+    writeSessionStateFiles(
+      sessionRoot,
+      "trusted-spooled-session",
+      [
+        "id: trusted-spooled-session",
+        "cwd: C:\\repo",
+        "repository: lossyrob/streamliner",
+        "branch: feature/manual-session-registry",
+        "summary: Trusted hook session",
+        "updated_at: 2026-04-24T20:01:00.000Z",
+      ],
+      [
+        {
+          type: "user.message",
+          data: { content: "Use trusted hook events to track this session." },
+          timestamp: "2026-04-24T20:01:00.000Z",
+        },
+      ],
+    );
+    writeTrustedSessionSignalSpoolFile(
+      {
+        event: "session.started",
+        source: "copilot-cli-hook",
+        sessionId: "trusted-spooled-session",
+        timestamp: "2026-04-24T20:00:00.000Z",
+        cwd: "C:\\repo",
+        repo: "lossyrob/streamliner",
+        branch: "feature/manual-session-registry",
+        hookSource: "new",
+        executionKind: "copilot_cli",
+      },
+      {
+        rootDir: signalRoot,
+        now: () => new Date("2026-04-24T20:00:01.000Z"),
+      },
+    );
+
+    const store = new SessionRegistryFileStore({ rootDir: registryRoot });
+    const summarizeSession = vi.fn(async () => ({
+      summary: "Tracking a trusted hook session",
+      model: "test-model",
+      durationMs: 1,
+      rawContent: "Tracking a trusted hook session",
+    }));
+    const worker = new SessionRegistryBackgroundWorker(store, {
+      sessionRoot,
+      signalSpoolRoot: signalRoot,
+      summarizer: { summarizeSession },
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    });
+
+    await worker.runCycle();
+
+    expect(store.getSession("trusted-spooled-session")).toEqual(
+      expect.objectContaining({
+        aiSummary: "Tracking a trusted hook session",
+        trustedSignalSource: "copilot-cli-hook",
+        trustedStartedAt: "2026-04-24T20:00:00.000Z",
+        trustedStartSource: "new",
+      }),
+    );
+  });
+
   it("discovers observed sessions, generates summaries, and skips unchanged fingerprints", async () => {
     const registryRoot = createRootDir("streamliner-session-worker-registry-");
     const sessionRoot = createRootDir("streamliner-session-worker-state-");

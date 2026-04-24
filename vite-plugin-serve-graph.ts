@@ -12,6 +12,7 @@ import {
   ensureSessionRegistryBackgroundWorkerStarted,
   stopSessionRegistryBackgroundWorker,
 } from "./src/session-registry/background-worker";
+import { syncDiscoveredCopilotSessions } from "./src/session-registry/copilot-session-discovery";
 import { getSessionRegistryStore } from "./src/session-registry/runtime";
 
 const RECENTS_PATH = resolve(homedir(), ".streamliner", "recent-graphs.json");
@@ -230,6 +231,7 @@ export default function serveGraph(options?: { graphPath?: string }): Plugin {
     configureServer(server) {
       const registryStore = getSessionRegistryStore();
       registryStore.listSessions({ includeArchived: true });
+      syncDiscoveredCopilotSessions(registryStore);
       ensureSessionRegistryBackgroundWorkerStarted(registryStore);
       server.httpServer?.once("close", () => {
         void stopSessionRegistryBackgroundWorker();
@@ -239,6 +241,7 @@ export default function serveGraph(options?: { graphPath?: string }): Plugin {
     configurePreviewServer(server) {
       const registryStore = getSessionRegistryStore();
       registryStore.listSessions({ includeArchived: true });
+      syncDiscoveredCopilotSessions(registryStore);
       ensureSessionRegistryBackgroundWorkerStarted(registryStore);
       server.httpServer?.once("close", () => {
         void stopSessionRegistryBackgroundWorker();

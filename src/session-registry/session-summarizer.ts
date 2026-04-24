@@ -1,6 +1,14 @@
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { createInterface } from "node:readline";
 
+import {
+  cleanupResidualDefaultCopilotSessionState,
+  createCopilotSdkSessionFsHandle,
+  getCopilotSdkSessionFsConfig,
+  type CopilotSdkSessionFsHandle,
+} from "./copilot-sdk-session-fs";
+import { rememberIgnoredObservedCopilotSessionId } from "./copilot-session-discovery";
+
 export interface RecentUserTurn {
   index: number;
   content: string;
@@ -160,8 +168,37 @@ function sanitizeSummary(raw: string): string {
 
 type CopilotSdkModule = typeof import("@github/copilot-sdk");
 
+interface SharedCopilotClient {
+  start: () => Promise<void>;
+  createSession: (config: unknown) => Promise<unknown>;
+  stop: () => Promise<unknown>;
+}
+
+interface SummarizerSession {
+  sessionId?: string;
+  sendAndWait: (
+    opts: { prompt: string },
+    timeout: number,
+  ) => Promise<{ content?: string } | undefined>;
+  disconnect?: () => Promise<void>;
+  destroy?: () => Promise<void>;
+}
+
+async function cleanupSessionFsHandle(
+  handle: CopilotSdkSessionFsHandle | null,
+): Promise<void> {
+  if (!handle) {
+    return;
+  }
+  try {
+    await handle.cleanup();
+  } catch {
+    // best-effort cleanup for isolated SDK session storage
+  }
+}
+
 let sharedSdk: CopilotSdkModule | null = null;
-let sharedClient: { start: () => Promise<void>; createSession: (...args: unknown[]) => Promise<unknown>; stop: () => Promise<unknown> } | null = null;
+let sharedClient: SharedCopilotClient | null = null;
 
 async function loadSdk(): Promise<CopilotSdkModule> {
   if (!sharedSdk) {
@@ -177,9 +214,11 @@ async function loadSdk(): Promise<CopilotSdkModule> {
 export async function getSharedCopilotClient(): Promise<unknown> {
   if (!sharedClient) {
     const sdk = await loadSdk();
-    const client = new sdk.CopilotClient();
+    const client = new sdk.CopilotClient({
+      sessionFs: getCopilotSdkSessionFsConfig(),
+    });
     await client.start();
-    sharedClient = client as unknown as typeof sharedClient;
+    sharedClient = client as unknown as SharedCopilotClient;
   }
   return sharedClient;
 }
@@ -208,6 +247,8 @@ export async function summarizeSession(
 
   const timeoutMs = options.timeoutMs ?? 60_000;
   const systemMessage = { mode: "replace" as const, content: SUMMARY_SYSTEM_PROMPT };
+  let sessionFsHandle: CopilotSdkSessionFsHandle | null = null;
+  let helperSessionId: string | null = null;
   const session = (await client.createSession({
     model: options.model,
     systemMessage,
@@ -216,10 +257,16 @@ export async function summarizeSession(
       answer: request.choices?.[0] ?? "Proceed.",
       wasFreeform: !request.choices?.length,
     }),
-  })) as {
-    sendAndWait: (opts: { prompt: string }, timeout: number) => Promise<{ content?: string } | undefined>;
-    destroy: () => Promise<void>;
-  };
+    createSessionFsHandler: (createdSession: { sessionId: string }) => {
+      helperSessionId = createdSession.sessionId;
+      sessionFsHandle = createCopilotSdkSessionFsHandle(createdSession.sessionId);
+      return sessionFsHandle.provider;
+    },
+  })) as SummarizerSession;
+  if (typeof session.sessionId === "string") {
+    helperSessionId = session.sessionId;
+    rememberIgnoredObservedCopilotSessionId(session.sessionId);
+  }
 
   const prompt = buildUserPrompt(options.turns, options.context);
   const startedAt = Date.now();
@@ -239,9 +286,18 @@ export async function summarizeSession(
     };
   } finally {
     try {
-      await session.destroy();
+      if (typeof session.disconnect === "function") {
+        await session.disconnect();
+      } else if (typeof session.destroy === "function") {
+        await session.destroy();
+      }
     } catch {
       // best-effort cleanup; a failed destroy shouldn't mask the primary result
+    } finally {
+      await cleanupSessionFsHandle(sessionFsHandle);
+      if (helperSessionId) {
+        await cleanupResidualDefaultCopilotSessionState(helperSessionId);
+      }
     }
   }
 }

@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",
-    "@github/copilot-sdk": "^0.2.2",
+    "@github/copilot-sdk": "^0.3.0",
     "@xyflow/react": "^12.10.2",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"

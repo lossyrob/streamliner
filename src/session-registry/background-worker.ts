@@ -15,6 +15,7 @@ import {
   SessionRegistryFileStore,
   type SessionRegistryDerivedStatePatch,
 } from "./file-store";
+import { drainTrustedSessionSignalSpool } from "./trusted-session-signals";
 
 export const SESSION_REGISTRY_WORKER_POLL_INTERVAL_MS = 15_000;
 export const SESSION_REGISTRY_WORKER_MAX_CONCURRENCY = 2;
@@ -49,6 +50,7 @@ export interface SessionRegistryBackgroundWorkerOptions {
   maxConcurrentSummaries?: number;
   summaryModel?: string;
   summaryTimeoutMs?: number;
+  signalSpoolRoot?: string;
   now?: () => Date;
   logger?: Pick<Console, "info" | "warn" | "error">;
   summarizer?: Partial<SummarizerDependencies>;
@@ -67,6 +69,7 @@ export class SessionRegistryBackgroundWorker {
   private readonly maxConcurrentSummaries: number;
   private readonly summaryModel: string;
   private readonly summaryTimeoutMs: number;
+  private readonly signalSpoolRoot: string | undefined;
   private readonly now: () => Date;
   private readonly logger: Pick<Console, "info" | "warn" | "error">;
   private readonly summarizer: SummarizerDependencies;
@@ -88,6 +91,7 @@ export class SessionRegistryBackgroundWorker {
       options.maxConcurrentSummaries ?? SESSION_REGISTRY_WORKER_MAX_CONCURRENCY;
     this.summaryModel = options.summaryModel ?? DEFAULT_SUMMARY_MODEL;
     this.summaryTimeoutMs = options.summaryTimeoutMs ?? 60_000;
+    this.signalSpoolRoot = options.signalSpoolRoot;
     this.now = options.now ?? (() => new Date());
     this.logger = options.logger ?? console;
     this.summarizer = {
@@ -130,6 +134,14 @@ export class SessionRegistryBackgroundWorker {
     }
     this.running = true;
     try {
+      try {
+        drainTrustedSessionSignalSpool(this.store, {
+          rootDir: this.signalSpoolRoot,
+          logger: this.logger,
+        });
+      } catch (error) {
+        this.logger.warn("[session-worker] trusted signal drain failed", error);
+      }
       syncDiscoveredCopilotSessions(this.store, this.sessionRoot);
       const candidates = this.collectSummaryCandidates().slice(0, this.maxConcurrentSummaries);
       await Promise.all(candidates.map((candidate) => this.summarizeCandidate(candidate)));
