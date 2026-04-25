@@ -21,6 +21,7 @@ export const SESSION_REGISTRY_WORKER_POLL_INTERVAL_MS = 15_000;
 export const SESSION_REGISTRY_WORKER_MAX_CONCURRENCY = 2;
 export const SESSION_REGISTRY_WORKER_INITIAL_DELAY_MS = 10_000;
 export const SESSION_REGISTRY_SUMMARY_REFRESH_USER_TURNS = 5;
+export const SESSION_REGISTRY_SUMMARY_FORMAT_VERSION = "description-v2";
 
 interface SummaryCandidate {
   session: SessionRegistryListItem;
@@ -66,7 +67,16 @@ function eventsFingerprintFromSummaryFingerprint(value: string | null): string |
   if (!value) {
     return null;
   }
-  return value.split("|userTurns=", 1)[0] || null;
+  const withoutUserTurns = value.split("|userTurns=", 1)[0] || "";
+  return withoutUserTurns.split("|summary=", 1)[0] || null;
+}
+
+function summaryFormatVersionFromSummaryFingerprint(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  const match = value.match(/(?:^|\|)summary=([^|]+)(?:\||$)/);
+  return match?.[1] ?? null;
 }
 
 function userTurnCountFromSummaryFingerprint(value: string | null): number | null {
@@ -82,7 +92,7 @@ function userTurnCountFromSummaryFingerprint(value: string | null): number | nul
 }
 
 function summaryFingerprint(eventsFingerprint: string, userTurnCount: number): string {
-  return `${eventsFingerprint}|userTurns=${userTurnCount}`;
+  return `${eventsFingerprint}|summary=${SESSION_REGISTRY_SUMMARY_FORMAT_VERSION}|userTurns=${userTurnCount}`;
 }
 
 export class SessionRegistryBackgroundWorker {
@@ -194,11 +204,14 @@ export class SessionRegistryBackgroundWorker {
       const eventsChanged =
         eventsFingerprintFromSummaryFingerprint(session.aiSummaryEventsFingerprint) !==
         fingerprint;
+      const summaryFormatChanged =
+        summaryFormatVersionFromSummaryFingerprint(session.aiSummaryEventsFingerprint) !==
+        SESSION_REGISTRY_SUMMARY_FORMAT_VERSION;
       const needsSummary =
         session.aiSummaryStatus === "ready"
-          ? eventsChanged || session.aiSummary === null
+          ? eventsChanged || summaryFormatChanged || session.aiSummary === null
           : session.aiSummaryStatus === "missing"
-            ? eventsChanged || session.aiSummaryEventsFingerprint === null
+            ? eventsChanged || summaryFormatChanged || session.aiSummaryEventsFingerprint === null
             : true;
       if (!needsSummary) {
         continue;
@@ -231,9 +244,13 @@ export class SessionRegistryBackgroundWorker {
       const lastSummaryTurnCount = userTurnCountFromSummaryFingerprint(
         candidate.session.aiSummaryEventsFingerprint,
       );
+      const summaryFormatChanged =
+        summaryFormatVersionFromSummaryFingerprint(candidate.session.aiSummaryEventsFingerprint) !==
+        SESSION_REGISTRY_SUMMARY_FORMAT_VERSION;
       if (
         candidate.session.aiSummaryStatus === "ready" &&
         candidate.session.aiSummary !== null &&
+        !summaryFormatChanged &&
         lastSummaryTurnCount !== null &&
         totalUserTurns - lastSummaryTurnCount < SESSION_REGISTRY_SUMMARY_REFRESH_USER_TURNS
       ) {

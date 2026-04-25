@@ -327,7 +327,7 @@ function getSessionSummaryDisplay(session: SessionRegistryListItem): SessionSumm
         text: aiSummary,
         source: "ai",
         status: "pending",
-        note: "Summary refresh queued.",
+        note: "Description refresh queued.",
       };
     }
     if (session.aiSummaryStatus === "error") {
@@ -339,18 +339,18 @@ function getSessionSummaryDisplay(session: SessionRegistryListItem): SessionSumm
       };
     }
     return {
-      text: aiSummary,
-      source: "ai",
-      status: "ready",
-      note: session.aiSummaryUpdatedAt
-        ? `Last summarized ${formatTimestamp(session.aiSummaryUpdatedAt)}`
-        : null,
-    };
+        text: aiSummary,
+        source: "ai",
+        status: "ready",
+        note: session.aiSummaryUpdatedAt
+          ? `Description updated ${formatTimestamp(session.aiSummaryUpdatedAt)}`
+          : null,
+      };
   }
 
   if (session.aiSummaryStatus === "pending" && session.copilotSessionId) {
     return {
-      text: "Generating AI summary…",
+      text: "Generating AI description…",
       source: "ai",
       status: "pending",
       note: "Using recent user turns from the Copilot session log.",
@@ -396,6 +396,48 @@ function getFreshnessTimestamp(session: SessionRegistryListItem): number {
   const freshnessSource = session.lastSeenAt ?? session.updatedAt;
   const freshnessTimestamp = Date.parse(freshnessSource);
   return Number.isFinite(freshnessTimestamp) ? freshnessTimestamp : Number.NEGATIVE_INFINITY;
+}
+
+function getSessionStartDescription(session: SessionRegistryListItem): string {
+  if (hasTrustedSignal(session)) {
+    const runner = session.trustedExecutionKind === "agency" ? "Agency" : "Copilot CLI";
+    const action =
+      session.trustedStartSource === "resume"
+        ? "Resumed"
+        : session.trustedStartSource === "startup"
+          ? "Observed at startup"
+          : "Started";
+    const startedAt = session.trustedStartedAt
+      ? ` on ${formatTimestamp(session.trustedStartedAt)}`
+      : "";
+    return `${action} from ${runner}${startedAt}.`;
+  }
+
+  if (session.originKind === "manual") {
+    return "Created manually in Streamliner.";
+  }
+
+  if (session.originKind === "launched") {
+    return "Launched from Streamliner.";
+  }
+
+  return "Discovered from local Copilot session state.";
+}
+
+function getSessionLatestDescription(
+  session: SessionRegistryListItem,
+  summary: SessionSummaryDisplay,
+): string {
+  if (summary.text) {
+    return summary.text;
+  }
+  if (session.description.trim().length > 0) {
+    return session.description;
+  }
+  if (session.lastSeenAt) {
+    return `Last observed ${formatTimestamp(session.lastSeenAt)}.`;
+  }
+  return "No conversation description has been generated yet.";
 }
 
 function getActivityTimestamp(session: SessionRegistryListItem): number | null {
@@ -1451,10 +1493,9 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                     const trustedStatus = getTrustedStatusLabel(session);
                     const rowTitle = getRowFallbackTitle(session);
                     const rowDetail =
-                      session.description ||
-                      (summary.text && summary.status !== "missing"
-                        ? `Summary: ${summary.text}`
-                        : null);
+                      summary.text && summary.status !== "missing"
+                        ? summary.text
+                        : session.description || null;
                     return (
                       <button
                         key={session.id}
@@ -1728,8 +1769,22 @@ interface SessionOverviewProps {
 
 function SessionOverview({ session }: SessionOverviewProps) {
   const summary = getSessionSummaryDisplay(session);
+  const latestDescription = getSessionLatestDescription(session, summary);
   return (
     <div className="sl-session-overview">
+      <section className="sl-session-overview-section narrative">
+        <h3 className="sl-session-overview-heading">Conversation</h3>
+        <div className="sl-session-narrative">
+          <p>
+            <strong>Started:</strong> {getSessionStartDescription(session)}
+          </p>
+          <p>
+            <strong>Latest:</strong> {latestDescription}
+          </p>
+        </div>
+        {summary.note && <div className="sl-session-overview-note">{summary.note}</div>}
+      </section>
+
       <section className="sl-session-overview-section">
         <h3 className="sl-session-overview-heading">Session</h3>
         <dl className="sl-session-kv">
@@ -1803,16 +1858,15 @@ function SessionOverview({ session }: SessionOverviewProps) {
       </section>
 
       <section className="sl-session-overview-section secondary">
-        <h3 className="sl-session-overview-heading">Summary</h3>
+        <h3 className="sl-session-overview-heading">Description source</h3>
         <div className="sl-session-overview-summary">
           {summary.text || (
             <em className="sl-session-overview-empty">
-              No summary yet. The background worker will generate one after enough
+              No AI description yet. The background worker will generate one after enough
               user turns accumulate in the Copilot session log.
             </em>
           )}
         </div>
-        {summary.note && <div className="sl-session-overview-note">{summary.note}</div>}
       </section>
     </div>
   );

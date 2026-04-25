@@ -255,7 +255,8 @@ describe("App sessions route", () => {
         title: "Follow Paw-Lite Process",
         originKind: "observed",
         copilotSessionId: "trusted-session",
-        aiSummary: "Debugging hooks and session registry filtering",
+        aiSummary:
+          "This session started as follow-up work on trusted Copilot session tracking. The latest discussion is refining session cards so the editable title stays separate from a richer conversation description.",
         aiSummaryModel: "gpt-5.4-mini",
         aiSummaryUpdatedAt: "2026-04-24T22:54:16.000Z",
         aiSummaryStatus: "ready",
@@ -297,12 +298,16 @@ describe("App sessions route", () => {
 
       const sessionList = findSessionList(container);
       expect(sessionList.textContent).toContain("Follow Paw-Lite Process");
+      expect(sessionList.textContent).toContain("richer conversation description");
       expect(sessionList.textContent).not.toContain("gpt-5.4-mini");
 
       act(() => {
         findSessionRow(container, "Follow Paw-Lite Process").click();
       });
       await settle();
+      expect(container.textContent).toContain("Conversation");
+      expect(container.textContent).toContain("Started:");
+      expect(container.textContent).toContain("Latest:");
 
       setInputValue(findInputByLabel(container, "Session title"), "Terminal A session");
       act(() => {

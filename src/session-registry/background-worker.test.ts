@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { __resetCopilotDiscoveryCacheForTests } from "./copilot-session-discovery";
 import { SessionRegistryFileStore } from "./file-store";
 import { SessionRegistryBackgroundWorker } from "./background-worker";
+import { computeEventsFingerprint } from "./session-summarizer";
 import { writeTrustedSessionSignalSpoolFile } from "./trusted-session-signals";
 
 const createdRoots: string[] = [];
@@ -299,5 +300,74 @@ describe("SessionRegistryBackgroundWorker", () => {
       }),
     );
     expect(summarizeSession).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes old short summaries when the summary format changes", async () => {
+    const registryRoot = createRootDir("streamliner-session-worker-registry-");
+    const sessionRoot = createRootDir("streamliner-session-worker-state-");
+
+    writeSessionStateFiles(
+      sessionRoot,
+      "session-4",
+      [
+        "id: session-4",
+        "cwd: C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+        "repository: lossyrob/streamliner",
+        "branch: feature/manual-session-registry",
+        "summary: Follow Paw-Lite Process",
+        "updated_at: 2026-04-23T18:28:32.345Z",
+      ],
+      [
+        {
+          type: "user.message",
+          data: { content: "Improve the session card description content." },
+          timestamp: "2026-04-23T18:29:00.000Z",
+        },
+      ],
+    );
+
+    const store = new SessionRegistryFileStore({ rootDir: registryRoot });
+    store.upsertSession({
+      id: "session-4",
+      title: "Follow Paw-Lite Process",
+      cwd: "C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+      repo: "lossyrob/streamliner",
+      branch: "feature/manual-session-registry",
+      origin: { kind: "observed" },
+      copilotSessionId: "session-4",
+      lastSeenAt: "2026-04-23T18:28:32.345Z",
+    });
+    store.patchDerivedSessionState("session-4", {
+      aiSummary: "Improving session cards",
+      aiSummaryModel: "test-model",
+      aiSummaryUpdatedAt: "2026-04-23T18:30:00.000Z",
+      aiSummaryEventsFingerprint: `${computeEventsFingerprint(
+        join(sessionRoot, "session-4", "events.jsonl"),
+      )}|userTurns=1`,
+      aiSummaryStatus: "ready",
+      aiSummaryError: null,
+    });
+
+    const summarizeSession = vi.fn(async () => ({
+      summary:
+        "This session started with follow-up work on session cards. The latest request asks for a richer conversation description.",
+      model: "test-model",
+      durationMs: 1,
+      rawContent:
+        "This session started with follow-up work on session cards. The latest request asks for a richer conversation description.",
+    }));
+
+    const worker = new SessionRegistryBackgroundWorker(store, {
+      sessionRoot,
+      summarizer: { summarizeSession },
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    });
+
+    await worker.runCycle();
+
+    const record = store.getSession("session-4");
+    expect(record?.aiSummary).toContain("richer conversation description");
+    expect(record?.aiSummaryEventsFingerprint).toContain("|summary=description-v2|");
+    expect(summarizeSession).toHaveBeenCalledTimes(1);
   });
 });

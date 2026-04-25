@@ -128,10 +128,11 @@ export interface SummarizeSessionResult {
 export const DEFAULT_SUMMARY_MODEL = "gpt-5.4-mini";
 
 const SUMMARY_SYSTEM_PROMPT = [
-  "You summarize Copilot coding agent sessions in a single short phrase (6-10 words).",
-  "The phrase describes what the user is actively working on based on their recent messages.",
-  "Use present-tense verbs (e.g. 'Debugging auth token refresh', 'Redesigning session list UI').",
-  "No quotes, no prefixes like 'Summary:', no trailing punctuation, no markdown. Plain text only.",
+  "You write concise descriptions for Copilot coding sessions.",
+  "Return exactly two short sentences, no more than 55 words total.",
+  "Sentence one describes the session's goal or start context using the existing title, repo, and branch only when helpful.",
+  "Sentence two describes the latest user requests or current direction from the recent messages.",
+  "Do not write a title. No labels like 'Summary:' or 'Latest:', no markdown, no bullets, no quotes.",
 ].join(" ");
 
 function buildUserPrompt(
@@ -148,7 +149,7 @@ function buildUserPrompt(
     .join("\n\n");
   return [
     header.length > 0 ? header.join("\n") : null,
-    "Based on the user's recent messages below, produce the summary phrase now.",
+    "Based on the session context and recent user messages below, produce the two-sentence session description now.",
     body,
   ]
     .filter(Boolean)
@@ -160,13 +161,17 @@ function sanitizeSummary(raw: string): string {
     .replace(/^```[a-z]*\n?/i, "")
     .replace(/```\s*$/i, "")
     .trim();
-  const firstLine = cleaned.split(/\r?\n/).map((line) => line.trim()).find((line) => line.length > 0);
-  if (!firstLine) return "";
-  return firstLine
+  const normalized = cleaned
+    .split(/\r?\n/)
+    .map((line) => line.trim().replace(/^[-*]\s+/, ""))
+    .filter((line) => line.length > 0)
+    .join(" ");
+  if (!normalized) return "";
+  return normalized
     .replace(/^summary[:\s-]+/i, "")
+    .replace(/^description[:\s-]+/i, "")
     .replace(/^["'`]+|["'`]+$/g, "")
     .replace(/\s+/g, " ")
-    .replace(/[.!]+$/g, "")
     .trim();
 }
 

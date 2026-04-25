@@ -53,7 +53,8 @@ function buildTrustedSession(
     originKind: "observed",
     graphBinding: null,
     copilotSessionId: "trusted-session",
-    aiSummary: "Debugging hooks and session registry filtering",
+    aiSummary:
+      "This session started as follow-up work on trusted Copilot session tracking. The latest discussion is refining session cards so the editable title stays separate from a richer conversation description.",
     aiSummaryModel: "gpt-5.4-mini",
     aiSummaryUpdatedAt: "2026-04-24T22:54:16.000Z",
     aiSummaryEventsFingerprint: "events|userTurns=12",
@@ -163,10 +164,14 @@ test("session color quick-pick closes immediately and Done saves without refetch
 
   const row = page.getByRole("button", { name: /Follow Paw-Lite Process/ });
   await expect(row).toBeVisible();
+  await expect(row).toContainText("richer conversation description");
   await expect(row).not.toContainText("gpt-5.4-mini");
   const initialListRequests = api.listRequests;
 
   await row.click();
+  await expect(page.getByRole("heading", { name: "Conversation" })).toBeVisible();
+  await expect(page.getByText(/Started:/)).toBeVisible();
+  await expect(page.getByText(/Latest:/)).toBeVisible();
   await page.getByRole("button", { name: "Show terminal color quick picks" }).click();
   const palette = page.getByLabel("Terminal color quick picks", { exact: true });
   await expect(palette).toBeVisible();
