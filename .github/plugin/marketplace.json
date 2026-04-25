@@ -1,0 +1,18 @@
+{
+  "name": "streamliner-local",
+  "owner": {
+    "name": "Streamliner"
+  },
+  "metadata": {
+    "description": "Local Streamliner Copilot CLI plugins.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "streamliner",
+      "description": "Reports trusted Copilot CLI session lifecycle events to Streamliner.",
+      "version": "0.1.0",
+      "source": "copilot-plugin/streamliner"
+    }
+  ]
+}
