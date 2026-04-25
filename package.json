@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:e2e": "playwright test",
     "docs:dev": "vitepress dev docs/design",
     "docs:build": "vitepress build docs/design",
     "docs:preview": "vitepress preview docs/design"

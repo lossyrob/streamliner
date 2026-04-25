@@ -916,7 +916,6 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
     return patch !== null;
   }, [creating, draft, selectedSession]);
   const existingDirtyRef = useLatestValue(existingDirty);
-  const fetchSessionsRef = useLatestValue(fetchSessions);
 
   const clearAutosaveTimer = useCallback(() => {
     if (autosaveTimerRef.current) {
@@ -978,11 +977,13 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
         }
 
         const updated = toListItem((await response.json()) as SessionRegistryRecord);
+        setSessions((current) =>
+          current.map((session) => (session.id === updated.id ? updated : session)),
+        );
         setSelectedSnapshot(updated);
         setDraft(draftFromSession(updated));
         setSaveState("saved");
         setSaveError(null);
-        await fetchSessionsRef.current();
         return true;
       } catch (nextError) {
         if (!options.background) {
@@ -992,7 +993,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
         return false;
       }
     },
-    [clearAutosaveTimer, creatingRef, draftRef, fetchSessionsRef, selectedSessionRef],
+    [clearAutosaveTimer, creatingRef, draftRef, selectedSessionRef],
   );
 
   const handleBeforeLeave = useCallback(async () => {
@@ -1526,9 +1527,10 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                         <div className="sl-sheet-color-popover">
                           <TerminalColorQuickPicker
                             value={draft.color}
-                            onChange={(color) =>
-                              setDraft((current) => ({ ...current, color }))
-                            }
+                            onChange={(color) => {
+                              setDraft((current) => ({ ...current, color }));
+                              setHeaderColorPaletteOpen(false);
+                            }}
                           />
                         </div>
                       )}
@@ -1540,7 +1542,6 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                       onChange={(event) =>
                         setDraft((current) => ({ ...current, title: event.target.value }))
                       }
-                      onBlur={() => void saveExistingSession()}
                     />
                   </div>
                 ) : (

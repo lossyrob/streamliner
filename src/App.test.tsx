@@ -300,6 +300,10 @@ describe("App sessions route", () => {
       act(() => {
         findButtonByLabel(container, "Use terminal color #ff8c0a").click();
       });
+      await settle();
+      expect(
+        container.querySelector('[aria-label="Terminal color quick picks"]'),
+      ).toBeNull();
       act(() => {
         findButton(container, "Done").click();
       });
