@@ -173,6 +173,16 @@ function buildPatch(
   return Object.keys(patch).length > 0 ? patch : null;
 }
 
+function applyPatchToListItem(
+  session: SessionRegistryListItem,
+  patch: SessionRegistryPatch,
+): SessionRegistryListItem {
+  return {
+    ...session,
+    ...patch,
+  };
+}
+
 function sessionSnapshotKey(session: SessionRegistryListItem | null): string | null {
   if (!session) {
     return null;
@@ -749,6 +759,8 @@ function useLatestValue<T>(value: T) {
 interface SessionSaveOptions {
   background?: boolean;
   keepalive?: boolean;
+  optimistic?: boolean;
+  surfaceErrorGlobally?: boolean;
 }
 
 interface SessionsPageProps {
@@ -778,6 +790,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
   const [creatingState, setCreatingState] = useState<SaveState>("idle");
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipUnmountFlushRef = useRef(false);
+  const saveRequestIdRef = useRef(0);
   // Frozen group order per mode. Filled lazily on first render for a mode; cleared by Resort.
   const frozenOrderRef = useRef<Partial<Record<GroupMode, string[]>>>({});
   const creatingRef = useLatestValue(creating);
@@ -951,6 +964,23 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
         return false;
       }
 
+      const requestId = ++saveRequestIdRef.current;
+      const savedDraftKey = draftKey(currentDraft);
+      const optimisticUpdate = options.optimistic
+        ? applyPatchToListItem(currentSelectedSession, patch)
+        : null;
+
+      if (optimisticUpdate) {
+        setSessions((current) =>
+          current.map((session) =>
+            session.id === optimisticUpdate.id ? optimisticUpdate : session,
+          ),
+        );
+        if (selectedIdRef.current === optimisticUpdate.id) {
+          setSelectedSnapshot(optimisticUpdate);
+        }
+      }
+
       if (!options.background) {
         setSaveState("saving");
       }
@@ -977,23 +1007,43 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
         }
 
         const updated = toListItem((await response.json()) as SessionRegistryRecord);
+        if (requestId !== saveRequestIdRef.current) {
+          return true;
+        }
+
         setSessions((current) =>
           current.map((session) => (session.id === updated.id ? updated : session)),
         );
-        setSelectedSnapshot(updated);
-        setDraft(draftFromSession(updated));
-        setSaveState("saved");
+        const currentDraftKey = draftKey(draftRef.current);
+        const draftStillMatchesSavedRequest = currentDraftKey === savedDraftKey;
+        if (selectedIdRef.current === updated.id) {
+          setSelectedSnapshot(updated);
+          if (draftStillMatchesSavedRequest) {
+            setDraft(draftFromSession(updated));
+          }
+        }
+        setSaveState(draftStillMatchesSavedRequest ? "saved" : "idle");
         setSaveError(null);
+        if (options.surfaceErrorGlobally) {
+          setError(null);
+        }
         return true;
       } catch (nextError) {
+        if (requestId !== saveRequestIdRef.current) {
+          return true;
+        }
+        const message = nextError instanceof Error ? nextError.message : String(nextError);
         if (!options.background) {
           setSaveState("error");
-          setSaveError(nextError instanceof Error ? nextError.message : String(nextError));
+          setSaveError(message);
+        }
+        if (options.surfaceErrorGlobally) {
+          setError(message);
         }
         return false;
       }
     },
-    [clearAutosaveTimer, creatingRef, draftRef, selectedSessionRef],
+    [clearAutosaveTimer, creatingRef, draftRef, selectedIdRef, selectedSessionRef],
   );
 
   const handleBeforeLeave = useCallback(async () => {
@@ -1099,13 +1149,16 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
   }, [creating, existingDirty, saveExistingSession]);
 
   const closeSheet = useCallback(async () => {
-    // Close semantics: if we have unsaved edits on an existing session, await the save
-    // so close reliably flushes. If saving fails, keep the sheet open so the error stays visible.
     if (!creating && existingDirty) {
-      const saved = await saveExistingSession();
-      if (!saved) {
+      if (draftRef.current.title.trim().length === 0) {
+        setSaveState("error");
+        setSaveError("Title is required.");
         return;
       }
+      setSheetOpen(false);
+      setHeaderColorPaletteOpen(false);
+      void saveExistingSession({ optimistic: true, surfaceErrorGlobally: true });
+      return;
     }
     setSheetOpen(false);
     setHeaderColorPaletteOpen(false);
@@ -1114,7 +1167,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
       setCreatingState("idle");
       setDraft(createEmptyDraft());
     }
-  }, [creating, existingDirty, saveExistingSession]);
+  }, [creating, draftRef, existingDirty, saveExistingSession]);
 
   const handleCreate = useCallback(async () => {
     if (draft.title.trim().length === 0 || draft.cwd.trim().length === 0) {

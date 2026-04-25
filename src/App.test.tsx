@@ -56,6 +56,16 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+function toRegistryRecord(session: SessionRegistryListItem): Record<string, unknown> {
+  const { originKind, ...record } = session;
+  return {
+    ...record,
+    schemaVersion: 1,
+    createdAt: "2026-04-23T12:00:00.000Z",
+    origin: { kind: originKind },
+  };
+}
+
 function requestPath(input: RequestInfo | URL): string {
   if (typeof input === "string") {
     const url = new URL(input, "http://localhost");
@@ -264,11 +274,13 @@ describe("App sessions route", () => {
           }
           if (path === "/api/sessions/trusted-session" && init?.method === "PATCH") {
             const patch = JSON.parse(String(init.body)) as Partial<SessionRegistryListItem>;
-            return jsonResponse({
-              ...session,
-              ...patch,
-              updatedAt: "2026-04-24T22:58:00.000Z",
-            });
+            return jsonResponse(
+              toRegistryRecord({
+                ...session,
+                ...patch,
+                updatedAt: "2026-04-24T22:58:00.000Z",
+              }),
+            );
           }
           throw new Error(`Unexpected fetch: ${path}`);
         },

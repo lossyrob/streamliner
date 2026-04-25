@@ -83,10 +83,22 @@ function toSessionRecord(session: SessionRegistryListItem) {
   };
 }
 
-async function mockSessionsApi(page: Page) {
+async function delay(ms: number): Promise<void> {
+  if (ms <= 0) {
+    return;
+  }
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+interface MockSessionsApiOptions {
+  patchDelayMs?: number;
+}
+
+async function mockSessionsApi(page: Page, options: MockSessionsApiOptions = {}) {
   let session = buildTrustedSession();
   let listRequests = 0;
   const patches: unknown[] = [];
+  let completedPatches = 0;
 
   await page.route("**/api/sessions**", async (route: Route) => {
     const request = route.request();
@@ -111,10 +123,13 @@ async function mockSessionsApi(page: Page) {
         ...patch,
         updatedAt: "2026-04-24T23:16:00.000Z",
       };
+      const responseSession = session;
+      await delay(options.patchDelayMs ?? 0);
+      completedPatches += 1;
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify(toSessionRecord(session)),
+        body: JSON.stringify(toSessionRecord(responseSession)),
       });
       return;
     }
@@ -133,13 +148,16 @@ async function mockSessionsApi(page: Page) {
     get patches() {
       return patches;
     },
+    get completedPatches() {
+      return completedPatches;
+    },
   };
 }
 
 test("session color quick-pick closes immediately and Done saves without refetch", async ({
   page,
 }) => {
-  const api = await mockSessionsApi(page);
+  const api = await mockSessionsApi(page, { patchDelayMs: 1_000 });
 
   await page.goto("/?view=sessions");
 
@@ -158,13 +176,34 @@ test("session color quick-pick closes immediately and Done saves without refetch
 
   await page.getByLabel("Session title").fill("Terminal A session");
   await page.getByRole("button", { name: "Done" }).click();
-  await expect(page.getByRole("dialog")).toBeHidden();
+  await expect(page.getByRole("dialog")).toBeHidden({ timeout: 500 });
   await expect(page.getByRole("button", { name: /Terminal A session/ })).toBeVisible();
 
-  expect(api.patches).toHaveLength(1);
+  await expect.poll(() => api.patches.length).toBe(1);
   expect(api.patches[0]).toMatchObject({
     title: "Terminal A session",
     color: "#ff8c0a",
   });
   expect(api.listRequests).toBe(initialListRequests);
+  await expect.poll(() => api.completedPatches).toBe(1);
+});
+
+test("delayed autosave responses do not replace newer title edits", async ({ page }) => {
+  const api = await mockSessionsApi(page, { patchDelayMs: 700 });
+
+  await page.goto("/?view=sessions");
+
+  await page.getByRole("button", { name: /Follow Paw-Lite Process/ }).click();
+  const titleInput = page.getByLabel("Session title");
+
+  await titleInput.fill("Terminal A");
+  await expect.poll(() => api.patches.length).toBe(1);
+
+  await titleInput.fill("Terminal Alpha");
+  await expect.poll(() => api.completedPatches).toBeGreaterThanOrEqual(1);
+  await expect(titleInput).toHaveValue("Terminal Alpha");
+
+  await expect.poll(() => api.patches.length).toBeGreaterThanOrEqual(2);
+  await expect.poll(() => api.completedPatches).toBeGreaterThanOrEqual(2);
+  await expect(titleInput).toHaveValue("Terminal Alpha");
 });
