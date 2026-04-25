@@ -131,6 +131,14 @@ function findNumberInput(container: HTMLElement): HTMLInputElement {
   return input;
 }
 
+function findInputByLabel(container: HTMLElement, label: string): HTMLInputElement {
+  const input = container.querySelector(`input[aria-label="${label}"]`);
+  if (!(input instanceof HTMLInputElement)) {
+    throw new Error(`Could not find input with label "${label}".`);
+  }
+  return input;
+}
+
 function setInputValue(
   input: HTMLInputElement,
   value: string,
@@ -222,6 +230,84 @@ describe("App sessions route", () => {
   );
 
   it(
+    "prioritizes editable session identity over summary metadata",
+    async () => {
+      const session = buildSession({
+        id: "trusted-session",
+        title: "Follow Paw-Lite Process",
+        originKind: "observed",
+        copilotSessionId: "trusted-session",
+        aiSummary: "Debugging hooks and session registry filtering",
+        aiSummaryModel: "gpt-5.4-mini",
+        aiSummaryUpdatedAt: "2026-04-24T22:54:16.000Z",
+        aiSummaryStatus: "ready",
+        trustedSignalSource: "copilot-cli-hook",
+        trustedStartedAt: "2026-04-24T22:48:16.000Z",
+        trustedLastSignalAt: "2026-04-24T22:48:16.000Z",
+        trustedExecutionKind: "copilot_cli",
+        observedSessionKind: "interactive",
+        copilotProcessState: "live",
+      });
+      const fetchMock = vi.fn(
+        async (input: RequestInfo | URL, init?: RequestInit) => {
+          const path = requestPath(input);
+          if (path === "/api/sessions") {
+            return jsonResponse([session]);
+          }
+          if (path === "/api/sessions/trusted-session" && init?.method === "PATCH") {
+            const patch = JSON.parse(String(init.body)) as Partial<SessionRegistryListItem>;
+            return jsonResponse({
+              ...session,
+              ...patch,
+              updatedAt: "2026-04-24T22:58:00.000Z",
+            });
+          }
+          throw new Error(`Unexpected fetch: ${path}`);
+        },
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      window.history.pushState({}, "", "/?view=sessions");
+
+      act(() => {
+        root.render(<App />);
+      });
+
+      await settle();
+
+      const sessionList = findSessionList(container);
+      expect(sessionList.textContent).toContain("Follow Paw-Lite Process");
+      expect(sessionList.textContent).not.toContain("gpt-5.4-mini");
+
+      act(() => {
+        findSessionRow(container, "Follow Paw-Lite Process").click();
+      });
+      await settle();
+
+      setInputValue(findInputByLabel(container, "Session title"), "Terminal A session");
+      setInputValue(findInputByLabel(container, "Session color"), "#ff8800");
+      act(() => {
+        findButton(container, "Done").click();
+      });
+      await settle();
+
+      const patchCall = fetchMock.mock.calls.find(
+        ([input, init]) =>
+          requestPath(input as RequestInfo | URL) === "/api/sessions/trusted-session" &&
+          init?.method === "PATCH",
+      );
+      expect(patchCall).toBeDefined();
+      expect(JSON.parse(String(patchCall?.[1]?.body))).toEqual(
+        expect.objectContaining({
+          title: "Terminal A session",
+          color: "#ff8800",
+        }),
+      );
+    },
+    15_000,
+  );
+
+  it(
     "refreshes an open sessions view when polling returns newer registry data",
     async () => {
       let sessionsRequests = 0;
@@ -270,7 +356,7 @@ describe("App sessions route", () => {
         "Manual session registry (refreshed)",
       );
       await openSessionSettings(container, "Manual session registry (refreshed)");
-      const [, , cwdInput, repoInput, branchInput] = findSessionEditorInputs(container);
+      const [, , , cwdInput, repoInput, branchInput] = findSessionEditorInputs(container);
       expect(cwdInput?.value).toBe(
         "C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry-refreshed",
       );

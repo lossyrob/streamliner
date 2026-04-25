@@ -234,6 +234,14 @@ function hasTrustedSignal(session: SessionRegistryListItem): boolean {
   return session.trustedSignalSource !== null;
 }
 
+function sessionDisplayColor(session: Pick<SessionRegistryListItem, "color">): string {
+  return session.color ?? "var(--sl-accent-border)";
+}
+
+function colorInputValue(value: string): string {
+  return /^#[0-9a-f]{6}$/i.test(value.trim()) ? value.trim() : "#5b7fff";
+}
+
 function isTrustedActiveSession(session: SessionRegistryListItem): boolean {
   return (
     hasTrustedSignal(session) &&
@@ -287,7 +295,7 @@ function getSessionSummaryDisplay(session: SessionRegistryListItem): SessionSumm
         text: aiSummary,
         source: "ai",
         status: "pending",
-        note: "Refreshing from recent turns…",
+        note: "Summary refresh queued.",
       };
     }
     if (session.aiSummaryStatus === "error") {
@@ -302,10 +310,9 @@ function getSessionSummaryDisplay(session: SessionRegistryListItem): SessionSumm
       text: aiSummary,
       source: "ai",
       status: "ready",
-      note:
-        session.aiSummaryModel && session.aiSummaryUpdatedAt
-          ? `${session.aiSummaryModel} · ${formatTimestamp(session.aiSummaryUpdatedAt)}`
-          : session.aiSummaryModel,
+      note: session.aiSummaryUpdatedAt
+        ? `Last summarized ${formatTimestamp(session.aiSummaryUpdatedAt)}`
+        : null,
     };
   }
 
@@ -1362,14 +1369,12 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                     const summary = getSessionSummaryDisplay(session);
                     const observedStatus = getObservedStatusLabel(session);
                     const trustedStatus = getTrustedStatusLabel(session);
-                    const rowTitle =
-                      summary.source === "ai" && summary.text
-                        ? summary.text
-                        : getRowFallbackTitle(session);
+                    const rowTitle = getRowFallbackTitle(session);
                     const rowDetail =
-                      summary.source === "ai"
-                        ? summary.note || session.description || null
-                        : summary.text;
+                      session.description ||
+                      (summary.text && summary.status !== "missing"
+                        ? `Summary: ${summary.text}`
+                        : null);
                     return (
                       <button
                         key={session.id}
@@ -1380,7 +1385,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                       >
                         <span
                           className="sl-session-row-stripe"
-                          style={{ backgroundColor: session.color ?? "var(--sl-accent-border)" }}
+                          style={{ backgroundColor: sessionDisplayColor(session) }}
                         />
                         <div className="sl-session-row-main">
                           <div className="sl-session-row-title-line">
@@ -1389,8 +1394,11 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                                 session.lifecycleStatus === "active" ? "active" : "dim"
                               }`}
                             />
-                             {summary.source === "ai" && <span className="sl-ai-badge">AI</span>}
-                            {hasTrustedSignal(session) && <span className="sl-ai-badge">CLI</span>}
+                            <span
+                              className="sl-session-row-swatch"
+                              style={{ backgroundColor: sessionDisplayColor(session) }}
+                              aria-hidden="true"
+                            />
                             <span className="sl-session-row-title">{rowTitle}</span>
                           </div>
                           <p className="sl-session-row-summary">
@@ -1425,12 +1433,8 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                             {session.lifecycleStatus}
                           </span>
                           <span className="sl-session-row-origin">
-                             {summary.status === "pending"
-                               ? "ai updating"
-                               : summary.status === "error"
-                                 ? "ai retrying"
-                                 : trustedStatus ?? observedStatus ?? session.originKind}
-                           </span>
+                            {trustedStatus ?? observedStatus ?? session.originKind}
+                          </span>
                         </div>
                         <div className="sl-session-row-activity">
                           {formatTimestamp(session.lastSeenAt)}
@@ -1474,13 +1478,31 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                   )}
                   {creating && <span className="sl-pill accent">new</span>}
                 </div>
-                <h2 className="sl-sheet-title">
-                  {creating
-                    ? "Create session"
-                    : selectedSession
-                      ? selectedSession.title
-                      : "Session"}
-                </h2>
+                {selectedSession && !creating ? (
+                  <div className="sl-sheet-title-editor">
+                    <input
+                      className="sl-sheet-color-picker"
+                      type="color"
+                      aria-label="Session color"
+                      value={colorInputValue(draft.color)}
+                      onChange={(event) =>
+                        setDraft((current) => ({ ...current, color: event.target.value }))
+                      }
+                      onBlur={() => void saveExistingSession()}
+                    />
+                    <input
+                      className="sl-sheet-title-input"
+                      aria-label="Session title"
+                      value={draft.title}
+                      onChange={(event) =>
+                        setDraft((current) => ({ ...current, title: event.target.value }))
+                      }
+                      onBlur={() => void saveExistingSession()}
+                    />
+                  </div>
+                ) : (
+                  <h2 className="sl-sheet-title">{creating ? "Create session" : "Session"}</h2>
+                )}
                 {selectedSession && !creating && (
                   <div className="sl-session-path">{selectedSession.cwd}</div>
                 )}
@@ -1612,23 +1634,12 @@ function SessionOverview({ session }: SessionOverviewProps) {
   return (
     <div className="sl-session-overview">
       <section className="sl-session-overview-section">
-        <h3 className="sl-session-overview-heading">
-          <span className="sl-ai-badge">AI</span> Summary
-        </h3>
-        <div className="sl-session-overview-summary">
-          {summary.text || (
-            <em className="sl-session-overview-empty">
-              No summary yet. Once the background worker sees recent user turns in the
-              Copilot session log, it will generate one here.
-            </em>
-          )}
-        </div>
-        {summary.note && <div className="sl-session-overview-note">{summary.note}</div>}
-      </section>
-
-      <section className="sl-session-overview-section">
-        <h3 className="sl-session-overview-heading">Details</h3>
+        <h3 className="sl-session-overview-heading">Session</h3>
         <dl className="sl-session-kv">
+          <dt>Title</dt>
+          <dd>{session.title}</dd>
+          <dt>Status</dt>
+          <dd>{getTrustedStatusLabel(session) ?? session.lifecycleStatus}</dd>
           <dt>Repo</dt>
           <dd>{session.repo ?? "—"}</dd>
           <dt>Branch</dt>
@@ -1692,6 +1703,19 @@ function SessionOverview({ session }: SessionOverviewProps) {
             </>
           )}
         </dl>
+      </section>
+
+      <section className="sl-session-overview-section secondary">
+        <h3 className="sl-session-overview-heading">Summary</h3>
+        <div className="sl-session-overview-summary">
+          {summary.text || (
+            <em className="sl-session-overview-empty">
+              No summary yet. The background worker will generate one after enough
+              user turns accumulate in the Copilot session log.
+            </em>
+          )}
+        </div>
+        {summary.note && <div className="sl-session-overview-note">{summary.note}</div>}
       </section>
     </div>
   );
@@ -1768,15 +1792,27 @@ function SessionSettingsForm({
       <div className="sl-field-grid">
         <label className="sl-field">
           <span className="sl-field-label">Color</span>
-          <input
-            className="sl-text-field"
-            value={draft.color}
-            onChange={(event) =>
-              onChange((current) => ({ ...current, color: event.target.value }))
-            }
-            placeholder="#5b7fff"
-            onBlur={onAutosave}
-          />
+          <div className="sl-color-editor">
+            <input
+              className="sl-color-picker"
+              type="color"
+              aria-label="Session color swatch"
+              value={colorInputValue(draft.color)}
+              onChange={(event) =>
+                onChange((current) => ({ ...current, color: event.target.value }))
+              }
+              onBlur={onAutosave}
+            />
+            <input
+              className="sl-text-field"
+              value={draft.color}
+              onChange={(event) =>
+                onChange((current) => ({ ...current, color: event.target.value }))
+              }
+              placeholder="#5b7fff"
+              onBlur={onAutosave}
+            />
+          </div>
         </label>
         <label className="sl-field">
           <span className="sl-field-label">Lifecycle</span>

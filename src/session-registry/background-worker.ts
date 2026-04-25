@@ -20,6 +20,7 @@ import { drainTrustedSessionSignalSpool } from "./trusted-session-signals";
 export const SESSION_REGISTRY_WORKER_POLL_INTERVAL_MS = 15_000;
 export const SESSION_REGISTRY_WORKER_MAX_CONCURRENCY = 2;
 export const SESSION_REGISTRY_WORKER_INITIAL_DELAY_MS = 10_000;
+export const SESSION_REGISTRY_SUMMARY_REFRESH_USER_TURNS = 5;
 
 interface SummaryCandidate {
   session: SessionRegistryListItem;
@@ -59,6 +60,29 @@ export interface SessionRegistryBackgroundWorkerOptions {
 function isLockedError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return message.includes("locked");
+}
+
+function eventsFingerprintFromSummaryFingerprint(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  return value.split("|userTurns=", 1)[0] || null;
+}
+
+function userTurnCountFromSummaryFingerprint(value: string | null): number | null {
+  if (!value) {
+    return null;
+  }
+  const match = value.match(/(?:^|\|)userTurns=(\d+)(?:\||$)/);
+  if (!match) {
+    return null;
+  }
+  const parsed = Number.parseInt(match[1], 10);
+  return Number.isInteger(parsed) ? parsed : null;
+}
+
+function summaryFingerprint(eventsFingerprint: string, userTurnCount: number): string {
+  return `${eventsFingerprint}|userTurns=${userTurnCount}`;
 }
 
 export class SessionRegistryBackgroundWorker {
@@ -167,10 +191,15 @@ export class SessionRegistryBackgroundWorker {
       if (!fingerprint) {
         continue;
       }
+      const eventsChanged =
+        eventsFingerprintFromSummaryFingerprint(session.aiSummaryEventsFingerprint) !==
+        fingerprint;
       const needsSummary =
-        session.aiSummaryStatus !== "ready" ||
-        session.aiSummaryEventsFingerprint !== fingerprint ||
-        session.aiSummary === null;
+        session.aiSummaryStatus === "ready"
+          ? eventsChanged || session.aiSummary === null
+          : session.aiSummaryStatus === "missing"
+            ? eventsChanged || session.aiSummaryEventsFingerprint === null
+            : true;
       if (!needsSummary) {
         continue;
       }
@@ -180,28 +209,50 @@ export class SessionRegistryBackgroundWorker {
   }
 
   private async summarizeCandidate(candidate: SummaryCandidate): Promise<void> {
-    this.tryPatch(candidate.session.id, {
-      aiSummaryStatus: "pending",
-      aiSummaryEventsFingerprint: candidate.fingerprint,
-      aiSummaryError: null,
-    });
-
     try {
       const turns = await this.summarizer.extractRecentUserTurns(candidate.eventsPath, {
         maxTurns: 4,
         maxCharsPerTurn: 1500,
       });
+      const totalUserTurns = turns.at(-1)?.absoluteIndex ?? 0;
+      const nextFingerprint = summaryFingerprint(candidate.fingerprint, totalUserTurns);
       if (turns.length === 0) {
         this.tryPatch(candidate.session.id, {
           aiSummary: null,
           aiSummaryModel: null,
           aiSummaryUpdatedAt: null,
-          aiSummaryEventsFingerprint: candidate.fingerprint,
+          aiSummaryEventsFingerprint: nextFingerprint,
           aiSummaryStatus: "missing",
           aiSummaryError: null,
         });
         return;
       }
+
+      const lastSummaryTurnCount = userTurnCountFromSummaryFingerprint(
+        candidate.session.aiSummaryEventsFingerprint,
+      );
+      if (
+        candidate.session.aiSummaryStatus === "ready" &&
+        candidate.session.aiSummary !== null &&
+        lastSummaryTurnCount !== null &&
+        totalUserTurns - lastSummaryTurnCount < SESSION_REGISTRY_SUMMARY_REFRESH_USER_TURNS
+      ) {
+        this.tryPatch(candidate.session.id, {
+          aiSummaryEventsFingerprint: summaryFingerprint(
+            candidate.fingerprint,
+            lastSummaryTurnCount,
+          ),
+          aiSummaryStatus: "ready",
+          aiSummaryError: null,
+        });
+        return;
+      }
+
+      this.tryPatch(candidate.session.id, {
+        aiSummaryStatus: "pending",
+        aiSummaryEventsFingerprint: nextFingerprint,
+        aiSummaryError: null,
+      });
 
       const result = await this.summarizer.summarizeSession({
         turns,
@@ -223,7 +274,7 @@ export class SessionRegistryBackgroundWorker {
         aiSummary: result.summary,
         aiSummaryModel: result.model,
         aiSummaryUpdatedAt: this.now().toISOString(),
-        aiSummaryEventsFingerprint: candidate.fingerprint,
+        aiSummaryEventsFingerprint: nextFingerprint,
         aiSummaryStatus: "ready",
         aiSummaryError: null,
       });

@@ -11,6 +11,7 @@ import { rememberIgnoredObservedCopilotSessionId } from "./copilot-session-disco
 
 export interface RecentUserTurn {
   index: number;
+  absoluteIndex: number;
   content: string;
   timestamp?: string;
 }
@@ -87,11 +88,14 @@ export async function extractRecentUserTurns(
     if (parsed.type !== "user.message") continue;
     const content = toStringContent(parsed.data?.content);
     if (!content) continue;
+    const absoluteIndex = index + 1;
     collected.push({
-      index: index++,
+      index: absoluteIndex,
+      absoluteIndex,
       content: truncate(content, maxCharsPerTurn),
       timestamp: parsed.timestamp,
     });
+    index += 1;
   }
 
   return collected.slice(-maxTurns).map((turn, idx) => ({ ...turn, index: idx + 1 }));

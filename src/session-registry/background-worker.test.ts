@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -208,7 +208,7 @@ describe("SessionRegistryBackgroundWorker", () => {
     expect(summarizeSession).not.toHaveBeenCalled();
   });
 
-  it("re-summarizes when events.jsonl changes", async () => {
+  it("waits for five more user turns before refreshing a ready summary", async () => {
     const registryRoot = createRootDir("streamliner-session-worker-registry-");
     const sessionRoot = createRootDir("streamliner-session-worker-state-");
     const sessionDir = join(sessionRoot, "session-3");
@@ -258,15 +258,36 @@ describe("SessionRegistryBackgroundWorker", () => {
     await worker.runCycle();
     const firstFingerprint = store.getSession("session-3")?.aiSummaryEventsFingerprint;
 
-    writeFileSync(
-      join(sessionDir, "events.jsonl"),
-      `${readFileSync(join(sessionDir, "events.jsonl"), "utf8")}\n${JSON.stringify({
-        type: "user.message",
-        data: { content: "Second summary input" },
-        timestamp: "2026-04-23T18:31:00.000Z",
-      })}`,
-      "utf8",
+    const appendUserTurn = (content: string, timestamp: string) => {
+      writeFileSync(
+        join(sessionDir, "events.jsonl"),
+        `\n${JSON.stringify({
+          type: "user.message",
+          data: { content },
+          timestamp,
+        })}`,
+        { flag: "a" },
+      );
+    };
+
+    appendUserTurn("Second summary input", "2026-04-23T18:31:00.000Z");
+    appendUserTurn("Third summary input", "2026-04-23T18:32:00.000Z");
+    appendUserTurn("Fourth summary input", "2026-04-23T18:33:00.000Z");
+    appendUserTurn("Fifth summary input", "2026-04-23T18:34:00.000Z");
+
+    await worker.runCycle();
+
+    const skippedRecord = store.getSession("session-3");
+    expect(skippedRecord).toEqual(
+      expect.objectContaining({
+        aiSummary: "First pass summary",
+        aiSummaryStatus: "ready",
+      }),
     );
+    expect(skippedRecord?.aiSummaryEventsFingerprint).not.toBe(firstFingerprint);
+    expect(summarizeSession).toHaveBeenCalledTimes(1);
+
+    appendUserTurn("Sixth summary input", "2026-04-23T18:35:00.000Z");
 
     await worker.runCycle();
 
@@ -277,7 +298,6 @@ describe("SessionRegistryBackgroundWorker", () => {
         aiSummaryStatus: "ready",
       }),
     );
-    expect(secondRecord?.aiSummaryEventsFingerprint).not.toBe(firstFingerprint);
     expect(summarizeSession).toHaveBeenCalledTimes(2);
   });
 });

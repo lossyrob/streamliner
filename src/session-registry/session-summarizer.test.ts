@@ -42,6 +42,7 @@ describe("extractRecentUserTurns", () => {
     const turns = await extractRecentUserTurns(eventsPath, { maxTurns: 3 });
     expect(turns.map((turn) => turn.content)).toEqual(["third", "fourth", "fifth"]);
     expect(turns.map((turn) => turn.index)).toEqual([1, 2, 3]);
+    expect(turns.map((turn) => turn.absoluteIndex)).toEqual([3, 4, 5]);
   });
 
   it("collapses whitespace and truncates long content", async () => {
