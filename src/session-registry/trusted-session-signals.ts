@@ -26,6 +26,7 @@ import {
   type SessionRegistryTrustedSignalSource,
   type SessionRegistryTrustedStartSource,
 } from "../session-registry-schema";
+import { isCopilotSdkSessionFsPath } from "./copilot-sdk-session-paths";
 
 export const SESSION_REGISTRY_SIGNAL_SPOOL_ROOT = resolve(
   homedir(),
@@ -113,6 +114,12 @@ export function getTrustedSessionSignalSpoolRoot(): string {
   return process.env.STREAMLINER_SESSION_SIGNAL_SPOOL_ROOT ?? SESSION_REGISTRY_SIGNAL_SPOOL_ROOT;
 }
 
+export function shouldIgnoreTrustedSessionSignal(
+  input: Pick<SessionRegistryTrustedSignalInput, "cwd">,
+): boolean {
+  return isCopilotSdkSessionFsPath(input.cwd);
+}
+
 export function parseTrustedSessionSignalInput(
   value: unknown,
 ): SessionRegistryTrustedSignalInput {
@@ -196,6 +203,11 @@ export function drainTrustedSessionSignalSpool(
       const signal = parseTrustedSessionSignalInput(
         JSON.parse(readFileSync(sourcePath, "utf8")) as unknown,
       );
+      if (shouldIgnoreTrustedSessionSignal(signal)) {
+        rmSync(sourcePath, { force: true });
+        processed += 1;
+        continue;
+      }
       store.recordTrustedSessionSignal(signal);
       rmSync(sourcePath, { force: true });
       processed += 1;

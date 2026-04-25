@@ -155,6 +155,33 @@ describe("handleSessionRegistryApiRequest", () => {
     );
   });
 
+  it("ignores Streamliner SDK helper hook signals", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+
+    const response = handleSessionRegistryApiRequest(store, {
+      method: "POST",
+      url: `${SESSION_REGISTRY_API_BASE_PATH}/signals`,
+      body: {
+        event: "session.started",
+        source: "copilot-cli-hook",
+        sessionId: "sdk-helper-api-session",
+        timestamp: "2026-04-24T20:00:00.000Z",
+        cwd: "C:\\Users\\robemanuele\\.streamliner\\state\\copilot-sdk-session-fs",
+        hookSource: "new",
+        executionKind: "copilot_cli",
+      },
+    });
+
+    expect(response?.statusCode).toBe(202);
+    expect(response?.body).toEqual({
+      ignored: true,
+      reason: "copilot-sdk-session-fs",
+    });
+    expect(store.listSessions({ includeArchived: true })).toEqual([]);
+  });
+
   it("maps lock errors and bad request bodies", () => {
     const rootDir = createRootDir();
     createdRoots.push(rootDir);

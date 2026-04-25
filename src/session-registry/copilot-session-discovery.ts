@@ -8,6 +8,7 @@ import type {
   SessionRegistryCopilotProcessState,
   SessionRegistryObservedSessionKind,
 } from "../session-registry-schema";
+import { isCopilotSdkSessionFsPath } from "./copilot-sdk-session-paths";
 import { SessionRegistryFileStore } from "./file-store";
 
 const DEFAULT_COPILOT_SESSION_STATE_ROOT = resolve(
@@ -277,9 +278,11 @@ function looksLikeSummarizerPromptTitle(title: string): boolean {
 function classifyObservedSessionKind(
   sessionId: string,
   summary: string | null,
+  cwd: string,
 ): SessionRegistryObservedSessionKind {
   if (
     ignoredObservedCopilotSessionIds.has(sessionId) ||
+    isCopilotSdkSessionFsPath(cwd) ||
     isSummarizerPromptSummary(summary)
   ) {
     return "helper";
@@ -293,6 +296,7 @@ function isHelperLikeObservedRegistrySession(
   return (
     session.originKind === "observed" &&
     (session.observedSessionKind === "helper" ||
+      isCopilotSdkSessionFsPath(session.cwd) ||
       looksLikeSummarizerPromptTitle(session.title) ||
       session.description.startsWith("AI summary helper ·"))
   );
@@ -334,7 +338,7 @@ function discoverSessionFromDirectory(
   const repo = workspace.repository?.trim() || null;
   const branch = workspace.branch?.trim() || null;
   const summary = normalizeSummary(workspace.summary);
-  const observedSessionKind = classifyObservedSessionKind(sessionId, summary);
+  const observedSessionKind = classifyObservedSessionKind(sessionId, summary, cwd);
   const lastSeenAt = workspace.updated_at?.trim() || workspaceStat.mtime.toISOString();
   const lifecycleStatus: SessionRegistryObservedLifecycleStatus =
     processObservation.state === "live" ? "active" : "ended";

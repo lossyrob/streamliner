@@ -12,6 +12,7 @@ const HOOK_EVENT_MAP = new Map([
 ]);
 const VALID_START_SOURCES = new Set(["new", "resume", "startup"]);
 const VALID_END_REASONS = new Set(["complete", "error", "abort", "timeout", "user_exit"]);
+const COPILOT_SDK_SESSION_FS_MARKER = "/.streamliner/state/copilot-sdk-session-fs";
 
 function readStdin() {
   return new Promise((resolveStdin, rejectStdin) => {
@@ -46,6 +47,19 @@ function executionKind() {
     : "copilot_cli";
 }
 
+function isCopilotSdkSessionFsPath(value) {
+  if (!value) {
+    return false;
+  }
+  const normalized = value.replace(/\\/g, "/").replace(/\/+/g, "/").toLowerCase();
+  const markerIndex = normalized.indexOf(COPILOT_SDK_SESSION_FS_MARKER);
+  if (markerIndex < 0) {
+    return false;
+  }
+  const nextCharacter = normalized.charAt(markerIndex + COPILOT_SDK_SESSION_FS_MARKER.length);
+  return nextCharacter === "" || nextCharacter === "/";
+}
+
 function buildSignal(hookName, payload) {
   const event = HOOK_EVENT_MAP.get(hookName);
   if (!event) {
@@ -61,6 +75,9 @@ function buildSignal(hookName, payload) {
     stringValue(process.env.COPILOT_PROJECT_DIR) ??
     process.cwd();
   if (!sessionId || !cwd) {
+    return null;
+  }
+  if (isCopilotSdkSessionFsPath(cwd)) {
     return null;
   }
 

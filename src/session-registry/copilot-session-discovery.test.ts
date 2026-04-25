@@ -189,6 +189,16 @@ describe("copilot session discovery", () => {
         "updated_at: 2026-04-23T18:28:32.345Z",
       ].join("\n"),
     );
+    writeWorkspaceFile(
+      sessionRoot,
+      "sdk-helper-session",
+      [
+        "id: sdk-helper-session",
+        "cwd: C:\\Users\\robemanuele\\.streamliner\\state\\copilot-sdk-session-fs",
+        "summary: copilot-sdk-session-fs",
+        "updated_at: 2026-04-23T18:28:32.345Z",
+      ].join("\n"),
+    );
     writeFileSync(
       join(sessionRoot, "stale-lock-session", "inuse.999999.lock"),
       "",
@@ -200,6 +210,12 @@ describe("copilot session discovery", () => {
       expect.arrayContaining([
         expect.objectContaining({
           sessionId: "helper-session",
+          observedSessionKind: "helper",
+          copilotProcessState: "none",
+          lifecycleStatus: "ended",
+        }),
+        expect.objectContaining({
+          sessionId: "sdk-helper-session",
           observedSessionKind: "helper",
           copilotProcessState: "none",
           lifecycleStatus: "ended",
@@ -241,9 +257,19 @@ describe("copilot session discovery", () => {
         importedFromCopilotSessionId: "legacy-helper",
       },
     });
+    store.recordTrustedSessionSignal({
+      event: "session.started",
+      source: "copilot-cli-hook",
+      sessionId: "trusted-sdk-helper",
+      timestamp: "2026-04-24T20:00:00.000Z",
+      cwd: "C:\\Users\\robemanuele\\.streamliner\\state\\copilot-sdk-session-fs",
+      hookSource: "new",
+      executionKind: "copilot_cli",
+    });
 
-    expect(syncDiscoveredCopilotSessions(store, sessionRoot)).toBe(1);
+    expect(syncDiscoveredCopilotSessions(store, sessionRoot)).toBe(2);
     expect(store.getSession("legacy-helper")).toBeNull();
+    expect(store.getSession("trusted-sdk-helper")).toBeNull();
   });
 
   it("skips importing helper sessions into the persisted observed registry", () => {

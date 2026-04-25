@@ -5,9 +5,12 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  drainTrustedSessionSignalSpool,
+  SESSION_REGISTRY_SIGNAL_FAILED_DIR,
   SESSION_REGISTRY_SIGNAL_PENDING_DIR,
   writeTrustedSessionSignalSpoolFile,
 } from "./trusted-session-signals";
+import { SessionRegistryFileStore } from "./file-store";
 
 const createdRoots: string[] = [];
 
@@ -57,5 +60,32 @@ describe("trusted session signal spool", () => {
     expect(pendingFiles.some((fileName) => fileName.endsWith(".tmp"))).toBe(false);
     expect(existsSync(first)).toBe(true);
     expect(existsSync(second)).toBe(true);
+  });
+
+  it("drops Streamliner SDK helper hook signals without failing ingest", () => {
+    const signalRoot = createRootDir();
+    const registryRoot = createRootDir();
+    const store = new SessionRegistryFileStore({ rootDir: registryRoot });
+
+    writeTrustedSessionSignalSpoolFile(
+      {
+        event: "session.started",
+        source: "copilot-cli-hook",
+        sessionId: "sdk-helper-session",
+        timestamp: "2026-04-24T20:00:00.000Z",
+        cwd: "C:\\Users\\robemanuele\\.streamliner\\state\\copilot-sdk-session-fs",
+        hookSource: "new",
+        executionKind: "copilot_cli",
+      },
+      { rootDir: signalRoot },
+    );
+
+    expect(drainTrustedSessionSignalSpool(store, { rootDir: signalRoot })).toEqual({
+      processed: 1,
+      failed: 0,
+    });
+    expect(readdirSync(join(signalRoot, SESSION_REGISTRY_SIGNAL_PENDING_DIR))).toEqual([]);
+    expect(existsSync(join(signalRoot, SESSION_REGISTRY_SIGNAL_FAILED_DIR))).toBe(false);
+    expect(store.listSessions({ includeArchived: true })).toEqual([]);
   });
 });

@@ -5,7 +5,10 @@ import {
   parseSessionRegistryPatch,
   parseSessionRegistryUpsertInput,
 } from "./file-store";
-import { parseTrustedSessionSignalInput } from "./trusted-session-signals";
+import {
+  parseTrustedSessionSignalInput,
+  shouldIgnoreTrustedSessionSignal,
+} from "./trusted-session-signals";
 
 export const SESSION_REGISTRY_API_BASE_PATH = "/api/sessions";
 
@@ -95,11 +98,16 @@ export function handleSessionRegistryApiRequest(
           body: { error: "Expected a JSON object body for POST /api/sessions/signals." },
         };
       }
+      const signal = parseTrustedSessionSignalInput(request.body);
+      if (shouldIgnoreTrustedSessionSignal(signal)) {
+        return {
+          statusCode: 202,
+          body: { ignored: true, reason: "copilot-sdk-session-fs" },
+        };
+      }
       return {
         statusCode: 200,
-        body: store.recordTrustedSessionSignal(
-          parseTrustedSessionSignalInput(request.body),
-        ),
+        body: store.recordTrustedSessionSignal(signal),
       };
     }
 
