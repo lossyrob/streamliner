@@ -9,6 +9,24 @@ const DEFAULT_STALE_SESSION_DAYS = 7;
 const DEFAULT_RECENTLY_CLOSED_HOURS = 6;
 const SESSION_STALE_DAYS_STORAGE_KEY = "streamliner:sessionsStaleDays";
 const SESSION_GROUP_MODE_STORAGE_KEY = "streamliner:sessionsGroupMode";
+const TERMINAL_COLOR_QUICK_PICKS = [
+  "#e8114b",
+  "#4891c8",
+  "#41b878",
+  "#ff8c0a",
+  "#c71585",
+  "#2897f0",
+  "#2fcf32",
+  "#ffff00",
+  "#9825d7",
+  "#6754d7",
+  "#00ff00",
+  "#d6bd93",
+  "#f000e8",
+  "#19d9df",
+  "#82c6df",
+  "#b8b8b8",
+] as const;
 
 type GroupMode = "recency" | "repo" | "folder" | "flat";
 type SheetTab = "overview" | "activity" | "settings";
@@ -240,6 +258,10 @@ function sessionDisplayColor(session: Pick<SessionRegistryListItem, "color">): s
 
 function colorInputValue(value: string): string {
   return /^#[0-9a-f]{6}$/i.test(value.trim()) ? value.trim() : "#5b7fff";
+}
+
+function normalizeColor(value: string): string {
+  return value.trim().toLowerCase();
 }
 
 function isTrustedActiveSession(session: SessionRegistryListItem): boolean {
@@ -748,6 +770,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
   const [creating, setCreating] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetTab, setSheetTab] = useState<SheetTab>("overview");
+  const [headerColorPaletteOpen, setHeaderColorPaletteOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
@@ -1052,6 +1075,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
       setSaveState("idle");
       setSaveError(null);
       setSheetTab("overview");
+      setHeaderColorPaletteOpen(false);
       setSheetOpen(true);
     },
     [creating, existingDirty, saveExistingSession],
@@ -1069,6 +1093,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
     setSaveState("idle");
     setSaveError(null);
     setSheetTab("settings"); // only settings is actionable while creating
+    setHeaderColorPaletteOpen(false);
     setSheetOpen(true);
   }, [creating, existingDirty, saveExistingSession]);
 
@@ -1082,6 +1107,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
       }
     }
     setSheetOpen(false);
+    setHeaderColorPaletteOpen(false);
     if (creating) {
       setCreating(false);
       setCreatingState("idle");
@@ -1480,16 +1506,33 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                 </div>
                 {selectedSession && !creating ? (
                   <div className="sl-sheet-title-editor">
-                    <input
-                      className="sl-sheet-color-picker"
-                      type="color"
-                      aria-label="Session color"
-                      value={colorInputValue(draft.color)}
-                      onChange={(event) =>
-                        setDraft((current) => ({ ...current, color: event.target.value }))
-                      }
-                      onBlur={() => void saveExistingSession()}
-                    />
+                    <div className="sl-sheet-color-menu">
+                      <button
+                        type="button"
+                        className="sl-sheet-color-button"
+                        aria-label="Show terminal color quick picks"
+                        aria-expanded={headerColorPaletteOpen}
+                        onClick={() => setHeaderColorPaletteOpen((value) => !value)}
+                      >
+                        <span
+                          className="sl-sheet-color-button-swatch"
+                          style={{
+                            backgroundColor:
+                              draft.color.trim() || sessionDisplayColor(selectedSession),
+                          }}
+                        />
+                      </button>
+                      {headerColorPaletteOpen && (
+                        <div className="sl-sheet-color-popover">
+                          <TerminalColorQuickPicker
+                            value={draft.color}
+                            onChange={(color) =>
+                              setDraft((current) => ({ ...current, color }))
+                            }
+                          />
+                        </div>
+                      )}
+                    </div>
                     <input
                       className="sl-sheet-title-input"
                       aria-label="Session title"
@@ -1747,6 +1790,53 @@ function SessionActivity({ session }: SessionActivityProps) {
   );
 }
 
+interface TerminalColorQuickPickerProps {
+  value: string;
+  onChange: (color: string) => void;
+}
+
+function TerminalColorQuickPicker({ value, onChange }: TerminalColorQuickPickerProps) {
+  const normalizedColor = normalizeColor(value);
+  return (
+    <div className="sl-terminal-color-picker" aria-label="Terminal color quick picks">
+      <div className="sl-terminal-color-grid">
+        {TERMINAL_COLOR_QUICK_PICKS.map((color) => (
+          <button
+            key={color}
+            type="button"
+            className={`sl-terminal-color-btn${
+              normalizedColor === color ? " selected" : ""
+            }`}
+            style={{ backgroundColor: color }}
+            aria-label={`Use terminal color ${color}`}
+            aria-pressed={normalizedColor === color}
+            onClick={() => onChange(color)}
+          />
+        ))}
+      </div>
+      <div className="sl-terminal-color-actions">
+        <button
+          type="button"
+          className="sl-terminal-color-action"
+          onClick={() => onChange("")}
+        >
+          Reset
+        </button>
+        <label className="sl-terminal-color-action custom">
+          Custom
+          <input
+            className="sl-color-picker"
+            type="color"
+            aria-label="Custom session color"
+            value={colorInputValue(value)}
+            onChange={(event) => onChange(event.target.value)}
+          />
+        </label>
+      </div>
+    </div>
+  );
+}
+
 interface SessionSettingsFormProps {
   draft: SessionDraft;
   creating: boolean;
@@ -1763,6 +1853,9 @@ function SessionSettingsForm({
   onAutosave,
 }: SessionSettingsFormProps) {
   const lifecycleLocked = selectedSession?.lifecycleStatus === "ended";
+  const setColor = (color: string) => {
+    onChange((current) => ({ ...current, color }));
+  };
   return (
     <div className="sl-session-editor">
       <label className="sl-field">
@@ -1793,22 +1886,11 @@ function SessionSettingsForm({
         <label className="sl-field">
           <span className="sl-field-label">Color</span>
           <div className="sl-color-editor">
-            <input
-              className="sl-color-picker"
-              type="color"
-              aria-label="Session color swatch"
-              value={colorInputValue(draft.color)}
-              onChange={(event) =>
-                onChange((current) => ({ ...current, color: event.target.value }))
-              }
-              onBlur={onAutosave}
-            />
+            <TerminalColorQuickPicker value={draft.color} onChange={setColor} />
             <input
               className="sl-text-field"
               value={draft.color}
-              onChange={(event) =>
-                onChange((current) => ({ ...current, color: event.target.value }))
-              }
+              onChange={(event) => setColor(event.target.value)}
               placeholder="#5b7fff"
               onBlur={onAutosave}
             />

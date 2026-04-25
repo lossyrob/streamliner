@@ -139,6 +139,14 @@ function findInputByLabel(container: HTMLElement, label: string): HTMLInputEleme
   return input;
 }
 
+function findButtonByLabel(container: HTMLElement, label: string): HTMLButtonElement {
+  const button = container.querySelector(`button[aria-label="${label}"]`);
+  if (!(button instanceof HTMLButtonElement)) {
+    throw new Error(`Could not find button with label "${label}".`);
+  }
+  return button;
+}
+
 function setInputValue(
   input: HTMLInputElement,
   value: string,
@@ -285,7 +293,13 @@ describe("App sessions route", () => {
       await settle();
 
       setInputValue(findInputByLabel(container, "Session title"), "Terminal A session");
-      setInputValue(findInputByLabel(container, "Session color"), "#ff8800");
+      act(() => {
+        findButtonByLabel(container, "Show terminal color quick picks").click();
+      });
+      await settle();
+      act(() => {
+        findButtonByLabel(container, "Use terminal color #ff8c0a").click();
+      });
       act(() => {
         findButton(container, "Done").click();
       });
@@ -300,7 +314,7 @@ describe("App sessions route", () => {
       expect(JSON.parse(String(patchCall?.[1]?.body))).toEqual(
         expect.objectContaining({
           title: "Terminal A session",
-          color: "#ff8800",
+          color: "#ff8c0a",
         }),
       );
     },

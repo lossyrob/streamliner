@@ -1117,6 +1117,44 @@ body,
   margin-top: 8px;
 }
 
+.sl-sheet-color-menu {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.sl-sheet-color-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--sl-card-border);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.72);
+  cursor: pointer;
+}
+
+.sl-sheet-color-button:hover,
+.sl-sheet-color-button[aria-expanded="true"] {
+  border-color: var(--sl-accent-border);
+  box-shadow: 0 0 0 3px rgba(58, 121, 255, 0.1);
+}
+
+.sl-sheet-color-button-swatch {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 1px solid rgba(16, 34, 60, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.34);
+}
+
+.sl-sheet-color-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 4;
+}
+
 .sl-sheet-color-picker,
 .sl-color-picker {
   width: 34px;
@@ -1412,9 +1450,80 @@ body,
 
 .sl-color-editor {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+
+.sl-terminal-color-picker {
+  width: max-content;
+  max-width: 100%;
+  background: rgba(24, 27, 31, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 12px;
+  box-shadow: 0 10px 26px rgba(13, 20, 32, 0.18);
+}
+
+.sl-terminal-color-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 40px);
+  gap: 6px;
+}
+
+.sl-terminal-color-btn {
+  width: 40px;
+  height: 40px;
+  border: 2px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+.sl-terminal-color-btn:hover,
+.sl-terminal-color-btn.selected {
+  border-color: #fff;
+}
+
+.sl-terminal-color-btn.selected {
+  box-shadow:
+    0 0 0 2px rgba(58, 121, 255, 0.42),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+.sl-terminal-color-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.sl-terminal-color-action {
+  position: relative;
+  display: inline-flex;
   align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+}
+
+.sl-terminal-color-action:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.sl-terminal-color-action.custom .sl-color-picker {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
 }
 
 @media (max-width: 1000px) {
