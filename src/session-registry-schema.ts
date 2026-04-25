@@ -72,10 +72,28 @@ export const SESSION_REGISTRY_TRUSTED_EXECUTION_KINDS = [
 export type SessionRegistryTrustedExecutionKind =
   (typeof SESSION_REGISTRY_TRUSTED_EXECUTION_KINDS)[number];
 
+export const SESSION_REGISTRY_GITHUB_REF_TYPES = [
+  "issue",
+  "pr",
+  "unknown",
+] as const;
+export type SessionRegistryGithubRefType =
+  (typeof SESSION_REGISTRY_GITHUB_REF_TYPES)[number];
+
 export interface SessionRegistryGraphBinding {
   workstreamId: string;
   nodeId: string;
   launchClaimId?: string | null;
+}
+
+export interface SessionRegistryGithubRef {
+  type: SessionRegistryGithubRefType;
+  repo: string | null;
+  number: number;
+  url: string | null;
+  firstSeenAt: string | null;
+  lastSeenAt: string | null;
+  source: string;
 }
 
 export interface ManualSessionRegistryOrigin {
@@ -132,6 +150,13 @@ export interface SessionRegistryRecord {
   trustedExecutionKind: SessionRegistryTrustedExecutionKind | null;
   trustedInitialPromptLength: number | null;
   trustedLastPromptLength: number | null;
+  derivedWorktreePath: string | null;
+  derivedBranch: string | null;
+  derivedGithubRefs: SessionRegistryGithubRef[];
+  derivedContextUpdatedAt: string | null;
+  derivedContextEventsOffset: number;
+  derivedContextEventsSize: number;
+  derivedContextEventsMtimeMs: number | null;
 }
 
 export interface SessionRegistryIndexEntry {
@@ -167,6 +192,13 @@ export interface SessionRegistryIndexEntry {
   trustedExecutionKind: SessionRegistryTrustedExecutionKind | null;
   trustedInitialPromptLength: number | null;
   trustedLastPromptLength: number | null;
+  derivedWorktreePath: string | null;
+  derivedBranch: string | null;
+  derivedGithubRefs: SessionRegistryGithubRef[];
+  derivedContextUpdatedAt: string | null;
+  derivedContextEventsOffset: number;
+  derivedContextEventsSize: number;
+  derivedContextEventsMtimeMs: number | null;
 }
 
 export interface SessionRegistryIndex {

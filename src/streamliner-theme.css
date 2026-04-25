@@ -1069,6 +1069,22 @@ body,
   font-size: 11px;
 }
 
+.sl-session-row-context-chip {
+  background: rgba(16, 34, 60, 0.06);
+  border: 1px solid rgba(16, 34, 60, 0.08);
+  color: var(--sl-text-mid);
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+}
+
+.sl-session-row-context-chip.important {
+  background: rgba(91, 127, 255, 0.12);
+  border-color: var(--sl-accent-border);
+  color: var(--sl-accent);
+  font-weight: 600;
+}
+
 .sl-session-row-path {
   font-family: var(--sl-mono);
   font-size: 12px;
@@ -1393,6 +1409,23 @@ body,
 
 .sl-session-narrative strong {
   color: var(--sl-text);
+}
+
+.sl-session-context-ref-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sl-session-context-ref {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--sl-accent-border);
+  background: var(--sl-accent-bg);
+  color: var(--sl-accent);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 12px;
 }
 
 .sl-session-overview-empty {

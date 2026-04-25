@@ -11,6 +11,7 @@ import {
   summarizeSession,
   type SummarizeSessionResult,
 } from "./session-summarizer";
+import { indexSessionContext } from "./session-context-indexer";
 import {
   SessionRegistryFileStore,
   type SessionRegistryDerivedStatePatch,
@@ -43,6 +44,7 @@ interface SummarizerDependencies {
     model: string;
     timeoutMs?: number;
   }) => Promise<SummarizeSessionResult>;
+  indexSessionContext: typeof indexSessionContext;
 }
 
 export interface SessionRegistryBackgroundWorkerOptions {
@@ -134,6 +136,7 @@ export class SessionRegistryBackgroundWorker {
       extractRecentUserTurns:
         options.summarizer?.extractRecentUserTurns ?? extractRecentUserTurns,
       summarizeSession: options.summarizer?.summarizeSession ?? summarizeSession,
+      indexSessionContext: options.summarizer?.indexSessionContext ?? indexSessionContext,
     };
   }
 
@@ -177,6 +180,7 @@ export class SessionRegistryBackgroundWorker {
         this.logger.warn("[session-worker] trusted signal drain failed", error);
       }
       syncDiscoveredCopilotSessions(this.store, this.sessionRoot);
+      this.indexSessionContexts();
       const candidates = this.collectSummaryCandidates().slice(0, this.maxConcurrentSummaries);
       await Promise.all(candidates.map((candidate) => this.summarizeCandidate(candidate)));
     } catch (error) {
@@ -219,6 +223,29 @@ export class SessionRegistryBackgroundWorker {
       candidates.push({ session, eventsPath, fingerprint });
     }
     return candidates;
+  }
+
+  private indexSessionContexts(): void {
+    const sessions = this.store.listSessions({ includeArchived: true });
+    for (const session of sessions) {
+      if (session.lifecycleStatus === "archived" || !session.copilotSessionId) {
+        continue;
+      }
+      const eventsPath = join(this.sessionRoot, session.copilotSessionId, "events.jsonl");
+      try {
+        const patch = this.summarizer.indexSessionContext(session, eventsPath, {
+          now: this.now,
+        });
+        if (patch) {
+          this.tryPatch(session.id, patch);
+        }
+      } catch (error) {
+        this.logger.warn(
+          `[session-worker] context indexing failed for ${session.id}`,
+          error,
+        );
+      }
+    }
   }
 
   private async summarizeCandidate(candidate: SummaryCandidate): Promise<void> {

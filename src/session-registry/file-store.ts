@@ -31,6 +31,7 @@ import {
 import {
   SESSION_REGISTRY_AI_SUMMARY_STATUSES,
   SESSION_REGISTRY_COPILOT_PROCESS_STATES,
+  SESSION_REGISTRY_GITHUB_REF_TYPES,
   SESSION_REGISTRY_LIFECYCLE_STATUSES,
   SESSION_REGISTRY_OBSERVED_SESSION_KINDS,
   SESSION_REGISTRY_ORIGIN_KINDS,
@@ -41,6 +42,8 @@ import {
   SESSION_REGISTRY_TRUSTED_START_SOURCES,
   type SessionRegistryAiSummaryStatus,
   type SessionRegistryCopilotProcessState,
+  type SessionRegistryGithubRef,
+  type SessionRegistryGithubRefType,
   type SessionRegistryGraphBinding,
   type SessionRegistryIndex,
   type SessionRegistryIndexEntry,
@@ -139,6 +142,13 @@ export interface SessionRegistryDerivedStatePatch {
   aiSummaryEventsFingerprint?: string | null;
   aiSummaryStatus?: SessionRegistryAiSummaryStatus;
   aiSummaryError?: string | null;
+  derivedWorktreePath?: string | null;
+  derivedBranch?: string | null;
+  derivedGithubRefs?: SessionRegistryGithubRef[];
+  derivedContextUpdatedAt?: string | null;
+  derivedContextEventsOffset?: number;
+  derivedContextEventsSize?: number;
+  derivedContextEventsMtimeMs?: number | null;
 }
 
 export function getDefaultSessionRegistryRoot(): string {
@@ -204,6 +214,26 @@ function ensureOptionalInteger(value: unknown, fieldName: string): number | null
   }
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
     throw new Error(`Expected ${fieldName} to be a non-negative integer or null.`);
+  }
+  return value;
+}
+
+function ensureNonNegativeInteger(value: unknown, fieldName: string): number {
+  if (value === undefined || value === null) {
+    return 0;
+  }
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new Error(`Expected ${fieldName} to be a non-negative integer.`);
+  }
+  return value;
+}
+
+function ensureOptionalNumber(value: unknown, fieldName: string): number | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new Error(`Expected ${fieldName} to be a non-negative number or null.`);
   }
   return value;
 }
@@ -422,6 +452,10 @@ function isTrustedExecutionKind(value: string): value is SessionRegistryTrustedE
   );
 }
 
+function isGithubRefType(value: string): value is SessionRegistryGithubRefType {
+  return SESSION_REGISTRY_GITHUB_REF_TYPES.includes(value as SessionRegistryGithubRefType);
+}
+
 function isObservedUpsertInput(
   input: SessionRegistryUpsertInput,
 ): input is ObservedSessionRegistryUpsertInput {
@@ -563,6 +597,39 @@ function normalizeTrustedExecutionKind(
     throw new Error(`Unsupported ${fieldName} "${kind}".`);
   }
   return kind;
+}
+
+function normalizeGithubRef(value: unknown, fieldName: string): SessionRegistryGithubRef {
+  if (!isJsonObject(value)) {
+    throw new Error(`Expected ${fieldName} to be an object.`);
+  }
+  const type = ensureString(value.type, `${fieldName}.type`);
+  if (!isGithubRefType(type)) {
+    throw new Error(`Unsupported ${fieldName}.type "${type}".`);
+  }
+  const number = ensureNonNegativeInteger(value.number, `${fieldName}.number`);
+  if (number < 1) {
+    throw new Error(`Expected ${fieldName}.number to be at least 1.`);
+  }
+  return {
+    type,
+    repo: ensureOptionalString(value.repo, `${fieldName}.repo`),
+    number,
+    url: ensureOptionalString(value.url, `${fieldName}.url`),
+    firstSeenAt: ensureOptionalString(value.firstSeenAt, `${fieldName}.firstSeenAt`),
+    lastSeenAt: ensureOptionalString(value.lastSeenAt, `${fieldName}.lastSeenAt`),
+    source: ensureString(value.source, `${fieldName}.source`),
+  };
+}
+
+function normalizeGithubRefs(value: unknown, fieldName: string): SessionRegistryGithubRef[] {
+  if (value === undefined || value === null) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`Expected ${fieldName} to be an array.`);
+  }
+  return value.map((entry, index) => normalizeGithubRef(entry, `${fieldName}[${index}]`));
 }
 
 export function parseSessionRegistryPatch(value: unknown): SessionRegistryPatch {
@@ -922,6 +989,31 @@ function validateStoredRecord(
       rawRecord.trustedLastPromptLength,
       `${filePath}.trustedLastPromptLength`,
     ),
+    derivedWorktreePath: ensureOptionalString(
+      rawRecord.derivedWorktreePath,
+      `${filePath}.derivedWorktreePath`,
+    ),
+    derivedBranch: ensureOptionalString(rawRecord.derivedBranch, `${filePath}.derivedBranch`),
+    derivedGithubRefs: normalizeGithubRefs(
+      rawRecord.derivedGithubRefs,
+      `${filePath}.derivedGithubRefs`,
+    ),
+    derivedContextUpdatedAt: ensureOptionalString(
+      rawRecord.derivedContextUpdatedAt,
+      `${filePath}.derivedContextUpdatedAt`,
+    ),
+    derivedContextEventsOffset: ensureNonNegativeInteger(
+      rawRecord.derivedContextEventsOffset,
+      `${filePath}.derivedContextEventsOffset`,
+    ),
+    derivedContextEventsSize: ensureNonNegativeInteger(
+      rawRecord.derivedContextEventsSize,
+      `${filePath}.derivedContextEventsSize`,
+    ),
+    derivedContextEventsMtimeMs: ensureOptionalNumber(
+      rawRecord.derivedContextEventsMtimeMs,
+      `${filePath}.derivedContextEventsMtimeMs`,
+    ),
   };
 
   return storedRecord;
@@ -1029,6 +1121,31 @@ function validateIndexEntry(
       rawEntry.trustedLastPromptLength,
       `${fieldName}.trustedLastPromptLength`,
     ),
+    derivedWorktreePath: ensureOptionalString(
+      rawEntry.derivedWorktreePath,
+      `${fieldName}.derivedWorktreePath`,
+    ),
+    derivedBranch: ensureOptionalString(rawEntry.derivedBranch, `${fieldName}.derivedBranch`),
+    derivedGithubRefs: normalizeGithubRefs(
+      rawEntry.derivedGithubRefs,
+      `${fieldName}.derivedGithubRefs`,
+    ),
+    derivedContextUpdatedAt: ensureOptionalString(
+      rawEntry.derivedContextUpdatedAt,
+      `${fieldName}.derivedContextUpdatedAt`,
+    ),
+    derivedContextEventsOffset: ensureNonNegativeInteger(
+      rawEntry.derivedContextEventsOffset,
+      `${fieldName}.derivedContextEventsOffset`,
+    ),
+    derivedContextEventsSize: ensureNonNegativeInteger(
+      rawEntry.derivedContextEventsSize,
+      `${fieldName}.derivedContextEventsSize`,
+    ),
+    derivedContextEventsMtimeMs: ensureOptionalNumber(
+      rawEntry.derivedContextEventsMtimeMs,
+      `${fieldName}.derivedContextEventsMtimeMs`,
+    ),
   };
 }
 
@@ -1092,6 +1209,13 @@ function buildIndex(records: Iterable<StoredSessionRegistryRecord>): SessionRegi
     trustedExecutionKind: record.trustedExecutionKind,
     trustedInitialPromptLength: record.trustedInitialPromptLength,
     trustedLastPromptLength: record.trustedLastPromptLength,
+    derivedWorktreePath: record.derivedWorktreePath,
+    derivedBranch: record.derivedBranch,
+    derivedGithubRefs: cloneValue(record.derivedGithubRefs),
+    derivedContextUpdatedAt: record.derivedContextUpdatedAt,
+    derivedContextEventsOffset: record.derivedContextEventsOffset,
+    derivedContextEventsSize: record.derivedContextEventsSize,
+    derivedContextEventsMtimeMs: record.derivedContextEventsMtimeMs,
   }));
   entries.sort(compareByFreshness);
 
@@ -1118,10 +1242,32 @@ function compareByFreshness(
 }
 
 function matchesText(
-  record: Pick<SessionRegistryIndexEntry, "title" | "description" | "aiSummary" | "tags">,
+  record: Pick<
+    SessionRegistryIndexEntry,
+    | "title"
+    | "description"
+    | "aiSummary"
+    | "tags"
+    | "derivedBranch"
+    | "derivedWorktreePath"
+    | "derivedGithubRefs"
+  >,
   text: string,
 ): boolean {
-  const haystacks = [record.title, record.description, record.aiSummary ?? "", ...record.tags];
+  const refs = record.derivedGithubRefs.map((ref) =>
+    [ref.repo, ref.type, `#${ref.number}`, `${ref.type} #${ref.number}`]
+      .filter(Boolean)
+      .join(" "),
+  );
+  const haystacks = [
+    record.title,
+    record.description,
+    record.aiSummary ?? "",
+    record.derivedBranch ?? "",
+    record.derivedWorktreePath ?? "",
+    ...refs,
+    ...record.tags,
+  ];
   return haystacks.some((value) => value.toLowerCase().includes(text));
 }
 
@@ -1359,6 +1505,13 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         trustedExecutionKind: nextTrustedExecutionKind,
         trustedInitialPromptLength: nextTrustedInitialPromptLength,
         trustedLastPromptLength: nextTrustedLastPromptLength,
+        derivedWorktreePath: latestRecord?.derivedWorktreePath ?? null,
+        derivedBranch: latestRecord?.derivedBranch ?? null,
+        derivedGithubRefs: cloneValue(latestRecord?.derivedGithubRefs ?? []),
+        derivedContextUpdatedAt: latestRecord?.derivedContextUpdatedAt ?? null,
+        derivedContextEventsOffset: latestRecord?.derivedContextEventsOffset ?? 0,
+        derivedContextEventsSize: latestRecord?.derivedContextEventsSize ?? 0,
+        derivedContextEventsMtimeMs: latestRecord?.derivedContextEventsMtimeMs ?? null,
       };
 
       const storedRecord = mergeStoredRecord(latestRecord, nextRecord);
@@ -1679,9 +1832,6 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       const records = this.loadEntriesFromDisk();
       const targetId = this.findRecordIdByCopilotSessionId(records, sessionId) ?? sessionId;
       const existingRecord = records.get(targetId);
-      if (!existingRecord && input.event === "prompt.submitted") {
-        throw new SessionRegistryNotFoundError(sessionId);
-      }
       if (existingRecord?.lifecycleStatus === "archived") {
         throw new SessionRegistryArchivedError(targetId, "accept trusted signals");
       }
@@ -1762,6 +1912,13 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
           input.event === "prompt.submitted"
             ? promptLength ?? existingRecord?.trustedLastPromptLength ?? null
             : existingRecord?.trustedLastPromptLength ?? null,
+        derivedWorktreePath: existingRecord?.derivedWorktreePath ?? null,
+        derivedBranch: existingRecord?.derivedBranch ?? null,
+        derivedGithubRefs: cloneValue(existingRecord?.derivedGithubRefs ?? []),
+        derivedContextUpdatedAt: existingRecord?.derivedContextUpdatedAt ?? null,
+        derivedContextEventsOffset: existingRecord?.derivedContextEventsOffset ?? 0,
+        derivedContextEventsSize: existingRecord?.derivedContextEventsSize ?? 0,
+        derivedContextEventsMtimeMs: existingRecord?.derivedContextEventsMtimeMs ?? null,
       };
 
       const storedRecord = mergeStoredRecord(existingRecord, nextRecord);
@@ -1814,6 +1971,34 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
           patch.aiSummaryError !== undefined
             ? patch.aiSummaryError
             : existingRecord.aiSummaryError,
+        derivedWorktreePath:
+          patch.derivedWorktreePath !== undefined
+            ? patch.derivedWorktreePath
+            : existingRecord.derivedWorktreePath,
+        derivedBranch:
+          patch.derivedBranch !== undefined
+            ? patch.derivedBranch
+            : existingRecord.derivedBranch,
+        derivedGithubRefs:
+          patch.derivedGithubRefs !== undefined
+            ? cloneValue(patch.derivedGithubRefs)
+            : existingRecord.derivedGithubRefs,
+        derivedContextUpdatedAt:
+          patch.derivedContextUpdatedAt !== undefined
+            ? patch.derivedContextUpdatedAt
+            : existingRecord.derivedContextUpdatedAt,
+        derivedContextEventsOffset:
+          patch.derivedContextEventsOffset !== undefined
+            ? patch.derivedContextEventsOffset
+            : existingRecord.derivedContextEventsOffset,
+        derivedContextEventsSize:
+          patch.derivedContextEventsSize !== undefined
+            ? patch.derivedContextEventsSize
+            : existingRecord.derivedContextEventsSize,
+        derivedContextEventsMtimeMs:
+          patch.derivedContextEventsMtimeMs !== undefined
+            ? patch.derivedContextEventsMtimeMs
+            : existingRecord.derivedContextEventsMtimeMs,
       };
 
       const storedRecord = mergeStoredRecord(existingRecord, nextRecord);

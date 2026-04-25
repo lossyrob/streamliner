@@ -43,6 +43,13 @@ function buildSession(
     trustedExecutionKind: null,
     trustedInitialPromptLength: null,
     trustedLastPromptLength: null,
+    derivedWorktreePath: null,
+    derivedBranch: null,
+    derivedGithubRefs: [],
+    derivedContextUpdatedAt: null,
+    derivedContextEventsOffset: 0,
+    derivedContextEventsSize: 0,
+    derivedContextEventsMtimeMs: null,
     ...overrides,
   };
 }
@@ -181,6 +188,12 @@ async function settle(delayMs = 25): Promise<void> {
   });
 }
 
+async function flushReact(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve();
+  });
+}
+
 describe("App sessions route", () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -201,9 +214,10 @@ describe("App sessions route", () => {
     window.history.pushState({}, "", "/");
   });
 
-  afterEach(() => {
-    act(() => {
+  afterEach(async () => {
+    await act(async () => {
       root.unmount();
+      await Promise.resolve();
     });
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -266,6 +280,20 @@ describe("App sessions route", () => {
         trustedExecutionKind: "copilot_cli",
         observedSessionKind: "interactive",
         copilotProcessState: "live",
+        derivedWorktreePath:
+          "C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+        derivedBranch: "feature/manual-session-registry",
+        derivedGithubRefs: [
+          {
+            type: "pr",
+            repo: "lossyrob/streamliner",
+            number: 14,
+            url: "https://github.com/lossyrob/streamliner/pull/14",
+            firstSeenAt: "2026-04-24T22:53:00.000Z",
+            lastSeenAt: "2026-04-24T22:53:00.000Z",
+            source: "gh",
+          },
+        ],
       });
       const fetchMock = vi.fn(
         async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -299,6 +327,8 @@ describe("App sessions route", () => {
       const sessionList = findSessionList(container);
       expect(sessionList.textContent).toContain("Follow Paw-Lite Process");
       expect(sessionList.textContent).toContain("richer conversation description");
+      expect(sessionList.textContent).toContain("worktree manual-session-registry");
+      expect(sessionList.textContent).toContain("PR #14");
       expect(sessionList.textContent).not.toContain("gpt-5.4-mini");
 
       act(() => {
@@ -308,6 +338,9 @@ describe("App sessions route", () => {
       expect(container.textContent).toContain("Conversation");
       expect(container.textContent).toContain("Started:");
       expect(container.textContent).toContain("Latest:");
+      expect(container.textContent).toContain("Derived context");
+      expect(container.textContent).toContain("Active branch");
+      expect(container.textContent).toContain("feature/manual-session-registry");
 
       setInputValue(findInputByLabel(container, "Session title"), "Terminal A session");
       act(() => {
@@ -345,6 +378,7 @@ describe("App sessions route", () => {
   it(
     "refreshes an open sessions view when polling returns newer registry data",
     async () => {
+      vi.useFakeTimers();
       let sessionsRequests = 0;
       const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
         const path = requestPath(input);
@@ -381,16 +415,32 @@ describe("App sessions route", () => {
         root.render(<App />);
       });
 
-      await settle();
+      await flushReact();
 
       expect(container.textContent).toContain("Manual session registry");
 
-      await settle(15_100);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+      await flushReact();
 
       expect(container.textContent).toContain(
         "Manual session registry (refreshed)",
       );
-      await openSessionSettings(container, "Manual session registry (refreshed)");
+      act(() => {
+        findSessionRow(container, "Manual session registry (refreshed)").click();
+      });
+      await flushReact();
+      const tab = [...container.querySelectorAll<HTMLButtonElement>(".sl-sheet-tab")].find(
+        (btn) => btn.textContent?.trim() === "Settings",
+      );
+      if (!tab) {
+        throw new Error("Could not find Settings tab.");
+      }
+      act(() => {
+        tab.click();
+      });
+      await flushReact();
       const [, , , cwdInput, repoInput, branchInput] = findSessionEditorInputs(container);
       expect(cwdInput?.value).toBe(
         "C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry-refreshed",

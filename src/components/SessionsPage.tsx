@@ -113,6 +113,13 @@ function toListItem(record: SessionRegistryRecord): SessionRegistryListItem {
     trustedExecutionKind: record.trustedExecutionKind,
     trustedInitialPromptLength: record.trustedInitialPromptLength,
     trustedLastPromptLength: record.trustedLastPromptLength,
+    derivedWorktreePath: record.derivedWorktreePath,
+    derivedBranch: record.derivedBranch,
+    derivedGithubRefs: record.derivedGithubRefs,
+    derivedContextUpdatedAt: record.derivedContextUpdatedAt,
+    derivedContextEventsOffset: record.derivedContextEventsOffset,
+    derivedContextEventsSize: record.derivedContextEventsSize,
+    derivedContextEventsMtimeMs: record.derivedContextEventsMtimeMs,
   };
 }
 
@@ -220,6 +227,13 @@ function sessionSnapshotKey(session: SessionRegistryListItem | null): string | n
     trustedExecutionKind: session.trustedExecutionKind,
     trustedInitialPromptLength: session.trustedInitialPromptLength,
     trustedLastPromptLength: session.trustedLastPromptLength,
+    derivedWorktreePath: session.derivedWorktreePath,
+    derivedBranch: session.derivedBranch,
+    derivedGithubRefs: session.derivedGithubRefs,
+    derivedContextUpdatedAt: session.derivedContextUpdatedAt,
+    derivedContextEventsOffset: session.derivedContextEventsOffset,
+    derivedContextEventsSize: session.derivedContextEventsSize,
+    derivedContextEventsMtimeMs: session.derivedContextEventsMtimeMs,
   });
 }
 
@@ -589,6 +603,27 @@ function folderOf(cwd: string): string {
     return "/";
   }
   return parent;
+}
+
+function leafName(path: string | null): string | null {
+  const trimmed = path?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  return trimmed.replace(/[\\/]+$/, "").split(/[/\\]+/).filter(Boolean).at(-1) ?? trimmed;
+}
+
+function displayBranch(session: SessionRegistryListItem): string | null {
+  return session.derivedBranch ?? session.branch;
+}
+
+function displayWorktree(session: SessionRegistryListItem): string | null {
+  return session.derivedWorktreePath ?? null;
+}
+
+function githubRefLabel(ref: SessionRegistryListItem["derivedGithubRefs"][number]): string {
+  const prefix = ref.type === "pr" ? "PR" : ref.type === "issue" ? "Issue" : "GitHub";
+  return `${prefix} #${ref.number}`;
 }
 
 type RecencyBucketKey =
@@ -1107,24 +1142,29 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
     return () => registerBeforeLeave(null);
   }, [handleBeforeLeave, registerBeforeLeave]);
 
+  const flushDirtyDraftOnExit = useCallback(() => {
+    if (!existingDirtyRef.current) {
+      return;
+    }
+    void saveExistingSession({ background: true, keepalive: true });
+  }, [existingDirtyRef, saveExistingSession]);
+
   useEffect(() => {
     const handlePageHide = () => {
-      if (!existingDirtyRef.current) {
-        return;
-      }
-      void saveExistingSession({ background: true, keepalive: true });
+      flushDirtyDraftOnExit();
     };
 
     window.addEventListener("pagehide", handlePageHide);
     return () => {
       window.removeEventListener("pagehide", handlePageHide);
+      clearAutosaveTimer();
       if (skipUnmountFlushRef.current) {
         skipUnmountFlushRef.current = false;
         return;
       }
-      void saveExistingSession({ background: true, keepalive: true });
+      flushDirtyDraftOnExit();
     };
-  }, [existingDirtyRef, saveExistingSession]);
+  }, [clearAutosaveTimer, flushDirtyDraftOnExit]);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -1492,6 +1532,8 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                     const observedStatus = getObservedStatusLabel(session);
                     const trustedStatus = getTrustedStatusLabel(session);
                     const rowTitle = getRowFallbackTitle(session);
+                    const rowBranch = displayBranch(session);
+                    const rowWorktree = displayWorktree(session);
                     const rowDetail =
                       summary.text && summary.status !== "missing"
                         ? summary.text
@@ -1535,12 +1577,25 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                             <span className="sl-session-row-repo">
                               {session.repo ?? "(no repo)"}
                             </span>
-                            {session.branch && (
+                            {rowBranch && (
                               <>
                                 <span className="sl-session-row-sep">·</span>
-                                <span className="sl-session-row-branch">{session.branch}</span>
+                                <span className="sl-session-row-branch">{rowBranch}</span>
                               </>
                             )}
+                            {rowWorktree && (
+                              <span className="sl-session-row-context-chip">
+                                worktree {leafName(rowWorktree)}
+                              </span>
+                            )}
+                            {session.derivedGithubRefs.slice(0, 3).map((ref) => (
+                              <span
+                                key={`${ref.type}-${ref.repo ?? ""}-${ref.number}`}
+                                className="sl-session-row-context-chip important"
+                              >
+                                {githubRefLabel(ref)}
+                              </span>
+                            ))}
                             {session.tags.map((tag) => (
                               <span key={tag} className="sl-session-row-tag">
                                 #{tag}
@@ -1770,6 +1825,8 @@ interface SessionOverviewProps {
 function SessionOverview({ session }: SessionOverviewProps) {
   const summary = getSessionSummaryDisplay(session);
   const latestDescription = getSessionLatestDescription(session, summary);
+  const contextBranch = displayBranch(session);
+  const contextWorktree = displayWorktree(session);
   return (
     <div className="sl-session-overview">
       <section className="sl-session-overview-section narrative">
@@ -1784,6 +1841,49 @@ function SessionOverview({ session }: SessionOverviewProps) {
         </div>
         {summary.note && <div className="sl-session-overview-note">{summary.note}</div>}
       </section>
+
+      {(contextBranch || contextWorktree || session.derivedGithubRefs.length > 0) && (
+        <section className="sl-session-overview-section">
+          <h3 className="sl-session-overview-heading">Derived context</h3>
+          <dl className="sl-session-kv">
+            {contextWorktree && (
+              <>
+                <dt>Worktree</dt>
+                <dd>{contextWorktree}</dd>
+              </>
+            )}
+            {contextBranch && (
+              <>
+                <dt>Active branch</dt>
+                <dd>{contextBranch}</dd>
+              </>
+            )}
+            {session.derivedGithubRefs.length > 0 && (
+              <>
+                <dt>GitHub refs</dt>
+                <dd>
+                  <div className="sl-session-context-ref-list">
+                    {session.derivedGithubRefs.map((ref) => (
+                      <span
+                        key={`${ref.type}-${ref.repo ?? ""}-${ref.number}`}
+                        className="sl-session-context-ref"
+                      >
+                        {githubRefLabel(ref)}
+                        {ref.repo ? ` · ${ref.repo}` : ""}
+                      </span>
+                    ))}
+                  </div>
+                </dd>
+              </>
+            )}
+          </dl>
+          {session.derivedContextUpdatedAt && (
+            <div className="sl-session-overview-note">
+              Context indexed {formatTimestamp(session.derivedContextUpdatedAt)}
+            </div>
+          )}
+        </section>
+      )}
 
       <section className="sl-session-overview-section">
         <h3 className="sl-session-overview-heading">Session</h3>

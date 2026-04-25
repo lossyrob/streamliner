@@ -88,4 +88,40 @@ describe("trusted session signal spool", () => {
     expect(existsSync(join(signalRoot, SESSION_REGISTRY_SIGNAL_FAILED_DIR))).toBe(false);
     expect(store.listSessions({ includeArchived: true })).toEqual([]);
   });
+
+  it("drains prompt signals even when they arrive before session start", () => {
+    const signalRoot = createRootDir();
+    const registryRoot = createRootDir();
+    const store = new SessionRegistryFileStore({ rootDir: registryRoot });
+
+    writeTrustedSessionSignalSpoolFile(
+      {
+        event: "prompt.submitted",
+        source: "copilot-cli-hook",
+        sessionId: "prompt-first-session",
+        timestamp: "2026-04-24T20:00:00.000Z",
+        cwd: "C:\\repo",
+        executionKind: "agency",
+        promptLength: 588,
+      },
+      { rootDir: signalRoot },
+    );
+
+    expect(drainTrustedSessionSignalSpool(store, { rootDir: signalRoot })).toEqual({
+      processed: 1,
+      failed: 0,
+    });
+    expect(readdirSync(join(signalRoot, SESSION_REGISTRY_SIGNAL_PENDING_DIR))).toEqual([]);
+    expect(existsSync(join(signalRoot, SESSION_REGISTRY_SIGNAL_FAILED_DIR))).toBe(false);
+    expect(store.getSession("prompt-first-session")).toEqual(
+      expect.objectContaining({
+        lifecycleStatus: "active",
+        trustedSignalSource: "copilot-cli-hook",
+        trustedStartedAt: null,
+        trustedLastSignalAt: "2026-04-24T20:00:00.000Z",
+        trustedExecutionKind: "agency",
+        trustedLastPromptLength: 588,
+      }),
+    );
+  });
 });

@@ -370,4 +370,73 @@ describe("SessionRegistryBackgroundWorker", () => {
     expect(record?.aiSummaryEventsFingerprint).toContain("|summary=description-v2|");
     expect(summarizeSession).toHaveBeenCalledTimes(1);
   });
+
+  it("continues indexing later sessions when one context index fails", async () => {
+    const registryRoot = createRootDir("streamliner-session-worker-registry-");
+    const sessionRoot = createRootDir("streamliner-session-worker-state-");
+
+    writeSessionStateFiles(
+      sessionRoot,
+      "bad-context-session",
+      [
+        "id: bad-context-session",
+        "cwd: C:\\bad",
+        "repository: lossyrob/streamliner",
+        "branch: main",
+        "summary: Bad context session",
+        "updated_at: 2026-04-23T18:28:32.345Z",
+      ],
+      [{ type: "user.message", data: { content: "Bad context" } }],
+    );
+    writeSessionStateFiles(
+      sessionRoot,
+      "good-context-session",
+      [
+        "id: good-context-session",
+        "cwd: C:\\good",
+        "repository: lossyrob/streamliner",
+        "branch: main",
+        "summary: Good context session",
+        "updated_at: 2026-04-23T18:29:32.345Z",
+      ],
+      [{ type: "user.message", data: { content: "Good context" } }],
+    );
+
+    const store = new SessionRegistryFileStore({ rootDir: registryRoot });
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const indexSessionContext = vi.fn((session: { id: string }) => {
+      if (session.id === "bad-context-session") {
+        throw new Error("events disappeared");
+      }
+      return {
+        derivedWorktreePath: "C:\\good",
+        derivedBranch: "feature/context",
+        derivedGithubRefs: [],
+        derivedContextUpdatedAt: "2026-04-23T19:00:00.000Z",
+        derivedContextEventsOffset: 12,
+        derivedContextEventsSize: 12,
+        derivedContextEventsMtimeMs: 123,
+      };
+    });
+    const worker = new SessionRegistryBackgroundWorker(store, {
+      sessionRoot,
+      maxConcurrentSummaries: 0,
+      summarizer: { indexSessionContext },
+      logger,
+    });
+
+    await worker.runCycle();
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      "[session-worker] context indexing failed for bad-context-session",
+      expect.any(Error),
+    );
+    expect(store.getSession("good-context-session")).toEqual(
+      expect.objectContaining({
+        derivedWorktreePath: "C:\\good",
+        derivedBranch: "feature/context",
+        derivedContextEventsOffset: 12,
+      }),
+    );
+  });
 });

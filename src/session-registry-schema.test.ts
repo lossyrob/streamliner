@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   SESSION_REGISTRY_AI_SUMMARY_STATUSES,
   SESSION_REGISTRY_COPILOT_PROCESS_STATES,
+  SESSION_REGISTRY_GITHUB_REF_TYPES,
   SESSION_REGISTRY_LIFECYCLE_STATUSES,
   SESSION_REGISTRY_OBSERVED_SESSION_KINDS,
   SESSION_REGISTRY_ORIGIN_KINDS,
@@ -66,6 +67,13 @@ function buildRecord(): SessionRegistryRecord {
     trustedExecutionKind: null,
     trustedInitialPromptLength: null,
     trustedLastPromptLength: null,
+    derivedWorktreePath: null,
+    derivedBranch: null,
+    derivedGithubRefs: [],
+    derivedContextUpdatedAt: null,
+    derivedContextEventsOffset: 0,
+    derivedContextEventsSize: 0,
+    derivedContextEventsMtimeMs: null,
   };
 }
 
@@ -98,6 +106,7 @@ describe("session registry schema", () => {
       "stale_lock",
       "none",
     ]);
+    expect(SESSION_REGISTRY_GITHUB_REF_TYPES).toEqual(["issue", "pr", "unknown"]);
     expect(SESSION_REGISTRY_TRUSTED_SIGNAL_SOURCES).toEqual([
       "copilot-cli-hook",
     ]);
@@ -182,6 +191,13 @@ describe("session registry schema", () => {
       trustedExecutionKind: record.trustedExecutionKind,
       trustedInitialPromptLength: record.trustedInitialPromptLength,
       trustedLastPromptLength: record.trustedLastPromptLength,
+      derivedWorktreePath: record.derivedWorktreePath,
+      derivedBranch: record.derivedBranch,
+      derivedGithubRefs: record.derivedGithubRefs,
+      derivedContextUpdatedAt: record.derivedContextUpdatedAt,
+      derivedContextEventsOffset: record.derivedContextEventsOffset,
+      derivedContextEventsSize: record.derivedContextEventsSize,
+      derivedContextEventsMtimeMs: record.derivedContextEventsMtimeMs,
     };
     const upsertInput: SessionRegistryUpsertInput = {
       title: record.title,

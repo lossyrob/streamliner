@@ -301,22 +301,49 @@ describe("SessionRegistryFileStore", () => {
     );
   });
 
-  it("rejects trusted prompt signals before a trusted session start exists", () => {
+  it("records trusted prompt signals before a trusted session start exists", () => {
     const rootDir = createRootDir();
     createdRoots.push(rootDir);
     const store = new SessionRegistryFileStore({ rootDir });
 
-    expect(() =>
-      store.recordTrustedSessionSignal({
-        event: "prompt.submitted",
-        source: "copilot-cli-hook",
-        sessionId: "unknown-prompt-session",
-        timestamp: "2026-04-24T20:00:00.000Z",
-        cwd: "C:\\repo",
-        promptLength: 12,
+    const prompted = store.recordTrustedSessionSignal({
+      event: "prompt.submitted",
+      source: "copilot-cli-hook",
+      sessionId: "unknown-prompt-session",
+      timestamp: "2026-04-24T20:00:00.000Z",
+      cwd: "C:\\repo",
+      promptLength: 12,
+    });
+    expect(prompted).toEqual(
+      expect.objectContaining({
+        id: "unknown-prompt-session",
+        lifecycleStatus: "active",
+        lastSeenAt: "2026-04-24T20:00:00.000Z",
+        trustedSignalSource: "copilot-cli-hook",
+        trustedStartedAt: null,
+        trustedLastSignalAt: "2026-04-24T20:00:00.000Z",
+        trustedLastPromptLength: 12,
+        copilotProcessState: "live",
       }),
-    ).toThrow(/does not exist/);
-    expect(store.getSession("unknown-prompt-session")).toBeNull();
+    );
+
+    const started = store.recordTrustedSessionSignal({
+      event: "session.started",
+      source: "copilot-cli-hook",
+      sessionId: "unknown-prompt-session",
+      timestamp: "2026-04-24T20:00:02.000Z",
+      cwd: "C:\\repo",
+      hookSource: "resume",
+      initialPromptLength: 34,
+    });
+    expect(started).toEqual(
+      expect.objectContaining({
+        trustedStartedAt: "2026-04-24T20:00:02.000Z",
+        trustedStartSource: "resume",
+        trustedInitialPromptLength: 34,
+        trustedLastPromptLength: 12,
+      }),
+    );
   });
 
   it("does not reactivate archived sessions from trusted signals", () => {

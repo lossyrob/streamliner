@@ -33,6 +33,21 @@ interface SessionRegistryListItem {
   trustedExecutionKind: "copilot_cli" | "agency" | null;
   trustedInitialPromptLength: number | null;
   trustedLastPromptLength: number | null;
+  derivedWorktreePath: string | null;
+  derivedBranch: string | null;
+  derivedGithubRefs: Array<{
+    type: "issue" | "pr" | "unknown";
+    repo: string | null;
+    number: number;
+    url: string | null;
+    firstSeenAt: string | null;
+    lastSeenAt: string | null;
+    source: string;
+  }>;
+  derivedContextUpdatedAt: string | null;
+  derivedContextEventsOffset: number;
+  derivedContextEventsSize: number;
+  derivedContextEventsMtimeMs: number | null;
 }
 
 function buildTrustedSession(
@@ -72,6 +87,23 @@ function buildTrustedSession(
     trustedExecutionKind: "copilot_cli",
     trustedInitialPromptLength: 452,
     trustedLastPromptLength: 452,
+    derivedWorktreePath: "C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+    derivedBranch: "feature/manual-session-registry",
+    derivedGithubRefs: [
+      {
+        type: "pr",
+        repo: "lossyrob/streamliner",
+        number: 14,
+        url: "https://github.com/lossyrob/streamliner/pull/14",
+        firstSeenAt: "2026-04-24T22:50:00.000Z",
+        lastSeenAt: "2026-04-24T22:50:00.000Z",
+        source: "gh",
+      },
+    ],
+    derivedContextUpdatedAt: "2026-04-24T22:55:00.000Z",
+    derivedContextEventsOffset: 1200,
+    derivedContextEventsSize: 1200,
+    derivedContextEventsMtimeMs: 1777080900000,
     ...overrides,
   };
 }

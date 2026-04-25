@@ -4,6 +4,7 @@ import type {
   ObservedSessionRegistryOrigin,
   SessionRegistryAiSummaryStatus,
   SessionRegistryCopilotProcessState,
+  SessionRegistryGithubRef,
   SessionRegistryGraphBinding,
   SessionRegistryLifecycleStatus,
   SessionRegistryObservedSessionKind,
@@ -68,6 +69,13 @@ export interface SessionRegistryListItem {
   trustedExecutionKind: SessionRegistryTrustedExecutionKind | null;
   trustedInitialPromptLength: number | null;
   trustedLastPromptLength: number | null;
+  derivedWorktreePath: string | null;
+  derivedBranch: string | null;
+  derivedGithubRefs: SessionRegistryGithubRef[];
+  derivedContextUpdatedAt: string | null;
+  derivedContextEventsOffset: number;
+  derivedContextEventsSize: number;
+  derivedContextEventsMtimeMs: number | null;
 }
 
 interface SessionRegistryUpsertInputBase {
