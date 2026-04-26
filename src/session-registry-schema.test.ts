@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   SESSION_REGISTRY_AI_SUMMARY_STATUSES,
+  SESSION_REGISTRY_ACTIVITY_STATUSES,
   SESSION_REGISTRY_COPILOT_PROCESS_STATES,
   SESSION_REGISTRY_GITHUB_REF_TYPES,
   SESSION_REGISTRY_LIFECYCLE_STATUSES,
@@ -58,6 +59,8 @@ function buildRecord(): SessionRegistryRecord {
     observedSessionKind: null,
     copilotProcessState: null,
     copilotProcessId: null,
+    activityStatus: "unknown",
+    activityStatusUpdatedAt: null,
     trustedSignalSource: null,
     trustedStartedAt: null,
     trustedEndedAt: null,
@@ -105,6 +108,13 @@ describe("session registry schema", () => {
       "live",
       "stale_lock",
       "none",
+    ]);
+    expect(SESSION_REGISTRY_ACTIVITY_STATUSES).toEqual([
+      "unknown",
+      "working",
+      "waiting_for_input",
+      "interrupted",
+      "exited",
     ]);
     expect(SESSION_REGISTRY_GITHUB_REF_TYPES).toEqual(["issue", "pr", "unknown"]);
     expect(SESSION_REGISTRY_TRUSTED_SIGNAL_SOURCES).toEqual([
@@ -182,6 +192,8 @@ describe("session registry schema", () => {
       observedSessionKind: record.observedSessionKind,
       copilotProcessState: record.copilotProcessState,
       copilotProcessId: record.copilotProcessId,
+      activityStatus: record.activityStatus,
+      activityStatusUpdatedAt: record.activityStatusUpdatedAt,
       trustedSignalSource: record.trustedSignalSource,
       trustedStartedAt: record.trustedStartedAt,
       trustedEndedAt: record.trustedEndedAt,
@@ -267,6 +279,13 @@ describe("session registry schema", () => {
         lastSeenAt: signal.timestamp,
         lifecycleStatus:
           signal.event === "session.ended" ? "ended" : record.lifecycleStatus,
+        activityStatus:
+          signal.event === "session.ended"
+            ? "exited"
+            : signal.event === "prompt.submitted"
+              ? "working"
+              : record.activityStatus,
+        activityStatusUpdatedAt: signal.timestamp,
         trustedSignalSource: signal.source,
         trustedLastSignalAt: signal.timestamp,
         trustedStartedAt:

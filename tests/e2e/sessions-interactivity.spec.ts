@@ -24,6 +24,8 @@ interface SessionRegistryListItem {
   observedSessionKind: "interactive" | "helper" | null;
   copilotProcessState: "live" | "stale_lock" | "none" | null;
   copilotProcessId: number | null;
+  activityStatus: "unknown" | "working" | "waiting_for_input" | "interrupted" | "exited";
+  activityStatusUpdatedAt: string | null;
   trustedSignalSource: "copilot-cli-hook" | null;
   trustedStartedAt: string | null;
   trustedEndedAt: string | null;
@@ -78,6 +80,8 @@ function buildTrustedSession(
     observedSessionKind: "interactive",
     copilotProcessState: "live",
     copilotProcessId: 34392,
+    activityStatus: "waiting_for_input",
+    activityStatusUpdatedAt: "2026-04-24T22:54:16.000Z",
     trustedSignalSource: "copilot-cli-hook",
     trustedStartedAt: "2026-04-24T22:48:16.000Z",
     trustedEndedAt: null,
@@ -260,6 +264,7 @@ test("session color quick-pick closes immediately and Done saves without refetch
   const row = page.getByRole("button", { name: /Follow Paw-Lite Process/ });
   await expect(row).toBeVisible();
   await expect(row).toContainText("richer conversation description");
+  await expect(row).toContainText("waiting for you");
   await expect(row).not.toContainText("gpt-5.4-mini");
   const initialListRequests = api.listRequests;
 
@@ -267,6 +272,7 @@ test("session color quick-pick closes immediately and Done saves without refetch
   await expect(page.getByRole("heading", { name: "Conversation" })).toBeVisible();
   await expect(page.getByText(/Started:/)).toBeVisible();
   await expect(page.getByText(/Latest:/)).toBeVisible();
+  await expect(page.getByText("Activity note")).toBeVisible();
   await page.getByRole("button", { name: "Show terminal color quick picks" }).click();
   const palette = page.getByLabel("Terminal color quick picks", { exact: true });
   await expect(palette).toBeVisible();

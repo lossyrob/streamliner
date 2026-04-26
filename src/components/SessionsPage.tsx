@@ -104,6 +104,8 @@ function toListItem(record: SessionRegistryRecord): SessionRegistryListItem {
     observedSessionKind: record.observedSessionKind,
     copilotProcessState: record.copilotProcessState,
     copilotProcessId: record.copilotProcessId,
+    activityStatus: record.activityStatus,
+    activityStatusUpdatedAt: record.activityStatusUpdatedAt,
     trustedSignalSource: record.trustedSignalSource,
     trustedStartedAt: record.trustedStartedAt,
     trustedEndedAt: record.trustedEndedAt,
@@ -218,6 +220,8 @@ function sessionSnapshotKey(session: SessionRegistryListItem | null): string | n
     observedSessionKind: session.observedSessionKind,
     copilotProcessState: session.copilotProcessState,
     copilotProcessId: session.copilotProcessId,
+    activityStatus: session.activityStatus,
+    activityStatusUpdatedAt: session.activityStatusUpdatedAt,
     trustedSignalSource: session.trustedSignalSource,
     trustedStartedAt: session.trustedStartedAt,
     trustedEndedAt: session.trustedEndedAt,
@@ -571,6 +575,57 @@ function getTrustedStatusLabel(session: SessionRegistryListItem): string | null 
     return `${runner} ended`;
   }
   return `${runner} trusted`;
+}
+
+function getActivityStatusLabel(session: SessionRegistryListItem): string {
+  switch (session.activityStatus) {
+    case "working":
+      return "working";
+    case "waiting_for_input":
+      return "waiting for you";
+    case "interrupted":
+      return "interrupted";
+    case "exited":
+      return "exited";
+    case "unknown":
+      return getTrustedStatusLabel(session) ?? getObservedStatusLabel(session) ?? "unknown";
+    default:
+      return "unknown";
+  }
+}
+
+function activityStatusClass(status: SessionRegistryListItem["activityStatus"]): string {
+  switch (status) {
+    case "working":
+      return "accent";
+    case "waiting_for_input":
+      return "green";
+    case "interrupted":
+      return "amber";
+    case "exited":
+      return "muted";
+    case "unknown":
+      return "muted";
+    default:
+      return "muted";
+  }
+}
+
+function getActivityStatusDescription(session: SessionRegistryListItem): string {
+  switch (session.activityStatus) {
+    case "working":
+      return "The latest Copilot event indicates the assistant turn is still in progress.";
+    case "waiting_for_input":
+      return "The latest Copilot event indicates the assistant turn ended and the session is waiting for input.";
+    case "interrupted":
+      return "The session started without a matching end signal, and Streamliner no longer sees a live Copilot process.";
+    case "exited":
+      return "The session has an end signal or ended lifecycle state.";
+    case "unknown":
+      return "Streamliner has not indexed enough activity yet to classify this session.";
+    default:
+      return "Streamliner has not indexed enough activity yet to classify this session.";
+  }
 }
 
 function readStaleSessionDays(): number {
@@ -1584,6 +1639,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                     const rowWorktree = displayWorktree(session);
                     const rowSessionId = getDisplaySessionId(session);
                     const rowRestartCommand = buildRestartCommand(session);
+                    const activityLabel = getActivityStatusLabel(session);
                     const rowDetail =
                       summary.text && summary.status !== "missing"
                         ? summary.text
@@ -1677,6 +1733,11 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                         </div>
                         <div className="sl-session-row-path">{session.cwd}</div>
                         <div className="sl-session-row-status">
+                          <span
+                            className={`sl-pill ${activityStatusClass(session.activityStatus)}`}
+                          >
+                            {activityLabel}
+                          </span>
                           <span className={`sl-pill ${statusClass(session.lifecycleStatus)}`}>
                             {session.lifecycleStatus}
                           </span>
@@ -1718,6 +1779,11 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                 <div className="sl-sheet-head-pills">
                   {selectedSession && (
                     <>
+                      <span
+                        className={`sl-pill ${activityStatusClass(selectedSession.activityStatus)}`}
+                      >
+                        {getActivityStatusLabel(selectedSession)}
+                      </span>
                       <span className={`sl-pill ${statusClass(selectedSession.lifecycleStatus)}`}>
                         {selectedSession.lifecycleStatus}
                       </span>
@@ -2084,6 +2150,15 @@ function SessionOverview({ session }: SessionOverviewProps) {
         <dl className="sl-session-kv">
           <dt>Title</dt>
           <dd>{session.title}</dd>
+          <dt>Activity</dt>
+          <dd>
+            {getActivityStatusLabel(session)}
+            {session.activityStatusUpdatedAt
+              ? ` · ${formatTimestamp(session.activityStatusUpdatedAt)}`
+              : ""}
+          </dd>
+          <dt>Activity note</dt>
+          <dd>{getActivityStatusDescription(session)}</dd>
           <dt>Status</dt>
           <dd>{getTrustedStatusLabel(session) ?? session.lifecycleStatus}</dd>
           <dt>Repo</dt>

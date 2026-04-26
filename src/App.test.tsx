@@ -34,6 +34,8 @@ function buildSession(
     observedSessionKind: null,
     copilotProcessState: null,
     copilotProcessId: null,
+    activityStatus: "unknown",
+    activityStatusUpdatedAt: null,
     trustedSignalSource: null,
     trustedStartedAt: null,
     trustedEndedAt: null,
@@ -280,6 +282,8 @@ describe("App sessions route", () => {
         trustedExecutionKind: "copilot_cli",
         observedSessionKind: "interactive",
         copilotProcessState: "live",
+        activityStatus: "waiting_for_input",
+        activityStatusUpdatedAt: "2026-04-24T22:54:16.000Z",
         derivedWorktreePath:
           "C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
         derivedBranch: "feature/manual-session-registry",
@@ -327,6 +331,7 @@ describe("App sessions route", () => {
       const sessionList = findSessionList(container);
       expect(sessionList.textContent).toContain("Follow Paw-Lite Process");
       expect(sessionList.textContent).toContain("richer conversation description");
+      expect(sessionList.textContent).toContain("waiting for you");
       expect(sessionList.textContent).toContain("worktree manual-session-registry");
       expect(sessionList.textContent).toContain("PR #14");
       expect(sessionList.textContent).not.toContain("gpt-5.4-mini");
@@ -338,6 +343,8 @@ describe("App sessions route", () => {
       expect(container.textContent).toContain("Conversation");
       expect(container.textContent).toContain("Started:");
       expect(container.textContent).toContain("Latest:");
+      expect(container.textContent).toContain("Activity");
+      expect(container.textContent).toContain("Activity note");
       expect(container.textContent).toContain("Derived context");
       expect(container.textContent).toContain("Active branch");
       expect(container.textContent).toContain("feature/manual-session-registry");

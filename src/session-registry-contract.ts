@@ -3,6 +3,7 @@ import type {
   ManualSessionRegistryOrigin,
   ObservedSessionRegistryOrigin,
   SessionRegistryAiSummaryStatus,
+  SessionRegistryActivityStatus,
   SessionRegistryCopilotProcessState,
   SessionRegistryGithubRef,
   SessionRegistryGraphBinding,
@@ -60,6 +61,8 @@ export interface SessionRegistryListItem {
   observedSessionKind: SessionRegistryObservedSessionKind | null;
   copilotProcessState: SessionRegistryCopilotProcessState | null;
   copilotProcessId: number | null;
+  activityStatus: SessionRegistryActivityStatus;
+  activityStatusUpdatedAt: string | null;
   trustedSignalSource: SessionRegistryTrustedSignalSource | null;
   trustedStartedAt: string | null;
   trustedEndedAt: string | null;

@@ -12,6 +12,7 @@ import {
   type SummarizeSessionResult,
 } from "./session-summarizer";
 import { indexSessionContext } from "./session-context-indexer";
+import { indexSessionActivity } from "./session-activity-indexer";
 import {
   SessionRegistryFileStore,
   type SessionRegistryDerivedStatePatch,
@@ -45,6 +46,7 @@ interface SummarizerDependencies {
     timeoutMs?: number;
   }) => Promise<SummarizeSessionResult>;
   indexSessionContext: typeof indexSessionContext;
+  indexSessionActivity: typeof indexSessionActivity;
 }
 
 export interface SessionRegistryBackgroundWorkerOptions {
@@ -147,6 +149,7 @@ export class SessionRegistryBackgroundWorker {
         options.summarizer?.extractRecentUserTurns ?? extractRecentUserTurns,
       summarizeSession: options.summarizer?.summarizeSession ?? summarizeSession,
       indexSessionContext: options.summarizer?.indexSessionContext ?? indexSessionContext,
+      indexSessionActivity: options.summarizer?.indexSessionActivity ?? indexSessionActivity,
     };
   }
 
@@ -189,6 +192,7 @@ export class SessionRegistryBackgroundWorker {
       } catch (error) {
         this.logger.warn("[session-worker] trusted signal drain failed", error);
       }
+      this.indexSessionActivities();
       this.indexSessionContexts();
       const candidates = this.collectSummaryCandidates().slice(0, this.maxConcurrentSummaries);
       await Promise.all(candidates.map((candidate) => this.summarizeCandidate(candidate)));
@@ -251,6 +255,29 @@ export class SessionRegistryBackgroundWorker {
       } catch (error) {
         this.logger.warn(
           `[session-worker] context indexing failed for ${session.id}`,
+          error,
+        );
+      }
+    }
+  }
+
+  private indexSessionActivities(): void {
+    const sessions = this.store.listSessions({ includeArchived: true });
+    for (const session of sessions) {
+      if (!shouldProcessSessionLog(session)) {
+        continue;
+      }
+      const eventsPath = join(this.sessionRoot, session.copilotSessionId, "events.jsonl");
+      try {
+        const patch = this.summarizer.indexSessionActivity(session, eventsPath, {
+          now: this.now,
+        });
+        if (patch) {
+          this.tryPatch(session.id, patch);
+        }
+      } catch (error) {
+        this.logger.warn(
+          `[session-worker] activity indexing failed for ${session.id}`,
           error,
         );
       }

@@ -228,6 +228,45 @@ describe("SessionRegistryBackgroundWorker", () => {
     expect(summarizeSession).not.toHaveBeenCalled();
   });
 
+  it("updates trusted session activity from the event log", async () => {
+    const registryRoot = createRootDir("streamliner-session-worker-registry-");
+    const sessionRoot = createRootDir("streamliner-session-worker-state-");
+
+    writeSessionStateFiles(
+      sessionRoot,
+      "session-activity",
+      [
+        "id: session-activity",
+        "cwd: C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+        "repository: lossyrob/streamliner",
+        "branch: feature/manual-session-registry",
+        "summary: Follow Paw-Lite Process",
+        "updated_at: 2026-04-26T15:04:00.000Z",
+      ],
+      [
+        { type: "assistant.turn_start", timestamp: "2026-04-26T15:02:00.000Z" },
+        { type: "assistant.turn_end", timestamp: "2026-04-26T15:04:00.000Z" },
+      ],
+    );
+
+    const store = new SessionRegistryFileStore({ rootDir: registryRoot });
+    recordTrustedStart(store, "session-activity");
+    const worker = new SessionRegistryBackgroundWorker(store, {
+      sessionRoot,
+      summarizer: { summarizeSession: vi.fn() },
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    });
+
+    await worker.runCycle();
+
+    expect(store.getSession("session-activity")).toEqual(
+      expect.objectContaining({
+        activityStatus: "waiting_for_input",
+        activityStatusUpdatedAt: "2026-04-26T15:04:00.000Z",
+      }),
+    );
+  });
+
   it("waits for five more user turns before refreshing a ready summary", async () => {
     const registryRoot = createRootDir("streamliner-session-worker-registry-");
     const sessionRoot = createRootDir("streamliner-session-worker-state-");

@@ -41,6 +41,16 @@ export const SESSION_REGISTRY_COPILOT_PROCESS_STATES = [
 export type SessionRegistryCopilotProcessState =
   (typeof SESSION_REGISTRY_COPILOT_PROCESS_STATES)[number];
 
+export const SESSION_REGISTRY_ACTIVITY_STATUSES = [
+  "unknown",
+  "working",
+  "waiting_for_input",
+  "interrupted",
+  "exited",
+] as const;
+export type SessionRegistryActivityStatus =
+  (typeof SESSION_REGISTRY_ACTIVITY_STATUSES)[number];
+
 export const SESSION_REGISTRY_TRUSTED_SIGNAL_SOURCES = [
   "copilot-cli-hook",
 ] as const;
@@ -141,6 +151,8 @@ export interface SessionRegistryRecord {
   observedSessionKind: SessionRegistryObservedSessionKind | null;
   copilotProcessState: SessionRegistryCopilotProcessState | null;
   copilotProcessId: number | null;
+  activityStatus: SessionRegistryActivityStatus;
+  activityStatusUpdatedAt: string | null;
   trustedSignalSource: SessionRegistryTrustedSignalSource | null;
   trustedStartedAt: string | null;
   trustedEndedAt: string | null;
@@ -183,6 +195,8 @@ export interface SessionRegistryIndexEntry {
   observedSessionKind: SessionRegistryObservedSessionKind | null;
   copilotProcessState: SessionRegistryCopilotProcessState | null;
   copilotProcessId: number | null;
+  activityStatus: SessionRegistryActivityStatus;
+  activityStatusUpdatedAt: string | null;
   trustedSignalSource: SessionRegistryTrustedSignalSource | null;
   trustedStartedAt: string | null;
   trustedEndedAt: string | null;

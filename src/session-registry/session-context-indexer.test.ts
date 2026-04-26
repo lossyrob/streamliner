@@ -48,6 +48,8 @@ function buildSession(overrides: Partial<SessionRegistryListItem> = {}): Session
     observedSessionKind: "interactive",
     copilotProcessState: "live",
     copilotProcessId: null,
+    activityStatus: "unknown",
+    activityStatusUpdatedAt: null,
     trustedSignalSource: "copilot-cli-hook",
     trustedStartedAt: "2026-04-25T20:00:00.000Z",
     trustedEndedAt: null,

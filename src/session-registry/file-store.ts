@@ -29,6 +29,7 @@ import {
   type SessionRegistryUpsertInput,
 } from "../session-registry-contract";
 import {
+  SESSION_REGISTRY_ACTIVITY_STATUSES,
   SESSION_REGISTRY_AI_SUMMARY_STATUSES,
   SESSION_REGISTRY_COPILOT_PROCESS_STATES,
   SESSION_REGISTRY_GITHUB_REF_TYPES,
@@ -40,6 +41,7 @@ import {
   SESSION_REGISTRY_TRUSTED_EXECUTION_KINDS,
   SESSION_REGISTRY_TRUSTED_SIGNAL_SOURCES,
   SESSION_REGISTRY_TRUSTED_START_SOURCES,
+  type SessionRegistryActivityStatus,
   type SessionRegistryAiSummaryStatus,
   type SessionRegistryCopilotProcessState,
   type SessionRegistryGithubRef,
@@ -148,6 +150,11 @@ export interface SessionRegistryDerivedStatePatch {
   aiSummaryError?: string | null;
   repo?: string | null;
   branch?: string | null;
+  lifecycleStatus?: SessionRegistryLifecycleStatus;
+  copilotProcessState?: SessionRegistryCopilotProcessState | null;
+  copilotProcessId?: number | null;
+  activityStatus?: SessionRegistryActivityStatus;
+  activityStatusUpdatedAt?: string | null;
   derivedWorktreePath?: string | null;
   derivedBranch?: string | null;
   derivedGithubRefs?: SessionRegistryGithubRef[];
@@ -439,6 +446,10 @@ function isAiSummaryStatus(value: string): value is SessionRegistryAiSummaryStat
   return SESSION_REGISTRY_AI_SUMMARY_STATUSES.includes(value as SessionRegistryAiSummaryStatus);
 }
 
+function isActivityStatus(value: string): value is SessionRegistryActivityStatus {
+  return SESSION_REGISTRY_ACTIVITY_STATUSES.includes(value as SessionRegistryActivityStatus);
+}
+
 function isObservedSessionKind(value: string): value is SessionRegistryObservedSessionKind {
   return SESSION_REGISTRY_OBSERVED_SESSION_KINDS.includes(
     value as SessionRegistryObservedSessionKind,
@@ -533,6 +544,20 @@ function normalizeAiSummaryStatus(
   }
   const status = ensureString(value, fieldName);
   if (!isAiSummaryStatus(status)) {
+    throw new Error(`Unsupported ${fieldName} "${status}".`);
+  }
+  return status;
+}
+
+function normalizeActivityStatus(
+  value: unknown,
+  fieldName: string,
+): SessionRegistryActivityStatus {
+  if (value === undefined || value === null) {
+    return "unknown";
+  }
+  const status = ensureString(value, fieldName);
+  if (!isActivityStatus(status)) {
     throw new Error(`Unsupported ${fieldName} "${status}".`);
   }
   return status;
@@ -976,6 +1001,14 @@ function validateStoredRecord(
       rawRecord.copilotProcessId,
       `${filePath}.copilotProcessId`,
     ),
+    activityStatus: normalizeActivityStatus(
+      rawRecord.activityStatus,
+      `${filePath}.activityStatus`,
+    ),
+    activityStatusUpdatedAt: ensureOptionalString(
+      rawRecord.activityStatusUpdatedAt,
+      `${filePath}.activityStatusUpdatedAt`,
+    ),
     trustedSignalSource: normalizeTrustedSignalSource(
       rawRecord.trustedSignalSource,
       `${filePath}.trustedSignalSource`,
@@ -1108,6 +1141,14 @@ function validateIndexEntry(
       rawEntry.copilotProcessId,
       `${fieldName}.copilotProcessId`,
     ),
+    activityStatus: normalizeActivityStatus(
+      rawEntry.activityStatus,
+      `${fieldName}.activityStatus`,
+    ),
+    activityStatusUpdatedAt: ensureOptionalString(
+      rawEntry.activityStatusUpdatedAt,
+      `${fieldName}.activityStatusUpdatedAt`,
+    ),
     trustedSignalSource: normalizeTrustedSignalSource(
       rawEntry.trustedSignalSource,
       `${fieldName}.trustedSignalSource`,
@@ -1223,6 +1264,8 @@ function buildIndex(records: Iterable<StoredSessionRegistryRecord>): SessionRegi
     observedSessionKind: record.observedSessionKind,
     copilotProcessState: record.copilotProcessState,
     copilotProcessId: record.copilotProcessId,
+    activityStatus: record.activityStatus,
+    activityStatusUpdatedAt: record.activityStatusUpdatedAt,
     trustedSignalSource: record.trustedSignalSource,
     trustedStartedAt: record.trustedStartedAt,
     trustedEndedAt: record.trustedEndedAt,
@@ -1403,6 +1446,8 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       let nextObservedSessionKind = latestRecord?.observedSessionKind ?? null;
       let nextCopilotProcessState = latestRecord?.copilotProcessState ?? null;
       let nextCopilotProcessId = latestRecord?.copilotProcessId ?? null;
+      let nextActivityStatus = latestRecord?.activityStatus ?? "unknown";
+      let nextActivityStatusUpdatedAt = latestRecord?.activityStatusUpdatedAt ?? null;
       let nextTrustedSignalSource = latestRecord?.trustedSignalSource ?? null;
       let nextTrustedStartedAt = latestRecord?.trustedStartedAt ?? null;
       let nextTrustedEndedAt = latestRecord?.trustedEndedAt ?? null;
@@ -1447,6 +1492,8 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
           Object.prototype.hasOwnProperty.call(validatedInput, "copilotProcessId")
             ? validatedInput.copilotProcessId ?? null
             : latestRecord?.copilotProcessId ?? null;
+        nextActivityStatus = latestRecord?.activityStatus ?? "unknown";
+        nextActivityStatusUpdatedAt = latestRecord?.activityStatusUpdatedAt ?? null;
         nextTrustedSignalSource =
           Object.prototype.hasOwnProperty.call(validatedInput, "trustedSignalSource")
             ? validatedInput.trustedSignalSource ?? null
@@ -1493,6 +1540,8 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         nextObservedSessionKind = null;
         nextCopilotProcessState = null;
         nextCopilotProcessId = null;
+        nextActivityStatus = latestRecord?.activityStatus ?? "unknown";
+        nextActivityStatusUpdatedAt = latestRecord?.activityStatusUpdatedAt ?? null;
         nextTrustedSignalSource = null;
         nextTrustedStartedAt = null;
         nextTrustedEndedAt = null;
@@ -1531,6 +1580,8 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         observedSessionKind: nextObservedSessionKind,
         copilotProcessState: nextCopilotProcessState,
         copilotProcessId: nextCopilotProcessId,
+        activityStatus: nextActivityStatus,
+        activityStatusUpdatedAt: nextActivityStatusUpdatedAt,
         trustedSignalSource: nextTrustedSignalSource,
         trustedStartedAt: nextTrustedStartedAt,
         trustedEndedAt: nextTrustedEndedAt,
@@ -1877,6 +1928,14 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
           : input.event === "session.started"
             ? "active"
             : existingRecord?.lifecycleStatus ?? "active";
+      const activityStatus: SessionRegistryActivityStatus =
+        input.event === "session.ended"
+          ? "exited"
+          : input.event === "prompt.submitted"
+            ? "working"
+            : initialPromptLength !== null && initialPromptLength > 0
+              ? "working"
+              : existingRecord?.activityStatus ?? "waiting_for_input";
       const nextRecord: SessionRegistryRecord = {
         schemaVersion: SESSION_REGISTRY_SCHEMA_VERSION,
         id: targetId,
@@ -1916,6 +1975,8 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
               ? "live"
               : existingRecord?.copilotProcessState ?? "live",
         copilotProcessId: existingRecord?.copilotProcessId ?? null,
+        activityStatus,
+        activityStatusUpdatedAt: timestamp,
         trustedSignalSource: signalSource,
         trustedStartedAt:
           input.event === "session.started"
@@ -1984,8 +2045,28 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
 
       const nextRecord: SessionRegistryRecord = {
         ...cloneValue(existingRecord),
+        lifecycleStatus:
+          patch.lifecycleStatus !== undefined
+            ? patch.lifecycleStatus
+            : existingRecord.lifecycleStatus,
         repo: patch.repo !== undefined ? patch.repo : existingRecord.repo,
         branch: patch.branch !== undefined ? patch.branch : existingRecord.branch,
+        copilotProcessState:
+          patch.copilotProcessState !== undefined
+            ? patch.copilotProcessState
+            : existingRecord.copilotProcessState,
+        copilotProcessId:
+          patch.copilotProcessId !== undefined
+            ? patch.copilotProcessId
+            : existingRecord.copilotProcessId,
+        activityStatus:
+          patch.activityStatus !== undefined
+            ? patch.activityStatus
+            : existingRecord.activityStatus,
+        activityStatusUpdatedAt:
+          patch.activityStatusUpdatedAt !== undefined
+            ? patch.activityStatusUpdatedAt
+            : existingRecord.activityStatusUpdatedAt,
         aiSummary:
           patch.aiSummary !== undefined ? patch.aiSummary : existingRecord.aiSummary,
         aiSummaryModel:

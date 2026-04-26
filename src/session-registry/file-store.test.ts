@@ -319,6 +319,8 @@ describe("SessionRegistryFileStore", () => {
         trustedExecutionKind: "copilot_cli",
         trustedInitialPromptLength: 54,
         trustedLastPromptLength: null,
+        activityStatus: "working",
+        activityStatusUpdatedAt: "2026-04-24T20:00:00.000Z",
       }),
     );
 
@@ -345,6 +347,8 @@ describe("SessionRegistryFileStore", () => {
         trustedStartedAt: "2026-04-24T20:00:00.000Z",
         trustedInitialPromptLength: 54,
         trustedLastPromptLength: 1234,
+        activityStatus: "working",
+        activityStatusUpdatedAt: "2026-04-24T20:01:00.000Z",
       }),
     );
     expect(ended).toEqual(
@@ -353,6 +357,8 @@ describe("SessionRegistryFileStore", () => {
         copilotProcessState: "none",
         trustedEndedAt: "2026-04-24T20:02:00.000Z",
         trustedEndReason: "user_exit",
+        activityStatus: "exited",
+        activityStatusUpdatedAt: "2026-04-24T20:02:00.000Z",
       }),
     );
     expect(readJsonFile<Record<string, unknown>>(join(rootDir, "entries", "trusted-session-1.json"))).not.toHaveProperty(
@@ -383,6 +389,8 @@ describe("SessionRegistryFileStore", () => {
         trustedLastSignalAt: "2026-04-24T20:00:00.000Z",
         trustedLastPromptLength: 12,
         copilotProcessState: "live",
+        activityStatus: "working",
+        activityStatusUpdatedAt: "2026-04-24T20:00:00.000Z",
       }),
     );
 
