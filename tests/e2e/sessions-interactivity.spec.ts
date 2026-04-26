@@ -225,6 +225,77 @@ test("session color quick-pick closes immediately and Done saves without refetch
   await expect.poll(() => api.completedPatches).toBe(1);
 });
 
+test("Done saves edits made before dirty state re-renders", async ({ page }) => {
+  const api = await mockSessionsApi(page, { patchDelayMs: 500 });
+
+  await page.goto("/?view=sessions");
+  await page.getByRole("button", { name: /Follow Paw-Lite Process/ }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+
+  await page.evaluate(() => {
+    const titleInput = document.querySelector<HTMLInputElement>(
+      'input[aria-label="Session title"]',
+    );
+    const doneButton = Array.from(document.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "Done",
+    ) as HTMLButtonElement | undefined;
+    if (!titleInput || !doneButton) {
+      throw new Error("Session title input or Done button was not found.");
+    }
+
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )?.set;
+    valueSetter?.call(titleInput, "Immediate Done session");
+    titleInput.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    doneButton.click();
+  });
+
+  await expect(page.getByRole("dialog")).toBeHidden({ timeout: 500 });
+  await expect(page.getByRole("button", { name: /Immediate Done session/ })).toBeVisible();
+  await expect.poll(() => api.patches.length).toBe(1);
+  expect(api.patches[0]).toMatchObject({
+    title: "Immediate Done session",
+  });
+});
+
+test("starting a new session saves edits made before dirty state re-renders", async ({
+  page,
+}) => {
+  const api = await mockSessionsApi(page, { patchDelayMs: 500 });
+
+  await page.goto("/?view=sessions");
+  await page.getByRole("button", { name: /Follow Paw-Lite Process/ }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+
+  await page.evaluate(() => {
+    const titleInput = document.querySelector<HTMLInputElement>(
+      'input[aria-label="Session title"]',
+    );
+    const newSessionButton = Array.from(document.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "+ New session",
+    ) as HTMLButtonElement | undefined;
+    if (!titleInput || !newSessionButton) {
+      throw new Error("Session title input or New session button was not found.");
+    }
+
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )?.set;
+    valueSetter?.call(titleInput, "Immediate New Session save");
+    titleInput.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    newSessionButton.click();
+  });
+
+  await expect.poll(() => api.patches.length).toBe(1);
+  expect(api.patches[0]).toMatchObject({
+    title: "Immediate New Session save",
+  });
+  await expect(page.getByRole("heading", { name: "Create session" })).toBeVisible();
+});
+
 test("delayed autosave responses do not replace newer title edits", async ({ page }) => {
   const api = await mockSessionsApi(page, { patchDelayMs: 700 });
 

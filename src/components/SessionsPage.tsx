@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { SessionRegistryListItem, SessionRegistryPatch } from "../session-registry-contract";
 import type { SessionRegistryRecord } from "../session-registry-schema";
@@ -827,7 +827,7 @@ function timeAgo(ts: number): string {
 
 function useLatestValue<T>(value: T) {
   const ref = useRef(value);
-  useEffect(() => {
+  useLayoutEffect(() => {
     ref.current = value;
   }, [value]);
   return ref;
@@ -998,14 +998,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
     return applyFrozenOrder(computedGroups, frozen);
   }, [computedGroups, groupMode]);
 
-  const existingDirty = useMemo(() => {
-    if (!selectedSession || creating) {
-      return false;
-    }
-    const patch = buildPatch(selectedSession, draft);
-    return patch !== null;
-  }, [creating, draft, selectedSession]);
-  const existingDirtyRef = useLatestValue(existingDirty);
+  const draftAutosaveKey = useMemo(() => draftKey(draft), [draft]);
 
   const clearAutosaveTimer = useCallback(() => {
     if (autosaveTimerRef.current) {
@@ -1123,8 +1116,16 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
     [clearAutosaveTimer, creatingRef, draftRef, selectedIdRef, selectedSessionRef],
   );
 
+  const getExistingDraftPatch = useCallback((): SessionRegistryPatch | null => {
+    const currentSelectedSession = selectedSessionRef.current;
+    if (creatingRef.current || !currentSelectedSession) {
+      return null;
+    }
+    return buildPatch(currentSelectedSession, draftRef.current);
+  }, [creatingRef, draftRef, selectedSessionRef]);
+
   const handleBeforeLeave = useCallback(async () => {
-    if (!existingDirtyRef.current) {
+    if (!getExistingDraftPatch()) {
       return true;
     }
     const saved = await saveExistingSession({ keepalive: true });
@@ -1132,7 +1133,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
       skipUnmountFlushRef.current = true;
     }
     return saved;
-  }, [existingDirtyRef, saveExistingSession]);
+  }, [getExistingDraftPatch, saveExistingSession]);
 
   useEffect(() => {
     if (!registerBeforeLeave) {
@@ -1143,11 +1144,11 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
   }, [handleBeforeLeave, registerBeforeLeave]);
 
   const flushDirtyDraftOnExit = useCallback(() => {
-    if (!existingDirtyRef.current) {
+    if (!getExistingDraftPatch()) {
       return;
     }
     void saveExistingSession({ background: true, keepalive: true });
-  }, [existingDirtyRef, saveExistingSession]);
+  }, [getExistingDraftPatch, saveExistingSession]);
 
   useEffect(() => {
     const handlePageHide = () => {
@@ -1182,7 +1183,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
   }, [groupMode]);
 
   useEffect(() => {
-    if (creating || !sheetOpen || !selectedSession || !existingDirty) {
+    if (creating || !sheetOpen || !selectedSession || !getExistingDraftPatch()) {
       return;
     }
 
@@ -1192,12 +1193,20 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
     }, SESSION_AUTOSAVE_MS);
 
     return clearAutosaveTimer;
-  }, [clearAutosaveTimer, creating, existingDirty, saveExistingSession, selectedSession, sheetOpen]);
+  }, [
+    clearAutosaveTimer,
+    creating,
+    draftAutosaveKey,
+    getExistingDraftPatch,
+    saveExistingSession,
+    selectedSession,
+    sheetOpen,
+  ]);
 
   const openSessionSheet = useCallback(
     async (session: SessionRegistryListItem) => {
       // If another session is currently dirty, flush before swapping.
-      if (!creating && existingDirty && !(await saveExistingSession())) {
+      if (getExistingDraftPatch() && !(await saveExistingSession())) {
         return;
       }
       setCreating(false);
@@ -1211,11 +1220,11 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
       setHeaderColorPaletteOpen(false);
       setSheetOpen(true);
     },
-    [creating, existingDirty, saveExistingSession],
+    [getExistingDraftPatch, saveExistingSession],
   );
 
   const startCreating = useCallback(async () => {
-    if (!creating && existingDirty && !(await saveExistingSession())) {
+    if (getExistingDraftPatch() && !(await saveExistingSession())) {
       return;
     }
     setCreating(true);
@@ -1228,18 +1237,24 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
     setSheetTab("settings"); // only settings is actionable while creating
     setHeaderColorPaletteOpen(false);
     setSheetOpen(true);
-  }, [creating, existingDirty, saveExistingSession]);
+  }, [getExistingDraftPatch, saveExistingSession]);
 
   const closeSheet = useCallback(async () => {
-    if (!creating && existingDirty) {
-      if (draftRef.current.title.trim().length === 0) {
+    const currentDraft = draftRef.current;
+    const currentPatch = getExistingDraftPatch();
+    if (currentPatch) {
+      if (currentDraft.title.trim().length === 0) {
         setSaveState("error");
         setSaveError("Title is required.");
         return;
       }
       setSheetOpen(false);
       setHeaderColorPaletteOpen(false);
-      void saveExistingSession({ optimistic: true, surfaceErrorGlobally: true });
+      void saveExistingSession({
+        optimistic: true,
+        surfaceErrorGlobally: true,
+        keepalive: true,
+      });
       return;
     }
     setSheetOpen(false);
@@ -1249,7 +1264,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
       setCreatingState("idle");
       setDraft(createEmptyDraft());
     }
-  }, [creating, draftRef, existingDirty, saveExistingSession]);
+  }, [creating, draftRef, getExistingDraftPatch, saveExistingSession]);
 
   const handleCreate = useCallback(async () => {
     if (draft.title.trim().length === 0 || draft.cwd.trim().length === 0) {
@@ -1302,7 +1317,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
     if (!selectedSession) {
       return;
     }
-    if (existingDirty && !(await saveExistingSession())) {
+    if (getExistingDraftPatch() && !(await saveExistingSession())) {
       return;
     }
     setSaveState("saving");
@@ -1321,13 +1336,13 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
       setSaveState("error");
       setSaveError(nextError instanceof Error ? nextError.message : String(nextError));
     }
-  }, [existingDirty, fetchSessions, saveExistingSession, selectedSession]);
+  }, [fetchSessions, getExistingDraftPatch, saveExistingSession, selectedSession]);
 
   const handleDelete = useCallback(async () => {
     if (!selectedSession || !window.confirm(`Delete "${selectedSession.title}"?`)) {
       return;
     }
-    if (existingDirty && !(await saveExistingSession())) {
+    if (getExistingDraftPatch() && !(await saveExistingSession())) {
       return;
     }
     setSaveState("saving");
@@ -1349,7 +1364,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
       setSaveState("error");
       setSaveError(nextError instanceof Error ? nextError.message : String(nextError));
     }
-  }, [existingDirty, fetchSessions, saveExistingSession, selectedSession]);
+  }, [fetchSessions, getExistingDraftPatch, saveExistingSession, selectedSession]);
 
   // Close sheet on Escape.
   useEffect(() => {
