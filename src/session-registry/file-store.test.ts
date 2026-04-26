@@ -477,6 +477,26 @@ describe("SessionRegistryFileStore", () => {
     ).toThrow();
   });
 
+  it("recovers stale advisory locks from exited processes", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+    writeFileSync(
+      join(rootDir, "registry.lock"),
+      JSON.stringify({ pid: 999999999, acquiredAt: "2026-04-23T12:00:00.000Z" }),
+      "utf8",
+    );
+
+    const created = store.upsertSession({
+      title: "Recovered",
+      cwd: "C:\\repo",
+      origin: { kind: "manual" },
+    });
+
+    expect(created.title).toBe("Recovered");
+    expect(existsSync(join(rootDir, "registry.lock"))).toBe(false);
+  });
+
   it("enforces lifecycle restrictions by source", () => {
     const rootDir = createRootDir();
     createdRoots.push(rootDir);

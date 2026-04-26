@@ -375,6 +375,14 @@ export function indexSessionContext(
   }
 
   const stat = statSync(eventsPath);
+  if (
+    session.derivedContextEventsOffset === stat.size &&
+    session.derivedContextEventsSize === stat.size &&
+    session.derivedContextEventsMtimeMs === stat.mtimeMs
+  ) {
+    return null;
+  }
+
   const maxBytes = options.maxBytesPerCycle ?? SESSION_CONTEXT_INDEX_MAX_BYTES_PER_CYCLE;
   const startOffset =
     session.derivedContextEventsOffset > stat.size ? 0 : session.derivedContextEventsOffset;

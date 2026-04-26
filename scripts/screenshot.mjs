@@ -21,17 +21,18 @@
  *   3 — dev server failed to become ready
  *   4 — page never reached the expected UI state
  */
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { dirname, resolve, isAbsolute } from "node:path";
 import { chromium } from "@playwright/test";
 
 function killTree(proc) {
-  if (!proc || proc.killed || proc.exitCode !== null) return;
+  if (!proc?.pid) return;
   if (process.platform === "win32") {
     // npx.cmd spawns a nested node process; kill the whole tree so Vite exits.
-    spawn("taskkill", ["/pid", String(proc.pid), "/f", "/t"], { stdio: "ignore" });
+    spawnSync("taskkill", ["/pid", String(proc.pid), "/f", "/t"], { stdio: "ignore" });
   } else {
+    if (proc.killed || proc.exitCode !== null) return;
     try { proc.kill("SIGTERM"); } catch { /* ignore */ }
   }
 }

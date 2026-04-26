@@ -109,6 +109,10 @@ const OBSERVED_SESSION_UPSERT_KEYS = [
 
 type StoredSessionRegistryRecord = SessionRegistryRecord & Record<string, unknown>;
 type JsonObject = Record<string, unknown>;
+interface SessionRegistryLockMetadata {
+  pid: number;
+  acquiredAt: string;
+}
 
 export class SessionRegistryNotFoundError extends Error {
   constructor(id: string) {
@@ -157,6 +161,23 @@ export function getDefaultSessionRegistryRoot(): string {
 
 function sleepSync(milliseconds: number): void {
   Atomics.wait(SHARED_SLEEP_ARRAY, 0, 0, milliseconds);
+}
+
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error: unknown) {
+    if (
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as NodeJS.ErrnoException).code === "EPERM"
+    ) {
+      return true;
+    }
+    return false;
+  }
 }
 
 function renameWithRetries(fromPath: string, toPath: string): void {
@@ -2196,42 +2217,51 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
   }
 
   private acquireLock(): number {
-    let fd: number;
-    try {
-      fd = openSync(this.lockPath, "wx");
-    } catch (error: unknown) {
-      const code =
-        error instanceof Error && "code" in error
-          ? String((error as NodeJS.ErrnoException).code)
-          : "";
-      if (code === "EEXIST") {
-        throw new SessionRegistryLockedError(this.lockPath);
-      }
-      throw error;
-    }
-    try {
-      writeFileSync(
-        fd,
-        JSON.stringify({
-          pid: process.pid,
-          acquiredAt: isoNow(),
-        }),
-        "utf8",
-      );
-    } catch (error: unknown) {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      let fd: number;
       try {
-        closeSync(fd);
-      } catch {
-        // Best effort cleanup; the original error is more important.
+        fd = openSync(this.lockPath, "wx");
+      } catch (error: unknown) {
+        const code =
+          error instanceof Error && "code" in error
+            ? String((error as NodeJS.ErrnoException).code)
+            : "";
+        if (code === "EEXIST") {
+          if (attempt === 0 && this.removeStaleLock()) {
+            continue;
+          }
+          throw new SessionRegistryLockedError(this.lockPath);
+        }
+        throw error;
       }
+
       try {
-        unlinkSync(this.lockPath);
-      } catch {
-        // Best effort cleanup; the original error is more important.
+        writeFileSync(
+          fd,
+          JSON.stringify({
+            pid: process.pid,
+            acquiredAt: isoNow(),
+          }),
+          "utf8",
+        );
+      } catch (error: unknown) {
+        try {
+          closeSync(fd);
+        } catch {
+          // Best effort cleanup; the original error is more important.
+        }
+        try {
+          unlinkSync(this.lockPath);
+        } catch {
+          // Best effort cleanup; the original error is more important.
+        }
+        throw error;
       }
-      throw error;
+
+      return fd;
     }
-    return fd;
+
+    throw new SessionRegistryLockedError(this.lockPath);
   }
 
   private releaseLock(lockFd: number): void {
@@ -2240,6 +2270,44 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
     } finally {
       rmSync(this.lockPath, { force: true });
     }
+  }
+
+  private removeStaleLock(): boolean {
+    const lockMetadata = this.readLockMetadata();
+    if (!lockMetadata || processExists(lockMetadata.pid)) {
+      return false;
+    }
+
+    rmSync(this.lockPath, { force: true });
+    return true;
+  }
+
+  private readLockMetadata(): SessionRegistryLockMetadata | null {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(this.lockPath, "utf8"));
+    } catch {
+      return null;
+    }
+
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+
+    const candidate = parsed as Record<string, unknown>;
+    if (
+      typeof candidate.pid !== "number" ||
+      !Number.isInteger(candidate.pid) ||
+      candidate.pid <= 0 ||
+      typeof candidate.acquiredAt !== "string"
+    ) {
+      return null;
+    }
+
+    return {
+      pid: candidate.pid,
+      acquiredAt: candidate.acquiredAt,
+    };
   }
 
   private findRecordIdByCopilotSessionId(

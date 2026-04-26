@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import type { SessionRegistryListItem } from "../session-registry-contract";
-import { getDefaultCopilotSessionStateRoot, syncDiscoveredCopilotSessions } from "./copilot-session-discovery";
+import { getDefaultCopilotSessionStateRoot } from "./copilot-session-discovery";
 import {
   computeEventsFingerprint,
   DEFAULT_SUMMARY_MODEL,
@@ -97,6 +97,16 @@ function summaryFingerprint(eventsFingerprint: string, userTurnCount: number): s
   return `${eventsFingerprint}|summary=${SESSION_REGISTRY_SUMMARY_FORMAT_VERSION}|userTurns=${userTurnCount}`;
 }
 
+function shouldProcessSessionLog(
+  session: SessionRegistryListItem,
+): session is SessionRegistryListItem & { copilotSessionId: string } {
+  return (
+    session.lifecycleStatus !== "archived" &&
+    session.copilotSessionId !== null &&
+    session.trustedSignalSource !== null
+  );
+}
+
 export class SessionRegistryBackgroundWorker {
   private readonly store: SessionRegistryFileStore;
   private readonly sessionRoot: string;
@@ -179,7 +189,6 @@ export class SessionRegistryBackgroundWorker {
       } catch (error) {
         this.logger.warn("[session-worker] trusted signal drain failed", error);
       }
-      syncDiscoveredCopilotSessions(this.store, this.sessionRoot);
       this.indexSessionContexts();
       const candidates = this.collectSummaryCandidates().slice(0, this.maxConcurrentSummaries);
       await Promise.all(candidates.map((candidate) => this.summarizeCandidate(candidate)));
@@ -194,7 +203,7 @@ export class SessionRegistryBackgroundWorker {
     const sessions = this.store.listSessions({ includeArchived: true });
     const candidates: SummaryCandidate[] = [];
     for (const session of sessions) {
-      if (session.lifecycleStatus === "archived" || !session.copilotSessionId) {
+      if (!shouldProcessSessionLog(session)) {
         continue;
       }
       const eventsPath = join(this.sessionRoot, session.copilotSessionId, "events.jsonl");
@@ -228,7 +237,7 @@ export class SessionRegistryBackgroundWorker {
   private indexSessionContexts(): void {
     const sessions = this.store.listSessions({ includeArchived: true });
     for (const session of sessions) {
-      if (session.lifecycleStatus === "archived" || !session.copilotSessionId) {
+      if (!shouldProcessSessionLog(session)) {
         continue;
       }
       const eventsPath = join(this.sessionRoot, session.copilotSessionId, "events.jsonl");

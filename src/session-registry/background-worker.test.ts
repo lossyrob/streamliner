@@ -34,6 +34,22 @@ function writeSessionStateFiles(
   );
 }
 
+function recordTrustedStart(
+  store: SessionRegistryFileStore,
+  sessionId: string,
+  cwd = "C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+): void {
+  store.recordTrustedSessionSignal({
+    event: "session.started",
+    source: "copilot-cli-hook",
+    sessionId,
+    timestamp: "2026-04-23T18:28:00.000Z",
+    cwd,
+    hookSource: "resume",
+    executionKind: "copilot_cli",
+  });
+}
+
 afterEach(() => {
   __resetCopilotDiscoveryCacheForTests();
   for (const root of createdRoots.splice(0)) {
@@ -85,6 +101,7 @@ describe("SessionRegistryBackgroundWorker", () => {
     );
 
     const store = new SessionRegistryFileStore({ rootDir: registryRoot });
+    recordTrustedStart(store, "session-1");
     const summarizeSession = vi.fn(async () => ({
       summary: "Tracking a trusted hook session",
       model: "test-model",
@@ -110,7 +127,7 @@ describe("SessionRegistryBackgroundWorker", () => {
     );
   });
 
-  it("discovers observed sessions, generates summaries, and skips unchanged fingerprints", async () => {
+  it("summarizes trusted sessions and skips unchanged fingerprints", async () => {
     const registryRoot = createRootDir("streamliner-session-worker-registry-");
     const sessionRoot = createRootDir("streamliner-session-worker-state-");
 
@@ -136,6 +153,7 @@ describe("SessionRegistryBackgroundWorker", () => {
     );
 
     const store = new SessionRegistryFileStore({ rootDir: registryRoot });
+    recordTrustedStart(store, "session-1");
     const summarizeSession = vi.fn(async () => ({
       summary: "Adding a persistent session worker",
       model: "test-model",
@@ -189,6 +207,7 @@ describe("SessionRegistryBackgroundWorker", () => {
     );
 
     const store = new SessionRegistryFileStore({ rootDir: registryRoot });
+    recordTrustedStart(store, "session-2");
     const summarizeSession = vi.fn();
     const worker = new SessionRegistryBackgroundWorker(store, {
       sessionRoot,
@@ -235,6 +254,7 @@ describe("SessionRegistryBackgroundWorker", () => {
     );
 
     const store = new SessionRegistryFileStore({ rootDir: registryRoot });
+    recordTrustedStart(store, "session-3");
     const summarizeSession = vi
       .fn()
       .mockResolvedValueOnce({
@@ -337,6 +357,7 @@ describe("SessionRegistryBackgroundWorker", () => {
       copilotSessionId: "session-4",
       lastSeenAt: "2026-04-23T18:28:32.345Z",
     });
+    recordTrustedStart(store, "session-4");
     store.patchDerivedSessionState("session-4", {
       aiSummary: "Improving session cards",
       aiSummaryModel: "test-model",
@@ -403,6 +424,8 @@ describe("SessionRegistryBackgroundWorker", () => {
     );
 
     const store = new SessionRegistryFileStore({ rootDir: registryRoot });
+    recordTrustedStart(store, "bad-context-session", "C:\\bad");
+    recordTrustedStart(store, "good-context-session", "C:\\good");
     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
     const indexSessionContext = vi.fn((session: { id: string }) => {
       if (session.id === "bad-context-session") {
