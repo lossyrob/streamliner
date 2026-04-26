@@ -124,4 +124,47 @@ describe("trusted session signal spool", () => {
       }),
     );
   });
+
+  it("preserves repo and branch when later drained signals omit them", () => {
+    const signalRoot = createRootDir();
+    const registryRoot = createRootDir();
+    const store = new SessionRegistryFileStore({ rootDir: registryRoot });
+
+    store.recordTrustedSessionSignal({
+      event: "session.started",
+      source: "copilot-cli-hook",
+      sessionId: "metadata-session",
+      timestamp: "2026-04-24T20:00:00.000Z",
+      cwd: "C:\\repo",
+      repo: "lossyrob/streamliner",
+      branch: "feature/manual-session-registry",
+      hookSource: "new",
+      executionKind: "copilot_cli",
+    });
+
+    writeTrustedSessionSignalSpoolFile(
+      {
+        event: "prompt.submitted",
+        source: "copilot-cli-hook",
+        sessionId: "metadata-session",
+        timestamp: "2026-04-24T20:01:00.000Z",
+        cwd: "C:\\repo",
+        promptLength: 24,
+      },
+      { rootDir: signalRoot },
+    );
+
+    expect(drainTrustedSessionSignalSpool(store, { rootDir: signalRoot })).toEqual({
+      processed: 1,
+      failed: 0,
+    });
+    expect(store.getSession("metadata-session")).toEqual(
+      expect.objectContaining({
+        repo: "lossyrob/streamliner",
+        branch: "feature/manual-session-registry",
+        trustedLastSignalAt: "2026-04-24T20:01:00.000Z",
+        trustedLastPromptLength: 24,
+      }),
+    );
+  });
 });

@@ -52,6 +52,10 @@ function isJsonObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function hasOwn(value: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
 function isErrnoCode(error: unknown, code: string): boolean {
   return (
     error instanceof Error &&
@@ -127,7 +131,7 @@ export function parseTrustedSessionSignalInput(
     throw new Error("Expected trusted session signal to be a JSON object.");
   }
 
-  return {
+  const signal: SessionRegistryTrustedSignalInput = {
     event: normalizeEnum(value.event, "signal.event", SESSION_REGISTRY_TRUSTED_SIGNAL_EVENTS),
     source: normalizeEnum<SessionRegistryTrustedSignalSource>(
       value.source,
@@ -137,30 +141,49 @@ export function parseTrustedSessionSignalInput(
     sessionId: ensureString(value.sessionId, "signal.sessionId"),
     timestamp: ensureString(value.timestamp, "signal.timestamp"),
     cwd: ensureString(value.cwd, "signal.cwd"),
-    repo: ensureOptionalString(value.repo, "signal.repo"),
-    branch: ensureOptionalString(value.branch, "signal.branch"),
-    hookSource: normalizeOptionalEnum<SessionRegistryTrustedStartSource>(
+  };
+
+  if (hasOwn(value, "repo")) {
+    signal.repo = ensureOptionalString(value.repo, "signal.repo");
+  }
+  if (hasOwn(value, "branch")) {
+    signal.branch = ensureOptionalString(value.branch, "signal.branch");
+  }
+  if (hasOwn(value, "hookSource")) {
+    signal.hookSource = normalizeOptionalEnum<SessionRegistryTrustedStartSource>(
       value.hookSource,
       "signal.hookSource",
       SESSION_REGISTRY_TRUSTED_START_SOURCES,
-    ),
-    endReason: normalizeOptionalEnum<SessionRegistryTrustedEndReason>(
+    );
+  }
+  if (hasOwn(value, "endReason")) {
+    signal.endReason = normalizeOptionalEnum<SessionRegistryTrustedEndReason>(
       value.endReason,
       "signal.endReason",
       SESSION_REGISTRY_TRUSTED_END_REASONS,
-    ),
-    executionKind: normalizeOptionalEnum<SessionRegistryTrustedExecutionKind>(
+    );
+  }
+  if (hasOwn(value, "executionKind")) {
+    signal.executionKind = normalizeOptionalEnum<SessionRegistryTrustedExecutionKind>(
       value.executionKind,
       "signal.executionKind",
       SESSION_REGISTRY_TRUSTED_EXECUTION_KINDS,
-    ),
-    environmentId: ensureOptionalString(value.environmentId, "signal.environmentId"),
-    initialPromptLength: ensureOptionalInteger(
+    );
+  }
+  if (hasOwn(value, "environmentId")) {
+    signal.environmentId = ensureOptionalString(value.environmentId, "signal.environmentId");
+  }
+  if (hasOwn(value, "initialPromptLength")) {
+    signal.initialPromptLength = ensureOptionalInteger(
       value.initialPromptLength,
       "signal.initialPromptLength",
-    ),
-    promptLength: ensureOptionalInteger(value.promptLength, "signal.promptLength"),
-  };
+    );
+  }
+  if (hasOwn(value, "promptLength")) {
+    signal.promptLength = ensureOptionalInteger(value.promptLength, "signal.promptLength");
+  }
+
+  return signal;
 }
 
 export function writeTrustedSessionSignalSpoolFile(
