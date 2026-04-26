@@ -206,6 +206,47 @@ describe("indexSessionContext", () => {
     );
   });
 
+  it("backfills missing repo from username-prefixed GitHub HTTPS remotes", () => {
+    const root = createRootDir();
+    const repo = join(root, "repo");
+    const eventsPath = join(root, "events.jsonl");
+    mkdirSync(repo, { recursive: true });
+    writeFileSync(eventsPath, "", "utf8");
+    spawnSync("git", ["init", "-b", "main"], { cwd: repo, windowsHide: true });
+    spawnSync(
+      "git",
+      [
+        "remote",
+        "add",
+        "origin",
+        "https://robemanuele_microsoft@github.com/azure-data-database-platform/dbagent.git",
+      ],
+      { cwd: repo, windowsHide: true },
+    );
+    const stat = statSync(eventsPath);
+
+    const patch = indexSessionContext(
+      buildSession({
+        cwd: repo,
+        repo: null,
+        branch: "main",
+        derivedWorktreePath: repo,
+        derivedContextEventsOffset: stat.size,
+        derivedContextEventsSize: stat.size,
+        derivedContextEventsMtimeMs: stat.mtimeMs,
+      }),
+      eventsPath,
+    );
+
+    expect(patch).toEqual(
+      expect.objectContaining({
+        repo: "azure-data-database-platform/dbagent",
+        branch: "main",
+        derivedBranch: "main",
+      }),
+    );
+  });
+
   it("skips unchanged logs with missing repo when no git worktree was derived", () => {
     const root = createRootDir();
     const nonGitDir = join(root, "not-a-repo");

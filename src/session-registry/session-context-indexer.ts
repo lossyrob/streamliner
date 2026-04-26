@@ -93,12 +93,16 @@ function repoFromGitRemote(value: string | null): string | null {
   }
 
   const trimmed = value.trim().replace(/\.git$/, "");
-  const githubUrlMatch = trimmed.match(/^https?:\/\/github\.com\/([\w.-]+)\/([\w.-]+)$/i);
+  const githubUrlMatch = trimmed.match(
+    /^https?:\/\/(?:[^/@]+@)?github\.com\/([\w.-]+)\/([\w.-]+)$/i,
+  );
   if (githubUrlMatch) {
     return normalizeRepo(`${githubUrlMatch[1]}/${githubUrlMatch[2]}`);
   }
 
-  const githubSshMatch = trimmed.match(/^git@github\.com:([\w.-]+)\/([\w.-]+)$/i);
+  const githubSshMatch = trimmed.match(
+    /^(?:ssh:\/\/)?git@github\.com[:/]([\w.-]+)\/([\w.-]+)$/i,
+  );
   if (githubSshMatch) {
     return normalizeRepo(`${githubSshMatch[1]}/${githubSshMatch[2]}`);
   }
