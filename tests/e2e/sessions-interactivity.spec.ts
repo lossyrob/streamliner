@@ -87,7 +87,7 @@ function buildTrustedSession(
     trustedExecutionKind: "copilot_cli",
     trustedInitialPromptLength: 452,
     trustedLastPromptLength: 452,
-    derivedWorktreePath: "C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+    derivedWorktreePath: "C:/Users/robemanuele/proj/streamliner/manual-session-registry",
     derivedBranch: "feature/manual-session-registry",
     derivedGithubRefs: [
       {
@@ -186,6 +186,69 @@ async function mockSessionsApi(page: Page, options: MockSessionsApiOptions = {})
     },
   };
 }
+
+async function installClipboardMock(page: Page) {
+  await page.addInitScript(() => {
+    const copiedTexts: string[] = [];
+    Object.defineProperty(window, "__streamlinerCopiedTexts", {
+      value: copiedTexts,
+      configurable: true,
+    });
+    Object.defineProperty(navigator, "clipboard", {
+      value: {
+        writeText: async (text: string) => {
+          copiedTexts.push(text);
+        },
+      },
+      configurable: true,
+    });
+  });
+}
+
+async function readClipboardWrites(page: Page): Promise<string[]> {
+  return page.evaluate(() => [
+    ...((window as Window & { __streamlinerCopiedTexts: string[] })
+      .__streamlinerCopiedTexts ?? []),
+  ]);
+}
+
+test("session cards and detail view copy restart commands and session ids", async ({
+  page,
+}) => {
+  await installClipboardMock(page);
+  await mockSessionsApi(page);
+
+  await page.goto("/?view=sessions");
+
+  const row = page.getByRole("button", { name: /Follow Paw-Lite Process/ });
+  await expect(row).toBeVisible();
+  await expect(row).toContainText("trusted-session");
+
+  await page.getByRole("button", { name: "Copy session ID trusted-session" }).click();
+  await expect(page.getByRole("dialog")).toBeHidden();
+  await expect.poll(() => readClipboardWrites(page)).toEqual(["trusted-session"]);
+
+  await page.getByRole("button", { name: "Copy restart command" }).click();
+  const expectedRestartCommand =
+    "Set-Location -LiteralPath 'C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry'; copilot --resume 'trusted-session'";
+  await expect.poll(() => readClipboardWrites(page)).toEqual([
+    "trusted-session",
+    expectedRestartCommand,
+  ]);
+  await expect(page.getByRole("dialog")).toBeHidden();
+
+  await row.click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText(expectedRestartCommand)).toBeVisible();
+
+  await dialog.getByRole("button", { name: "Copy restart command" }).click();
+  await expect.poll(() => readClipboardWrites(page)).toEqual([
+    "trusted-session",
+    expectedRestartCommand,
+    expectedRestartCommand,
+  ]);
+});
 
 test("session color quick-pick closes immediately and Done saves without refetch", async ({
   page,

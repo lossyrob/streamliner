@@ -288,6 +288,39 @@ function normalizeColor(value: string): string {
   return value.trim().toLowerCase();
 }
 
+function getDisplaySessionId(session: SessionRegistryListItem): string {
+  return session.copilotSessionId ?? session.id;
+}
+
+function quotePowerShellLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+function normalizePathForPowerShell(value: string): string {
+  const trimmed = value.trim();
+  if (/^[a-zA-Z]:[\\/]/.test(trimmed) || trimmed.startsWith("//") || trimmed.startsWith("\\\\")) {
+    return trimmed.replace(/\//g, "\\");
+  }
+  return trimmed;
+}
+
+function buildRestartCommand(session: SessionRegistryListItem): string {
+  const sessionId = getDisplaySessionId(session);
+  const worktree = normalizePathForPowerShell(displayWorktree(session) ?? session.cwd);
+  const resumeCommand = `copilot --resume ${quotePowerShellLiteral(sessionId)}`;
+  if (worktree.length === 0) {
+    return resumeCommand;
+  }
+  return `Set-Location -LiteralPath ${quotePowerShellLiteral(worktree)}; ${resumeCommand}`;
+}
+
+async function copyTextToClipboard(text: string): Promise<void> {
+  if (!navigator.clipboard?.writeText) {
+    throw new Error("Clipboard copy is not available in this browser.");
+  }
+  await navigator.clipboard.writeText(text);
+}
+
 function isTrustedActiveSession(session: SessionRegistryListItem): boolean {
   return (
     hasTrustedSignal(session) &&
@@ -1549,17 +1582,31 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                     const rowTitle = getRowFallbackTitle(session);
                     const rowBranch = displayBranch(session);
                     const rowWorktree = displayWorktree(session);
+                    const rowSessionId = getDisplaySessionId(session);
+                    const rowRestartCommand = buildRestartCommand(session);
                     const rowDetail =
                       summary.text && summary.status !== "missing"
                         ? summary.text
                         : session.description || null;
                     return (
-                      <button
+                      <div
                         key={session.id}
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`Open session ${rowTitle}`}
                         className={`sl-session-row${
                           session.id === selectedId && sheetOpen ? " selected" : ""
                         }`}
                         onClick={() => void openSessionSheet(session)}
+                        onKeyDown={(event) => {
+                          if (event.target !== event.currentTarget) {
+                            return;
+                          }
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            void openSessionSheet(session);
+                          }
+                        }}
                       >
                         <span
                           className="sl-session-row-stripe"
@@ -1598,6 +1645,16 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                                 <span className="sl-session-row-branch">{rowBranch}</span>
                               </>
                             )}
+                            <span className="sl-session-row-id">
+                              <span className="sl-session-row-id-label">id</span>
+                              <code>{rowSessionId}</code>
+                              <CopyButton
+                                text={rowSessionId}
+                                label={`Copy session ID ${rowSessionId}`}
+                                copiedLabel="Copied session ID"
+                                iconOnly
+                              />
+                            </span>
                             {rowWorktree && (
                               <span className="sl-session-row-context-chip">
                                 worktree {leafName(rowWorktree)}
@@ -1630,7 +1687,17 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                         <div className="sl-session-row-activity">
                           {formatTimestamp(session.lastSeenAt)}
                         </div>
-                      </button>
+                        <div className="sl-session-row-actions">
+                          <CopyButton
+                            text={rowRestartCommand}
+                            label="Copy restart command"
+                            copiedLabel="Copied restart command"
+                            className="compact"
+                          >
+                            Copy restart
+                          </CopyButton>
+                        </div>
+                      </div>
                     );
                   })}
                 </div>
@@ -1837,13 +1904,125 @@ interface SessionOverviewProps {
   session: SessionRegistryListItem;
 }
 
+type CopyState = "idle" | "copied" | "error";
+
+interface CopyButtonProps {
+  text: string;
+  label: string;
+  copiedLabel: string;
+  className?: string;
+  iconOnly?: boolean;
+  children?: string;
+}
+
+function CopyButton({
+  text,
+  label,
+  copiedLabel,
+  className,
+  iconOnly = false,
+  children = "Copy",
+}: CopyButtonProps) {
+  const [copyState, setCopyState] = useState<CopyState>("idle");
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (resetTimerRef.current) {
+        clearTimeout(resetTimerRef.current);
+      }
+    };
+  }, []);
+
+  const markCopyState = useCallback((state: CopyState) => {
+    setCopyState(state);
+    if (resetTimerRef.current) {
+      clearTimeout(resetTimerRef.current);
+    }
+    resetTimerRef.current = setTimeout(() => {
+      setCopyState("idle");
+      resetTimerRef.current = null;
+    }, 1_500);
+  }, []);
+
+  const handleCopy = useCallback(async () => {
+    try {
+      await copyTextToClipboard(text);
+      markCopyState("copied");
+    } catch {
+      markCopyState("error");
+    }
+  }, [markCopyState, text]);
+
+  const stateLabel =
+    copyState === "copied" ? copiedLabel : copyState === "error" ? "Copy failed" : children;
+
+  return (
+    <button
+      type="button"
+      className={`sl-copy-btn${iconOnly ? " icon" : ""}${
+        copyState === "copied" ? " copied" : ""
+      }${copyState === "error" ? " error" : ""}${className ? ` ${className}` : ""}`}
+      aria-label={label}
+      title={copyState === "copied" ? copiedLabel : label}
+      disabled={text.trim().length === 0}
+      onClick={(event) => {
+        event.stopPropagation();
+        void handleCopy();
+      }}
+    >
+      <span className="sl-copy-btn-icon" aria-hidden="true">
+        ⧉
+      </span>
+      {!iconOnly && <span>{stateLabel}</span>}
+    </button>
+  );
+}
+
+interface CopyableValueProps {
+  value: string;
+  label: string;
+}
+
+function CopyableValue({ value, label }: CopyableValueProps) {
+  return (
+    <span className="sl-copyable-value">
+      <code>{value}</code>
+      <CopyButton text={value} label={label} copiedLabel="Copied" iconOnly />
+    </span>
+  );
+}
+
 function SessionOverview({ session }: SessionOverviewProps) {
   const summary = getSessionSummaryDisplay(session);
   const latestDescription = getSessionLatestDescription(session, summary);
   const contextBranch = displayBranch(session);
   const contextWorktree = displayWorktree(session);
+  const displaySessionId = getDisplaySessionId(session);
+  const restartCommand = buildRestartCommand(session);
   return (
     <div className="sl-session-overview">
+      <section className="sl-session-overview-section">
+        <h3 className="sl-session-overview-heading">Restart</h3>
+        <div className="sl-session-quick-actions">
+          <CopyButton
+            text={restartCommand}
+            label="Copy restart command"
+            copiedLabel="Copied restart command"
+          >
+            Copy restart command
+          </CopyButton>
+          <CopyButton
+            text={displaySessionId}
+            label={`Copy session ID ${displaySessionId}`}
+            copiedLabel="Copied session ID"
+          >
+            Copy session ID
+          </CopyButton>
+        </div>
+        <code className="sl-session-command-preview">{restartCommand}</code>
+      </section>
+
       <section className="sl-session-overview-section narrative">
         <h3 className="sl-session-overview-heading">Conversation</h3>
         <div className="sl-session-narrative">
@@ -1916,7 +2095,12 @@ function SessionOverview({ session }: SessionOverviewProps) {
           <dt>Parent folder</dt>
           <dd>{folderOf(session.cwd) || "—"}</dd>
           <dt>Session id</dt>
-          <dd>{session.id}</dd>
+          <dd>
+            <CopyableValue
+              value={session.id}
+              label={`Copy registry session ID ${session.id}`}
+            />
+          </dd>
           <dt>Origin</dt>
           <dd>{session.originKind}</dd>
           {hasTrustedSignal(session) && (
@@ -1966,7 +2150,12 @@ function SessionOverview({ session }: SessionOverviewProps) {
           {session.copilotSessionId && (
             <>
               <dt>Copilot session</dt>
-              <dd>{session.copilotSessionId}</dd>
+              <dd>
+                <CopyableValue
+                  value={session.copilotSessionId}
+                  label={`Copy session ID ${session.copilotSessionId}`}
+                />
+              </dd>
             </>
           )}
         </dl>
