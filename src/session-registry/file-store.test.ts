@@ -191,6 +191,65 @@ describe("SessionRegistryFileStore", () => {
     expect(attached.copilotSessionId).toBe("copilot-123");
   });
 
+  it("preserves edited observed session identity during rediscovery", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+
+    const observed = store.upsertSession({
+      title: "Workspace summary",
+      description: "lossyrob/streamliner · main",
+      color: null,
+      cwd: "C:\\repo",
+      repo: "lossyrob/streamliner",
+      branch: "main",
+      copilotSessionId: "copilot-edited",
+      lastSeenAt: "2026-04-23T12:00:00.000Z",
+      origin: { kind: "observed" },
+      tags: ["initial"],
+      graphBinding: { workstreamId: "sessions", nodeId: "node-a" },
+    });
+    store.patchSession(observed.id, {
+      title: "My custom title",
+      description: "Custom description",
+      color: "#ff00aa",
+      tags: ["custom"],
+      graphBinding: { workstreamId: "custom", nodeId: "node-b" },
+    });
+
+    const rediscovered = store.upsertSession({
+      title: "Rediscovered workspace summary",
+      description: "lossyrob/streamliner · feature",
+      color: null,
+      cwd: "C:\\repo\\worktree",
+      repo: "lossyrob/streamliner",
+      branch: "feature/manual-session-registry",
+      copilotSessionId: "copilot-edited",
+      lastSeenAt: "2026-04-23T13:00:00.000Z",
+      lifecycleStatus: "ended",
+      origin: { kind: "observed" },
+      tags: ["rediscovered"],
+      graphBinding: null,
+    });
+
+    expect(rediscovered).toEqual(
+      expect.objectContaining({
+        title: "My custom title",
+        description: "Custom description",
+        color: "#ff00aa",
+        cwd: "C:\\repo\\worktree",
+        branch: "feature/manual-session-registry",
+        lastSeenAt: "2026-04-23T13:00:00.000Z",
+        lifecycleStatus: "ended",
+        tags: ["custom"],
+        graphBinding: expect.objectContaining({
+          workstreamId: "custom",
+          nodeId: "node-b",
+        }),
+      }),
+    );
+  });
+
   it("patches derived AI summary state without changing updatedAt", () => {
     const rootDir = createRootDir();
     createdRoots.push(rootDir);

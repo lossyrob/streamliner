@@ -1384,12 +1384,13 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
 
   upsertSession(input: SessionRegistryUpsertInput): SessionRegistryRecord {
     const validatedInput = parseSessionRegistryUpsertInput(input);
-    const nextDescription = validatedInput.description ?? "";
-    const nextColor = validatedInput.color ?? null;
     const nextRepo = validatedInput.repo ?? null;
     const nextBranch = validatedInput.branch ?? null;
-    const nextTags = normalizeTags(validatedInput.tags);
-    const nextGraphBinding = validatedInput.graphBinding ?? null;
+    let nextTitle = validatedInput.title;
+    let nextDescription = validatedInput.description ?? "";
+    let nextColor = validatedInput.color ?? null;
+    let nextTags = normalizeTags(validatedInput.tags);
+    let nextGraphBinding = validatedInput.graphBinding ?? null;
 
     return this.withWriteLock(() => {
       const records = this.loadEntriesFromDisk();
@@ -1418,6 +1419,15 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
           this.findRecordIdByCopilotSessionId(records, validatedInput.copilotSessionId) ??
           targetId;
         latestRecord = records.get(targetId);
+        if (latestRecord) {
+          nextTitle = latestRecord.title;
+          nextDescription = latestRecord.description;
+          nextColor = latestRecord.color;
+          nextTags = cloneValue(latestRecord.tags);
+          nextGraphBinding = latestRecord.graphBinding
+            ? cloneValue(latestRecord.graphBinding)
+            : null;
+        }
         nextCopilotSessionId = validatedInput.copilotSessionId;
         nextLastSeenAt =
           Object.prototype.hasOwnProperty.call(validatedInput, "lastSeenAt")
@@ -1496,7 +1506,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       const nextRecord: SessionRegistryRecord = {
         schemaVersion: SESSION_REGISTRY_SCHEMA_VERSION,
         id: targetId,
-        title: validatedInput.title,
+        title: nextTitle,
         description: nextDescription,
         color: nextColor,
         cwd: validatedInput.cwd,
