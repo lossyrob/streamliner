@@ -38,6 +38,7 @@ interface ExtractedContext {
 interface GitContext {
   worktreePath: string;
   branch: string | null;
+  repo: string | null;
 }
 
 function readRange(path: string, start: number, length: number): Buffer {
@@ -84,6 +85,25 @@ function normalizeRepo(value: string | null | undefined): string | null {
 
 function normalizeGithubUrl(value: string): string {
   return value.replace(/\/$/, "");
+}
+
+function repoFromGitRemote(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const trimmed = value.trim().replace(/\.git$/, "");
+  const githubUrlMatch = trimmed.match(/^https?:\/\/github\.com\/([\w.-]+)\/([\w.-]+)$/i);
+  if (githubUrlMatch) {
+    return normalizeRepo(`${githubUrlMatch[1]}/${githubUrlMatch[2]}`);
+  }
+
+  const githubSshMatch = trimmed.match(/^git@github\.com:([\w.-]+)\/([\w.-]+)$/i);
+  if (githubSshMatch) {
+    return normalizeRepo(`${githubSshMatch[1]}/${githubSshMatch[2]}`);
+  }
+
+  return null;
 }
 
 function refSource(text: string, event: RawEventLine | null): string {
@@ -342,9 +362,11 @@ function resolveGitContext(candidatePaths: readonly string[]): GitContext | null
     const branch =
       runGit(gitCwd, ["branch", "--show-current"]) ??
       runGit(gitCwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
+    const repo = repoFromGitRemote(runGit(gitCwd, ["remote", "get-url", "origin"]));
     return {
       worktreePath,
       branch: branch && branch !== "HEAD" ? branch : null,
+      repo,
     };
   }
   return null;
@@ -358,6 +380,8 @@ function patchChanged(
     patch.derivedContextEventsOffset !== session.derivedContextEventsOffset ||
     patch.derivedContextEventsSize !== session.derivedContextEventsSize ||
     patch.derivedContextEventsMtimeMs !== session.derivedContextEventsMtimeMs ||
+    patch.repo !== session.repo ||
+    patch.branch !== session.branch ||
     patch.derivedWorktreePath !== session.derivedWorktreePath ||
     patch.derivedBranch !== session.derivedBranch ||
     JSON.stringify(patch.derivedGithubRefs ?? []) !==
@@ -375,10 +399,12 @@ export function indexSessionContext(
   }
 
   const stat = statSync(eventsPath);
+  const needsRepoBackfill = session.repo === null && session.derivedWorktreePath !== null;
   if (
     session.derivedContextEventsOffset === stat.size &&
     session.derivedContextEventsSize === stat.size &&
-    session.derivedContextEventsMtimeMs === stat.mtimeMs
+    session.derivedContextEventsMtimeMs === stat.mtimeMs &&
+    !needsRepoBackfill
   ) {
     return null;
   }
@@ -389,7 +415,10 @@ export function indexSessionContext(
   const bytesToRead = Math.min(maxBytes, stat.size - startOffset);
   const defaultRepo = normalizeRepo(session.repo);
   const refs: SessionRegistryGithubRef[] = [];
-  const candidatePaths = [session.cwd];
+  const candidatePaths = [
+    ...(session.derivedWorktreePath ? [session.derivedWorktreePath] : []),
+    session.cwd,
+  ];
   let nextOffset = startOffset;
 
   if (bytesToRead > 0) {
@@ -418,6 +447,8 @@ export function indexSessionContext(
 
   const gitContext = resolveGitContext(candidatePaths);
   const patch: SessionRegistryDerivedStatePatch = {
+    repo: gitContext?.repo ?? session.repo,
+    branch: gitContext?.branch ?? session.branch,
     derivedWorktreePath: gitContext?.worktreePath ?? session.derivedWorktreePath,
     derivedBranch: gitContext?.branch ?? session.derivedBranch,
     derivedGithubRefs: mergeRefs(session.derivedGithubRefs, refs),

@@ -1,4 +1,11 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -135,6 +142,11 @@ describe("indexSessionContext", () => {
     mkdirSync(nestedDir, { recursive: true });
     writeFileSync(editedFile, "export const context = true;\n", "utf8");
     spawnSync("git", ["init", "-b", "context-test"], { cwd: repo, windowsHide: true });
+    spawnSync(
+      "git",
+      ["remote", "add", "origin", "https://github.com/lossyrob/streamliner.git"],
+      { cwd: repo, windowsHide: true },
+    );
     writeFileSync(
       eventsPath,
       JSON.stringify({
@@ -153,6 +165,68 @@ describe("indexSessionContext", () => {
     expect(
       realpathSync.native(patch?.derivedWorktreePath ?? "").replace(/\\/g, "/"),
     ).toBe(realpathSync.native(repo).replace(/\\/g, "/"));
+    expect(patch?.repo).toBe("lossyrob/streamliner");
+    expect(patch?.branch).toBe("context-test");
     expect(patch?.derivedBranch).toBe("context-test");
+  });
+
+  it("backfills missing repo from git even when the event cursor is unchanged", () => {
+    const root = createRootDir();
+    const repo = join(root, "repo");
+    const eventsPath = join(root, "events.jsonl");
+    mkdirSync(repo, { recursive: true });
+    writeFileSync(eventsPath, "", "utf8");
+    spawnSync("git", ["init", "-b", "main"], { cwd: repo, windowsHide: true });
+    spawnSync(
+      "git",
+      ["remote", "add", "origin", "git@github.com:lossyrob/streamliner.git"],
+      { cwd: repo, windowsHide: true },
+    );
+    const stat = statSync(eventsPath);
+
+    const patch = indexSessionContext(
+      buildSession({
+        cwd: repo,
+        repo: null,
+        branch: null,
+        derivedWorktreePath: repo,
+        derivedContextEventsOffset: stat.size,
+        derivedContextEventsSize: stat.size,
+        derivedContextEventsMtimeMs: stat.mtimeMs,
+      }),
+      eventsPath,
+    );
+
+    expect(patch).toEqual(
+      expect.objectContaining({
+        repo: "lossyrob/streamliner",
+        branch: "main",
+        derivedBranch: "main",
+      }),
+    );
+  });
+
+  it("skips unchanged logs with missing repo when no git worktree was derived", () => {
+    const root = createRootDir();
+    const nonGitDir = join(root, "not-a-repo");
+    const eventsPath = join(root, "events.jsonl");
+    mkdirSync(nonGitDir, { recursive: true });
+    writeFileSync(eventsPath, "", "utf8");
+    const stat = statSync(eventsPath);
+
+    const patch = indexSessionContext(
+      buildSession({
+        cwd: nonGitDir,
+        repo: null,
+        branch: null,
+        derivedWorktreePath: null,
+        derivedContextEventsOffset: stat.size,
+        derivedContextEventsSize: stat.size,
+        derivedContextEventsMtimeMs: stat.mtimeMs,
+      }),
+      eventsPath,
+    );
+
+    expect(patch).toBeNull();
   });
 });

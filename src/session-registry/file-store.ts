@@ -146,6 +146,8 @@ export interface SessionRegistryDerivedStatePatch {
   aiSummaryEventsFingerprint?: string | null;
   aiSummaryStatus?: SessionRegistryAiSummaryStatus;
   aiSummaryError?: string | null;
+  repo?: string | null;
+  branch?: string | null;
   derivedWorktreePath?: string | null;
   derivedBranch?: string | null;
   derivedGithubRefs?: SessionRegistryGithubRef[];
@@ -1982,6 +1984,8 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
 
       const nextRecord: SessionRegistryRecord = {
         ...cloneValue(existingRecord),
+        repo: patch.repo !== undefined ? patch.repo : existingRecord.repo,
+        branch: patch.branch !== undefined ? patch.branch : existingRecord.branch,
         aiSummary:
           patch.aiSummary !== undefined ? patch.aiSummary : existingRecord.aiSummary,
         aiSummaryModel:
