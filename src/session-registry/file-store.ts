@@ -1336,6 +1336,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
   private readonly quarantineDir: string;
   private readonly indexPath: string;
   private readonly lockPath: string;
+  private readonly recoveryLockPath: string;
   private readonly listeners = new Set<SessionRegistryChangeListener>();
 
   private records = new Map<string, StoredSessionRegistryRecord>();
@@ -1350,6 +1351,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
     this.quarantineDir = join(resolvedRoot, "quarantine");
     this.indexPath = join(resolvedRoot, "index.json");
     this.lockPath = join(resolvedRoot, "registry.lock");
+    this.recoveryLockPath = join(resolvedRoot, "registry.lock.recovery");
   }
 
   listSessions(options: SessionRegistryListOptions = {}): SessionRegistryListItem[] {
@@ -2217,51 +2219,74 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
   }
 
   private acquireLock(): number {
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      let fd: number;
-      try {
-        fd = openSync(this.lockPath, "wx");
-      } catch (error: unknown) {
-        const code =
-          error instanceof Error && "code" in error
-            ? String((error as NodeJS.ErrnoException).code)
-            : "";
-        if (code === "EEXIST") {
-          if (attempt === 0 && this.removeStaleLock()) {
-            continue;
-          }
+    let recoveryLockFd: number | null = null;
+
+    try {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (recoveryLockFd === null && this.hasActiveRecoveryLock()) {
           throw new SessionRegistryLockedError(this.lockPath);
         }
-        throw error;
+
+        let fd: number;
+        try {
+          fd = openSync(this.lockPath, "wx");
+        } catch (error: unknown) {
+          const code =
+            error instanceof Error && "code" in error
+              ? String((error as NodeJS.ErrnoException).code)
+              : "";
+          if (code === "EEXIST") {
+            recoveryLockFd = this.acquireRecoveryLock();
+            if (attempt === 0 && recoveryLockFd !== null && this.removeStaleLock()) {
+              continue;
+            }
+            throw new SessionRegistryLockedError(this.lockPath);
+          }
+          throw error;
+        }
+
+        try {
+          writeFileSync(
+            fd,
+            JSON.stringify({
+              pid: process.pid,
+              acquiredAt: isoNow(),
+            }),
+            "utf8",
+          );
+        } catch (error: unknown) {
+          try {
+            closeSync(fd);
+          } catch {
+            // Best effort cleanup; the original error is more important.
+          }
+          try {
+            unlinkSync(this.lockPath);
+          } catch {
+            // Best effort cleanup; the original error is more important.
+          }
+          throw error;
+        }
+
+        if (recoveryLockFd === null && this.hasActiveRecoveryLock()) {
+          this.releaseLock(fd);
+          throw new SessionRegistryLockedError(this.lockPath);
+        }
+
+        if (recoveryLockFd !== null) {
+          this.releaseRecoveryLock(recoveryLockFd);
+          recoveryLockFd = null;
+        }
+
+        return fd;
       }
 
-      try {
-        writeFileSync(
-          fd,
-          JSON.stringify({
-            pid: process.pid,
-            acquiredAt: isoNow(),
-          }),
-          "utf8",
-        );
-      } catch (error: unknown) {
-        try {
-          closeSync(fd);
-        } catch {
-          // Best effort cleanup; the original error is more important.
-        }
-        try {
-          unlinkSync(this.lockPath);
-        } catch {
-          // Best effort cleanup; the original error is more important.
-        }
-        throw error;
+      throw new SessionRegistryLockedError(this.lockPath);
+    } finally {
+      if (recoveryLockFd !== null) {
+        this.releaseRecoveryLock(recoveryLockFd);
       }
-
-      return fd;
     }
-
-    throw new SessionRegistryLockedError(this.lockPath);
   }
 
   private releaseLock(lockFd: number): void {
@@ -2282,10 +2307,80 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
     return true;
   }
 
-  private readLockMetadata(): SessionRegistryLockMetadata | null {
+  private acquireRecoveryLock(): number | null {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      let fd: number;
+      try {
+        fd = openSync(this.recoveryLockPath, "wx");
+      } catch (error: unknown) {
+        const code =
+          error instanceof Error && "code" in error
+            ? String((error as NodeJS.ErrnoException).code)
+            : "";
+        if (code === "EEXIST") {
+          if (attempt === 0 && !this.hasActiveRecoveryLock()) {
+            continue;
+          }
+          return null;
+        }
+        throw error;
+      }
+
+      try {
+        writeFileSync(
+          fd,
+          JSON.stringify({
+            pid: process.pid,
+            acquiredAt: isoNow(),
+          }),
+          "utf8",
+        );
+      } catch (error: unknown) {
+        try {
+          closeSync(fd);
+        } catch {
+          // Best effort cleanup; the original error is more important.
+        }
+        try {
+          unlinkSync(this.recoveryLockPath);
+        } catch {
+          // Best effort cleanup; the original error is more important.
+        }
+        throw error;
+      }
+
+      return fd;
+    }
+
+    return null;
+  }
+
+  private releaseRecoveryLock(recoveryLockFd: number): void {
+    try {
+      closeSync(recoveryLockFd);
+    } finally {
+      rmSync(this.recoveryLockPath, { force: true });
+    }
+  }
+
+  private hasActiveRecoveryLock(): boolean {
+    const metadata = this.readLockMetadata(this.recoveryLockPath);
+    if (!metadata) {
+      return false;
+    }
+
+    if (processExists(metadata.pid)) {
+      return true;
+    }
+
+    rmSync(this.recoveryLockPath, { force: true });
+    return false;
+  }
+
+  private readLockMetadata(lockPath = this.lockPath): SessionRegistryLockMetadata | null {
     let parsed: unknown;
     try {
-      parsed = JSON.parse(readFileSync(this.lockPath, "utf8"));
+      parsed = JSON.parse(readFileSync(lockPath, "utf8"));
     } catch {
       return null;
     }

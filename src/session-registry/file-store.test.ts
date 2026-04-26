@@ -497,6 +497,26 @@ describe("SessionRegistryFileStore", () => {
     expect(existsSync(join(rootDir, "registry.lock"))).toBe(false);
   });
 
+  it("does not acquire the registry lock during active stale-lock recovery", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+    writeFileSync(
+      join(rootDir, "registry.lock.recovery"),
+      JSON.stringify({ pid: process.pid, acquiredAt: "2026-04-23T12:00:00.000Z" }),
+      "utf8",
+    );
+
+    expect(() =>
+      store.upsertSession({
+        title: "Blocked by recovery",
+        cwd: "C:\\repo",
+        origin: { kind: "manual" },
+      }),
+    ).toThrow();
+    expect(existsSync(join(rootDir, "registry.lock"))).toBe(false);
+  });
+
   it("enforces lifecycle restrictions by source", () => {
     const rootDir = createRootDir();
     createdRoots.push(rootDir);
