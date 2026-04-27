@@ -1,6 +1,16 @@
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -13,6 +23,12 @@ import {
 import { SessionRegistryFileStore } from "./file-store";
 
 const createdRoots: string[] = [];
+const signalScriptPath = resolve(
+  "copilot-plugin",
+  "streamliner",
+  "scripts",
+  "streamliner-signal.mjs",
+);
 
 function createRootDir(): string {
   const root = mkdtempSync(join(tmpdir(), "streamliner-session-signals-"));
@@ -26,7 +42,145 @@ afterEach(() => {
   }
 });
 
+function runSignalScript(
+  hookName: string,
+  payload: Record<string, unknown>,
+  env: Record<string, string>,
+): Promise<void> {
+  return new Promise((resolveRun, rejectRun) => {
+    const child = spawn(process.execPath, [signalScriptPath, hookName], {
+      env: {
+        ...process.env,
+        ...env,
+      },
+      stdio: ["pipe", "ignore", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.on("error", rejectRun);
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolveRun();
+        return;
+      }
+      rejectRun(new Error(`streamliner-signal exited with ${code}: ${stderr}`));
+    });
+    child.stdin.end(JSON.stringify(payload));
+  });
+}
+
+function closeServer(server: Server): Promise<void> {
+  return new Promise((resolveClose, rejectClose) => {
+    server.close((error) => {
+      if (error) {
+        rejectClose(error);
+        return;
+      }
+      resolveClose();
+    });
+  });
+}
+
 describe("trusted session signal spool", () => {
+  it("spools hook stdin as prompt lengths without persisting raw prompt text", async () => {
+    const signalRoot = createRootDir();
+    const initialPrompt = "secret kickoff prompt that must not be persisted";
+
+    await runSignalScript(
+      "sessionStart",
+      {
+        sessionId: "hook-spool-session",
+        timestamp: "2026-04-24T20:00:00.000Z",
+        cwd: "C:\\repo",
+        source: "new",
+        initialPrompt,
+      },
+      {
+        STREAMLINER_SESSION_SIGNAL_SPOOL_ROOT: signalRoot,
+        STREAMLINER_SESSION_SIGNAL_ENDPOINT: "",
+      },
+    );
+
+    const pendingFiles = readdirSync(join(signalRoot, SESSION_REGISTRY_SIGNAL_PENDING_DIR));
+    expect(pendingFiles).toHaveLength(1);
+    const rawSignal = readFileSync(
+      join(signalRoot, SESSION_REGISTRY_SIGNAL_PENDING_DIR, pendingFiles[0]),
+      "utf8",
+    );
+    expect(rawSignal).not.toContain(initialPrompt);
+    const signal = JSON.parse(rawSignal) as Record<string, unknown>;
+    expect(signal).toEqual(
+      expect.objectContaining({
+        event: "session.started",
+        source: "copilot-cli-hook",
+        sessionId: "hook-spool-session",
+        cwd: "C:\\repo",
+        hookSource: "new",
+        executionKind: "copilot_cli",
+        initialPromptLength: initialPrompt.length,
+      }),
+    );
+    expect(signal).not.toHaveProperty("initialPrompt");
+  });
+
+  it("posts hook stdin as prompt lengths without sending raw prompt text", async () => {
+    const signalRoot = createRootDir();
+    const prompt = "secret follow-up prompt that must not be sent";
+    const receivedBodies: string[] = [];
+    const server = createServer((req, res) => {
+      let body = "";
+      req.setEncoding("utf8");
+      req.on("data", (chunk) => {
+        body += chunk;
+      });
+      req.on("end", () => {
+        receivedBodies.push(body);
+        res.statusCode = 200;
+        res.end("{}");
+      });
+    });
+    await new Promise<void>((resolveListen) => {
+      server.listen(0, "127.0.0.1", resolveListen);
+    });
+
+    try {
+      const { port } = server.address() as AddressInfo;
+      await runSignalScript(
+        "userPromptSubmitted",
+        {
+          sessionId: "hook-post-session",
+          timestamp: "2026-04-24T20:01:00.000Z",
+          cwd: "C:\\repo",
+          prompt,
+        },
+        {
+          STREAMLINER_SESSION_SIGNAL_SPOOL_ROOT: signalRoot,
+          STREAMLINER_SESSION_SIGNAL_ENDPOINT: `http://127.0.0.1:${port}/signals`,
+        },
+      );
+    } finally {
+      await closeServer(server);
+    }
+
+    expect(receivedBodies).toHaveLength(1);
+    expect(receivedBodies[0]).not.toContain(prompt);
+    const signal = JSON.parse(receivedBodies[0]) as Record<string, unknown>;
+    expect(signal).toEqual(
+      expect.objectContaining({
+        event: "prompt.submitted",
+        source: "copilot-cli-hook",
+        sessionId: "hook-post-session",
+        cwd: "C:\\repo",
+        executionKind: "copilot_cli",
+        promptLength: prompt.length,
+      }),
+    );
+    expect(signal).not.toHaveProperty("prompt");
+    expect(existsSync(join(signalRoot, SESSION_REGISTRY_SIGNAL_PENDING_DIR))).toBe(false);
+  });
+
   it("writes collision-safe complete files for same-session same-timestamp signals", () => {
     const rootDir = createRootDir();
     const now = () => new Date("2026-04-24T20:00:00.000Z");
