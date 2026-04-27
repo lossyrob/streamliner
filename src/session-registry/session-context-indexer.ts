@@ -13,6 +13,7 @@ import type { SessionRegistryGithubRef } from "../session-registry-schema";
 import type { SessionRegistryDerivedStatePatch } from "./file-store";
 
 export const SESSION_CONTEXT_INDEX_MAX_BYTES_PER_CYCLE = 1024 * 1024;
+export const SESSION_CONTEXT_INDEX_MAX_OVERSIZED_RECORD_SKIP_BYTES = 16 * 1024 * 1024;
 
 interface SessionContextIndexOptions {
   maxBytesPerCycle?: number;
@@ -50,6 +51,29 @@ function readRange(path: string, start: number, length: number): Buffer {
   } finally {
     closeSync(fd);
   }
+}
+
+function findNextNewlineOffset(
+  path: string,
+  start: number,
+  fileSize: number,
+  maxSkipBytes: number,
+): number | null {
+  let cursor = start;
+  let remaining = Math.min(maxSkipBytes, Math.max(0, fileSize - start));
+  while (remaining > 0) {
+    const chunk = readRange(path, cursor, Math.min(64 * 1024, remaining));
+    if (chunk.length === 0) {
+      return null;
+    }
+    const newlineIndex = chunk.indexOf(0x0a);
+    if (newlineIndex >= 0) {
+      return cursor + newlineIndex + 1;
+    }
+    cursor += chunk.length;
+    remaining -= chunk.length;
+  }
+  return null;
 }
 
 function collectStringValues(value: unknown, output: string[] = [], depth = 0): string[] {
@@ -433,11 +457,20 @@ export function indexSessionContext(
       const lastNewline = text.lastIndexOf("\n");
       if (lastNewline < 0) {
         text = "";
+        nextOffset =
+          findNextNewlineOffset(
+            eventsPath,
+            startOffset + buffer.length,
+            stat.size,
+            SESSION_CONTEXT_INDEX_MAX_OVERSIZED_RECORD_SKIP_BYTES,
+          ) ?? Math.min(stat.size, startOffset + buffer.length);
       } else {
         text = text.slice(0, lastNewline + 1);
+        nextOffset = startOffset + Buffer.byteLength(text, "utf8");
       }
+    } else {
+      nextOffset = startOffset + Buffer.byteLength(text, "utf8");
     }
-    nextOffset = startOffset + Buffer.byteLength(text, "utf8");
 
     for (const line of text.split(/\r?\n/)) {
       if (line.trim().length === 0) {

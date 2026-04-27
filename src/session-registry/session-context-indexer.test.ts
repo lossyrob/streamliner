@@ -136,6 +136,49 @@ describe("indexSessionContext", () => {
     expect(unchanged).toBeNull();
   });
 
+  it("advances past oversized records without pinning the cursor", () => {
+    const root = createRootDir();
+    const eventsPath = join(root, "events.jsonl");
+    writeFileSync(
+      eventsPath,
+      [
+        "x".repeat(256),
+        JSON.stringify({
+          type: "tool.execution",
+          timestamp: "2026-04-25T20:10:00.000Z",
+          data: { command: "gh pr view 14" },
+        }),
+      ].join("\n"),
+      "utf8",
+    );
+
+    let session = buildSession();
+    let iterations = 0;
+    while (iterations < 10 && session.derivedGithubRefs.length === 0) {
+      const patch = indexSessionContext(session, eventsPath, {
+        maxBytesPerCycle: 128,
+        now: () => new Date("2026-04-25T20:11:00.000Z"),
+      });
+      expect(patch?.derivedContextEventsOffset).toBeGreaterThan(
+        session.derivedContextEventsOffset,
+      );
+      session = {
+        ...session,
+        ...patch,
+        derivedGithubRefs: patch?.derivedGithubRefs ?? session.derivedGithubRefs,
+      };
+      iterations += 1;
+    }
+
+    expect(session.derivedGithubRefs).toEqual([
+      expect.objectContaining({
+        type: "pr",
+        repo: "lossyrob/streamliner",
+        number: 14,
+      }),
+    ]);
+  });
+
   it("resolves git context from file paths mentioned in events", () => {
     const root = createRootDir();
     const repo = join(root, "repo");
