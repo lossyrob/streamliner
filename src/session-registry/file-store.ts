@@ -1,5 +1,6 @@
 import {
   closeSync,
+  existsSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -72,6 +73,8 @@ const DEFAULT_REGISTRY_ROOT = resolve(
 const ENTRY_EXTENSION = ".json";
 const SHARED_SLEEP_BUFFER = new SharedArrayBuffer(4);
 const SHARED_SLEEP_ARRAY = new Int32Array(SHARED_SLEEP_BUFFER);
+const WRITE_LOCK_WAIT_TIMEOUT_MS = 5_000;
+const WRITE_LOCK_WAIT_INTERVAL_MS = 50;
 const SESSION_REGISTRY_PATCH_KEYS = [
   "title",
   "description",
@@ -141,6 +144,7 @@ export class SessionRegistryLockedError extends Error {
 
 export interface SessionRegistryFileStoreOptions {
   rootDir?: string;
+  writeLockWaitTimeoutMs?: number;
 }
 
 export interface SessionRegistryDerivedStatePatch {
@@ -1483,6 +1487,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
   private readonly indexPath: string;
   private readonly lockPath: string;
   private readonly recoveryLockPath: string;
+  private readonly writeLockWaitTimeoutMs: number;
   private readonly listeners = new Set<SessionRegistryChangeListener>();
 
   private records = new Map<string, StoredSessionRegistryRecord>();
@@ -1498,6 +1503,8 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
     this.indexPath = join(resolvedRoot, "index.json");
     this.lockPath = join(resolvedRoot, "registry.lock");
     this.recoveryLockPath = join(resolvedRoot, "registry.lock.recovery");
+    this.writeLockWaitTimeoutMs =
+      options?.writeLockWaitTimeoutMs ?? WRITE_LOCK_WAIT_TIMEOUT_MS;
   }
 
   listSessions(options: SessionRegistryListOptions = {}): SessionRegistryListItem[] {
@@ -2433,10 +2440,15 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
 
   private acquireLock(): number {
     let recoveryLockFd: number | null = null;
+    const deadline = Date.now() + this.writeLockWaitTimeoutMs;
 
     try {
-      for (let attempt = 0; attempt < 2; attempt += 1) {
+      for (;;) {
         if (recoveryLockFd === null && this.hasActiveRecoveryLock()) {
+          if (Date.now() < deadline) {
+            sleepSync(WRITE_LOCK_WAIT_INTERVAL_MS);
+            continue;
+          }
           throw new SessionRegistryLockedError(this.lockPath);
         }
 
@@ -2449,8 +2461,25 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
               ? String((error as NodeJS.ErrnoException).code)
               : "";
           if (code === "EEXIST") {
-            recoveryLockFd = this.acquireRecoveryLock();
-            if (attempt === 0 && recoveryLockFd !== null && this.removeStaleLock()) {
+            if (recoveryLockFd === null) {
+              recoveryLockFd = this.acquireRecoveryLock();
+            }
+            if (recoveryLockFd !== null && this.removeStaleLock()) {
+              continue;
+            }
+            if (recoveryLockFd !== null) {
+              this.releaseRecoveryLock(recoveryLockFd);
+              recoveryLockFd = null;
+            }
+            if (this.hasActiveRecoveryLock() && Date.now() < deadline) {
+              sleepSync(WRITE_LOCK_WAIT_INTERVAL_MS);
+              continue;
+            }
+            if (this.hasActiveRegistryLock() && Date.now() < deadline) {
+              sleepSync(WRITE_LOCK_WAIT_INTERVAL_MS);
+              continue;
+            }
+            if (!existsSync(this.lockPath) && Date.now() < deadline) {
               continue;
             }
             throw new SessionRegistryLockedError(this.lockPath);
@@ -2483,6 +2512,10 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
 
         if (recoveryLockFd === null && this.hasActiveRecoveryLock()) {
           this.releaseLock(fd);
+          if (Date.now() < deadline) {
+            sleepSync(WRITE_LOCK_WAIT_INTERVAL_MS);
+            continue;
+          }
           throw new SessionRegistryLockedError(this.lockPath);
         }
 
@@ -2493,8 +2526,6 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
 
         return fd;
       }
-
-      throw new SessionRegistryLockedError(this.lockPath);
     } finally {
       if (recoveryLockFd !== null) {
         this.releaseRecoveryLock(recoveryLockFd);
@@ -2518,6 +2549,11 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
 
     rmSync(this.lockPath, { force: true });
     return true;
+  }
+
+  private hasActiveRegistryLock(): boolean {
+    const lockMetadata = this.readLockMetadata();
+    return lockMetadata !== null && processExists(lockMetadata.pid);
   }
 
   private acquireRecoveryLock(): number | null {

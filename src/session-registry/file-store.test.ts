@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawn } from "node:child_process";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -25,6 +26,26 @@ function readJsonFile<T>(path: string): T {
 }
 
 const createdRoots: string[] = [];
+
+function waitForChildExit(
+  child: ReturnType<typeof spawn>,
+  stderr: Buffer[],
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(
+        new Error(
+          `Lock holder exited with ${code ?? signal}: ${Buffer.concat(stderr).toString("utf8")}`,
+        ),
+      );
+    });
+  });
+}
 
 afterEach(() => {
   for (const rootDir of createdRoots.splice(0)) {
@@ -584,6 +605,45 @@ describe("SessionRegistryFileStore", () => {
     ).toThrow();
   });
 
+  it("waits briefly for an active advisory lock to clear", async () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({
+      rootDir,
+      writeLockWaitTimeoutMs: 2_000,
+    });
+    const lockPath = join(rootDir, "registry.lock");
+    writeFileSync(
+      lockPath,
+      JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() }),
+      "utf8",
+    );
+    const script = `
+const { rmSync } = require("node:fs");
+const lockPath = process.argv[1];
+const holdMs = Number(process.argv[2]);
+setTimeout(() => {
+  rmSync(lockPath, { force: true });
+}, holdMs);
+setTimeout(() => process.exit(0), holdMs + 50);
+`;
+    const stderr: Buffer[] = [];
+    const child = spawn(process.execPath, ["-e", script, lockPath, "250"], {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
+    const childExit = waitForChildExit(child, stderr);
+
+    const created = store.upsertSession({
+      title: "Recovered after wait",
+      cwd: "C:\\repo",
+      origin: { kind: "manual" },
+    });
+
+    expect(created.title).toBe("Recovered after wait");
+    await childExit;
+  });
+
   it("recovers stale advisory locks from exited processes", () => {
     const rootDir = createRootDir();
     createdRoots.push(rootDir);
@@ -607,7 +667,10 @@ describe("SessionRegistryFileStore", () => {
   it("does not acquire the registry lock during active stale-lock recovery", () => {
     const rootDir = createRootDir();
     createdRoots.push(rootDir);
-    const store = new SessionRegistryFileStore({ rootDir });
+    const store = new SessionRegistryFileStore({
+      rootDir,
+      writeLockWaitTimeoutMs: 0,
+    });
     writeFileSync(
       join(rootDir, "registry.lock.recovery"),
       JSON.stringify({ pid: process.pid, acquiredAt: "2026-04-23T12:00:00.000Z" }),
