@@ -62,12 +62,7 @@ Implementation should be documentation-first:
 
 ## Open Questions
 
-- Does local evidence reveal any Windows Terminal behavior that contradicts the current constrained-feasible conclusion?
-- Does PR #14 land or change the registry `color` shape before this PR merges? If yes, re-check the bridge normalization contract before final PR.
-- Does `--tabColor` accept anything beyond `#RGB` and `#RRGGBB`, or should all other values be normalized away before the bridge?
-- What is the observed behavior when `--window` targets a non-existent window, and does that reinforce the default no-`--window` stance?
-- Does an old or unsupported Windows Terminal fail loudly or silently ignore `--tabColor`?
-- Is there any supported existing-tab recolor mechanism via CLI, OSC escape, or settings reload, or is launch-time-only the durable answer?
+None.
 
 ## Done When
 
