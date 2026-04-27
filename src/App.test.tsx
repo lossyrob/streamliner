@@ -252,7 +252,7 @@ describe("App sessions route", () => {
 
       await settle();
 
-      expect(container.textContent).toContain("My Sessions");
+      expect(container.textContent).toContain("Copilot CLI sessions");
       expect(container.textContent).toContain("Manual session registry");
 
       expect(
@@ -504,7 +504,7 @@ describe("App sessions route", () => {
 
       await settle(75);
 
-      expect(container.textContent).toContain("My Sessions");
+      expect(container.textContent).toContain("Copilot CLI sessions");
       expect(container.textContent).toContain("Session registry is locked.");
       expect(
         fetchMock.mock.calls.some(([input]) =>

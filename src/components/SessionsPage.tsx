@@ -1615,12 +1615,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
     <div className="sl-sessions sl-sessions-v2">
       <div className="sl-sessions-header">
         <div>
-          <span className="sl-eyebrow">SESSIONS</span>
-          <h2 className="sl-status-title">My Sessions</h2>
-          <p className="sl-status-message">
-            Track manual Copilot sessions that survive restarts, even before observation
-            or graph binding exists.
-          </p>
+          <h2 className="sl-status-title">Copilot CLI sessions</h2>
         </div>
         <div className="sl-header-actions">
           <button
