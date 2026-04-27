@@ -17,6 +17,7 @@ import { SessionsPage } from "./components/SessionsPage";
 
 const POLL_INTERVAL_MS = 2000;
 const LAST_GRAPH_KEY = "streamliner:lastGraphPath";
+const STREAMLINER_LOGO_URL = "/streamliner-logo.png";
 
 interface RecentEntry {
   path: string;
@@ -293,9 +294,17 @@ function DashboardNav({
 }) {
   return (
     <div className="sl-shell-nav">
-      <div>
-        <span className="sl-eyebrow">DASHBOARD</span>
-        <div className="sl-shell-nav-title">Streamliner surfaces</div>
+      <div className="sl-shell-brand" aria-label="Streamliner">
+        <img
+          className="sl-shell-brand-logo"
+          src={STREAMLINER_LOGO_URL}
+          alt=""
+          aria-hidden="true"
+        />
+        <div className="sl-shell-brand-stack">
+          <span className="sl-shell-brand-wordmark">Streamliner</span>
+          <span className="sl-shell-brand-rail" aria-hidden="true" />
+        </div>
       </div>
       <div className="sl-header-actions">
         <button
