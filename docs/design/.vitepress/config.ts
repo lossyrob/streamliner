@@ -46,6 +46,7 @@ export default defineConfig({
           { text: '003 — PAW Control State Integration', link: '/decisions/003-paw-control-state-integration' },
           { text: '004 — Session Registry as the Primary Session Surface', link: '/decisions/004-session-registry-primary-surface' },
           { text: '005 — Session Registry Storage and Identity Model', link: '/decisions/005-session-registry-storage-and-identity' },
+          { text: '006 — Terminal Color as Optional Launch-Time Projection', link: '/decisions/006-terminal-color-launch-time-projection' },
         ]
       }
     ],

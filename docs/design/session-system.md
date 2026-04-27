@@ -1,7 +1,7 @@
 ---
 kind: design-doc
 status: draft
-last_updated: 2026-04-21
+last_updated: 2026-04-27
 update_semantics: rewrite-in-place
 authoritative_for: "Session launching, lifecycle, registry contract, tracking, and runtime overlay"
 scope_tags:
@@ -22,6 +22,7 @@ references_decisions:
   - 3
   - 4
   - 5
+  - 6
 ---
 
 # Session System
@@ -78,6 +79,7 @@ SDK preparation output:
 | `reviewPolicy` | string | Review behavior the worker session should follow |
 | `launchNonce` | string | Unique launch token used to bind the discovered session to the correct graph node |
 | `kickoffPrompt` | string | Initial prompt passed to Copilot CLI interactive mode |
+| `terminalPresentation` | object or `null` | Optional terminal presentation hints for adapters that support them, such as `terminalTitle` and a normalized Windows Terminal `tabColor`. These hints never participate in session identity or launch-claim binding. |
 
 #### Phase 2 — Copilot CLI Interactive Launch
 
@@ -467,6 +469,65 @@ Sessions run in visible terminals. The builder sees:
 - Streamliner's UI shows a session list with node binding, status, and terminal reference
 
 Conceptually, the launch integration is doing the equivalent of `copilot -i "<kickoff prompt>" .` in the prepared `cwd`, even if the exact terminal adapter wraps that command differently for the local platform.
+
+### Windows Terminal color bridge
+
+The local Windows Terminal bridge is a constrained Wave 2 bridge for projecting registry color into newly created Windows Terminal tabs. See [Decision 006](decisions/006-terminal-color-launch-time-projection.md): terminal color is optional launch-time presentation, never registry identity, and never a required part of relaunch.
+
+#### Evidence matrix
+
+| Probe | Evidence | Contract implication |
+|-------|----------|----------------------|
+| Official command surface | Microsoft documents `wt` as accepting options plus commands, with `new-tab` as the default command when no command is specified. Commands are separated by semicolons. | Streamliner should treat Windows Terminal as an explicit adapter invoked through `wt.exe`, not as an ambient shell behavior. |
+| Tab color format | Microsoft documents `new-tab --tabColor hex-color` and `split-pane --tabColor`, with accepted values `#RGB` or `#RRGGBB`. | The terminal boundary accepts only resolved `#RGB` or `#RRGGBB`. Registry palette tokens must be resolved before the bridge runs. |
+| Tab title | Microsoft documents `new-tab --title title`. It also notes application title changes may override the title unless the profile suppresses application title updates. | The bridge may pass the registry `title` as the initial tab title when non-empty, but persistent title behavior is a terminal/profile concern. |
+| Window targeting | Microsoft documents `--window, -w window-id` for sending commands to existing windows; `new`/`-1` creates a new window, `last`/`0` uses the most recently used window, and an unknown id/name creates a new window with that id/name. | Wave 2 does not rely on `--window` for idempotency. Relaunch may create a new tab/window according to Windows Terminal defaults and user settings. |
+| Existing-tab recolor | The documented color options apply to `new-tab` and `split-pane`. No supported `wt.exe` command-line surface was found for recoloring an already-open tab. | Streamliner does not attempt automatic existing-tab recolor. A user may still manually change tab color through Windows Terminal UI. |
+| Command composition | Microsoft documents semicolon-separated `wt` commands and PowerShell-specific escaping patterns for passing semicolons to `wt`. | Launch/relaunch implementation must avoid naive shell-string composition. It should use argument arrays or equivalent escaping at the caller boundary before invoking `wt.exe`. |
+| Local environment probe | This spike ran on local Windows with `wt.exe` available via the app execution alias, an installed `Microsoft.WindowsTerminal` package version `1.24.10921.0`, and active `WT_SESSION` / `WT_PROFILE_ID` environment variables. | The local machine supports the documented adapter surface, but the bridge still needs runtime fallback when `wt.exe` is missing, too old, or rejects an argument. |
+| PR #14 registry shape | PR #14 was still open during the spike and provisionally carried `color: string | null` in the registry schema/contract. The accepted design doc still owns the durable shape: palette token or hex. | The bridge contract should depend on the design contract, not unmerged PR implementation details. If the registry shape changes before relaunch lands, the normalization boundary must be revisited. |
+
+#### Bridge contract
+
+The Windows Terminal bridge applies only when all of these preconditions hold:
+
+- the launch environment is local Windows;
+- `wt.exe` is resolvable through the Windows Terminal app execution alias or an equivalent configured path;
+- the relaunch target is a new terminal tab or pane, not an already-open tab;
+- the registry color can be resolved to `#RGB` or `#RRGGBB`.
+
+The bridge consumes a normalized presentation payload:
+
+| Field | Source | Rule |
+|-------|--------|------|
+| `cwd` | Registry row | Open the new terminal at the recorded absolute `cwd`. If the path is not valid for local Windows, skip the Windows Terminal bridge and use the relaunch flow's existing fallback behavior. |
+| `terminalTitle` | Registry row `title` | Use the registry title when non-empty. If empty, omit `--title` and let the terminal/profile/application choose the title. |
+| `tabColor` | Registry row `color` | Accept only `#RGB` or `#RRGGBB` after palette-token resolution. Unknown palette tokens, named colors, alpha hex, malformed hex, and `null` are treated as absent color. |
+| `profile` | User terminal settings | Do not pass `--profile` / `-p` in Wave 2; Windows Terminal uses the user's default profile. |
+| `windowTarget` | None in Wave 2 | Do not persist or rely on a terminal window id. If a future implementation uses `--window`, it must remain a presentation hint and not a registry identity field. |
+
+The launcher should invoke Windows Terminal explicitly when applying color, conceptually:
+
+```text
+wt.exe new-tab --startingDirectory <cwd> --title <terminalTitle> --tabColor <tabColor> <commandline>
+```
+
+The exact process-spawn API is an implementation detail, but the command must be constructed safely. `wt.exe` treats `;` as a command separator, and shells such as PowerShell have their own escaping rules before arguments reach `wt.exe`. Launch/relaunch code should prefer argument-vector process creation and must not interpolate registry title, cwd, kickoff prompt, or command text into an unescaped shell string.
+
+#### Fallback and observability
+
+Terminal color failure is not a launch failure. The relaunch flow falls back to an uncolored terminal at the recorded `cwd` when:
+
+- the environment is not local Windows;
+- the target terminal host is not Windows Terminal;
+- `wt.exe` is unavailable, too old, or exits with an argument error;
+- the registry color is absent, malformed, an unknown palette token, or not representable as `#RGB` / `#RRGGBB`;
+- command construction cannot be made safe for the chosen caller boundary;
+- applying color would require recoloring an already-open tab.
+
+The relaunch path should record a local diagnostic event for bridge attempts with at least: whether color was requested, whether it was normalized, whether Windows Terminal was attempted, whether color was applied or skipped, and the fallback reason. This diagnostic is for builder troubleshooting; absence of tab color is not surfaced as a user-facing error.
+
+The bridge is fire-and-forget for Wave 2. It does not enumerate existing tabs, focus a specific prior tab, persist terminal handles, or guarantee idempotency. Repeated relaunches may create duplicate tabs until a future terminal-handle model exists.
 
 ### Operator Presence
 

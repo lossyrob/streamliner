@@ -14,6 +14,7 @@ references_decisions:
   - 3
   - 4
   - 5
+  - 6
 ---
 
 # Streamliner — Design
@@ -56,6 +57,7 @@ Streamliner helps a single builder direct many concurrent AI coding agent workst
 | 003 | [PAW control state as the workflow progression source](decisions/003-paw-control-state-integration.md) | accepted | 2026-04-20 |
 | 004 | [Session registry as the primary session surface](decisions/004-session-registry-primary-surface.md) | accepted | 2026-04-21 |
 | 005 | [Session registry storage and identity model](decisions/005-session-registry-storage-and-identity.md) | accepted | 2026-04-21 |
+| 006 | [Terminal color as optional launch-time projection](decisions/006-terminal-color-launch-time-projection.md) | accepted | 2026-04-27 |
 
 ## Open questions
 
