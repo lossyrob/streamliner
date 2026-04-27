@@ -1179,6 +1179,24 @@ body,
   font-weight: 600;
 }
 
+a.sl-session-row-context-chip,
+a.sl-session-context-ref {
+  text-decoration: none;
+}
+
+.sl-session-row-context-chip.linkable,
+.sl-session-context-ref.linkable {
+  cursor: pointer;
+}
+
+.sl-session-row-context-chip.linkable:hover,
+.sl-session-row-context-chip.linkable:focus-visible,
+.sl-session-context-ref.linkable:hover,
+.sl-session-context-ref.linkable:focus-visible {
+  border-color: var(--sl-accent);
+  text-decoration: underline;
+}
+
 .sl-session-row-path {
   font-family: var(--sl-mono);
   font-size: 12px;

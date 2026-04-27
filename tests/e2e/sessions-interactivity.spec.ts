@@ -105,6 +105,15 @@ function buildTrustedSession(
         lastSeenAt: "2026-04-24T22:50:00.000Z",
         source: "gh",
       },
+      {
+        type: "issue",
+        repo: null,
+        number: 13,
+        url: null,
+        firstSeenAt: "2026-04-24T22:51:00.000Z",
+        lastSeenAt: "2026-04-24T22:51:00.000Z",
+        source: "user",
+      },
     ],
     derivedContextUpdatedAt: "2026-04-24T22:55:00.000Z",
     derivedContextEventsOffset: 1200,
@@ -254,6 +263,56 @@ test("session cards and detail view copy restart commands and session ids", asyn
     expectedRestartCommand,
     expectedRestartCommand,
   ]);
+});
+
+test("GitHub ref chips link to issues and PRs without opening the card", async ({
+  page,
+}) => {
+  await mockSessionsApi(page);
+
+  await page.goto("/?view=sessions");
+
+  const row = page.getByRole("button", { name: /Follow Paw-Lite Process/ });
+  await expect(row).toBeVisible();
+
+  const prLink = page.getByRole("link", { name: "Open PR #14 in GitHub" });
+  await expect(prLink).toHaveAttribute(
+    "href",
+    "https://github.com/lossyrob/streamliner/pull/14",
+  );
+  await expect(prLink).toHaveAttribute("target", "_blank");
+
+  const issueLink = page.getByRole("link", { name: "Open Issue #13 in GitHub" });
+  await expect(issueLink).toHaveAttribute(
+    "href",
+    "https://github.com/lossyrob/streamliner/issues/13",
+  );
+  await expect(issueLink).toHaveAttribute("target", "_blank");
+
+  await page.evaluate(() => {
+    const link = document.querySelector<HTMLAnchorElement>(
+      'a[aria-label="Open PR #14 in GitHub"]',
+    );
+    if (!link) {
+      throw new Error("Expected PR link to be rendered.");
+    }
+    link.addEventListener("click", (event) => event.preventDefault(), {
+      once: true,
+    });
+    link.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+  });
+  await expect(page.getByRole("dialog")).toBeHidden();
+
+  await row.click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("link", { name: "Open PR #14 in GitHub" })).toHaveAttribute(
+    "href",
+    "https://github.com/lossyrob/streamliner/pull/14",
+  );
+  await expect(
+    dialog.getByRole("link", { name: "Open Issue #13 in GitHub" }),
+  ).toHaveAttribute("href", "https://github.com/lossyrob/streamliner/issues/13");
 });
 
 test("session color quick-pick closes immediately and Done saves without refetch", async ({

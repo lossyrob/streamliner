@@ -52,6 +52,7 @@ interface SessionDraft {
 }
 
 type SaveState = "idle" | "saving" | "saved" | "error";
+type DerivedGithubRef = SessionRegistryListItem["derivedGithubRefs"][number];
 
 function draftFromSession(session: SessionRegistryListItem): SessionDraft {
   return {
@@ -711,9 +712,96 @@ function displayWorktree(session: SessionRegistryListItem): string | null {
   return session.derivedWorktreePath ?? null;
 }
 
-function githubRefLabel(ref: SessionRegistryListItem["derivedGithubRefs"][number]): string {
+function githubRefLabel(ref: DerivedGithubRef): string {
   const prefix = ref.type === "pr" ? "PR" : ref.type === "issue" ? "Issue" : "GitHub";
   return `${prefix} #${ref.number}`;
+}
+
+function githubRefRepo(ref: DerivedGithubRef, session: SessionRegistryListItem): string | null {
+  return ref.repo ?? session.repo;
+}
+
+function normalizeGithubRepoForUrl(repo: string | null): string | null {
+  const trimmed = repo?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const match = trimmed.match(/^([\w.-]+)\/([\w.-]+)$/);
+  if (!match) {
+    return null;
+  }
+  return `${encodeURIComponent(match[1])}/${encodeURIComponent(match[2])}`;
+}
+
+function safeGithubRefUrl(url: string | null): string | null {
+  if (!url) {
+    return null;
+  }
+  try {
+    const parsed = new URL(url);
+    if (
+      (parsed.protocol === "https:" || parsed.protocol === "http:") &&
+      parsed.hostname.toLowerCase() === "github.com" &&
+      /^\/[\w.-]+\/[\w.-]+\/(?:pull|issues)\/\d+\/?$/i.test(parsed.pathname)
+    ) {
+      return parsed.href;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function githubRefUrl(ref: DerivedGithubRef, session: SessionRegistryListItem): string | null {
+  const explicitUrl = safeGithubRefUrl(ref.url);
+  if (explicitUrl) {
+    return explicitUrl;
+  }
+  if (ref.type !== "pr" && ref.type !== "issue") {
+    return null;
+  }
+  const repo = normalizeGithubRepoForUrl(githubRefRepo(ref, session));
+  if (!repo) {
+    return null;
+  }
+  const segment = ref.type === "pr" ? "pull" : "issues";
+  return `https://github.com/${repo}/${segment}/${ref.number}`;
+}
+
+interface GithubRefChipProps {
+  refItem: DerivedGithubRef;
+  session: SessionRegistryListItem;
+  className: string;
+  showRepo?: boolean;
+}
+
+function GithubRefChip({ refItem, session, className, showRepo = false }: GithubRefChipProps) {
+  const label = githubRefLabel(refItem);
+  const repo = githubRefRepo(refItem, session);
+  const url = githubRefUrl(refItem, session);
+  const content = (
+    <>
+      {label}
+      {showRepo && repo ? ` · ${repo}` : ""}
+    </>
+  );
+
+  if (!url) {
+    return <span className={className}>{content}</span>;
+  }
+
+  return (
+    <a
+      className={`${className} linkable`}
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label={`Open ${label} in GitHub`}
+      onClick={(event) => event.stopPropagation()}
+    >
+      {content}
+    </a>
+  );
 }
 
 type RecencyBucketKey =
@@ -1719,12 +1807,12 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                               </span>
                             )}
                             {session.derivedGithubRefs.slice(0, 3).map((ref) => (
-                              <span
+                              <GithubRefChip
                                 key={`${ref.type}-${ref.repo ?? ""}-${ref.number}`}
+                                refItem={ref}
+                                session={session}
                                 className="sl-session-row-context-chip important"
-                              >
-                                {githubRefLabel(ref)}
-                              </span>
+                              />
                             ))}
                             {session.tags.map((tag) => (
                               <span key={tag} className="sl-session-row-tag">
@@ -2126,13 +2214,13 @@ function SessionOverview({ session }: SessionOverviewProps) {
                 <dd>
                   <div className="sl-session-context-ref-list">
                     {session.derivedGithubRefs.map((ref) => (
-                      <span
+                      <GithubRefChip
                         key={`${ref.type}-${ref.repo ?? ""}-${ref.number}`}
+                        refItem={ref}
+                        session={session}
                         className="sl-session-context-ref"
-                      >
-                        {githubRefLabel(ref)}
-                        {ref.repo ? ` · ${ref.repo}` : ""}
-                      </span>
+                        showRepo
+                      />
                     ))}
                   </div>
                 </dd>
