@@ -18,8 +18,6 @@ import type {
   SessionRegistryTrustedStartSource,
 } from "./session-registry-schema";
 
-// The future runtime implementation will live under src/session-registry/.
-
 export type SessionRegistryBuilderLifecycleStatus = Exclude<
   SessionRegistryLifecycleStatus,
   "ended"
@@ -228,6 +226,17 @@ export type SessionRegistryChangeListener = (
   event: SessionRegistryChangeEvent,
 ) => void;
 
+/**
+ * Consumer-facing registry port used by the API, UI-facing runtime, and worker
+ * seams. It deliberately exposes durable session operations and in-process
+ * change notifications only; file layout, lock recovery, discovery, signal
+ * spool draining, migration, and summarization remain concrete
+ * SessionRegistryFileStore/runtime concerns behind this boundary.
+ *
+ * The current production binding is file-backed. A future alternate store
+ * should either implement this shape directly or provide an adapter rather than
+ * leaking file-store-specific helpers into consumers.
+ */
 export interface SessionRegistryStore {
   listSessions(options?: SessionRegistryListOptions): SessionRegistryListItem[];
   getSession(id: string): SessionRegistryRecord | null;
