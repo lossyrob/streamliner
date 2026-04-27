@@ -227,6 +227,59 @@ async function readClipboardWrites(page: Page): Promise<string[]> {
   ]);
 }
 
+test("sessions API handles malformed JSON and persists create, reload, archive, delete", async ({
+  page,
+  request,
+}) => {
+  const malformedResponse = await request.post("/api/sessions", {
+    data: Buffer.from("{"),
+    headers: { "Content-Type": "application/json" },
+  });
+  expect(malformedResponse.status()).toBe(400);
+  await expect(malformedResponse.json()).resolves.toEqual({
+    error: "Malformed JSON request body.",
+  });
+
+  const title = `Unmocked smoke ${Date.now()}`;
+  let createdId: string | null = null;
+  try {
+    const createResponse = await request.post("/api/sessions", {
+      data: {
+        title,
+        cwd: "C:\\streamliner-e2e",
+        origin: { kind: "manual" },
+      },
+    });
+    expect(createResponse.status()).toBe(200);
+    createdId = ((await createResponse.json()) as { id: string }).id;
+
+    await page.goto("/?view=sessions");
+    const row = page.getByRole("button", { name: new RegExp(title) });
+    await expect(row).toBeVisible();
+
+    await page.reload();
+    await expect(row).toBeVisible();
+
+    const archiveResponse = await request.post(`/api/sessions/${createdId}/archive`);
+    expect(archiveResponse.status()).toBe(200);
+    await page.reload();
+    await expect(row).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Show archived" }).click();
+    await expect(row).toBeVisible();
+
+    const deleteResponse = await request.delete(`/api/sessions/${createdId}`);
+    expect(deleteResponse.status()).toBe(204);
+    createdId = null;
+    await page.reload();
+    await expect(row).toHaveCount(0);
+  } finally {
+    if (createdId) {
+      await request.delete(`/api/sessions/${createdId}`);
+    }
+  }
+});
+
 test("session cards and detail view copy restart commands and session ids", async ({
   page,
 }) => {

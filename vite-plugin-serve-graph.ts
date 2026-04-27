@@ -173,6 +173,10 @@ function registerApiMiddleware(
           return;
         }
       } catch (err: unknown) {
+        if (err instanceof SyntaxError) {
+          sendJson(res, 400, { error: "Malformed JSON request body." });
+          return;
+        }
         sendJson(res, 500, { error: String(err) });
         return;
       }
