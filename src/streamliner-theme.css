@@ -1034,44 +1034,6 @@ body,
   outline-offset: 2px;
 }
 
-.sl-session-row-signal {
-  display: grid;
-  grid-template-columns: auto minmax(160px, 1fr) auto;
-  gap: 12px;
-  align-items: center;
-  min-height: 30px;
-  padding: 5px 14px;
-  border-bottom: 1px solid var(--sl-card-border);
-  background:
-    radial-gradient(circle at 10% 50%, rgba(29, 110, 220, 0.08), transparent 18rem),
-    rgba(16, 34, 60, 0.025);
-}
-
-.sl-session-row-signal.working {
-  background:
-    radial-gradient(circle at 12% 50%, rgba(18, 148, 95, 0.11), transparent 18rem),
-    rgba(18, 148, 95, 0.055);
-}
-
-.sl-session-row-signal.waiting {
-  background:
-    linear-gradient(
-      100deg,
-      rgba(176, 120, 8, 0.035) 0%,
-      rgba(176, 120, 8, 0.13) 28%,
-      rgba(255, 188, 74, 0.18) 48%,
-      rgba(176, 120, 8, 0.08) 68%,
-      rgba(176, 120, 8, 0.035) 100%
-    ),
-    rgba(176, 120, 8, 0.045);
-  background-size: 260% 100%, auto;
-  animation: sl-session-waiting-drift 10s ease-in-out infinite alternate;
-}
-
-.sl-session-row-signal.inactive {
-  background: rgba(111, 128, 148, 0.055);
-}
-
 .sl-session-row-signal-label {
   display: inline-flex;
   align-items: center;
@@ -1097,6 +1059,75 @@ body,
 .sl-session-row-signal-label.inactive {
   background: rgba(20, 60, 130, 0.05);
   color: var(--sl-text-muted);
+}
+
+.sl-session-row-status-dock {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  align-content: center;
+  gap: 8px;
+  overflow: hidden;
+  border: 1px solid var(--sl-card-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background:
+    radial-gradient(circle at 12% 50%, rgba(29, 110, 220, 0.08), transparent 9rem),
+    rgba(16, 34, 60, 0.025);
+}
+
+.sl-session-row-status-dock.working {
+  background:
+    radial-gradient(circle at 12% 50%, rgba(18, 148, 95, 0.12), transparent 9rem),
+    rgba(18, 148, 95, 0.045);
+}
+
+.sl-session-row-status-dock.waiting {
+  background:
+    linear-gradient(
+      100deg,
+      rgba(176, 120, 8, 0.035) 0%,
+      rgba(176, 120, 8, 0.13) 28%,
+      rgba(255, 188, 74, 0.18) 48%,
+      rgba(176, 120, 8, 0.08) 68%,
+      rgba(176, 120, 8, 0.035) 100%
+    ),
+    rgba(176, 120, 8, 0.045);
+  background-size: 260% 100%, auto;
+  animation: sl-session-waiting-drift 10s ease-in-out infinite alternate;
+}
+
+.sl-session-row-status-dock.inactive {
+  background: rgba(111, 128, 148, 0.055);
+}
+
+.sl-session-row-status-dock-head,
+.sl-session-row-status-dock-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sl-session-row-status-dock-foot {
+  color: var(--sl-text-dim);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.sl-session-row-status-dock-foot span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sl-session-row-status-dock-foot span:last-child {
+  text-align: right;
+}
+
+.sl-session-row-status-dock-action {
+  justify-self: start;
 }
 
 .sl-session-row-signal-track {
@@ -1129,7 +1160,7 @@ body,
   transform: translateY(-50%);
 }
 
-.sl-session-row-signal.working .sl-session-row-signal-track::before {
+.sl-session-row-status-dock.working .sl-session-row-signal-track::before {
   background: linear-gradient(
     90deg,
     rgba(18, 148, 95, 0.08),
@@ -1139,7 +1170,7 @@ body,
   box-shadow: 0 0 10px rgba(18, 148, 95, 0.18);
 }
 
-.sl-session-row-signal.waiting .sl-session-row-signal-track::before {
+.sl-session-row-status-dock.waiting .sl-session-row-signal-track::before {
   background: linear-gradient(
     90deg,
     rgba(176, 120, 8, 0.12),
@@ -1149,7 +1180,7 @@ body,
   box-shadow: 0 0 5px rgba(176, 120, 8, 0.1);
 }
 
-.sl-session-row-signal.inactive .sl-session-row-signal-track::before {
+.sl-session-row-status-dock.inactive .sl-session-row-signal-track::before {
   background: rgba(111, 128, 148, 0.22);
 }
 
@@ -1158,7 +1189,7 @@ body,
   top: 50%;
   left: 0;
   z-index: 1;
-  width: clamp(72px, 18%, 160px);
+  width: clamp(48px, 28%, 86px);
   height: 3px;
   border-radius: 999px;
   background: linear-gradient(
@@ -1176,12 +1207,12 @@ body,
   will-change: transform, opacity;
 }
 
-.sl-session-row-signal.working .sl-session-row-signal-pulse {
+.sl-session-row-status-dock.working .sl-session-row-signal-pulse {
   animation: sl-session-beam-sweep 2.7s cubic-bezier(0.42, 0, 0.2, 1) infinite;
 }
 
-.sl-session-row-signal.waiting .sl-session-row-signal-pulse,
-.sl-session-row-signal.inactive .sl-session-row-signal-pulse {
+.sl-session-row-status-dock.waiting .sl-session-row-signal-pulse,
+.sl-session-row-status-dock.inactive .sl-session-row-signal-pulse {
   display: none;
 }
 
@@ -1196,10 +1227,10 @@ body,
 
 .sl-session-row-body {
   display: grid;
-  grid-template-columns: 6px minmax(0, 1fr) minmax(100px, 160px) 124px minmax(120px, auto);
+  grid-template-columns: 6px minmax(0, 1fr) minmax(100px, 160px) minmax(210px, 240px);
   gap: 18px;
-  align-items: center;
-  padding: 10px 16px 12px;
+  align-items: stretch;
+  padding: 12px 16px;
 }
 
 .sl-session-row-stripe {
@@ -1435,7 +1466,7 @@ a.sl-session-context-ref {
     opacity: 0.9;
   }
   100% {
-    transform: translate3d(620%, -50%, 0) scaleX(0.86);
+    transform: translate3d(520%, -50%, 0) scaleX(0.86);
     opacity: 0;
   }
 }
@@ -1949,33 +1980,28 @@ a.sl-session-context-ref {
 
 @media (max-width: 1000px) {
   .sl-session-row-body {
-    grid-template-columns: 6px minmax(0, 1fr) minmax(110px, auto);
+    grid-template-columns: 6px minmax(0, 1fr) minmax(210px, 240px);
   }
-  .sl-session-row-path,
-  .sl-session-row-activity {
+  .sl-session-row-path {
     display: none;
   }
 }
 
 @media (max-width: 720px) {
-  .sl-session-row-signal {
-    grid-template-columns: minmax(0, 1fr);
-  }
   .sl-session-row-signal-detail {
     display: none;
   }
   .sl-session-row-body {
     grid-template-columns: 6px minmax(0, 1fr);
   }
-  .sl-session-row-actions {
+  .sl-session-row-status-dock {
     grid-column: 2;
-    justify-content: flex-start;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sl-session-row-signal.working .sl-session-row-signal-pulse,
-  .sl-session-row-signal.waiting {
+  .sl-session-row-status-dock.working .sl-session-row-signal-pulse,
+  .sl-session-row-status-dock.waiting {
     animation: none;
   }
 }

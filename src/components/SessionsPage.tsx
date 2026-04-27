@@ -629,6 +629,23 @@ function activitySignalClass(status: SessionRegistryListItem["activityStatus"]):
   }
 }
 
+function activityStatusHint(status: SessionRegistryListItem["activityStatus"]): string {
+  switch (status) {
+    case "working":
+      return "agent active";
+    case "waiting_for_input":
+      return "assistant done";
+    case "interrupted":
+      return "resumable";
+    case "exited":
+      return "ended";
+    case "unknown":
+      return "activity unknown";
+    default:
+      return "activity unknown";
+  }
+}
+
 function getActivityStatusDescription(session: SessionRegistryListItem): string {
   switch (session.activityStatus) {
     case "working":
@@ -1745,6 +1762,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                     const rowSessionId = getDisplaySessionId(session);
                     const rowRestartCommand = buildRestartCommand(session);
                     const activityLabel = getActivityStatusLabel(session);
+                    const activityHint = activityStatusHint(session.activityStatus);
                     const signalClass = activitySignalClass(session.activityStatus);
                     const signalDetail = trustedStatus ?? observedStatus ?? session.originKind;
                     const rowDetail =
@@ -1771,15 +1789,6 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                           }
                         }}
                       >
-                        <div className={`sl-session-row-signal ${signalClass}`}>
-                          <span className={`sl-session-row-signal-label ${signalClass}`}>
-                            {activityLabel}
-                          </span>
-                          <span className="sl-session-row-signal-track" aria-hidden="true">
-                            <span className="sl-session-row-signal-pulse" />
-                          </span>
-                          <span className="sl-session-row-signal-detail">{signalDetail}</span>
-                        </div>
                         <div className="sl-session-row-body">
                           <span
                             className="sl-session-row-stripe"
@@ -1854,16 +1863,30 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                               {leafName(rowWorktree ?? session.cwd) ?? session.cwd}
                             </span>
                           </div>
-                          <div className="sl-session-row-activity">
-                            <span className="sl-session-row-activity-label">last seen</span>
-                            <span>{formatTimestamp(session.lastSeenAt)}</span>
-                          </div>
-                          <div className="sl-session-row-actions">
+                          <div
+                            className={`sl-session-row-status-dock ${signalClass}`}
+                            aria-label={`${activityLabel} status`}
+                          >
+                            <div className="sl-session-row-status-dock-head">
+                              <span className={`sl-session-row-signal-label ${signalClass}`}>
+                                {activityLabel}
+                              </span>
+                              <span className="sl-session-row-signal-detail">
+                                {signalDetail}
+                              </span>
+                            </div>
+                            <span className="sl-session-row-signal-track" aria-hidden="true">
+                              <span className="sl-session-row-signal-pulse" />
+                            </span>
+                            <div className="sl-session-row-status-dock-foot">
+                              <span>{activityHint}</span>
+                              <span>{formatTimestamp(session.lastSeenAt)}</span>
+                            </div>
                             <CopyButton
                               text={rowRestartCommand}
                               label="Copy restart command"
                               copiedLabel="Copied restart command"
-                              className="compact"
+                              className="compact sl-session-row-status-dock-action"
                             >
                               Copy restart
                             </CopyButton>
