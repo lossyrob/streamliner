@@ -2,6 +2,13 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 
 import type { SessionRegistryListItem, SessionRegistryPatch } from "../session-registry-contract";
 import type { SessionRegistryRecord } from "../session-registry-schema";
+import {
+  buildRestartCommand,
+  filterEndedSessions,
+  getDisplaySessionId,
+  isTrustedActiveSession,
+  isTrustedInterruptedSession,
+} from "./session-policies";
 
 const SESSION_POLL_INTERVAL_MS = 15_000;
 const SESSION_AUTOSAVE_MS = 500;
@@ -295,65 +302,11 @@ function normalizeColor(value: string): string {
   return value.trim().toLowerCase();
 }
 
-function getDisplaySessionId(session: SessionRegistryListItem): string {
-  return session.copilotSessionId ?? session.id;
-}
-
-function quotePowerShellLiteral(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`;
-}
-
-function normalizePathForPowerShell(value: string): string {
-  const trimmed = value.trim();
-  if (/^[a-zA-Z]:[\\/]/.test(trimmed) || trimmed.startsWith("//") || trimmed.startsWith("\\\\")) {
-    return trimmed.replace(/\//g, "\\");
-  }
-  return trimmed;
-}
-
-function buildRestartCommand(session: SessionRegistryListItem): string {
-  const sessionId = getDisplaySessionId(session);
-  const worktree = normalizePathForPowerShell(displayWorktree(session) ?? session.cwd);
-  const resumeCommand = `copilot --resume ${quotePowerShellLiteral(sessionId)}`;
-  if (worktree.length === 0) {
-    return resumeCommand;
-  }
-  return `Set-Location -LiteralPath ${quotePowerShellLiteral(worktree)}; ${resumeCommand}`;
-}
-
 async function copyTextToClipboard(text: string): Promise<void> {
   if (!navigator.clipboard?.writeText) {
     throw new Error("Clipboard copy is not available in this browser.");
   }
   await navigator.clipboard.writeText(text);
-}
-
-function isTrustedActiveSession(session: SessionRegistryListItem): boolean {
-  return (
-    hasTrustedSignal(session) &&
-    session.trustedEndedAt === null &&
-    session.copilotProcessState === "live"
-  );
-}
-
-function isTrustedInterruptedSession(session: SessionRegistryListItem): boolean {
-  return (
-    hasTrustedSignal(session) &&
-    session.trustedStartedAt !== null &&
-    session.trustedEndedAt === null &&
-    session.copilotProcessState !== "live"
-  );
-}
-
-function isCleanlyEndedSession(session: SessionRegistryListItem): boolean {
-  if (isTrustedInterruptedSession(session)) {
-    return false;
-  }
-  return (
-    session.trustedEndedAt !== null ||
-    session.activityStatus === "exited" ||
-    session.lifecycleStatus === "ended"
-  );
 }
 
 function getRowFallbackTitle(session: SessionRegistryListItem): string {
@@ -1191,10 +1144,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
     [sessions, showAllObserved],
   );
   const endedFilteredSessions = useMemo(
-    () =>
-      showEnded
-        ? relevanceFilteredSessions
-        : relevanceFilteredSessions.filter((session) => !isCleanlyEndedSession(session)),
+    () => filterEndedSessions(relevanceFilteredSessions, showEnded),
     [relevanceFilteredSessions, showEnded],
   );
   const visibleSessions = useMemo(
@@ -1918,12 +1868,16 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                               <span>{formatTimestamp(session.lastSeenAt)}</span>
                             </div>
                             <CopyButton
-                              text={rowRestartCommand}
-                              label="Copy restart command"
+                              text={rowRestartCommand ?? ""}
+                              label={
+                                rowRestartCommand
+                                  ? "Copy restart command"
+                                  : "Restart unavailable; no Copilot session ID"
+                              }
                               copiedLabel="Copied restart command"
                               className="compact sl-session-row-status-dock-action"
                             >
-                              Copy restart
+                              {rowRestartCommand ? "Copy restart" : "No restart"}
                             </CopyButton>
                           </div>
                         </div>
@@ -2241,11 +2195,15 @@ function SessionOverview({ session }: SessionOverviewProps) {
         <h3 className="sl-session-overview-heading">Restart</h3>
         <div className="sl-session-quick-actions">
           <CopyButton
-            text={restartCommand}
-            label="Copy restart command"
+            text={restartCommand ?? ""}
+            label={
+              restartCommand
+                ? "Copy restart command"
+                : "Restart unavailable; no Copilot session ID"
+            }
             copiedLabel="Copied restart command"
           >
-            Copy restart command
+            {restartCommand ? "Copy restart command" : "Restart unavailable"}
           </CopyButton>
           <CopyButton
             text={displaySessionId}
@@ -2255,7 +2213,9 @@ function SessionOverview({ session }: SessionOverviewProps) {
             Copy session ID
           </CopyButton>
         </div>
-        <code className="sl-session-command-preview">{restartCommand}</code>
+        <code className="sl-session-command-preview">
+          {restartCommand ?? "No Copilot session ID recorded. Copy the registry ID instead."}
+        </code>
       </section>
 
       <section className="sl-session-overview-section narrative">
