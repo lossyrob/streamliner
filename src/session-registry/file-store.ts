@@ -37,6 +37,7 @@ import {
   SESSION_REGISTRY_OBSERVED_SESSION_KINDS,
   SESSION_REGISTRY_ORIGIN_KINDS,
   SESSION_REGISTRY_SCHEMA_VERSION,
+  SESSION_REGISTRY_TITLE_SOURCES,
   SESSION_REGISTRY_TRUSTED_END_REASONS,
   SESSION_REGISTRY_TRUSTED_EXECUTION_KINDS,
   SESSION_REGISTRY_TRUSTED_SIGNAL_SOURCES,
@@ -54,6 +55,7 @@ import {
   type SessionRegistryOrigin,
   type SessionRegistryOriginKind,
   type SessionRegistryRecord,
+  type SessionRegistryTitleSource,
   type SessionRegistryTrustedEndReason,
   type SessionRegistryTrustedExecutionKind,
   type SessionRegistryTrustedSignalSource,
@@ -442,6 +444,10 @@ function isLifecycleStatus(value: string): value is SessionRegistryLifecycleStat
   return SESSION_REGISTRY_LIFECYCLE_STATUSES.includes(value as SessionRegistryLifecycleStatus);
 }
 
+function isTitleSource(value: string): value is SessionRegistryTitleSource {
+  return SESSION_REGISTRY_TITLE_SOURCES.includes(value as SessionRegistryTitleSource);
+}
+
 function isAiSummaryStatus(value: string): value is SessionRegistryAiSummaryStatus {
   return SESSION_REGISTRY_AI_SUMMARY_STATUSES.includes(value as SessionRegistryAiSummaryStatus);
 }
@@ -547,6 +553,21 @@ function normalizeAiSummaryStatus(
     throw new Error(`Unsupported ${fieldName} "${status}".`);
   }
   return status;
+}
+
+function normalizeTitleSource(
+  value: unknown,
+  fieldName: string,
+  fallback: SessionRegistryTitleSource,
+): SessionRegistryTitleSource {
+  if (value === undefined || value === null) {
+    return fallback;
+  }
+  const source = ensureString(value, fieldName);
+  if (!isTitleSource(source)) {
+    throw new Error(`Unsupported ${fieldName} "${source}".`);
+  }
+  return source;
 }
 
 function normalizeActivityStatus(
@@ -678,6 +699,40 @@ function normalizeGithubRefs(value: unknown, fieldName: string): SessionRegistry
     throw new Error(`Expected ${fieldName} to be an array.`);
   }
   return value.map((entry, index) => normalizeGithubRef(entry, `${fieldName}[${index}]`));
+}
+
+function inferLegacyTitleSource(value: {
+  title: string;
+  cwd: string;
+  repo: string | null;
+  copilotSessionId: string | null;
+  originKind: SessionRegistryOriginKind;
+  observedSessionKind: SessionRegistryObservedSessionKind | null;
+  trustedSignalSource: SessionRegistryTrustedSignalSource | null;
+}): SessionRegistryTitleSource {
+  if (value.originKind === "manual" || value.originKind === "launched") {
+    return "user";
+  }
+  if (!value.trustedSignalSource && value.originKind !== "observed") {
+    return "user";
+  }
+
+  const title = value.title.trim();
+  const candidates = new Set<string>();
+  const repoName = value.repo?.split("/").at(-1)?.trim();
+  const cwdName = basename(value.cwd).trim();
+  const helperSuffix =
+    value.observedSessionKind === "helper" ? " helper session" : "";
+  for (const candidate of [repoName, cwdName, value.copilotSessionId]) {
+    if (candidate && candidate.trim().length > 0) {
+      candidates.add(`${candidate.trim()}${helperSuffix}`);
+    }
+  }
+  if (value.observedSessionKind === "helper") {
+    candidates.add("AI helper session");
+  }
+
+  return candidates.has(title) ? "auto" : "user";
 }
 
 export function parseSessionRegistryPatch(value: unknown): SessionRegistryPatch {
@@ -944,6 +999,27 @@ function validateStoredRecord(
     schemaVersion: SESSION_REGISTRY_SCHEMA_VERSION,
     id,
     title: ensureString(rawRecord.title, `${filePath}.title`),
+    titleSource: normalizeTitleSource(
+      rawRecord.titleSource,
+      `${filePath}.titleSource`,
+      inferLegacyTitleSource({
+        title: typeof rawRecord.title === "string" ? rawRecord.title : "",
+        cwd: typeof rawRecord.cwd === "string" ? rawRecord.cwd : "",
+        repo: typeof rawRecord.repo === "string" ? rawRecord.repo : null,
+        copilotSessionId,
+        originKind: origin.kind,
+        observedSessionKind:
+          typeof rawRecord.observedSessionKind === "string" &&
+          isObservedSessionKind(rawRecord.observedSessionKind)
+            ? rawRecord.observedSessionKind
+            : null,
+        trustedSignalSource:
+          typeof rawRecord.trustedSignalSource === "string" &&
+          isTrustedSignalSource(rawRecord.trustedSignalSource)
+            ? rawRecord.trustedSignalSource
+            : null,
+      }),
+    ),
     description:
       typeof rawRecord.description === "string" ? rawRecord.description : "",
     color: ensureOptionalString(rawRecord.color, `${filePath}.color`),
@@ -1096,6 +1172,30 @@ function validateIndexEntry(
   return {
     id: ensureString(rawEntry.id, `${fieldName}.id`),
     title: ensureString(rawEntry.title, `${fieldName}.title`),
+    titleSource: normalizeTitleSource(
+      rawEntry.titleSource,
+      `${fieldName}.titleSource`,
+      inferLegacyTitleSource({
+        title: typeof rawEntry.title === "string" ? rawEntry.title : "",
+        cwd: typeof rawEntry.cwd === "string" ? rawEntry.cwd : "",
+        repo: typeof rawEntry.repo === "string" ? rawEntry.repo : null,
+        copilotSessionId:
+          typeof rawEntry.copilotSessionId === "string"
+            ? rawEntry.copilotSessionId
+            : null,
+        originKind,
+        observedSessionKind:
+          typeof rawEntry.observedSessionKind === "string" &&
+          isObservedSessionKind(rawEntry.observedSessionKind)
+            ? rawEntry.observedSessionKind
+            : null,
+        trustedSignalSource:
+          typeof rawEntry.trustedSignalSource === "string" &&
+          isTrustedSignalSource(rawEntry.trustedSignalSource)
+            ? rawEntry.trustedSignalSource
+            : null,
+      }),
+    ),
     description: ensureStringField(rawEntry.description, `${fieldName}.description`),
     lifecycleStatus,
     lastSeenAt: ensureOptionalString(rawEntry.lastSeenAt, `${fieldName}.lastSeenAt`),
@@ -1243,6 +1343,7 @@ function buildIndex(records: Iterable<StoredSessionRegistryRecord>): SessionRegi
   const entries = [...records].map<SessionRegistryIndexEntry>((record) => ({
     id: record.id,
     title: record.title,
+    titleSource: record.titleSource,
     description: record.description,
     lifecycleStatus: record.lifecycleStatus,
     lastSeenAt: record.lastSeenAt,
@@ -1432,6 +1533,8 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
     const nextRepo = validatedInput.repo ?? null;
     const nextBranch = validatedInput.branch ?? null;
     let nextTitle = validatedInput.title;
+    let nextTitleSource: SessionRegistryTitleSource =
+      validatedInput.origin.kind === "observed" ? "auto" : "user";
     let nextDescription = validatedInput.description ?? "";
     let nextColor = validatedInput.color ?? null;
     let nextTags = normalizeTags(validatedInput.tags);
@@ -1467,7 +1570,9 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
           targetId;
         latestRecord = records.get(targetId);
         if (latestRecord) {
-          nextTitle = latestRecord.title;
+          nextTitleSource = latestRecord.titleSource;
+          nextTitle =
+            latestRecord.titleSource === "auto" ? validatedInput.title : latestRecord.title;
           nextDescription = latestRecord.description;
           nextColor = latestRecord.color;
           nextTags = cloneValue(latestRecord.tags);
@@ -1537,6 +1642,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
             ? validatedInput.trustedLastPromptLength ?? null
             : latestRecord?.trustedLastPromptLength ?? null;
       } else {
+        nextTitleSource = "user";
         nextObservedSessionKind = null;
         nextCopilotProcessState = null;
         nextCopilotProcessId = null;
@@ -1558,6 +1664,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         schemaVersion: SESSION_REGISTRY_SCHEMA_VERSION,
         id: targetId,
         title: nextTitle,
+        titleSource: nextTitleSource,
         description: nextDescription,
         color: nextColor,
         cwd: validatedInput.cwd,
@@ -1623,6 +1730,9 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       observation.copilotSessionId,
       "observation.copilotSessionId",
     );
+    const title = Object.prototype.hasOwnProperty.call(observation, "title")
+      ? ensureString(observation.title, "observation.title")
+      : undefined;
     const cwd = ensureString(observation.cwd, "observation.cwd");
     const repo = Object.prototype.hasOwnProperty.call(observation, "repo")
       ? ensureOptionalString(observation.repo, "observation.repo")
@@ -1757,6 +1867,11 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
 
       const nextRecord: SessionRegistryRecord = {
         ...cloneValue(existingRecord),
+        title:
+          title !== undefined && existingRecord.titleSource === "auto"
+            ? title
+            : existingRecord.title,
+        titleSource: existingRecord.titleSource,
         cwd,
         repo: repo !== undefined ? repo : existingRecord.repo,
         branch: branch !== undefined ? branch : existingRecord.branch,
@@ -1845,6 +1960,8 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       const nextRecord: SessionRegistryRecord = {
         ...cloneValue(existingRecord),
         title: validatedPatch.title ?? existingRecord.title,
+        titleSource:
+          validatedPatch.title !== undefined ? "user" : existingRecord.titleSource,
         description: validatedPatch.description ?? existingRecord.description,
         color:
           validatedPatch.color !== undefined ? validatedPatch.color : existingRecord.color,
@@ -1940,6 +2057,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         schemaVersion: SESSION_REGISTRY_SCHEMA_VERSION,
         id: targetId,
         title: (existingRecord?.title ?? cwdName) || sessionId,
+        titleSource: existingRecord?.titleSource ?? "auto",
         description:
           existingRecord?.description ??
           (executionKind === "agency" ? "Agency Copilot session" : "Copilot CLI session"),

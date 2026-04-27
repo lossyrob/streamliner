@@ -2,7 +2,10 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import type { SessionRegistryListItem } from "../session-registry-contract";
-import { getDefaultCopilotSessionStateRoot } from "./copilot-session-discovery";
+import {
+  getDefaultCopilotSessionStateRoot,
+  syncDiscoveredCopilotSessions,
+} from "./copilot-session-discovery";
 import {
   computeEventsFingerprint,
   DEFAULT_SUMMARY_MODEL,
@@ -191,6 +194,13 @@ export class SessionRegistryBackgroundWorker {
         });
       } catch (error) {
         this.logger.warn("[session-worker] trusted signal drain failed", error);
+      }
+      try {
+        syncDiscoveredCopilotSessions(this.store, this.sessionRoot);
+      } catch (error) {
+        if (!isLockedError(error)) {
+          this.logger.warn("[session-worker] Copilot session discovery failed", error);
+        }
       }
       this.indexSessionActivities();
       this.indexSessionContexts();

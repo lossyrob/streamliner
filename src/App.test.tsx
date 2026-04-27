@@ -13,6 +13,7 @@ function buildSession(
   return {
     id: "manual-session-registry",
     title: "Manual session registry",
+    titleSource: "user",
     description: "Build the local-first sessions surface and persistence layer.",
     lifecycleStatus: "active",
     lastSeenAt: null,

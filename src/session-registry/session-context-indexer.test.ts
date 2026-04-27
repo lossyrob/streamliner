@@ -27,6 +27,7 @@ function buildSession(overrides: Partial<SessionRegistryListItem> = {}): Session
   return {
     id: "context-session",
     title: "Context session",
+    titleSource: "auto",
     description: "",
     lifecycleStatus: "active",
     lastSeenAt: "2026-04-25T20:00:00.000Z",

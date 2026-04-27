@@ -17,6 +17,13 @@ export const SESSION_REGISTRY_ORIGIN_KINDS = [
 export type SessionRegistryOriginKind =
   (typeof SESSION_REGISTRY_ORIGIN_KINDS)[number];
 
+export const SESSION_REGISTRY_TITLE_SOURCES = [
+  "auto",
+  "user",
+] as const;
+export type SessionRegistryTitleSource =
+  (typeof SESSION_REGISTRY_TITLE_SOURCES)[number];
+
 export const SESSION_REGISTRY_AI_SUMMARY_STATUSES = [
   "missing",
   "pending",
@@ -129,6 +136,7 @@ export interface SessionRegistryRecord {
   schemaVersion: typeof SESSION_REGISTRY_SCHEMA_VERSION;
   id: string;
   title: string;
+  titleSource: SessionRegistryTitleSource;
   description: string;
   color: string | null;
   cwd: string;
@@ -174,6 +182,7 @@ export interface SessionRegistryRecord {
 export interface SessionRegistryIndexEntry {
   id: string;
   title: string;
+  titleSource: SessionRegistryTitleSource;
   description: string;
   lifecycleStatus: SessionRegistryLifecycleStatus;
   lastSeenAt: string | null;

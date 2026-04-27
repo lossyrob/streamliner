@@ -11,6 +11,7 @@ import type {
   SessionRegistryObservedSessionKind,
   SessionRegistryOriginKind,
   SessionRegistryRecord,
+  SessionRegistryTitleSource,
   SessionRegistryTrustedEndReason,
   SessionRegistryTrustedExecutionKind,
   SessionRegistryTrustedSignalSource,
@@ -40,6 +41,7 @@ export interface SessionRegistryListOptions {
 export interface SessionRegistryListItem {
   id: string;
   title: string;
+  titleSource: SessionRegistryTitleSource;
   description: string;
   lifecycleStatus: SessionRegistryLifecycleStatus;
   lastSeenAt: string | null;
@@ -135,6 +137,7 @@ export interface LaunchedSessionRegistryUpsertInput
 
 export interface SessionRegistryObservedLinkInput {
   copilotSessionId: string;
+  title?: string;
   cwd: string;
   repo?: string | null;
   branch?: string | null;

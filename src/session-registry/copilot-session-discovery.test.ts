@@ -108,6 +108,7 @@ describe("copilot session discovery", () => {
           id: "session-1",
           copilotSessionId: "session-1",
           title: "Follow Paw-Lite Process",
+          titleSource: "auto",
           repo: "lossyrob/streamliner",
           branch: "feature/manual-session-registry",
           lifecycleStatus: "active",
@@ -119,6 +120,7 @@ describe("copilot session discovery", () => {
           id: "session-2",
           copilotSessionId: "session-2",
           title: "Edit Presentation Spec",
+          titleSource: "auto",
           repo: "azure-data-database-platform/dbagent",
           branch: "main",
           lifecycleStatus: "ended",
@@ -146,9 +148,80 @@ describe("copilot session discovery", () => {
     expect(store.getSession("session-1")).toEqual(
       expect.objectContaining({
         title: "Custom session title",
+        titleSource: "user",
         branch: "main",
         lastSeenAt: "2026-04-23T19:00:00.000Z",
         lifecycleStatus: "ended",
+      }),
+    );
+  });
+
+  it("adopts Copilot workspace titles for trusted sessions until they are renamed", () => {
+    const registryRoot = createRootDir("streamliner-session-registry-discovery-");
+    const sessionRoot = createRootDir("streamliner-copilot-session-state-");
+    createdRoots.push(registryRoot, sessionRoot);
+    const store = new SessionRegistryFileStore({ rootDir: registryRoot });
+
+    store.recordTrustedSessionSignal({
+      event: "session.started",
+      source: "copilot-cli-hook",
+      sessionId: "trusted-planning-session",
+      timestamp: "2026-04-27T13:00:00.000Z",
+      cwd: "C:\\Users\\robemanuele\\proj\\planning",
+      repo: "lossyrob/planning",
+      branch: "main",
+      hookSource: "new",
+      executionKind: "copilot_cli",
+    });
+    expect(store.getSession("trusted-planning-session")).toEqual(
+      expect.objectContaining({
+        title: "planning",
+        titleSource: "auto",
+      }),
+    );
+
+    writeWorkspaceFile(
+      sessionRoot,
+      "trusted-planning-session",
+      [
+        "id: trusted-planning-session",
+        "cwd: C:\\Users\\robemanuele\\proj\\planning",
+        "repository: lossyrob/planning",
+        "branch: main",
+        "summary: Plan Manual Session Titles",
+        "updated_at: 2026-04-27T13:05:00.000Z",
+      ].join("\n"),
+      { active: true },
+    );
+    expect(syncDiscoveredCopilotSessions(store, sessionRoot)).toBe(1);
+    expect(store.getSession("trusted-planning-session")).toEqual(
+      expect.objectContaining({
+        title: "Plan Manual Session Titles",
+        titleSource: "auto",
+      }),
+    );
+
+    store.patchSession("trusted-planning-session", { title: "My planning terminal" });
+    writeWorkspaceFile(
+      sessionRoot,
+      "trusted-planning-session",
+      [
+        "id: trusted-planning-session",
+        "cwd: C:\\Users\\robemanuele\\proj\\planning",
+        "repository: lossyrob/planning",
+        "branch: feature/title-refresh",
+        "summary: Updated Copilot Workspace Title",
+        "updated_at: 2026-04-27T13:10:00.000Z",
+      ].join("\n"),
+      { active: true },
+    );
+
+    expect(syncDiscoveredCopilotSessions(store, sessionRoot)).toBe(1);
+    expect(store.getSession("trusted-planning-session")).toEqual(
+      expect.objectContaining({
+        title: "My planning terminal",
+        titleSource: "user",
+        branch: "feature/title-refresh",
       }),
     );
   });

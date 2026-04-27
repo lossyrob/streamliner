@@ -54,6 +54,7 @@ describe("SessionRegistryFileStore", () => {
     expect(record.schemaVersion).toBe(SESSION_REGISTRY_SCHEMA_VERSION);
     expect(record.lifecycleStatus).toBe("active");
     expect(record.origin.kind).toBe("manual");
+    expect(record.titleSource).toBe("user");
     expect(events).toEqual(["upsert"]);
     expect(store.listSessions()).toHaveLength(1);
     expect(
@@ -87,6 +88,7 @@ describe("SessionRegistryFileStore", () => {
       origin: { kind: "observed" },
       graphBinding: { workstreamId: "wave-2", nodeId: "beta-node" },
     });
+    expect(beta.titleSource).toBe("auto");
     const gamma = store.upsertSession({
       title: "Gamma",
       cwd: "C:\\gamma",
@@ -235,6 +237,7 @@ describe("SessionRegistryFileStore", () => {
     expect(rediscovered).toEqual(
       expect.objectContaining({
         title: "My custom title",
+        titleSource: "user",
         description: "Custom description",
         color: "#ff00aa",
         cwd: "C:\\repo\\worktree",
@@ -246,6 +249,42 @@ describe("SessionRegistryFileStore", () => {
           workstreamId: "custom",
           nodeId: "node-b",
         }),
+      }),
+    );
+  });
+
+  it("updates auto-managed observed titles during rediscovery", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+
+    const observed = store.upsertSession({
+      title: "planning",
+      description: "lossyrob/planning · main",
+      cwd: "C:\\repo\\planning",
+      repo: "lossyrob/planning",
+      branch: "main",
+      copilotSessionId: "copilot-auto-title",
+      lastSeenAt: "2026-04-23T12:00:00.000Z",
+      origin: { kind: "observed" },
+    });
+    expect(observed.titleSource).toBe("auto");
+
+    const rediscovered = store.upsertSession({
+      title: "Plan Session Registry Fix",
+      description: "lossyrob/planning · main",
+      cwd: "C:\\repo\\planning",
+      repo: "lossyrob/planning",
+      branch: "main",
+      copilotSessionId: "copilot-auto-title",
+      lastSeenAt: "2026-04-23T12:05:00.000Z",
+      origin: { kind: "observed" },
+    });
+
+    expect(rediscovered).toEqual(
+      expect.objectContaining({
+        title: "Plan Session Registry Fix",
+        titleSource: "auto",
       }),
     );
   });
@@ -309,6 +348,7 @@ describe("SessionRegistryFileStore", () => {
     expect(started).toEqual(
       expect.objectContaining({
         id: "trusted-session-1",
+        titleSource: "auto",
         lifecycleStatus: "active",
         observedSessionKind: "interactive",
         copilotProcessState: "live",

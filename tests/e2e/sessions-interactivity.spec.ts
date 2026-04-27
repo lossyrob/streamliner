@@ -3,6 +3,7 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 interface SessionRegistryListItem {
   id: string;
   title: string;
+  titleSource: "auto" | "user";
   description: string;
   lifecycleStatus: "active" | "paused" | "archived" | "ended";
   lastSeenAt: string | null;
@@ -58,6 +59,7 @@ function buildTrustedSession(
   return {
     id: "trusted-session",
     title: "Follow Paw-Lite Process",
+    titleSource: "user",
     description: "lossyrob/streamliner · feature/manual-session-registry",
     lifecycleStatus: "active",
     lastSeenAt: "2026-04-24T22:48:16.000Z",

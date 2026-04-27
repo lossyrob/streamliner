@@ -119,6 +119,8 @@ describe("SessionRegistryBackgroundWorker", () => {
 
     expect(store.getSession("trusted-spooled-session")).toEqual(
       expect.objectContaining({
+        title: "Trusted hook session",
+        titleSource: "auto",
         aiSummary: "Tracking a trusted hook session",
         trustedSignalSource: "copilot-cli-hook",
         trustedStartedAt: "2026-04-24T20:00:00.000Z",
@@ -247,6 +249,11 @@ describe("SessionRegistryBackgroundWorker", () => {
         { type: "assistant.turn_start", timestamp: "2026-04-26T15:02:00.000Z" },
         { type: "assistant.turn_end", timestamp: "2026-04-26T15:04:00.000Z" },
       ],
+    );
+    writeFileSync(
+      join(sessionRoot, "session-activity", `inuse.${process.pid}.lock`),
+      "",
+      "utf8",
     );
 
     const store = new SessionRegistryFileStore({ rootDir: registryRoot });

@@ -83,6 +83,7 @@ function toListItem(record: SessionRegistryRecord): SessionRegistryListItem {
   return {
     id: record.id,
     title: record.title,
+    titleSource: record.titleSource,
     description: record.description,
     lifecycleStatus: record.lifecycleStatus,
     lastSeenAt: record.lastSeenAt,
@@ -199,6 +200,7 @@ function sessionSnapshotKey(session: SessionRegistryListItem | null): string | n
   return JSON.stringify({
     id: session.id,
     title: session.title,
+    titleSource: session.titleSource,
     description: session.description,
     lifecycleStatus: session.lifecycleStatus,
     lastSeenAt: session.lastSeenAt,

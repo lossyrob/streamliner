@@ -409,7 +409,10 @@ function observationMatches(
   discovered: DiscoveredCopilotSession,
 ): boolean {
   const lifecycleStatus = getObservedLifecycleForRegistry(session, discovered);
+  const titleMatches =
+    session.titleSource !== "auto" || session.title === discovered.title;
   return (
+    titleMatches &&
     session.cwd === discovered.cwd &&
     session.repo === discovered.repo &&
     session.branch === discovered.branch &&
@@ -440,6 +443,11 @@ function isRegistryLockedError(error: unknown): boolean {
   return message.includes("locked");
 }
 
+function isRegistryNotFoundError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("does not exist");
+}
+
 export function syncDiscoveredCopilotSessions(
   store: SessionRegistryFileStore,
   sessionRoot: string = getDefaultCopilotSessionStateRoot(),
@@ -455,6 +463,9 @@ export function syncDiscoveredCopilotSessions(
       } catch (error: unknown) {
         if (isRegistryLockedError(error)) {
           return changes;
+        }
+        if (isRegistryNotFoundError(error)) {
+          continue;
         }
         throw error;
       }
@@ -485,6 +496,7 @@ export function syncDiscoveredCopilotSessions(
 
         const link: SessionRegistryObservedLinkInput = {
           copilotSessionId: observed.sessionId,
+          title: observed.title,
           cwd: observed.cwd,
           repo: observed.repo,
           branch: observed.branch,
@@ -521,6 +533,9 @@ export function syncDiscoveredCopilotSessions(
     } catch (error: unknown) {
       if (isRegistryLockedError(error)) {
         return changes;
+      }
+      if (isRegistryNotFoundError(error)) {
+        continue;
       }
       throw error;
     }

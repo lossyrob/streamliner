@@ -19,6 +19,7 @@ function buildSession(overrides: Partial<SessionRegistryListItem> = {}): Session
   return {
     id: "activity-session",
     title: "Activity session",
+    titleSource: "auto",
     description: "",
     lifecycleStatus: "active",
     lastSeenAt: "2026-04-26T15:00:00.000Z",

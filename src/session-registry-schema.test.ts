@@ -9,6 +9,7 @@ import {
   SESSION_REGISTRY_OBSERVED_SESSION_KINDS,
   SESSION_REGISTRY_ORIGIN_KINDS,
   SESSION_REGISTRY_SCHEMA_VERSION,
+  SESSION_REGISTRY_TITLE_SOURCES,
   SESSION_REGISTRY_TRUSTED_END_REASONS,
   SESSION_REGISTRY_TRUSTED_EXECUTION_KINDS,
   SESSION_REGISTRY_TRUSTED_SIGNAL_SOURCES,
@@ -31,6 +32,7 @@ function buildRecord(): SessionRegistryRecord {
     schemaVersion: SESSION_REGISTRY_SCHEMA_VERSION,
     id: "session-registry-model",
     title: "Session registry model",
+    titleSource: "user",
     description: "Design the session registry contract.",
     color: "#5b7fff",
     cwd: "C:\\Users\\robemanuele\\proj\\streamliner\\streamliner-session-registry-model",
@@ -94,6 +96,7 @@ describe("session registry schema", () => {
       "observed",
       "launched",
     ]);
+    expect(SESSION_REGISTRY_TITLE_SOURCES).toEqual(["auto", "user"]);
     expect(SESSION_REGISTRY_AI_SUMMARY_STATUSES).toEqual([
       "missing",
       "pending",
@@ -171,6 +174,7 @@ describe("session registry schema", () => {
     const listItem: SessionRegistryListItem = {
       id: record.id,
       title: record.title,
+      titleSource: record.titleSource,
       description: record.description,
       lifecycleStatus: record.lifecycleStatus,
       lastSeenAt: record.lastSeenAt,
@@ -241,6 +245,11 @@ describe("session registry schema", () => {
       attachObservedSession: (id, observation) => ({
         ...record,
         id,
+        title:
+          observation.title && record.titleSource === "auto"
+            ? observation.title
+            : record.title,
+        titleSource: record.titleSource,
         copilotSessionId: observation.copilotSessionId,
         cwd: observation.cwd,
         repo: observation.repo ?? record.repo,
@@ -309,6 +318,7 @@ describe("session registry schema", () => {
         ...record,
         id,
         title: nextPatch.title ?? record.title,
+        titleSource: nextPatch.title ? "user" : record.titleSource,
         lifecycleStatus:
           nextPatch.lifecycleStatus ?? record.lifecycleStatus,
         tags: nextPatch.tags ?? record.tags,
