@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+} from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import "./streamliner-theme.css";
@@ -292,9 +299,29 @@ function DashboardNav({
   view: DashboardView;
   onViewChange: (view: DashboardView) => void | Promise<void>;
 }) {
+  const handleBrandClick = (event: MouseEvent<HTMLAnchorElement>) => {
+    if (
+      event.defaultPrevented ||
+      event.button !== 0 ||
+      event.metaKey ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.shiftKey
+    ) {
+      return;
+    }
+    event.preventDefault();
+    void onViewChange("graph");
+  };
+
   return (
     <div className="sl-shell-nav">
-      <div className="sl-shell-brand" aria-label="Streamliner">
+      <a
+        className="sl-shell-brand"
+        href="/"
+        aria-label="Streamliner home"
+        onClick={handleBrandClick}
+      >
         <img
           className="sl-shell-brand-logo"
           src={STREAMLINER_LOGO_URL}
@@ -305,7 +332,7 @@ function DashboardNav({
           <span className="sl-shell-brand-wordmark">Streamliner</span>
           <span className="sl-shell-brand-rail" aria-hidden="true" />
         </div>
-      </div>
+      </a>
       <div className="sl-header-actions">
         <button
           className={`sl-action-btn${view === "graph" ? " active" : ""}`}

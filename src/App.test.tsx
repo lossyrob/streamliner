@@ -230,7 +230,7 @@ describe("App sessions route", () => {
   });
 
   it(
-    "renders the sessions view directly without attempting to load a graph",
+    "renders the sessions view directly and links the brand to the root view",
     async () => {
       const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
         const path = requestPath(input);
@@ -260,6 +260,22 @@ describe("App sessions route", () => {
           requestPath(input as RequestInfo | URL).startsWith("/api/graph.json"),
         ),
       ).toBe(false);
+
+      const brandLink = container.querySelector(".sl-shell-brand");
+      expect(brandLink).toBeInstanceOf(HTMLAnchorElement);
+      expect(brandLink?.getAttribute("href")).toBe("/");
+
+      act(() => {
+        (brandLink as HTMLAnchorElement).click();
+      });
+      await settle();
+
+      expect(window.location.search).toBe("");
+      expect(
+        fetchMock.mock.calls.some(([input]) =>
+          requestPath(input as RequestInfo | URL).startsWith("/api/graph.json"),
+        ),
+      ).toBe(true);
     },
     15_000,
   );

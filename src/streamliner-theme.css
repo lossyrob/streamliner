@@ -67,6 +67,14 @@ body,
   display: flex;
   align-items: center;
   gap: 13px;
+  color: inherit;
+  text-decoration: none;
+  border-radius: 999px;
+}
+
+.sl-shell-brand:focus-visible {
+  outline: 2px solid var(--sl-accent-border);
+  outline-offset: 4px;
 }
 
 .sl-shell-brand-logo {
