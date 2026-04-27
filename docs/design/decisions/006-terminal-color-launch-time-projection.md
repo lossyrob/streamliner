@@ -23,7 +23,7 @@ Treat terminal color as an **optional launch-time projection** of registry metad
 For the local Windows bridge:
 
 1. Registry `color` remains the source of truth, but the terminal bridge receives only a resolved `#RGB` or `#RRGGBB` value.
-2. Palette tokens must be resolved before crossing the terminal bridge boundary. Unknown tokens, invalid hex, and absent colors are treated as "no color".
+2. Palette tokens must be resolved before crossing the terminal bridge boundary. Unknown tokens, invalid hex, and absent colors are treated as "no color". Palette-token resolution is a shared registry presentation concern; this decision does not define the palette table, and relaunch must use the same resolver as the registry UI rather than inventing a terminal-specific mapping.
 3. Windows Terminal color is applied only when Streamliner creates a new Windows Terminal tab or pane. Streamliner does not attempt to recolor an existing tab in Wave 2.
 4. Failure to apply terminal color never changes session identity and never blocks relaunch. The fallback is an uncolored terminal opened at the recorded `cwd`.
 5. The bridge is local-Windows and Windows-Terminal-specific. Other terminal hosts, WSL, devbox, and remote contexts use the no-color fallback until they have their own explicit bridge contracts.

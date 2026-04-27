@@ -1,7 +1,7 @@
 ---
 kind: design-doc
 status: current
-last_updated: 2026-04-21
+last_updated: 2026-04-27
 update_semantics: rewrite-in-place
 authoritative_for: "Design documentation entry point, reading order, and decision log"
 scope_tags:
