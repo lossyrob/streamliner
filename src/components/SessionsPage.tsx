@@ -614,6 +614,21 @@ function activityStatusClass(status: SessionRegistryListItem["activityStatus"]):
   }
 }
 
+function activitySignalClass(status: SessionRegistryListItem["activityStatus"]): string {
+  switch (status) {
+    case "working":
+      return "working";
+    case "waiting_for_input":
+      return "waiting";
+    case "interrupted":
+    case "exited":
+    case "unknown":
+      return "inactive";
+    default:
+      return "inactive";
+  }
+}
+
 function getActivityStatusDescription(session: SessionRegistryListItem): string {
   switch (session.activityStatus) {
     case "working":
@@ -1730,6 +1745,8 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                     const rowSessionId = getDisplaySessionId(session);
                     const rowRestartCommand = buildRestartCommand(session);
                     const activityLabel = getActivityStatusLabel(session);
+                    const signalClass = activitySignalClass(session.activityStatus);
+                    const signalDetail = trustedStatus ?? observedStatus ?? session.originKind;
                     const rowDetail =
                       summary.text && summary.status !== "missing"
                         ? summary.text
@@ -1754,99 +1771,103 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                           }
                         }}
                       >
-                        <span
-                          className="sl-session-row-stripe"
-                          style={{ backgroundColor: sessionDisplayColor(session) }}
-                        />
-                        <div className="sl-session-row-main">
-                          <div className="sl-session-row-title-line">
-                            <span
-                              className={`sl-session-row-dot ${
-                                session.lifecycleStatus === "active" ? "active" : "dim"
-                              }`}
-                            />
-                            <span
-                              className="sl-session-row-swatch"
-                              style={{ backgroundColor: sessionDisplayColor(session) }}
-                              aria-hidden="true"
-                            />
-                            <span className="sl-session-row-title">{rowTitle}</span>
-                          </div>
-                          <p className="sl-session-row-summary">
-                            {rowDetail ? (
-                              rowDetail
-                            ) : (
-                              <em className="sl-session-row-summary-empty">
-                                No description yet.
-                              </em>
-                            )}
-                          </p>
-                          <div className="sl-session-row-meta">
-                            <span className="sl-session-row-repo">
-                              {session.repo ?? "(no repo)"}
-                            </span>
-                            {rowBranch && (
-                              <>
-                                <span className="sl-session-row-sep">·</span>
-                                <span className="sl-session-row-branch">{rowBranch}</span>
-                              </>
-                            )}
-                            <span className="sl-session-row-id">
-                              <span className="sl-session-row-id-label">id</span>
-                              <code>{rowSessionId}</code>
-                              <CopyButton
-                                text={rowSessionId}
-                                label={`Copy session ID ${rowSessionId}`}
-                                copiedLabel="Copied session ID"
-                                iconOnly
-                              />
-                            </span>
-                            {rowWorktree && (
-                              <span className="sl-session-row-context-chip">
-                                worktree {leafName(rowWorktree)}
-                              </span>
-                            )}
-                            {session.derivedGithubRefs.slice(0, 3).map((ref) => (
-                              <GithubRefChip
-                                key={`${ref.type}-${ref.repo ?? ""}-${ref.number}`}
-                                refItem={ref}
-                                session={session}
-                                className="sl-session-row-context-chip important"
-                              />
-                            ))}
-                            {session.tags.map((tag) => (
-                              <span key={tag} className="sl-session-row-tag">
-                                #{tag}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                        <div className="sl-session-row-path">{session.cwd}</div>
-                        <div className="sl-session-row-status">
-                          <span
-                            className={`sl-pill ${activityStatusClass(session.activityStatus)}`}
-                          >
+                        <div className={`sl-session-row-signal ${signalClass}`}>
+                          <span className={`sl-session-row-signal-label ${signalClass}`}>
                             {activityLabel}
                           </span>
-                          <span className={`sl-pill ${statusClass(session.lifecycleStatus)}`}>
-                            {session.lifecycleStatus}
+                          <span className="sl-session-row-signal-track" aria-hidden="true">
+                            <span className="sl-session-row-signal-pulse" />
                           </span>
-                          <span className="sl-session-row-origin">
-                            {trustedStatus ?? observedStatus ?? session.originKind}
-                          </span>
+                          <span className="sl-session-row-signal-detail">{signalDetail}</span>
                         </div>
-                        <div className="sl-session-row-activity">
-                          {formatTimestamp(session.lastSeenAt)}
-                        </div>
-                        <div className="sl-session-row-actions">
-                          <CopyButton
-                            text={rowRestartCommand}
-                            label="Copy restart command"
-                            copiedLabel="Copied restart command"
-                            className="compact"
-                          >
-                            Copy restart
-                          </CopyButton>
+                        <div className="sl-session-row-body">
+                          <span
+                            className="sl-session-row-stripe"
+                            style={{ backgroundColor: sessionDisplayColor(session) }}
+                          />
+                          <div className="sl-session-row-main">
+                            <div className="sl-session-row-title-line">
+                              <span
+                                className={`sl-session-row-dot ${
+                                  session.lifecycleStatus === "active" ? "active" : "dim"
+                                }`}
+                              />
+                              <span
+                                className="sl-session-row-swatch"
+                                style={{ backgroundColor: sessionDisplayColor(session) }}
+                                aria-hidden="true"
+                              />
+                              <span className="sl-session-row-title">{rowTitle}</span>
+                            </div>
+                            <p className="sl-session-row-summary">
+                              {rowDetail ? (
+                                rowDetail
+                              ) : (
+                                <em className="sl-session-row-summary-empty">
+                                  No description yet.
+                                </em>
+                              )}
+                            </p>
+                            <div className="sl-session-row-meta">
+                              <span className="sl-session-row-repo">
+                                {session.repo ?? "(no repo)"}
+                              </span>
+                              {rowBranch && (
+                                <>
+                                  <span className="sl-session-row-sep">·</span>
+                                  <span className="sl-session-row-branch">{rowBranch}</span>
+                                </>
+                              )}
+                              <span className="sl-session-row-id">
+                                <span className="sl-session-row-id-label">id</span>
+                                <code>{rowSessionId}</code>
+                                <CopyButton
+                                  text={rowSessionId}
+                                  label={`Copy session ID ${rowSessionId}`}
+                                  copiedLabel="Copied session ID"
+                                  iconOnly
+                                />
+                              </span>
+                              {rowWorktree && (
+                                <span className="sl-session-row-context-chip">
+                                  worktree {leafName(rowWorktree)}
+                                </span>
+                              )}
+                              {session.derivedGithubRefs.slice(0, 3).map((ref) => (
+                                <GithubRefChip
+                                  key={`${ref.type}-${ref.repo ?? ""}-${ref.number}`}
+                                  refItem={ref}
+                                  session={session}
+                                  className="sl-session-row-context-chip important"
+                                />
+                              ))}
+                              {session.tags.map((tag) => (
+                                <span key={tag} className="sl-session-row-tag">
+                                  #{tag}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="sl-session-row-path" title={session.cwd}>
+                            <span className="sl-session-row-path-label">folder</span>
+                            <span className="sl-session-row-path-value">
+                              {leafName(rowWorktree ?? session.cwd) ?? session.cwd}
+                            </span>
+                          </div>
+                          <div className="sl-session-row-activity">
+                            <span className="sl-session-row-activity-label">last seen</span>
+                            <span>{formatTimestamp(session.lastSeenAt)}</span>
+                          </div>
+                          <div className="sl-session-row-actions">
+                            <CopyButton
+                              text={rowRestartCommand}
+                              label="Copy restart command"
+                              copiedLabel="Copied restart command"
+                              className="compact"
+                            >
+                              Copy restart
+                            </CopyButton>
+                          </div>
                         </div>
                       </div>
                     );
