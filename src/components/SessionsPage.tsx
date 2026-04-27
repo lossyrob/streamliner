@@ -345,6 +345,17 @@ function isTrustedInterruptedSession(session: SessionRegistryListItem): boolean 
   );
 }
 
+function isCleanlyEndedSession(session: SessionRegistryListItem): boolean {
+  if (isTrustedInterruptedSession(session)) {
+    return false;
+  }
+  return (
+    session.trustedEndedAt !== null ||
+    session.activityStatus === "exited" ||
+    session.lifecycleStatus === "ended"
+  );
+}
+
 function getRowFallbackTitle(session: SessionRegistryListItem): string {
   const title = session.title.trim();
   const looksLikePrompt =
@@ -1058,6 +1069,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
   const [sessions, setSessions] = useState<SessionRegistryListItem[]>([]);
   const [query, setQuery] = useState("");
   const [showArchived, setShowArchived] = useState(false);
+  const [showEnded, setShowEnded] = useState(false);
   const [showAllObserved, setShowAllObserved] = useState(false);
   const [staleSessionDays, setStaleSessionDays] = useState(readStaleSessionDays);
   const [groupMode, setGroupMode] = useState<GroupMode>(readGroupMode);
@@ -1178,16 +1190,25 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
       showAllObserved ? sessions : sessions.filter((session) => isRelevantSession(session)),
     [sessions, showAllObserved],
   );
+  const endedFilteredSessions = useMemo(
+    () =>
+      showEnded
+        ? relevanceFilteredSessions
+        : relevanceFilteredSessions.filter((session) => !isCleanlyEndedSession(session)),
+    [relevanceFilteredSessions, showEnded],
+  );
   const visibleSessions = useMemo(
     () =>
-      relevanceFilteredSessions.filter(
+      endedFilteredSessions.filter(
         (session) => !isSessionStale(session, staleSessionDays),
       ),
-    [relevanceFilteredSessions, staleSessionDays],
+    [endedFilteredSessions, staleSessionDays],
   );
   const hiddenObservedSessionCount = sessions.length - relevanceFilteredSessions.length;
+  const hiddenEndedSessionCount =
+    relevanceFilteredSessions.length - endedFilteredSessions.length;
   const hiddenStaleSessionCount =
-    relevanceFilteredSessions.length - visibleSessions.length;
+    endedFilteredSessions.length - visibleSessions.length;
 
   const computedGroups = useMemo(
     () => groupSessions(visibleSessions, groupMode),
@@ -1631,6 +1652,12 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
             {showArchived ? "Hide archived" : "Show archived"}
           </button>
           <button
+            className={`sl-action-btn${showEnded ? " active" : ""}`}
+            onClick={() => setShowEnded((value) => !value)}
+          >
+            {showEnded ? "Hide ended" : "Show ended"}
+          </button>
+          <button
             className="sl-action-btn primary"
             onClick={() => void startCreating()}
           >
@@ -1703,6 +1730,14 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
         </div>
       )}
 
+      {hiddenEndedSessionCount > 0 && (
+        <div className="sl-sessions-filter-note">
+          Hiding {hiddenEndedSessionCount} ended session
+          {hiddenEndedSessionCount === 1 ? "" : "s"}. Interrupted / resumable sessions
+          stay visible for recovery.
+        </div>
+      )}
+
       {hiddenStaleSessionCount > 0 && (
         <div className="sl-sessions-filter-note">
           Hiding {hiddenStaleSessionCount} session
@@ -1724,6 +1759,11 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
           <div className="sl-empty-state">
             No active or recently closed Copilot CLI sessions right now. Show all observed
             to inspect older or helper sessions.
+          </div>
+        ) : endedFilteredSessions.length === 0 ? (
+          <div className="sl-empty-state">
+            No open or interrupted Copilot CLI sessions right now. Show ended to inspect
+            sessions that closed cleanly.
           </div>
         ) : visibleSessions.length === 0 ? (
           <div className="sl-empty-state">

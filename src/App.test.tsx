@@ -605,6 +605,23 @@ describe("App sessions route", () => {
         trustedEndReason: "user_exit",
         trustedExecutionKind: "agency",
       });
+      const interruptedObserved = buildSession({
+        id: "interrupted-observed",
+        title: "Interrupted observed",
+        originKind: "observed",
+        copilotSessionId: "interrupted-observed",
+        lifecycleStatus: "active",
+        lastSeenAt: new Date(now - 30 * 60 * 1000).toISOString(),
+        updatedAt: new Date(now - 30 * 60 * 1000).toISOString(),
+        observedSessionKind: "interactive",
+        copilotProcessState: "none",
+        trustedSignalSource: "copilot-cli-hook",
+        trustedStartedAt: new Date(now - 30 * 60 * 1000).toISOString(),
+        trustedEndedAt: null,
+        trustedLastSignalAt: new Date(now - 30 * 60 * 1000).toISOString(),
+        trustedStartSource: "resume",
+        trustedExecutionKind: "agency",
+      });
       const helperObserved = buildSession({
         id: "helper-observed",
         title:
@@ -635,6 +652,7 @@ describe("App sessions route", () => {
           return jsonResponse([
             activeObserved,
             closedObserved,
+            interruptedObserved,
             helperObserved,
             historicalObserved,
           ]);
@@ -653,12 +671,23 @@ describe("App sessions route", () => {
 
       const sessionList = findSessionList(container);
       expect(sessionList.textContent).toContain("Active observed");
-      expect(sessionList.textContent).toContain("Closed observed");
+      expect(sessionList.textContent).toContain("Interrupted observed");
+      expect(sessionList.textContent).not.toContain("Closed observed");
       expect(sessionList.textContent).not.toContain("Helper observed");
       expect(sessionList.textContent).not.toContain("Historical observed");
       expect(container.textContent).toContain(
         "Hiding 2 observed sessions without trusted Copilot CLI hook signals.",
       );
+      expect(container.textContent).toContain(
+        "Hiding 1 ended session. Interrupted / resumable sessions stay visible for recovery.",
+      );
+
+      act(() => {
+        findButton(container, "Show ended").click();
+      });
+      await settle();
+
+      expect(sessionList.textContent).toContain("Closed observed");
 
       act(() => {
         findButton(container, "Show all observed").click();
