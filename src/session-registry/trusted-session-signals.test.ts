@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -122,6 +122,52 @@ describe("trusted session signal spool", () => {
         trustedExecutionKind: "agency",
         trustedLastPromptLength: 588,
       }),
+    );
+  });
+
+  it("leaves signals pending when the registry is locked", () => {
+    const signalRoot = createRootDir();
+    const registryRoot = createRootDir();
+    const store = new SessionRegistryFileStore({
+      rootDir: registryRoot,
+      writeLockWaitTimeoutMs: 0,
+    });
+    const warnings: string[] = [];
+
+    writeTrustedSessionSignalSpoolFile(
+      {
+        event: "session.started",
+        source: "copilot-cli-hook",
+        sessionId: "locked-session",
+        timestamp: "2026-04-24T20:00:00.000Z",
+        cwd: "C:\\repo",
+      },
+      { rootDir: signalRoot },
+    );
+    writeFileSync(
+      join(registryRoot, "registry.lock"),
+      JSON.stringify({ pid: process.pid, acquiredAt: "2026-04-24T20:00:00.000Z" }),
+      "utf8",
+    );
+
+    expect(
+      drainTrustedSessionSignalSpool(store, {
+        rootDir: signalRoot,
+        logger: { warn: (message) => warnings.push(message) },
+      }),
+    ).toEqual({ processed: 0, failed: 0 });
+    expect(readdirSync(join(signalRoot, SESSION_REGISTRY_SIGNAL_PENDING_DIR))).toHaveLength(1);
+    expect(existsSync(join(signalRoot, SESSION_REGISTRY_SIGNAL_FAILED_DIR))).toBe(false);
+    expect(warnings[0]).toContain("registry locked; will retry");
+
+    rmSync(join(registryRoot, "registry.lock"), { force: true });
+    expect(drainTrustedSessionSignalSpool(store, { rootDir: signalRoot })).toEqual({
+      processed: 1,
+      failed: 0,
+    });
+    expect(readdirSync(join(signalRoot, SESSION_REGISTRY_SIGNAL_PENDING_DIR))).toEqual([]);
+    expect(store.getSession("locked-session")).toEqual(
+      expect.objectContaining({ lifecycleStatus: "active" }),
     );
   });
 

@@ -75,6 +75,31 @@ const SHARED_SLEEP_BUFFER = new SharedArrayBuffer(4);
 const SHARED_SLEEP_ARRAY = new Int32Array(SHARED_SLEEP_BUFFER);
 const WRITE_LOCK_WAIT_TIMEOUT_MS = 5_000;
 const WRITE_LOCK_WAIT_INTERVAL_MS = 50;
+const REGISTRY_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const RESERVED_WINDOWS_FILE_NAMES = new Set([
+  "CON",
+  "PRN",
+  "AUX",
+  "NUL",
+  "COM1",
+  "COM2",
+  "COM3",
+  "COM4",
+  "COM5",
+  "COM6",
+  "COM7",
+  "COM8",
+  "COM9",
+  "LPT1",
+  "LPT2",
+  "LPT3",
+  "LPT4",
+  "LPT5",
+  "LPT6",
+  "LPT7",
+  "LPT8",
+  "LPT9",
+]);
 const SESSION_REGISTRY_PATCH_KEYS = [
   "title",
   "description",
@@ -232,6 +257,35 @@ function ensureString(value: unknown, fieldName: string): string {
   }
 
   return value;
+}
+
+function parseRegistryId(value: unknown, fieldName: string): string {
+  const id = ensureString(value, fieldName).trim();
+  const reservedStem = id.split(".", 1)[0].toUpperCase();
+  if (
+    !REGISTRY_ID_PATTERN.test(id) ||
+    id.endsWith(".") ||
+    RESERVED_WINDOWS_FILE_NAMES.has(reservedStem)
+  ) {
+    throw new Error(`Expected ${fieldName} to be a safe registry id.`);
+  }
+  return id;
+}
+
+function parseTimestampMs(value: string, fieldName: string): number {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) {
+    throw new Error(`Expected ${fieldName} to be a valid timestamp.`);
+  }
+  return timestamp;
+}
+
+function optionalTimestampMs(value: string | null | undefined): number {
+  if (!value) {
+    return Number.NEGATIVE_INFINITY;
+  }
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
 }
 
 function ensureOptionalString(value: unknown, fieldName: string): string | null {
@@ -780,7 +834,7 @@ export function parseSessionRegistryUpsertInput(value: unknown): SessionRegistry
 
   const origin = parseInputOrigin(value.origin, "input.origin");
   const common = {
-    ...(hasOwn(value, "id") ? { id: ensureString(value.id, "input.id") } : {}),
+    ...(hasOwn(value, "id") ? { id: parseRegistryId(value.id, "input.id") } : {}),
     title: ensureString(value.title, "input.title"),
     ...(hasOwn(value, "description")
       ? { description: ensureStringField(value.description, "input.description") }
@@ -968,7 +1022,7 @@ function validateStoredRecord(
     );
   }
 
-  const id = ensureString(rawRecord.id, `${filePath}.id`);
+  const id = parseRegistryId(rawRecord.id, `${filePath}.id`);
   const expectedFileName = `${id}${ENTRY_EXTENSION}`;
   if (basename(filePath) !== expectedFileName) {
     throw new Error(
@@ -1419,6 +1473,9 @@ function matchesText(
     | "description"
     | "aiSummary"
     | "tags"
+    | "cwd"
+    | "repo"
+    | "branch"
     | "derivedBranch"
     | "derivedWorktreePath"
     | "derivedGithubRefs"
@@ -1434,6 +1491,9 @@ function matchesText(
     record.title,
     record.description,
     record.aiSummary ?? "",
+    record.cwd,
+    record.repo ?? "",
+    record.branch ?? "",
     record.derivedBranch ?? "",
     record.derivedWorktreePath ?? "",
     ...refs,
@@ -2009,6 +2069,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
     const sessionId = ensureString(input.sessionId, "signal.sessionId");
     const cwd = ensureString(input.cwd, "signal.cwd");
     const timestamp = ensureString(input.timestamp, "signal.timestamp");
+    const signalTime = parseTimestampMs(timestamp, "signal.timestamp");
     const signalSource = normalizeTrustedSignalSource(input.source, "signal.source");
     if (!signalSource) {
       throw new Error("Trusted session signal requires a source.");
@@ -2040,24 +2101,39 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
 
     return this.withWriteLock(() => {
       const records = this.loadEntriesFromDisk();
-      const targetId = this.findRecordIdByCopilotSessionId(records, sessionId) ?? sessionId;
+      const targetId =
+        this.findRecordIdByCopilotSessionId(records, sessionId) ??
+        parseRegistryId(sessionId, "signal.sessionId");
       const existingRecord = records.get(targetId);
       if (existingRecord?.lifecycleStatus === "archived") {
         throw new SessionRegistryArchivedError(targetId, "accept trusted signals");
       }
+      const lastSignalTime = optionalTimestampMs(existingRecord?.trustedLastSignalAt);
+      const isLatestSignal = signalTime >= lastSignalTime;
+      if (existingRecord && !isLatestSignal) {
+        return cloneValue(existingRecord);
+      }
+
+      const existingEndTime = optionalTimestampMs(existingRecord?.trustedEndedAt);
+      const isEnded =
+        existingRecord?.lifecycleStatus === "ended" || existingRecord?.trustedEndedAt != null;
+      const appliesStart =
+        input.event === "session.started" && signalTime >= existingEndTime;
+      const appliesEnd = input.event === "session.ended";
+      const appliesPrompt = input.event === "prompt.submitted" && !isEnded;
       const cwdName = basename(cwd).trim();
       const lifecycleStatus: SessionRegistryLifecycleStatus =
-        input.event === "session.ended"
+        appliesEnd
           ? "ended"
-          : input.event === "session.started"
+          : appliesStart
             ? "active"
             : existingRecord?.lifecycleStatus ?? "active";
       const activityStatus: SessionRegistryActivityStatus =
-        input.event === "session.ended"
+        appliesEnd
           ? "exited"
-          : input.event === "prompt.submitted"
+          : appliesPrompt
             ? "working"
-            : initialPromptLength !== null && initialPromptLength > 0
+            : appliesStart && initialPromptLength !== null && initialPromptLength > 0
               ? "working"
               : existingRecord?.activityStatus ?? "waiting_for_input";
       const nextRecord: SessionRegistryRecord = {
@@ -2069,12 +2145,12 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
           existingRecord?.description ??
           (executionKind === "agency" ? "Agency Copilot session" : "Copilot CLI session"),
         color: existingRecord?.color ?? null,
-        cwd,
-        repo: repo !== undefined ? repo : existingRecord?.repo ?? null,
-        branch: branch !== undefined ? branch : existingRecord?.branch ?? null,
+        cwd: isLatestSignal ? cwd : existingRecord?.cwd ?? cwd,
+        repo: isLatestSignal && repo !== undefined ? repo : existingRecord?.repo ?? null,
+        branch: isLatestSignal && branch !== undefined ? branch : existingRecord?.branch ?? null,
         copilotSessionId: sessionId,
         lifecycleStatus,
-        lastSeenAt: timestamp,
+        lastSeenAt: isLatestSignal ? timestamp : existingRecord?.lastSeenAt ?? timestamp,
         createdAt: existingRecord?.createdAt ?? timestamp,
         updatedAt: isoNow(),
         tags: existingRecord ? cloneValue(existingRecord.tags) : [],
@@ -2094,43 +2170,46 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         aiSummaryError: existingRecord?.aiSummaryError ?? null,
         observedSessionKind: "interactive",
         copilotProcessState:
-          input.event === "session.ended"
+          appliesEnd
             ? "none"
-            : input.event === "session.started"
+            : appliesStart
               ? "live"
               : existingRecord?.copilotProcessState ?? "live",
         copilotProcessId: existingRecord?.copilotProcessId ?? null,
         activityStatus,
-        activityStatusUpdatedAt: timestamp,
+        activityStatusUpdatedAt:
+          appliesStart || appliesEnd || appliesPrompt
+            ? timestamp
+            : existingRecord?.activityStatusUpdatedAt ?? timestamp,
         trustedSignalSource: signalSource,
         trustedStartedAt:
-          input.event === "session.started"
+          appliesStart
             ? timestamp
             : existingRecord?.trustedStartedAt ?? null,
         trustedEndedAt:
-          input.event === "session.ended"
+          appliesEnd
             ? timestamp
-            : input.event === "session.started"
+            : appliesStart
               ? null
               : existingRecord?.trustedEndedAt ?? null,
         trustedLastSignalAt: timestamp,
         trustedStartSource:
-          input.event === "session.started"
+          appliesStart
             ? hookSource
             : existingRecord?.trustedStartSource ?? null,
         trustedEndReason:
-          input.event === "session.ended"
+          appliesEnd
             ? endReason
-            : input.event === "session.started"
+            : appliesStart
               ? null
               : existingRecord?.trustedEndReason ?? null,
         trustedExecutionKind: executionKind ?? existingRecord?.trustedExecutionKind ?? null,
         trustedInitialPromptLength:
-          input.event === "session.started"
+          appliesStart
             ? initialPromptLength ?? existingRecord?.trustedInitialPromptLength ?? null
             : existingRecord?.trustedInitialPromptLength ?? null,
         trustedLastPromptLength:
-          input.event === "prompt.submitted"
+          appliesPrompt
             ? promptLength ?? existingRecord?.trustedLastPromptLength ?? null
             : existingRecord?.trustedLastPromptLength ?? null,
         derivedWorktreePath: existingRecord?.derivedWorktreePath ?? null,
@@ -2346,8 +2425,21 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       // Index is optional on first load; refreshFromDisk will rebuild it from entries.
     }
 
-    const entriesStat = statSync(this.entriesDir);
-    return `${entriesStat.mtimeMs}|${indexFingerprint}`;
+    const entryFingerprints = readdirSync(this.entriesDir)
+      .filter((fileName) => fileName.endsWith(ENTRY_EXTENSION))
+      .sort()
+      .flatMap((fileName) => {
+        try {
+          const entryStat = statSync(join(this.entriesDir, fileName));
+          return [`${fileName}:${entryStat.mtimeMs}:${entryStat.size}`];
+        } catch (error) {
+          if (isErrnoCode(error, "ENOENT")) {
+            return [];
+          }
+          throw error;
+        }
+      });
+    return `${entryFingerprints.join("|")}|${indexFingerprint}`;
   }
 
   private loadEntriesFromDisk(): Map<string, StoredSessionRegistryRecord> {

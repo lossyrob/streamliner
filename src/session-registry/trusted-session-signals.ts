@@ -64,6 +64,10 @@ function isErrnoCode(error: unknown, code: string): boolean {
   );
 }
 
+function isSessionRegistryLocked(error: unknown): boolean {
+  return error instanceof Error && error.name === "SessionRegistryLockedError";
+}
+
 function ensureString(value: unknown, fieldName: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new Error(`Expected ${fieldName} to be a non-empty string.`);
@@ -236,6 +240,14 @@ export function drainTrustedSessionSignalSpool(
       processed += 1;
     } catch (error) {
       if (isErrnoCode(error, "ENOENT")) {
+        continue;
+      }
+      if (isSessionRegistryLocked(error)) {
+        options.logger?.warn(
+          `[session-signals] registry locked; will retry ${fileName}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
         continue;
       }
       mkdirSync(failedDir, { recursive: true });

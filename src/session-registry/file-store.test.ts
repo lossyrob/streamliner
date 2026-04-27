@@ -14,7 +14,10 @@ import { spawn } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { SessionRegistryPatch, SessionRegistryUpsertInput } from "../session-registry-contract";
-import { SESSION_REGISTRY_SCHEMA_VERSION } from "../session-registry-schema";
+import {
+  SESSION_REGISTRY_SCHEMA_VERSION,
+  type SessionRegistryRecord,
+} from "../session-registry-schema";
 import { SessionRegistryFileStore } from "./file-store";
 
 function createRootDir(): string {
@@ -122,6 +125,12 @@ describe("SessionRegistryFileStore", () => {
     expect(listed.map((item) => item.id)).toEqual([beta.id, alpha.id]);
     expect(store.listSessions({ includeArchived: true })).toHaveLength(3);
     expect(store.listSessions({ text: "beta" }).map((item) => item.id)).toEqual([
+      beta.id,
+    ]);
+    expect(store.listSessions({ text: "feature/beta" }).map((item) => item.id)).toEqual([
+      beta.id,
+    ]);
+    expect(store.listSessions({ text: "c:\\beta" }).map((item) => item.id)).toEqual([
       beta.id,
     ]);
     expect(
@@ -427,6 +436,99 @@ describe("SessionRegistryFileStore", () => {
     );
   });
 
+  it("ignores stale trusted signals and preserves chronological end metadata", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+
+    store.recordTrustedSessionSignal({
+      event: "session.started",
+      source: "copilot-cli-hook",
+      sessionId: "chronological-session",
+      timestamp: "2026-04-24T20:00:00.000Z",
+      cwd: "C:\\repo",
+      hookSource: "new",
+      initialPromptLength: 20,
+    });
+    store.recordTrustedSessionSignal({
+      event: "prompt.submitted",
+      source: "copilot-cli-hook",
+      sessionId: "chronological-session",
+      timestamp: "2026-04-24T20:01:00.000Z",
+      cwd: "C:\\repo",
+      promptLength: 33,
+    });
+    store.recordTrustedSessionSignal({
+      event: "session.ended",
+      source: "copilot-cli-hook",
+      sessionId: "chronological-session",
+      timestamp: "2026-04-24T20:03:00.000Z",
+      cwd: "C:\\repo",
+      endReason: "complete",
+    });
+
+    const stalePrompt = store.recordTrustedSessionSignal({
+      event: "prompt.submitted",
+      source: "copilot-cli-hook",
+      sessionId: "chronological-session",
+      timestamp: "2026-04-24T20:02:00.000Z",
+      cwd: "C:\\repo",
+      promptLength: 99,
+    });
+    const staleStart = store.recordTrustedSessionSignal({
+      event: "session.started",
+      source: "copilot-cli-hook",
+      sessionId: "chronological-session",
+      timestamp: "2026-04-24T20:00:30.000Z",
+      cwd: "C:\\repo",
+      hookSource: "resume",
+      initialPromptLength: 44,
+    });
+
+    for (const record of [stalePrompt, staleStart]) {
+      expect(record).toEqual(
+        expect.objectContaining({
+          lifecycleStatus: "ended",
+          copilotProcessState: "none",
+          trustedStartedAt: "2026-04-24T20:00:00.000Z",
+          trustedEndedAt: "2026-04-24T20:03:00.000Z",
+          trustedLastSignalAt: "2026-04-24T20:03:00.000Z",
+          trustedEndReason: "complete",
+          trustedInitialPromptLength: 20,
+          trustedLastPromptLength: 33,
+          activityStatus: "exited",
+          activityStatusUpdatedAt: "2026-04-24T20:03:00.000Z",
+        }),
+      );
+    }
+
+    const resumed = store.recordTrustedSessionSignal({
+      event: "session.started",
+      source: "copilot-cli-hook",
+      sessionId: "chronological-session",
+      timestamp: "2026-04-24T20:04:00.000Z",
+      cwd: "C:\\repo",
+      hookSource: "resume",
+      initialPromptLength: 55,
+    });
+
+    expect(resumed).toEqual(
+      expect.objectContaining({
+        lifecycleStatus: "active",
+        copilotProcessState: "live",
+        trustedStartedAt: "2026-04-24T20:04:00.000Z",
+        trustedEndedAt: null,
+        trustedLastSignalAt: "2026-04-24T20:04:00.000Z",
+        trustedStartSource: "resume",
+        trustedEndReason: null,
+        trustedInitialPromptLength: 55,
+        trustedLastPromptLength: 33,
+        activityStatus: "working",
+        activityStatusUpdatedAt: "2026-04-24T20:04:00.000Z",
+      }),
+    );
+  });
+
   it("records trusted prompt signals before a trusted session start exists", () => {
     const rootDir = createRootDir();
     createdRoots.push(rootDir);
@@ -588,6 +690,19 @@ describe("SessionRegistryFileStore", () => {
     expect(readJsonFile<{ entries: Array<{ id: string }> }>(indexPath).entries).toEqual([
       expect.objectContaining({ id: "external-entry" }),
     ]);
+
+    const externalPath = join(entriesDir, "external-entry.json");
+    const externalRecord = readJsonFile<SessionRegistryRecord>(externalPath);
+    writeFileSync(
+      externalPath,
+      JSON.stringify({ ...externalRecord, title: "Externally renamed" }, null, 2),
+      "utf8",
+    );
+
+    expect(store.listSessions()[0]).toEqual(
+      expect.objectContaining({ title: "Externally renamed" }),
+    );
+    expect(rebuilds).toEqual([["external-entry"], ["external-entry"]]);
   });
 
   it("blocks writes when an advisory lock already exists", () => {
@@ -738,5 +853,39 @@ setTimeout(() => process.exit(0), holdMs + 50);
         copilotProcessId: -1,
       }),
     ).toThrow(/non-negative integer/);
+  });
+
+  it("rejects caller-provided ids that are unsafe as registry filenames", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+
+    expect(() =>
+      store.upsertSession({
+        id: "..\\escape",
+        title: "Unsafe manual",
+        cwd: "C:\\repo",
+        origin: { kind: "manual" },
+      }),
+    ).toThrow(/safe registry id/);
+
+    expect(() =>
+      store.upsertSession({
+        id: "CON",
+        title: "Reserved manual",
+        cwd: "C:\\repo",
+        origin: { kind: "manual" },
+      }),
+    ).toThrow(/safe registry id/);
+
+    expect(() =>
+      store.recordTrustedSessionSignal({
+        event: "session.started",
+        source: "copilot-cli-hook",
+        sessionId: "..\\escape",
+        timestamp: "2026-04-24T20:00:00.000Z",
+        cwd: "C:\\repo",
+      }),
+    ).toThrow(/safe registry id/);
   });
 });
