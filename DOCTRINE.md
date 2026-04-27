@@ -60,7 +60,7 @@ Streamliner uses three roles:
 
 ```text
 Developer
-  -> Orchestrator (AI session managing a workstream)
+  -> Orchestrator function (interactive session or background invocation)
        -> Worker (AI session executing a single node)
 ```
 
@@ -90,9 +90,11 @@ requires judgment.
 
 ### Orchestrator
 
-An AI session that translates project design plus workstream intent into an
-executable plan. It manages wave progression, reviews worker output for
-alignment, and updates workstream artifacts as reality unfolds.
+The workstream function that translates project design plus workstream intent
+into an executable plan. It manages wave progression, reviews worker output for
+alignment, and updates workstream artifacts as reality unfolds. It can be
+performed by an interactive AI session, a background SDK invocation, or another
+authorized orchestration path that reads the same durable artifacts.
 
 **What the orchestrator decides:**
 
@@ -111,9 +113,11 @@ alignment, and updates workstream artifacts as reality unfolds.
 - whether to proceed past a gate
 - product-level architecture changes that should be owned by the developer
 
-**Design principle:** The orchestrator is a session, not a daemon. Any new
-orchestrator session should be able to read the design layer and workstream
-artifacts and become productive immediately.
+**Design principle:** Orchestration is a function, not the memory of one
+long-lived chat session. Any orchestrator invocation should be able to read the
+design layer and workstream artifacts and become productive immediately. See
+[ORCHESTRATION.md](ORCHESTRATION.md) for the top-down orchestration and
+bottom-up reconciliation model.
 
 ### Worker
 
@@ -220,6 +224,15 @@ The worker's output is:
 - design-doc updates, if any
 - an explicit design-impact declaration: `none`, `updated-docs`, or `decision-needed`
 - flags for issues that exceed worker authority
+
+**Workstream reconciliation absorbs reality into the artifacts.**
+
+The orchestrator reconciles worker output, tracker state, runtime facts, design
+impact, and developer presence back into the brief and graph. Reconciliation is
+normal process: it may run after node completion, PR merge, checkpoints, wave
+transitions, hot work, detected drift, or an explicit operator request. It keeps
+the workstream's durable state aligned with what actually happened without
+silently changing operator intent.
 
 **Orchestrators report through workstream artifacts.**
 

@@ -16,7 +16,10 @@ of the work itself — not the design of the system being built, but the
 boundaries, contracts, and sequencing of the workstreams that build it. See
 [PRODUCT-THESIS.md](PRODUCT-THESIS.md) for the full thesis.
 
-See [DOCTRINE.md](DOCTRINE.md) for the operating model and [DESIGN-DOCS.md](DESIGN-DOCS.md) for the project-level design layer.
+See [DOCTRINE.md](DOCTRINE.md) for the operating model,
+[ORCHESTRATION.md](ORCHESTRATION.md) for how workstream orchestration operates
+across interactive sessions, UI launches, and reconciliation, and
+[DESIGN-DOCS.md](DESIGN-DOCS.md) for the project-level design layer.
 
 ## Who is this for?
 
@@ -67,6 +70,12 @@ Together, the brief, graph, and design layer — with Design References highligh
 Workstream artifacts are persisted as committed files — typically in a dedicated planning repository, though they can also live in the source repo or elsewhere. They are versioned, diffable, portable, and resilient to session failure.
 
 Fast-changing operational data is separate. Streamliner keeps local runtime state — session IDs, heartbeats, tracker snapshots, launch metadata — outside the committed artifact set and overlays it onto the graph at runtime.
+
+Orchestration is also separate from any single long-lived chat session. A
+workstream can be shaped by an interactive orchestrator, execute through
+UI-launched worker sessions, and be reconciled by an SDK-backed invocation. The
+artifact set remains the durable truth; runtime state and pending orchestration
+facts feed reconciliation back into the brief and graph.
 
 ### The brief
 
@@ -231,7 +240,12 @@ See [WORKSTREAM-FORMAT.md](WORKSTREAM-FORMAT.md) for the full details on where a
 - tracker caches and PR snapshot overlays
 - ad hoc chat summaries used as de facto source of truth
 
-The orchestrator is not a built-in daemon. It is any AI session that reads the brief, graph, and design layer — starting with the referenced docs — then updates artifacts when durable plan or progress changes are worth committing. Fast-moving runtime state is tracked separately and projected onto the UI.
+Orchestration is not a built-in daemon or one privileged chat transcript. It is
+the workstream function that reads the brief, graph, design layer, runtime facts,
+and pending orchestration facts — starting with the referenced docs — then
+updates or proposes updates to artifacts when durable plan or progress changes
+are worth committing. Fast-moving runtime state is tracked separately and
+projected onto the UI.
 
 ## The operating rhythm
 
@@ -239,7 +253,7 @@ Streamliner is designed for bursts of focused human attention interspersed with 
 
 ### Phase 1: Workstream shaping
 
-The developer works with an orchestrator session to produce:
+The developer works with an interactive orchestrator to produce:
 
 - the initial brief
 - the initial graph
@@ -260,7 +274,10 @@ Workers pick up nodes and execute:
 5. create the PR
 6. declare design impact: `none`, `updated-docs`, or `decision-needed`
 
-The developer's role during this phase is none unless flagged.
+The orchestrator reconciles completed work, tracker changes, runtime facts, and
+design-impact declarations back into the workstream artifacts so the brief and
+graph continue to describe reality. The developer's role during this phase is
+none unless flagged.
 
 ### Phase 3: Wave transition
 
@@ -317,7 +334,7 @@ Design docs and workstream artifacts can live in the same repo or different repo
 - **Not a micromanagement tool** - autonomy is the default
 - **Not a replacement for your issue tracker** - when using GitHub Issues, ADO, or another platform, those remain the source of truth for node-level specs. Streamliner can also work with local spec files when no external tracker is used.
 - **Not an IDE** - Streamliner does not edit code itself
-- **Not a chat app** - the orchestrator is an AI session using artifacts, not a built-in chat surface
+- **Not a chat app** - orchestration uses artifacts as the source of truth; it is not a built-in chat surface
 
 ## V1 scope
 
