@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { __resetCopilotDiscoveryCacheForTests } from "./copilot-session-discovery";
 import { SessionRegistryFileStore } from "./file-store";
 import { SessionRegistryBackgroundWorker } from "./background-worker";
-import { computeEventsFingerprint } from "./session-summarizer";
+import { computeEventsFingerprint, extractRecentUserTurns } from "./session-summarizer";
 import { writeTrustedSessionSignalSpoolFile } from "./trusted-session-signals";
 
 const createdRoots: string[] = [];
@@ -315,15 +315,17 @@ describe("SessionRegistryBackgroundWorker", () => {
         durationMs: 1,
         rawContent: "Second pass summary",
       });
+    const extractRecentUserTurnsMock = vi.fn(extractRecentUserTurns);
 
     const worker = new SessionRegistryBackgroundWorker(store, {
       sessionRoot,
-      summarizer: { summarizeSession },
+      summarizer: { extractRecentUserTurns: extractRecentUserTurnsMock, summarizeSession },
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     });
 
     await worker.runCycle();
     const firstFingerprint = store.getSession("session-3")?.aiSummaryEventsFingerprint;
+    expect(extractRecentUserTurnsMock).toHaveBeenCalledTimes(1);
 
     const appendUserTurn = (content: string, timestamp: string) => {
       writeFileSync(
@@ -353,6 +355,7 @@ describe("SessionRegistryBackgroundWorker", () => {
     );
     expect(skippedRecord?.aiSummaryEventsFingerprint).not.toBe(firstFingerprint);
     expect(summarizeSession).toHaveBeenCalledTimes(1);
+    expect(extractRecentUserTurnsMock).toHaveBeenCalledTimes(1);
 
     appendUserTurn("Sixth summary input", "2026-04-23T18:35:00.000Z");
 
@@ -366,6 +369,7 @@ describe("SessionRegistryBackgroundWorker", () => {
       }),
     );
     expect(summarizeSession).toHaveBeenCalledTimes(2);
+    expect(extractRecentUserTurnsMock).toHaveBeenCalledTimes(2);
   });
 
   it("refreshes old short summaries when the summary format changes", async () => {

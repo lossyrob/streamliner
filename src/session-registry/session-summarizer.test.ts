@@ -4,7 +4,11 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { computeEventsFingerprint, extractRecentUserTurns } from "./session-summarizer";
+import {
+  computeEventsFingerprint,
+  countUserMessageTurns,
+  extractRecentUserTurns,
+} from "./session-summarizer";
 
 const createdDirs: string[] = [];
 
@@ -90,6 +94,24 @@ describe("extractRecentUserTurns", () => {
   it("returns an empty list when the events file is missing", async () => {
     const turns = await extractRecentUserTurns("/definitely/does/not/exist.jsonl");
     expect(turns).toEqual([]);
+  });
+});
+
+describe("countUserMessageTurns", () => {
+  it("counts contentful user.message turns without retaining prompt text", async () => {
+    const eventsPath = writeEventsFile([
+      { type: "user.message", data: { content: "first" } },
+      { type: "assistant.message", data: { content: "noise" } },
+      { type: "user.message", data: { content: [{ type: "text", text: "second" }] } },
+      { type: "user.message", data: { content: null } },
+    ]);
+    writeFileSync(eventsPath, "\n{not json}\n", { flag: "a" });
+
+    await expect(countUserMessageTurns(eventsPath)).resolves.toBe(2);
+  });
+
+  it("returns zero when the events file is missing", async () => {
+    await expect(countUserMessageTurns("/definitely/does/not/exist.jsonl")).resolves.toBe(0);
   });
 });
 

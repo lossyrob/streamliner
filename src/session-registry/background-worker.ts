@@ -8,6 +8,7 @@ import {
 } from "./copilot-session-discovery";
 import {
   computeEventsFingerprint,
+  countUserMessageTurns,
   DEFAULT_SUMMARY_MODEL,
   extractRecentUserTurns,
   shutdownSharedCopilotClient,
@@ -36,6 +37,7 @@ interface SummaryCandidate {
 
 interface SummarizerDependencies {
   computeEventsFingerprint: typeof computeEventsFingerprint;
+  countUserMessageTurns: typeof countUserMessageTurns;
   extractRecentUserTurns: typeof extractRecentUserTurns;
   summarizeSession: (options: {
     turns: Awaited<ReturnType<typeof extractRecentUserTurns>>;
@@ -148,6 +150,8 @@ export class SessionRegistryBackgroundWorker {
     this.summarizer = {
       computeEventsFingerprint:
         options.summarizer?.computeEventsFingerprint ?? computeEventsFingerprint,
+      countUserMessageTurns:
+        options.summarizer?.countUserMessageTurns ?? countUserMessageTurns,
       extractRecentUserTurns:
         options.summarizer?.extractRecentUserTurns ?? extractRecentUserTurns,
       summarizeSession: options.summarizer?.summarizeSession ?? summarizeSession,
@@ -296,13 +300,9 @@ export class SessionRegistryBackgroundWorker {
 
   private async summarizeCandidate(candidate: SummaryCandidate): Promise<void> {
     try {
-      const turns = await this.summarizer.extractRecentUserTurns(candidate.eventsPath, {
-        maxTurns: 4,
-        maxCharsPerTurn: 1500,
-      });
-      const totalUserTurns = turns.at(-1)?.absoluteIndex ?? 0;
+      const totalUserTurns = await this.summarizer.countUserMessageTurns(candidate.eventsPath);
       const nextFingerprint = summaryFingerprint(candidate.fingerprint, totalUserTurns);
-      if (turns.length === 0) {
+      if (totalUserTurns === 0) {
         this.tryPatch(candidate.session.id, {
           aiSummary: null,
           aiSummaryModel: null,
@@ -333,6 +333,22 @@ export class SessionRegistryBackgroundWorker {
             lastSummaryTurnCount,
           ),
           aiSummaryStatus: "ready",
+          aiSummaryError: null,
+        });
+        return;
+      }
+
+      const turns = await this.summarizer.extractRecentUserTurns(candidate.eventsPath, {
+        maxTurns: 4,
+        maxCharsPerTurn: 1500,
+      });
+      if (turns.length === 0) {
+        this.tryPatch(candidate.session.id, {
+          aiSummary: null,
+          aiSummaryModel: null,
+          aiSummaryUpdatedAt: null,
+          aiSummaryEventsFingerprint: nextFingerprint,
+          aiSummaryStatus: "missing",
           aiSummaryError: null,
         });
         return;

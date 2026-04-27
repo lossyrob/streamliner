@@ -101,6 +101,27 @@ export async function extractRecentUserTurns(
   return collected.slice(-maxTurns).map((turn, idx) => ({ ...turn, index: idx + 1 }));
 }
 
+export async function countUserMessageTurns(eventsPath: string): Promise<number> {
+  if (!existsSync(eventsPath)) return 0;
+
+  const stream = createReadStream(eventsPath, { encoding: "utf8" });
+  const lines = createInterface({ input: stream, crlfDelay: Number.POSITIVE_INFINITY });
+  let count = 0;
+  for await (const line of lines) {
+    if (!line || line[0] !== "{") continue;
+    let parsed: RawEventLine;
+    try {
+      parsed = JSON.parse(line) as RawEventLine;
+    } catch {
+      continue;
+    }
+    if (parsed.type !== "user.message") continue;
+    if (!toStringContent(parsed.data?.content)) continue;
+    count += 1;
+  }
+  return count;
+}
+
 export interface SessionSummaryContext {
   title?: string | null;
   repo?: string | null;

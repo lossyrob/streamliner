@@ -1,7 +1,7 @@
 ---
 kind: design-doc
 status: draft
-last_updated: 2026-04-24
+last_updated: 2026-04-27
 update_semantics: rewrite-in-place
 authoritative_for: "Session launching, lifecycle, registry contract, tracking, and runtime overlay"
 scope_tags:
@@ -253,6 +253,7 @@ Each registry entry is a persisted `SessionRegistryRecord`. The stored lifecycle
 | `repo` | string or `null` | yes | Observation or builder | Normalized `owner/name` when known; otherwise the repo root path; `null` when unknown. |
 | `branch` | string or `null` | yes | Observation or builder | Last known branch when one is available. |
 | `copilotSessionId` | string or `null` | yes | Observation | Linked Copilot CLI session id when the row is tied to an observed session. |
+| `aiSummary`, `aiSummaryModel`, `aiSummaryUpdatedAt`, `aiSummaryEventsFingerprint`, `aiSummaryStatus`, `aiSummaryError` | string/status fields or `null` | yes | Worker | Optional persisted conversation description and refresh metadata. The worker may transiently read bounded recent `events.jsonl` user turns to produce `aiSummary`, but it does not persist the raw prompt/event bodies in these fields. |
 | `lifecycleStatus` | `active \| paused \| ended \| archived` | yes | Builder + observation | Durable coarse lifecycle. Observation only owns the transition into `ended`; archiving is builder-driven. |
 | `lastSeenAt` | ISO 8601 string or `null` | yes | Observation | Last observed activity timestamp; `null` for never-observed manual entries. |
 | `createdAt`, `updatedAt` | ISO 8601 string | yes | Streamliner | Record creation and last persisted update timestamps. |
@@ -345,7 +346,7 @@ Trusted signal fields are persisted on both full records and list entries:
 | `trustedStartSource` | Copilot hook start source such as `new`, `resume`, or `startup`. |
 | `trustedEndReason` | Copilot hook end reason such as `complete`, `user_exit`, `error`, `abort`, or `timeout`. |
 | `trustedExecutionKind` | Whether the trusted session came from direct Copilot CLI (`copilot_cli`) or Agency (`agency`). |
-| `trustedInitialPromptLength`, `trustedLastPromptLength` | Privacy-preserving prompt metadata. Raw prompt text is never stored in the registry. |
+| `trustedInitialPromptLength`, `trustedLastPromptLength` | Privacy-preserving prompt metadata. Hook prompt bodies are reduced to lengths before persistence; raw hook prompt text is not stored in trusted-signal registry fields. |
 
 The default Sessions view prioritizes trusted lifecycle buckets:
 
