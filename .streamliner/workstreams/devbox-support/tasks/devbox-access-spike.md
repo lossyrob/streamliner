@@ -65,6 +65,10 @@ read-only probe over SSH:
 - the Streamliner Copilot CLI plugin/hook endpoint can be tested without storing
   prompt text.
 
+The laptop-side probe should report summaries and capability flags only. It
+should not persist the concrete SSH target, username, key path, token, or raw
+session output into committed artifacts.
+
 ## Minimal registration field split
 
 ### Committed artifact fields
@@ -153,6 +157,20 @@ content. The devbox-side result should answer:
   or `none`?
 - Does a bridge health endpoint make remote trusted-signal forwarding plausible?
 
+Run the laptop-to-devbox SSH probe from the laptop once the builder has selected
+the SSH target or host alias:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\.streamliner\workstreams\devbox-support\tasks\devbox-access-ssh-probe.ps1 -SshTarget <ssh-host-alias> -RemoteWorktreePath <remote spike worktree> -MaxSessions 10
+```
+
+If an SSH local port forward to a prototype bridge is active, include the local
+bridge URL:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\.streamliner\workstreams\devbox-support\tasks\devbox-access-ssh-probe.ps1 -SshTarget <ssh-host-alias> -RemoteWorktreePath <remote spike worktree> -MaxSessions 10 -LocalBridgeUrl http://127.0.0.1:<forwarded-port>
+```
+
 ## Devbox evidence
 
 Probe run from `feature/issue-19-devbox-access-spike` on the active devbox with
@@ -179,6 +197,12 @@ the default session-state root and `-MaxSessions 10`.
 - No bridge URL was supplied, so bridge health was not tested. This run validates
   devbox-local filesystem and process evidence; laptop-to-devbox SSH
   reachability and any bridge endpoint still need separate validation.
+
+The evidence is enough to accept the devbox-local side of the design:
+session-state observation and process-lock interpretation should run on the
+devbox host. It is not yet enough to accept a concrete access profile because
+the laptop has not verified the builder's chosen SSH target, forwarding behavior,
+or bridge endpoint.
 
 ## Open evidence needed
 
