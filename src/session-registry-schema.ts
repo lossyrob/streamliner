@@ -135,6 +135,7 @@ export type SessionRegistryOrigin =
 export interface SessionRegistryRecord {
   schemaVersion: typeof SESSION_REGISTRY_SCHEMA_VERSION;
   id: string;
+  version: number;
   title: string;
   titleSource: SessionRegistryTitleSource;
   description: string;
@@ -181,6 +182,7 @@ export interface SessionRegistryRecord {
 
 export interface SessionRegistryIndexEntry {
   id: string;
+  version: number;
   title: string;
   titleSource: SessionRegistryTitleSource;
   description: string;

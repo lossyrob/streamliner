@@ -26,6 +26,7 @@ function createRootDir(): string {
 function buildSession(overrides: Partial<SessionRegistryListItem> = {}): SessionRegistryListItem {
   return {
     id: "context-session",
+    version: 0,
     title: "Context session",
     titleSource: "auto",
     description: "",

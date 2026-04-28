@@ -101,6 +101,7 @@ const RESERVED_WINDOWS_FILE_NAMES = new Set([
   "LPT9",
 ]);
 const SESSION_REGISTRY_PATCH_KEYS = [
+  "expectedVersion",
   "title",
   "description",
   "color",
@@ -164,6 +165,18 @@ export class SessionRegistryLockedError extends Error {
   constructor(lockPath: string) {
     super(`Session registry is locked at ${lockPath}.`);
     this.name = "SessionRegistryLockedError";
+  }
+}
+
+export class SessionRegistryConflictError extends Error {
+  readonly latest: SessionRegistryRecord;
+  readonly conflictingFields: string[];
+
+  constructor(latest: SessionRegistryRecord, conflictingFields: string[]) {
+    super(`Session ${latest.id} changed before this update could be saved.`);
+    this.name = "SessionRegistryConflictError";
+    this.latest = latest;
+    this.conflictingFields = conflictingFields;
   }
 }
 
@@ -311,6 +324,19 @@ function ensureOptionalInteger(value: unknown, fieldName: string): number | null
 function ensureNonNegativeInteger(value: unknown, fieldName: string): number {
   if (value === undefined || value === null) {
     return 0;
+  }
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new Error(`Expected ${fieldName} to be a non-negative integer.`);
+  }
+  return value;
+}
+
+function ensureOptionalNonNegativeInteger(
+  value: unknown,
+  fieldName: string,
+): number | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
   }
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
     throw new Error(`Expected ${fieldName} to be a non-negative integer.`);
@@ -800,6 +826,12 @@ export function parseSessionRegistryPatch(value: unknown): SessionRegistryPatch 
   ensureAllowedKeys(value, "patch", SESSION_REGISTRY_PATCH_KEYS);
 
   const patch: SessionRegistryPatch = {};
+  if (hasOwn(value, "expectedVersion")) {
+    patch.expectedVersion = ensureOptionalNonNegativeInteger(
+      value.expectedVersion,
+      "patch.expectedVersion",
+    );
+  }
   if (hasOwn(value, "title")) {
     patch.title = ensureString(value.title, "patch.title");
   }
@@ -1056,6 +1088,12 @@ function validateStoredRecord(
     ...rawRecord,
     schemaVersion: SESSION_REGISTRY_SCHEMA_VERSION,
     id,
+    version:
+      typeof rawRecord.version === "number" &&
+      Number.isInteger(rawRecord.version) &&
+      rawRecord.version >= 0
+        ? rawRecord.version
+        : 0,
     title: ensureString(rawRecord.title, `${filePath}.title`),
     titleSource: normalizeTitleSource(
       rawRecord.titleSource,
@@ -1229,6 +1267,7 @@ function validateIndexEntry(
 
   return {
     id: ensureString(rawEntry.id, `${fieldName}.id`),
+    version: ensureNonNegativeInteger(rawEntry.version, `${fieldName}.version`),
     title: ensureString(rawEntry.title, `${fieldName}.title`),
     titleSource: normalizeTitleSource(
       rawEntry.titleSource,
@@ -1400,6 +1439,7 @@ function computeIndexEntriesSignature(entries: readonly SessionRegistryIndexEntr
 function buildIndex(records: Iterable<StoredSessionRegistryRecord>): SessionRegistryIndex {
   const entries = [...records].map<SessionRegistryIndexEntry>((record) => ({
     id: record.id,
+    version: record.version,
     title: record.title,
     titleSource: record.titleSource,
     description: record.description,
@@ -1524,6 +1564,19 @@ function mergeStoredRecord(
     origin: nextOrigin,
     graphBinding: nextGraphBinding,
   };
+}
+
+function getBuilderConflictFields(patch: SessionRegistryPatch): string[] {
+  const fields: string[] = [];
+  for (const key of SESSION_REGISTRY_PATCH_KEYS) {
+    if (key === "expectedVersion") {
+      continue;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, key)) {
+      fields.push(key);
+    }
+  }
+  return fields;
 }
 
 function writeJsonFile(path: string, payload: unknown): void {
@@ -1730,6 +1783,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       const nextRecord: SessionRegistryRecord = {
         schemaVersion: SESSION_REGISTRY_SCHEMA_VERSION,
         id: targetId,
+        version: latestRecord?.version ?? 0,
         title: nextTitle,
         titleSource: nextTitleSource,
         description: nextDescription,
@@ -2021,11 +2075,26 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         throw new SessionRegistryNotFoundError(id);
       }
 
+      const conflictFields = getBuilderConflictFields(validatedPatch);
+      if (
+        validatedPatch.expectedVersion !== undefined &&
+        validatedPatch.expectedVersion !== existingRecord.version
+      ) {
+        throw new SessionRegistryConflictError(
+          cloneValue(existingRecord),
+          conflictFields,
+        );
+      }
+
       const nextLifecycle =
         validatedPatch.lifecycleStatus ?? existingRecord.lifecycleStatus;
 
       const nextRecord: SessionRegistryRecord = {
         ...cloneValue(existingRecord),
+        version:
+          conflictFields.length > 0
+            ? existingRecord.version + 1
+            : existingRecord.version,
         title: validatedPatch.title ?? existingRecord.title,
         titleSource:
           validatedPatch.title !== undefined ? "user" : existingRecord.titleSource,
@@ -2139,6 +2208,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       const nextRecord: SessionRegistryRecord = {
         schemaVersion: SESSION_REGISTRY_SCHEMA_VERSION,
         id: targetId,
+        version: existingRecord?.version ?? 0,
         title: (existingRecord?.title ?? cwdName) || sessionId,
         titleSource: existingRecord?.titleSource ?? "auto",
         description:

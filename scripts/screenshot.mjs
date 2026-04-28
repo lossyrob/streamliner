@@ -22,7 +22,9 @@
  *   4 — page never reached the expected UI state
  */
 import { spawn, spawnSync } from "node:child_process";
-import { mkdir } from "node:fs/promises";
+import { mkdtemp, mkdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { createServer } from "node:net";
 import { dirname, resolve, isAbsolute } from "node:path";
 import { chromium } from "@playwright/test";
 
@@ -78,7 +80,24 @@ function parseArgs(argv) {
   return args;
 }
 
-async function waitForServerReady(proc) {
+async function getFreePort() {
+  return new Promise((resolvePort, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      server.close(() => {
+        if (!address || typeof address === "string") {
+          reject(new Error("Could not allocate a free TCP port"));
+          return;
+        }
+        resolvePort(address.port);
+      });
+    });
+  });
+}
+
+async function waitForViteReady(proc) {
   return new Promise((ok, fail) => {
     const timer = setTimeout(() => fail(new Error("timeout waiting for vite ready")), 45_000);
     let buffer = "";
@@ -107,21 +126,57 @@ async function waitForServerReady(proc) {
   });
 }
 
+async function waitForApiReady(baseUrl) {
+  const deadline = Date.now() + 45_000;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`${baseUrl}/api/health`);
+      if (response.ok) {
+        return;
+      }
+    } catch {
+      // Retry until the API process binds.
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+  }
+  throw new Error("timeout waiting for API ready");
+}
+
 async function main() {
   const args = parseArgs(process.argv);
   await mkdir(dirname(args.out), { recursive: true });
 
-  const viteBin = process.platform === "win32" ? "npx.cmd" : "npx";
-  const vite = spawn(viteBin, ["vite", "--host", "127.0.0.1", "--port", "0", "--strictPort=false"], {
-    env: { ...process.env, STREAMLINER_GRAPH: args.graph, BROWSER: "none" },
+  const npxBin = process.platform === "win32" ? "npx.cmd" : "npx";
+  const apiPort = String(await getFreePort());
+  const apiRuntimeRoot = await mkdtemp(resolve(tmpdir(), "streamliner-screenshot-registry-"));
+  const childEnv = {
+    ...process.env,
+    STREAMLINER_GRAPH: args.graph,
+    STREAMLINER_API_PORT: apiPort,
+    STREAMLINER_API_HOST: "127.0.0.1",
+    STREAMLINER_SESSION_REGISTRY_ROOT: apiRuntimeRoot,
+    STREAMLINER_INTERNAL_DISABLE_SESSION_WORKER: "1",
+    BROWSER: "none",
+  };
+  const api = spawn(npxBin, ["tsx", "src/server/index.ts"], {
+    env: childEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+    shell: process.platform === "win32",
+  });
+  api.stdout.on("data", (b) => process.stdout.write(`[api] ${b}`));
+  api.stderr.on("data", (b) => process.stderr.write(`[api:err] ${b}`));
+  const vite = spawn(npxBin, ["vite", "--host", "127.0.0.1", "--port", "0", "--strictPort=false"], {
+    env: childEnv,
     stdio: ["ignore", "pipe", "pipe"],
     shell: process.platform === "win32",
   });
   let baseUrl;
   try {
-    baseUrl = await waitForServerReady(vite);
+    await waitForApiReady(`http://127.0.0.1:${apiPort}`);
+    baseUrl = await waitForViteReady(vite);
   } catch (e) {
     console.error(e.message);
+    killTree(api);
     killTree(vite);
     process.exit(3);
   }
@@ -150,6 +205,7 @@ async function main() {
     process.exitCode = 4;
   } finally {
     await browser.close().catch(() => {});
+    killTree(api);
     killTree(vite);
     // Give taskkill a moment, then force-exit since npx.cmd may still hold stdio.
     setTimeout(() => process.exit(process.exitCode ?? 0), 500).unref();

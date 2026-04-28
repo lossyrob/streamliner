@@ -12,6 +12,7 @@ function buildSession(
 ): SessionRegistryListItem {
   return {
     id: "registry-row",
+    version: 0,
     title: "Registry row",
     titleSource: "user",
     description: "",

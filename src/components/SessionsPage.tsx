@@ -11,6 +11,7 @@ import {
 } from "./session-policies";
 
 const SESSION_POLL_INTERVAL_MS = 15_000;
+const SESSION_EVENT_REFETCH_DEBOUNCE_MS = 150;
 const SESSION_AUTOSAVE_MS = 500;
 const DEFAULT_STALE_SESSION_DAYS = 7;
 const DEFAULT_RECENTLY_CLOSED_HOURS = 6;
@@ -59,7 +60,16 @@ interface SessionDraft {
 }
 
 type SaveState = "idle" | "saving" | "saved" | "error";
+type SyncState = "connecting" | "live" | "reconnecting" | "polling";
 type DerivedGithubRef = SessionRegistryListItem["derivedGithubRefs"][number];
+type SessionDraftUpdater = (current: SessionDraft) => SessionDraft;
+
+interface SessionConflictState {
+  sessionId: string;
+  latest: SessionRegistryListItem;
+  fields: string[];
+  message: string;
+}
 
 function draftFromSession(session: SessionRegistryListItem): SessionDraft {
   return {
@@ -90,6 +100,7 @@ function createEmptyDraft(): SessionDraft {
 function toListItem(record: SessionRegistryRecord): SessionRegistryListItem {
   return {
     id: record.id,
+    version: record.version,
     title: record.title,
     titleSource: record.titleSource,
     description: record.description,
@@ -159,7 +170,7 @@ function buildPatch(
   session: SessionRegistryListItem,
   draft: SessionDraft,
 ): SessionRegistryPatch | null {
-  const patch: SessionRegistryPatch = {};
+  const patch: SessionRegistryPatch = { expectedVersion: session.version };
   const nextTitle = draft.title.trim();
   if (nextTitle !== session.title) {
     patch.title = nextTitle;
@@ -188,16 +199,18 @@ function buildPatch(
     }
   }
 
-  return Object.keys(patch).length > 0 ? patch : null;
+  return Object.keys(patch).length > 1 ? patch : null;
 }
 
 function applyPatchToListItem(
   session: SessionRegistryListItem,
   patch: SessionRegistryPatch,
 ): SessionRegistryListItem {
+  const { expectedVersion, ...sessionPatch } = patch;
+  void expectedVersion;
   return {
     ...session,
-    ...patch,
+    ...sessionPatch,
   };
 }
 
@@ -207,6 +220,7 @@ function sessionSnapshotKey(session: SessionRegistryListItem | null): string | n
   }
   return JSON.stringify({
     id: session.id,
+    version: session.version,
     title: session.title,
     titleSource: session.titleSource,
     description: session.description,
@@ -248,6 +262,22 @@ function sessionSnapshotKey(session: SessionRegistryListItem | null): string | n
     derivedContextEventsOffset: session.derivedContextEventsOffset,
     derivedContextEventsSize: session.derivedContextEventsSize,
     derivedContextEventsMtimeMs: session.derivedContextEventsMtimeMs,
+  });
+}
+
+function builderSnapshotKey(session: SessionRegistryListItem | null): string | null {
+  if (!session) {
+    return null;
+  }
+  return JSON.stringify({
+    id: session.id,
+    version: session.version,
+    title: session.title,
+    description: session.description,
+    lifecycleStatus: session.lifecycleStatus,
+    color: session.color,
+    tags: session.tags,
+    graphBinding: session.graphBinding,
   });
 }
 
@@ -1039,8 +1069,11 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
   const [error, setError] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [syncState, setSyncState] = useState<SyncState>("connecting");
+  const [conflictPending, setConflictPending] = useState<SessionConflictState | null>(null);
   const [creatingState, setCreatingState] = useState<SaveState>("idle");
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const eventRefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipUnmountFlushRef = useRef(false);
   const saveRequestIdRef = useRef(0);
   // Frozen group order per mode. Filled lazily on first render for a mode; cleared by Resort.
@@ -1050,28 +1083,12 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
   const draftRef = useLatestValue(draft);
   const selectedSnapshotRef = useLatestValue(selectedSnapshot);
   const saveStateRef = useLatestValue(saveState);
+  const conflictPendingRef = useLatestValue(conflictPending);
 
-  const fetchSessions = useCallback(
-    async (keepSelection = true) => {
-      try {
-        const search = new URLSearchParams();
-        if (showArchived) {
-          search.set("includeArchived", "true");
-        }
-        if (query.trim().length > 0) {
-          search.set("text", query.trim());
-        }
-        const suffix = search.toString();
-        const response = await fetch(
-          suffix.length > 0 ? `/api/sessions?${suffix}` : "/api/sessions",
-        );
-        if (!response.ok) {
-          throw new Error(`Failed to load sessions (${response.status})`);
-        }
-
-        const nextSessions = (await response.json()) as SessionRegistryListItem[];
-        setSessions(nextSessions);
-        setError(null);
+  const applySessionList = useCallback(
+    (nextSessions: SessionRegistryListItem[], keepSelection = true) => {
+      setSessions(nextSessions);
+      setError(null);
         const currentCreating = creatingRef.current;
         const currentSelectedId = selectedIdRef.current;
         const currentSelectedSnapshot = selectedSnapshotRef.current;
@@ -1092,6 +1109,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
             setSelectedSnapshot(null);
             setDraft(createEmptyDraft());
             setSaveState("idle");
+            setConflictPending(null);
             setSheetOpen(false);
             return;
           }
@@ -1102,27 +1120,96 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
             : null;
           const nextSnapshotKey = sessionSnapshotKey(matching);
           const currentSnapshotKey = sessionSnapshotKey(currentSelectedSnapshot);
+          const nextBuilderKey = builderSnapshotKey(matching);
+          const currentBuilderKey = builderSnapshotKey(currentSelectedSnapshot);
           if (
             currentSaveState !== "saving" &&
             currentSelectedSnapshot &&
             currentDraftKey === snapshotDraftKey
           ) {
+            const nextDraft = draftFromSession(matching);
             if (currentSnapshotKey !== nextSnapshotKey) {
               setSelectedSnapshot(matching);
+              setSaveError(null);
             }
-            const nextDraft = draftFromSession(matching);
             if (currentDraftKey !== draftKey(nextDraft)) {
               setDraft(nextDraft);
             }
+            setConflictPending((current) =>
+              current?.sessionId === matching.id ? null : current,
+            );
+          } else if (
+            currentSaveState !== "saving" &&
+            currentSelectedSnapshot &&
+            currentBuilderKey !== nextBuilderKey
+          ) {
+            const message =
+              "This session changed elsewhere. Your unsaved edits are preserved; edit a field to re-apply them after reviewing the latest row.";
+            setConflictPending({
+              sessionId: matching.id,
+              latest: matching,
+              fields: ["builder-owned fields"],
+              message,
+            });
+            setSaveError(message);
           }
         }
+    },
+    [creatingRef, draftRef, saveStateRef, selectedIdRef, selectedSnapshotRef],
+  );
+
+  const fetchSessions = useCallback(
+    async (keepSelection = true) => {
+      try {
+        const search = new URLSearchParams();
+        if (showArchived) {
+          search.set("includeArchived", "true");
+        }
+        if (query.trim().length > 0) {
+          search.set("text", query.trim());
+        }
+        const suffix = search.toString();
+        const response = await fetch(
+          suffix.length > 0 ? `/api/sessions?${suffix}` : "/api/sessions",
+        );
+        if (!response.ok) {
+          throw new Error(`Failed to load sessions (${response.status})`);
+        }
+
+        applySessionList((await response.json()) as SessionRegistryListItem[], keepSelection);
       } catch (nextError) {
         setError(nextError instanceof Error ? nextError.message : String(nextError));
       } finally {
         setLoading(false);
       }
     },
-    [creatingRef, draftRef, query, saveStateRef, selectedIdRef, selectedSnapshotRef, showArchived],
+    [applySessionList, query, showArchived],
+  );
+
+  const scheduleEventRefetch = useCallback(
+    (delayMs = SESSION_EVENT_REFETCH_DEBOUNCE_MS) => {
+      if (eventRefetchTimerRef.current) {
+        clearTimeout(eventRefetchTimerRef.current);
+      }
+      eventRefetchTimerRef.current = setTimeout(() => {
+        eventRefetchTimerRef.current = null;
+        void fetchSessions();
+      }, delayMs);
+    },
+    [fetchSessions],
+  );
+
+  const updateDraft = useCallback(
+    (updater: SessionDraftUpdater) => {
+      const currentConflict = conflictPendingRef.current;
+      if (currentConflict?.sessionId === selectedIdRef.current) {
+        setSelectedSnapshot(currentConflict.latest);
+        setConflictPending(null);
+        setSaveError(null);
+      }
+      setDraft(updater);
+    },
+    [conflictPendingRef, selectedIdRef],
   );
 
   useEffect(() => {
@@ -1130,8 +1217,77 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
     const timer = setInterval(() => {
       void fetchSessions();
     }, SESSION_POLL_INTERVAL_MS);
-    return () => clearInterval(timer);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState !== "hidden") {
+        void fetchSessions();
+      }
+    };
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
   }, [fetchSessions]);
+
+  useEffect(() => {
+    if (typeof EventSource === "undefined") {
+      setSyncState("polling");
+      return;
+    }
+
+    let closed = false;
+    const source = new EventSource("/api/sessions/events");
+    setSyncState("connecting");
+
+    const handleChange = () => {
+      scheduleEventRefetch();
+    };
+    const handleSnapshot = (event: MessageEvent) => {
+      if (query.trim().length > 0 || showArchived) {
+        scheduleEventRefetch(0);
+        return;
+      }
+      try {
+        const payload = JSON.parse(event.data) as { sessions?: unknown };
+        if (!Array.isArray(payload.sessions)) {
+          scheduleEventRefetch(0);
+          return;
+        }
+        applySessionList(payload.sessions as SessionRegistryListItem[]);
+        setLoading(false);
+      } catch {
+        scheduleEventRefetch(0);
+      }
+    };
+    const handleOpen = () => {
+      if (!closed) {
+        setSyncState("live");
+      }
+    };
+    const handleError = () => {
+      if (!closed) {
+        setSyncState("reconnecting");
+      }
+    };
+
+    source.addEventListener("open", handleOpen);
+    source.addEventListener("error", handleError);
+    source.addEventListener("snapshot", handleSnapshot);
+    source.addEventListener("session.upserted", handleChange);
+    source.addEventListener("session.deleted", handleChange);
+    source.addEventListener("session.rebuilt", handleChange);
+
+    return () => {
+      closed = true;
+      source.close();
+      if (eventRefetchTimerRef.current) {
+        clearTimeout(eventRefetchTimerRef.current);
+        eventRefetchTimerRef.current = null;
+      }
+    };
+  }, [applySessionList, query, scheduleEventRefetch, showArchived]);
 
   const selectedSession = useMemo(
     () => sessions.find((session) => session.id === selectedId) ?? selectedSnapshot,
@@ -1192,7 +1348,8 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
     async (options: SessionSaveOptions = {}): Promise<boolean> => {
       clearAutosaveTimer();
 
-      const currentSelectedSession = selectedSessionRef.current;
+      const currentSelectedSession =
+        selectedSnapshotRef.current ?? selectedSessionRef.current;
       if (!currentSelectedSession || creatingRef.current) {
         return true;
       }
@@ -1205,6 +1362,15 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
           setSaveError(null);
         }
         return true;
+      }
+
+      const currentConflict = conflictPendingRef.current;
+      if (currentConflict?.sessionId === currentSelectedSession.id) {
+        if (!options.background) {
+          setSaveState("error");
+          setSaveError(currentConflict.message);
+        }
+        return false;
       }
 
       if (currentDraft.title.trim().length === 0) {
@@ -1249,7 +1415,34 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
           },
         );
         if (!response.ok) {
-          const payload = (await response.json().catch(() => ({}))) as { error?: string };
+          const payload = (await response.json().catch(() => ({}))) as {
+            error?: string;
+            latest?: SessionRegistryRecord;
+            conflictingFields?: string[];
+          };
+          if (response.status === 409 && payload.latest) {
+            const latest = toListItem(payload.latest);
+            setSessions((current) =>
+              current.map((session) => (session.id === latest.id ? latest : session)),
+            );
+            const fields =
+              payload.conflictingFields && payload.conflictingFields.length > 0
+                ? payload.conflictingFields
+                : [];
+            const fieldText =
+              fields.length > 0
+                ? ` (${fields.join(", ")})`
+                : "";
+            const message =
+              `${payload.error ?? "Session changed elsewhere."}${fieldText} Edit a field to re-apply your draft after reviewing the latest row.`;
+            setConflictPending({
+              sessionId: latest.id,
+              latest,
+              fields,
+              message,
+            });
+            throw new Error(message);
+          }
           throw new Error(payload.error ?? `Failed to save session (${response.status})`);
         }
 
@@ -1275,6 +1468,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
         }
         setSaveState(draftStillMatchesSavedRequest ? "saved" : "idle");
         setSaveError(null);
+        setConflictPending(null);
         if (options.surfaceErrorGlobally) {
           setError(null);
         }
@@ -1290,20 +1484,30 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
         }
         if (options.surfaceErrorGlobally) {
           setError(message);
+          setSheetOpen(true);
         }
         return false;
       }
     },
-    [clearAutosaveTimer, creatingRef, draftRef, selectedIdRef, selectedSessionRef],
+    [
+      clearAutosaveTimer,
+      conflictPendingRef,
+      creatingRef,
+      draftRef,
+      selectedIdRef,
+      selectedSessionRef,
+      selectedSnapshotRef,
+    ],
   );
 
   const getExistingDraftPatch = useCallback((): SessionRegistryPatch | null => {
-    const currentSelectedSession = selectedSessionRef.current;
+    const currentSelectedSession =
+      selectedSnapshotRef.current ?? selectedSessionRef.current;
     if (creatingRef.current || !currentSelectedSession) {
       return null;
     }
     return buildPatch(currentSelectedSession, draftRef.current);
-  }, [creatingRef, draftRef, selectedSessionRef]);
+  }, [creatingRef, draftRef, selectedSessionRef, selectedSnapshotRef]);
 
   const handleBeforeLeave = useCallback(async () => {
     if (!getExistingDraftPatch()) {
@@ -1364,7 +1568,13 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
   }, [groupMode]);
 
   useEffect(() => {
-    if (creating || !sheetOpen || !selectedSession || !getExistingDraftPatch()) {
+    if (
+      creating ||
+      !sheetOpen ||
+      !selectedSession ||
+      !getExistingDraftPatch() ||
+      conflictPending?.sessionId === selectedSession.id
+    ) {
       return;
     }
 
@@ -1376,6 +1586,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
     return clearAutosaveTimer;
   }, [
     clearAutosaveTimer,
+    conflictPending,
     creating,
     draftAutosaveKey,
     getExistingDraftPatch,
@@ -1397,6 +1608,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
       setDraft(draftFromSession(session));
       setSaveState("idle");
       setSaveError(null);
+      setConflictPending(null);
       setSheetTab("overview");
       setHeaderColorPaletteOpen(false);
       setSheetOpen(true);
@@ -1415,6 +1627,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
     setCreatingState("idle");
     setSaveState("idle");
     setSaveError(null);
+    setConflictPending(null);
     setSheetTab("settings"); // only settings is actionable while creating
     setHeaderColorPaletteOpen(false);
     setSheetOpen(true);
@@ -1424,6 +1637,12 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
     const currentDraft = draftRef.current;
     const currentPatch = getExistingDraftPatch();
     if (currentPatch) {
+      const currentConflict = conflictPendingRef.current;
+      if (currentConflict?.sessionId === selectedIdRef.current) {
+        setSaveState("error");
+        setSaveError(currentConflict.message);
+        return;
+      }
       if (currentDraft.title.trim().length === 0) {
         setSaveState("error");
         setSaveError("Title is required.");
@@ -1445,7 +1664,14 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
       setCreatingState("idle");
       setDraft(createEmptyDraft());
     }
-  }, [creating, draftRef, getExistingDraftPatch, saveExistingSession]);
+  }, [
+    conflictPendingRef,
+    creating,
+    draftRef,
+    getExistingDraftPatch,
+    saveExistingSession,
+    selectedIdRef,
+  ]);
 
   const handleCreate = useCallback(async () => {
     if (draft.title.trim().length === 0 || draft.cwd.trim().length === 0) {
@@ -1486,6 +1712,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
       setDraft(draftFromSession(created));
       setCreatingState("saved");
       setSaveError(null);
+      setConflictPending(null);
       setSheetTab("overview");
       await fetchSessions();
     } catch (nextError) {
@@ -1539,6 +1766,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
       setSelectedSnapshot(null);
       setDraft(createEmptyDraft());
       setSaveState("idle");
+      setConflictPending(null);
       setSheetOpen(false);
       await fetchSessions(false);
     } catch (nextError) {
@@ -1575,6 +1803,14 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
 
   const detailStatus = creating ? creatingState : saveState;
   const showDetailStatus = detailStatus !== "idle";
+  const syncNote =
+    syncState === "live"
+      ? null
+      : syncState === "polling"
+        ? "Live session events are unavailable in this browser; using polling and focus refresh."
+        : syncState === "connecting"
+          ? "Connecting to live session updates..."
+          : "Reconnecting to live session updates; polling remains active.";
   const freezeNote =
     groupMode === "recency"
       ? "Recency buckets — order is semantic"
@@ -1695,6 +1931,8 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
           {staleSessionDays} day{staleSessionDays === 1 ? "" : "s"}.
         </div>
       )}
+
+      {syncNote && <div className="sl-sessions-filter-note">{syncNote}</div>}
 
       {error && <div className="sl-action-error">{error}</div>}
 
@@ -1948,7 +2186,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                           <TerminalColorQuickPicker
                             value={draft.color}
                             onChange={(color) => {
-                              setDraft((current) => ({ ...current, color }));
+                              updateDraft((current) => ({ ...current, color }));
                               setHeaderColorPaletteOpen(false);
                             }}
                           />
@@ -1960,7 +2198,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                       aria-label="Session title"
                       value={draft.title}
                       onChange={(event) =>
-                        setDraft((current) => ({ ...current, title: event.target.value }))
+                        updateDraft((current) => ({ ...current, title: event.target.value }))
                       }
                     />
                   </div>
@@ -2033,7 +2271,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                   draft={draft}
                   creating={creating}
                   selectedSession={selectedSession}
-                  onChange={setDraft}
+                  onChange={updateDraft}
                   onAutosave={() => {
                     if (!creating) {
                       void saveExistingSession();

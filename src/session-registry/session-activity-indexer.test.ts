@@ -18,6 +18,7 @@ function createRootDir(): string {
 function buildSession(overrides: Partial<SessionRegistryListItem> = {}): SessionRegistryListItem {
   return {
     id: "activity-session",
+    version: 0,
     title: "Activity session",
     titleSource: "auto",
     description: "",
@@ -99,6 +100,34 @@ describe("indexSessionActivity", () => {
     expect(indexSessionActivity(buildSession(), eventsPath)).toEqual({
       activityStatus: "waiting_for_input",
       activityStatusUpdatedAt: "2026-04-26T15:04:00.000Z",
+    });
+  });
+
+  it("marks sessions as waiting after a user-requested shell command completes", () => {
+    const eventsPath = writeEvents([
+      { type: "assistant.turn_end", timestamp: "2026-04-26T15:04:00.000Z" },
+      {
+        type: "tool.user_requested",
+        timestamp: "2026-04-26T15:05:00.000Z",
+        data: {
+          toolCallId: "shell-1",
+          toolName: "shell",
+        },
+      },
+      {
+        type: "tool.execution_complete",
+        timestamp: "2026-04-26T15:05:03.000Z",
+        data: {
+          toolCallId: "shell-1",
+          isUserRequested: true,
+          success: true,
+        },
+      },
+    ]);
+
+    expect(indexSessionActivity(buildSession(), eventsPath)).toEqual({
+      activityStatus: "waiting_for_input",
+      activityStatusUpdatedAt: "2026-04-26T15:05:03.000Z",
     });
   });
 

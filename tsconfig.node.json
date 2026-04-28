@@ -22,7 +22,7 @@
   },
   "include": [
     "vite.config.ts",
-    "vite-plugin-serve-graph.ts",
-    "src/session-registry/**/*.ts"
+    "src/session-registry/**/*.ts",
+    "src/server/**/*.ts"
   ]
 }

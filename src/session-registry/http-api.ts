@@ -1,5 +1,6 @@
 import type { SessionRegistryStore } from "../session-registry-contract";
 import {
+  SessionRegistryConflictError,
   SessionRegistryLockedError,
   SessionRegistryNotFoundError,
   parseSessionRegistryPatch,
@@ -39,6 +40,16 @@ function buildErrorResponse(error: unknown): SessionRegistryApiResponse {
     return {
       statusCode: 423,
       body: { error: message },
+    };
+  }
+  if (error instanceof SessionRegistryConflictError) {
+    return {
+      statusCode: 409,
+      body: {
+        error: message,
+        latest: error.latest,
+        conflictingFields: error.conflictingFields,
+      },
     };
   }
   return {

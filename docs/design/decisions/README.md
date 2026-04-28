@@ -1,7 +1,7 @@
 ---
 kind: design-doc
 status: current
-last_updated: 2026-04-21
+last_updated: 2026-04-28
 update_semantics: rewrite-in-place
 authoritative_for: "Decision record conventions and catalog"
 scope_tags:
@@ -14,6 +14,7 @@ references_decisions:
   - 3
   - 4
   - 5
+  - 6
 ---
 
 # Decision Records
@@ -65,3 +66,4 @@ What follows from this choice.
 | 003 | [PAW control state as the workflow progression source](003-paw-control-state-integration.md) | accepted | 2026-04-20 |
 | 004 | [Session registry as the primary session surface](004-session-registry-primary-surface.md) | accepted | 2026-04-21 |
 | 005 | [Session registry storage and identity model](005-session-registry-storage-and-identity.md) | accepted | 2026-04-21 |
+| 006 | [Local Streamliner API service](006-local-streamliner-api-service.md) | accepted | 2026-04-28 |

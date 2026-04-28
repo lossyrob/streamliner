@@ -31,6 +31,7 @@ function buildRecord(): SessionRegistryRecord {
   return {
     schemaVersion: SESSION_REGISTRY_SCHEMA_VERSION,
     id: "session-registry-model",
+    version: 0,
     title: "Session registry model",
     titleSource: "user",
     description: "Design the session registry contract.",
@@ -173,6 +174,7 @@ describe("session registry schema", () => {
     const record = buildRecord();
     const listItem: SessionRegistryListItem = {
       id: record.id,
+      version: record.version,
       title: record.title,
       titleSource: record.titleSource,
       description: record.description,
