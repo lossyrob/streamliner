@@ -1,0 +1,295 @@
+[CmdletBinding()]
+param(
+    [string]$SshTarget = "",
+    [string]$SshHost = "",
+    [string]$SshUser = "",
+    [int]$SshPort = 0,
+    [string]$RemoteWorktreePath = "",
+    [string]$RemoteProbeRelativePath = ".streamliner\workstreams\devbox-support\tasks\devbox-access-probe.ps1",
+    [int]$MaxSessions = 5,
+    [string]$LocalBridgeUrl = "",
+    [int]$ConnectTimeoutSec = 10
+)
+
+$ErrorActionPreference = "Stop"
+
+function Add-ProbeError {
+    param(
+        [System.Collections.Generic.List[object]]$ErrorList,
+        [string]$Scope,
+        [string]$Message
+    )
+
+    $ErrorList.Add([ordered]@{
+        scope = $Scope
+        message = $Message
+    }) | Out-Null
+}
+
+function ConvertTo-PowerShellLiteral {
+    param([string]$Value)
+
+    return "'" + $Value.Replace("'", "''") + "'"
+}
+
+function New-EncodedPowerShellCommand {
+    param([string]$Script)
+
+    return [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($Script))
+}
+
+function New-SshArgs {
+    param(
+        [string]$Target,
+        [string]$HostName,
+        [string]$UserName,
+        [int]$Port,
+        [string]$RemoteCommand,
+        [int]$TimeoutSec
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Target) -and [string]::IsNullOrWhiteSpace($HostName)) {
+        throw "Provide either -SshTarget for an SSH config alias/raw target or -SshHost with optional -SshUser/-SshPort."
+    }
+
+    $resolvedTarget = $Target
+    if ([string]::IsNullOrWhiteSpace($resolvedTarget)) {
+        $resolvedTarget = $HostName
+        if (-not [string]::IsNullOrWhiteSpace($UserName)) {
+            $resolvedTarget = "$UserName@$HostName"
+        }
+    }
+
+    $args = @(
+        "-o", "BatchMode=yes",
+        "-o", "ConnectTimeout=$TimeoutSec"
+    )
+    if ($Port -gt 0) {
+        $args += @("-p", [string]$Port)
+    }
+    $args += @($resolvedTarget, $RemoteCommand)
+    return $args
+}
+
+function Invoke-SshCommand {
+    param(
+        [string]$Target,
+        [string]$HostName,
+        [string]$UserName,
+        [int]$Port,
+        [string]$RemoteCommand,
+        [int]$TimeoutSec,
+        [string]$Name
+    )
+
+    $result = [ordered]@{
+        name = $Name
+        exitCode = $null
+        succeeded = $false
+        outputLines = @()
+        error = $null
+    }
+
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        Get-Command ssh -ErrorAction Stop | Out-Null
+        $sshArgs = New-SshArgs -Target $Target -HostName $HostName -UserName $UserName -Port $Port -RemoteCommand $RemoteCommand -TimeoutSec $TimeoutSec
+        $ErrorActionPreference = "Continue"
+        $output = & ssh @sshArgs 2>&1
+        $result.exitCode = $LASTEXITCODE
+        $result.succeeded = $LASTEXITCODE -eq 0
+        $result.outputLines = @($output | ForEach-Object { [string]$_ })
+    } catch {
+        $result.error = $_.Exception.Message
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+
+    return $result
+}
+
+function Join-OutputLines {
+    param([object[]]$Lines)
+
+    return ($Lines | ForEach-Object { [string]$_ }) -join "`n"
+}
+
+function ConvertFrom-JsonOrNull {
+    param([string]$Text)
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return $null
+    }
+
+    try {
+        return $Text | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        return $null
+    }
+}
+
+function Summarize-RemoteProbe {
+    param([object]$Probe)
+
+    if ($null -eq $Probe) {
+        return $null
+    }
+
+    $sessions = @($Probe.sessions)
+    $eventTypes = @(
+        $sessions |
+            ForEach-Object { @($_.events.eventTypes) } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
+            Sort-Object -Unique
+    )
+    $processStates = @(
+        $sessions |
+            ForEach-Object { $_.locks.processState } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
+            Sort-Object -Unique
+    )
+    $sessionsWithHooks = @(
+        $sessions |
+            Where-Object { $_.events.hasHookEvents -eq $true }
+    ).Count
+
+    return [ordered]@{
+        generatedAt = $Probe.generatedAt
+        sessionStateRootExists = $Probe.checks.sessionStateRootExists
+        sampledSessionCount = $sessions.Count
+        sessionsWithWorkspace = @($sessions | Where-Object { $_.workspace.exists -eq $true }).Count
+        sessionsWithEvents = @($sessions | Where-Object { $_.events.exists -eq $true }).Count
+        sessionsWithHookEvents = $sessionsWithHooks
+        eventTypes = $eventTypes
+        processStates = $processStates
+        errorCount = @($Probe.errors).Count
+    }
+}
+
+$probeErrors = New-Object 'System.Collections.Generic.List[object]'
+
+$hasSshInput =
+    -not [string]::IsNullOrWhiteSpace($SshTarget) -or
+    -not [string]::IsNullOrWhiteSpace($SshHost)
+
+$hostScript = @'
+$result = [ordered]@{
+    computerNamePresent = -not [string]::IsNullOrWhiteSpace($env:COMPUTERNAME)
+    userProfilePresent = -not [string]::IsNullOrWhiteSpace($env:USERPROFILE)
+    powershellVersion = $PSVersionTable.PSVersion.ToString()
+    sessionStateRootExists = Test-Path -LiteralPath (Join-Path $env:USERPROFILE ".copilot\session-state")
+    pathConventions = "windows"
+}
+$result | ConvertTo-Json -Compress
+'@
+$hostResult = $null
+$hostSummary = $null
+$hostSkippedReason = $null
+if ($hasSshInput) {
+    $hostCommand = "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand $(New-EncodedPowerShellCommand -Script $hostScript)"
+    $hostResult = Invoke-SshCommand -Target $SshTarget -HostName $SshHost -UserName $SshUser -Port $SshPort -RemoteCommand $hostCommand -TimeoutSec $ConnectTimeoutSec -Name "host-summary"
+    $hostSummary = ConvertFrom-JsonOrNull -Text (Join-OutputLines -Lines $hostResult.outputLines)
+    if ($hostResult.succeeded -and $null -eq $hostSummary) {
+        Add-ProbeError -ErrorList $probeErrors -Scope "ssh.host-summary.parse" -Message "SSH host summary succeeded but did not return parseable JSON."
+    }
+} else {
+    $hostSkippedReason = "no-ssh-target"
+}
+
+$remoteProbeResult = $null
+$remoteProbeSummary = $null
+$remoteProbeSkippedReason = $null
+if (-not [string]::IsNullOrWhiteSpace($RemoteWorktreePath)) {
+    if (-not $hostResult -or -not $hostResult.succeeded) {
+        $remoteProbeSkippedReason = "host-summary-failed"
+    } else {
+        $remoteWorktreeLiteral = ConvertTo-PowerShellLiteral -Value $RemoteWorktreePath
+        $remoteProbeRelativeLiteral = ConvertTo-PowerShellLiteral -Value $RemoteProbeRelativePath
+        $remoteProbeScript = @"
+`$probePath = Join-Path $remoteWorktreeLiteral $remoteProbeRelativeLiteral
+if (-not (Test-Path -LiteralPath `$probePath)) {
+    throw "Remote probe path does not exist: `$probePath"
+}
+& `$probePath -MaxSessions $MaxSessions
+"@
+        $remoteProbeCommand = "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand $(New-EncodedPowerShellCommand -Script $remoteProbeScript)"
+        $remoteProbeResult = Invoke-SshCommand -Target $SshTarget -HostName $SshHost -UserName $SshUser -Port $SshPort -RemoteCommand $remoteProbeCommand -TimeoutSec $ConnectTimeoutSec -Name "remote-devbox-probe"
+        $remoteProbe = ConvertFrom-JsonOrNull -Text (Join-OutputLines -Lines $remoteProbeResult.outputLines)
+        $remoteProbeSummary = Summarize-RemoteProbe -Probe $remoteProbe
+        if ($remoteProbeResult.succeeded -and $null -eq $remoteProbeSummary) {
+            Add-ProbeError -ErrorList $probeErrors -Scope "ssh.remote-probe.parse" -Message "Remote devbox probe succeeded but did not return parseable JSON."
+        }
+    }
+}
+
+$localBridgeHealth = $null
+if (-not [string]::IsNullOrWhiteSpace($LocalBridgeUrl)) {
+    try {
+        $localBridgeHealth = Invoke-RestMethod -Uri ($LocalBridgeUrl.TrimEnd("/") + "/health") -TimeoutSec 2
+    } catch {
+        Add-ProbeError -ErrorList $probeErrors -Scope "localBridge.health" -Message $_.Exception.Message
+    }
+}
+
+$hostSummaryExitCode = $null
+$hostSummarySucceeded = $false
+$hostSummaryError = $null
+$hostSummaryOutputLineCount = 0
+if ($hostResult) {
+    $hostSummaryExitCode = $hostResult.exitCode
+    $hostSummarySucceeded = $hostResult.succeeded
+    $hostSummaryError = $hostResult.error
+    $hostSummaryOutputLineCount = @($hostResult.outputLines).Count
+}
+
+$remoteProbeExitCode = $null
+$remoteProbeSucceeded = $false
+$remoteProbeError = $null
+$remoteProbeOutputLineCount = 0
+if ($remoteProbeResult) {
+    $remoteProbeExitCode = $remoteProbeResult.exitCode
+    $remoteProbeSucceeded = $remoteProbeResult.succeeded
+    $remoteProbeError = $remoteProbeResult.error
+    $remoteProbeOutputLineCount = @($remoteProbeResult.outputLines).Count
+}
+
+$result = [ordered]@{
+    schemaVersion = 1
+    generatedAt = (Get-Date).ToUniversalTime().ToString("o")
+    inputs = [ordered]@{
+        sshTargetProvided = -not [string]::IsNullOrWhiteSpace($SshTarget)
+        sshHostProvided = -not [string]::IsNullOrWhiteSpace($SshHost)
+        sshUserProvided = -not [string]::IsNullOrWhiteSpace($SshUser)
+        sshPortProvided = $SshPort -gt 0
+        remoteWorktreePathProvided = -not [string]::IsNullOrWhiteSpace($RemoteWorktreePath)
+        remoteProbeRelativePath = $RemoteProbeRelativePath
+        maxSessions = $MaxSessions
+        localBridgeUrlProvided = -not [string]::IsNullOrWhiteSpace($LocalBridgeUrl)
+        connectTimeoutSec = $ConnectTimeoutSec
+    }
+    ssh = [ordered]@{
+        attempted = $hasSshInput
+        hostSummaryExitCode = $hostSummaryExitCode
+        hostSummarySucceeded = $hostSummarySucceeded
+        hostSummary = $hostSummary
+        hostSummaryError = $hostSummaryError
+        hostSummaryOutputLineCount = $hostSummaryOutputLineCount
+        skippedReason = $hostSkippedReason
+    }
+    remoteProbe = [ordered]@{
+        attempted = $null -ne $remoteProbeResult
+        exitCode = $remoteProbeExitCode
+        succeeded = $remoteProbeSucceeded
+        summary = $remoteProbeSummary
+        error = $remoteProbeError
+        outputLineCount = $remoteProbeOutputLineCount
+        skippedReason = $remoteProbeSkippedReason
+    }
+    localBridge = [ordered]@{
+        attempted = -not [string]::IsNullOrWhiteSpace($LocalBridgeUrl)
+        health = $localBridgeHealth
+    }
+    errors = @($probeErrors.ToArray())
+}
+
+$result | ConvertTo-Json -Depth 10

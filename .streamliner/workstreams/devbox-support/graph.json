@@ -7,7 +7,7 @@
   "status": "active",
   "attention": "focus",
   "createdAt": "2026-04-27T21:52:52.683Z",
-  "updatedAt": "2026-04-28T01:18:31.015Z",
+  "updatedAt": "2026-04-28T03:35:00.000Z",
   "repos": [
     {
       "id": "streamliner",
@@ -72,7 +72,7 @@
       "type": "research",
       "title": "Devbox access spike",
       "summary": "Identify the concrete host registration and access model Streamliner can rely on for the first devbox observability slice.",
-      "status": "ready",
+      "status": "in-progress",
       "attention": "focus",
       "repoIds": ["streamliner"],
       "tracker": {
