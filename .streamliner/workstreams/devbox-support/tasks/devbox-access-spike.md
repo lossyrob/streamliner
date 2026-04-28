@@ -39,7 +39,7 @@ validate remote process locks without asking the devbox.
 The builder should be able to configure the first slice with local-only facts:
 
 - a logical devbox/environment id,
-- a display name such as "Donna",
+- a display name such as "work-devbox",
 - an SSH target or host alias,
 - the remote Copilot session-state root when it is not the default
   `~/.copilot/session-state`,
@@ -121,7 +121,7 @@ to resolve it, but the secret itself remains outside Streamliner artifacts.
 | --- | --- |
 | Mounted remote filesystem as the primary path | It can expose files but not trusted hook delivery, remote process liveness, or clear host health. It also makes permission and caching failures look like normal local filesystem behavior. |
 | Local Streamliner directly reading devbox files over ad hoc SSH commands as the whole design | Useful as a spike baseline, but too polling-heavy and cannot give hooks a reliable local endpoint when the laptop is offline or unreachable. |
-| Copilot SDK or remote-control tunnel as the first slice | Donna's prior work explored forwarded SDK/control behavior, but issue 19 is observability, not remote launch/control. Using SDK control first would expand scope and obscure the session-tracking question. |
+| Copilot SDK or remote-control tunnel as the first slice | The prior reference implementation explored forwarded SDK/control behavior, but issue 19 is observability, not remote launch/control. Using SDK control first would expand scope and obscure the session-tracking question. |
 | VS Code/editor remote channel | Too editor-specific for Streamliner's local-first web app direction and hard to test independently. |
 | Azure Dev Tunnel as the only access model | A tunnel is a transport channel, not a host registration, trust, or observation model. It can be evaluated as a substitute for SSH port forwarding after the bridge contract is proven. |
 | Cloud-hosted Streamliner relay | Violates the first workstream's local-first boundary and introduces multi-user/cloud security questions before they are needed. |
@@ -144,7 +144,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\.streamliner\workstreams\d
 The probe intentionally reports metadata and event type shapes, not prompt
 content. The devbox-side result should answer:
 
-- Does the default session-state root exist on Donna?
+- Does the default session-state root exist on the devbox?
 - Do recent sessions have `workspace.yaml` fields compatible with local
   observation?
 - Do recent `events.jsonl` tails include the event types Streamliner depends on?
@@ -155,7 +155,7 @@ content. The devbox-side result should answer:
 
 ## Open evidence needed
 
-- A real Donna probe result from this branch.
+- A real devbox probe result from this branch.
 - Confirmation of the actual SSH target or alias shape the builder wants to use.
 - Confirmation whether Azure Dev Tunnels add value beyond SSH port forwarding for
   this observability slice.
