@@ -36,15 +36,40 @@ plugin cache.
 
 ### Install from this checkout
 
+Use the main checkout for the local marketplace registration. The Copilot CLI
+stores the marketplace as an absolute path in its own config, so registering
+from a temporary worktree will leave Copilot pointing at that worktree even
+after the PR is merged.
+
 ```powershell
-$repo = "C:\Users\robemanuele\proj\streamliner\manual-session-registry"
+$repo = "C:\Users\robemanuele\proj\streamliner\streamliner"
+
+git -C $repo switch main
+git -C $repo pull --ff-only
 
 copilot plugin marketplace add $repo
 copilot plugin install streamliner@streamliner-local
+copilot plugin marketplace list
 copilot plugin list
 ```
 
-`copilot plugin list` should include `streamliner@streamliner-local`.
+`copilot plugin marketplace list` should show `streamliner-local` pointing at
+the main checkout, and `copilot plugin list` should include
+`streamliner@streamliner-local`.
+
+If `streamliner-local` is already registered to an old worktree, remove and
+re-add it from the main checkout:
+
+```powershell
+$repo = "C:\Users\robemanuele\proj\streamliner\streamliner"
+
+copilot plugin uninstall streamliner
+copilot plugin marketplace remove streamliner-local
+copilot plugin marketplace add $repo
+copilot plugin install streamliner@streamliner-local
+copilot plugin marketplace list
+copilot plugin list
+```
 
 ### Refresh after editing the plugin
 
@@ -60,17 +85,19 @@ For one-off development runs that should bypass the cache, launch Copilot with
 the plugin directory directly:
 
 ```powershell
-copilot --plugin-dir C:\Users\robemanuele\proj\streamliner\manual-session-registry\copilot-plugin\streamliner
+$repo = "C:\Users\robemanuele\proj\streamliner\streamliner"
+
+copilot --plugin-dir (Join-Path $repo "copilot-plugin\streamliner")
 ```
 
 Direct path installs with `copilot plugin install <absolute-path>` work today,
 but Copilot CLI warns that direct installs are deprecated in favor of
 `plugin@marketplace` installs.
 
-### Remove or switch worktrees
+### Remove or switch checkouts
 
 The marketplace registration is stored in the Copilot CLI config, not in this
-repository. Remove it before deleting this worktree or switching the
+repository. Remove it before deleting the checkout it points to or switching the
 `streamliner-local` marketplace to another checkout:
 
 ```powershell
