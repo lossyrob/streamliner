@@ -8,6 +8,7 @@
  *   node scripts/screenshot.mjs \
  *       --graph <abs-path-to-graph.json> \
  *       --out   <abs-path-to-output.png> \
+ *       [--path <url-path-or-query>] \
  *       [--selector <css-selector-to-wait-for>] \
  *       [--viewport 1600x1000] \
  *       [--full-page] \
@@ -20,17 +21,18 @@
  *   3 — dev server failed to become ready
  *   4 — page never reached the expected UI state
  */
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { dirname, resolve, isAbsolute } from "node:path";
 import { chromium } from "@playwright/test";
 
 function killTree(proc) {
-  if (!proc || proc.killed || proc.exitCode !== null) return;
+  if (!proc?.pid) return;
   if (process.platform === "win32") {
     // npx.cmd spawns a nested node process; kill the whole tree so Vite exits.
-    spawn("taskkill", ["/pid", String(proc.pid), "/f", "/t"], { stdio: "ignore" });
+    spawnSync("taskkill", ["/pid", String(proc.pid), "/f", "/t"], { stdio: "ignore" });
   } else {
+    if (proc.killed || proc.exitCode !== null) return;
     try { proc.kill("SIGTERM"); } catch { /* ignore */ }
   }
 }
@@ -38,6 +40,7 @@ function killTree(proc) {
 function parseArgs(argv) {
   const args = {
     viewport: { width: 1600, height: 1000 },
+    path: "/",
     selector: ".react-flow__node",
     fullPage: false,
     delayMs: 600,
@@ -48,6 +51,7 @@ function parseArgs(argv) {
     switch (a) {
       case "--graph":      args.graph = next(); break;
       case "--out":        args.out = next(); break;
+      case "--path":       args.path = next(); break;
       case "--selector":   args.selector = next(); break;
       case "--select-node":args.selectNode = next(); break;
       case "--viewport": {
@@ -131,7 +135,7 @@ async function main() {
   });
 
   try {
-    await page.goto(baseUrl, { waitUntil: "networkidle" });
+    await page.goto(new URL(args.path, `${baseUrl}/`).toString(), { waitUntil: "domcontentloaded" });
     await page.waitForSelector(args.selector, { timeout: 20_000 });
     if (args.selectNode) {
       await page.click(`.react-flow__node[data-id="${args.selectNode}"]`, { timeout: 5_000 });

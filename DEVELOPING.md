@@ -27,6 +27,66 @@ The app will be available at [http://localhost:5173](http://localhost:5173). Cha
 
 The dev server serves `public/example-project.json` as the default workstream fixture. You can load a different workstream JSON file using the "Load workstream…" button in the app header.
 
+## Copilot CLI Streamliner plugin
+
+The Streamliner Copilot CLI plugin marks real Copilot CLI and Agency sessions as
+trusted local sessions. It is installed through a local Copilot plugin
+marketplace so normal `copilot` launches load the hook plugin from Copilot CLI's
+plugin cache.
+
+### Install from this checkout
+
+```powershell
+$repo = "C:\Users\robemanuele\proj\streamliner\manual-session-registry"
+
+copilot plugin marketplace add $repo
+copilot plugin install streamliner@streamliner-local
+copilot plugin list
+```
+
+`copilot plugin list` should include `streamliner@streamliner-local`.
+
+### Refresh after editing the plugin
+
+Copilot CLI caches installed plugin files. Reinstall the plugin after changing
+files under `copilot-plugin\streamliner`:
+
+```powershell
+copilot plugin marketplace update streamliner-local
+copilot plugin install streamliner@streamliner-local
+```
+
+For one-off development runs that should bypass the cache, launch Copilot with
+the plugin directory directly:
+
+```powershell
+copilot --plugin-dir C:\Users\robemanuele\proj\streamliner\manual-session-registry\copilot-plugin\streamliner
+```
+
+Direct path installs with `copilot plugin install <absolute-path>` work today,
+but Copilot CLI warns that direct installs are deprecated in favor of
+`plugin@marketplace` installs.
+
+### Remove or switch worktrees
+
+The marketplace registration is stored in the Copilot CLI config, not in this
+repository. Remove it before deleting this worktree or switching the
+`streamliner-local` marketplace to another checkout:
+
+```powershell
+copilot plugin uninstall streamliner
+copilot plugin marketplace remove streamliner-local
+```
+
+Then register and install from the new checkout:
+
+```powershell
+$repo = "C:\path\to\other\streamliner-worktree"
+
+copilot plugin marketplace add $repo
+copilot plugin install streamliner@streamliner-local
+```
+
 ## Available scripts
 
 | Command | Description |

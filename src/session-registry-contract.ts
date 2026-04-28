@@ -2,13 +2,21 @@ import type {
   LaunchedSessionRegistryOrigin,
   ManualSessionRegistryOrigin,
   ObservedSessionRegistryOrigin,
+  SessionRegistryAiSummaryStatus,
+  SessionRegistryActivityStatus,
+  SessionRegistryCopilotProcessState,
+  SessionRegistryGithubRef,
   SessionRegistryGraphBinding,
   SessionRegistryLifecycleStatus,
+  SessionRegistryObservedSessionKind,
   SessionRegistryOriginKind,
   SessionRegistryRecord,
+  SessionRegistryTitleSource,
+  SessionRegistryTrustedEndReason,
+  SessionRegistryTrustedExecutionKind,
+  SessionRegistryTrustedSignalSource,
+  SessionRegistryTrustedStartSource,
 } from "./session-registry-schema";
-
-// The future runtime implementation will live under src/session-registry/.
 
 export type SessionRegistryBuilderLifecycleStatus = Exclude<
   SessionRegistryLifecycleStatus,
@@ -31,6 +39,7 @@ export interface SessionRegistryListOptions {
 export interface SessionRegistryListItem {
   id: string;
   title: string;
+  titleSource: SessionRegistryTitleSource;
   description: string;
   lifecycleStatus: SessionRegistryLifecycleStatus;
   lastSeenAt: string | null;
@@ -43,6 +52,33 @@ export interface SessionRegistryListItem {
   originKind: SessionRegistryOriginKind;
   graphBinding: SessionRegistryGraphBinding | null;
   copilotSessionId: string | null;
+  aiSummary: string | null;
+  aiSummaryModel: string | null;
+  aiSummaryUpdatedAt: string | null;
+  aiSummaryEventsFingerprint: string | null;
+  aiSummaryStatus: SessionRegistryAiSummaryStatus;
+  aiSummaryError: string | null;
+  observedSessionKind: SessionRegistryObservedSessionKind | null;
+  copilotProcessState: SessionRegistryCopilotProcessState | null;
+  copilotProcessId: number | null;
+  activityStatus: SessionRegistryActivityStatus;
+  activityStatusUpdatedAt: string | null;
+  trustedSignalSource: SessionRegistryTrustedSignalSource | null;
+  trustedStartedAt: string | null;
+  trustedEndedAt: string | null;
+  trustedLastSignalAt: string | null;
+  trustedStartSource: SessionRegistryTrustedStartSource | null;
+  trustedEndReason: SessionRegistryTrustedEndReason | null;
+  trustedExecutionKind: SessionRegistryTrustedExecutionKind | null;
+  trustedInitialPromptLength: number | null;
+  trustedLastPromptLength: number | null;
+  derivedWorktreePath: string | null;
+  derivedBranch: string | null;
+  derivedGithubRefs: SessionRegistryGithubRef[];
+  derivedContextUpdatedAt: string | null;
+  derivedContextEventsOffset: number;
+  derivedContextEventsSize: number;
+  derivedContextEventsMtimeMs: number | null;
 }
 
 interface SessionRegistryUpsertInputBase {
@@ -73,6 +109,18 @@ export interface ObservedSessionRegistryUpsertInput
   lastSeenAt?: string | null;
   lifecycleStatus?: SessionRegistryObservedLifecycleStatus;
   graphBinding?: SessionRegistryGraphBinding | null;
+  observedSessionKind?: SessionRegistryObservedSessionKind | null;
+  copilotProcessState?: SessionRegistryCopilotProcessState | null;
+  copilotProcessId?: number | null;
+  trustedSignalSource?: SessionRegistryTrustedSignalSource | null;
+  trustedStartedAt?: string | null;
+  trustedEndedAt?: string | null;
+  trustedLastSignalAt?: string | null;
+  trustedStartSource?: SessionRegistryTrustedStartSource | null;
+  trustedEndReason?: SessionRegistryTrustedEndReason | null;
+  trustedExecutionKind?: SessionRegistryTrustedExecutionKind | null;
+  trustedInitialPromptLength?: number | null;
+  trustedLastPromptLength?: number | null;
 }
 
 export interface LaunchedSessionRegistryUpsertInput
@@ -87,11 +135,48 @@ export interface LaunchedSessionRegistryUpsertInput
 
 export interface SessionRegistryObservedLinkInput {
   copilotSessionId: string;
+  title?: string;
   cwd: string;
   repo?: string | null;
   branch?: string | null;
   lastSeenAt?: string | null;
-  lifecycleStatus?: Extract<SessionRegistryLifecycleStatus, "ended">;
+  lifecycleStatus?: SessionRegistryObservedLifecycleStatus;
+  observedSessionKind?: SessionRegistryObservedSessionKind | null;
+  copilotProcessState?: SessionRegistryCopilotProcessState | null;
+  copilotProcessId?: number | null;
+  trustedSignalSource?: SessionRegistryTrustedSignalSource | null;
+  trustedStartedAt?: string | null;
+  trustedEndedAt?: string | null;
+  trustedLastSignalAt?: string | null;
+  trustedStartSource?: SessionRegistryTrustedStartSource | null;
+  trustedEndReason?: SessionRegistryTrustedEndReason | null;
+  trustedExecutionKind?: SessionRegistryTrustedExecutionKind | null;
+  trustedInitialPromptLength?: number | null;
+  trustedLastPromptLength?: number | null;
+}
+
+export const SESSION_REGISTRY_TRUSTED_SIGNAL_EVENTS = [
+  "session.started",
+  "session.ended",
+  "prompt.submitted",
+] as const;
+export type SessionRegistryTrustedSignalEvent =
+  (typeof SESSION_REGISTRY_TRUSTED_SIGNAL_EVENTS)[number];
+
+export interface SessionRegistryTrustedSignalInput {
+  event: SessionRegistryTrustedSignalEvent;
+  source: SessionRegistryTrustedSignalSource;
+  sessionId: string;
+  timestamp: string;
+  cwd: string;
+  repo?: string | null;
+  branch?: string | null;
+  hookSource?: SessionRegistryTrustedStartSource | null;
+  endReason?: SessionRegistryTrustedEndReason | null;
+  executionKind?: SessionRegistryTrustedExecutionKind | null;
+  environmentId?: string | null;
+  initialPromptLength?: number | null;
+  promptLength?: number | null;
 }
 
 export type SessionRegistryUpsertInput =
@@ -141,6 +226,17 @@ export type SessionRegistryChangeListener = (
   event: SessionRegistryChangeEvent,
 ) => void;
 
+/**
+ * Consumer-facing registry port used by the API, UI-facing runtime, and worker
+ * seams. It deliberately exposes durable session operations and in-process
+ * change notifications only; file layout, lock recovery, discovery, signal
+ * spool draining, migration, and summarization remain concrete
+ * SessionRegistryFileStore/runtime concerns behind this boundary.
+ *
+ * The current production binding is file-backed. A future alternate store
+ * should either implement this shape directly or provide an adapter rather than
+ * leaking file-store-specific helpers into consumers.
+ */
 export interface SessionRegistryStore {
   listSessions(options?: SessionRegistryListOptions): SessionRegistryListItem[];
   getSession(id: string): SessionRegistryRecord | null;
@@ -149,6 +245,7 @@ export interface SessionRegistryStore {
     id: string,
     observation: SessionRegistryObservedLinkInput,
   ): SessionRegistryRecord;
+  recordTrustedSessionSignal(input: SessionRegistryTrustedSignalInput): SessionRegistryRecord;
   patchSession(id: string, patch: SessionRegistryPatch): SessionRegistryRecord;
   archiveSession(id: string): SessionRegistryRecord;
   deleteSession(id: string): void;

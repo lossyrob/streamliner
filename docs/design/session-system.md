@@ -1,7 +1,7 @@
 ---
 kind: design-doc
 status: draft
-last_updated: 2026-04-21
+last_updated: 2026-04-27
 update_semantics: rewrite-in-place
 authoritative_for: "Session launching, lifecycle, registry contract, tracking, and runtime overlay"
 scope_tags:
@@ -16,6 +16,7 @@ code_paths:
   - src/server/session/**
   - src/server/context/**
   - src/components/session/**
+  - copilot-plugin/streamliner/**
 references_decisions:
   - 1
   - 2
@@ -252,6 +253,7 @@ Each registry entry is a persisted `SessionRegistryRecord`. The stored lifecycle
 | `repo` | string or `null` | yes | Observation or builder | Normalized `owner/name` when known; otherwise the repo root path; `null` when unknown. |
 | `branch` | string or `null` | yes | Observation or builder | Last known branch when one is available. |
 | `copilotSessionId` | string or `null` | yes | Observation | Linked Copilot CLI session id when the row is tied to an observed session. |
+| `aiSummary`, `aiSummaryModel`, `aiSummaryUpdatedAt`, `aiSummaryEventsFingerprint`, `aiSummaryStatus`, `aiSummaryError` | string/status fields or `null` | yes | Worker | Optional persisted conversation description and refresh metadata. The worker may transiently read bounded recent `events.jsonl` user turns to produce `aiSummary`, but it does not persist the raw prompt/event bodies in these fields. |
 | `lifecycleStatus` | `active \| paused \| ended \| archived` | yes | Builder + observation | Durable coarse lifecycle. Observation only owns the transition into `ended`; archiving is builder-driven. |
 | `lastSeenAt` | ISO 8601 string or `null` | yes | Observation | Last observed activity timestamp; `null` for never-observed manual entries. |
 | `createdAt`, `updatedAt` | ISO 8601 string | yes | Streamliner | Record creation and last persisted update timestamps. |
@@ -306,7 +308,7 @@ Hand-edited files are tolerated when they still parse and match the supported sc
 
 #### Observation import and merge
 
-The observation hook defined by [Decision 001](decisions/001-observation-based-session-tracking.md) remains authoritative for discovery and liveness. The discovery source of truth is Copilot CLI's session-state root:
+The observation model defined by [Decision 001](decisions/001-observation-based-session-tracking.md) remains authoritative for session-state discovery and liveness. The discovery source of truth is Copilot CLI's session-state root:
 
 - **`workspace.yaml`** — session id, cwd, repository, branch, timestamps
 - **`events.jsonl`** — activity and turn/event stream
@@ -324,6 +326,59 @@ Observation may refresh `copilotSessionId`, `cwd`, `repo`, `branch`, `lastSeenAt
 The manual-row attach rule is deliberately strict. Streamliner does **not** fuzzy-match by `cwd` alone, and it does not auto-attach when more than one manual row could plausibly match. Ambiguous cases fall back to a new observed row plus an explicit builder bind/reconcile step.
 
 Observation never auto-archives. A linked row becomes `ended` when a clean end signal arrives or when the stale-session fallback fires after the watcher has not seen activity within the configured timeout. `archived` is only reached through an explicit builder action. Archived rows stay archived and are excluded from automatic rediscovery matching; a newly observed session creates a fresh row unless a relaunch flow explicitly reactivates the archived entry first.
+
+#### Trusted Copilot CLI signals
+
+Filesystem discovery alone is intentionally weak: it can see Copilot SDK/helper sessions as well as terminal sessions the builder actually cares about. Streamliner therefore treats Copilot CLI plugin hooks as the trust/admission layer and the Copilot session-state files as the observation layer:
+
+1. A trusted hook signal creates or updates a registry row for a real Copilot CLI/Agency session.
+2. The background worker watches the matching `~/.copilot/session-state/{session-id}` folder for workspace metadata, process locks, transcripts, and summarization.
+3. Filesystem-only observed rows remain diagnostics-only by default. Helper-like rows are pruned or hidden.
+
+Trusted signal fields are persisted on both full records and list entries:
+
+| Field | Meaning |
+|-------|---------|
+| `trustedSignalSource` | Source that admitted the session, currently `copilot-cli-hook`. `null` means filesystem-only/diagnostic. |
+| `trustedStartedAt` | Timestamp of the latest trusted `session.started` signal. |
+| `trustedEndedAt` | Timestamp of the latest trusted `session.ended` signal. |
+| `trustedLastSignalAt` | Timestamp of the latest trusted signal of any supported type. |
+| `trustedStartSource` | Copilot hook start source such as `new`, `resume`, or `startup`. |
+| `trustedEndReason` | Copilot hook end reason such as `complete`, `user_exit`, `error`, `abort`, or `timeout`. |
+| `trustedExecutionKind` | Whether the trusted session came from direct Copilot CLI (`copilot_cli`) or Agency (`agency`). |
+| `trustedInitialPromptLength`, `trustedLastPromptLength` | Privacy-preserving prompt metadata. Hook prompt bodies are reduced to lengths before persistence; raw hook prompt text is not stored in trusted-signal registry fields. |
+
+The default Sessions view prioritizes trusted lifecycle buckets:
+
+- **Active Copilot sessions** — trusted start, no trusted end, and a live process lock.
+- **Interrupted / resumable** — trusted start, no trusted end, but no live process lock. This is the expected restart/crash recovery state and remains `lifecycleStatus: active`.
+- **Recently ended** — trusted end signal seen recently.
+- **Pinned / launched** — manual or launched rows the builder created explicitly.
+- **Observed diagnostics** — filesystem-only rows, visible through "Show all observed" rather than the default view.
+
+Trusted signals do not override archive intent. Archived rows reject automatic observation/trusted-signal reactivation unless a future explicit relaunch flow reactivates them first.
+
+#### Trusted signal transport
+
+The Streamliner Copilot CLI plugin under `copilot-plugin/streamliner/` ships hooks for `sessionStart`, `userPromptSubmitted`, and `sessionEnd`. The hook script emits Streamliner-normalized events:
+
+| Plugin hook | Streamliner event | Required fields | Optional fields |
+|-------------|-------------------|-----------------|-----------------|
+| `sessionStart` | `session.started` | `source`, `sessionId`, `timestamp`, `cwd` | `repo`, `branch`, `hookSource`, `executionKind`, `initialPromptLength` |
+| `userPromptSubmitted` | `prompt.submitted` | `source`, `sessionId`, `timestamp`, `cwd` | `executionKind`, `promptLength` |
+| `sessionEnd` | `session.ended` | `source`, `sessionId`, `timestamp`, `cwd` | `endReason`, `executionKind` |
+
+The hook script first tries `STREAMLINER_SESSION_SIGNAL_ENDPOINT`, typically `POST /api/sessions/signals` on the local Streamliner host. If no endpoint is configured or the POST fails quickly, it writes a complete JSON file to the local spool:
+
+```text
+~/.streamliner/state/session-signals/
+  pending/
+    {timestamp}-{pid}-{session-id}-{random}.json
+  failed/
+    {original-file-name}.json
+```
+
+The background worker drains `pending/` before discovery and summarization. Successfully ingested files are deleted. Invalid files move to `failed/` for inspection. Missing-file races are ignored because another process may have drained or cleaned a file between directory listing and read.
 
 Registry import also inherits Decision 001's compatibility contract. If the Copilot compatibility probe cannot verify the expected event/file shapes, Streamliner may still create or update rows from `workspace.yaml`, but any observation-derived freshness or liveness that depends on unverified event parsing is surfaced as degraded confidence rather than fabricated certainty.
 
@@ -369,17 +424,15 @@ Streamliner overlays both onto the graph node. Neither subsumes the other: a ses
 
 ### Hook Signals
 
-Copilot CLI plugin hooks provide low-latency hints that complement polling:
+Copilot CLI plugin hooks are the trusted admission signal for default-visible sessions. They complement polling but do not replace Copilot's session-state files:
 
-| Hook | Signal file | Purpose |
-|------|-------------|---------|
-| `sessionStart` | `{id}.start.json` | Triggers immediate session scan |
-| `agentStop` | `{id}.turn.json` | Signals turn completion for fast idle detection |
-| `sessionEnd` | `{id}.end.json` | Signals clean session exit with reason |
+| Hook | Streamliner event | Purpose |
+|------|-------------------|---------|
+| `sessionStart` | `session.started` | Admits a real Copilot CLI/Agency terminal session and starts observation for its session-state folder. |
+| `userPromptSubmitted` | `prompt.submitted` | Updates trusted activity timestamps and prompt-length-only metadata without storing prompt text. |
+| `sessionEnd` | `session.ended` | Records clean session exit and reason. |
 
-Hook scripts write a small JSON signal file to a signals directory and exit immediately (<100ms). The session watcher picks up these files via a second filesystem watch. Signal files are deleted after processing.
-
-Hooks are **hints, not the source of truth**. If a hook fails to fire (plugin not installed, script error), the watcher still detects the same state transitions through polling — just with higher latency.
+Hooks are **trust signals, not complete state**. If the plugin is not installed, Streamliner may still discover session folders for diagnostics, but those rows stay observed-only by default because they may be SDK/helper sessions. Once a hook admits a session, the worker uses polling over `workspace.yaml` and `events.jsonl` to keep the registry current even if later prompt/end signals are delayed.
 
 ### Node-to-Session Binding
 

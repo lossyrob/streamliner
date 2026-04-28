@@ -1,8 +1,18 @@
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { type Plugin } from "vite";
 import { readFile, stat, writeFile, mkdir } from "node:fs/promises";
 import { resolve, dirname } from "node:path";
 import { homedir } from "node:os";
 import { execFile } from "node:child_process";
+import {
+  handleSessionRegistryApiRequest,
+  SESSION_REGISTRY_API_BASE_PATH,
+} from "./src/session-registry/http-api";
+import {
+  ensureSessionRegistryBackgroundWorkerStarted,
+  stopSessionRegistryBackgroundWorker,
+} from "./src/session-registry/background-worker";
+import { getSessionRegistryStore } from "./src/session-registry/runtime";
 
 const RECENTS_PATH = resolve(homedir(), ".streamliner", "recent-graphs.json");
 const MAX_RECENTS = 20;
@@ -80,6 +90,133 @@ async function serveGraphFile(absPath: string, req: { headers: Record<string, st
   res.end(content);
 }
 
+async function readRequestBody(req: IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+
+  if (chunks.length === 0) {
+    return undefined;
+  }
+
+  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+}
+
+function sendJson(
+  res: ServerResponse,
+  statusCode: number,
+  body?: unknown,
+): void {
+  res.statusCode = statusCode;
+  if (body === undefined) {
+    res.end();
+    return;
+  }
+  res.setHeader("Content-Type", "application/json");
+  res.end(JSON.stringify(body));
+}
+
+function registerApiMiddleware(
+  register: (
+    handler: (
+      req: IncomingMessage,
+      res: ServerResponse,
+      next: () => void,
+    ) => void | Promise<void>,
+  ) => void,
+  defaultGraphPath?: string,
+): void {
+  register(async (req, res, next) => {
+    const url = new URL(req.url ?? "/", "http://localhost");
+
+    if (url.pathname === "/api/recents") {
+      try {
+        const entries = await loadRecents();
+        sendJson(res, 200, entries);
+      } catch (err: unknown) {
+        sendJson(res, 500, { error: String(err) });
+      }
+      return;
+    }
+
+    if (url.pathname === "/api/pick-file") {
+      try {
+        const picked = await openFilePicker();
+        if (picked) {
+          sendJson(res, 200, { path: picked });
+        } else {
+          sendJson(res, 204);
+        }
+      } catch (err: unknown) {
+        sendJson(res, 500, { error: String(err) });
+      }
+      return;
+    }
+
+    if (url.pathname.startsWith(SESSION_REGISTRY_API_BASE_PATH)) {
+      try {
+        const registryStore = getSessionRegistryStore();
+        const apiResponse = handleSessionRegistryApiRequest(
+          registryStore,
+          {
+            method: req.method,
+            url: req.url ?? url.pathname,
+            body:
+              req.method === "POST" || req.method === "PATCH"
+                ? await readRequestBody(req)
+                : undefined,
+          },
+        );
+        if (apiResponse) {
+          sendJson(res, apiResponse.statusCode, apiResponse.body);
+          return;
+        }
+      } catch (err: unknown) {
+        if (err instanceof SyntaxError) {
+          sendJson(res, 400, { error: "Malformed JSON request body." });
+          return;
+        }
+        sendJson(res, 500, { error: String(err) });
+        return;
+      }
+    }
+
+    if (url.pathname !== "/api/graph.json") {
+      next();
+      return;
+    }
+
+    const queryPath = url.searchParams.get("path");
+    let targetPath = queryPath ?? defaultGraphPath;
+
+    // If no explicit path, try the most recent graph
+    if (!targetPath) {
+      try {
+        const entries = await loadRecents();
+        if (entries.length > 0) targetPath = entries[0].path;
+      } catch {
+        /* ignore */
+      }
+    }
+
+    if (!targetPath) {
+      sendJson(res, 404, {
+        error: "No graph configured. Load a graph file or set STREAMLINER_GRAPH.",
+      });
+      return;
+    }
+
+    try {
+      const abs = resolve(targetPath);
+      await serveGraphFile(abs, req as never, res as never);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      sendJson(res, 500, { error: msg });
+    }
+  });
+}
+
 /**
  * Vite plugin that serves local graph.json files.
  *
@@ -95,72 +232,24 @@ export default function serveGraph(options?: { graphPath?: string }): Plugin {
   return {
     name: "streamliner-serve-graph",
     configureServer(server) {
-      server.middlewares.use(async (req, res, next) => {
-        const url = new URL(req.url ?? "/", "http://localhost");
-
-        if (url.pathname === "/api/recents") {
-          try {
-            const entries = await loadRecents();
-            res.statusCode = 200;
-            res.setHeader("Content-Type", "application/json");
-            res.end(JSON.stringify(entries));
-          } catch (err: unknown) {
-            res.statusCode = 500;
-            res.setHeader("Content-Type", "application/json");
-            res.end(JSON.stringify({ error: String(err) }));
-          }
-          return;
-        }
-
-        if (url.pathname === "/api/pick-file") {
-          try {
-            const picked = await openFilePicker();
-            if (picked) {
-              res.statusCode = 200;
-              res.setHeader("Content-Type", "application/json");
-              res.end(JSON.stringify({ path: picked }));
-            } else {
-              res.statusCode = 204;
-              res.end();
-            }
-          } catch (err: unknown) {
-            res.statusCode = 500;
-            res.setHeader("Content-Type", "application/json");
-            res.end(JSON.stringify({ error: String(err) }));
-          }
-          return;
-        }
-
-        if (url.pathname !== "/api/graph.json") return next();
-
-        const queryPath = url.searchParams.get("path");
-        let targetPath = queryPath ?? defaultGraphPath;
-
-        // If no explicit path, try the most recent graph
-        if (!targetPath) {
-          try {
-            const entries = await loadRecents();
-            if (entries.length > 0) targetPath = entries[0].path;
-          } catch { /* ignore */ }
-        }
-
-        if (!targetPath) {
-          res.statusCode = 404;
-          res.setHeader("Content-Type", "application/json");
-          res.end(JSON.stringify({ error: "No graph configured. Load a graph file or set STREAMLINER_GRAPH." }));
-          return;
-        }
-
-        try {
-          const abs = resolve(targetPath);
-          await serveGraphFile(abs, req as never, res as never);
-        } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : String(err);
-          res.statusCode = 500;
-          res.setHeader("Content-Type", "application/json");
-          res.end(JSON.stringify({ error: msg }));
-        }
+      const registryStore = getSessionRegistryStore();
+      if (process.env.STREAMLINER_DISABLE_SESSION_WORKER !== "1") {
+        ensureSessionRegistryBackgroundWorkerStarted(registryStore);
+      }
+      server.httpServer?.once("close", () => {
+        void stopSessionRegistryBackgroundWorker();
       });
+      registerApiMiddleware(server.middlewares.use.bind(server.middlewares), defaultGraphPath);
+    },
+    configurePreviewServer(server) {
+      const registryStore = getSessionRegistryStore();
+      if (process.env.STREAMLINER_DISABLE_SESSION_WORKER !== "1") {
+        ensureSessionRegistryBackgroundWorkerStarted(registryStore);
+      }
+      server.httpServer?.once("close", () => {
+        void stopSessionRegistryBackgroundWorker();
+      });
+      registerApiMiddleware(server.middlewares.use.bind(server.middlewares), defaultGraphPath);
     },
   };
 }
