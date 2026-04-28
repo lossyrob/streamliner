@@ -22,7 +22,7 @@ Issue #19 accepted the first access direction: target a builder-managed access
 channel to a devbox-side Streamliner bridge. For locked-down Windows Dev Boxes,
 an authenticated Dev Tunnel to a loopback bridge is viable without inbound SSH;
 SSH/local port forwarding remains an optional channel when available. Issue #22
-is validating the first production transport shape on top of that access model:
+accepts the first production transport shape on top of that access model:
 HTTP polling over the bridge with health/capability checks, bounded snapshots,
 incremental event-tail offsets, and trusted-signal cursors.
 
@@ -91,20 +91,19 @@ tails include the local observation event types, hook events are available for
 some sessions, in-use locks are interpretable on the devbox host, and remote
 paths use Windows conventions.
 
-Issue #22 is in progress. The candidate transport contract is HTTP polling over
-the devbox bridge with health/capability checks, bounded session snapshots,
+Issue #22 is complete. The accepted transport contract is HTTP polling over the
+devbox bridge with health/capability checks, bounded session snapshots,
 offset-based event tails, replayable trusted-signal cursors, and failure behavior
-that preserves stale last-known registry data without fabricating freshness. That
-contract still needs a live devbox run against the issue #22 smoke bridge/probe
-before the finding is accepted.
+that preserves stale last-known registry data without fabricating freshness. The
+contract was validated devbox-locally and through a laptop-to-devbox Dev Tunnel
+connection against the issue #22 smoke bridge/probe.
 
-The next promoted research issues are `environment-identity-spike` and
-`devbox-security-spike`. `devbox-health-spike` should wait for issue #22's live
-transport evidence because its states depend on the accepted transport failure
-model. The implementation tail remains blocked on the accepted devbox research
-contract plus the specific upstream registry, sync, and observation contracts
-named above; it is not blocked on the entire `session-launching-and-tracking`
-workstream or on launch-from-graph.
+The next promoted research issues are `environment-identity-spike`,
+`devbox-health-spike`, and `devbox-security-spike`. The implementation tail
+remains blocked on the accepted devbox research contract plus the specific
+upstream registry, sync, and observation contracts named above; it is not blocked
+on the entire `session-launching-and-tracking` workstream or on
+launch-from-graph.
 
 ## Decisions
 - Use local tracker specs for Wave 1 research nodes so the spike missions are
@@ -135,7 +134,7 @@ workstream or on launch-from-graph.
   evidence. The remaining transport work is no longer "can we see session files
   on the devbox?" but "what production bridge API, snapshot/tail contract, and
   freshness behavior should Streamliner consume?"
-- Validate HTTP polling over the bridge as the first remote observation transport:
+- Use HTTP polling over the bridge as the first remote observation transport:
   `/health`, `/capabilities`, bounded `/sessions/snapshot`, offset-based
   `/sessions/{id}/events`, replayable `/signals`, and loopback
   `POST /api/sessions/signals` for devbox Copilot CLI hooks.

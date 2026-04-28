@@ -2,9 +2,8 @@
 
 ## Status
 
-Draft issue #22 contract. The recommendation below is the candidate transport
-model to validate with a real devbox run before the finding is accepted or the
-PR is marked ready for review.
+Devbox-local and laptop-to-devbox Dev Tunnel evidence captured. The transport
+recommendation below is ready to drive the first implementation slice.
 
 Tracker: [issue #22](https://github.com/lossyrob/streamliner/issues/22)
 
@@ -289,36 +288,27 @@ transport-specific smoke bridge on devbox loopback.
   laptop-side verification. The concrete tunnel id and URLs are intentionally
   omitted from this committed evidence.
 
-The remaining acceptance check is the laptop-side probe through
-`devtunnel connect` against the live bridge. Until that check is recorded, the
-issue #22 graph node remains `in-progress`.
+Issue #22 laptop-side validation was run through authenticated `devtunnel
+connect` to the live devbox-hosted bridge, mapped locally to
+`http://127.0.0.1:17620`.
 
-## Required issue #22 validation
+- `/health`, `/capabilities`, `/sessions/snapshot`, offset event-tail probing,
+  signal POST, and signal cursor read all succeeded from the laptop through the
+  tunnel.
+- `/health` again reported `status: "ok"`, `loopbackOnly: true`,
+  `sessionStateRootExists: true`, and `pathConventions: "windows"`.
+- `/sessions/snapshot` sampled 10 recent devbox sessions. All 10 had event
+  metadata, 7 had trusted hook events, and process states covered `live`, `none`,
+  and `stale_lock`.
+- Snapshot event types included assistant/user turns, tool execution,
+  hook events, session lifecycle/diagnostic events, and `subagent.completed`.
+- Offset event-tail probing returned 6 normalized events, 0 parse errors, and
+  `rawContentOmitted: true`.
+- Synthetic signal POST was accepted, and `/signals?after=0` returned a cursor
+  read containing the synthetic signal.
 
-The branch includes a devbox-side smoke bridge and a laptop/devbox probe for the
-candidate endpoint contract:
-
-- `remote-observation-transport-bridge-smoke.ps1`
-- `remote-observation-transport-probe.ps1`
-
-The devbox validation should prove:
-
-- `/health` returns `status: "ok"` and reports the session-state root;
-- `/capabilities` advertises snapshots, offset event tails, signal POST, signal
-  cursor reads, process-lock liveness, and raw-content omission;
-- `/sessions/snapshot` returns real devbox session metadata without raw prompt or
-  assistant content;
-- `/sessions/{id}/events?afterOffset=...` can tail at least one real devbox
-  session by byte offset and returns normalized event envelopes;
-- `POST /api/sessions/signals` accepts a synthetic normalized signal on devbox
-  loopback;
-- `/signals?after=...` returns that synthetic signal through a replayable cursor;
-- the same probe succeeds from the laptop through `devtunnel connect`, not only
-  from the devbox itself.
-
-Once that evidence is committed back to the branch, update this section with the
-observed results and move the issue #22 graph node from `in-progress` to
-`completed`.
+This completes the issue #22 acceptance evidence: the proposed transport
+contract works devbox-locally and through the locked-down-device Dev Tunnel path.
 
 ## Design impact
 
