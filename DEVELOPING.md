@@ -23,7 +23,7 @@ Start the local API and Vite dev server together:
 npm run dev
 ```
 
-The app will be available at [http://localhost:5173](http://localhost:5173). Vite binds to `127.0.0.1` and proxies `/api/*` to the standalone local API at [http://127.0.0.1:4319](http://127.0.0.1:4319). Frontend changes hot-reload through Vite without restarting the API worker.
+The app will be available at [http://localhost:5173](http://localhost:5173). Vite binds to `127.0.0.1` and proxies `/api/*` to the standalone local API at [http://127.0.0.1:4319](http://127.0.0.1:4319). `npm run dev` waits for the API health endpoint before starting Vite so initial dashboard requests do not race the API process. Frontend changes hot-reload through Vite without restarting the API worker.
 
 Run the processes separately when you only need to restart one side:
 
@@ -108,7 +108,7 @@ copilot plugin install streamliner@streamliner-local
 |---------|-------------|
 | `npm run dev` | Start the local API and Vite dev server together |
 | `npm run dev:api` | Start the local API in watch mode |
-| `npm run dev:web` | Start only the Vite dev server with HMR |
+| `npm run dev:web` | Wait for the local API, then start only the Vite dev server with HMR |
 | `npm run api` | Start the local API without watch mode |
 | `npm run build` | Type-check with `tsc` and build for production |
 | `npm run preview` | Preview the production build locally with the API running |
