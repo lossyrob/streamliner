@@ -18,6 +18,14 @@ whether remote session state can be observed reliably, what host/environment
 identity must be added to the registry/runtime model, and how degraded health
 should be represented.
 
+Issue #19 accepted the first access direction: target a builder-managed access
+channel to a devbox-side Streamliner bridge. For locked-down Windows Dev Boxes,
+an authenticated Dev Tunnel to a loopback bridge is viable without inbound SSH;
+SSH/local port forwarding remains an optional channel when available. Issue #22
+accepts the first production transport shape on top of that access model:
+HTTP polling over the bridge with health/capability checks, bounded snapshots,
+incremental event-tail offsets, and trusted-signal cursors.
+
 Implementation work is intentionally behind two gates: a local research contract
 gate and an external runtime-contract gate. The research nodes should export
 small, durable findings that downstream implementation nodes can consume without
@@ -72,13 +80,30 @@ contracts:
 | Launch claims and graph-node binding | `launch-claim-binding`, `terminal-launch-integration`, `launch-from-graph` checkpoint | Future devbox launch, recovery, or node-binding work | Not a prerequisite for devbox observability. This workstream should not wait on launch-from-graph unless a later wave expands into remote launch or graph-node binding. |
 
 ## Current State
-Issue #18 clarified the workstream boundary and external dependency map. Wave 1
-should continue executing the research spikes before implementation begins. The
-implementation tail is blocked on the accepted devbox research contract plus the
-specific upstream registry, sync, and observation contracts named above; it is
-not blocked on the entire `session-launching-and-tracking` workstream or on
-launch-from-graph. Research can proceed now because it is meant to define the
-devbox-specific contracts those later implementation nodes will consume.
+Issues #18 and #19 are complete. Issue #18 clarified the observability-first
+workstream boundary and external dependency map. Issue #19 accepted a
+devbox-side bridge reached through a builder-managed channel as the first access
+shape, with Dev Tunnels validated for a locked-down Windows Dev Box where
+inbound SSH is unavailable. The same evidence completed the
+`remote-session-state-spike`: the devbox session-state root exists, recent
+sessions expose the expected `workspace.yaml` / `events.jsonl` shape, event
+tails include the local observation event types, hook events are available for
+some sessions, in-use locks are interpretable on the devbox host, and remote
+paths use Windows conventions.
+
+Issue #22 is complete. The accepted transport contract is HTTP polling over the
+devbox bridge with health/capability checks, bounded session snapshots,
+offset-based event tails, replayable trusted-signal cursors, and failure behavior
+that preserves stale last-known registry data without fabricating freshness. The
+contract was validated devbox-locally and through a laptop-to-devbox Dev Tunnel
+connection against the issue #22 smoke bridge/probe.
+
+The next promoted research issues are `environment-identity-spike`,
+`devbox-health-spike`, and `devbox-security-spike`. The implementation tail
+remains blocked on the accepted devbox research contract plus the specific
+upstream registry, sync, and observation contracts named above; it is not blocked
+on the entire `session-launching-and-tracking` workstream or on
+launch-from-graph.
 
 ## Decisions
 - Use local tracker specs for Wave 1 research nodes so the spike missions are
@@ -97,15 +122,30 @@ devbox-specific contracts those later implementation nodes will consume.
   observation semantics are the critical upstream contracts for devbox
   observability; launch-from-graph and graph-node binding are not blockers for
   the first observability slice.
+- Target first-slice devbox observability at a devbox-side Streamliner bridge
+  reached through a builder-managed access channel. Direct SSH reads can remain
+  a bootstrap or degraded fallback when SSH is available, but host-local
+  filesystem/process inspection and hook ingestion belong on the devbox side.
+- Treat authenticated Dev Tunnels as an accepted access channel for locked-down
+  Windows Dev Boxes. The access spike validated devbox-local bridge health and
+  snapshot endpoints plus laptop-to-devbox reachability through `devtunnel
+  connect`, without inbound SSH or local admin changes.
+- Treat the original `remote-session-state-spike` as completed by the issue #19
+  evidence. The remaining transport work is no longer "can we see session files
+  on the devbox?" but "what production bridge API, snapshot/tail contract, and
+  freshness behavior should Streamliner consume?"
+- Use HTTP polling over the bridge as the first remote observation transport:
+  `/health`, `/capabilities`, bounded `/sessions/snapshot`, offset-based
+  `/sessions/{id}/events`, replayable `/signals`, and loopback
+  `POST /api/sessions/signals` for devbox Copilot CLI hooks.
 
 ## Open Questions
-- Which concrete devbox access path should the first implementation support:
-  SSH, a mounted filesystem, a local bridge service, an editor remote channel,
-  or something else discovered by the access spike?
-- Does reliable remote observation require an agent/service on the devbox, or
-  can the local Streamliner process read remote Copilot state directly with
-  acceptable latency and failure behavior?
 - What host/environment fields belong in the registry record versus derived
   runtime overlay state?
-- Should the devbox contract update `session-system.md` only, or does it require
-  a new accepted decision record once the spikes establish the approach?
+- How should Streamliner represent host reachability, tunnel reachability,
+  bridge health, plugin/hook availability, stale observations, and degraded
+  compatibility without making stale devbox data look fresh?
+- What credential references, bridge auth rules, and diagnostic redaction
+  boundaries are needed beyond the no-secrets artifact rule?
+- Should the production bridge remain a user-started helper, or should a later
+  implementation install it as a user login task/service after an explicit ADR?

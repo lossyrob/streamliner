@@ -1,7 +1,7 @@
 ---
 kind: design-doc
 status: draft
-last_updated: 2026-04-27
+last_updated: 2026-04-28
 update_semantics: rewrite-in-place
 authoritative_for: "Session launching, lifecycle, registry contract, tracking, and runtime overlay"
 scope_tags:
@@ -48,7 +48,7 @@ The launch contract is the interface between the graph UI (where the builder ini
 
 The builder selects a node in the graph and initiates a launch. Streamliner resolves the node's workstream, target repository, and branch strategy. The builder may override the branch strategy or accept the default (new feature branch from the repo's main branch).
 
-This design specifies **local launches only**. The launch contract keeps an environment dimension so future remote execution can fit the same shape, but `devbox` launch and remote session observation are not defined here.
+This design specifies **local launches only**. The launch contract keeps an environment dimension so future remote execution can fit the same shape, but `devbox` launch is not defined here. Devbox observation is defined later as an extension of the session-tracking model, not as a launch mode.
 
 ### Launch Sequence
 
@@ -455,6 +455,35 @@ snapshots and event tails. The bridge is not a replacement source of truth for
 session status: Copilot CLI's `workspace.yaml`, `events.jsonl`, and in-use lock
 files remain the observed facts.
 
+The first production transport over that bridge is versioned HTTP/JSON polling,
+not a remote filesystem mount and not a cloud relay. The minimum bridge surface
+is:
+
+| Endpoint | Role |
+|----------|------|
+| `GET /health` | Bridge reachability, version, host clock, session-root access, hook-spool health, and diagnostics. |
+| `GET /capabilities` | Supported observation features and limits, including snapshot, event tail, signal ingest/read, lock liveness, and path conventions. |
+| `GET /sessions/snapshot` | Bounded startup/current-state scan of recent sessions with workspace metadata, event-file cursors, event-shape summaries, trusted-signal summaries, and lock state. |
+| `GET /sessions/{copilotSessionId}/events` | Offset-based incremental event tail returning complete normalized event envelopes and the next byte offset. |
+| `GET /signals` | Replayable cursor read of trusted hook signals accepted or spooled on the devbox. |
+| `POST /api/sessions/signals` | Devbox-local Copilot CLI hook target using the same normalized signal payload as local sessions. |
+
+The bridge returns metadata and normalized event shapes by default. Raw prompt
+text, assistant message text, tool arguments, and complete JSONL lines do not
+cross the bridge in the first slice; prompt bodies are reduced to lengths, and
+workspace summaries are represented by presence/length unless a later content
+policy explicitly opts into bounded raw-content reads. Local Streamliner stores
+per-environment snapshot cursors, signal cursors, event-tail offsets, compatibility
+diagnostics, and freshness timestamps in local runtime state only. Those cursors
+are advanced only after successful ingestion by the local registry worker.
+
+Dev Tunnel authentication expiry, SSH-forward failure, bridge unavailability,
+permission errors, cursor invalidation, and bridge version mismatch are
+environment diagnostics, not registry-deletion or session-ended signals. A remote
+session can become stale when the freshness window expires after the last
+successful bridge observation, but Streamliner must not fabricate fresh liveness
+or clean session ends solely from transport outage.
+
 Direct SSH reads of `~/.copilot/session-state` are the bootstrap/probe path and
 may remain a degraded fallback. They are sufficient to verify reachability,
 session-state shape, and remote process-lock interpretation, but they are not the
@@ -608,6 +637,7 @@ Clicking a session in the list focuses its terminal (when the terminal integrati
 - **Terminal multiplexer integration**: Should Streamliner manage terminal tabs directly, or delegate to tmux/screen/IDE terminal APIs? (See terminal note for tmux-based approach.)
 - **Multiple sessions per node**: Can a node have multiple concurrent sessions (e.g., after a crash and relaunch)? If so, how are they reconciled?
 - **Context staleness**: If a session runs long enough that the workstream state changes (brief updated, graph refined), should the session be notified or continue with its original context?
-- **Devbox transport evidence**: Does a real devbox probe confirm that SSH reachability plus a devbox-side bridge is sufficient for trusted hook forwarding, remote session-state snapshots, and host-local process liveness?
+- **Devbox bridge lifecycle**: Should the production bridge remain a user-started helper, be launched by Streamliner through the configured access channel, or be installed as a user login task/service after an explicit ADR?
+- **Devbox hook ingest proof**: Does the production bridge receive real devbox Copilot CLI hook POSTs and drain plugin fallback spool files without slowing or breaking interactive sessions?
 - **Watcher restart rehydration**: On a cold watcher start against an active session, how far back does the incremental tool-request index need to be rebuilt to catch unresolved `ask_user` calls from before the restart? Options: re-scan the full log (bounded by an explicit budget), or treat pre-restart state as unknown until the next turn.
 - **Cross-runtime coordination beyond the registry**: The registry now uses `registry.lock` plus record-authoritative rebuild rules. Should the rest of the per-workstream runtime cache converge on the same coordination pattern, or keep file-specific rules?
