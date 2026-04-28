@@ -1,0 +1,267 @@
+{
+  "schemaVersion": 1,
+  "id": "devbox-support",
+  "projectKey": "streamliner",
+  "title": "Devbox support",
+  "summary": "Research-first devbox observability workstream: prove access, remote session-state observation, identity, security, and health contracts before implementation consumes the in-flight local session/runtime checkpoints.",
+  "status": "active",
+  "attention": "focus",
+  "createdAt": "2026-04-27T21:52:52.683Z",
+  "updatedAt": "2026-04-27T21:52:52.683Z",
+  "repos": [
+    {
+      "id": "streamliner",
+      "owner": "lossyrob",
+      "name": "streamliner",
+      "role": "primary"
+    }
+  ],
+  "designRefs": [
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/index.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/product.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/operating-model.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/workstream-format.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/session-system.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/001-observation-based-session-tracking.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/004-session-registry-primary-surface.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/005-session-registry-storage-and-identity.md"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "devbox-scope-and-dependencies",
+      "type": "research",
+      "title": "Devbox scope and dependency map",
+      "summary": "Define the exact devbox observability boundary and map which external checkpoints from session-launching-and-tracking must be consumed before implementation starts.",
+      "status": "ready",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/devbox-scope-and-dependencies.md"
+      },
+      "dependsOn": []
+    },
+    {
+      "id": "devbox-access-spike",
+      "type": "research",
+      "title": "Devbox access spike",
+      "summary": "Identify the concrete host registration and access model Streamliner can rely on for the first devbox observability slice.",
+      "status": "ready",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/devbox-access-spike.md"
+      },
+      "dependsOn": []
+    },
+    {
+      "id": "remote-session-state-spike",
+      "type": "research",
+      "title": "Remote Copilot state spike",
+      "summary": "Confirm where Copilot CLI session state lives on the devbox, what metadata and events are available, and how compatible that shape is with local observation.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/remote-session-state-spike.md"
+      },
+      "dependsOn": ["devbox-access-spike"]
+    },
+    {
+      "id": "remote-observation-transport-spike",
+      "type": "research",
+      "title": "Remote observation transport spike",
+      "summary": "Evaluate the viable scan/watch transport for reading devbox session state from the local Streamliner process, including latency, consistency, and failure modes.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/remote-observation-transport-spike.md"
+      },
+      "dependsOn": ["devbox-access-spike", "remote-session-state-spike"]
+    },
+    {
+      "id": "environment-identity-spike",
+      "type": "research",
+      "title": "Environment identity spike",
+      "summary": "Define host, environment, path, repo, branch, and Copilot-session identity rules so devbox sessions can merge into the registry without colliding with local sessions.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/environment-identity-spike.md"
+      },
+      "dependsOn": ["devbox-scope-and-dependencies", "remote-session-state-spike"]
+    },
+    {
+      "id": "devbox-health-spike",
+      "type": "research",
+      "title": "Devbox health and freshness spike",
+      "summary": "Define the health, freshness, degraded-confidence, and unreachable-host states that make devbox observation trustworthy enough to operate from.",
+      "status": "planned",
+      "attention": "watch",
+      "repoIds": ["streamliner"],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/devbox-health-spike.md"
+      },
+      "dependsOn": ["remote-observation-transport-spike"]
+    },
+    {
+      "id": "devbox-security-spike",
+      "type": "research",
+      "title": "Devbox security and credential spike",
+      "summary": "Determine how devbox registration records, credentials, secrets, and trust boundaries should work without committing sensitive data or widening Streamliner's local-first scope.",
+      "status": "ready",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/devbox-security-spike.md"
+      },
+      "dependsOn": []
+    },
+    {
+      "id": "devbox-research-contract-gate",
+      "type": "gate",
+      "title": "Devbox research contract gate",
+      "summary": "Operator reviews the spike findings and accepts the devbox access, observation, identity, health, and security contracts before implementation nodes are promoted.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": [
+        "devbox-scope-and-dependencies",
+        "remote-observation-transport-spike",
+        "environment-identity-spike",
+        "devbox-health-spike",
+        "devbox-security-spike"
+      ]
+    },
+    {
+      "id": "external-runtime-checkpoint-gate",
+      "type": "gate",
+      "title": "External runtime checkpoint gate",
+      "summary": "Wait for session-launching-and-tracking to export the stable local registry/session runtime and node-binding checkpoints that devbox implementation must consume.",
+      "status": "blocked",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["devbox-research-contract-gate"]
+    },
+    {
+      "id": "devbox-host-registration",
+      "type": "task",
+      "title": "Devbox host registration",
+      "summary": "Implement the accepted devbox host registration model without storing secrets in committed artifacts or creating a general host-fleet manager.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["external-runtime-checkpoint-gate"]
+    },
+    {
+      "id": "devbox-session-discovery",
+      "type": "task",
+      "title": "Devbox session discovery",
+      "summary": "Discover Copilot CLI sessions from registered devbox hosts and produce observation records that align with the local session watcher contract.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["devbox-host-registration"]
+    },
+    {
+      "id": "devbox-registry-merge",
+      "type": "task",
+      "title": "Devbox registry merge",
+      "summary": "Merge discovered devbox sessions into the primary session registry with environment-aware identity, preserving builder-owned fields and avoiding local/devbox collisions.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["devbox-session-discovery"]
+    },
+    {
+      "id": "devbox-operational-surface",
+      "type": "task",
+      "title": "Devbox operational surface",
+      "summary": "Surface devbox sessions, freshness, degraded confidence, and unreachable-host states through the existing session/registry UI without taking ownership of the portfolio shell.",
+      "status": "planned",
+      "attention": "watch",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["devbox-registry-merge", "devbox-health-spike"]
+    },
+    {
+      "id": "devbox-observability-gate",
+      "type": "gate",
+      "title": "Devbox observability usable",
+      "summary": "A real devbox's Copilot sessions are visible in Streamliner with trustworthy identity, freshness, and failure states, and local session behavior still follows the primary registry contract.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["devbox-operational-surface"]
+    }
+  ],
+  "checkpoints": [
+    {
+      "id": "research-foundation",
+      "title": "Research foundation",
+      "summary": "Devbox-specific access, state, transport, identity, health, and security questions are answered before implementation begins.",
+      "status": "planned",
+      "nodeIds": [
+        "devbox-scope-and-dependencies",
+        "devbox-access-spike",
+        "remote-session-state-spike",
+        "remote-observation-transport-spike",
+        "environment-identity-spike",
+        "devbox-health-spike",
+        "devbox-security-spike",
+        "devbox-research-contract-gate"
+      ]
+    },
+    {
+      "id": "runtime-contract-ready",
+      "title": "Runtime contract ready",
+      "summary": "The devbox research contract and the external local session/runtime checkpoints are both accepted.",
+      "status": "planned",
+      "nodeIds": ["external-runtime-checkpoint-gate"]
+    },
+    {
+      "id": "devbox-observability-usable",
+      "title": "Devbox observability usable",
+      "summary": "Registered devbox sessions are discovered, merged into the primary registry, and surfaced with trustworthy operational state.",
+      "status": "planned",
+      "nodeIds": [
+        "devbox-host-registration",
+        "devbox-session-discovery",
+        "devbox-registry-merge",
+        "devbox-operational-surface",
+        "devbox-observability-gate"
+      ]
+    }
+  ]
+}
