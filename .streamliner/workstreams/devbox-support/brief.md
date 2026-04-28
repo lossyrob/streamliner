@@ -21,8 +21,9 @@ should be represented.
 Implementation work is intentionally behind two gates: a local research contract
 gate and an external runtime-contract gate. The research nodes should export
 small, durable findings that downstream implementation nodes can consume without
-re-litigating the design. The implementation nodes remain sketches until the
-current workstream exports the required local-session checkpoints.
+re-litigating the design. The external gate is deliberately contract-sized: it
+waits for the registry, observation, and session-surface contracts devbox
+observability consumes, not for unrelated launch-from-graph work.
 
 ## Design References
 - `streamliner:docs/design/index.md` - entry point for the project design set
@@ -55,12 +56,28 @@ current workstream exports the required local-session checkpoints.
 - **Deferred:** Devbox launch, devbox WSL observability, cross-devbox sync,
   remote control actions beyond observation, and richer host fleet management.
 
+## External Dependency Map
+
+Devbox support consumes the `session-launching-and-tracking` workstream as the
+owner of local session contracts, but it should not block on that whole
+workstream. The first devbox implementation slice needs these checkpoint-sized
+contracts:
+
+| Upstream contract | Current owner | Devbox consumers | Blocking rule |
+|---|---|---|---|
+| Primary registry storage and identity | Decision 004, Decision 005, `session-registry-model`, `manual-session-registry-ui` | `devbox-host-registration`, `devbox-registry-merge`, `devbox-operational-surface` | Available as the baseline contract; devbox must preserve Streamliner-owned registry ids and builder-owned fields. |
+| Registry mutation and multi-view sync behavior | `session-dashboard-sync` / issue #17 | `devbox-registry-merge`, `devbox-operational-surface` | Required before remote observations become a new writer/refresh source for the shared registry surface. |
+| Local observation lifecycle and compatibility semantics | `session-event-observation`, plus Decision 001 until that node lands | `remote-session-state-spike`, `remote-observation-transport-spike`, `devbox-session-discovery` | Research can proceed now; implementation should wait for the stable local observation record shape, stale/ended rules, and compatibility diagnostics. |
+| Runtime overlay and PAW progression projection | `paw-control-state-observation`, `runtime-overlay-ui`, `tracking-visible` checkpoint | `devbox-operational-surface` only when graph projection is included | Not required for the first Sessions/registry-based devbox visibility slice unless the accepted implementation scope includes graph overlay behavior. |
+| Launch claims and graph-node binding | `launch-claim-binding`, `terminal-launch-integration`, `launch-from-graph` checkpoint | Future devbox launch, recovery, or node-binding work | Not a prerequisite for devbox observability. This workstream should not wait on launch-from-graph unless a later wave expands into remote launch or graph-node binding. |
+
 ## Current State
-The workstream is newly shaped. Wave 1 should execute the research spikes in the
-graph before any implementation begins. The implementation tail is blocked on
-external checkpoints from `session-launching-and-tracking`, especially the
-stable local session/runtime shape, single-box tracking behavior, and node
-binding story. Research can proceed now because it is meant to define the
+Issue #18 clarified the workstream boundary and external dependency map. Wave 1
+should continue executing the research spikes before implementation begins. The
+implementation tail is blocked on the accepted devbox research contract plus the
+specific upstream registry, sync, and observation contracts named above; it is
+not blocked on the entire `session-launching-and-tracking` workstream or on
+launch-from-graph. Research can proceed now because it is meant to define the
 devbox-specific contracts those later implementation nodes will consume.
 
 ## Decisions
@@ -75,6 +92,11 @@ devbox-specific contracts those later implementation nodes will consume.
 - Make implementation wait behind an explicit external-contract gate so the
   workstream can keep researching without pretending the in-flight dependency is
   already stable.
+- Use the issue #18 dependency map as the boundary for the external runtime
+  checkpoint gate. Registry identity/storage, registry sync, and local
+  observation semantics are the critical upstream contracts for devbox
+  observability; launch-from-graph and graph-node binding are not blockers for
+  the first observability slice.
 
 ## Open Questions
 - Which concrete devbox access path should the first implementation support:

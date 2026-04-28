@@ -7,7 +7,7 @@
   "status": "active",
   "attention": "focus",
   "createdAt": "2026-04-27T21:52:52.683Z",
-  "updatedAt": "2026-04-27T21:52:52.683Z",
+  "updatedAt": "2026-04-28T01:18:31.015Z",
   "repos": [
     {
       "id": "streamliner",
@@ -56,12 +56,14 @@
       "type": "research",
       "title": "Devbox scope and dependency map",
       "summary": "Define the exact devbox observability boundary and map which external checkpoints from session-launching-and-tracking must be consumed before implementation starts.",
-      "status": "ready",
+      "status": "completed",
       "attention": "focus",
       "repoIds": ["streamliner"],
       "tracker": {
-        "type": "local",
-        "path": "tasks/devbox-scope-and-dependencies.md"
+        "type": "github",
+        "owner": "lossyrob",
+        "repo": "streamliner",
+        "number": 18
       },
       "dependsOn": []
     },
@@ -74,8 +76,10 @@
       "attention": "focus",
       "repoIds": ["streamliner"],
       "tracker": {
-        "type": "local",
-        "path": "tasks/devbox-access-spike.md"
+        "type": "github",
+        "owner": "lossyrob",
+        "repo": "streamliner",
+        "number": 19
       },
       "dependsOn": []
     },
@@ -169,7 +173,7 @@
       "id": "external-runtime-checkpoint-gate",
       "type": "gate",
       "title": "External runtime checkpoint gate",
-      "summary": "Wait for session-launching-and-tracking to export the stable local registry/session runtime and node-binding checkpoints that devbox implementation must consume.",
+      "summary": "Wait for session-launching-and-tracking to export the specific registry storage/identity, registry sync, local observation, and session-surface contracts that devbox implementation consumes; launch-from-graph is not a blanket prerequisite for devbox observability.",
       "status": "blocked",
       "attention": "focus",
       "repoIds": ["streamliner"],
@@ -246,7 +250,7 @@
     {
       "id": "runtime-contract-ready",
       "title": "Runtime contract ready",
-      "summary": "The devbox research contract and the external local session/runtime checkpoints are both accepted.",
+      "summary": "The devbox research contract and the required upstream registry, sync, observation, and session-surface contracts are accepted without waiting on unrelated launch-from-graph work.",
       "status": "planned",
       "nodeIds": ["external-runtime-checkpoint-gate"]
     },
