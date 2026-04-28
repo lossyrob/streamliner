@@ -421,8 +421,7 @@ describe("createStreamlinerApiApp", () => {
     activeApps.push(api);
 
     const response = await request(api.app)
-      .post(`/api/sessions/${session.id}/relaunch`)
-      .expect(200);
+      .post(`/api/sessions/${session.id}/relaunch`).set("Content-Type", "application/json").expect(200);
     expect(response.body).toEqual(
       expect.objectContaining({
         sessionId: session.id,
@@ -446,8 +445,7 @@ describe("createStreamlinerApiApp", () => {
     activeApps.push(api);
 
     const response = await request(api.app)
-      .post("/api/sessions/nonexistent/relaunch")
-      .expect(404);
+      .post("/api/sessions/nonexistent/relaunch").set("Content-Type", "application/json").expect(404);
     expect(response.body.code).toBe("session_not_found");
   });
 
@@ -470,8 +468,7 @@ describe("createStreamlinerApiApp", () => {
     activeApps.push(api);
 
     const response = await request(api.app)
-      .post(`/api/sessions/${session.id}/relaunch`)
-      .expect(400);
+      .post(`/api/sessions/${session.id}/relaunch`).set("Content-Type", "application/json").expect(400);
     expect(response.body.code).toBe("session_archived");
   });
 
@@ -497,4 +494,28 @@ describe("createStreamlinerApiApp", () => {
       .set("X-Forwarded-For", "203.0.113.7")
       .expect(403, { error: "Session relaunch must originate from loopback." });
   });
+
+  it("relaunch endpoint rejects requests without application/json content-type", async () => {
+    const rootDir = createRootDir();
+    const store = new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") });
+    const session = store.upsertSession({
+      title: "CSRF test",
+      cwd: rootDir,
+      origin: { kind: "manual" },
+    });
+    const api = createStreamlinerApiApp({
+      store,
+      relaunchDeps: {
+        launchTerminal: () => ({ method: "powershell", pid: 1 }),
+        existsSync: () => true,
+      },
+    });
+    activeApps.push(api);
+
+    await request(api.app)
+      .post(`/api/sessions/${session.id}/relaunch`)
+      .set("Content-Type", "text/plain")
+      .expect(415, { error: "Content-Type must be application/json." });
+  });
 });
+

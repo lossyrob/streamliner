@@ -59,23 +59,23 @@ export function launchTerminal(
   }
 }
 
+function escapeForWindowsTerminal(value: string): string {
+  return value.replace(/;/g, "\\;");
+}
+
 function launchWindowsTerminal(options: TerminalLaunchOptions): TerminalLaunchResult {
   const args: string[] = ["new-tab"];
 
-  // Add title if provided
   if (options.title) {
-    args.push("--title", options.title);
+    args.push("--title", escapeForWindowsTerminal(options.title));
   }
 
-  // Add tab color if provided and valid
   if (options.tabColor && isValidHexColor(options.tabColor)) {
     args.push("--tabColor", options.tabColor);
   }
 
-  // Add working directory
-  args.push("-d", options.cwd);
+  args.push("-d", escapeForWindowsTerminal(options.cwd));
 
-  // Add command if provided
   if (options.command) {
     args.push("powershell", "-NoExit", "-Command", options.command);
   }
@@ -86,6 +86,10 @@ function launchWindowsTerminal(options: TerminalLaunchOptions): TerminalLaunchRe
   });
 
   child.unref();
+
+  if (child.pid === undefined) {
+    throw new Error("Failed to spawn Windows Terminal process");
+  }
 
   return {
     method: "windows-terminal",
@@ -116,6 +120,10 @@ function launchPowerShellTerminal(
   });
 
   child.unref();
+
+  if (child.pid === undefined) {
+    throw new Error("Failed to spawn PowerShell process");
+  }
 
   return {
     method: "powershell",

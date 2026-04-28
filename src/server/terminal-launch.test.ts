@@ -203,6 +203,25 @@ describe("terminal-launch", () => {
       );
     });
 
+    it("escapes semicolons in title and cwd to prevent WT subcommand injection", () => {
+      launchTerminal({
+        cwd: "C:\\Users\\test;workspace",
+        title: "foo ; new-tab cmd.exe",
+      });
+
+      expect(spawn).toHaveBeenCalledWith(
+        "wt.exe",
+        [
+          "new-tab",
+          "--title",
+          "foo \\; new-tab cmd.exe",
+          "-d",
+          "C:\\Users\\test\\;workspace",
+        ],
+        { detached: true, stdio: "ignore" }
+      );
+    });
+
     it("calls unref() on spawned process", () => {
       const mockChild = {
         pid: 12345,

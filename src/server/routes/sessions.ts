@@ -35,9 +35,17 @@ export function createSessionsRouter(options: {
 
   // Relaunch endpoint — registered before the catch-all so it isn't swallowed.
   // Loopback-only: relaunch spawns local processes.
+  // Requires non-simple request (Content-Type header) to prevent CSRF from
+  // cross-origin pages that can POST to loopback without preflight.
   router.post("/:id/relaunch", (req, res) => {
     if (isNonLoopbackRequest(req)) {
       res.status(403).json({ error: "Session relaunch must originate from loopback." });
+      return;
+    }
+
+    const contentType = req.headers["content-type"] ?? "";
+    if (!contentType.startsWith("application/json")) {
+      res.status(415).json({ error: "Content-Type must be application/json." });
       return;
     }
 

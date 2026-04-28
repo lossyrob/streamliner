@@ -28,24 +28,6 @@ export function buildRestartCommand(session: SessionRegistryListItem): string | 
   return `Set-Location -LiteralPath ${quotePowerShellLiteral(worktree)}; ${resumeCommand}`;
 }
 
-export function buildRelaunchCommand(session: SessionRegistryListItem): string {
-  const worktree = normalizePathForPowerShell(session.derivedWorktreePath ?? session.cwd);
-  
-  if (session.copilotSessionId) {
-    const resumeCommand = `copilot --resume ${quotePowerShellLiteral(session.copilotSessionId)}`;
-    if (worktree.length === 0) {
-      return resumeCommand;
-    }
-    return `Set-Location -LiteralPath ${quotePowerShellLiteral(worktree)}; ${resumeCommand}`;
-  }
-  
-  // No copilotSessionId: just navigate to cwd
-  if (worktree.length === 0) {
-    return "";
-  }
-  return `Set-Location -LiteralPath ${quotePowerShellLiteral(worktree)}`;
-}
-
 export function canRelaunch(session: SessionRegistryListItem): boolean {
   // Cannot relaunch archived sessions
   if (session.lifecycleStatus === "archived") {

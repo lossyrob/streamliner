@@ -2443,7 +2443,7 @@ function RelaunchButton({ session, className, compact = false }: RelaunchButtonP
     try {
       const response = await fetch(
         `/api/sessions/${encodeURIComponent(session.id)}/relaunch`,
-        { method: "POST" },
+        { method: "POST", headers: { "Content-Type": "application/json" } },
       );
       const body = await response.json();
       if (response.ok) {
@@ -2466,7 +2466,7 @@ function RelaunchButton({ session, className, compact = false }: RelaunchButtonP
       setState("idle");
       setDetail("");
       resetTimerRef.current = null;
-    }, 3_000);
+    }, 15_000);
   }, [eligible, session.id, state]);
 
   const label = !eligible
