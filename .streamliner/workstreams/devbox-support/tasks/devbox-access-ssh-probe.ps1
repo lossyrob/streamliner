@@ -1,7 +1,9 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$SshTarget,
+    [string]$SshTarget = "",
+    [string]$SshHost = "",
+    [string]$SshUser = "",
+    [int]$SshPort = 0,
     [string]$RemoteWorktreePath = "",
     [string]$RemoteProbeRelativePath = ".streamliner\workstreams\devbox-support\tasks\devbox-access-probe.ps1",
     [int]$MaxSessions = 5,
@@ -36,9 +38,45 @@ function New-EncodedPowerShellCommand {
     return [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($Script))
 }
 
+function New-SshArgs {
+    param(
+        [string]$Target,
+        [string]$HostName,
+        [string]$UserName,
+        [int]$Port,
+        [string]$RemoteCommand,
+        [int]$TimeoutSec
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Target) -and [string]::IsNullOrWhiteSpace($HostName)) {
+        throw "Provide either -SshTarget for an SSH config alias/raw target or -SshHost with optional -SshUser/-SshPort."
+    }
+
+    $resolvedTarget = $Target
+    if ([string]::IsNullOrWhiteSpace($resolvedTarget)) {
+        $resolvedTarget = $HostName
+        if (-not [string]::IsNullOrWhiteSpace($UserName)) {
+            $resolvedTarget = "$UserName@$HostName"
+        }
+    }
+
+    $args = @(
+        "-o", "BatchMode=yes",
+        "-o", "ConnectTimeout=$TimeoutSec"
+    )
+    if ($Port -gt 0) {
+        $args += @("-p", [string]$Port)
+    }
+    $args += @($resolvedTarget, $RemoteCommand)
+    return $args
+}
+
 function Invoke-SshCommand {
     param(
         [string]$Target,
+        [string]$HostName,
+        [string]$UserName,
+        [int]$Port,
         [string]$RemoteCommand,
         [int]$TimeoutSec,
         [string]$Name
@@ -55,12 +93,7 @@ function Invoke-SshCommand {
     $previousErrorActionPreference = $ErrorActionPreference
     try {
         Get-Command ssh -ErrorAction Stop | Out-Null
-        $sshArgs = @(
-            "-o", "BatchMode=yes",
-            "-o", "ConnectTimeout=$TimeoutSec",
-            $Target,
-            $RemoteCommand
-        )
+        $sshArgs = New-SshArgs -Target $Target -HostName $HostName -UserName $UserName -Port $Port -RemoteCommand $RemoteCommand -TimeoutSec $TimeoutSec
         $ErrorActionPreference = "Continue"
         $output = & ssh @sshArgs 2>&1
         $result.exitCode = $LASTEXITCODE
@@ -146,7 +179,7 @@ $result = [ordered]@{
 $result | ConvertTo-Json -Compress
 '@
 $hostCommand = "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand $(New-EncodedPowerShellCommand -Script $hostScript)"
-$hostResult = Invoke-SshCommand -Target $SshTarget -RemoteCommand $hostCommand -TimeoutSec $ConnectTimeoutSec -Name "host-summary"
+$hostResult = Invoke-SshCommand -Target $SshTarget -HostName $SshHost -UserName $SshUser -Port $SshPort -RemoteCommand $hostCommand -TimeoutSec $ConnectTimeoutSec -Name "host-summary"
 $hostSummary = ConvertFrom-JsonOrNull -Text (Join-OutputLines -Lines $hostResult.outputLines)
 if ($hostResult.succeeded -and $null -eq $hostSummary) {
     Add-ProbeError -ErrorList $probeErrors -Scope "ssh.host-summary.parse" -Message "SSH host summary succeeded but did not return parseable JSON."
@@ -169,7 +202,7 @@ if (-not (Test-Path -LiteralPath `$probePath)) {
 & `$probePath -MaxSessions $MaxSessions
 "@
         $remoteProbeCommand = "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand $(New-EncodedPowerShellCommand -Script $remoteProbeScript)"
-        $remoteProbeResult = Invoke-SshCommand -Target $SshTarget -RemoteCommand $remoteProbeCommand -TimeoutSec $ConnectTimeoutSec -Name "remote-devbox-probe"
+        $remoteProbeResult = Invoke-SshCommand -Target $SshTarget -HostName $SshHost -UserName $SshUser -Port $SshPort -RemoteCommand $remoteProbeCommand -TimeoutSec $ConnectTimeoutSec -Name "remote-devbox-probe"
         $remoteProbe = ConvertFrom-JsonOrNull -Text (Join-OutputLines -Lines $remoteProbeResult.outputLines)
         $remoteProbeSummary = Summarize-RemoteProbe -Probe $remoteProbe
         if ($remoteProbeResult.succeeded -and $null -eq $remoteProbeSummary) {
@@ -192,6 +225,9 @@ $result = [ordered]@{
     generatedAt = (Get-Date).ToUniversalTime().ToString("o")
     inputs = [ordered]@{
         sshTargetProvided = -not [string]::IsNullOrWhiteSpace($SshTarget)
+        sshHostProvided = -not [string]::IsNullOrWhiteSpace($SshHost)
+        sshUserProvided = -not [string]::IsNullOrWhiteSpace($SshUser)
+        sshPortProvided = $SshPort -gt 0
         remoteWorktreePathProvided = -not [string]::IsNullOrWhiteSpace($RemoteWorktreePath)
         remoteProbeRelativePath = $RemoteProbeRelativePath
         maxSessions = $MaxSessions

@@ -96,7 +96,7 @@ These are acceptable in local Streamliner config or runtime state:
 | `displayName` | Builder-facing label. |
 | `provider` | `microsoft-dev-box`, `ssh`, or similar non-secret provider hint. |
 | `access.kind` | First slice: `ssh-port-forward`. Later equivalent channels can be added explicitly. |
-| `sshTarget` | SSH config host alias or target string. Prefer an alias so host/user/port can stay in SSH config. |
+| `sshTarget` | SSH config host alias or target string when one exists. |
 | `sshUser`, `sshPort` | Optional overrides when not supplied by the SSH alias. |
 | `sessionStateRoot` | Remote Copilot session-state root; default `~/.copilot/session-state`. |
 | `bridge.remotePort`, `bridge.localPort` | Loopback bridge endpoint and local forwarded port. |
@@ -158,10 +158,16 @@ content. The devbox-side result should answer:
 - Does a bridge health endpoint make remote trusted-signal forwarding plausible?
 
 Run the laptop-to-devbox SSH probe from the laptop once the builder has selected
-the SSH target or host alias:
+the SSH target. If the target is in `~/.ssh/config`, pass the alias:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\.streamliner\workstreams\devbox-support\tasks\devbox-access-ssh-probe.ps1 -SshTarget <ssh-host-alias> -RemoteWorktreePath <remote spike worktree> -MaxSessions 10
+```
+
+If there is no SSH config alias, pass the host details explicitly:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\.streamliner\workstreams\devbox-support\tasks\devbox-access-ssh-probe.ps1 -SshHost <host> -SshUser <user> -SshPort <port> -RemoteWorktreePath <remote spike worktree> -MaxSessions 10
 ```
 
 If an SSH local port forward to a prototype bridge is active, include the local
