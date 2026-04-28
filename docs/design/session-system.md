@@ -446,8 +446,9 @@ owned by SSH, Azure CLI, the OS credential store, or an equivalent external
 credential manager.
 
 The preferred access model is a devbox-side Streamliner bridge reached from the
-local Streamliner process through an SSH local port forward. The bridge listens
-on devbox loopback, accepts the same normalized trusted hook signal payloads as
+local Streamliner process through a builder-managed access channel such as an
+SSH local port forward or an authenticated Dev Tunnel. The bridge listens on
+devbox loopback, accepts the same normalized trusted hook signal payloads as
 `POST /api/sessions/signals`, spools them on the devbox when the laptop is
 unreachable, and exposes bounded observation endpoints for session-state
 snapshots and event tails. The bridge is not a replacement source of truth for
@@ -458,10 +459,10 @@ Direct SSH reads of `~/.copilot/session-state` are the bootstrap/probe path and
 may remain a degraded fallback. They are sufficient to verify reachability,
 session-state shape, and remote process-lock interpretation, but they are not the
 preferred steady-state transport because trusted hooks need a devbox-local
-endpoint and process liveness must be evaluated on the devbox. Azure Dev Tunnels
-may later replace the SSH port-forward channel if they provide equivalent
-authenticated loopback reachability; they do not replace the bridge or the
-registry identity model.
+endpoint and process liveness must be evaluated on the devbox. On managed
+Windows Dev Boxes where SSH is unavailable or undesirable, an authenticated Dev
+Tunnel can be the first reachability channel for the bridge; it does not replace
+the bridge or the registry identity model.
 
 Devbox observation does not imply devbox launch, remote control, or
 multi-machine registry sync. A devbox-observed registry row still uses a

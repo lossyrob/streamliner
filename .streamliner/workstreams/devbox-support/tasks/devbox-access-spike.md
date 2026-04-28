@@ -10,29 +10,28 @@ Tracker: [issue #19](https://github.com/lossyrob/streamliner/issues/19)
 
 ## Recommendation
 
-Target the first devbox observability slice at a **builder-managed SSH access
-profile with a devbox-side Streamliner bridge**.
+Target the first devbox observability slice at a **builder-managed access
+channel to a devbox-side Streamliner bridge**.
 
-SSH is the baseline access primitive because it is already available for a real
-Microsoft Dev Box, works without committing secrets, and gives Streamliner a
-simple reachability test. The devbox-side bridge is the intended steady-state
-observation endpoint because trusted Copilot CLI hooks and process-lock checks
-are host-local facts:
+For managed Windows Dev Boxes, inbound SSH may be unavailable or routed through
+policy-controlled layers. The devbox-side bridge is therefore the intended
+steady-state observation endpoint because trusted Copilot CLI hooks and
+process-lock checks are host-local facts:
 
 1. The builder registers a devbox in Streamliner's local runtime config.
-2. Streamliner verifies the registration with a non-interactive SSH probe.
+2. Streamliner verifies the registration through a non-secret reachability probe.
 3. The Streamliner Copilot CLI plugin is installed on the devbox.
 4. Devbox hooks POST to a bridge bound to devbox loopback.
 5. The bridge spools trusted signals locally and exposes bounded observation
    endpoints for session-state snapshots/tails.
-6. The local Streamliner process reaches the bridge through an SSH local port
-   forward. Azure Dev Tunnels can be evaluated as an equivalent channel after
-   the SSH path works, but they are not the first required access primitive.
+6. The local Streamliner process reaches the bridge through either an SSH local
+   port forward or an authenticated Dev Tunnel.
 
-Direct SSH reads of `~/.copilot/session-state` remain valuable for the spike and
-as a degraded fallback. They are not the preferred steady-state design because
-they do not give hooks a reliable local endpoint and local Windows cannot
-validate remote process locks without asking the devbox.
+Direct SSH reads of `~/.copilot/session-state` remain valuable when SSH is
+available, but they are not required for the first slice. They do not give hooks
+a reliable local endpoint and local Windows cannot validate remote process locks
+without asking the devbox. A locked-down devbox can instead expose only the
+bridge over Dev Tunnels and keep all filesystem/process inspection host-local.
 
 ## What the builder configures
 
@@ -40,7 +39,9 @@ The builder should be able to configure the first slice with local-only facts:
 
 - a logical devbox/environment id,
 - a display name such as "work-devbox",
-- an SSH target or host alias,
+- an access channel kind such as `dev-tunnel-bridge` or `ssh-port-forward`,
+- an SSH target or host alias only when SSH is available,
+- a Dev Tunnel id/name and local bridge port when Dev Tunnels are used,
 - the remote Copilot session-state root when it is not the default
   `~/.copilot/session-state`,
 - an optional bridge remote port and local forwarded port,
@@ -52,9 +53,10 @@ multi-machine registry sync, devbox launch, or a general host-fleet manager.
 ## What Streamliner can verify automatically
 
 Before accepting a devbox registration as observable, Streamliner can run a
-read-only probe over SSH:
+read-only probe through the configured access channel:
 
-- the SSH target is reachable in batch/non-interactive mode,
+- the bridge endpoint is reachable in batch/non-interactive mode,
+- the direct SSH target is reachable when SSH is configured,
 - the remote platform/path conventions are known,
 - the configured session-state root exists or is absent in a diagnosable way,
 - recent session directories expose `workspace.yaml` and `events.jsonl` with the
@@ -94,10 +96,11 @@ These are acceptable in local Streamliner config or runtime state:
 | --- | --- |
 | `environmentId` | Stable local id used by registry rows and diagnostics; Streamliner-owned, not a Copilot session id. |
 | `displayName` | Builder-facing label. |
-| `provider` | `microsoft-dev-box`, `ssh`, or similar non-secret provider hint. |
-| `access.kind` | First slice: `ssh-port-forward`. Later equivalent channels can be added explicitly. |
+| `provider` | `microsoft-dev-box`, `ssh`, `dev-tunnel`, or similar non-secret provider hint. |
+| `access.kind` | First slice: `dev-tunnel-bridge` or `ssh-port-forward`. |
 | `sshTarget` | SSH config host alias or target string when one exists. |
 | `sshUser`, `sshPort` | Optional overrides when not supplied by the SSH alias. |
+| `devTunnelId` | Dev Tunnel id/name when the bridge is reached through Dev Tunnels. |
 | `sessionStateRoot` | Remote Copilot session-state root; default `~/.copilot/session-state`. |
 | `bridge.remotePort`, `bridge.localPort` | Loopback bridge endpoint and local forwarded port. |
 | `pathConventions` | `windows` or `posix` for path display/normalization. |
@@ -124,10 +127,10 @@ to resolve it, but the secret itself remains outside Streamliner artifacts.
 | Model | Reason rejected |
 | --- | --- |
 | Mounted remote filesystem as the primary path | It can expose files but not trusted hook delivery, remote process liveness, or clear host health. It also makes permission and caching failures look like normal local filesystem behavior. |
-| Local Streamliner directly reading devbox files over ad hoc SSH commands as the whole design | Useful as a spike baseline, but too polling-heavy and cannot give hooks a reliable local endpoint when the laptop is offline or unreachable. |
+| Local Streamliner directly reading devbox files over ad hoc SSH commands as the whole design | Useful as a spike baseline when SSH is available, but too polling-heavy and cannot give hooks a reliable local endpoint when the laptop is offline or unreachable. |
 | Copilot SDK or remote-control tunnel as the first slice | The prior reference implementation explored forwarded SDK/control behavior, but issue 19 is observability, not remote launch/control. Using SDK control first would expand scope and obscure the session-tracking question. |
 | VS Code/editor remote channel | Too editor-specific for Streamliner's local-first web app direction and hard to test independently. |
-| Azure Dev Tunnel as the only access model | A tunnel is a transport channel, not a host registration, trust, or observation model. It can be evaluated as a substitute for SSH port forwarding after the bridge contract is proven. |
+| Azure Dev Tunnel without a devbox-side bridge | A tunnel is a transport channel, not a host registration, trust, or observation model. It is acceptable as the reachability channel when it exposes the bridge contract. |
 | Cloud-hosted Streamliner relay | Violates the first workstream's local-first boundary and introduces multi-user/cloud security questions before they are needed. |
 
 ## Devbox validation plan
@@ -143,6 +146,14 @@ If a prototype bridge is running, include its URL:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\.streamliner\workstreams\devbox-support\tasks\devbox-access-probe.ps1 -MaxSessions 10 -BridgeUrl http://127.0.0.1:<bridge-port>
+```
+
+Until the production bridge exists, the spike branch includes a temporary
+loopback smoke bridge that exposes `/health` and `/snapshot` without storing raw
+prompt content:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\.streamliner\workstreams\devbox-support\tasks\devbox-access-bridge-smoke.ps1 -Port <bridge-port>
 ```
 
 The probe intentionally reports metadata and event type shapes, not prompt
@@ -176,6 +187,37 @@ bridge URL:
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\.streamliner\workstreams\devbox-support\tasks\devbox-access-ssh-probe.ps1 -SshTarget <ssh-host-alias> -RemoteWorktreePath <remote spike worktree> -MaxSessions 10 -LocalBridgeUrl http://127.0.0.1:<forwarded-port>
 ```
+
+For a locked-down Windows Dev Box where SSH is unavailable, use Dev Tunnels to
+expose only the bridge port. The evidence needed from this path is whether the
+laptop can connect to a devbox-hosted loopback bridge and receive a health or
+snapshot response. On the devbox, create the tunnel and start the temporary
+smoke bridge in one shell:
+
+```powershell
+devtunnel user login
+devtunnel create <tunnel-id> --expiration 30d
+devtunnel port create <tunnel-id> -p <bridge-port> --protocol http
+powershell -NoProfile -ExecutionPolicy Bypass -File .\.streamliner\workstreams\devbox-support\tasks\devbox-access-bridge-smoke.ps1 -Port <bridge-port>
+```
+
+In another devbox shell, host the tunnel:
+
+```powershell
+devtunnel host <tunnel-id>
+```
+
+On the laptop, after authenticating with the same provider:
+
+```powershell
+devtunnel user login
+devtunnel connect <tunnel-id>
+powershell -NoProfile -ExecutionPolicy Bypass -File .\.streamliner\workstreams\devbox-support\tasks\devbox-access-ssh-probe.ps1 -LocalBridgeUrl http://127.0.0.1:<bridge-port>
+```
+
+This does not validate remote file access directly. It validates the preferred
+locked-down-device shape: the bridge does host-local file/process inspection and
+the laptop reaches only the bridge through an authenticated outbound tunnel.
 
 ## Devbox evidence
 

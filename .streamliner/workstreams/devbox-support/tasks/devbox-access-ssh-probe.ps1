@@ -168,6 +168,10 @@ function Summarize-RemoteProbe {
 
 $probeErrors = New-Object 'System.Collections.Generic.List[object]'
 
+$hasSshInput =
+    -not [string]::IsNullOrWhiteSpace($SshTarget) -or
+    -not [string]::IsNullOrWhiteSpace($SshHost)
+
 $hostScript = @'
 $result = [ordered]@{
     computerNamePresent = -not [string]::IsNullOrWhiteSpace($env:COMPUTERNAME)
@@ -178,18 +182,25 @@ $result = [ordered]@{
 }
 $result | ConvertTo-Json -Compress
 '@
-$hostCommand = "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand $(New-EncodedPowerShellCommand -Script $hostScript)"
-$hostResult = Invoke-SshCommand -Target $SshTarget -HostName $SshHost -UserName $SshUser -Port $SshPort -RemoteCommand $hostCommand -TimeoutSec $ConnectTimeoutSec -Name "host-summary"
-$hostSummary = ConvertFrom-JsonOrNull -Text (Join-OutputLines -Lines $hostResult.outputLines)
-if ($hostResult.succeeded -and $null -eq $hostSummary) {
-    Add-ProbeError -ErrorList $probeErrors -Scope "ssh.host-summary.parse" -Message "SSH host summary succeeded but did not return parseable JSON."
+$hostResult = $null
+$hostSummary = $null
+$hostSkippedReason = $null
+if ($hasSshInput) {
+    $hostCommand = "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand $(New-EncodedPowerShellCommand -Script $hostScript)"
+    $hostResult = Invoke-SshCommand -Target $SshTarget -HostName $SshHost -UserName $SshUser -Port $SshPort -RemoteCommand $hostCommand -TimeoutSec $ConnectTimeoutSec -Name "host-summary"
+    $hostSummary = ConvertFrom-JsonOrNull -Text (Join-OutputLines -Lines $hostResult.outputLines)
+    if ($hostResult.succeeded -and $null -eq $hostSummary) {
+        Add-ProbeError -ErrorList $probeErrors -Scope "ssh.host-summary.parse" -Message "SSH host summary succeeded but did not return parseable JSON."
+    }
+} else {
+    $hostSkippedReason = "no-ssh-target"
 }
 
 $remoteProbeResult = $null
 $remoteProbeSummary = $null
 $remoteProbeSkippedReason = $null
 if (-not [string]::IsNullOrWhiteSpace($RemoteWorktreePath)) {
-    if (-not $hostResult.succeeded) {
+    if (-not $hostResult -or -not $hostResult.succeeded) {
         $remoteProbeSkippedReason = "host-summary-failed"
     } else {
         $remoteWorktreeLiteral = ConvertTo-PowerShellLiteral -Value $RemoteWorktreePath
@@ -220,6 +231,28 @@ if (-not [string]::IsNullOrWhiteSpace($LocalBridgeUrl)) {
     }
 }
 
+$hostSummaryExitCode = $null
+$hostSummarySucceeded = $false
+$hostSummaryError = $null
+$hostSummaryOutputLineCount = 0
+if ($hostResult) {
+    $hostSummaryExitCode = $hostResult.exitCode
+    $hostSummarySucceeded = $hostResult.succeeded
+    $hostSummaryError = $hostResult.error
+    $hostSummaryOutputLineCount = @($hostResult.outputLines).Count
+}
+
+$remoteProbeExitCode = $null
+$remoteProbeSucceeded = $false
+$remoteProbeError = $null
+$remoteProbeOutputLineCount = 0
+if ($remoteProbeResult) {
+    $remoteProbeExitCode = $remoteProbeResult.exitCode
+    $remoteProbeSucceeded = $remoteProbeResult.succeeded
+    $remoteProbeError = $remoteProbeResult.error
+    $remoteProbeOutputLineCount = @($remoteProbeResult.outputLines).Count
+}
+
 $result = [ordered]@{
     schemaVersion = 1
     generatedAt = (Get-Date).ToUniversalTime().ToString("o")
@@ -235,19 +268,21 @@ $result = [ordered]@{
         connectTimeoutSec = $ConnectTimeoutSec
     }
     ssh = [ordered]@{
-        hostSummaryExitCode = $hostResult.exitCode
-        hostSummarySucceeded = $hostResult.succeeded
+        attempted = $hasSshInput
+        hostSummaryExitCode = $hostSummaryExitCode
+        hostSummarySucceeded = $hostSummarySucceeded
         hostSummary = $hostSummary
-        hostSummaryError = $hostResult.error
-        hostSummaryOutputLineCount = @($hostResult.outputLines).Count
+        hostSummaryError = $hostSummaryError
+        hostSummaryOutputLineCount = $hostSummaryOutputLineCount
+        skippedReason = $hostSkippedReason
     }
     remoteProbe = [ordered]@{
         attempted = $null -ne $remoteProbeResult
-        exitCode = if ($remoteProbeResult) { $remoteProbeResult.exitCode } else { $null }
-        succeeded = if ($remoteProbeResult) { $remoteProbeResult.succeeded } else { $false }
+        exitCode = $remoteProbeExitCode
+        succeeded = $remoteProbeSucceeded
         summary = $remoteProbeSummary
-        error = if ($remoteProbeResult) { $remoteProbeResult.error } else { $null }
-        outputLineCount = if ($remoteProbeResult) { @($remoteProbeResult.outputLines).Count } else { 0 }
+        error = $remoteProbeError
+        outputLineCount = $remoteProbeOutputLineCount
         skippedReason = $remoteProbeSkippedReason
     }
     localBridge = [ordered]@{
