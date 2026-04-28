@@ -2,9 +2,9 @@
 
 ## Status
 
-Laptop-side contract draft. The access recommendation below is concrete enough
-to prototype, but the spike should remain open until a real devbox session runs
-the validation probe and records whether the assumptions hold.
+Devbox-local evidence captured. The access recommendation below is concrete
+enough to prototype, but the spike should remain open until a laptop-side client
+confirms reachability through a hosted Dev Tunnel bridge.
 
 Tracker: [issue #19](https://github.com/lossyrob/streamliner/issues/19)
 
@@ -277,10 +277,9 @@ check against the hosted bridge.
 
 ## Open evidence needed
 
-- A laptop-to-devbox SSH reachability probe using the builder's chosen target or
-  host alias.
-- Confirmation of the actual SSH target or alias shape the builder wants to use.
-- A laptop-side Dev Tunnel client or browser check against the hosted bridge.
+- A laptop-side Dev Tunnel client or browser check against a live hosted bridge.
+- Optional SSH reachability details only if the builder wants SSH as an
+  additional bootstrap or degraded-fallback channel.
 - Confirmation that installing the Streamliner Copilot CLI plugin on the devbox
   can point hooks at the devbox-local bridge without slowing or breaking Copilot
   sessions.
