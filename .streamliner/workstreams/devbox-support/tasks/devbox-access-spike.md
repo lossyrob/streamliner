@@ -153,9 +153,37 @@ content. The devbox-side result should answer:
   or `none`?
 - Does a bridge health endpoint make remote trusted-signal forwarding plausible?
 
+## Devbox evidence
+
+Probe run from `feature/issue-19-devbox-access-spike` on the active devbox with
+the default session-state root and `-MaxSessions 10`.
+
+- `~/.copilot/session-state` exists on the devbox and was readable without
+  permission or enumeration errors.
+- All 10 sampled recent session directories had both `workspace.yaml` and
+  `events.jsonl`.
+- The sampled event tails parsed without JSON errors and exposed the expected
+  observation shape: `user.message`, `assistant.turn_start`,
+  `assistant.turn_end`, `tool.execution_start`, `tool.execution_complete`,
+  session lifecycle/info events, and hook events.
+- Hook events appeared in 7 of the 10 sampled sessions. The sessions without
+  hook events were older investigation-style session directories, so the active
+  plugin path is present but Streamliner should treat hook availability as a
+  capability observed per session or per devbox registration.
+- `inuse.*.lock` files were interpretable on the devbox. The sample included
+  `live`, `stale_lock`, and `none`, confirming the probe can distinguish a live
+  local process from stale or absent locks when it runs on the devbox host.
+- The devbox uses Windows path conventions for the observed session state. This
+  is compatible with the proposed `pathConventions` registration field and means
+  local observation code must not assume POSIX-style remote paths.
+- No bridge URL was supplied, so bridge health was not tested. This run validates
+  devbox-local filesystem and process evidence; laptop-to-devbox SSH
+  reachability and any bridge endpoint still need separate validation.
+
 ## Open evidence needed
 
-- A real devbox probe result from this branch.
+- A laptop-to-devbox SSH reachability probe using the builder's chosen target or
+  host alias.
 - Confirmation of the actual SSH target or alias shape the builder wants to use.
 - Confirmation whether Azure Dev Tunnels add value beyond SSH port forwarding for
   this observability slice.
