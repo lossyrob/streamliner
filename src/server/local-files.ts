@@ -69,16 +69,31 @@ if ($d.ShowDialog() -eq 'OK') { $d.FileName } else { '' }
   });
 }
 
-export async function readGraphFile(absPath: string): Promise<{
-  content: string;
+export interface GraphFileInfo {
   lastModified: string;
   mtimeMs: number;
-}> {
+}
+
+export interface GraphFile extends GraphFileInfo {
+  content: string;
+}
+
+export async function statGraphFile(absPath: string): Promise<GraphFileInfo> {
   const info = await stat(absPath);
-  const content = await readFile(absPath, "utf-8");
   return {
-    content,
     lastModified: info.mtime.toUTCString(),
     mtimeMs: Math.floor(info.mtime.getTime() / 1000) * 1000,
+  };
+}
+
+export async function readGraphFile(
+  absPath: string,
+  graphInfo?: GraphFileInfo,
+): Promise<GraphFile> {
+  const info = graphInfo ?? await statGraphFile(absPath);
+  const content = await readFile(absPath, "utf-8");
+  return {
+    ...info,
+    content,
   };
 }

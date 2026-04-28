@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { Router } from "express";
 
-import { loadRecents, readGraphFile, touchRecent } from "../local-files";
+import { loadRecents, readGraphFile, statGraphFile, touchRecent } from "../local-files";
 
 export function createGraphRouter(options: {
   defaultGraphPath?: string;
@@ -32,16 +32,17 @@ export function createGraphRouter(options: {
 
     try {
       const absPath = resolve(targetPath);
-      const graph = await readGraphFile(absPath);
+      const graphInfo = await statGraphFile(absPath);
       const ifModifiedSince = req.header("if-modified-since");
       if (
         ifModifiedSince &&
-        new Date(ifModifiedSince).getTime() >= graph.mtimeMs
+        new Date(ifModifiedSince).getTime() >= graphInfo.mtimeMs
       ) {
         res.status(304).end();
         return;
       }
 
+      const graph = await readGraphFile(absPath, graphInfo);
       try {
         const parsed = JSON.parse(graph.content) as { title?: unknown; id?: unknown };
         if (typeof parsed.title === "string" && typeof parsed.id === "string") {
