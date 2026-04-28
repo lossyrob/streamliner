@@ -98,12 +98,20 @@ that preserves stale last-known registry data without fabricating freshness. The
 contract was validated devbox-locally and through a laptop-to-devbox Dev Tunnel
 connection against the issue #22 smoke bridge/probe.
 
-The next promoted research issues are `environment-identity-spike`,
-`devbox-health-spike`, and `devbox-security-spike`. The implementation tail
-remains blocked on the accepted devbox research contract plus the specific
-upstream registry, sync, and observation contracts named above; it is not blocked
-on the entire `session-launching-and-tracking` workstream or on
-launch-from-graph.
+Issue #23 is complete. The accepted identity model scopes observations by a
+Streamliner-owned `environmentId`, treats legacy/local rows as
+`environmentId: "local"`, uses `(environmentId, copilotSessionId)` as the
+automatic observed-session key, and keeps access-channel metadata, bridge
+capabilities, cursors, diagnostics, and credentials out of durable session
+identity. Remote `cwd`, `repo`, and `branch` remain environment-native registry
+facts used as strict manual-row attach guardrails, not cross-environment merge
+keys.
+
+The next promoted research issues are `devbox-health-spike` (issue #24) and
+`devbox-security-spike`. The implementation tail remains blocked on the accepted
+devbox research contract plus the specific upstream registry, sync, and
+observation contracts named above; it is not blocked on the entire
+`session-launching-and-tracking` workstream or on launch-from-graph.
 
 ## Decisions
 - Use local tracker specs for Wave 1 research nodes so the spike missions are
@@ -138,10 +146,22 @@ launch-from-graph.
   `/health`, `/capabilities`, bounded `/sessions/snapshot`, offset-based
   `/sessions/{id}/events`, replayable `/signals`, and loopback
   `POST /api/sessions/signals` for devbox Copilot CLI hooks.
+- Use environment-scoped observation identity for devbox sessions. A registry row
+  keeps its Streamliner-owned `id`; automatic observed-session matching uses
+  `(environmentId, copilotSessionId)`, and manual-row attachment additionally
+  requires the same environment plus matching remote `cwd`, `repo`, and `branch`
+  guardrails.
+- Treat a registered devbox environment as one host/session-state-root
+  observation scope in local runtime config. Retargeting a registration to a
+  different host or Copilot session-state root requires a new environment id or
+  an explicit migration, not silent reuse.
+- Cache non-secret environment display/provider metadata on registry rows so the
+  existing Sessions surface can distinguish local and devbox rows. Keep access
+  details, bridge/tunnel identifiers, capabilities, cursors, diagnostics, path
+  mappings, and credentials in local runtime/config, derived overlay, or external
+  credential stores according to the issue #23 field-placement finding.
 
 ## Open Questions
-- What host/environment fields belong in the registry record versus derived
-  runtime overlay state?
 - How should Streamliner represent host reachability, tunnel reachability,
   bridge health, plugin/hook availability, stale observations, and degraded
   compatibility without making stale devbox data look fresh?

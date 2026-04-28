@@ -7,7 +7,7 @@
   "status": "active",
   "attention": "focus",
   "createdAt": "2026-04-27T21:52:52.683Z",
-  "updatedAt": "2026-04-28T06:29:25.868Z",
+  "updatedAt": "2026-04-28T20:03:58.543Z",
   "repos": [
     {
       "id": "streamliner",
@@ -118,12 +118,14 @@
       "type": "research",
       "title": "Environment identity spike",
       "summary": "Define host, environment, path, repo, branch, and Copilot-session identity rules so devbox sessions can merge into the registry without colliding with local sessions.",
-      "status": "ready",
+      "status": "completed",
       "attention": "focus",
       "repoIds": ["streamliner"],
       "tracker": {
-        "type": "local",
-        "path": "tasks/environment-identity-spike.md"
+        "type": "github",
+        "owner": "lossyrob",
+        "repo": "streamliner",
+        "number": 23
       },
       "dependsOn": ["devbox-scope-and-dependencies", "remote-session-state-spike"]
     },

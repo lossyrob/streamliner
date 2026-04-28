@@ -253,10 +253,14 @@ Each registry entry is a persisted `SessionRegistryRecord`. The stored lifecycle
 | `title` | string | yes | Builder | Short editable label. Observation-created rows bootstrap this from `workspace.yaml.summary`, then fall back to repo/cwd naming until the builder edits it. |
 | `description` | string | yes | Builder | Longer editable notes; empty string allowed. |
 | `color` | string or `null` | yes | Builder | Palette token or hex; single source of truth for terminal/UI color bridges. |
-| `cwd` | string | yes | Observation or builder | Absolute relaunch path and merge guardrail. |
+| `environmentId` | string | yes | Streamliner/runtime config | Stable observation scope for this local Streamliner install. Local rows use `local`; registered devboxes use a Streamliner-owned id from local runtime config. It is part of observation merge keys and is never a hostname, credential, tunnel id, or filesystem path. |
+| `environmentKind` | `local \| devbox` | yes | Runtime config | Host class for display and policy. `devbox` means remote observation in this design, not devbox launch or remote control. |
+| `environmentDisplayName` | string | yes | Runtime config | Non-secret label cached from the environment registration so the session list can distinguish local and devbox rows without a separate portfolio-shell surface. |
+| `environmentProvider` | string or `null` | yes | Runtime config | Non-secret provider hint such as `local`, `microsoft-dev-box`, `ssh`, or `dev-tunnel`; never a credential reference or access token. |
+| `cwd` | string | yes | Observation or builder | Environment-native absolute path and merge guardrail. For devbox rows this is the remote path reported by the devbox, not a rewritten local path. |
 | `repo` | string or `null` | yes | Observation or builder | Normalized `owner/name` when known; otherwise the repo root path; `null` when unknown. |
 | `branch` | string or `null` | yes | Observation or builder | Last known branch when one is available. |
-| `copilotSessionId` | string or `null` | yes | Observation | Linked Copilot CLI session id when the row is tied to an observed session. |
+| `copilotSessionId` | string or `null` | yes | Observation | Linked Copilot CLI session id when the row is tied to an observed session. It is scoped by `environmentId` and is not globally unique. |
 | `aiSummary`, `aiSummaryModel`, `aiSummaryUpdatedAt`, `aiSummaryEventsFingerprint`, `aiSummaryStatus`, `aiSummaryError` | string/status fields or `null` | yes | Worker | Optional persisted conversation description and refresh metadata. The worker may transiently read bounded recent `events.jsonl` user turns to produce `aiSummary`, but it does not persist the raw prompt/event bodies in these fields. |
 | `lifecycleStatus` | `active \| paused \| ended \| archived` | yes | Builder + observation | Durable coarse lifecycle. Observation only owns the transition into `ended`; archiving is builder-driven. |
 | `lastSeenAt` | ISO 8601 string or `null` | yes | Observation | Last observed activity timestamp; `null` for never-observed manual entries. |
@@ -270,6 +274,8 @@ Each registry entry is a persisted `SessionRegistryRecord`. The stored lifecycle
 `lifecycleStatus` is intentionally coarse and durable. The fine-grained, observation-derived liveness of a currently-live Copilot session (`launching`, `discovered`, `active`, `idle`, `ended`) is an orthogonal derived view layered on top of the registry row at render time, not a field stored on the row. A single registry entry can be `lifecycleStatus: active` and observation-`idle` simultaneously — those are independent axes and the overlay composes them.
 
 Only observed rows may carry `origin.importedFromCopilotSessionId`; only launched rows may carry `origin.launchClaimId`; manual rows carry neither. Persisted schema and API types should encode that constraint directly rather than relying on convention.
+
+Rows written before the environment fields exist normalize at read/migration time to `environmentId: "local"`, `environmentKind: "local"`, `environmentDisplayName: "Local"`, and `environmentProvider: "local"`. That keeps existing local registry rows in the same identity scope while making future devbox observations explicit instead of inferring host identity from paths.
 
 Registry entries are created in three ways:
 
@@ -322,16 +328,18 @@ The observation model defined by [Decision 001](decisions/001-observation-based-
 - **`events.jsonl`** — activity and turn/event stream
 - **Hook signal files** (`{id}.start.json`, `{id}.turn.json`, `{id}.end.json`) — low-latency hints only, never the durable source of truth
 
-Discovery uses both a **startup scan** of the session-state root and **`fs.watch()`** for ongoing updates. Merge precedence is:
+Discovery runs inside an observation environment. The local environment uses `environmentId: "local"`, a startup scan of the local session-state root, and **`fs.watch()`** for ongoing updates. A registered devbox uses its configured `environmentId` plus bridge snapshots, signal cursors, and event-tail offsets. A Copilot session id is only unique inside that environment and configured session-state root, so merge logic never compares `copilotSessionId` without the environment scope. Merge precedence is:
 
-1. If a registry row already has the same `copilotSessionId`, update that row.
-2. Else if an active launch/relaunch claim resolves to a known registry row, link the discovered session onto that row.
-3. Else if there is **exactly one** non-archived manual row with no `copilotSessionId`, `lastSeenAt: null`, and matching `cwd`, `repo`, and `branch` (ignoring fields that are `null` on both sides), attach the discovered session to that row and preserve the builder-owned fields already on it.
+1. If a registry row already has the same `environmentId` and `copilotSessionId`, update that row.
+2. Else if an active launch/relaunch claim with the same `environmentId` resolves to a known registry row, link the discovered session onto that row. Current launch claims are local-only; devbox observation does not bind to local launch claims until a later devbox launch/recovery design explicitly adds remote claims.
+3. Else if there is **exactly one** non-archived manual row with the same `environmentId`, no `copilotSessionId`, `lastSeenAt: null`, and matching `cwd`, `repo`, and `branch` (ignoring fields that are `null` on both sides), attach the discovered session to that row and preserve the builder-owned fields already on it.
 4. Else create a new `origin.kind: observed` row.
 
-Observation may refresh `copilotSessionId`, `cwd`, `repo`, `branch`, `lastSeenAt`, and the transition from `lifecycleStatus: active | paused` to `ended`. It does **not** overwrite builder-edited `title`, `description`, `color`, `tags`, or an existing `graphBinding` unless a launch/relaunch claim explicitly owns that binding update.
+Observation may refresh `copilotSessionId`, `cwd`, `repo`, `branch`, `lastSeenAt`, and the transition from `lifecycleStatus: active | paused` to `ended`; local environment config may refresh cached `environmentDisplayName` or `environmentProvider`. Observation does **not** rewrite `environmentId`, and it does **not** overwrite builder-edited `title`, `description`, `color`, `tags`, or an existing `graphBinding` unless a launch/relaunch claim explicitly owns that binding update.
 
 The manual-row attach rule is deliberately strict. Streamliner does **not** fuzzy-match by `cwd` alone, and it does not auto-attach when more than one manual row could plausibly match. Ambiguous cases fall back to a new observed row plus an explicit builder bind/reconcile step.
+
+Different `environmentId` values always produce distinct automatic matches even when `cwd`, `repo`, `branch`, or `copilotSessionId` overlap. The UI may show a possible relationship between rows in different environments, but cross-environment reconciliation is a builder action rather than an observation side effect.
 
 Observation never auto-archives. A linked row becomes `ended` when a clean end signal arrives or when the stale-session fallback fires after the watcher has not seen activity within the configured timeout. `archived` is only reached through an explicit builder action. Archived rows stay archived and are excluded from automatic rediscovery matching; a newly observed session creates a fresh row unless a relaunch flow explicitly reactivates the archived entry first.
 
@@ -481,6 +489,28 @@ Streamliner config. Credentials, tokens, key material, and tunnel secrets remain
 owned by SSH, Azure CLI, the OS credential store, or an equivalent external
 credential manager.
 
+A registered devbox environment represents one host/session-state-root
+observation scope inside the local Streamliner install. The stable
+`environmentId` is Streamliner-owned and stored in local runtime config; it is not
+the devbox hostname, Azure resource id, tunnel id, SSH alias, credential name, or
+remote path. If the builder retargets a registration to a different host or a
+different Copilot session-state root, Streamliner must treat that as a new
+environment or an explicit migration rather than silently reusing old identity.
+
+Field placement for devbox identity and access facts is:
+
+| Fact | Placement | Notes |
+|------|-----------|-------|
+| `environmentId` | Registry row, registry list entry, bridge snapshots/signals, and local runtime config | Primary observation scope. Required for merge with `copilotSessionId`; safe to persist because it is Streamliner-owned and non-secret. |
+| `environmentKind`, `environmentDisplayName`, `environmentProvider` | Registry row/list as cached non-secret display metadata; authoritative value in local runtime config | Lets the UI render "Local" vs a named devbox without portfolio-shell work. Renaming a devbox can refresh these fields without changing session identity. |
+| Provider-native host identifiers, Azure Dev Center project/box names, host fingerprints | Local runtime/config diagnostics | Useful for reachability and duplicate-registration warnings, but not part of the registry row and not committed to workstream artifacts. |
+| Access channel metadata (`access.kind`, SSH target/alias, Dev Tunnel id, bridge base URL, local/remote ports) | Local runtime/config or external tool state | May be redacted in diagnostics. The registry records that a row belongs to an environment, not how the laptop currently reaches it. |
+| `sessionStateRoot` and `pathConventions` | Environment config plus bridge health/capability/runtime cache | Scope and normalize observation. The first slice treats one registered environment as one configured session-state root; multiple roots require distinct environment ids or an explicit migration. |
+| `cwd`, `repo`, `branch` | Registry row/list as observation or builder facts | `cwd` remains environment-native. Optional repo/path mappings can improve display, but they do not rewrite identity or make a devbox cwd equivalent to a local cwd. |
+| Repo/path mappings | Local runtime config only | Paths can reveal machine layout and are hints for display or future launch work, not merge keys across environments. |
+| Bridge capabilities, health, cursors, event-tail offsets, freshness timestamps, compatibility diagnostics | Local runtime/cache and derived overlay | They explain whether observation is trustworthy now; they are not durable session identity and must not make stale data appear fresh. |
+| SSH keys, Azure/Dev Tunnel tokens, bridge bearer secrets, passphrases, known-host private material | External credential manager, SSH/Azure CLI/Dev Tunnel/OS state | Never committed and never copied into ordinary registry JSON as raw values. |
+
 The preferred access model is a devbox-side Streamliner bridge reached from the
 local Streamliner process through a builder-managed access channel such as an
 SSH local port forward or an authenticated Dev Tunnel. The bridge listens on
@@ -531,8 +561,9 @@ the bridge or the registry identity model.
 
 Devbox observation does not imply devbox launch, remote control, or
 multi-machine registry sync. A devbox-observed registry row still uses a
-Streamliner-owned `id`; the Copilot session id, remote host/environment id, and
-remote cwd are separate identity facts used for merge and display.
+Streamliner-owned `id`; the automatic observation identity is
+`environmentId` + `copilotSessionId`, with remote `cwd`, `repo`, and `branch` as
+manual-row attach guardrails and display facts.
 
 ### Node-to-Session Binding
 
@@ -653,7 +684,7 @@ Clicking a session in the list focuses its terminal (when the terminal integrati
 - Launch from the graph with SDK preparation, kickoff-prompt compilation, and Copilot CLI interactive worker-session launch
 - Observation-based session tracking via Copilot state files
 - Plugin hook signals for low-latency status hints
-- Registered-devbox observation vocabulary for trusted hook forwarding and remote session-state access
+- Registered-devbox observation vocabulary, environment identity, trusted hook forwarding, and remote session-state access
 - Runtime overlay onto the committed graph
 - Terminal-based operator presence
 - Local session tracking plus registered-devbox observation through the local Streamliner process
