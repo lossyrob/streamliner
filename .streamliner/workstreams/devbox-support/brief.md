@@ -107,11 +107,17 @@ identity. Remote `cwd`, `repo`, and `branch` remain environment-native registry
 facts used as strict manual-row attach guardrails, not cross-environment merge
 keys.
 
-The next promoted research issues are `devbox-health-spike` (issue #24) and
-`devbox-security-spike`. The implementation tail remains blocked on the accepted
-devbox research contract plus the specific upstream registry, sync, and
-observation contracts named above; it is not blocked on the entire
-`session-launching-and-tracking` workstream or on launch-from-graph.
+Issue #24 is complete. The accepted health model keeps durable registry lifecycle,
+observation-derived liveness, environment reachability, bridge health,
+observation freshness, and observation confidence as separate axes. Devbox rows
+stay visible as last-known history when the host, tunnel, bridge, credentials, or
+compatibility fail, but stale or unverified observations cannot look fresh and
+cannot create clean `ended` transitions from transport silence alone.
+
+The next promoted research issue is `devbox-security-spike`. The implementation
+tail remains blocked on the accepted devbox research contract plus the specific
+upstream registry, sync, and observation contracts named above; it is not blocked
+on the entire `session-launching-and-tracking` workstream or on launch-from-graph.
 
 ## Decisions
 - Use local tracker specs for Wave 1 research nodes so the spike missions are
@@ -160,11 +166,16 @@ observation contracts named above; it is not blocked on the entire
   details, bridge/tunnel identifiers, capabilities, cursors, diagnostics, path
   mappings, and credentials in local runtime/config, derived overlay, or external
   credential stores according to the issue #23 field-placement finding.
+- Represent devbox health as runtime confidence layered on top of the registry:
+  environment reachability, bridge health, observation freshness, and observation
+  confidence are distinct from durable `lifecycleStatus` and per-session
+  liveness.
+- Preserve last-known devbox registry rows during unreachable, credential-expired,
+  unsupported-bridge, permission, cursor, parse, stale-lock, and hook-capability
+  failures. Surface diagnostics and stale/degraded badges instead of fabricating
+  freshness, deleting rows, or marking sessions ended from outage alone.
 
 ## Open Questions
-- How should Streamliner represent host reachability, tunnel reachability,
-  bridge health, plugin/hook availability, stale observations, and degraded
-  compatibility without making stale devbox data look fresh?
 - What credential references, bridge auth rules, and diagnostic redaction
   boundaries are needed beyond the no-secrets artifact rule?
 - Should the production bridge remain a user-started helper, or should a later

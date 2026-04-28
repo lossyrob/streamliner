@@ -201,6 +201,8 @@ Beyond the core lifecycle state, the session watcher derives additional fields f
 | `endReason` | Hook signal or inactivity | Why the session ended: "hook-signal", "idle-timeout", "user_exit" |
 | `turnCount` | Count of `user.message` events | How many user turns have occurred |
 | `pawWorkflow` | PAW work directory on disk | Work ID, work title, `Workflow Identity` (`paw` | `paw-lite`), current activity, and gate/procedure state read from `## Control State` in `WorkflowContext.md` / `ReviewContext.md` when present; legacy inference from artifact presence otherwise. See [Decision 003](decisions/003-paw-control-state-integration.md). |
+| `observationFreshness` | Watcher/bridge runtime cache | Whether the observation is `fresh`, `stale`, or `unknown` for the environment that owns the row. Freshness is separate from durable `lifecycleStatus`. |
+| `observationConfidence` | Compatibility probes, bridge health, and diagnostics | Whether observation-derived liveness is `trusted`, `degraded`, or `unverified`. Degraded confidence suppresses mutation-affecting affordances but keeps last-known registry data visible. |
 
 ### Key Distinction: Idle vs. Ended
 
@@ -220,6 +222,13 @@ Beyond the core lifecycle state, the session watcher derives additional fields f
 ### Stale Session Detection
 
 A session is considered ended when its `events.jsonl` modification time exceeds the ended threshold (default: 30 minutes of inactivity). This is conservative — sessions that the builder is actively using interactively may have long pauses between turns, so the threshold must accommodate human-paced interaction.
+
+For local sessions this threshold is evaluated against the local session-state
+files directly. For devbox sessions, the stale/ended fallback may only use facts
+from a recent successful bridge observation. If the devbox, tunnel, bridge, or
+session-state root is unreachable, Streamliner marks the observation stale or
+unverified and preserves the last-known registry row; it does not infer a clean
+session end from transport silence.
 
 Crash recovery is not automatic. The builder decides whether the work is recoverable (relaunch from the same PAW work directory) or needs a fresh start.
 
@@ -565,6 +574,50 @@ Streamliner-owned `id`; the automatic observation identity is
 `environmentId` + `copilotSessionId`, with remote `cwd`, `repo`, and `branch` as
 manual-row attach guardrails and display facts.
 
+### Devbox Health and Freshness
+
+Devbox health composes with the registry; it is not a replacement lifecycle
+status. The registry row remains the durable identity and builder-edited history.
+Local runtime/cache state records whether the environment and bridge are
+currently observable, whether the most recent observation is fresh enough to
+trust, and which diagnostics explain degraded confidence.
+
+The runtime health model has four independent axes:
+
+| Axis | Values | Owner | Meaning |
+|------|--------|-------|---------|
+| Environment reachability | `reachable`, `unreachable`, `unknown` | Connector/health probe | Whether the local Streamliner process can reach the configured devbox access channel. |
+| Bridge health | `healthy`, `unavailable`, `unsupported`, `permission_denied`, `unknown` | `/health` and `/capabilities` | Whether the bridge can read the configured session-state root, report capabilities, and speak a compatible contract. |
+| Observation freshness | `fresh`, `stale`, `unknown` | Local runtime cache | Whether the last successful snapshot/signal/tail ingestion is within the freshness window for the environment or session. |
+| Observation confidence | `trusted`, `degraded`, `unverified` | Compatibility probes and diagnostics | Whether observation-derived liveness can drive normal UI affordances, should be shown with warnings, or should be treated as history only. |
+
+Per-session liveness (`active`, `idle`, `ended`, interrupted/resumable lock state)
+is only current when environment reachability, bridge health, and observation
+freshness allow it. Otherwise the UI renders the last-known row with a stale or
+degraded badge. This keeps old devbox observations useful for context recovery
+without presenting them as fresh truth.
+
+Minimum health/freshness rules:
+
+| Condition | Runtime behavior |
+|-----------|------------------|
+| `/health`, `/capabilities`, snapshot, signal, and needed event-tail reads succeed within the freshness window | Mark the environment reachable, bridge healthy, relevant observations fresh, and confidence trusted unless compatibility diagnostics say otherwise. |
+| Dev Tunnel or SSH connector is unavailable, bridge is not listening, or a health probe times out | Mark environment or bridge unreachable/unavailable; keep registry rows; observations become stale after the freshness window; do not create `ended` transitions from outage alone. |
+| Dev Tunnel authentication expires or SSH auth fails | Mark the environment unreachable with a credential diagnostic and re-login guidance; do not delete rows or rewrite session lifecycle. |
+| Bridge version is unsupported or required capabilities are absent | Mark bridge `unsupported` and confidence `unverified` for feature-dependent liveness; skip snapshot/tail ingestion unless the version/capability is explicitly backward compatible. |
+| Session-state root is missing, denied, or unreadable | Mark bridge `permission_denied` or compatibility degraded; do not create fresh observations from partial data. |
+| Event tail cursor is invalid, JSONL parsing fails, or clock skew is detected | Keep metadata that is still verified, perform bounded resync when possible, and mark event-dependent fields degraded until reverified. |
+| Hook capability is absent or no trusted hook has admitted a historical session | Keep filesystem-only rows observed-diagnostic by default; hook absence is degraded confidence, not proof that the bridge is unhealthy. |
+| Bridge reports `stale_lock` for a session | Render the session as interrupted/resumable or stale-lock degraded, not live. |
+
+The freshness window defaults to the local watcher cadence plus a bounded grace
+period rather than the 30-minute session-ended threshold. A missed poll should
+not instantly stale all rows, but freshness should expire quickly enough that an
+unreachable devbox cannot look operational. The exact default is implementation
+configuration owned by the devbox discovery task; the invariant is that
+transport outage affects freshness/confidence first and lifecycle only after
+verified session-state facts support that transition.
+
 ### Node-to-Session Binding
 
 Streamliner binds sessions to graph nodes through **launch claims**. When a launch is initiated:
@@ -597,8 +650,20 @@ Each session carries:
 - **Last successful Copilot parse** — timestamp and byte offset of the last `events.jsonl` read that succeeded, plus the number of open tool requests in the incremental index.
 - **Last successful PAW parse** — timestamp of the last `WorkflowContext.md` / `ReviewContext.md` read, along with the derivation path used (`control-state`, `inferred`, or `unparsable`; see [Decision 003](decisions/003-paw-control-state-integration.md)).
 - **Hook signal counters** — count of `sessionStart`, `agentStop`, `sessionEnd` signals received vs. equivalent transitions inferred from polling, so "hooks silently stopped firing" is visible.
+- **Environment observation health** — for devbox rows, the last successful health/capability probe, snapshot receipt, signal cursor, event-tail offset, freshness expiry, and any environment-level diagnostic affecting the row.
 
-In addition, the watcher emits structured diagnostic events (not free-form logs) for every degradation mode it recognizes: `hook-miss`, `tail-truncation`, `nonce-absent-after-window`, `legacy-inference-used`, `unknown-control-state-token`, `copilot-compatibility-probe-failed`, `paw-contract-version-out-of-range`. These events are retained alongside session history and surfaced in the diagnostic view. The UI shows a compact degradation badge on any session whose diagnostics are non-empty so the builder never has to guess whether the overlay can be trusted.
+In addition, the watcher emits structured diagnostic events (not free-form logs)
+for every degradation mode it recognizes: `hook-miss`, `tail-truncation`,
+`nonce-absent-after-window`, `legacy-inference-used`,
+`unknown-control-state-token`, `copilot-compatibility-probe-failed`,
+`paw-contract-version-out-of-range`, `environment-unreachable`,
+`bridge-unavailable`, `credential-expired`, `unsupported-bridge-version`,
+`session-root-unreadable`, `remote-observation-stale`, `cursor-invalid`,
+`event-parse-error`, `bridge-clock-skew`, `missing-hook-capability`, and
+`stale-process-lock`. These events are retained alongside session history and
+surfaced in the diagnostic view. The UI shows a compact degradation badge on any
+session whose diagnostics are non-empty so the builder never has to guess whether
+the overlay can be trusted.
 
 ## Runtime Overlay
 
@@ -633,6 +698,12 @@ The `pawWorkflow` field carries a derivation-path annotation (see [Decision 003]
 - **`control-state` + `Reconciliation: stale | external_unverified | not_run`** — overlay visibly downgrades confidence (muted colors, "reconciliation stale" badge). "Ready to launch next activity" affordances are suppressed until reconciliation is refreshed. The builder may still inspect state but cannot trigger mutation-affecting actions from the overlay.
 - **`inferred`** — legacy artifact-presence fallback. Overlay renders with a "legacy inference" badge. Mutation-affecting affordances are suppressed.
 - **`unparsable`** — control state present but rejected by the parser (unknown tokens, out-of-range contract version). Overlay shows an error badge and the underlying diagnostic. No activity-status rendering until the parser is updated or the builder acknowledges the condition.
+
+Devbox observation confidence applies the same rendering principle to remote
+session liveness. Fresh trusted devbox observations render like local
+observations plus an environment badge. Stale, degraded, or unverified devbox
+observations keep the session row visible but mute or badge liveness and suppress
+actions that would assume the remote state is current.
 
 ### Artifact Promotion
 
@@ -669,11 +740,13 @@ Streamliner surfaces a session panel or overlay showing:
 | Column | Source |
 |--------|--------|
 | Node | Launch claim binding → graph node title |
-| Status | Observed lifecycle state |
+| Environment | Registry environment display metadata plus local runtime health |
+| Status | Observed lifecycle state, badged by freshness/confidence for devbox rows |
 | Phase | Derived from recent events |
 | Needs Input | `pendingInputRequest` present |
 | Duration | `now - createdAt` from `workspace.yaml` |
 | Last Activity | `events.jsonl` mtime |
+| Observation Trust | Local watcher or devbox bridge freshness/confidence diagnostics |
 
 Clicking a session in the list focuses its terminal (when the terminal integration supports it) or shows the session's details.
 
@@ -685,6 +758,7 @@ Clicking a session in the list focuses its terminal (when the terminal integrati
 - Observation-based session tracking via Copilot state files
 - Plugin hook signals for low-latency status hints
 - Registered-devbox observation vocabulary, environment identity, trusted hook forwarding, and remote session-state access
+- Devbox health/freshness vocabulary that separates reachability, bridge health, observation freshness, and confidence from durable session lifecycle
 - Runtime overlay onto the committed graph
 - Terminal-based operator presence
 - Local session tracking plus registered-devbox observation through the local Streamliner process
