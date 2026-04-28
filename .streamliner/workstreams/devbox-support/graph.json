@@ -7,7 +7,7 @@
   "status": "active",
   "attention": "focus",
   "createdAt": "2026-04-27T21:52:52.683Z",
-  "updatedAt": "2026-04-28T20:25:01.196Z",
+  "updatedAt": "2026-04-28T20:47:02.732Z",
   "repos": [
     {
       "id": "streamliner",
@@ -150,12 +150,14 @@
       "type": "research",
       "title": "Devbox security and credential spike",
       "summary": "Determine how devbox registration records, credentials, secrets, and trust boundaries should work without committing sensitive data or widening Streamliner's local-first scope.",
-      "status": "ready",
+      "status": "completed",
       "attention": "focus",
       "repoIds": ["streamliner"],
       "tracker": {
-        "type": "local",
-        "path": "tasks/devbox-security-spike.md"
+        "type": "github",
+        "owner": "lossyrob",
+        "repo": "streamliner",
+        "number": 27
       },
       "dependsOn": []
     },
@@ -164,7 +166,7 @@
       "type": "gate",
       "title": "Devbox research contract gate",
       "summary": "Operator reviews the spike findings and accepts the devbox access, observation, identity, health, and security contracts before implementation nodes are promoted.",
-      "status": "planned",
+      "status": "ready",
       "attention": "focus",
       "repoIds": ["streamliner"],
       "dependsOn": [

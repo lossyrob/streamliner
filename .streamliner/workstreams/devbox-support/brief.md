@@ -114,8 +114,19 @@ stay visible as last-known history when the host, tunnel, bridge, credentials, o
 compatibility fail, but stale or unverified observations cannot look fresh and
 cannot create clean `ended` transitions from transport silence alone.
 
-The next promoted research issue is `devbox-security-spike`. The implementation
-tail remains blocked on the accepted devbox research contract plus the specific
+Issue #27 is complete. The accepted security model keeps the first devbox
+observability slice local-first, builder-managed, and credential-external:
+Streamliner stores non-secret environment/access metadata and redacted diagnostics
+in local runtime/config, while SSH, Azure/Dev Tunnel tooling, OS credential
+stores, or a later explicit secret provider own credential material and private
+trust roots. A bridge bound to devbox loopback and reached only through an
+authenticated private Dev Tunnel or SSH forward does not need separate
+Streamliner bridge auth in the first slice; expanded bridge exposure, remote
+control, raw transcript transport, multi-user access, or Streamliner-managed
+credential storage requires a new security design/ADR.
+
+The next promoted item is the `devbox-research-contract-gate`. The implementation
+tail remains blocked on that accepted devbox research contract plus the specific
 upstream registry, sync, and observation contracts named above; it is not blocked
 on the entire `session-launching-and-tracking` workstream or on launch-from-graph.
 
@@ -174,9 +185,16 @@ on the entire `session-launching-and-tracking` workstream or on launch-from-grap
   unsupported-bridge, permission, cursor, parse, stale-lock, and hook-capability
   failures. Surface diagnostics and stale/degraded badges instead of fabricating
   freshness, deleting rows, or marking sessions ended from outage alone.
+- Keep devbox credentials and private trust material outside Streamliner-managed
+  artifacts and ordinary runtime JSON. Local runtime/config may store non-secret
+  connector identifiers, credential references, host/bridge trust diagnostics,
+  and redacted health state; committed artifacts may describe vocabulary only.
+- Rely on loopback bridge binding plus authenticated private Dev Tunnel or SSH
+  forwarding for first-slice bridge trust. Open an ADR before requiring app-layer
+  bridge secrets, Streamliner-managed credential caches, privileged services,
+  cloud relays, multi-user access control, raw transcript transport, or remote
+  control semantics.
 
 ## Open Questions
-- What credential references, bridge auth rules, and diagnostic redaction
-  boundaries are needed beyond the no-secrets artifact rule?
 - Should the production bridge remain a user-started helper, or should a later
   implementation install it as a user login task/service after an explicit ADR?

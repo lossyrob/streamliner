@@ -618,6 +618,59 @@ configuration owned by the devbox discovery task; the invariant is that
 transport outage affects freshness/confidence first and lifecycle only after
 verified session-state facts support that transition.
 
+### Devbox Security and Credential Boundary
+
+The first devbox observation slice stays local-first and builder-managed. It does
+not introduce a hosted Streamliner service, multi-user access control, a
+Streamliner-managed credential vault, or remote control authority. Streamliner may
+store enough non-secret local runtime/config state to reconnect to a registered
+devbox and explain failures, but credential material and private trust roots stay
+with the tools that own the access channel.
+
+Credential ownership:
+
+| Secret or trust material | Owner | Streamliner handling |
+|--------------------------|-------|----------------------|
+| SSH private keys, passphrases, SSH agent state, private certificates | SSH/OS credential store | Never copied into Streamliner config, registry rows, committed artifacts, or diagnostics. Streamliner may reference an SSH host alias and rely on SSH to authenticate. |
+| SSH known-host trust store | SSH | Streamliner may cache a non-secret host fingerprint or trust status for diagnostics, but SSH remains authoritative for host verification. |
+| Azure CLI, Dev Center, and Dev Tunnel refresh/access tokens | Azure CLI, Dev Tunnel tooling, OS credential manager | Streamliner invokes or observes the configured connector and records status/expiry diagnostics only. |
+| Dev Tunnel id/name, SSH alias/target, bridge local URL/ports | Local Streamliner runtime config | Allowed locally because they are operational identifiers, but redacted from committed artifacts and default logs. |
+| Bridge bearer/shared secret, if a later bridge requires one | OS credential manager or explicit secret provider | Not required for the first loopback/private-channel slice. If added later, registry/config store only a credential reference, never the raw secret. |
+
+For the first implementation slice, a devbox bridge bound to devbox loopback and
+reached only through an authenticated private Dev Tunnel or SSH local forward does
+not require a separate Streamliner bridge-auth scheme. The private channel and
+host-local loopback binding are the trust boundary. If the bridge is exposed
+beyond loopback/private tunnel, accepts remote control actions, transfers raw
+transcript content, or must authenticate multiple users, implementation must stop
+for an explicit security design/ADR before depending on that shape.
+
+Registration and verification rules:
+
+| Step | Requirement |
+|------|-------------|
+| Registration | Store `environmentId`, display/provider metadata, access kind, non-secret connector identifiers, bridge URL/ports, session-state root override, path conventions, and optional credential references in local runtime/config only. |
+| Verification | Probe `/health` and `/capabilities` through the configured connector. Require compatible bridge version, expected session-state root access, path convention, loopback/private-channel posture, and required capabilities before marking the environment observable. |
+| Host trust changes | If SSH host trust, provider identity, bridge instance identity, or configured session-state root changes unexpectedly, mark the environment `unverified` or `host-identity-changed` and require builder review instead of silently continuing. |
+| Credential failures | Surface `credential-expired`, `auth-denied`, or `bridge-auth-required` diagnostics with remediation guidance. Preserve registry rows as stale history and do not retry in a way that prints secrets. |
+| Retargeting | Moving an environment registration to a different host or session-state root requires explicit migration or a new `environmentId`; it is not a normal credential refresh. |
+
+Diagnostics and logs use allowlists, not best-effort scrubbing. Safe diagnostic
+fields include environment id/display label, provider kind, access kind,
+capability booleans, bridge version, path convention, timestamps, event counts,
+cursor/offset numbers, prompt lengths, process-state enums, and structured error
+codes. Sensitive fields include access tokens, bearer secrets, SSH key material,
+passphrases, raw tunnel URLs when they embed secrets, usernames/hosts/tunnel ids
+outside local runtime config, full filesystem paths in committed artifacts, raw
+prompt text, assistant text, tool arguments, and complete JSONL event lines.
+
+Committed workstream artifacts and design docs may name field vocabulary and
+endpoint shapes, but must not include real hostnames, usernames, tunnel ids,
+tokens, private paths, credential names that reveal secrets, or raw session
+content. Local runtime files may contain concrete connector identifiers and path
+hints, but default logs and issue-ready diagnostics should redact them unless the
+builder explicitly exports a local troubleshooting bundle.
+
 ### Node-to-Session Binding
 
 Streamliner binds sessions to graph nodes through **launch claims**. When a launch is initiated:
@@ -659,11 +712,12 @@ for every degradation mode it recognizes: `hook-miss`, `tail-truncation`,
 `paw-contract-version-out-of-range`, `environment-unreachable`,
 `bridge-unavailable`, `credential-expired`, `unsupported-bridge-version`,
 `session-root-unreadable`, `remote-observation-stale`, `cursor-invalid`,
-`event-parse-error`, `bridge-clock-skew`, `missing-hook-capability`, and
-`stale-process-lock`. These events are retained alongside session history and
-surfaced in the diagnostic view. The UI shows a compact degradation badge on any
-session whose diagnostics are non-empty so the builder never has to guess whether
-the overlay can be trusted.
+`event-parse-error`, `bridge-clock-skew`, `missing-hook-capability`,
+`stale-process-lock`, `auth-denied`, `bridge-auth-required`,
+`host-identity-changed`, and `redaction-applied`. These events are retained
+alongside session history and surfaced in the diagnostic view. The UI shows a
+compact degradation badge on any session whose diagnostics are non-empty so the
+builder never has to guess whether the overlay can be trusted.
 
 ## Runtime Overlay
 
@@ -759,6 +813,7 @@ Clicking a session in the list focuses its terminal (when the terminal integrati
 - Plugin hook signals for low-latency status hints
 - Registered-devbox observation vocabulary, environment identity, trusted hook forwarding, and remote session-state access
 - Devbox health/freshness vocabulary that separates reachability, bridge health, observation freshness, and confidence from durable session lifecycle
+- Devbox security/credential boundary for local runtime config, external credential ownership, host trust, bridge-auth escalation, and redacted diagnostics
 - Runtime overlay onto the committed graph
 - Terminal-based operator presence
 - Local session tracking plus registered-devbox observation through the local Streamliner process
