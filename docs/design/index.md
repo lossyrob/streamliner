@@ -1,7 +1,7 @@
 ---
 kind: design-doc
 status: current
-last_updated: 2026-04-21
+last_updated: 2026-04-28
 update_semantics: rewrite-in-place
 authoritative_for: "Design documentation entry point, reading order, and decision log"
 scope_tags:
@@ -14,6 +14,7 @@ references_decisions:
   - 3
   - 4
   - 5
+  - 6
 ---
 
 # Streamliner — Design
@@ -56,6 +57,7 @@ Streamliner helps a single builder direct many concurrent AI coding agent workst
 | 003 | [PAW control state as the workflow progression source](decisions/003-paw-control-state-integration.md) | accepted | 2026-04-20 |
 | 004 | [Session registry as the primary session surface](decisions/004-session-registry-primary-surface.md) | accepted | 2026-04-21 |
 | 005 | [Session registry storage and identity model](decisions/005-session-registry-storage-and-identity.md) | accepted | 2026-04-21 |
+| 006 | [Local Streamliner API service](decisions/006-local-streamliner-api-service.md) | accepted | 2026-04-28 |
 
 ## Open questions
 

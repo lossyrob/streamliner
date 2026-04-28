@@ -18,6 +18,7 @@ function createRootDir(): string {
 function buildSession(overrides: Partial<SessionRegistryListItem> = {}): SessionRegistryListItem {
   return {
     id: "activity-session",
+    version: 0,
     title: "Activity session",
     titleSource: "auto",
     description: "",

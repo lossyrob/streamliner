@@ -76,6 +76,7 @@ describe("SessionRegistryFileStore", () => {
     });
 
     expect(record.schemaVersion).toBe(SESSION_REGISTRY_SCHEMA_VERSION);
+    expect(record.version).toBe(0);
     expect(record.lifecycleStatus).toBe("active");
     expect(record.origin.kind).toBe("manual");
     expect(record.titleSource).toBe("user");
@@ -347,6 +348,7 @@ describe("SessionRegistryFileStore", () => {
         aiSummaryModel: "gpt-5.4-mini",
         aiSummaryStatus: "ready",
         updatedAt: manual.updatedAt,
+        version: manual.version,
       }),
     );
     expect(store.listSessions()[0]).toEqual(
@@ -355,6 +357,36 @@ describe("SessionRegistryFileStore", () => {
         aiSummaryStatus: "ready",
       }),
     );
+  });
+
+  it("rejects stale builder patches while allowing derived patches to bypass builder version", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+
+    const created = store.upsertSession({
+      title: "Concurrent row",
+      cwd: "C:\\repo",
+      origin: { kind: "manual" },
+    });
+    const afterDerived = store.patchDerivedSessionState(created.id, {
+      aiSummary: "Derived update",
+      aiSummaryStatus: "ready",
+    });
+    expect(afterDerived.version).toBe(created.version);
+
+    const patched = store.patchSession(created.id, {
+      expectedVersion: created.version,
+      title: "Builder update",
+    });
+    expect(patched.version).toBe(created.version + 1);
+
+    expect(() =>
+      store.patchSession(created.id, {
+        expectedVersion: created.version,
+        description: "Stale update",
+      }),
+    ).toThrow("changed before this update could be saved");
   });
 
   it("records trusted hook signals idempotently and preserves prompt privacy", () => {

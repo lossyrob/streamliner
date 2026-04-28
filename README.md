@@ -19,7 +19,7 @@ Streamliner loads a **workstream** — a structured JSON artifact describing a d
 ## Architecture
 
 ```
-workstream JSON → parseWorkstreamDocument() → buildWorkstreamViewModel() → buildWorkstreamGraphLayout() → React Flow
+local API → workstream JSON → parseWorkstreamDocument() → buildWorkstreamViewModel() → buildWorkstreamGraphLayout() → React Flow
 ```
 
 The data pipeline is fully layered:
@@ -29,12 +29,14 @@ The data pipeline is fully layered:
 | **Schema** | `workstream-schema.ts` | TypeScript types and enums for the workstream document format |
 | **View Model** | `workstream-view-model.ts` | Strict parser/validator, operational queue derivation, freshness signals |
 | **Graph Layout** | `workstream-graph.ts` | Dagre auto-layout, transitive edge reduction, selection highlighting |
+| **Local API** | `src/server/` | Express API for graph loading, session registry mutations, trusted signals, and live session events |
 | **Components** | `src/components/` | React Flow canvas, node renderers, inspector, header, status strip |
 | **Theme** | `streamliner-theme.css` | Light Deep Ocean design system with `sl-` prefixed CSS classes |
 
 ## Tech stack
 
 - [Vite](https://vite.dev/) + [React](https://react.dev/) + [TypeScript](https://www.typescriptlang.org/)
+- [Express](https://expressjs.com/) — local loopback API
 - [React Flow](https://reactflow.dev/) (`@xyflow/react`) — graph rendering
 - [dagre](https://github.com/dagrejs/dagre) (`@dagrejs/dagre`) — directed graph auto-layout
 - [Vitest](https://vitest.dev/) — testing
@@ -46,7 +48,7 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173) to see the example workstream graph.
+Open [http://localhost:5173](http://localhost:5173) to see the example workstream graph. `npm run dev` starts both the local API and Vite; the API is available directly at [http://127.0.0.1:4319/api/health](http://127.0.0.1:4319/api/health).
 
 See [DEVELOPING.md](DEVELOPING.md) for full development setup and workflow.
 

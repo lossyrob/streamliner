@@ -15,17 +15,32 @@ cd streamliner
 npm install
 ```
 
-## Development server
+## Development servers
 
-Start the Vite dev server with hot module replacement:
+Start the local API and Vite dev server together:
 
 ```bash
 npm run dev
 ```
 
-The app will be available at [http://localhost:5173](http://localhost:5173). Changes to source files are reflected immediately in the browser.
+The app will be available at [http://localhost:5173](http://localhost:5173). Vite binds to `127.0.0.1` and proxies `/api/*` to the standalone local API at [http://127.0.0.1:4319](http://127.0.0.1:4319). Frontend changes hot-reload through Vite without restarting the API worker.
 
-The dev server serves `public/example-project.json` as the default workstream fixture. You can load a different workstream JSON file using the "Load workstream…" button in the app header.
+Run the processes separately when you only need to restart one side:
+
+```bash
+npm run dev:api
+npm run dev:web
+```
+
+Use `npm run api` for a non-watch API process. The API serves `GET /api/health`, graph loading, the session registry, trusted session signals, and `GET /api/sessions/events` for live session updates. Configure it with:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `STREAMLINER_API_HOST` | `127.0.0.1` | API bind host |
+| `STREAMLINER_API_PORT` | `4319` | API port used by direct callers and the Vite proxy |
+| `STREAMLINER_GRAPH` | unset | Optional graph file path served by `GET /api/graph.json` |
+
+The API serves `public/example-project.json` as the default workstream fixture when no `STREAMLINER_GRAPH` is set. You can load a different workstream JSON file using the "Load workstream…" button in the app header.
 
 ## Copilot CLI Streamliner plugin
 
@@ -91,9 +106,12 @@ copilot plugin install streamliner@streamliner-local
 
 | Command | Description |
 |---------|-------------|
-| `npm run dev` | Start the Vite dev server with HMR |
+| `npm run dev` | Start the local API and Vite dev server together |
+| `npm run dev:api` | Start the local API in watch mode |
+| `npm run dev:web` | Start only the Vite dev server with HMR |
+| `npm run api` | Start the local API without watch mode |
 | `npm run build` | Type-check with `tsc` and build for production |
-| `npm run preview` | Preview the production build locally |
+| `npm run preview` | Preview the production build locally with the API running |
 | `npm test` | Run tests once with Vitest |
 | `npm run lint` | Run ESLint across the project |
 
@@ -108,6 +126,8 @@ src/
 ├── workstream-graph.ts                   # Dagre layout, transitive reduction, highlights
 ├── workstream-graph.test.ts              # Vitest tests for graph logic
 ├── streamliner-theme.css                 # Light Deep Ocean theme (all sl-* classes)
+├── server/                               # Express local API, routes, and SSE event stream
+├── session-registry/                     # File-backed session registry and observation worker
 └── components/
     ├── WorkstreamCanvas.tsx              # React Flow graph wrapper
     ├── WorkstreamGraphNode.tsx           # Custom node renderers (task + gate)

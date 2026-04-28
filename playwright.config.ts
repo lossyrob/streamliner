@@ -20,12 +20,15 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "npx vite --host 127.0.0.1 --port 5178 --strictPort",
+    command:
+      "npx concurrently -n api,web --kill-others-on-fail \"npx tsx src/server/index.ts\" \"npx vite --host 127.0.0.1 --port 5178 --strictPort\"",
     url: "http://127.0.0.1:5178",
     reuseExistingServer: !process.env.CI,
     timeout: 45_000,
     env: {
       STREAMLINER_GRAPH: "public/example-project.json",
+      STREAMLINER_API_HOST: "127.0.0.1",
+      STREAMLINER_API_PORT: "4329",
       STREAMLINER_SESSION_REGISTRY_ROOT: ".playwright/session-registry",
       STREAMLINER_COPILOT_SESSION_STATE_ROOT: ".playwright/copilot-session-state",
       STREAMLINER_SESSION_SIGNAL_SPOOL_ROOT: ".playwright/session-signals",

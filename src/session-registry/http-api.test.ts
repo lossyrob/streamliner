@@ -242,6 +242,41 @@ describe("handleSessionRegistryApiRequest", () => {
     );
   });
 
+  it("returns conflict details for stale builder patches", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+    const created = store.upsertSession({
+      title: "Created row",
+      cwd: "C:\\created",
+      origin: { kind: "manual" },
+    });
+    store.patchSession(created.id, {
+      expectedVersion: created.version,
+      title: "Updated elsewhere",
+    });
+
+    const stalePatchResponse = handleSessionRegistryApiRequest(store, {
+      method: "PATCH",
+      url: `${SESSION_REGISTRY_API_BASE_PATH}/${created.id}`,
+      body: {
+        expectedVersion: created.version,
+        description: "Stale description",
+      },
+    });
+
+    expect(stalePatchResponse?.statusCode).toBe(409);
+    expect(stalePatchResponse?.body).toEqual(
+      expect.objectContaining({
+        conflictingFields: ["description"],
+        latest: expect.objectContaining({
+          title: "Updated elsewhere",
+          version: created.version + 1,
+        }),
+      }),
+    );
+  });
+
   it("passes through unknown-field preservation for externally written rows", () => {
     const rootDir = createRootDir();
     createdRoots.push(rootDir);

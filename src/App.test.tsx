@@ -12,6 +12,7 @@ function buildSession(
 ): SessionRegistryListItem {
   return {
     id: "manual-session-registry",
+    version: 0,
     title: "Manual session registry",
     titleSource: "user",
     description: "Build the local-first sessions surface and persistence layer.",
@@ -195,6 +196,31 @@ async function flushReact(): Promise<void> {
   await act(async () => {
     await Promise.resolve();
   });
+}
+
+class MockEventSource extends EventTarget {
+  static instances: MockEventSource[] = [];
+
+  readonly url: string;
+  readonly withCredentials = false;
+  readyState = 0;
+  onerror: ((this: EventSource, ev: Event) => unknown) | null = null;
+  onmessage: ((this: EventSource, ev: MessageEvent) => unknown) | null = null;
+  onopen: ((this: EventSource, ev: Event) => unknown) | null = null;
+
+  constructor(url: string | URL) {
+    super();
+    this.url = String(url);
+    MockEventSource.instances.push(this);
+  }
+
+  close(): void {
+    this.readyState = 2;
+  }
+
+  emit(type: string): void {
+    this.dispatchEvent(new MessageEvent(type, { data: "{}" }));
+  }
 }
 
 describe("App sessions route", () => {
@@ -391,10 +417,208 @@ describe("App sessions route", () => {
       expect(patchCall).toBeDefined();
       expect(JSON.parse(String(patchCall?.[1]?.body))).toEqual(
         expect.objectContaining({
+          expectedVersion: session.version,
           title: "Terminal A session",
           color: "#ff8c0a",
         }),
       );
+    },
+    15_000,
+  );
+
+  it(
+    "refreshes the session list when the live event stream reports a change",
+    async () => {
+      vi.useFakeTimers();
+      MockEventSource.instances = [];
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+      let sessionsRequests = 0;
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path.startsWith("/api/sessions")) {
+          sessionsRequests += 1;
+          return jsonResponse([
+            buildSession({
+              title: sessionsRequests === 1 ? "Initial session" : "Live refreshed session",
+              version: sessionsRequests === 1 ? 0 : 1,
+            }),
+          ]);
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      window.history.pushState({}, "", "/?view=sessions");
+
+      act(() => {
+        root.render(<App />);
+      });
+
+      await flushReact();
+      expect(container.textContent).toContain("Initial session");
+      expect(MockEventSource.instances).toHaveLength(1);
+      expect(MockEventSource.instances[0]?.url).toBe("/api/sessions/events");
+
+      act(() => {
+        MockEventSource.instances[0]?.emit("session.upserted");
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(150);
+      });
+      await flushReact();
+
+      expect(container.textContent).toContain("Live refreshed session");
+      expect(sessionsRequests).toBeGreaterThanOrEqual(2);
+    },
+    15_000,
+  );
+
+  it(
+    "sends expectedVersion and surfaces stale edit conflicts",
+    async () => {
+      const session = buildSession({
+        id: "conflicted-session",
+        version: 3,
+        title: "Editable session",
+      });
+      const latest = buildSession({
+        ...session,
+        version: 4,
+        title: "Edited elsewhere",
+        updatedAt: "2026-04-23T12:05:00.000Z",
+      });
+      const fetchMock = vi.fn(
+        async (input: RequestInfo | URL, init?: RequestInit) => {
+          const path = requestPath(input);
+          if (path === "/api/sessions") {
+            return jsonResponse([session]);
+          }
+          if (path === "/api/sessions/conflicted-session" && init?.method === "PATCH") {
+            return jsonResponse(
+              {
+                error: "Session changed elsewhere.",
+                latest: toRegistryRecord(latest),
+                conflictingFields: ["title"],
+              },
+              409,
+            );
+          }
+          throw new Error(`Unexpected fetch: ${path}`);
+        },
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      window.history.pushState({}, "", "/?view=sessions");
+
+      act(() => {
+        root.render(<App />);
+      });
+
+      await settle();
+      await openSessionSettings(container, "Editable session");
+      setInputValue(findInputByLabel(container, "Session title"), "Local edit");
+
+      act(() => {
+        findButton(container, "Done").click();
+      });
+      await settle(75);
+
+      const patchCall = fetchMock.mock.calls.find(
+        ([input, init]) =>
+          requestPath(input as RequestInfo | URL) === "/api/sessions/conflicted-session" &&
+          init?.method === "PATCH",
+      );
+      expect(JSON.parse(String(patchCall?.[1]?.body))).toEqual(
+        expect.objectContaining({
+          expectedVersion: 3,
+          title: "Local edit",
+        }),
+      );
+      expect(container.textContent).toContain("Session changed elsewhere.");
+      expect(container.textContent).toContain("title");
+      expect(container.textContent).toContain("Edited elsewhere");
+    },
+    15_000,
+  );
+
+  it(
+    "does not treat observation-only refreshes as stale builder conflicts",
+    async () => {
+      vi.useFakeTimers();
+      MockEventSource.instances = [];
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+      let sessionsRequests = 0;
+      const initial = buildSession({
+        id: "active-session",
+        title: "Active session",
+        version: 0,
+        lastSeenAt: "2026-04-23T12:00:00.000Z",
+        activityStatus: "waiting_for_input",
+      });
+      const observedRefresh = buildSession({
+        ...initial,
+        lastSeenAt: "2026-04-23T12:01:00.000Z",
+        activityStatus: "working",
+      });
+      const fetchMock = vi.fn(
+        async (input: RequestInfo | URL, init?: RequestInit) => {
+          const path = requestPath(input);
+          if (path === "/api/sessions") {
+            sessionsRequests += 1;
+            return jsonResponse([
+              sessionsRequests === 1 ? initial : observedRefresh,
+            ]);
+          }
+          if (path === "/api/sessions/active-session" && init?.method === "PATCH") {
+            const patch = JSON.parse(String(init.body)) as Partial<SessionRegistryListItem>;
+            return jsonResponse(
+              toRegistryRecord({
+                ...observedRefresh,
+                ...patch,
+                version: 1,
+                updatedAt: "2026-04-23T12:02:00.000Z",
+              }),
+            );
+          }
+          throw new Error(`Unexpected fetch: ${path}`);
+        },
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      window.history.pushState({}, "", "/?view=sessions");
+
+      act(() => {
+        root.render(<App />);
+      });
+
+      await flushReact();
+      act(() => {
+        findSessionRow(container, "Active session").click();
+      });
+      await flushReact();
+      const settingsTab = [...container.querySelectorAll<HTMLButtonElement>(".sl-sheet-tab")].find(
+        (btn) => btn.textContent?.trim() === "Settings",
+      );
+      if (!settingsTab) {
+        throw new Error("Could not find Settings tab.");
+      }
+      act(() => {
+        settingsTab.click();
+      });
+      await flushReact();
+      setInputValue(findInputByLabel(container, "Session title"), "Active session local edit");
+
+      act(() => {
+        MockEventSource.instances[0]?.emit("session.upserted");
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(150);
+      });
+      await flushReact();
+
+      expect(container.textContent).not.toContain("changed elsewhere");
+      expect(container.textContent).toContain("working");
     },
     15_000,
   );

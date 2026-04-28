@@ -38,6 +38,7 @@ export interface SessionRegistryListOptions {
 
 export interface SessionRegistryListItem {
   id: string;
+  version: number;
   title: string;
   titleSource: SessionRegistryTitleSource;
   description: string;
@@ -185,6 +186,7 @@ export type SessionRegistryUpsertInput =
   | LaunchedSessionRegistryUpsertInput;
 
 export interface SessionRegistryPatch {
+  expectedVersion?: number;
   title?: string;
   description?: string;
   color?: string | null;

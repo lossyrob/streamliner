@@ -44,16 +44,16 @@ Additional Inputs: .streamliner\workstreams\session-launching-and-tracking\brief
 ## Control State
 
 TODO Mirror: active-required-items
-Reconciliation: not_run
+Reconciliation: current
 
 ### Required Workflow Items
 - `init` | `resolved` | `activity`
 - `planning` | `resolved` | `activity`
 - `planning-docs-review` | `resolved` | `activity`
-- `implementation` | `pending` | `activity`
-- `final-review` | `pending` | `activity`
-- `final-pr` | `pending` | `activity`
+- `implementation` | `resolved` | `activity`
+- `final-review` | `resolved` | `activity`
+- `final-pr` | `in_progress` | `activity`
 
 ### Configured Procedure Items
 - `procedure:planning-review` | `resolved` | `procedure`
-- `procedure:final-review` | `pending` | `procedure`
+- `procedure:final-review` | `resolved` | `procedure`

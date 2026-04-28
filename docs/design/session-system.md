@@ -1,7 +1,7 @@
 ---
 kind: design-doc
 status: draft
-last_updated: 2026-04-27
+last_updated: 2026-04-28
 update_semantics: rewrite-in-place
 authoritative_for: "Session launching, lifecycle, registry contract, tracking, and runtime overlay"
 scope_tags:
@@ -13,6 +13,8 @@ scope_tags:
 code_paths:
   - src/session-registry*.ts
   - src/session-registry/**
+  - src/server/**
+  - src/components/SessionsPage.tsx
   - src/server/session/**
   - src/server/context/**
   - src/components/session/**
@@ -23,6 +25,7 @@ references_decisions:
   - 3
   - 4
   - 5
+  - 6
 ---
 
 # Session System
@@ -245,6 +248,7 @@ Each registry entry is a persisted `SessionRegistryRecord`. The stored lifecycle
 | Field | Type | Required | Source | Notes |
 |-------|------|----------|--------|-------|
 | `schemaVersion` | integer | yes | Streamliner | Record schema version. Starts at `1`. |
+| `version` | integer | yes | Streamliner | Monotonic builder-edit version used by the HTTP API for optimistic concurrency. Legacy records default to `0`. |
 | `id` | string | yes | Streamliner | Stable Streamliner-owned identifier. It is never the Copilot session id. |
 | `title` | string | yes | Builder | Short editable label. Observation-created rows bootstrap this from `workspace.yaml.summary`, then fall back to repo/cwd naming until the builder edits it. |
 | `description` | string | yes | Builder | Longer editable notes; empty string allowed. |
@@ -280,6 +284,7 @@ The registry lives under a global subtree of Streamliner's local runtime-state r
 ```text
 ~/.streamliner/state/
   session-registry/
+    api.lock
     index.json
     entries/
       {registry-id}.json
@@ -293,8 +298,9 @@ The registry lives under a global subtree of Streamliner's local runtime-state r
 ```
 
 - **`entries/{registry-id}.json` is authoritative.** Each file holds one full `SessionRegistryRecord`.
-- **`index.json` is a denormalized summary, not the source of truth.** It exists for fast list rendering and rebuilds from the entry files whenever it is missing, malformed, version-incompatible, or observably stale. It carries the exact list-surface fields needed by `listSessions()`, including `title`, `description`, `tags`, lifecycle, origin, freshness, and graph-binding metadata.
+- **`index.json` is a denormalized summary, not the source of truth.** It exists for fast list rendering and rebuilds from the entry files whenever it is missing, malformed, version-incompatible, or observably stale. It carries the exact list-surface fields needed by `listSessions()`, including `version`, `title`, `description`, `tags`, lifecycle, origin, freshness, and graph-binding metadata.
 - **`registry.lock` is an advisory single-writer lock.** Exactly one process is expected to mutate registry files at a time; readers never require the lock.
+- **`api.lock` is the standalone API process lock.** It prevents accidental duplicate Streamliner API processes from owning the same registry worker and live event stream.
 - **`quarantine/` holds bad inputs.** Malformed JSON, unsupported schema versions, and partially written files are moved here and excluded from normal reads until the builder repairs or deletes them.
 
 Hand-edited files are tolerated when they still parse and match the supported schema version. Unknown extra fields are preserved on rewrite rather than dropped opportunistically. If an entry file and `index.json` disagree, the entry file wins: missing index rows are rebuilt from entries, and orphaned index rows are dropped on rebuild.
@@ -303,7 +309,9 @@ Hand-edited files are tolerated when they still parse and match the supported sc
 
 - UI edits to `title`, `description`, and `color` debounce for **500 ms** and flush immediately on blur, submit, or shutdown.
 - Writers update files with **write-then-rename** in the destination directory so readers never see a half-written JSON payload.
-- Mutation paths re-read the latest entry file before writing if `updatedAt` changed since the caller's read. The mutation is re-applied to the latest on-disk snapshot and resolves conflicts with **last-writer-wins on the fields explicitly being changed**; untouched fields are preserved.
+- Builder mutations carry `expectedVersion` from the row snapshot the builder edited. If the latest row has a different `version`, the API rejects the write with `409 Conflict` and returns `{ error, latest, conflictingFields }`.
+- Successful builder mutations increment `version` when they change builder-owned fields (`title`, `description`, `color`, `tags`, `graphBinding`, or builder-driven `lifecycleStatus`). Derived observation updates do not increment `version`, so liveness refreshes do not churn open edit sheets.
+- After a conflict, the UI reloads the latest row and asks the builder to re-apply their intended field edits rather than silently overwriting another page's save.
 - Writers that cannot acquire `registry.lock` stay read-only rather than writing blind. This keeps the near-term concurrency model aligned with the runtime-state single-writer rule.
 
 #### Observation import and merge
@@ -382,9 +390,37 @@ The background worker drains `pending/` before discovery and summarization. Succ
 
 Registry import also inherits Decision 001's compatibility contract. If the Copilot compatibility probe cannot verify the expected event/file shapes, Streamliner may still create or update rows from `workspace.yaml`, but any observation-derived freshness or liveness that depends on unverified event parsing is surfaced as degraded confidence rather than fabricated certainty.
 
+#### Local API service
+
+The session registry is served by a standalone local Express process, not by the Vite development server. See [Decision 006](decisions/006-local-streamliner-api-service.md). The API process owns registry mutations, trusted signal ingestion, background observation/summarization, and the live session event stream. Vite is a frontend-only process and proxies `/api/*` to the API process in development and preview.
+
+The default service address is loopback-only:
+
+| Setting | Default | Meaning |
+|---------|---------|---------|
+| `STREAMLINER_API_HOST` | `127.0.0.1` | Interface the local API binds to. |
+| `STREAMLINER_API_PORT` | `4319` | TCP port for direct API access and Vite proxying. |
+| `STREAMLINER_GRAPH` | unset | Optional default graph path served by `GET /api/graph.json`. |
+
+The local HTTP surface includes:
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/health` | Process liveness probe used by dev tooling. |
+| `GET /api/graph.json` | Load the configured graph file or default fixture. |
+| `GET /api/recents` | Return recently opened graph files. |
+| `POST /api/pick-file` | Native local file picker bridge. |
+| `GET /api/sessions`, `GET /api/sessions/:id`, `POST /api/sessions`, `PATCH /api/sessions/:id`, `DELETE /api/sessions/:id`, `POST /api/sessions/:id/archive` | Registry list/read/mutation API. |
+| `POST /api/sessions/signals` | Loopback-only trusted Copilot CLI hook signal intake. |
+| `GET /api/sessions/events` | Server-sent event stream for live registry changes. |
+
+The initial live sync protocol uses `EventSource` over `GET /api/sessions/events`. New clients receive a `snapshot` event unless they reconnect with a replayable `Last-Event-ID`. Subsequent buffered changes are emitted as `session.upserted`, `session.deleted`, or `session.rebuilt` with monotonic event ids; id-less `heartbeat` events keep intermediaries from treating the stream as idle without consuming replay ids. The API keeps a bounded replay buffer, and the browser also refreshes on window focus/visibility changes so reconnect gaps degrade to a normal reload rather than stale UI.
+
+In development, `npm run dev` starts both long-lived processes: `npm run dev:api` for the API and `npm run dev:web` for Vite. Vite dev and preview are loopback-bound by default so trusted signal intake cannot be exposed to the LAN through the frontend proxy. Frontend HMR or a Vite restart does not restart the registry worker, and API restarts do not require rebuilding the frontend. For direct API debugging, run `npm run api` or `npm run dev:api` and call `http://127.0.0.1:4319/api/...` directly.
+
 #### Public surface
 
-The dashboard and future relaunch flows consume the registry through a shared in-process module that will live under `src/session-registry/`. This issue only defines the contract; it does not implement persistence.
+The dashboard and future relaunch flows consume the registry through the local API. The API delegates to the shared store contract under `src/session-registry/`, keeping persisted schema shapes separate from consumer-facing view/mutation shapes.
 
 | Operation | Contract |
 |-----------|----------|
@@ -392,7 +428,7 @@ The dashboard and future relaunch flows consume the registry through a shared in
 | `getSession(id)` | Returns the full registry record or `null`. |
 | `upsertSession(input)` | Creates or replaces a row for manual, observed, or launched sources using the identity/merge rules above. Lifecycle input is source-sensitive: observation may create newly discovered active rows and may also upsert rows that are already `ended`; caller-driven manual/launch upserts may not create `ended` or `archived` rows directly. |
 | `attachObservedSession(id, observation)` | Links a discovered Copilot session onto an existing manual or launched row without rewriting its original `origin.kind`. Observation-owned fields (`copilotSessionId`, `lastSeenAt`, `cwd`, `repo`, `branch`, observation-driven `ended`) flow through this operation. This operation does not let observation write builder-owned `paused` or `active` lifecycle transitions onto an existing row. |
-| `patchSession(id, patch)` | Applies builder-owned edits (`title`, `description`, `color`, `tags`, `graphBinding`, builder-driven lifecycle changes). Builder patches do not force `ended`. |
+| `patchSession(id, patch)` | Applies builder-owned edits (`title`, `description`, `color`, `tags`, `graphBinding`, builder-driven lifecycle changes). Builder patches do not force `ended`; HTTP callers pass `expectedVersion` for conflict detection. |
 | `archiveSession(id)` | Convenience mutation that sets `lifecycleStatus` to `archived`. |
 | `deleteSession(id)` | Explicit destructive cleanup for rows the builder intentionally wants removed; never used by observation. |
 | `subscribe(listener)` | Emits discriminated change notifications: `upsert` carries `{ registryId, snapshot }`, `delete` carries `{ registryId }`, and `rebuild` carries `{ registryIds }`. |
