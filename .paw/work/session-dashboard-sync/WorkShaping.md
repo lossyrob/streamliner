@@ -14,6 +14,7 @@ The user prefers a clean frontend/API split now while the project is still young
 - Keep the file-backed registry as durable storage, but make the API the single live owner of registry mutations, background observation/indexing, trusted signal ingestion, and change broadcasting.
 - Make Vite frontend-only in development, with `/api/*` proxied to the standalone API.
 - Do not preserve the old Vite-plugin-owned backend path as a parallel production path; remove or reduce it to frontend proxy/config glue.
+- Capture the standalone API/service ownership change in a new accepted decision record, because issue #17 explicitly treats introducing a local service or changing registry write ownership as a design-impact decision.
 
 ## Work Breakdown
 
@@ -51,7 +52,7 @@ The user prefers a clean frontend/API split now while the project is still young
 - **Backend code changes:** API restarts independently; frontend remains alive and reconnects.
 - **Multiple frontend instances:** all coordinate through the same API process, not separate Vite middleware instances.
 - **Direct API callers mutate sessions:** dashboard pages receive the same change events and refresh.
-- **Stale edit sheet:** a PATCH based on an outdated row should return an explicit conflict or otherwise surface that the row changed elsewhere; it must not silently overwrite unrelated newer builder-owned fields.
+- **Stale edit sheet:** a PATCH based on an outdated builder-owned snapshot returns `409 Conflict` with the latest row and conflicting builder-owned fields; it must not silently overwrite unrelated newer builder-owned fields.
 - **Observation-derived updates during editing:** worker-owned fields may update in the background without taking over builder-owned draft fields.
 - **API unavailable:** frontend should show a useful load/sync error rather than pretending state is current.
 
@@ -106,11 +107,11 @@ The implementation should reuse the existing session registry API contract and f
 - Tests should not require a long-lived server; app creation should be separable from listening.
 - API process should bind to localhost by default, not a public interface.
 
-## Open Questions
+## Resolved Questions
 
-- Whether to add CORS immediately. Current recommendation: no first-class CORS unless a non-proxied browser origin needs it; direct API tools and Vite proxy do not need it.
-- Whether Express should serve built frontend assets in preview/production. Current recommendation: keep dev split first; optionally serve `dist/` later.
-- Exact conflict response shape for stale PATCH requests: likely `409 Conflict` with the latest row payload.
+- **CORS:** Do not add first-class CORS in Wave 2. The API binds to loopback by default, Vite uses a proxy, and direct API tools do not need browser CORS.
+- **Preview/static serving:** `vite preview` should mirror dev by proxying to the standalone API. Serving `dist/` from Express can be added later when packaging/distribution becomes explicit.
+- **Stale PATCH shape:** Builder-owned stale PATCH requests return `409 Conflict` with `{ error, latest, conflictingFields }`. Observation-derived changes bypass this builder precondition path.
 
 ## Session Notes
 
