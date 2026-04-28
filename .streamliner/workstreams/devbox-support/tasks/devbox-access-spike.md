@@ -246,19 +246,41 @@ the default session-state root and `-MaxSessions 10`.
   devbox-local filesystem and process evidence; laptop-to-devbox SSH
   reachability and any bridge endpoint still need separate validation.
 
+### Dev Tunnel evidence
+
+Follow-up run from `feature/issue-19-devbox-access-spike` after the laptop
+handoff commit `4838057` validated the locked-down Windows Dev Box path with the
+temporary loopback smoke bridge on `127.0.0.1:17619`.
+
+- `devtunnel` is installed on the managed devbox. Its cached login token had
+  expired, but `devtunnel user login` succeeded without committing or recording
+  auth material.
+- The smoke bridge bound successfully to `127.0.0.1:17619` without requiring
+  local administrator changes.
+- Local devbox requests to `/health` and `/snapshot` both succeeded. `/health`
+  returned `status: "ok"` with the session-state root present, and `/snapshot`
+  returned schema version 1 with 10 sampled sessions and no probe errors.
+- A private Dev Tunnel could be created, port `17619` could be attached with
+  HTTP protocol, and `devtunnel host` reported the tunnel ready to accept
+  connections. This validates the devbox-hosted, outbound tunnel side without
+  relying on inbound SSH.
+- Laptop-to-devbox bridge reachability was not completed from this devbox-only
+  session. No devbox-side blocker was observed; the remaining check is an
+  authenticated laptop client or browser request through the tunnel to confirm
+  the laptop can reach the hosted `/health` or `/snapshot` endpoint.
+
 The evidence is enough to accept the devbox-local side of the design:
 session-state observation and process-lock interpretation should run on the
-devbox host. It is not yet enough to accept a concrete access profile because
-the laptop has not verified the builder's chosen SSH target, forwarding behavior,
-or bridge endpoint.
+devbox host. It also supports Dev Tunnels as the locked-down-device transport
+candidate when inbound SSH is unavailable, pending a laptop-side reachability
+check against the hosted bridge.
 
 ## Open evidence needed
 
 - A laptop-to-devbox SSH reachability probe using the builder's chosen target or
   host alias.
 - Confirmation of the actual SSH target or alias shape the builder wants to use.
-- Confirmation whether Azure Dev Tunnels add value beyond SSH port forwarding for
-  this observability slice.
+- A laptop-side Dev Tunnel client or browser check against the hosted bridge.
 - Confirmation that installing the Streamliner Copilot CLI plugin on the devbox
   can point hooks at the devbox-local bridge without slowing or breaking Copilot
   sessions.
