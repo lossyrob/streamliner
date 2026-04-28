@@ -4,6 +4,7 @@ import type { SessionRegistryListItem, SessionRegistryPatch } from "../session-r
 import type { SessionRegistryRecord } from "../session-registry-schema";
 import {
   buildRestartCommand,
+  canRelaunch,
   filterEndedSessions,
   getDisplaySessionId,
   isTrustedActiveSession,
@@ -2117,6 +2118,11 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                             >
                               {rowRestartCommand ? "Copy restart" : "No restart"}
                             </CopyButton>
+                            <RelaunchButton
+                              session={session}
+                              className="sl-session-row-status-dock-action"
+                              compact
+                            />
                           </div>
                         </div>
                       </div>
@@ -2406,6 +2412,100 @@ function CopyButton({
   );
 }
 
+type RelaunchState = "idle" | "launching" | "launched" | "error";
+
+interface RelaunchButtonProps {
+  session: SessionRegistryListItem;
+  className?: string;
+  compact?: boolean;
+}
+
+function RelaunchButton({ session, className, compact = false }: RelaunchButtonProps) {
+  const [state, setState] = useState<RelaunchState>("idle");
+  const [detail, setDetail] = useState("");
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const eligible = canRelaunch(session);
+
+  useEffect(() => {
+    return () => {
+      if (resetTimerRef.current) {
+        clearTimeout(resetTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleRelaunch = useCallback(async () => {
+    if (!eligible || state === "launching") {
+      return;
+    }
+    setState("launching");
+    setDetail("");
+    try {
+      const response = await fetch(
+        `/api/sessions/${encodeURIComponent(session.id)}/relaunch`,
+        { method: "POST" },
+      );
+      const body = await response.json();
+      if (response.ok) {
+        const method = body.method === "powershell" ? "PowerShell" : "Windows Terminal";
+        const info = body.copilotResumed ? `Resumed in ${method}` : `Opened in ${method}`;
+        setState("launched");
+        setDetail(info);
+      } else {
+        setState("error");
+        setDetail(body.message ?? "Relaunch failed");
+      }
+    } catch {
+      setState("error");
+      setDetail("Network error");
+    }
+    if (resetTimerRef.current) {
+      clearTimeout(resetTimerRef.current);
+    }
+    resetTimerRef.current = setTimeout(() => {
+      setState("idle");
+      setDetail("");
+      resetTimerRef.current = null;
+    }, 3_000);
+  }, [eligible, session.id, state]);
+
+  const label = !eligible
+    ? session.lifecycleStatus === "archived"
+      ? "Archived — unarchive to relaunch"
+      : session.copilotProcessState === "live"
+        ? "Session is live"
+        : "No working directory"
+    : state === "launching"
+      ? "Launching…"
+      : state === "launched"
+        ? detail
+        : state === "error"
+          ? detail
+          : "Relaunch session";
+
+  const buttonText = compact
+    ? state === "launching" ? "…" : state === "launched" ? "✓" : state === "error" ? "✗" : "⟳"
+    : label;
+
+  return (
+    <button
+      type="button"
+      className={`sl-relaunch-btn${state === "launched" ? " success" : ""}${
+        state === "error" ? " error" : ""
+      }${state === "launching" ? " launching" : ""}${className ? ` ${className}` : ""}`}
+      aria-label={label}
+      title={label}
+      disabled={!eligible || state === "launching"}
+      onClick={(event) => {
+        event.stopPropagation();
+        void handleRelaunch();
+      }}
+    >
+      {buttonText}
+    </button>
+  );
+}
+
 interface CopyableValueProps {
   value: string;
   label: string;
@@ -2432,6 +2532,7 @@ function SessionOverview({ session }: SessionOverviewProps) {
       <section className="sl-session-overview-section">
         <h3 className="sl-session-overview-heading">Restart</h3>
         <div className="sl-session-quick-actions">
+          <RelaunchButton session={session} />
           <CopyButton
             text={restartCommand ?? ""}
             label={

@@ -646,6 +646,88 @@ Streamliner surfaces a session panel or overlay showing:
 
 Clicking a session in the list focuses its terminal (when the terminal integration supports it) or shows the session's details.
 
+## Session Relaunch
+
+Relaunch restores a builder to a tracked session's working directory after an
+interruption (browser close, machine restart, terminal crash). It is a
+**registry operation**: the registry row is the durable session identity, and
+relaunch consumes metadata from that row rather than maintaining a parallel
+terminal or session store.
+
+### Relaunch API
+
+**Endpoint**: `POST /api/sessions/:id/relaunch`
+
+Loopback-only (same enforcement as `/api/sessions/signals`). The local
+Streamliner API process owns this action per Decision 006.
+
+**Response on success** (200):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `sessionId` | string | Registry entry ID |
+| `cwd` | string | Resolved working directory used |
+| `method` | `"windows-terminal"` \| `"powershell"` | Terminal method used |
+| `copilotResumed` | boolean | Whether `copilot --resume` was attempted |
+| `colorApplied` | boolean | Whether tab color was applied |
+| `pid` | number \| undefined | PID of spawned terminal process |
+
+**Error response** (400 / 404 / 500):
+
+| `code` | HTTP status | Meaning |
+|--------|------------|---------|
+| `session_not_found` | 404 | No registry row with this ID |
+| `session_archived` | 400 | Session is archived; unarchive first |
+| `session_live` | 400 | Copilot process is still live; stop it first |
+| `no_cwd` | 400 | No working directory recorded |
+| `cwd_not_found` | 400 | Working directory does not exist on disk |
+| `spawn_failed` | 500 | Terminal process failed to launch |
+
+### Relaunch Behavior
+
+**Path resolution**: `derivedWorktreePath ?? cwd` — worktree path is preferred
+when available, matching the existing restart-command behavior.
+
+**Terminal selection**:
+1. If Windows Terminal (`wt.exe`) is in PATH → `wt new-tab` with `--title`,
+   `--tabColor` (valid `#RRGGBB` only), `-d <cwd>`, and optionally
+   `powershell -NoExit -Command "copilot --resume <id>"`.
+2. Otherwise → `powershell.exe -NoExit -Command "Set-Location ...; copilot --resume <id>"`.
+
+**Process lifecycle**: Terminals are spawned `detached` with `stdio: 'ignore'`
+and `unref()`'d so they outlive the Streamliner API process. The relaunch
+endpoint does not track the spawned process after returning the PID.
+
+**Degradation rules**:
+- No `copilotSessionId` → open terminal at cwd without resume (still a
+  successful relaunch; the issue spec principle is "correct cwd beats full
+  resume").
+- No Windows Terminal → PowerShell fallback.
+- Invalid or missing `color` → launch without tab color.
+- Missing cwd directory → fail with `cwd_not_found`.
+
+### Non-Mutating
+
+Relaunch does **not** write to the registry or emit SSE change events. It is
+a read-then-spawn action. A future `lastRelaunchedAt` timestamp or relaunch
+claim binding would be a separate registry schema change.
+
+### Eligibility
+
+A session is eligible for relaunch when:
+- `lifecycleStatus` is **not** `"archived"` (must unarchive first).
+- `copilotProcessState` is **not** `"live"` (prevents duplicate terminal
+  spawns for already-running sessions).
+- A working directory is available (`derivedWorktreePath` or `cwd` is
+  non-empty).
+
+### Wave 3 Separation
+
+Relaunch (`POST /api/sessions/:id/relaunch`) operates on an **existing**
+registry row. The future launch-from-graph flow (Wave 3) will use a separate
+endpoint (e.g., `POST /api/sessions/launch`) that creates a new registry row
+and then launches, sharing the same terminal-launch infrastructure.
+
 ## Scope Boundaries
 
 ### In This Design
@@ -662,7 +744,7 @@ Clicking a session in the list focuses its terminal (when the terminal integrati
 
 - Using Copilot SDK as the worker-session runtime instead of Copilot CLI interactive mode
 - Multi-machine registry sync, devbox launch, or remote control actions beyond observation
-- Automatic crash recovery or relaunch implementation (this doc defines the registry contract relaunch will consume, not the relaunch flow itself)
+- Automatic crash recovery or relaunch implementation beyond the explicit `POST /api/sessions/:id/relaunch` action (this doc defines the registry contract relaunch consumes and the relaunch API contract; automatic recovery is not in scope)
 - Session-to-session communication
 - Rich session control beyond launch and presence
 - Headless (non-terminal) session execution

@@ -402,4 +402,99 @@ describe("createStreamlinerApiApp", () => {
       eventStream.close();
     }
   });
+
+  it("relaunch endpoint returns result for valid session", async () => {
+    const rootDir = createRootDir();
+    const store = new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") });
+    const session = store.upsertSession({
+      title: "Relaunch target",
+      cwd: rootDir,
+      origin: { kind: "manual" },
+    });
+    const api = createStreamlinerApiApp({
+      store,
+      relaunchDeps: {
+        launchTerminal: () => ({ method: "windows-terminal", pid: 99999 }),
+        existsSync: () => true,
+      },
+    });
+    activeApps.push(api);
+
+    const response = await request(api.app)
+      .post(`/api/sessions/${session.id}/relaunch`)
+      .expect(200);
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        sessionId: session.id,
+        cwd: rootDir,
+        method: "windows-terminal",
+        pid: 99999,
+      }),
+    );
+  });
+
+  it("relaunch endpoint returns 404 for nonexistent session", async () => {
+    const rootDir = createRootDir();
+    const store = new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") });
+    const api = createStreamlinerApiApp({
+      store,
+      relaunchDeps: {
+        launchTerminal: () => ({ method: "powershell", pid: 1 }),
+        existsSync: () => true,
+      },
+    });
+    activeApps.push(api);
+
+    const response = await request(api.app)
+      .post("/api/sessions/nonexistent/relaunch")
+      .expect(404);
+    expect(response.body.code).toBe("session_not_found");
+  });
+
+  it("relaunch endpoint returns 400 for archived session", async () => {
+    const rootDir = createRootDir();
+    const store = new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") });
+    const session = store.upsertSession({
+      title: "Archived session",
+      cwd: rootDir,
+      origin: { kind: "manual" },
+    });
+    store.archiveSession(session.id);
+    const api = createStreamlinerApiApp({
+      store,
+      relaunchDeps: {
+        launchTerminal: () => ({ method: "powershell", pid: 1 }),
+        existsSync: () => true,
+      },
+    });
+    activeApps.push(api);
+
+    const response = await request(api.app)
+      .post(`/api/sessions/${session.id}/relaunch`)
+      .expect(400);
+    expect(response.body.code).toBe("session_archived");
+  });
+
+  it("relaunch endpoint blocks non-loopback requests", async () => {
+    const rootDir = createRootDir();
+    const store = new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") });
+    const session = store.upsertSession({
+      title: "Blocked relaunch",
+      cwd: rootDir,
+      origin: { kind: "manual" },
+    });
+    const api = createStreamlinerApiApp({
+      store,
+      relaunchDeps: {
+        launchTerminal: () => ({ method: "powershell", pid: 1 }),
+        existsSync: () => true,
+      },
+    });
+    activeApps.push(api);
+
+    await request(api.app)
+      .post(`/api/sessions/${session.id}/relaunch`)
+      .set("X-Forwarded-For", "203.0.113.7")
+      .expect(403, { error: "Session relaunch must originate from loopback." });
+  });
 });

@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { SessionRegistryListItem } from "../session-registry-contract";
 import {
   buildRestartCommand,
+  buildRelaunchCommand,
+  canRelaunch,
   filterEndedSessions,
   getDisplaySessionId,
 } from "./session-policies";
@@ -101,5 +103,140 @@ describe("session policies", () => {
       "ended",
       "interrupted",
     ]);
+  });
+
+  describe("buildRelaunchCommand", () => {
+    it("returns a Set-Location + resume command when copilotSessionId is present", () => {
+      const session = buildSession({
+        copilotSessionId: "copilot-session-id",
+        cwd: "C:\\repo",
+      });
+      expect(buildRelaunchCommand(session)).toBe(
+        "Set-Location -LiteralPath 'C:\\repo'; copilot --resume 'copilot-session-id'",
+      );
+    });
+
+    it("returns a Set-Location command (cwd-only) when copilotSessionId is absent", () => {
+      const session = buildSession({
+        copilotSessionId: null,
+        cwd: "C:\\repo",
+      });
+      expect(buildRelaunchCommand(session)).toBe("Set-Location -LiteralPath 'C:\\repo'");
+    });
+
+    it("prefers derivedWorktreePath over cwd", () => {
+      const session = buildSession({
+        copilotSessionId: "copilot-session-id",
+        cwd: "C:\\repo",
+        derivedWorktreePath: "C:\\repo\\worktree",
+      });
+      expect(buildRelaunchCommand(session)).toBe(
+        "Set-Location -LiteralPath 'C:\\repo\\worktree'; copilot --resume 'copilot-session-id'",
+      );
+    });
+
+    it("uses cwd when derivedWorktreePath is null", () => {
+      const session = buildSession({
+        copilotSessionId: "copilot-session-id",
+        cwd: "C:\\repo",
+        derivedWorktreePath: null,
+      });
+      expect(buildRelaunchCommand(session)).toBe(
+        "Set-Location -LiteralPath 'C:\\repo'; copilot --resume 'copilot-session-id'",
+      );
+    });
+
+    it("handles cwd with single quotes (escaping)", () => {
+      const session = buildSession({
+        copilotSessionId: null,
+        cwd: "C:\\repo's folder",
+      });
+      expect(buildRelaunchCommand(session)).toBe("Set-Location -LiteralPath 'C:\\repo''s folder'");
+    });
+
+    it("returns just the resume command when both path sources are empty but copilotSessionId exists", () => {
+      const session = buildSession({
+        copilotSessionId: "copilot-session-id",
+        cwd: "",
+        derivedWorktreePath: null,
+      });
+      expect(buildRelaunchCommand(session)).toBe("copilot --resume 'copilot-session-id'");
+    });
+
+    it("returns empty string when no paths and no copilotSessionId", () => {
+      const session = buildSession({
+        copilotSessionId: null,
+        cwd: "",
+        derivedWorktreePath: null,
+      });
+      expect(buildRelaunchCommand(session)).toBe("");
+    });
+  });
+
+  describe("canRelaunch", () => {
+    it("returns true for active session with cwd", () => {
+      const session = buildSession({
+        lifecycleStatus: "active",
+        copilotProcessState: null,
+        cwd: "C:\\repo",
+      });
+      expect(canRelaunch(session)).toBe(true);
+    });
+
+    it("returns true for paused session with cwd", () => {
+      const session = buildSession({
+        lifecycleStatus: "paused",
+        copilotProcessState: null,
+        cwd: "C:\\repo",
+      });
+      expect(canRelaunch(session)).toBe(true);
+    });
+
+    it("returns true for ended session with cwd", () => {
+      const session = buildSession({
+        lifecycleStatus: "ended",
+        copilotProcessState: null,
+        cwd: "C:\\repo",
+      });
+      expect(canRelaunch(session)).toBe(true);
+    });
+
+    it("returns false for archived session", () => {
+      const session = buildSession({
+        lifecycleStatus: "archived",
+        copilotProcessState: null,
+        cwd: "C:\\repo",
+      });
+      expect(canRelaunch(session)).toBe(false);
+    });
+
+    it("returns false for live session (copilotProcessState === 'live')", () => {
+      const session = buildSession({
+        lifecycleStatus: "active",
+        copilotProcessState: "live",
+        cwd: "C:\\repo",
+      });
+      expect(canRelaunch(session)).toBe(false);
+    });
+
+    it("returns false for session with empty cwd and no derivedWorktreePath", () => {
+      const session = buildSession({
+        lifecycleStatus: "active",
+        copilotProcessState: null,
+        cwd: "",
+        derivedWorktreePath: null,
+      });
+      expect(canRelaunch(session)).toBe(false);
+    });
+
+    it("returns true for session with derivedWorktreePath but empty cwd", () => {
+      const session = buildSession({
+        lifecycleStatus: "active",
+        copilotProcessState: null,
+        cwd: "",
+        derivedWorktreePath: "C:\\repo\\worktree",
+      });
+      expect(canRelaunch(session)).toBe(true);
+    });
   });
 });
