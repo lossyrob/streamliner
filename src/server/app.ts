@@ -36,8 +36,13 @@ const malformedJsonHandler: ErrorRequestHandler = (error, _req, res, next) => {
 
 const jsonErrorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
   void _next;
+  const maybeStatus = (error as { status?: unknown; statusCode?: unknown }).status
+    ?? (error as { statusCode?: unknown }).statusCode;
+  const status = typeof maybeStatus === "number" && maybeStatus >= 400 && maybeStatus < 600
+    ? maybeStatus
+    : 500;
   const message = error instanceof Error ? error.message : "Internal server error.";
-  res.status(500).json({ error: message });
+  res.status(status).json({ error: message });
 };
 
 export function createStreamlinerApiApp(

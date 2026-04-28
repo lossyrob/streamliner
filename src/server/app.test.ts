@@ -131,4 +131,28 @@ describe("createStreamlinerApiApp", () => {
     expect(received).toContain("event: session.upserted");
     expect(received).toContain("Streamed session");
   });
+
+  it("returns client errors for malformed and oversized JSON bodies", async () => {
+    const rootDir = createRootDir();
+    const store = new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") });
+    const api = createStreamlinerApiApp({ store });
+    activeApps.push(api);
+
+    await request(api.app)
+      .post("/api/sessions")
+      .set("Content-Type", "application/json")
+      .send("{")
+      .expect(400, { error: "Malformed JSON request body." });
+
+    const oversizedJson = JSON.stringify({ payload: "x".repeat(1024 * 1024) });
+    const oversizedResponse = await request(api.app)
+      .post("/api/sessions")
+      .set("Content-Type", "application/json")
+      .send(oversizedJson)
+      .expect(413);
+
+    expect(oversizedResponse.body).toEqual({
+      error: expect.stringContaining("request entity too large"),
+    });
+  });
 });
