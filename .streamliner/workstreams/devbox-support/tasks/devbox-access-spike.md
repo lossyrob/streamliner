@@ -2,9 +2,8 @@
 
 ## Status
 
-Devbox-local evidence captured. The access recommendation below is concrete
-enough to prototype, but the spike should remain open until a laptop-side client
-confirms reachability through a hosted Dev Tunnel bridge.
+Devbox-local and laptop-to-devbox Dev Tunnel evidence captured. The access
+recommendation below is ready to drive the first prototype slice.
 
 Tracker: [issue #19](https://github.com/lossyrob/streamliner/issues/19)
 
@@ -264,20 +263,20 @@ temporary loopback smoke bridge on `127.0.0.1:17619`.
   HTTP protocol, and `devtunnel host` reported the tunnel ready to accept
   connections. This validates the devbox-hosted, outbound tunnel side without
   relying on inbound SSH.
-- Laptop-to-devbox bridge reachability was not completed from this devbox-only
-  session. No devbox-side blocker was observed; the remaining check is an
-  authenticated laptop client or browser request through the tunnel to confirm
-  the laptop can reach the hosted `/health` or `/snapshot` endpoint.
+- A laptop-side authenticated `devtunnel connect` session reached the hosted
+  bridge and mapped it to `http://127.0.0.1:17619`.
+- The laptop-side probe succeeded against that mapped bridge. `/health` reported
+  `status: "ok"`, `loopbackOnly: true`, and `sessionStateRootExists: true`.
+  The SSH probe path was skipped because no SSH target was provided, confirming
+  the Dev Tunnel-only path does not depend on inbound SSH.
 
-The evidence is enough to accept the devbox-local side of the design:
-session-state observation and process-lock interpretation should run on the
-devbox host. It also supports Dev Tunnels as the locked-down-device transport
-candidate when inbound SSH is unavailable, pending a laptop-side reachability
-check against the hosted bridge.
+The evidence is enough to accept the locked-down-device design: session-state
+observation and process-lock interpretation should run on the devbox host, and
+an authenticated Dev Tunnel can be the first laptop-to-devbox reachability
+channel when inbound SSH is unavailable.
 
-## Open evidence needed
+## Follow-up evidence
 
-- A laptop-side Dev Tunnel client or browser check against a live hosted bridge.
 - Optional SSH reachability details only if the builder wants SSH as an
   additional bootstrap or degraded-fallback channel.
 - Confirmation that installing the Streamliner Copilot CLI plugin on the devbox
