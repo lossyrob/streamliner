@@ -40,7 +40,7 @@ Use `npm run api` for a non-watch API process. The API serves `GET /api/health`,
 | `STREAMLINER_API_PORT` | `4319` | API port used by direct callers and the Vite proxy |
 | `STREAMLINER_GRAPH` | unset | Optional graph file path served by `GET /api/graph.json` |
 
-The API serves `public/example-project.json` as the default workstream fixture when no `STREAMLINER_GRAPH` is set. You can load a different workstream JSON file using the "Load workstream…" button in the app header.
+When no `STREAMLINER_GRAPH` is set and no recent graph is available, `GET /api/graph.json` returns a 404. The dashboard handles that by falling back to Vite's static `public/example-project.json` fixture. Use the "Load workstream…" button to select a different workstream JSON file.
 
 ## Copilot CLI Streamliner plugin
 
