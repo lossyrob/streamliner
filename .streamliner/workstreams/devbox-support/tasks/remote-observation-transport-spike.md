@@ -264,9 +264,34 @@ Issue #19 validated the transport premise:
   compatible `workspace.yaml` and `events.jsonl` shapes, hook events in current
   plugin sessions, Windows path conventions, and host-local lock interpretation.
 
-This evidence is not sufficient by itself to accept issue #22 because it tested
-only the issue #19 access/smoke bridge. Issue #22 still needs a live devbox run
-against the transport-specific smoke bridge and probe added in this branch.
+Issue #22 devbox-local validation was run from
+`feature/issue-22-remote-observation-transport-spike` against the
+transport-specific smoke bridge on devbox loopback.
+
+- `/health` returned `status: "ok"`, `loopbackOnly: true`,
+  `sessionStateRootExists: true`, and `pathConventions: "windows"`.
+- `/capabilities` advertised `snapshots`, `eventTailByOffset`, `signalPost`,
+  `signalCursorRead`, `processLockLiveness`, and `rawContentOmitted` as
+  supported.
+- `/sessions/snapshot` sampled 10 recent sessions. All 10 had event metadata, 7
+  had trusted hook events, and process states covered `live`, `stale_lock`, and
+  `none`.
+- Snapshot event types included `user.message`, `assistant.turn_start`,
+  `assistant.turn_end`, `tool.execution_start`, `tool.execution_complete`,
+  `hook.start`, `hook.end`, session lifecycle/diagnostic events, and
+  `subagent.completed`.
+- Offset event-tail probing was attempted and succeeded for one real session.
+  The tail returned 5 normalized events, 0 parse errors, and
+  `rawContentOmitted: true`.
+- Synthetic signal POST to `/api/sessions/signals` was accepted, and
+  `/signals?after=0` returned a cursor read containing that synthetic signal.
+- Dev Tunnel hosting for the smoke bridge succeeded and was left running for
+  laptop-side verification. The concrete tunnel id and URLs are intentionally
+  omitted from this committed evidence.
+
+The remaining acceptance check is the laptop-side probe through
+`devtunnel connect` against the live bridge. Until that check is recorded, the
+issue #22 graph node remains `in-progress`.
 
 ## Required issue #22 validation
 
