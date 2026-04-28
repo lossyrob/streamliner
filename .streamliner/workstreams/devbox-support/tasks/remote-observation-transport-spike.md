@@ -2,9 +2,9 @@
 
 ## Status
 
-Issue #22 finding drafted from issue #19's devbox-local and laptop-to-devbox Dev
-Tunnel evidence. The recommendation below is ready for operator review and for
-downstream implementation planning.
+Draft issue #22 contract. The recommendation below is the candidate transport
+model to validate with a real devbox run before the finding is accepted or the
+PR is marked ready for review.
 
 Tracker: [issue #22](https://github.com/lossyrob/streamliner/issues/22)
 
@@ -264,11 +264,36 @@ Issue #19 validated the transport premise:
   compatible `workspace.yaml` and `events.jsonl` shapes, hook events in current
   plugin sessions, Windows path conventions, and host-local lock interpretation.
 
-No additional devbox-agent evidence is required to accept this transport
-contract. The next implementation slice should separately validate that the
-production bridge's `POST /api/sessions/signals` endpoint receives real plugin
-hook POSTs and that plugin fallback spool draining works when the bridge is
-temporarily stopped.
+This evidence is not sufficient by itself to accept issue #22 because it tested
+only the issue #19 access/smoke bridge. Issue #22 still needs a live devbox run
+against the transport-specific smoke bridge and probe added in this branch.
+
+## Required issue #22 validation
+
+The branch includes a devbox-side smoke bridge and a laptop/devbox probe for the
+candidate endpoint contract:
+
+- `remote-observation-transport-bridge-smoke.ps1`
+- `remote-observation-transport-probe.ps1`
+
+The devbox validation should prove:
+
+- `/health` returns `status: "ok"` and reports the session-state root;
+- `/capabilities` advertises snapshots, offset event tails, signal POST, signal
+  cursor reads, process-lock liveness, and raw-content omission;
+- `/sessions/snapshot` returns real devbox session metadata without raw prompt or
+  assistant content;
+- `/sessions/{id}/events?afterOffset=...` can tail at least one real devbox
+  session by byte offset and returns normalized event envelopes;
+- `POST /api/sessions/signals` accepts a synthetic normalized signal on devbox
+  loopback;
+- `/signals?after=...` returns that synthetic signal through a replayable cursor;
+- the same probe succeeds from the laptop through `devtunnel connect`, not only
+  from the devbox itself.
+
+Once that evidence is committed back to the branch, update this section with the
+observed results and move the issue #22 graph node from `in-progress` to
+`completed`.
 
 ## Design impact
 
