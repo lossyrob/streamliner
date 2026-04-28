@@ -7,7 +7,7 @@
   "status": "active",
   "attention": "focus",
   "createdAt": "2026-04-27T21:52:52.683Z",
-  "updatedAt": "2026-04-28T03:35:00.000Z",
+  "updatedAt": "2026-04-28T06:06:28.815Z",
   "repos": [
     {
       "id": "streamliner",
@@ -72,7 +72,7 @@
       "type": "research",
       "title": "Devbox access spike",
       "summary": "Identify the concrete host registration and access model Streamliner can rely on for the first devbox observability slice.",
-      "status": "in-progress",
+      "status": "completed",
       "attention": "focus",
       "repoIds": ["streamliner"],
       "tracker": {
@@ -88,7 +88,7 @@
       "type": "research",
       "title": "Remote Copilot state spike",
       "summary": "Confirm where Copilot CLI session state lives on the devbox, what metadata and events are available, and how compatible that shape is with local observation.",
-      "status": "planned",
+      "status": "completed",
       "attention": "focus",
       "repoIds": ["streamliner"],
       "tracker": {
@@ -102,12 +102,14 @@
       "type": "research",
       "title": "Remote observation transport spike",
       "summary": "Evaluate the viable scan/watch transport for reading devbox session state from the local Streamliner process, including latency, consistency, and failure modes.",
-      "status": "planned",
+      "status": "completed",
       "attention": "focus",
       "repoIds": ["streamliner"],
       "tracker": {
-        "type": "local",
-        "path": "tasks/remote-observation-transport-spike.md"
+        "type": "github",
+        "owner": "lossyrob",
+        "repo": "streamliner",
+        "number": 22
       },
       "dependsOn": ["devbox-access-spike", "remote-session-state-spike"]
     },
@@ -116,7 +118,7 @@
       "type": "research",
       "title": "Environment identity spike",
       "summary": "Define host, environment, path, repo, branch, and Copilot-session identity rules so devbox sessions can merge into the registry without colliding with local sessions.",
-      "status": "planned",
+      "status": "ready",
       "attention": "focus",
       "repoIds": ["streamliner"],
       "tracker": {
@@ -130,7 +132,7 @@
       "type": "research",
       "title": "Devbox health and freshness spike",
       "summary": "Define the health, freshness, degraded-confidence, and unreachable-host states that make devbox observation trustworthy enough to operate from.",
-      "status": "planned",
+      "status": "ready",
       "attention": "watch",
       "repoIds": ["streamliner"],
       "tracker": {
