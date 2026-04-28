@@ -23,8 +23,11 @@ const activeApps: StreamlinerApiApp[] = [];
 const activeServers: Server[] = [];
 
 class FakeSseRequest extends EventEmitter {
-  constructor(private readonly lastEventId?: string) {
+  private readonly lastEventId?: string;
+
+  constructor(lastEventId?: string) {
     super();
+    this.lastEventId = lastEventId;
   }
 
   header(name: string): string | undefined {
@@ -187,18 +190,28 @@ function createEventStreamStore(): {
   publishUpsert: (id: string, title: string) => void;
 } {
   const listeners = new Set<SessionRegistryChangeListener>();
-  const streamStore = {
+  const unsupportedStoreCall = () => {
+    throw new Error("Unexpected SessionRegistryStore call in event stream test.");
+  };
+  const streamStore: SessionRegistryStore = {
     listSessions: () => [],
+    getSession: unsupportedStoreCall,
+    upsertSession: unsupportedStoreCall,
+    attachObservedSession: unsupportedStoreCall,
+    recordTrustedSessionSignal: unsupportedStoreCall,
+    patchSession: unsupportedStoreCall,
+    archiveSession: unsupportedStoreCall,
+    deleteSession: unsupportedStoreCall,
     subscribe: (listener: SessionRegistryChangeListener) => {
       listeners.add(listener);
       return () => {
         listeners.delete(listener);
       };
     },
-  } satisfies Pick<SessionRegistryStore, "listSessions" | "subscribe">;
+  };
 
   return {
-    store: streamStore as SessionRegistryStore,
+    store: streamStore,
     publishUpsert: (id: string, title: string) => {
       const event: SessionRegistryChangeEvent = {
         kind: "upsert",
