@@ -7,7 +7,7 @@
   "status": "active",
   "attention": "focus",
   "createdAt": "2026-04-10T15:37:14.125Z",
-  "updatedAt": "2026-04-21T18:05:00.000Z",
+  "updatedAt": "2026-04-28T00:33:20.000Z",
   "trackingIssue": {
     "owner": "lossyrob",
     "repo": "streamliner",
@@ -61,6 +61,10 @@
     {
       "repoId": "streamliner",
       "path": "docs/design/decisions/004-session-registry-primary-surface.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/005-session-registry-storage-and-identity.md"
     }
   ],
   "nodes": [
@@ -132,8 +136,8 @@
       "id": "manual-session-registry-ui",
       "type": "task",
       "title": "Manual session registry UI",
-      "summary": "Ship a flat 'my sessions' UI surface decoupled from the graph: list every tracked session, edit title/description, assign colors, mark paused/ended/archived, autosave on change. Imports are populated from the observation hook; manual entries are also supported for sessions not yet discoverable.",
-      "status": "planned",
+      "summary": "Ship a graph-independent Sessions surface and registry-backed default view: list/create/edit/archive sessions, preserve user-edited identity fields across observation refreshes, surface trusted Copilot/Agency sessions via local plugin signals and context/activity indexing, and keep manual entries supported for sessions not yet discoverable.",
+      "status": "completed",
       "attention": "focus",
       "repoIds": ["streamliner"],
       "tracker": {
@@ -145,10 +149,26 @@
       "dependsOn": ["session-registry-model"]
     },
     {
+      "id": "session-dashboard-sync",
+      "type": "task",
+      "title": "Session dashboard multi-instance sync",
+      "summary": "Make multiple Streamliner pages behave like coordinated views of one session registry: same-origin tab refresh, focus/visibility refresh, explicit concurrent-edit behavior, and a decision on whether separate Vite/dev/preview instances can remain disk-coordinated for Wave 2 or need a single local registry service.",
+      "status": "ready",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "tracker": {
+        "type": "github",
+        "owner": "lossyrob",
+        "repo": "streamliner",
+        "number": 17
+      },
+      "dependsOn": ["manual-session-registry-ui"]
+    },
+    {
       "id": "session-relaunch",
       "type": "task",
       "title": "Session relaunch",
-      "summary": "Reopen a tracked session after a restart: open a terminal at the recorded cwd and, when the Copilot CLI session id is still resolvable, resume that session directly. Minimum viable version just restores the tab at the right cwd with the assigned color; Copilot CLI resume is a stretch within the same node. Backend action is independent of the registry UI and can land in parallel.",
+      "summary": "Reopen a tracked session after a restart: open a terminal at the recorded cwd and, when the Copilot CLI session id is still resolvable, resume that session directly. Minimum viable version restores the tab at the right cwd; Windows Terminal tab color is optional presentation metadata only and must not block relaunch. Copilot CLI resume is a stretch within the same node.",
       "status": "planned",
       "attention": "focus",
       "repoIds": ["streamliner"],
@@ -158,10 +178,16 @@
       "id": "terminal-tab-color-spike",
       "type": "research",
       "title": "Windows Terminal color bridge spike",
-      "summary": "Spike feasibility of reflecting the registry's assigned color into Windows Terminal (tab title + tabColor via profile or wt.exe args). Decide whether Wave 2 ships the bridge or defers it. Independent of the registry UI and relaunch work.",
-      "status": "planned",
+      "summary": "Spike completed: Windows Terminal can accept `wt new-tab --tabColor` for new tabs, but there is no reliable CLI contract for recoloring an already-open tab. Wave 2 treats terminal color as optional launch-time presentation metadata; relaunch continues uncolored whenever color application is unavailable or fails.",
+      "status": "completed",
       "attention": "watch",
       "repoIds": ["streamliner"],
+      "tracker": {
+        "type": "github",
+        "owner": "lossyrob",
+        "repo": "streamliner",
+        "number": 15
+      },
       "dependsOn": ["session-registry-model"]
     },
     {
@@ -262,6 +288,7 @@
         "registry-first-reorientation",
         "session-registry-model",
         "manual-session-registry-ui",
+        "session-dashboard-sync",
         "session-relaunch",
         "terminal-tab-color-spike"
       ]

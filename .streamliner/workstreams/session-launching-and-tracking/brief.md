@@ -49,6 +49,7 @@ derived UI state rather than written back into `graph.json`.
 - `streamliner:docs/design/decisions/002-file-based-context-delivery.md` - rationale for file-based context delivery
 - `streamliner:docs/design/decisions/003-paw-control-state-integration.md` - rationale for reading PAW control state as the workflow progression source
 - `streamliner:docs/design/decisions/004-session-registry-primary-surface.md` - rationale for treating the session registry as the primary session surface
+- `streamliner:docs/design/decisions/005-session-registry-storage-and-identity.md` - concrete storage and identity contract for the local session registry
 
 ## Boundaries
 - **In scope:** Repo-local Streamliner initialization, design-doc bootstrap,
@@ -75,15 +76,24 @@ control-state integration). The workstream's intended design is written down,
 including the split between SDK-based launch preparation and Copilot CLI
 interactive worker launch.
 
-Wave 2 is now the active focus, reoriented per issue #9 to deliver a
-**manual session registry** before the launch pipeline. This pivot is driven
-by the most acute near-term pain: losing track of active Copilot sessions
-across Windows restarts. The registry is graph-independent — sessions do not
-need to be tied to workstream nodes — and builds directly on the
-observation-based tracking decision (#001), so it does not require any of
-the launch plumbing to land first. Launch-from-graph and the graph runtime
-overlay follow in Waves 3 and 4 and register into / project from the Wave 2
-registry rather than introducing parallel surfaces.
+Wave 2 is the active focus, reoriented per issue #9 to deliver a **manual
+session registry** before the launch pipeline. Issue #13
+(`manual-session-registry-ui`) is complete via merged PR #14. It landed the local
+file-backed registry and Sessions surface, and hot work pulled trusted Copilot
+CLI session tracking into the same branch: plugin hook signals, trusted/default
+visibility, activity/context indexing, derived worktree/branch/GitHub refs,
+activity status, restart copy actions, and related design-doc updates. This
+remains the right Wave 2 center of gravity — restart-resilient session visibility
+before launch-from-graph — but the remaining planned observation and relaunch
+nodes need a scope review so they consume what #14 landed instead of duplicating
+it. Launch-from-graph and graph overlay remain later waves and should register
+into / project from the Wave 2 registry rather than introducing parallel
+surfaces. Issue #15 is complete: Windows Terminal tab color is feasible only as
+an optional launch-time convenience for new tabs via `wt new-tab --tabColor`, not
+as core relaunch behavior and not as a contract for recoloring existing tabs.
+Worker discussion also surfaced a separate multi-page/multi-instance dashboard
+sync concern; issue #17 now tracks `session-dashboard-sync` as the next ready
+Wave 2 hardening node.
 
 ## Decisions
 - Use repo-local `.streamliner/workstreams/` for Streamliner's committed
@@ -120,6 +130,12 @@ registry rather than introducing parallel surfaces.
   graph overlay is a projection of the registry. Pull manual tracking ahead of
   the launch pipeline so restart recovery ships independently of launch work
   (issue #9).
+- Treat Windows Terminal tab color as optional presentation metadata only. If
+  `session-relaunch` later opens a new Windows Terminal tab and has a resolved
+  hex registry color, it may pass `wt new-tab --tabColor`; relaunch must continue
+  uncolored when Windows Terminal is unavailable, color is missing/invalid, the
+  environment is not local Windows Terminal, or color application fails. Do not
+  attempt existing-tab recolor in Wave 2.
 
 ## Open Questions
 - When should runtime-discovered progress be promoted into committed workstream
@@ -128,6 +144,10 @@ registry rather than introducing parallel surfaces.
   IDE terminal APIs?
 - How should Streamliner observe remote session-state roots for devbox-launched
   sessions?
-- Windows Terminal tab color bridge: feasible via profile/tab title + tabColor,
-  or better deferred until a cross-platform strategy is clearer? (Tracked by
-  the separate `terminal-tab-color-spike` node after `session-registry-model`.)
+- Post-PR #14 scope review: how should `session-event-observation` and
+  `session-relaunch` be re-cut so they only cover work not already absorbed by
+  issue #13 / PR #14?
+- Does Wave 2 need a single local Streamliner service for session registry API,
+  trusted signal ingestion, and live updates, or is page-level sync plus the
+  file-backed registry sufficient until a later architecture pass? (Tracked by
+  issue #17 / `session-dashboard-sync`.)
