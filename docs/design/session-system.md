@@ -434,6 +434,40 @@ Copilot CLI plugin hooks are the trusted admission signal for default-visible se
 
 Hooks are **trust signals, not complete state**. If the plugin is not installed, Streamliner may still discover session folders for diagnostics, but those rows stay observed-only by default because they may be SDK/helper sessions. Once a hook admits a session, the worker uses polling over `workspace.yaml` and `events.jsonl` to keep the registry current even if later prompt/end signals are delayed.
 
+### Devbox Observation Access
+
+Devbox support extends the same trust/observation split across a host boundary.
+The first devbox observability slice targets a builder-registered devbox reached
+through local runtime configuration, not committed workstream secrets. A concrete
+devbox registration supplies a logical environment id, display name, access
+method, remote Copilot session-state root, and optional repo/path hints in local
+Streamliner config. Credentials, tokens, key material, and tunnel secrets remain
+owned by SSH, Azure CLI, the OS credential store, or an equivalent external
+credential manager.
+
+The preferred access model is a devbox-side Streamliner bridge reached from the
+local Streamliner process through an SSH local port forward. The bridge listens
+on devbox loopback, accepts the same normalized trusted hook signal payloads as
+`POST /api/sessions/signals`, spools them on the devbox when the laptop is
+unreachable, and exposes bounded observation endpoints for session-state
+snapshots and event tails. The bridge is not a replacement source of truth for
+session status: Copilot CLI's `workspace.yaml`, `events.jsonl`, and in-use lock
+files remain the observed facts.
+
+Direct SSH reads of `~/.copilot/session-state` are the bootstrap/probe path and
+may remain a degraded fallback. They are sufficient to verify reachability,
+session-state shape, and remote process-lock interpretation, but they are not the
+preferred steady-state transport because trusted hooks need a devbox-local
+endpoint and process liveness must be evaluated on the devbox. Azure Dev Tunnels
+may later replace the SSH port-forward channel if they provide equivalent
+authenticated loopback reachability; they do not replace the bridge or the
+registry identity model.
+
+Devbox observation does not imply devbox launch, remote control, or
+multi-machine registry sync. A devbox-observed registry row still uses a
+Streamliner-owned `id`; the Copilot session id, remote host/environment id, and
+remote cwd are separate identity facts used for merge and display.
+
 ### Node-to-Session Binding
 
 Streamliner binds sessions to graph nodes through **launch claims**. When a launch is initiated:
@@ -553,14 +587,15 @@ Clicking a session in the list focuses its terminal (when the terminal integrati
 - Launch from the graph with SDK preparation, kickoff-prompt compilation, and Copilot CLI interactive worker-session launch
 - Observation-based session tracking via Copilot state files
 - Plugin hook signals for low-latency status hints
+- Registered-devbox observation vocabulary for trusted hook forwarding and remote session-state access
 - Runtime overlay onto the committed graph
 - Terminal-based operator presence
-- Single-machine session tracking with environment field for future remote support
+- Local session tracking plus registered-devbox observation through the local Streamliner process
 
 ### Not In This Design
 
 - Using Copilot SDK as the worker-session runtime instead of Copilot CLI interactive mode
-- Multi-machine session tracking or remote session discovery (shape is compatible; implementation is deferred)
+- Multi-machine registry sync, devbox launch, or remote control actions beyond observation
 - Automatic crash recovery or relaunch implementation (this doc defines the registry contract relaunch will consume, not the relaunch flow itself)
 - Session-to-session communication
 - Rich session control beyond launch and presence
@@ -572,6 +607,6 @@ Clicking a session in the list focuses its terminal (when the terminal integrati
 - **Terminal multiplexer integration**: Should Streamliner manage terminal tabs directly, or delegate to tmux/screen/IDE terminal APIs? (See terminal note for tmux-based approach.)
 - **Multiple sessions per node**: Can a node have multiple concurrent sessions (e.g., after a crash and relaunch)? If so, how are they reconciled?
 - **Context staleness**: If a session runs long enough that the workstream state changes (brief updated, graph refined), should the session be notified or continue with its original context?
-- **Remote session observation**: When sessions run on a devbox, how does Streamliner observe the remote session state directory? SSH polling or a forwarded watcher?
+- **Devbox transport evidence**: Does a real Donna probe confirm that SSH reachability plus a devbox-side bridge is sufficient for trusted hook forwarding, remote session-state snapshots, and host-local process liveness?
 - **Watcher restart rehydration**: On a cold watcher start against an active session, how far back does the incremental tool-request index need to be rebuilt to catch unresolved `ask_user` calls from before the restart? Options: re-scan the full log (bounded by an explicit budget), or treat pre-restart state as unknown until the next turn.
 - **Cross-runtime coordination beyond the registry**: The registry now uses `registry.lock` plus record-authoritative rebuild rules. Should the rest of the per-workstream runtime cache converge on the same coordination pattern, or keep file-specific rules?
