@@ -1,0 +1,9 @@
+{
+  "name": "streamliner",
+  "description": "Reports trusted Copilot CLI session lifecycle events to Streamliner.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Streamliner"
+  },
+  "hooks": "hooks.json"
+}

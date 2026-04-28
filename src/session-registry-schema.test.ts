@@ -1,13 +1,24 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  SESSION_REGISTRY_AI_SUMMARY_STATUSES,
+  SESSION_REGISTRY_ACTIVITY_STATUSES,
+  SESSION_REGISTRY_COPILOT_PROCESS_STATES,
+  SESSION_REGISTRY_GITHUB_REF_TYPES,
   SESSION_REGISTRY_LIFECYCLE_STATUSES,
+  SESSION_REGISTRY_OBSERVED_SESSION_KINDS,
   SESSION_REGISTRY_ORIGIN_KINDS,
   SESSION_REGISTRY_SCHEMA_VERSION,
+  SESSION_REGISTRY_TITLE_SOURCES,
+  SESSION_REGISTRY_TRUSTED_END_REASONS,
+  SESSION_REGISTRY_TRUSTED_EXECUTION_KINDS,
+  SESSION_REGISTRY_TRUSTED_SIGNAL_SOURCES,
+  SESSION_REGISTRY_TRUSTED_START_SOURCES,
   type SessionRegistryRecord,
 } from "./session-registry-schema";
 import {
   SESSION_REGISTRY_CHANGE_EVENT_KINDS,
+  SESSION_REGISTRY_TRUSTED_SIGNAL_EVENTS,
   type SessionRegistryChangeEvent,
   type SessionRegistryListItem,
   type SessionRegistryObservedLinkInput,
@@ -21,6 +32,7 @@ function buildRecord(): SessionRegistryRecord {
     schemaVersion: SESSION_REGISTRY_SCHEMA_VERSION,
     id: "session-registry-model",
     title: "Session registry model",
+    titleSource: "user",
     description: "Design the session registry contract.",
     color: "#5b7fff",
     cwd: "C:\\Users\\robemanuele\\proj\\streamliner\\streamliner-session-registry-model",
@@ -40,6 +52,33 @@ function buildRecord(): SessionRegistryRecord {
       nodeId: "session-registry-model",
       launchClaimId: "launch-claim-123",
     },
+    aiSummary: "Designing the session registry contract surface",
+    aiSummaryModel: "gpt-5.4-mini",
+    aiSummaryUpdatedAt: "2026-04-21T20:31:00.000Z",
+    aiSummaryEventsFingerprint: "1:100",
+    aiSummaryStatus: "ready",
+    aiSummaryError: null,
+    observedSessionKind: null,
+    copilotProcessState: null,
+    copilotProcessId: null,
+    activityStatus: "unknown",
+    activityStatusUpdatedAt: null,
+    trustedSignalSource: null,
+    trustedStartedAt: null,
+    trustedEndedAt: null,
+    trustedLastSignalAt: null,
+    trustedStartSource: null,
+    trustedEndReason: null,
+    trustedExecutionKind: null,
+    trustedInitialPromptLength: null,
+    trustedLastPromptLength: null,
+    derivedWorktreePath: null,
+    derivedBranch: null,
+    derivedGithubRefs: [],
+    derivedContextUpdatedAt: null,
+    derivedContextEventsOffset: 0,
+    derivedContextEventsSize: 0,
+    derivedContextEventsMtimeMs: null,
   };
 }
 
@@ -56,6 +95,54 @@ describe("session registry schema", () => {
       "manual",
       "observed",
       "launched",
+    ]);
+    expect(SESSION_REGISTRY_TITLE_SOURCES).toEqual(["auto", "user"]);
+    expect(SESSION_REGISTRY_AI_SUMMARY_STATUSES).toEqual([
+      "missing",
+      "pending",
+      "ready",
+      "error",
+    ]);
+    expect(SESSION_REGISTRY_OBSERVED_SESSION_KINDS).toEqual([
+      "interactive",
+      "helper",
+    ]);
+    expect(SESSION_REGISTRY_COPILOT_PROCESS_STATES).toEqual([
+      "live",
+      "stale_lock",
+      "none",
+    ]);
+    expect(SESSION_REGISTRY_ACTIVITY_STATUSES).toEqual([
+      "unknown",
+      "working",
+      "waiting_for_input",
+      "interrupted",
+      "exited",
+    ]);
+    expect(SESSION_REGISTRY_GITHUB_REF_TYPES).toEqual(["issue", "pr", "unknown"]);
+    expect(SESSION_REGISTRY_TRUSTED_SIGNAL_SOURCES).toEqual([
+      "copilot-cli-hook",
+    ]);
+    expect(SESSION_REGISTRY_TRUSTED_START_SOURCES).toEqual([
+      "new",
+      "resume",
+      "startup",
+    ]);
+    expect(SESSION_REGISTRY_TRUSTED_END_REASONS).toEqual([
+      "complete",
+      "error",
+      "abort",
+      "timeout",
+      "user_exit",
+    ]);
+    expect(SESSION_REGISTRY_TRUSTED_EXECUTION_KINDS).toEqual([
+      "copilot_cli",
+      "agency",
+    ]);
+    expect(SESSION_REGISTRY_TRUSTED_SIGNAL_EVENTS).toEqual([
+      "session.started",
+      "session.ended",
+      "prompt.submitted",
     ]);
     expect(SESSION_REGISTRY_CHANGE_EVENT_KINDS).toEqual([
       "upsert",
@@ -87,6 +174,7 @@ describe("session registry schema", () => {
     const listItem: SessionRegistryListItem = {
       id: record.id,
       title: record.title,
+      titleSource: record.titleSource,
       description: record.description,
       lifecycleStatus: record.lifecycleStatus,
       lastSeenAt: record.lastSeenAt,
@@ -99,6 +187,33 @@ describe("session registry schema", () => {
       originKind: record.origin.kind,
       graphBinding: record.graphBinding,
       copilotSessionId: record.copilotSessionId,
+      aiSummary: record.aiSummary,
+      aiSummaryModel: record.aiSummaryModel,
+      aiSummaryUpdatedAt: record.aiSummaryUpdatedAt,
+      aiSummaryEventsFingerprint: record.aiSummaryEventsFingerprint,
+      aiSummaryStatus: record.aiSummaryStatus,
+      aiSummaryError: record.aiSummaryError,
+      observedSessionKind: record.observedSessionKind,
+      copilotProcessState: record.copilotProcessState,
+      copilotProcessId: record.copilotProcessId,
+      activityStatus: record.activityStatus,
+      activityStatusUpdatedAt: record.activityStatusUpdatedAt,
+      trustedSignalSource: record.trustedSignalSource,
+      trustedStartedAt: record.trustedStartedAt,
+      trustedEndedAt: record.trustedEndedAt,
+      trustedLastSignalAt: record.trustedLastSignalAt,
+      trustedStartSource: record.trustedStartSource,
+      trustedEndReason: record.trustedEndReason,
+      trustedExecutionKind: record.trustedExecutionKind,
+      trustedInitialPromptLength: record.trustedInitialPromptLength,
+      trustedLastPromptLength: record.trustedLastPromptLength,
+      derivedWorktreePath: record.derivedWorktreePath,
+      derivedBranch: record.derivedBranch,
+      derivedGithubRefs: record.derivedGithubRefs,
+      derivedContextUpdatedAt: record.derivedContextUpdatedAt,
+      derivedContextEventsOffset: record.derivedContextEventsOffset,
+      derivedContextEventsSize: record.derivedContextEventsSize,
+      derivedContextEventsMtimeMs: record.derivedContextEventsMtimeMs,
     };
     const upsertInput: SessionRegistryUpsertInput = {
       title: record.title,
@@ -130,6 +245,11 @@ describe("session registry schema", () => {
       attachObservedSession: (id, observation) => ({
         ...record,
         id,
+        title:
+          observation.title && record.titleSource === "auto"
+            ? observation.title
+            : record.title,
+        titleSource: record.titleSource,
         copilotSessionId: observation.copilotSessionId,
         cwd: observation.cwd,
         repo: observation.repo ?? record.repo,
@@ -137,11 +257,68 @@ describe("session registry schema", () => {
         lastSeenAt: observation.lastSeenAt ?? record.lastSeenAt,
         lifecycleStatus:
           observation.lifecycleStatus ?? record.lifecycleStatus,
+        observedSessionKind:
+          observation.observedSessionKind ?? record.observedSessionKind,
+        copilotProcessState:
+          observation.copilotProcessState ?? record.copilotProcessState,
+        copilotProcessId:
+          observation.copilotProcessId ?? record.copilotProcessId,
+        trustedSignalSource:
+          observation.trustedSignalSource ?? record.trustedSignalSource,
+        trustedStartedAt:
+          observation.trustedStartedAt ?? record.trustedStartedAt,
+        trustedEndedAt: observation.trustedEndedAt ?? record.trustedEndedAt,
+        trustedLastSignalAt:
+          observation.trustedLastSignalAt ?? record.trustedLastSignalAt,
+        trustedStartSource:
+          observation.trustedStartSource ?? record.trustedStartSource,
+        trustedEndReason:
+          observation.trustedEndReason ?? record.trustedEndReason,
+        trustedExecutionKind:
+          observation.trustedExecutionKind ?? record.trustedExecutionKind,
+        trustedInitialPromptLength:
+          observation.trustedInitialPromptLength ?? record.trustedInitialPromptLength,
+        trustedLastPromptLength:
+          observation.trustedLastPromptLength ?? record.trustedLastPromptLength,
+      }),
+      recordTrustedSessionSignal: (signal) => ({
+        ...record,
+        copilotSessionId: signal.sessionId,
+        cwd: signal.cwd,
+        lastSeenAt: signal.timestamp,
+        lifecycleStatus:
+          signal.event === "session.ended" ? "ended" : record.lifecycleStatus,
+        activityStatus:
+          signal.event === "session.ended"
+            ? "exited"
+            : signal.event === "prompt.submitted"
+              ? "working"
+              : record.activityStatus,
+        activityStatusUpdatedAt: signal.timestamp,
+        trustedSignalSource: signal.source,
+        trustedLastSignalAt: signal.timestamp,
+        trustedStartedAt:
+          signal.event === "session.started"
+            ? signal.timestamp
+            : record.trustedStartedAt,
+        trustedEndedAt:
+          signal.event === "session.ended"
+            ? signal.timestamp
+            : record.trustedEndedAt,
+        trustedStartSource: signal.hookSource ?? record.trustedStartSource,
+        trustedEndReason: signal.endReason ?? record.trustedEndReason,
+        trustedExecutionKind:
+          signal.executionKind ?? record.trustedExecutionKind,
+        trustedInitialPromptLength:
+          signal.initialPromptLength ?? record.trustedInitialPromptLength,
+        trustedLastPromptLength:
+          signal.promptLength ?? record.trustedLastPromptLength,
       }),
       patchSession: (id, nextPatch) => ({
         ...record,
         id,
         title: nextPatch.title ?? record.title,
+        titleSource: nextPatch.title ? "user" : record.titleSource,
         lifecycleStatus:
           nextPatch.lifecycleStatus ?? record.lifecycleStatus,
         tags: nextPatch.tags ?? record.tags,
@@ -187,7 +364,7 @@ describe("session registry schema", () => {
     const invalidObservedLink: SessionRegistryObservedLinkInput = {
       copilotSessionId: "copilot-session-123",
       cwd: "C:\\repo",
-      // @ts-expect-error observation attach may only promote a row into ended.
+      // @ts-expect-error observation attach may only use observed lifecycle states.
       lifecycleStatus: "paused",
     };
 

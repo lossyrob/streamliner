@@ -7,6 +7,6 @@ export default defineConfig({
   plugins: [react(), serveGraph()],
   test: {
     environment: 'node',
-    exclude: ['prototype/**', 'node_modules/**'],
+    exclude: ['prototype/**', 'node_modules/**', 'tests/e2e/**'],
   },
 })
