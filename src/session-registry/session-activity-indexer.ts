@@ -17,6 +17,16 @@ interface ActivityObservation {
   observedAt: string | null;
 }
 
+interface RawActivityEvent {
+  type?: unknown;
+  timestamp?: unknown;
+  data?: unknown;
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function processExists(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -56,15 +66,27 @@ function readTail(path: string, maxBytes: number): string {
   return text;
 }
 
-function eventTypeToActivityStatus(type: string): SessionRegistryActivityStatus | null {
+function isUserRequestedToolExecution(event: RawActivityEvent): boolean {
+  return isJsonObject(event.data) && event.data.isUserRequested === true;
+}
+
+function eventToActivityStatus(event: RawActivityEvent): SessionRegistryActivityStatus | null {
+  const type = event.type;
+  if (typeof type !== "string") {
+    return null;
+  }
   if (type === "assistant.turn_end") {
     return "waiting_for_input";
   }
   if (type === "session.ended") {
     return "exited";
   }
+  if (type === "tool.execution_complete" && isUserRequestedToolExecution(event)) {
+    return "waiting_for_input";
+  }
   if (
     type === "user.message" ||
+    type === "tool.user_requested" ||
     type === "assistant.turn_start" ||
     type === "assistant.message" ||
     type === "tool.execution_start" ||
@@ -88,11 +110,8 @@ function parseActivityFromEvents(
       continue;
     }
     try {
-      const event = JSON.parse(line) as { type?: unknown; timestamp?: unknown };
-      if (typeof event.type !== "string") {
-        continue;
-      }
-      const status = eventTypeToActivityStatus(event.type);
+      const event = JSON.parse(line) as RawActivityEvent;
+      const status = eventToActivityStatus(event);
       if (!status) {
         continue;
       }
