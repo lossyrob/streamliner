@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { SessionRegistryStore } from "../session-registry-contract";
+import type { SessionRegistryStore, SessionRegistryTrustedSignalInput } from "../session-registry-contract";
 import type { SessionRegistryRecord } from "../session-registry-schema";
 import type { TerminalLaunchOptions, TerminalLaunchResult } from "../server/terminal-launch";
 import {
@@ -71,11 +71,17 @@ function fakeLaunchTerminal(options: TerminalLaunchOptions): TerminalLaunchResul
 function fakeDeps(
   sessions: Record<string, SessionRegistryRecord>,
   overrides: Partial<RelaunchDeps> = {},
-): { store: SessionRegistryStore; deps: Partial<RelaunchDeps> } {
+): { store: SessionRegistryStore; recordedSignals: SessionRegistryTrustedSignalInput[]; deps: Partial<RelaunchDeps> } {
+  const recordedSignals: SessionRegistryTrustedSignalInput[] = [];
   return {
     store: {
       getSession: (id: string) => sessions[id] ?? null,
+      recordTrustedSessionSignal: (input: SessionRegistryTrustedSignalInput) => {
+        recordedSignals.push(input);
+        return sessions[Object.keys(sessions)[0] ?? ""] ?? null;
+      },
     } as unknown as SessionRegistryStore,
+    recordedSignals,
     deps: {
       existsSync: () => true,
       launchTerminal: fakeLaunchTerminal,
@@ -222,6 +228,52 @@ describe("relaunchSession", () => {
       expect(result.result.colorApplied).toBe(true);
       expect(result.result.pid).toBe(12345);
     }
+  });
+
+  it("synthesizes a session.started signal on success when copilotSessionId exists", () => {
+    const session = buildRecord({
+      copilotSessionId: "sess-42",
+      repo: "lossyrob/streamliner",
+      branch: "main",
+      trustedExecutionKind: "copilot_cli",
+    });
+    const { store, recordedSignals, deps } = fakeDeps({ [session.id]: session });
+    relaunchSession(store, session.id, deps);
+    expect(recordedSignals).toHaveLength(1);
+    expect(recordedSignals[0]).toEqual(
+      expect.objectContaining({
+        event: "session.started",
+        source: "copilot-cli-hook",
+        sessionId: "sess-42",
+        cwd: "C:\\repo",
+        repo: "lossyrob/streamliner",
+        branch: "main",
+        hookSource: "resume",
+        executionKind: "copilot_cli",
+      }),
+    );
+  });
+
+  it("does not synthesize a signal when no copilotSessionId", () => {
+    const session = buildRecord();
+    const { store, recordedSignals, deps } = fakeDeps({ [session.id]: session });
+    relaunchSession(store, session.id, deps);
+    expect(recordedSignals).toHaveLength(0);
+  });
+
+  it("still returns success when synthesized-signal recording throws", () => {
+    const session = buildRecord({ copilotSessionId: "sess-42" });
+    const store = {
+      getSession: (id: string) => (id === session.id ? session : null),
+      recordTrustedSessionSignal: () => {
+        throw new Error("registry locked");
+      },
+    } as unknown as SessionRegistryStore;
+    const result = relaunchSession(store, session.id, {
+      existsSync: () => true,
+      launchTerminal: fakeLaunchTerminal,
+    });
+    expect(result.ok).toBe(true);
   });
 
   it("reports copilotResumed as false when no copilotSessionId", () => {

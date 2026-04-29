@@ -143,6 +143,31 @@ export function relaunchSession(
 
   try {
     const launchResult = resolved.launchTerminal(launchOptions);
+
+    // The Copilot CLI hooks (`sessionStart`, etc.) do not fire on `--resume`,
+    // so derived/observed status fields would otherwise stay stale until the
+    // background discovery worker notices the new process. Synthesize the
+    // signal that resume should have produced so the registry reflects the
+    // relaunch immediately.
+    if (session.copilotSessionId) {
+      try {
+        store.recordTrustedSessionSignal({
+          event: "session.started",
+          source: "copilot-cli-hook",
+          sessionId: session.copilotSessionId,
+          timestamp: new Date().toISOString(),
+          cwd: launchOptions.cwd,
+          repo: session.repo,
+          branch: session.branch,
+          hookSource: "resume",
+          executionKind: session.trustedExecutionKind ?? "copilot_cli",
+        });
+      } catch {
+        // Synthesized-signal failure must not fail the relaunch itself —
+        // observation will catch up on the next worker cycle.
+      }
+    }
+
     return {
       ok: true,
       result: {

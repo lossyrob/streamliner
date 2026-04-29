@@ -148,6 +148,39 @@ async function spoolSignal(signal) {
   await rename(tempPath, finalPath);
 }
 
+async function writeDebugSnapshot(hookName, payload, signal) {
+  if (!stringValue(process.env.STREAMLINER_HOOK_DEBUG)) {
+    return;
+  }
+  try {
+    const debugDir = join(signalSpoolRoot(), "debug");
+    await mkdir(debugDir, { recursive: true });
+    const snapshot = {
+      ts: new Date().toISOString(),
+      hookName,
+      payload,
+      signal,
+      env: {
+        COPILOT_AGENT_SESSION_ID: process.env.COPILOT_AGENT_SESSION_ID ?? null,
+        AGENCY_SESSION_ID: process.env.AGENCY_SESSION_ID ?? null,
+        COPILOT_PROJECT_DIR: process.env.COPILOT_PROJECT_DIR ?? null,
+        COPILOT_HOME: process.env.COPILOT_HOME ?? null,
+        COPILOT_PLUGIN_ROOT: process.env.COPILOT_PLUGIN_ROOT ?? null,
+        STREAMLINER_SESSION_SIGNAL_ENDPOINT:
+          process.env.STREAMLINER_SESSION_SIGNAL_ENDPOINT ?? null,
+        copilotKeys: Object.keys(process.env)
+          .filter((key) => /copilot|agent|session/i.test(key))
+          .sort(),
+      },
+      cwd: process.cwd(),
+    };
+    const fileName = `${snapshot.ts.replace(/[:.]/g, "-")}-${process.pid}-${hookName}.json`;
+    await writeFile(join(debugDir, fileName), `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
+  } catch {
+    // Never let debug logging fail the hook.
+  }
+}
+
 async function main() {
   const hookName = process.argv[2];
   const rawInput = await readStdin();
@@ -161,6 +194,7 @@ async function main() {
   }
 
   const signal = buildSignal(hookName, payload);
+  await writeDebugSnapshot(hookName, payload, signal);
   if (!signal) {
     return;
   }
