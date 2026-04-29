@@ -67,6 +67,14 @@ export function createSessionsRouter(options: {
       return;
     }
 
+    if (req.path === "/signals" && req.method === "POST") {
+      const body = req.body as Record<string, unknown> | undefined;
+      const event = body?.event ?? "?";
+      const sessionId = body?.sessionId ?? "?";
+      const hookSource = body?.hookSource ?? "";
+      console.info(`[streamliner] signal received: event=${event} sessionId=${sessionId} hookSource=${hookSource} ts=${new Date().toISOString()}`);
+    }
+
     const apiResponse = handleSessionRegistryApiRequest(options.store, {
       method: req.method,
       url: req.originalUrl || `${SESSION_REGISTRY_API_BASE_PATH}${req.url}`,
