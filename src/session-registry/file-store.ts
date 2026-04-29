@@ -2266,7 +2266,16 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
             : appliesStart
               ? "live"
               : existingRecord?.copilotProcessState ?? "live",
-        copilotProcessId: existingRecord?.copilotProcessId ?? null,
+        // session.started signals (whether for a fresh session or a resume)
+        // logically establish a new process. Clear any stale PID from the
+        // previous incarnation so the activity indexer doesn't see a
+        // process-state mismatch and flash "interrupted" before discovery
+        // picks up the new PID.
+        copilotProcessId: appliesStart
+          ? null
+          : appliesEnd
+            ? null
+            : existingRecord?.copilotProcessId ?? null,
         activityStatus,
         activityStatusUpdatedAt:
           appliesStart || appliesEnd || appliesPrompt
