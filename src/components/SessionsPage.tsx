@@ -1990,6 +1990,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                     const activityHint = activityStatusHint(session.activityStatus);
                     const signalClass = activitySignalClass(session.activityStatus);
                     const signalDetail = trustedStatus ?? observedStatus ?? session.originKind;
+                    const rowFolderLeaf = leafName(rowWorktree ?? session.cwd);
                     const rowDetail =
                       summary.text && summary.status !== "missing"
                         ? summary.text
@@ -2021,11 +2022,6 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                           />
                           <div className="sl-session-row-main">
                             <div className="sl-session-row-title-line">
-                              <span
-                                className={`sl-session-row-dot ${
-                                  session.lifecycleStatus === "active" ? "active" : "dim"
-                                }`}
-                              />
                               <span
                                 className="sl-session-row-swatch"
                                 style={{ backgroundColor: sessionDisplayColor(session) }}
@@ -2067,6 +2063,14 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                                   worktree {leafName(rowWorktree)}
                                 </span>
                               )}
+                              {!rowWorktree && rowFolderLeaf && (
+                                <span
+                                  className="sl-session-row-context-chip"
+                                  title={session.cwd}
+                                >
+                                  folder {rowFolderLeaf}
+                                </span>
+                              )}
                               {session.derivedGithubRefs.slice(0, 3).map((ref) => (
                                 <GithubRefChip
                                   key={`${ref.type}-${ref.repo ?? ""}-${ref.number}`}
@@ -2082,53 +2086,43 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                               ))}
                             </div>
                           </div>
-                          <div className="sl-session-row-path" title={session.cwd}>
-                            <span className="sl-session-row-path-label">folder</span>
-                            <span className="sl-session-row-path-value">
-                              {leafName(rowWorktree ?? session.cwd) ?? session.cwd}
-                            </span>
-                          </div>
                           <div
                             className={`sl-session-row-status-dock ${signalClass}`}
                             aria-label={`${activityLabel} status`}
                           >
-                            <div className="sl-session-row-status-dock-head">
-                              <span className={`sl-session-row-signal-label ${signalClass}`}>
+                            <div className="sl-session-row-status-dock-line">
+                              <span
+                                className={`sl-session-row-status-pill ${signalClass}`}
+                                title={`${activityHint} · ${signalDetail}`}
+                              >
                                 {activityLabel}
                               </span>
-                              <span className="sl-session-row-signal-detail">
-                                {signalDetail}
+                              <span className="sl-session-row-signal-track" aria-hidden="true">
+                                <span className="sl-session-row-signal-pulse" />
                               </span>
                             </div>
-                            <span className="sl-session-row-signal-track" aria-hidden="true">
-                              <span className="sl-session-row-signal-pulse" />
-                            </span>
-                            <div className="sl-session-row-status-dock-foot">
-                              <span>{activityHint}</span>
-                              <span>{formatTimestamp(session.lastSeenAt)}</span>
+                            <div className="sl-session-row-status-dock-actions">
+                              <CopyButton
+                                text={rowRestartCommand ?? ""}
+                                label={
+                                  rowRestartCommand
+                                    ? "Copy restart command"
+                                    : "Restart unavailable; no Copilot session ID"
+                                }
+                                copiedLabel="Copied restart command"
+                                iconOnly
+                              />
+                              <RelaunchButton
+                                session={session}
+                                compact
+                              />
+                              {session.activityStatus === "interrupted" && (
+                                <StopButton
+                                  session={session}
+                                  compact
+                                />
+                              )}
                             </div>
-                            <CopyButton
-                              text={rowRestartCommand ?? ""}
-                              label={
-                                rowRestartCommand
-                                  ? "Copy restart command"
-                                  : "Restart unavailable; no Copilot session ID"
-                              }
-                              copiedLabel="Copied restart command"
-                              className="compact sl-session-row-status-dock-action"
-                            >
-                              {rowRestartCommand ? "Copy restart" : "No restart"}
-                            </CopyButton>
-                            <RelaunchButton
-                              session={session}
-                              className="sl-session-row-status-dock-action"
-                              compact
-                            />
-                            <StopButton
-                              session={session}
-                              className="sl-session-row-status-dock-action"
-                              compact
-                            />
                           </div>
                         </div>
                       </div>

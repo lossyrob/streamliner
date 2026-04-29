@@ -1213,31 +1213,38 @@ body,
   outline-offset: 2px;
 }
 
-.sl-session-row-signal-label {
+.sl-session-row-status-pill {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  min-height: 20px;
-  padding: 2px 8px;
+  min-height: 22px;
+  padding: 2px 9px;
   border-radius: 999px;
   font-size: 10px;
   font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  text-transform: uppercase;
   white-space: nowrap;
 }
 
-.sl-session-row-signal-label.working {
+.sl-session-row-status-pill.working {
   background: var(--sl-green-bg);
   color: var(--sl-green);
+  border: 1px solid rgba(18, 148, 95, 0.22);
 }
 
-.sl-session-row-signal-label.waiting {
+.sl-session-row-status-pill.waiting {
   background: var(--sl-amber-bg);
   color: var(--sl-amber);
+  border: 1px solid rgba(176, 120, 8, 0.22);
 }
 
-.sl-session-row-signal-label.inactive {
+.sl-session-row-status-pill.inactive {
   background: rgba(20, 60, 130, 0.05);
   color: var(--sl-text-muted);
+  border: 1px solid var(--sl-card-border);
 }
 
 .sl-session-row-status-dock {
@@ -1249,7 +1256,7 @@ body,
   overflow: hidden;
   border: 1px solid var(--sl-card-border);
   border-radius: 10px;
-  padding: 10px 12px;
+  padding: 9px 12px;
   background:
     radial-gradient(circle at 12% 50%, rgba(29, 110, 220, 0.08), transparent 9rem),
     rgba(16, 34, 60, 0.025);
@@ -1280,38 +1287,34 @@ body,
   background: rgba(111, 128, 148, 0.055);
 }
 
-.sl-session-row-status-dock-head,
-.sl-session-row-status-dock-foot {
+.sl-session-row-status-dock-line {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+}
+
+.sl-session-row-status-dock-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
 }
 
-.sl-session-row-status-dock-foot {
-  color: var(--sl-text-dim);
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.sl-session-row-status-dock-foot span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sl-session-row-status-dock-foot span:last-child {
-  text-align: right;
-}
-
-.sl-session-row-status-dock-action {
-  justify-self: start;
+.sl-session-row-status-dock-actions .sl-copy-btn.icon,
+.sl-session-row-status-dock-actions .sl-relaunch-btn,
+.sl-session-row-status-dock-actions .sl-stop-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  flex: 0 0 auto;
 }
 
 .sl-session-row-signal-track {
   position: relative;
   display: block;
+  flex: 1 1 auto;
+  min-width: 60px;
   overflow: hidden;
   height: 10px;
   border-radius: 999px;
@@ -1395,18 +1398,9 @@ body,
   display: none;
 }
 
-.sl-session-row-signal-detail {
-  color: var(--sl-text-muted);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
 .sl-session-row-body {
   display: grid;
-  grid-template-columns: 6px minmax(0, 1fr) minmax(100px, 160px) minmax(210px, 240px);
+  grid-template-columns: 6px minmax(0, 1fr) minmax(280px, 320px);
   gap: 18px;
   align-items: stretch;
   padding: 12px 16px;
@@ -1429,22 +1423,6 @@ body,
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.sl-session-row-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  flex-shrink: 0;
-}
-
-.sl-session-row-dot.active {
-  background: var(--sl-green);
-  box-shadow: 0 0 0 3px rgba(18, 148, 95, 0.15);
-}
-
-.sl-session-row-dot.dim {
-  background: var(--sl-text-dim);
 }
 
 .sl-session-row-swatch {
@@ -1575,17 +1553,6 @@ a.sl-session-context-ref {
   text-decoration: underline;
 }
 
-.sl-session-row-path {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 3px;
-  font-family: var(--sl-mono);
-  font-size: 11px;
-  color: var(--sl-text-dim);
-}
-
-.sl-session-row-path-label,
 .sl-session-row-activity-label {
   color: var(--sl-text-dim);
   font-family: inherit;
@@ -1593,13 +1560,6 @@ a.sl-session-context-ref {
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-}
-
-.sl-session-row-path-value {
-  overflow: hidden;
-  color: var(--sl-text-muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .sl-session-row-status {
@@ -2159,17 +2119,11 @@ a.sl-session-context-ref {
 
 @media (max-width: 1000px) {
   .sl-session-row-body {
-    grid-template-columns: 6px minmax(0, 1fr) minmax(210px, 240px);
-  }
-  .sl-session-row-path {
-    display: none;
+    grid-template-columns: 6px minmax(0, 1fr) minmax(240px, 280px);
   }
 }
 
 @media (max-width: 720px) {
-  .sl-session-row-signal-detail {
-    display: none;
-  }
   .sl-session-row-body {
     grid-template-columns: 6px minmax(0, 1fr);
   }
