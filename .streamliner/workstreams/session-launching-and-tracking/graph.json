@@ -7,7 +7,7 @@
   "status": "active",
   "attention": "focus",
   "createdAt": "2026-04-10T15:37:14.125Z",
-  "updatedAt": "2026-04-28T00:33:20.000Z",
+  "updatedAt": "2026-04-28T20:38:56.000Z",
   "trackingIssue": {
     "owner": "lossyrob",
     "repo": "streamliner",
@@ -152,8 +152,8 @@
       "id": "session-dashboard-sync",
       "type": "task",
       "title": "Session dashboard multi-instance sync",
-      "summary": "Make multiple Streamliner pages behave like coordinated views of one session registry: same-origin tab refresh, focus/visibility refresh, explicit concurrent-edit behavior, and a decision on whether separate Vite/dev/preview instances can remain disk-coordinated for Wave 2 or need a single local registry service.",
-      "status": "ready",
+      "summary": "Completed: accepted a standalone local Streamliner API process as the session registry synchronization hub. Vite dev/preview frontends proxy `/api/*` to that process; the API owns registry mutation, trusted signal ingestion, background observation/indexing, live session events, and optimistic builder-edit concurrency.",
+      "status": "completed",
       "attention": "focus",
       "repoIds": ["streamliner"],
       "tracker": {
@@ -169,9 +169,15 @@
       "type": "task",
       "title": "Session relaunch",
       "summary": "Reopen a tracked session after a restart: open a terminal at the recorded cwd and, when the Copilot CLI session id is still resolvable, resume that session directly. Minimum viable version restores the tab at the right cwd; Windows Terminal tab color is optional presentation metadata only and must not block relaunch. Copilot CLI resume is a stretch within the same node.",
-      "status": "planned",
+      "status": "ready",
       "attention": "focus",
       "repoIds": ["streamliner"],
+      "tracker": {
+        "type": "github",
+        "owner": "lossyrob",
+        "repo": "streamliner",
+        "number": 29
+      },
       "dependsOn": ["session-registry-model"]
     },
     {

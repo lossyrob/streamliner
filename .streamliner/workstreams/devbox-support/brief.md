@@ -74,7 +74,7 @@ contracts:
 | Upstream contract | Current owner | Devbox consumers | Blocking rule |
 |---|---|---|---|
 | Primary registry storage and identity | Decision 004, Decision 005, `session-registry-model`, `manual-session-registry-ui` | `devbox-host-registration`, `devbox-registry-merge`, `devbox-operational-surface` | Available as the baseline contract; devbox must preserve Streamliner-owned registry ids and builder-owned fields. |
-| Registry mutation and multi-view sync behavior | `session-dashboard-sync` / issue #17 | `devbox-registry-merge`, `devbox-operational-surface` | Required before remote observations become a new writer/refresh source for the shared registry surface. |
+| Registry mutation and multi-view sync behavior | `session-dashboard-sync` / issue #17 | `devbox-registry-merge`, `devbox-operational-surface` | Completed: devbox support should consume the standalone local Streamliner API process as the registry mutation, trusted signal ingestion, background observation/indexing, and live event hub. |
 | Local observation lifecycle and compatibility semantics | `session-event-observation`, plus Decision 001 until that node lands | `remote-session-state-spike`, `remote-observation-transport-spike`, `devbox-session-discovery` | Research can proceed now; implementation should wait for the stable local observation record shape, stale/ended rules, and compatibility diagnostics. |
 | Runtime overlay and PAW progression projection | `paw-control-state-observation`, `runtime-overlay-ui`, `tracking-visible` checkpoint | `devbox-operational-surface` only when graph projection is included | Not required for the first Sessions/registry-based devbox visibility slice unless the accepted implementation scope includes graph overlay behavior. |
 | Launch claims and graph-node binding | `launch-claim-binding`, `terminal-launch-integration`, `launch-from-graph` checkpoint | Future devbox launch, recovery, or node-binding work | Not a prerequisite for devbox observability. This workstream should not wait on launch-from-graph unless a later wave expands into remote launch or graph-node binding. |
@@ -98,12 +98,17 @@ that preserves stale last-known registry data without fabricating freshness. The
 contract was validated devbox-locally and through a laptop-to-devbox Dev Tunnel
 connection against the issue #22 smoke bridge/probe.
 
-The next promoted research issues are `environment-identity-spike` (issue #23),
-`devbox-health-spike` (issue #24), and `devbox-security-spike`. The implementation tail
-remains blocked on the accepted devbox research contract plus the specific
-upstream registry, sync, and observation contracts named above; it is not blocked
-on the entire `session-launching-and-tracking` workstream or on
-launch-from-graph.
+Issue #17 is complete in the upstream `session-launching-and-tracking`
+workstream. It accepted the standalone local Streamliner API process as the
+registry sync/live-update contract that devbox implementation should consume
+rather than relying on Vite-owned registry workers.
+
+The promoted research issues are `environment-identity-spike` (issue #23),
+`devbox-health-spike` (issue #24), and `devbox-security-spike` (issue #27).
+Issue #28 tracks the research-contract gate. The implementation tail remains
+blocked on the accepted devbox research contract plus the remaining upstream
+local observation semantics named above; it is not blocked on the entire
+`session-launching-and-tracking` workstream or on launch-from-graph.
 
 ## Decisions
 - Use local tracker specs for Wave 1 research nodes so the spike missions are
@@ -138,6 +143,10 @@ launch-from-graph.
   `/health`, `/capabilities`, bounded `/sessions/snapshot`, offset-based
   `/sessions/{id}/events`, replayable `/signals`, and loopback
   `POST /api/sessions/signals` for devbox Copilot CLI hooks.
+- Consume the standalone local Streamliner API process accepted by issue #17 as
+  the registry mutation, trusted signal ingestion, background observation/indexing,
+  and live event hub. Devbox support should not add a parallel registry writer or
+  depend on Vite dev/preview processes as backend owners.
 
 ## Open Questions
 - What host/environment fields belong in the registry record versus derived

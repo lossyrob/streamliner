@@ -7,7 +7,7 @@
   "status": "active",
   "attention": "focus",
   "createdAt": "2026-04-27T21:52:52.683Z",
-  "updatedAt": "2026-04-28T14:28:14.665Z",
+  "updatedAt": "2026-04-28T20:27:41.000Z",
   "repos": [
     {
       "id": "streamliner",
@@ -154,8 +154,10 @@
       "attention": "focus",
       "repoIds": ["streamliner"],
       "tracker": {
-        "type": "local",
-        "path": "tasks/devbox-security-spike.md"
+        "type": "github",
+        "owner": "lossyrob",
+        "repo": "streamliner",
+        "number": 27
       },
       "dependsOn": []
     },
@@ -167,6 +169,12 @@
       "status": "planned",
       "attention": "focus",
       "repoIds": ["streamliner"],
+      "tracker": {
+        "type": "github",
+        "owner": "lossyrob",
+        "repo": "streamliner",
+        "number": 28
+      },
       "dependsOn": [
         "devbox-scope-and-dependencies",
         "remote-observation-transport-spike",

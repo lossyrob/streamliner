@@ -91,9 +91,14 @@ into / project from the Wave 2 registry rather than introducing parallel
 surfaces. Issue #15 is complete: Windows Terminal tab color is feasible only as
 an optional launch-time convenience for new tabs via `wt new-tab --tabColor`, not
 as core relaunch behavior and not as a contract for recoloring existing tabs.
-Worker discussion also surfaced a separate multi-page/multi-instance dashboard
-sync concern; issue #17 now tracks `session-dashboard-sync` as the next ready
-Wave 2 hardening node.
+Issue #17 (`session-dashboard-sync`) is complete. It accepted a standalone local
+Streamliner API process as the synchronization hub for the local session
+registry: dashboard pages, Vite dev/preview frontends, direct API callers, and
+future graph/session surfaces all talk to the same API process rather than each
+Vite instance owning registry workers independently. Issue #29 now tracks
+`session-relaunch` as the local Wave 2 relaunch task: restore a tracked session
+at its recorded `cwd` through the local API, with Copilot resume and Windows
+Terminal color treated as best-effort enhancements.
 
 ## Decisions
 - Use repo-local `.streamliner/workstreams/` for Streamliner's committed
@@ -136,6 +141,12 @@ Wave 2 hardening node.
   uncolored when Windows Terminal is unavailable, color is missing/invalid, the
   environment is not local Windows Terminal, or color application fails. Do not
   attempt existing-tab recolor in Wave 2.
+- Use a standalone local Streamliner API process as the owner of the registry
+  API, registry mutation, trusted signal ingestion, session-registry background
+  observation/indexing, and live session change events. Vite dev/preview servers
+  should proxy `/api/*` to that process instead of owning independent registry
+  workers. Session synchronization should be push-first via API-hosted events,
+  with focus/refetch and polling retained as resilience fallbacks.
 
 ## Open Questions
 - When should runtime-discovered progress be promoted into committed workstream
@@ -144,10 +155,5 @@ Wave 2 hardening node.
   IDE terminal APIs?
 - How should Streamliner observe remote session-state roots for devbox-launched
   sessions?
-- Post-PR #14 scope review: how should `session-event-observation` and
-  `session-relaunch` be re-cut so they only cover work not already absorbed by
-  issue #13 / PR #14?
-- Does Wave 2 need a single local Streamliner service for session registry API,
-  trusted signal ingestion, and live updates, or is page-level sync plus the
-  file-backed registry sufficient until a later architecture pass? (Tracked by
-  issue #17 / `session-dashboard-sync`.)
+- Post-PR #14 scope review: how should `session-event-observation` be re-cut so
+  it only covers work not already absorbed by issue #13 / PR #14?
