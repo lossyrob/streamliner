@@ -63,6 +63,33 @@ function escapeForWindowsTerminal(value: string): string {
   return value.replace(/;/g, "\\;");
 }
 
+/**
+ * Build a sanitized environment for spawned terminal processes.
+ *
+ * `npm run dev:api` (and any `npm run` script) prepends the project's
+ * `node_modules/.bin` to PATH. Children of the API server inherit that PATH,
+ * so a relaunched `copilot --resume <id>` resolves to the local copy in
+ * `node_modules/@github/copilot-win32-x64/copilot.exe` instead of the user's
+ * globally-installed Copilot CLI. The local copy does not have the
+ * Streamliner plugin configured, so no hooks fire.
+ *
+ * Strip any `node_modules/.bin` entry from PATH so the spawned shell falls
+ * through to the user's normal command resolution.
+ */
+function buildSpawnEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  const pathKey = Object.keys(env).find((key) => key.toUpperCase() === "PATH");
+  if (pathKey && typeof env[pathKey] === "string") {
+    const separator = process.platform === "win32" ? ";" : ":";
+    const filtered = env[pathKey]!
+      .split(separator)
+      .filter((entry) => !/[\\/]node_modules[\\/]\.bin\b/i.test(entry))
+      .join(separator);
+    env[pathKey] = filtered;
+  }
+  return env;
+}
+
 function launchWindowsTerminal(options: TerminalLaunchOptions): TerminalLaunchResult {
   const args: string[] = ["new-tab"];
 
@@ -84,6 +111,7 @@ function launchWindowsTerminal(options: TerminalLaunchOptions): TerminalLaunchRe
   const child = spawn("wt.exe", args, {
     detached: true,
     stdio: "ignore",
+    env: buildSpawnEnv(),
   });
 
   child.unref();
@@ -118,6 +146,7 @@ function launchPowerShellTerminal(
   const child = spawn("powershell.exe", args, {
     detached: true,
     stdio: "ignore",
+    env: buildSpawnEnv(),
   });
 
   child.unref();

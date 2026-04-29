@@ -80,7 +80,7 @@ describe("terminal-launch", () => {
       expect(spawn).toHaveBeenCalledWith(
         "wt.exe",
         ["new-tab", "-d", "C:\\Users\\test\\workspace"],
-        { detached: true, stdio: "ignore" }
+        expect.objectContaining({ detached: true, stdio: "ignore" })
       );
     });
 
@@ -99,7 +99,7 @@ describe("terminal-launch", () => {
           "-d",
           "C:\\Users\\test\\workspace",
         ],
-        { detached: true, stdio: "ignore" }
+        expect.objectContaining({ detached: true, stdio: "ignore" })
       );
     });
 
@@ -112,7 +112,7 @@ describe("terminal-launch", () => {
       expect(spawn).toHaveBeenCalledWith(
         "wt.exe",
         ["new-tab", "--tabColor", "#FF5733", "-d", "C:\\Users\\test\\workspace"],
-        { detached: true, stdio: "ignore" }
+        expect.objectContaining({ detached: true, stdio: "ignore" })
       );
     });
 
@@ -125,7 +125,7 @@ describe("terminal-launch", () => {
       expect(spawn).toHaveBeenCalledWith(
         "wt.exe",
         ["new-tab", "-d", "C:\\Users\\test\\workspace"],
-        { detached: true, stdio: "ignore" }
+        expect.objectContaining({ detached: true, stdio: "ignore" })
       );
     });
 
@@ -138,7 +138,7 @@ describe("terminal-launch", () => {
       expect(spawn).toHaveBeenCalledWith(
         "wt.exe",
         ["new-tab", "-d", "C:\\Users\\test\\workspace"],
-        { detached: true, stdio: "ignore" }
+        expect.objectContaining({ detached: true, stdio: "ignore" })
       );
     });
 
@@ -151,7 +151,7 @@ describe("terminal-launch", () => {
       expect(spawn).toHaveBeenCalledWith(
         "wt.exe",
         ["new-tab", "-d", "C:\\Users\\test\\workspace"],
-        { detached: true, stdio: "ignore" }
+        expect.objectContaining({ detached: true, stdio: "ignore" })
       );
     });
 
@@ -174,7 +174,7 @@ describe("terminal-launch", () => {
           "-Command",
           "npm run dev",
         ],
-        { detached: true, stdio: "ignore" }
+        expect.objectContaining({ detached: true, stdio: "ignore" })
       );
     });
 
@@ -203,7 +203,7 @@ describe("terminal-launch", () => {
           "-Command",
           "npm run dev",
         ],
-        { detached: true, stdio: "ignore" }
+        expect.objectContaining({ detached: true, stdio: "ignore" })
       );
     });
 
@@ -222,7 +222,7 @@ describe("terminal-launch", () => {
           "-d",
           "C:\\Users\\test\\;workspace",
         ],
-        { detached: true, stdio: "ignore" }
+        expect.objectContaining({ detached: true, stdio: "ignore" })
       );
     });
 
@@ -267,7 +267,7 @@ describe("terminal-launch", () => {
       expect(spawn).toHaveBeenCalledWith(
         "powershell.exe",
         ["-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "Set-Location -LiteralPath 'C:\\Users\\test\\workspace'"],
-        { detached: true, stdio: "ignore" }
+        expect.objectContaining({ detached: true, stdio: "ignore" })
       );
     });
 
@@ -286,7 +286,7 @@ describe("terminal-launch", () => {
           "-Command",
           "Set-Location -LiteralPath 'C:\\Users\\test\\workspace'; npm run dev",
         ],
-        { detached: true, stdio: "ignore" }
+        expect.objectContaining({ detached: true, stdio: "ignore" })
       );
     });
 
@@ -304,7 +304,7 @@ describe("terminal-launch", () => {
           "-Command",
           "Set-Location -LiteralPath 'C:\\Users\\O''Brien\\workspace'",
         ],
-        { detached: true, stdio: "ignore" }
+        expect.objectContaining({ detached: true, stdio: "ignore" })
       );
     });
 
@@ -323,7 +323,7 @@ describe("terminal-launch", () => {
           "-Command",
           "Set-Location -LiteralPath 'C:\\Users\\O''Brien\\workspace'; npm run dev",
         ],
-        { detached: true, stdio: "ignore" }
+        expect.objectContaining({ detached: true, stdio: "ignore" })
       );
     });
 
@@ -364,7 +364,7 @@ describe("terminal-launch", () => {
       launchTerminal({ cwd: "C:\\Users\\test\\workspace" });
 
       const callArgs = vi.mocked(spawn).mock.calls[0];
-      expect(callArgs[2]).toEqual({ detached: true, stdio: "ignore" });
+      expect(callArgs[2]).toEqual(expect.objectContaining({ detached: true, stdio: "ignore" }));
     });
 
     it("uses detached: true and stdio: 'ignore' for PowerShell fallback", () => {
@@ -375,10 +375,41 @@ describe("terminal-launch", () => {
       launchTerminal({ cwd: "C:\\Users\\test\\workspace" });
 
       const callArgs = vi.mocked(spawn).mock.calls[0];
-      expect(callArgs[2]).toEqual({ detached: true, stdio: "ignore" });
+      expect(callArgs[2]).toEqual(expect.objectContaining({ detached: true, stdio: "ignore" }));
+    });
+
+    it("strips node_modules/.bin entries from PATH so spawned shells use globally-installed tools", () => {
+      const originalPath = process.env.PATH;
+      const separator = process.platform === "win32" ? ";" : ":";
+      const noiseyPath = [
+        "C:\\Users\\me\\proj\\streamliner\\node_modules\\.bin",
+        "/usr/local/bin",
+        "C:\\Users\\me\\proj\\other\\node_modules\\.bin",
+        "C:\\Windows\\System32",
+      ].join(separator);
+      process.env.PATH = noiseyPath;
+      try {
+        launchTerminal({ cwd: "C:\\Users\\test\\workspace" });
+        const callArgs = vi.mocked(spawn).mock.calls[0];
+        const spawnedEnv = (callArgs[2] as { env?: NodeJS.ProcessEnv }).env;
+        expect(spawnedEnv).toBeDefined();
+        const pathKey = Object.keys(spawnedEnv!).find((key) => key.toUpperCase() === "PATH");
+        expect(pathKey).toBeDefined();
+        const filtered = spawnedEnv![pathKey!]!;
+        expect(filtered).not.toMatch(/node_modules[\\/]\.bin/i);
+        expect(filtered).toContain("/usr/local/bin");
+        expect(filtered).toContain("C:\\Windows\\System32");
+      } finally {
+        if (originalPath === undefined) {
+          delete process.env.PATH;
+        } else {
+          process.env.PATH = originalPath;
+        }
+      }
     });
   });
 });
+
 
 
 
