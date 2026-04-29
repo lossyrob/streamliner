@@ -14,7 +14,7 @@ const logger = getApiLogger().withScope("api");
 const config = readStreamlinerApiConfig();
 let releaseApiLock: () => void = () => {};
 try {
-  releaseApiLock = acquireApiProcessLock();
+  releaseApiLock = acquireApiProcessLock({ host: config.host, port: config.port });
 } catch (error: unknown) {
   if (error instanceof StreamlinerApiLockError) {
     logger.error("failed to acquire API process lock (already held)", { err: error });

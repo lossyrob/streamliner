@@ -6,7 +6,7 @@
         "type": "command",
         "powershell": "node \"$env:COPILOT_PLUGIN_ROOT\\scripts\\streamliner-signal.mjs\" sessionStart",
         "bash": "node \"$COPILOT_PLUGIN_ROOT/scripts/streamliner-signal.mjs\" sessionStart",
-        "timeoutSec": 3
+        "timeoutSec": 10
       }
     ],
     "userPromptSubmitted": [
@@ -14,7 +14,7 @@
         "type": "command",
         "powershell": "node \"$env:COPILOT_PLUGIN_ROOT\\scripts\\streamliner-signal.mjs\" userPromptSubmitted",
         "bash": "node \"$COPILOT_PLUGIN_ROOT/scripts/streamliner-signal.mjs\" userPromptSubmitted",
-        "timeoutSec": 3
+        "timeoutSec": 10
       }
     ],
     "sessionEnd": [
@@ -22,8 +22,9 @@
         "type": "command",
         "powershell": "node \"$env:COPILOT_PLUGIN_ROOT\\scripts\\streamliner-signal.mjs\" sessionEnd",
         "bash": "node \"$COPILOT_PLUGIN_ROOT/scripts/streamliner-signal.mjs\" sessionEnd",
-        "timeoutSec": 3
+        "timeoutSec": 10
       }
     ]
   }
 }
+

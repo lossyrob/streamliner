@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import process from "node:process";
@@ -13,6 +13,8 @@ const HOOK_EVENT_MAP = new Map([
 const VALID_START_SOURCES = new Set(["new", "resume", "startup"]);
 const VALID_END_REASONS = new Set(["complete", "error", "abort", "timeout", "user_exit"]);
 const COPILOT_SDK_SESSION_FS_MARKER = "/.streamliner/state/copilot-sdk-session-fs";
+const DEFAULT_API_HOST = "127.0.0.1";
+const DEFAULT_API_PORT = 4319;
 
 function readStdin() {
   return new Promise((resolveStdin, rejectStdin) => {
@@ -34,10 +36,40 @@ function textLength(value) {
   return typeof value === "string" ? value.length : null;
 }
 
+function streamlinerStateRoot() {
+  return (
+    stringValue(process.env.STREAMLINER_STATE_ROOT) ??
+    resolve(homedir(), ".streamliner", "state")
+  );
+}
+
 function signalSpoolRoot() {
   return (
     stringValue(process.env.STREAMLINER_SESSION_SIGNAL_SPOOL_ROOT) ??
-    resolve(homedir(), ".streamliner", "state", "session-signals")
+    join(streamlinerStateRoot(), "session-signals")
+  );
+}
+
+async function readApiEndpointFromLockFile() {
+  // Lock file location mirrors resolveSessionRegistryRoot() in the API server.
+  const lockPath = join(streamlinerStateRoot(), "session-registry", "api.lock");
+  try {
+    const raw = await readFile(lockPath, "utf8");
+    const parsed = JSON.parse(raw);
+    const host = stringValue(parsed?.host) ?? DEFAULT_API_HOST;
+    const port = Number.isInteger(parsed?.port) && parsed.port > 0 ? parsed.port : DEFAULT_API_PORT;
+    return `http://${host}:${port}/api/sessions/signals`;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveSignalEndpoint() {
+  // Precedence: explicit env var → lock file (running API) → loopback default.
+  return (
+    stringValue(process.env.STREAMLINER_SESSION_SIGNAL_ENDPOINT) ??
+    (await readApiEndpointFromLockFile()) ??
+    `http://${DEFAULT_API_HOST}:${DEFAULT_API_PORT}/api/sessions/signals`
   );
 }
 
@@ -113,13 +145,13 @@ function buildSignal(hookName, payload) {
 }
 
 async function postSignal(signal) {
-  const endpoint = stringValue(process.env.STREAMLINER_SESSION_SIGNAL_ENDPOINT);
+  const endpoint = await resolveSignalEndpoint();
   if (!endpoint || typeof fetch !== "function") {
     return false;
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 1000);
+  const timer = setTimeout(() => controller.abort(), 5000);
   try {
     const response = await fetch(endpoint, {
       method: "POST",
@@ -160,6 +192,7 @@ async function writeDebugSnapshot(hookName, payload, signal) {
       hookName,
       payload,
       signal,
+      resolvedEndpoint: await resolveSignalEndpoint(),
       env: {
         COPILOT_AGENT_SESSION_ID: process.env.COPILOT_AGENT_SESSION_ID ?? null,
         AGENCY_SESSION_ID: process.env.AGENCY_SESSION_ID ?? null,
@@ -168,6 +201,7 @@ async function writeDebugSnapshot(hookName, payload, signal) {
         COPILOT_PLUGIN_ROOT: process.env.COPILOT_PLUGIN_ROOT ?? null,
         STREAMLINER_SESSION_SIGNAL_ENDPOINT:
           process.env.STREAMLINER_SESSION_SIGNAL_ENDPOINT ?? null,
+        STREAMLINER_STATE_ROOT: process.env.STREAMLINER_STATE_ROOT ?? null,
         copilotKeys: Object.keys(process.env)
           .filter((key) => /copilot|agent|session/i.test(key))
           .sort(),

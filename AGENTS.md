@@ -41,6 +41,12 @@ verbose traces. Full reference: [`docs/operations/logging.md`](docs/operations/l
 - `npm test` — run the Vitest suite (use `--pool=forks` if you see worker errors)
 - `npm run lint` — ESLint
 - `npm run build` — `tsc -b && vite build`
+- `npm run refresh-copilot-plugin` — copy the worktree's
+  `copilot-plugin/streamliner/*` files (hooks.json, scripts/*) into the
+  installed plugin's cache directory at
+  `~/.copilot/installed-plugins/<marketplace>/streamliner/`. Required
+  whenever you edit hook scripts in the worktree — Copilot CLI runs the
+  cached copy, not the worktree, and does NOT auto-refresh.
 
 The API binds to `127.0.0.1:4319` by default. See
 [`DEVELOPING.md`](DEVELOPING.md) for the full env-var matrix and the

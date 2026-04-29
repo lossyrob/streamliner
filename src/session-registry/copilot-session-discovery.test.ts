@@ -437,4 +437,55 @@ describe("copilot session discovery", () => {
       }),
     );
   });
+
+  it("keeps lifecycleStatus ended after a trusted end signal even if the OS process is still observed alive", () => {
+    const registryRoot = createRootDir("streamliner-session-registry-ended-live-");
+    const sessionRoot = createRootDir("streamliner-copilot-session-state-");
+    createdRoots.push(registryRoot, sessionRoot);
+
+    writeWorkspaceFile(
+      sessionRoot,
+      "ended-but-process-alive",
+      [
+        "id: ended-but-process-alive",
+        "cwd: C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+        "repository: lossyrob/streamliner",
+        "branch: feature/relaunch",
+        "summary: Trusted session that ended while its process lingers",
+        "updated_at: 2026-04-29T16:55:00.000Z",
+      ].join("\n"),
+      { active: true },
+    );
+
+    const store = new SessionRegistryFileStore({ rootDir: registryRoot });
+    store.recordTrustedSessionSignal({
+      event: "session.started",
+      source: "copilot-cli-hook",
+      sessionId: "ended-but-process-alive",
+      timestamp: "2026-04-29T16:53:29.000Z",
+      cwd: "C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+      hookSource: "resume",
+      executionKind: "copilot_cli",
+    });
+    store.recordTrustedSessionSignal({
+      event: "session.ended",
+      source: "copilot-cli-hook",
+      sessionId: "ended-but-process-alive",
+      timestamp: "2026-04-29T16:55:25.000Z",
+      cwd: "C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+      endReason: "user_exit",
+      executionKind: "copilot_cli",
+    });
+
+    syncDiscoveredCopilotSessions(store, sessionRoot);
+
+    const record = store.getSession("ended-but-process-alive");
+    expect(record).toEqual(
+      expect.objectContaining({
+        lifecycleStatus: "ended",
+        trustedEndedAt: "2026-04-29T16:55:25.000Z",
+        trustedEndReason: "user_exit",
+      }),
+    );
+  });
 });

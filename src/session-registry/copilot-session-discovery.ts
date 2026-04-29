@@ -428,6 +428,13 @@ function getObservedLifecycleForRegistry(
   session: SessionRegistryListItem,
   discovered: DiscoveredCopilotSession,
 ): SessionRegistryObservedLifecycleStatus {
+  // A trusted session.ended signal is the source of truth: even if the OS
+  // process is still detected as running, the user-facing session has ended
+  // (e.g. the user typed /exit). Surfacing "active" in that window would
+  // contradict the trustedEndedAt signal already in the registry.
+  if (session.trustedEndedAt) {
+    return "ended";
+  }
   if (
     session.trustedStartedAt &&
     !session.trustedEndedAt &&

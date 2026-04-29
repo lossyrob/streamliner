@@ -10,6 +10,7 @@
     "api": "tsx src/server/index.ts",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "refresh-copilot-plugin": "node scripts/refresh-copilot-plugin.mjs",
     "preview": "concurrently -n api,preview --kill-others-on-fail \"npm:api\" \"npm:preview:web\"",
     "preview:web": "node scripts/wait-for-api.mjs && vite preview",
     "test": "vitest run",
