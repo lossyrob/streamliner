@@ -260,6 +260,18 @@ function cloneValue<T>(value: T): T {
   return structuredClone(value);
 }
 
+function fingerprintMapsEqual(left: Map<string, string>, right: Map<string, string>): boolean {
+  if (left.size !== right.size) {
+    return false;
+  }
+  for (const [key, value] of left) {
+    if (right.get(key) !== value) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function isoNow(): string {
   return new Date().toISOString();
 }
@@ -1609,6 +1621,15 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
   private lastDiskFingerprint = "";
   private loaded = false;
 
+  /**
+   * Per-file (filename → "mtimeMs:size") snapshot of the entries directory.
+   * Used by loadEntriesFromDisk to skip re-reading 1000+ JSON files when
+   * nothing has changed externally. Updated incrementally in persistEntry /
+   * deleteSession so write paths don't pay the read cost either.
+   */
+  private cachedEntryFingerprints: Map<string, string> | null = null;
+  private cachedEntryRecords: Map<string, StoredSessionRegistryRecord> | null = null;
+
   constructor(options?: SessionRegistryFileStoreOptions) {
     const resolvedRoot = resolve(options?.rootDir ?? DEFAULT_REGISTRY_ROOT);
     this.entriesDir = join(resolvedRoot, "entries");
@@ -2417,8 +2438,18 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
 
       records.delete(id);
       const nextIndex = buildIndex(records.values());
-      const entryPath = join(this.entriesDir, `${id}${ENTRY_EXTENSION}`);
+      const entryFileName = `${id}${ENTRY_EXTENSION}`;
+      const entryPath = join(this.entriesDir, entryFileName);
       rmSync(entryPath, { force: true });
+
+      // Keep the loadEntriesFromDisk cache in sync.
+      if (this.cachedEntryRecords) {
+        this.cachedEntryRecords.delete(id);
+      }
+      if (this.cachedEntryFingerprints) {
+        this.cachedEntryFingerprints.delete(entryFileName);
+      }
+
       this.persistIndex(records, nextIndex);
       this.commitSnapshot(records, nextIndex);
       this.emitChange({
@@ -2515,12 +2546,37 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
   private loadEntriesFromDisk(): Map<string, StoredSessionRegistryRecord> {
     this.ensureDirectories();
 
-    const records = new Map<string, StoredSessionRegistryRecord>();
+    // Cheap check: stat all entry files in the directory and build a
+    // (filename → "mtime:size") map. If it matches our cache, return the
+    // cached records without re-reading any file content.
+    const currentFingerprints = new Map<string, string>();
     for (const fileName of readdirSync(this.entriesDir)) {
       if (!fileName.endsWith(ENTRY_EXTENSION)) {
         continue;
       }
+      try {
+        const stat = statSync(join(this.entriesDir, fileName));
+        currentFingerprints.set(fileName, `${stat.mtimeMs}:${stat.size}`);
+      } catch (error) {
+        if (isErrnoCode(error, "ENOENT")) {
+          continue;
+        }
+        throw error;
+      }
+    }
 
+    if (
+      this.cachedEntryRecords &&
+      this.cachedEntryFingerprints &&
+      fingerprintMapsEqual(this.cachedEntryFingerprints, currentFingerprints)
+    ) {
+      return this.cachedEntryRecords;
+    }
+
+    // Slow path: reload every entry. Only happens on first load or when
+    // an external process modified the entries directory.
+    const records = new Map<string, StoredSessionRegistryRecord>();
+    for (const fileName of currentFingerprints.keys()) {
       const entryPath = join(this.entriesDir, fileName);
       try {
         const parsed = JSON.parse(readFileSync(entryPath, "utf8")) as unknown;
@@ -2538,6 +2594,8 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       }
     }
 
+    this.cachedEntryRecords = records;
+    this.cachedEntryFingerprints = currentFingerprints;
     return records;
   }
 
@@ -2577,10 +2635,41 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       }
       throw error;
     }
+    // The entry no longer exists; drop it from any cached state so the next
+    // read doesn't try to reuse a stale record.
+    const entryFileName = basename(entryPath);
+    this.cachedEntryFingerprints?.delete(entryFileName);
+    if (this.cachedEntryRecords) {
+      const idMatch = entryFileName.endsWith(ENTRY_EXTENSION)
+        ? entryFileName.slice(0, -ENTRY_EXTENSION.length)
+        : null;
+      if (idMatch) {
+        this.cachedEntryRecords.delete(idMatch);
+      }
+    }
   }
 
   private persistEntry(record: StoredSessionRegistryRecord): void {
-    writeJsonFile(join(this.entriesDir, `${record.id}${ENTRY_EXTENSION}`), record);
+    const entryFileName = `${record.id}${ENTRY_EXTENSION}`;
+    const entryPath = join(this.entriesDir, entryFileName);
+    writeJsonFile(entryPath, record);
+
+    // Keep the loadEntriesFromDisk cache in sync so the next read sees this
+    // change without re-reading every file in the entries directory.
+    if (this.cachedEntryRecords) {
+      this.cachedEntryRecords.set(record.id, cloneValue(record));
+    }
+    if (this.cachedEntryFingerprints) {
+      try {
+        const stat = statSync(entryPath);
+        this.cachedEntryFingerprints.set(entryFileName, `${stat.mtimeMs}:${stat.size}`);
+      } catch {
+        // Stat failure is rare immediately after a successful write; if it
+        // happens, drop the cache entry so the next load detects the
+        // mismatch and reloads from disk.
+        this.cachedEntryFingerprints.delete(entryFileName);
+      }
+    }
   }
 
   private persistIndex(
