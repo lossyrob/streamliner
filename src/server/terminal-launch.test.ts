@@ -168,6 +168,8 @@ describe("terminal-launch", () => {
           "-d",
           "C:\\Users\\test\\workspace",
           "powershell",
+          "-ExecutionPolicy",
+          "Bypass",
           "-NoExit",
           "-Command",
           "npm run dev",
@@ -195,6 +197,8 @@ describe("terminal-launch", () => {
           "-d",
           "C:\\Users\\test\\workspace",
           "powershell",
+          "-ExecutionPolicy",
+          "Bypass",
           "-NoExit",
           "-Command",
           "npm run dev",
@@ -262,7 +266,7 @@ describe("terminal-launch", () => {
 
       expect(spawn).toHaveBeenCalledWith(
         "powershell.exe",
-        ["-NoExit", "-Command", "Set-Location -LiteralPath 'C:\\Users\\test\\workspace'"],
+        ["-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "Set-Location -LiteralPath 'C:\\Users\\test\\workspace'"],
         { detached: true, stdio: "ignore" }
       );
     });
@@ -276,6 +280,8 @@ describe("terminal-launch", () => {
       expect(spawn).toHaveBeenCalledWith(
         "powershell.exe",
         [
+          "-ExecutionPolicy",
+          "Bypass",
           "-NoExit",
           "-Command",
           "Set-Location -LiteralPath 'C:\\Users\\test\\workspace'; npm run dev",
@@ -292,6 +298,8 @@ describe("terminal-launch", () => {
       expect(spawn).toHaveBeenCalledWith(
         "powershell.exe",
         [
+          "-ExecutionPolicy",
+          "Bypass",
           "-NoExit",
           "-Command",
           "Set-Location -LiteralPath 'C:\\Users\\O''Brien\\workspace'",
@@ -309,6 +317,8 @@ describe("terminal-launch", () => {
       expect(spawn).toHaveBeenCalledWith(
         "powershell.exe",
         [
+          "-ExecutionPolicy",
+          "Bypass",
           "-NoExit",
           "-Command",
           "Set-Location -LiteralPath 'C:\\Users\\O''Brien\\workspace'; npm run dev",
@@ -369,4 +379,5 @@ describe("terminal-launch", () => {
     });
   });
 });
+
 

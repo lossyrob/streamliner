@@ -77,7 +77,7 @@ function launchWindowsTerminal(options: TerminalLaunchOptions): TerminalLaunchRe
   args.push("-d", escapeForWindowsTerminal(options.cwd));
 
   if (options.command) {
-    args.push("powershell", "-NoExit", "-Command", options.command);
+    args.push("powershell", "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", options.command);
   }
 
   const child = spawn("wt.exe", args, {
@@ -112,7 +112,7 @@ function launchPowerShellTerminal(
     psCommand = `Set-Location -LiteralPath '${escapedCwd}'`;
   }
 
-  const args = ["-NoExit", "-Command", psCommand];
+  const args = ["-ExecutionPolicy", "Bypass", "-NoExit", "-Command", psCommand];
 
   const child = spawn("powershell.exe", args, {
     detached: true,
