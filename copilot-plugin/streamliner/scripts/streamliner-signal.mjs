@@ -66,14 +66,14 @@ async function readApiEndpointFromLockFile() {
 
 async function resolveSignalEndpoint() {
   // Precedence:
-  //  1. STREAMLINER_SESSION_SIGNAL_ENDPOINT env var if defined (empty string
-  //     means "skip the POST entirely" — useful for tests and spool-only setups).
-  //  2. Live API endpoint discovered from api.lock written by the API server.
+  //  1. STREAMLINER_SESSION_SIGNAL_ENDPOINT env var, when set to a
+  //     non-empty string. Lets advanced setups point hooks at a
+  //     non-default API host/port.
+  //  2. Live API endpoint discovered from api.lock written by the
+  //     Streamliner API server on startup.
   //  3. Loopback default (no env vars or lock file required).
-  if (process.env.STREAMLINER_SESSION_SIGNAL_ENDPOINT !== undefined) {
-    return stringValue(process.env.STREAMLINER_SESSION_SIGNAL_ENDPOINT);
-  }
   return (
+    stringValue(process.env.STREAMLINER_SESSION_SIGNAL_ENDPOINT) ??
     (await readApiEndpointFromLockFile()) ??
     `http://${DEFAULT_API_HOST}:${DEFAULT_API_PORT}/api/sessions/signals`
   );
