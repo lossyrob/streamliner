@@ -1984,7 +1984,6 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                     const rowTitle = getRowFallbackTitle(session);
                     const rowBranch = displayBranch(session);
                     const rowWorktree = displayWorktree(session);
-                    const rowSessionId = getDisplaySessionId(session);
                     const rowRestartCommand = buildRestartCommand(session);
                     const activityLabel = getActivityStatusLabel(session);
                     const activityHint = activityStatusHint(session.activityStatus);
@@ -2048,22 +2047,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                                   <span className="sl-session-row-branch">{rowBranch}</span>
                                 </>
                               )}
-                              <span className="sl-session-row-id">
-                                <span className="sl-session-row-id-label">id</span>
-                                <code>{rowSessionId}</code>
-                                <CopyButton
-                                  text={rowSessionId}
-                                  label={`Copy session ID ${rowSessionId}`}
-                                  copiedLabel="Copied session ID"
-                                  iconOnly
-                                />
-                              </span>
-                              {rowWorktree && (
-                                <span className="sl-session-row-context-chip">
-                                  worktree {leafName(rowWorktree)}
-                                </span>
-                              )}
-                              {!rowWorktree && rowFolderLeaf && (
+                              {rowFolderLeaf && (
                                 <span
                                   className="sl-session-row-context-chip"
                                   title={session.cwd}
