@@ -95,7 +95,7 @@ describe("terminal-launch", () => {
         [
           "new-tab",
           "--title",
-          "My Session",
+          "My Session", "--suppressApplicationTitle",
           "-d",
           "C:\\Users\\test\\workspace",
         ],
@@ -191,7 +191,7 @@ describe("terminal-launch", () => {
         [
           "new-tab",
           "--title",
-          "Dev",
+          "Dev", "--suppressApplicationTitle",
           "--tabColor",
           "#00FF00",
           "-d",
@@ -218,7 +218,7 @@ describe("terminal-launch", () => {
         [
           "new-tab",
           "--title",
-          "foo \\; new-tab cmd.exe",
+          "foo \\; new-tab cmd.exe", "--suppressApplicationTitle",
           "-d",
           "C:\\Users\\test\\;workspace",
         ],
@@ -379,5 +379,6 @@ describe("terminal-launch", () => {
     });
   });
 });
+
 
 

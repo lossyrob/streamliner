@@ -68,6 +68,7 @@ function launchWindowsTerminal(options: TerminalLaunchOptions): TerminalLaunchRe
 
   if (options.title) {
     args.push("--title", escapeForWindowsTerminal(options.title));
+    args.push("--suppressApplicationTitle");
   }
 
   if (options.tabColor && isValidHexColor(options.tabColor)) {

@@ -2443,7 +2443,7 @@ function RelaunchButton({ session, className, compact = false }: RelaunchButtonP
     try {
       const response = await fetch(
         `/api/sessions/${encodeURIComponent(session.id)}/relaunch`,
-        { method: "POST", headers: { "Content-Type": "application/json" } },
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
       );
       const body = await response.json();
       if (response.ok) {
