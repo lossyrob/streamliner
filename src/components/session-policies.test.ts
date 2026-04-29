@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { SessionRegistryListItem } from "../session-registry-contract";
 import {
   buildRestartCommand,
+  canManuallyStop,
   canRelaunch,
   filterEndedSessions,
   getDisplaySessionId,
@@ -180,6 +181,50 @@ describe("session policies", () => {
         derivedWorktreePath: "C:\\repo\\worktree",
       });
       expect(canRelaunch(session)).toBe(true);
+    });
+  });
+
+  describe("canManuallyStop", () => {
+    it("returns true for an interrupted session with copilotSessionId", () => {
+      const session = buildSession({
+        lifecycleStatus: "active",
+        activityStatus: "interrupted",
+        copilotSessionId: "sess-1",
+      });
+      expect(canManuallyStop(session)).toBe(true);
+    });
+
+    it("returns true for an active session with copilotSessionId", () => {
+      const session = buildSession({
+        lifecycleStatus: "active",
+        copilotSessionId: "sess-1",
+      });
+      expect(canManuallyStop(session)).toBe(true);
+    });
+
+    it("returns false for archived sessions", () => {
+      const session = buildSession({
+        lifecycleStatus: "archived",
+        copilotSessionId: "sess-1",
+      });
+      expect(canManuallyStop(session)).toBe(false);
+    });
+
+    it("returns false for sessions already ended via trusted signal", () => {
+      const session = buildSession({
+        lifecycleStatus: "ended",
+        trustedEndedAt: "2026-04-29T19:59:00.000Z",
+        copilotSessionId: "sess-1",
+      });
+      expect(canManuallyStop(session)).toBe(false);
+    });
+
+    it("returns false for sessions without a copilotSessionId", () => {
+      const session = buildSession({
+        lifecycleStatus: "active",
+        copilotSessionId: null,
+      });
+      expect(canManuallyStop(session)).toBe(false);
     });
   });
 });

@@ -4,6 +4,7 @@ import type { SessionRegistryListItem, SessionRegistryPatch } from "../session-r
 import type { SessionRegistryRecord } from "../session-registry-schema";
 import {
   buildRestartCommand,
+  canManuallyStop,
   canRelaunch,
   filterEndedSessions,
   getDisplaySessionId,
@@ -2123,6 +2124,11 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                               className="sl-session-row-status-dock-action"
                               compact
                             />
+                            <StopButton
+                              session={session}
+                              className="sl-session-row-status-dock-action"
+                              compact
+                            />
                           </div>
                         </div>
                       </div>
@@ -2511,6 +2517,105 @@ interface CopyableValueProps {
   label: string;
 }
 
+type StopState = "idle" | "stopping" | "stopped" | "error";
+
+interface StopButtonProps {
+  session: SessionRegistryListItem;
+  className?: string;
+  compact?: boolean;
+  confirmBeforeStopping?: boolean;
+}
+
+function StopButton({ session, className, compact = false, confirmBeforeStopping = true }: StopButtonProps) {
+  const [state, setState] = useState<StopState>("idle");
+  const [detail, setDetail] = useState("");
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const eligible = canManuallyStop(session);
+
+  useEffect(() => {
+    return () => {
+      if (resetTimerRef.current) {
+        clearTimeout(resetTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleStop = useCallback(async () => {
+    if (!eligible || state === "stopping") {
+      return;
+    }
+    if (confirmBeforeStopping) {
+      const ok = window.confirm(
+        `Mark "${session.title}" as ended? Use this only if the Copilot CLI session is no longer running but the registry still shows it as active or interrupted.`,
+      );
+      if (!ok) return;
+    }
+    setState("stopping");
+    setDetail("");
+    try {
+      const response = await fetch(
+        `/api/sessions/${encodeURIComponent(session.id)}/stop`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
+      );
+      const body = await response.json();
+      if (response.ok) {
+        setState("stopped");
+        setDetail("Marked as ended");
+      } else {
+        setState("error");
+        setDetail(body.message ?? "Stop failed");
+      }
+    } catch {
+      setState("error");
+      setDetail("Network error");
+    }
+    if (resetTimerRef.current) {
+      clearTimeout(resetTimerRef.current);
+    }
+    resetTimerRef.current = setTimeout(() => {
+      setState("idle");
+      setDetail("");
+      resetTimerRef.current = null;
+    }, 5_000);
+  }, [confirmBeforeStopping, eligible, session.id, session.title, state]);
+
+  const label = !eligible
+    ? session.lifecycleStatus === "archived"
+      ? "Archived"
+      : session.lifecycleStatus === "ended" && session.trustedEndedAt
+        ? "Already ended"
+        : "No Copilot session ID"
+    : state === "stopping"
+      ? "Marking ended…"
+      : state === "stopped"
+        ? detail
+        : state === "error"
+          ? detail
+          : "Mark as ended";
+
+  const buttonText = compact
+    ? state === "stopping" ? "…" : state === "stopped" ? "✓" : state === "error" ? "✗" : "■"
+    : label;
+
+  return (
+    <button
+      type="button"
+      className={`sl-stop-btn${state === "stopped" ? " success" : ""}${
+        state === "error" ? " error" : ""
+      }${state === "stopping" ? " stopping" : ""}${className ? ` ${className}` : ""}`}
+      aria-label={label}
+      title={label}
+      disabled={!eligible || state === "stopping"}
+      onClick={(event) => {
+        event.stopPropagation();
+        void handleStop();
+      }}
+    >
+      {buttonText}
+    </button>
+  );
+}
+
 function CopyableValue({ value, label }: CopyableValueProps) {
   return (
     <span className="sl-copyable-value">
@@ -2533,6 +2638,7 @@ function SessionOverview({ session }: SessionOverviewProps) {
         <h3 className="sl-session-overview-heading">Restart</h3>
         <div className="sl-session-quick-actions">
           <RelaunchButton session={session} />
+          <StopButton session={session} />
           <CopyButton
             text={restartCommand ?? ""}
             label={

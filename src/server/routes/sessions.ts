@@ -5,6 +5,7 @@ import {
   SESSION_REGISTRY_API_BASE_PATH,
 } from "../../session-registry/http-api";
 import { relaunchSession, type RelaunchDeps } from "../../session-registry/relaunch";
+import { stopSession } from "../../session-registry/stop";
 import type { SessionRegistryStore } from "../../session-registry-contract";
 import { isLoopbackAddress } from "../config";
 import { getApiLogger } from "../logger";
@@ -33,6 +34,7 @@ export function createSessionsRouter(options: {
   const router = Router();
   const signalsLogger = getApiLogger().withScope("signals");
   const relaunchLogger = getApiLogger().withScope("relaunch");
+  const stopLogger = getApiLogger().withScope("stop");
 
   router.get("/events", options.eventStream.handle);
 
@@ -73,6 +75,49 @@ export function createSessionsRouter(options: {
           : outcome.error.code === "spawn_failed" ? 500
             : 400;
       relaunchLogger.warn("failed", {
+        sessionId,
+        code: outcome.error.code,
+        message: outcome.error.message,
+        statusCode,
+      });
+      res.status(statusCode).json(outcome.error);
+    }
+  });
+
+  // Manual stop endpoint — synthesizes a session.ended trusted signal so the
+  // user can clean up sessions whose Copilot CLI never fired the sessionEnd
+  // hook (e.g. terminal closed before the hook could POST).
+  router.post("/:id/stop", (req, res) => {
+    const sessionId = req.params.id;
+
+    if (isNonLoopbackRequest(req)) {
+      stopLogger.warn("rejected: non-loopback", { sessionId });
+      res.status(403).json({ error: "Session stop must originate from loopback." });
+      return;
+    }
+
+    const contentType = req.headers["content-type"] ?? "";
+    if (!contentType.startsWith("application/json")) {
+      stopLogger.warn("rejected: bad content-type", { sessionId, contentType });
+      res.status(415).json({ error: "Content-Type must be application/json." });
+      return;
+    }
+
+    stopLogger.info("attempt", { sessionId });
+    const outcome = stopSession(options.store, sessionId);
+    if (outcome.ok) {
+      stopLogger.info("success", {
+        sessionId,
+        lifecycleStatus: outcome.result.lifecycleStatus,
+        trustedEndedAt: outcome.result.trustedEndedAt,
+      });
+      res.json(outcome.result);
+    } else {
+      const statusCode =
+        outcome.error.code === "session_not_found" ? 404
+          : outcome.error.code === "stop_failed" ? 500
+            : 400;
+      stopLogger.warn("failed", {
         sessionId,
         code: outcome.error.code,
         message: outcome.error.message,

@@ -478,6 +478,57 @@ body,
   background: rgba(200, 50, 50, 0.08);
 }
 
+.sl-stop-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid rgba(20, 60, 130, 0.14);
+  background: rgba(255, 255, 255, 0.84);
+  color: var(--sl-text);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 0.15s ease,
+    transform 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.sl-stop-btn:hover:not(:disabled) {
+  background: rgba(200, 50, 50, 0.06);
+  border-color: rgba(200, 50, 50, 0.28);
+  color: var(--sl-red);
+  transform: translateY(-1px);
+}
+
+.sl-stop-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.sl-stop-btn.stopping {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.sl-stop-btn.success {
+  color: var(--sl-green);
+  border-color: rgba(18, 148, 95, 0.28);
+  background: rgba(18, 148, 95, 0.08);
+}
+
+.sl-stop-btn.error {
+  color: var(--sl-red);
+  border-color: rgba(200, 50, 50, 0.28);
+  background: rgba(200, 50, 50, 0.08);
+}
+
 .sl-text-field,
 .sl-text-area,
 .sl-select-field {

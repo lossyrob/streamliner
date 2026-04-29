@@ -49,6 +49,22 @@ export function canRelaunch(session: SessionRegistryListItem): boolean {
   return true;
 }
 
+export function canManuallyStop(session: SessionRegistryListItem): boolean {
+  // Manual stop synthesizes a session.ended trusted signal. It only makes
+  // sense for sessions that have a Copilot session id (so the signal can be
+  // attributed) and aren't already terminally archived or ended.
+  if (session.lifecycleStatus === "archived") {
+    return false;
+  }
+  if (session.lifecycleStatus === "ended" && session.trustedEndedAt) {
+    return false;
+  }
+  if (!session.copilotSessionId) {
+    return false;
+  }
+  return true;
+}
+
 export function isTrustedActiveSession(session: SessionRegistryListItem): boolean {
   return (
     session.trustedSignalSource !== null &&
