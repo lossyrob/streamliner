@@ -48,7 +48,12 @@ function readLockPid(lockPath: string): number | null {
   }
 }
 
-export function acquireApiProcessLock(): () => void {
+export interface ApiProcessLockOptions {
+  host?: string;
+  port?: number;
+}
+
+export function acquireApiProcessLock(options: ApiProcessLockOptions = {}): () => void {
   const rootDir = resolveSessionRegistryRoot();
   const lockPath = join(rootDir, "api.lock");
   mkdirSync(rootDir, { recursive: true });
@@ -63,7 +68,16 @@ export function acquireApiProcessLock(): () => void {
     fd = openSync(lockPath, "wx");
     writeFileSync(
       fd,
-      JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() }, null, 2),
+      JSON.stringify(
+        {
+          pid: process.pid,
+          acquiredAt: new Date().toISOString(),
+          host: options.host ?? null,
+          port: options.port ?? null,
+        },
+        null,
+        2,
+      ),
       "utf8",
     );
   } catch (error: unknown) {

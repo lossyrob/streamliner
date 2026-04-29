@@ -86,6 +86,7 @@ function closeServer(server: Server): Promise<void> {
 describe("trusted session signal spool", () => {
   it("spools hook stdin as prompt lengths without persisting raw prompt text", async () => {
     const signalRoot = createRootDir();
+    const stateRoot = createRootDir();
     const initialPrompt = "secret kickoff prompt that must not be persisted";
 
     await runSignalScript(
@@ -99,7 +100,11 @@ describe("trusted session signal spool", () => {
       },
       {
         STREAMLINER_SESSION_SIGNAL_SPOOL_ROOT: signalRoot,
-        STREAMLINER_SESSION_SIGNAL_ENDPOINT: "",
+        // Isolate the script from the user's running API and lock file: a
+        // temp state root has no api.lock, and an unreachable port forces
+        // the POST to fail so the script falls through to the spool.
+        STREAMLINER_STATE_ROOT: stateRoot,
+        STREAMLINER_SESSION_SIGNAL_ENDPOINT: "http://127.0.0.1:1/disabled",
       },
     );
 

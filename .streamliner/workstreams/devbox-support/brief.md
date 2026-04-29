@@ -98,8 +98,8 @@ that preserves stale last-known registry data without fabricating freshness. The
 contract was validated devbox-locally and through a laptop-to-devbox Dev Tunnel
 connection against the issue #22 smoke bridge/probe.
 
-The next promoted research issues are `environment-identity-spike`,
-`devbox-health-spike`, and `devbox-security-spike`. The implementation tail
+The next promoted research issues are `environment-identity-spike` (issue #23),
+`devbox-health-spike` (issue #24), and `devbox-security-spike`. The implementation tail
 remains blocked on the accepted devbox research contract plus the specific
 upstream registry, sync, and observation contracts named above; it is not blocked
 on the entire `session-launching-and-tracking` workstream or on

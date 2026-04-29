@@ -88,6 +88,47 @@ describe("SessionRegistryFileStore", () => {
     expect(existsSync(join(rootDir, "index.json"))).toBe(true);
   });
 
+  it("ranks list freshness by trustedLastSignalAt when it is newer than lastSeenAt", () => {
+    // Discovery sets lastSeenAt from workspace.yaml mtime, which lags real
+    // user activity. A session that just received a prompt.submitted hook
+    // signal should rank above a quiet session whose workspace was touched
+    // more recently.
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+
+    // "Stale active" — workspace was touched recently (lastSeenAt) but no
+    // hook signal in a long time.
+    store.upsertSession({
+      title: "Stale active",
+      cwd: "C:\\stale",
+      origin: { kind: "observed" },
+      copilotSessionId: "stale-session",
+      lastSeenAt: "2026-04-29T19:00:00.000Z",
+    });
+
+    // "Currently typing" — workspace mtime is hours older than the most
+    // recent hook signal arrived for this session.
+    store.upsertSession({
+      title: "Currently typing",
+      cwd: "C:\\typing",
+      origin: { kind: "observed" },
+      copilotSessionId: "typing-session",
+      lastSeenAt: "2026-04-29T15:22:00.000Z",
+    });
+    store.recordTrustedSessionSignal({
+      event: "prompt.submitted",
+      source: "copilot-cli-hook",
+      sessionId: "typing-session",
+      timestamp: "2026-04-29T20:00:00.000Z",
+      cwd: "C:\\typing",
+      promptLength: 12,
+    });
+
+    const titles = store.listSessions().map((session) => session.title);
+    expect(titles).toEqual(["Currently typing", "Stale active"]);
+  });
+
   it("sorts and filters list results by freshness, text, repo, and graph binding", () => {
     const rootDir = createRootDir();
     createdRoots.push(rootDir);
@@ -466,6 +507,52 @@ describe("SessionRegistryFileStore", () => {
     expect(readJsonFile<Record<string, unknown>>(join(rootDir, "entries", "trusted-session-1.json"))).not.toHaveProperty(
       "prompt",
     );
+  });
+
+  it("clears stale copilotProcessId on session.started so activity indexer does not see a dead PID", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+
+    // Establish a session that observation has linked to a real PID.
+    const initial = store.upsertSession({
+      title: "Resumable",
+      cwd: "C:\\repo",
+      origin: { kind: "observed" },
+      copilotSessionId: "resumable-session",
+      copilotProcessState: "live",
+      copilotProcessId: 5092,
+    });
+    expect(initial.copilotProcessId).toBe(5092);
+
+    // The original process exits and a session.ended signal arrives.
+    store.recordTrustedSessionSignal({
+      event: "session.ended",
+      source: "copilot-cli-hook",
+      sessionId: "resumable-session",
+      timestamp: "2026-04-24T20:00:00.000Z",
+      cwd: "C:\\repo",
+      endReason: "user_exit",
+    });
+
+    // The user (or relaunch endpoint synthesis) issues a new session.started
+    // for the resume. The previous PID is no longer valid; leaving it in the
+    // record would trip the activity indexer's "process disappeared" branch
+    // and flash activityStatus to "interrupted" until discovery picks up the
+    // new PID.
+    const restarted = store.recordTrustedSessionSignal({
+      event: "session.started",
+      source: "copilot-cli-hook",
+      sessionId: "resumable-session",
+      timestamp: "2026-04-24T20:01:00.000Z",
+      cwd: "C:\\repo",
+      hookSource: "resume",
+    });
+
+    expect(restarted.copilotProcessId).toBeNull();
+    expect(restarted.copilotProcessState).toBe("live");
+    expect(restarted.trustedStartSource).toBe("resume");
+    expect(restarted.trustedEndedAt).toBeNull();
   });
 
   it("ignores stale trusted signals and preserves chronological end metadata", () => {

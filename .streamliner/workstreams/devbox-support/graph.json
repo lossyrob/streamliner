@@ -3,11 +3,11 @@
   "id": "devbox-support",
   "projectKey": "streamliner",
   "title": "Devbox support",
-  "summary": "Research-first devbox observability workstream: prove access, remote session-state observation, identity, security, and health contracts before implementation consumes the in-flight local session/runtime checkpoints.",
+  "summary": "Research-first devbox observability workstream: access, remote session-state, and bridge transport evidence are complete; identity, health, and security remain before implementation consumes the in-flight local session/runtime checkpoints.",
   "status": "active",
   "attention": "focus",
   "createdAt": "2026-04-27T21:52:52.683Z",
-  "updatedAt": "2026-04-28T06:29:25.868Z",
+  "updatedAt": "2026-04-28T14:28:14.665Z",
   "repos": [
     {
       "id": "streamliner",
@@ -122,8 +122,10 @@
       "attention": "focus",
       "repoIds": ["streamliner"],
       "tracker": {
-        "type": "local",
-        "path": "tasks/environment-identity-spike.md"
+        "type": "github",
+        "owner": "lossyrob",
+        "repo": "streamliner",
+        "number": 23
       },
       "dependsOn": ["devbox-scope-and-dependencies", "remote-session-state-spike"]
     },
@@ -136,8 +138,10 @@
       "attention": "watch",
       "repoIds": ["streamliner"],
       "tracker": {
-        "type": "local",
-        "path": "tasks/devbox-health-spike.md"
+        "type": "github",
+        "owner": "lossyrob",
+        "repo": "streamliner",
+        "number": 24
       },
       "dependsOn": ["remote-observation-transport-spike"]
     },

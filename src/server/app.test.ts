@@ -402,4 +402,223 @@ describe("createStreamlinerApiApp", () => {
       eventStream.close();
     }
   });
+
+  it("relaunch endpoint returns result for valid session", async () => {
+    const rootDir = createRootDir();
+    const store = new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") });
+    const session = store.upsertSession({
+      title: "Relaunch target",
+      cwd: rootDir,
+      origin: { kind: "manual" },
+    });
+    const api = createStreamlinerApiApp({
+      store,
+      relaunchDeps: {
+        launchTerminal: () => ({ method: "windows-terminal", pid: 99999 }),
+        existsSync: () => true,
+      },
+    });
+    activeApps.push(api);
+
+    const response = await request(api.app)
+      .post(`/api/sessions/${session.id}/relaunch`).set("Content-Type", "application/json").expect(200);
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        sessionId: session.id,
+        cwd: rootDir,
+        method: "windows-terminal",
+        pid: 99999,
+      }),
+    );
+  });
+
+  it("relaunch endpoint returns 404 for nonexistent session", async () => {
+    const rootDir = createRootDir();
+    const store = new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") });
+    const api = createStreamlinerApiApp({
+      store,
+      relaunchDeps: {
+        launchTerminal: () => ({ method: "powershell", pid: 1 }),
+        existsSync: () => true,
+      },
+    });
+    activeApps.push(api);
+
+    const response = await request(api.app)
+      .post("/api/sessions/nonexistent/relaunch").set("Content-Type", "application/json").expect(404);
+    expect(response.body.code).toBe("session_not_found");
+  });
+
+  it("relaunch endpoint returns 400 for archived session", async () => {
+    const rootDir = createRootDir();
+    const store = new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") });
+    const session = store.upsertSession({
+      title: "Archived session",
+      cwd: rootDir,
+      origin: { kind: "manual" },
+    });
+    store.archiveSession(session.id);
+    const api = createStreamlinerApiApp({
+      store,
+      relaunchDeps: {
+        launchTerminal: () => ({ method: "powershell", pid: 1 }),
+        existsSync: () => true,
+      },
+    });
+    activeApps.push(api);
+
+    const response = await request(api.app)
+      .post(`/api/sessions/${session.id}/relaunch`).set("Content-Type", "application/json").expect(400);
+    expect(response.body.code).toBe("session_archived");
+  });
+
+  it("relaunch endpoint blocks non-loopback requests", async () => {
+    const rootDir = createRootDir();
+    const store = new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") });
+    const session = store.upsertSession({
+      title: "Blocked relaunch",
+      cwd: rootDir,
+      origin: { kind: "manual" },
+    });
+    const api = createStreamlinerApiApp({
+      store,
+      relaunchDeps: {
+        launchTerminal: () => ({ method: "powershell", pid: 1 }),
+        existsSync: () => true,
+      },
+    });
+    activeApps.push(api);
+
+    await request(api.app)
+      .post(`/api/sessions/${session.id}/relaunch`)
+      .set("X-Forwarded-For", "203.0.113.7")
+      .expect(403, { error: "Session relaunch must originate from loopback." });
+  });
+
+  it("relaunch endpoint rejects requests without application/json content-type", async () => {
+    const rootDir = createRootDir();
+    const store = new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") });
+    const session = store.upsertSession({
+      title: "CSRF test",
+      cwd: rootDir,
+      origin: { kind: "manual" },
+    });
+    const api = createStreamlinerApiApp({
+      store,
+      relaunchDeps: {
+        launchTerminal: () => ({ method: "powershell", pid: 1 }),
+        existsSync: () => true,
+      },
+    });
+    activeApps.push(api);
+
+    await request(api.app)
+      .post(`/api/sessions/${session.id}/relaunch`)
+      .set("Content-Type", "text/plain")
+      .expect(415, { error: "Content-Type must be application/json." });
+  });
+
+  it("stop endpoint synthesizes session.ended for an interrupted session", async () => {
+    const rootDir = createRootDir();
+    const store = new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") });
+    const session = store.upsertSession({
+      title: "Stuck",
+      cwd: rootDir,
+      origin: { kind: "observed" },
+      copilotSessionId: "stuck-session",
+    });
+    // Simulate the stuck-active state from the user's report: started but
+    // no end signal, process gone.
+    store.recordTrustedSessionSignal({
+      event: "session.started",
+      source: "copilot-cli-hook",
+      sessionId: "stuck-session",
+      timestamp: "2026-04-29T20:02:39.000Z",
+      cwd: rootDir,
+      hookSource: "resume",
+    });
+    const api = createStreamlinerApiApp({ store });
+    activeApps.push(api);
+
+    const response = await request(api.app)
+      .post(`/api/sessions/${session.id}/stop`)
+      .set("Content-Type", "application/json")
+      .send({})
+      .expect(200);
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        sessionId: session.id,
+        lifecycleStatus: "ended",
+      }),
+    );
+    expect(typeof response.body.trustedEndedAt).toBe("string");
+
+    const updated = store.getSession(session.id);
+    expect(updated?.lifecycleStatus).toBe("ended");
+    expect(updated?.trustedEndReason).toBe("user_exit");
+    expect(updated?.activityStatus).toBe("exited");
+  });
+
+  it("stop endpoint returns 404 for nonexistent session", async () => {
+    const rootDir = createRootDir();
+    const store = new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") });
+    const api = createStreamlinerApiApp({ store });
+    activeApps.push(api);
+
+    const response = await request(api.app)
+      .post("/api/sessions/nonexistent/stop")
+      .set("Content-Type", "application/json")
+      .send({})
+      .expect(404);
+    expect(response.body.code).toBe("session_not_found");
+  });
+
+  it("stop endpoint returns 400 for already-ended session", async () => {
+    const rootDir = createRootDir();
+    const store = new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") });
+    const session = store.upsertSession({
+      title: "Already done",
+      cwd: rootDir,
+      origin: { kind: "observed" },
+      copilotSessionId: "done-session",
+    });
+    store.recordTrustedSessionSignal({
+      event: "session.ended",
+      source: "copilot-cli-hook",
+      sessionId: "done-session",
+      timestamp: "2026-04-29T19:00:00.000Z",
+      cwd: rootDir,
+      endReason: "complete",
+    });
+    const api = createStreamlinerApiApp({ store });
+    activeApps.push(api);
+
+    const response = await request(api.app)
+      .post(`/api/sessions/${session.id}/stop`)
+      .set("Content-Type", "application/json")
+      .send({})
+      .expect(400);
+    expect(response.body.code).toBe("session_already_ended");
+  });
+
+  it("stop endpoint blocks non-loopback requests", async () => {
+    const rootDir = createRootDir();
+    const store = new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") });
+    const session = store.upsertSession({
+      title: "Loopback test",
+      cwd: rootDir,
+      origin: { kind: "observed" },
+      copilotSessionId: "lb-session",
+    });
+    const api = createStreamlinerApiApp({ store });
+    activeApps.push(api);
+
+    await request(api.app)
+      .post(`/api/sessions/${session.id}/stop`)
+      .set("Content-Type", "application/json")
+      .set("X-Forwarded-For", "203.0.113.7")
+      .send({})
+      .expect(403, { error: "Session stop must originate from loopback." });
+  });
 });
+

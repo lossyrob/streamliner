@@ -4,6 +4,8 @@ import type { SessionRegistryListItem, SessionRegistryPatch } from "../session-r
 import type { SessionRegistryRecord } from "../session-registry-schema";
 import {
   buildRestartCommand,
+  canManuallyStop,
+  canRelaunch,
   filterEndedSessions,
   getDisplaySessionId,
   isTrustedActiveSession,
@@ -1982,12 +1984,12 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                     const rowTitle = getRowFallbackTitle(session);
                     const rowBranch = displayBranch(session);
                     const rowWorktree = displayWorktree(session);
-                    const rowSessionId = getDisplaySessionId(session);
                     const rowRestartCommand = buildRestartCommand(session);
                     const activityLabel = getActivityStatusLabel(session);
                     const activityHint = activityStatusHint(session.activityStatus);
                     const signalClass = activitySignalClass(session.activityStatus);
                     const signalDetail = trustedStatus ?? observedStatus ?? session.originKind;
+                    const rowFolderLeaf = leafName(rowWorktree ?? session.cwd);
                     const rowDetail =
                       summary.text && summary.status !== "missing"
                         ? summary.text
@@ -2020,11 +2022,6 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                           <div className="sl-session-row-main">
                             <div className="sl-session-row-title-line">
                               <span
-                                className={`sl-session-row-dot ${
-                                  session.lifecycleStatus === "active" ? "active" : "dim"
-                                }`}
-                              />
-                              <span
                                 className="sl-session-row-swatch"
                                 style={{ backgroundColor: sessionDisplayColor(session) }}
                                 aria-hidden="true"
@@ -2050,19 +2047,12 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                                   <span className="sl-session-row-branch">{rowBranch}</span>
                                 </>
                               )}
-                              <span className="sl-session-row-id">
-                                <span className="sl-session-row-id-label">id</span>
-                                <code>{rowSessionId}</code>
-                                <CopyButton
-                                  text={rowSessionId}
-                                  label={`Copy session ID ${rowSessionId}`}
-                                  copiedLabel="Copied session ID"
-                                  iconOnly
-                                />
-                              </span>
-                              {rowWorktree && (
-                                <span className="sl-session-row-context-chip">
-                                  worktree {leafName(rowWorktree)}
+                              {rowFolderLeaf && (
+                                <span
+                                  className="sl-session-row-context-chip"
+                                  title={session.cwd}
+                                >
+                                  folder {rowFolderLeaf}
                                 </span>
                               )}
                               {session.derivedGithubRefs.slice(0, 3).map((ref) => (
@@ -2080,43 +2070,43 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                               ))}
                             </div>
                           </div>
-                          <div className="sl-session-row-path" title={session.cwd}>
-                            <span className="sl-session-row-path-label">folder</span>
-                            <span className="sl-session-row-path-value">
-                              {leafName(rowWorktree ?? session.cwd) ?? session.cwd}
-                            </span>
-                          </div>
                           <div
                             className={`sl-session-row-status-dock ${signalClass}`}
                             aria-label={`${activityLabel} status`}
                           >
-                            <div className="sl-session-row-status-dock-head">
-                              <span className={`sl-session-row-signal-label ${signalClass}`}>
+                            <div className="sl-session-row-status-dock-line">
+                              <span
+                                className={`sl-session-row-status-pill ${signalClass}`}
+                                title={`${activityHint} · ${signalDetail}`}
+                              >
                                 {activityLabel}
                               </span>
-                              <span className="sl-session-row-signal-detail">
-                                {signalDetail}
+                              <span className="sl-session-row-signal-track" aria-hidden="true">
+                                <span className="sl-session-row-signal-pulse" />
                               </span>
                             </div>
-                            <span className="sl-session-row-signal-track" aria-hidden="true">
-                              <span className="sl-session-row-signal-pulse" />
-                            </span>
-                            <div className="sl-session-row-status-dock-foot">
-                              <span>{activityHint}</span>
-                              <span>{formatTimestamp(session.lastSeenAt)}</span>
+                            <div className="sl-session-row-status-dock-actions">
+                              <CopyButton
+                                text={rowRestartCommand ?? ""}
+                                label={
+                                  rowRestartCommand
+                                    ? "Copy restart command"
+                                    : "Restart unavailable; no Copilot session ID"
+                                }
+                                copiedLabel="Copied restart command"
+                                iconOnly
+                              />
+                              <RelaunchButton
+                                session={session}
+                                compact
+                              />
+                              {session.activityStatus === "interrupted" && (
+                                <StopButton
+                                  session={session}
+                                  compact
+                                />
+                              )}
                             </div>
-                            <CopyButton
-                              text={rowRestartCommand ?? ""}
-                              label={
-                                rowRestartCommand
-                                  ? "Copy restart command"
-                                  : "Restart unavailable; no Copilot session ID"
-                              }
-                              copiedLabel="Copied restart command"
-                              className="compact sl-session-row-status-dock-action"
-                            >
-                              {rowRestartCommand ? "Copy restart" : "No restart"}
-                            </CopyButton>
                           </div>
                         </div>
                       </div>
@@ -2406,9 +2396,202 @@ function CopyButton({
   );
 }
 
+type RelaunchState = "idle" | "launching" | "launched" | "error";
+
+interface RelaunchButtonProps {
+  session: SessionRegistryListItem;
+  className?: string;
+  compact?: boolean;
+}
+
+function RelaunchButton({ session, className, compact = false }: RelaunchButtonProps) {
+  const [state, setState] = useState<RelaunchState>("idle");
+  const [detail, setDetail] = useState("");
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const eligible = canRelaunch(session);
+
+  useEffect(() => {
+    return () => {
+      if (resetTimerRef.current) {
+        clearTimeout(resetTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleRelaunch = useCallback(async () => {
+    if (!eligible || state === "launching") {
+      return;
+    }
+    setState("launching");
+    setDetail("");
+    try {
+      const response = await fetch(
+        `/api/sessions/${encodeURIComponent(session.id)}/relaunch`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
+      );
+      const body = await response.json();
+      if (response.ok) {
+        const method = body.method === "powershell" ? "PowerShell" : "Windows Terminal";
+        const info = body.copilotResumed ? `Resumed in ${method}` : `Opened in ${method}`;
+        setState("launched");
+        setDetail(info);
+      } else {
+        setState("error");
+        setDetail(body.message ?? "Relaunch failed");
+      }
+    } catch {
+      setState("error");
+      setDetail("Network error");
+    }
+    if (resetTimerRef.current) {
+      clearTimeout(resetTimerRef.current);
+    }
+    resetTimerRef.current = setTimeout(() => {
+      setState("idle");
+      setDetail("");
+      resetTimerRef.current = null;
+    }, 15_000);
+  }, [eligible, session.id, state]);
+
+  const label = !eligible
+    ? session.lifecycleStatus === "archived"
+      ? "Archived — unarchive to relaunch"
+      : session.copilotProcessState === "live"
+        ? "Session is live"
+        : "No working directory"
+    : state === "launching"
+      ? "Launching…"
+      : state === "launched"
+        ? detail
+        : state === "error"
+          ? detail
+          : "Relaunch session";
+
+  const buttonText = compact
+    ? state === "launching" ? "…" : state === "launched" ? "✓" : state === "error" ? "✗" : "⟳"
+    : label;
+
+  return (
+    <button
+      type="button"
+      className={`sl-relaunch-btn${state === "launched" ? " success" : ""}${
+        state === "error" ? " error" : ""
+      }${state === "launching" ? " launching" : ""}${className ? ` ${className}` : ""}`}
+      aria-label={label}
+      title={label}
+      disabled={!eligible || state === "launching"}
+      onClick={(event) => {
+        event.stopPropagation();
+        void handleRelaunch();
+      }}
+    >
+      {buttonText}
+    </button>
+  );
+}
+
 interface CopyableValueProps {
   value: string;
   label: string;
+}
+
+type StopState = "idle" | "stopping" | "stopped" | "error";
+
+interface StopButtonProps {
+  session: SessionRegistryListItem;
+  className?: string;
+  compact?: boolean;
+  confirmBeforeStopping?: boolean;
+}
+
+function StopButton({ session, className, compact = false, confirmBeforeStopping = true }: StopButtonProps) {
+  const [state, setState] = useState<StopState>("idle");
+  const [detail, setDetail] = useState("");
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const eligible = canManuallyStop(session);
+
+  useEffect(() => {
+    return () => {
+      if (resetTimerRef.current) {
+        clearTimeout(resetTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleStop = useCallback(async () => {
+    if (!eligible || state === "stopping") {
+      return;
+    }
+    if (confirmBeforeStopping) {
+      const ok = window.confirm(
+        `Mark "${session.title}" as ended? Use this only if the Copilot CLI session is no longer running but the registry still shows it as active or interrupted.`,
+      );
+      if (!ok) return;
+    }
+    setState("stopping");
+    setDetail("");
+    try {
+      const response = await fetch(
+        `/api/sessions/${encodeURIComponent(session.id)}/stop`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
+      );
+      const body = await response.json();
+      if (response.ok) {
+        setState("stopped");
+        setDetail("Marked as ended");
+      } else {
+        setState("error");
+        setDetail(body.message ?? "Stop failed");
+      }
+    } catch {
+      setState("error");
+      setDetail("Network error");
+    }
+    if (resetTimerRef.current) {
+      clearTimeout(resetTimerRef.current);
+    }
+    resetTimerRef.current = setTimeout(() => {
+      setState("idle");
+      setDetail("");
+      resetTimerRef.current = null;
+    }, 5_000);
+  }, [confirmBeforeStopping, eligible, session.id, session.title, state]);
+
+  const label = !eligible
+    ? session.lifecycleStatus === "archived"
+      ? "Archived"
+      : session.lifecycleStatus === "ended" && session.trustedEndedAt
+        ? "Already ended"
+        : "No Copilot session ID"
+    : state === "stopping"
+      ? "Marking ended…"
+      : state === "stopped"
+        ? detail
+        : state === "error"
+          ? detail
+          : "Mark as ended";
+
+  const buttonText = compact
+    ? state === "stopping" ? "…" : state === "stopped" ? "✓" : state === "error" ? "✗" : "■"
+    : label;
+
+  return (
+    <button
+      type="button"
+      className={`sl-stop-btn${state === "stopped" ? " success" : ""}${
+        state === "error" ? " error" : ""
+      }${state === "stopping" ? " stopping" : ""}${className ? ` ${className}` : ""}`}
+      aria-label={label}
+      title={label}
+      disabled={!eligible || state === "stopping"}
+      onClick={(event) => {
+        event.stopPropagation();
+        void handleStop();
+      }}
+    >
+      {buttonText}
+    </button>
+  );
 }
 
 function CopyableValue({ value, label }: CopyableValueProps) {
@@ -2432,6 +2615,8 @@ function SessionOverview({ session }: SessionOverviewProps) {
       <section className="sl-session-overview-section">
         <h3 className="sl-session-overview-heading">Restart</h3>
         <div className="sl-session-quick-actions">
+          <RelaunchButton session={session} />
+          <StopButton session={session} />
           <CopyButton
             text={restartCommand ?? ""}
             label={
