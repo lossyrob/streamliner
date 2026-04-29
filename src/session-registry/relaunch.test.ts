@@ -97,11 +97,20 @@ describe("validateSessionForRelaunch", () => {
     expect(error!.code).toBe("session_archived");
   });
 
-  it("rejects live sessions", () => {
-    const session = buildRecord({ copilotProcessState: "live" });
+  it("rejects trusted-active sessions (all three signals present)", () => {
+    const session = buildRecord({
+      copilotProcessState: "live",
+      trustedSignalSource: "copilot-cli-hook",
+      trustedEndedAt: null,
+    });
     const error = validateSessionForRelaunch(session, () => true);
     expect(error).not.toBeNull();
     expect(error!.code).toBe("session_live");
+  });
+
+  it("allows relaunch when copilotProcessState is live but no trusted signal source", () => {
+    const session = buildRecord({ copilotProcessState: "live" });
+    expect(validateSessionForRelaunch(session, () => true)).toBeNull();
   });
 
   it("rejects sessions with empty cwd and no worktree path", () => {

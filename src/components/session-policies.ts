@@ -34,8 +34,9 @@ export function canRelaunch(session: SessionRegistryListItem): boolean {
     return false;
   }
   
-  // Cannot relaunch if copilot process is live (prevent duplicate spawns)
-  if (session.copilotProcessState === "live") {
+  // Cannot relaunch if the session is trusted-active (high-confidence live check:
+  // has trusted signal source, no end signal, and live process state)
+  if (isTrustedActiveSession(session)) {
     return false;
   }
   

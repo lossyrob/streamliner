@@ -141,13 +141,25 @@ describe("session policies", () => {
       expect(canRelaunch(session)).toBe(false);
     });
 
-    it("returns false for live session (copilotProcessState === 'live')", () => {
+    it("returns false for trusted-active session", () => {
       const session = buildSession({
         lifecycleStatus: "active",
         copilotProcessState: "live",
+        trustedSignalSource: "copilot-cli-hook",
+        trustedEndedAt: null,
         cwd: "C:\\repo",
       });
       expect(canRelaunch(session)).toBe(false);
+    });
+
+    it("returns true when copilotProcessState is live but no trusted signal source", () => {
+      const session = buildSession({
+        lifecycleStatus: "active",
+        copilotProcessState: "live",
+        trustedSignalSource: null,
+        cwd: "C:\\repo",
+      });
+      expect(canRelaunch(session)).toBe(true);
     });
 
     it("returns false for session with empty cwd and no derivedWorktreePath", () => {

@@ -65,7 +65,14 @@ export function validateSessionForRelaunch(
     };
   }
 
-  if (session.copilotProcessState === "live") {
+  // Block only when all three trusted-active signals agree: trusted source,
+  // no end signal, and live process. Raw copilotProcessState alone can be
+  // stale after crashes or observation lag.
+  if (
+    session.trustedSignalSource !== null &&
+    session.trustedEndedAt === null &&
+    session.copilotProcessState === "live"
+  ) {
     return {
       code: "session_live",
       message: `Session "${session.title}" appears to have a live Copilot process. Stop the existing session before relaunching.`,
