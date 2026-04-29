@@ -4,6 +4,8 @@ import { getSessionRegistryStore } from "../session-registry/runtime";
 import { SESSION_REGISTRY_API_BASE_PATH } from "../session-registry/http-api";
 import type { RelaunchDeps } from "../session-registry/relaunch";
 import type { SessionRegistryStore } from "../session-registry-contract";
+import { getApiLogger } from "./logger";
+import { createAccessLogMiddleware } from "./middleware/access-log";
 import { createFilePickerRouter } from "./routes/file-picker";
 import { createGraphRouter } from "./routes/graph";
 import { createRecentsRouter } from "./routes/recents";
@@ -56,6 +58,13 @@ export function createStreamlinerApiApp(
 
   app.disable("x-powered-by");
   app.use(express.json({ limit: "1mb" }));
+
+  app.use(
+    createAccessLogMiddleware({
+      logger: getApiLogger().withScope("http"),
+      skip: (path) => path.startsWith(`${SESSION_REGISTRY_API_BASE_PATH}/events`),
+    }),
+  );
 
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true });

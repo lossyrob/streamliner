@@ -7,6 +7,7 @@ import {
 import { relaunchSession, type RelaunchDeps } from "../../session-registry/relaunch";
 import type { SessionRegistryStore } from "../../session-registry-contract";
 import { isLoopbackAddress } from "../config";
+import { getApiLogger } from "../logger";
 import { SessionRegistryEventStream } from "../session-events";
 
 function hasNonLoopbackForwardedFor(value: string | string[] | undefined): boolean {
@@ -30,6 +31,8 @@ export function createSessionsRouter(options: {
   relaunchDeps?: Partial<RelaunchDeps>;
 }): Router {
   const router = Router();
+  const signalsLogger = getApiLogger().withScope("signals");
+  const relaunchLogger = getApiLogger().withScope("relaunch");
 
   router.get("/events", options.eventStream.handle);
 
@@ -38,41 +41,63 @@ export function createSessionsRouter(options: {
   // Requires non-simple request (Content-Type header) to prevent CSRF from
   // cross-origin pages that can POST to loopback without preflight.
   router.post("/:id/relaunch", (req, res) => {
+    const sessionId = req.params.id;
+
     if (isNonLoopbackRequest(req)) {
+      relaunchLogger.warn("rejected: non-loopback", { sessionId });
       res.status(403).json({ error: "Session relaunch must originate from loopback." });
       return;
     }
 
     const contentType = req.headers["content-type"] ?? "";
     if (!contentType.startsWith("application/json")) {
+      relaunchLogger.warn("rejected: bad content-type", { sessionId, contentType });
       res.status(415).json({ error: "Content-Type must be application/json." });
       return;
     }
 
-    const outcome = relaunchSession(options.store, req.params.id, options.relaunchDeps);
+    relaunchLogger.info("attempt", { sessionId });
+    const outcome = relaunchSession(options.store, sessionId, options.relaunchDeps);
     if (outcome.ok) {
+      relaunchLogger.info("success", {
+        sessionId,
+        method: outcome.result.method,
+        copilotResumed: outcome.result.copilotResumed,
+        colorApplied: outcome.result.colorApplied,
+        pid: outcome.result.pid,
+      });
       res.json(outcome.result);
     } else {
       const statusCode =
         outcome.error.code === "session_not_found" ? 404
           : outcome.error.code === "spawn_failed" ? 500
             : 400;
+      relaunchLogger.warn("failed", {
+        sessionId,
+        code: outcome.error.code,
+        message: outcome.error.message,
+        statusCode,
+      });
       res.status(statusCode).json(outcome.error);
     }
   });
 
   router.use((req, res, next) => {
     if (req.path === "/signals" && isNonLoopbackRequest(req)) {
+      signalsLogger.warn("rejected: non-loopback signal");
       res.status(403).json({ error: "Trusted session signals must originate from loopback." });
       return;
     }
 
     if (req.path === "/signals" && req.method === "POST") {
       const body = req.body as Record<string, unknown> | undefined;
-      const event = body?.event ?? "?";
-      const sessionId = body?.sessionId ?? "?";
-      const hookSource = body?.hookSource ?? "";
-      console.info(`[streamliner] signal received: event=${event} sessionId=${sessionId} hookSource=${hookSource} ts=${new Date().toISOString()}`);
+      signalsLogger.info("received", {
+        event: body?.event,
+        sessionId: body?.sessionId,
+        hookSource: body?.hookSource,
+        cwd: body?.cwd,
+        endReason: body?.endReason,
+      });
     }
 
     const apiResponse = handleSessionRegistryApiRequest(options.store, {
