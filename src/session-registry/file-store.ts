@@ -1504,18 +1504,28 @@ function buildIndex(records: Iterable<StoredSessionRegistryRecord>): SessionRegi
 }
 
 function compareByFreshness(
-  left: Pick<SessionRegistryListItem, "lastSeenAt" | "updatedAt">,
-  right: Pick<SessionRegistryListItem, "lastSeenAt" | "updatedAt">,
+  left: Pick<SessionRegistryListItem, "lastSeenAt" | "updatedAt" | "trustedLastSignalAt">,
+  right: Pick<SessionRegistryListItem, "lastSeenAt" | "updatedAt" | "trustedLastSignalAt">,
 ): number {
-  const leftSeen = left.lastSeenAt ? Date.parse(left.lastSeenAt) : Number.NEGATIVE_INFINITY;
-  const rightSeen = right.lastSeenAt ? Date.parse(right.lastSeenAt) : Number.NEGATIVE_INFINITY;
-  if (leftSeen !== rightSeen) {
-    return rightSeen - leftSeen;
-  }
+  // Use the most recent of (trustedLastSignalAt, lastSeenAt, updatedAt) as
+  // the freshness key. The discovery worker tracks lastSeenAt from
+  // workspace.yaml mtime, which lags real user activity by minutes/hours
+  // for sessions that aren't constantly writing turns to disk. Trusted
+  // hook signals (prompt.submitted, session.started, session.ended) are
+  // the truest signal of "this session was just used."
+  const leftKey = freshnessKey(left);
+  const rightKey = freshnessKey(right);
+  return rightKey - leftKey;
+}
 
-  const leftUpdated = Date.parse(left.updatedAt);
-  const rightUpdated = Date.parse(right.updatedAt);
-  return rightUpdated - leftUpdated;
+function freshnessKey(
+  entry: Pick<SessionRegistryListItem, "lastSeenAt" | "updatedAt" | "trustedLastSignalAt">,
+): number {
+  const candidates = [entry.trustedLastSignalAt, entry.lastSeenAt, entry.updatedAt]
+    .filter((value): value is string => typeof value === "string" && value.length > 0)
+    .map((value) => Date.parse(value))
+    .filter((value) => Number.isFinite(value));
+  return candidates.length > 0 ? Math.max(...candidates) : Number.NEGATIVE_INFINITY;
 }
 
 function matchesText(
