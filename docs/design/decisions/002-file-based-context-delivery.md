@@ -46,6 +46,17 @@ The context directory is excluded from Git (via `.gitignore`) and regenerated on
 - The PAW workflow skill needs to recognize and load the `context/` directory. This is a coordination point between Streamliner and the PAW skill system.
 - Generated context files should be clearly marked as generated (e.g., with a header comment) to prevent confusion with manually authored artifacts.
 
+### 2026-04-29 update: pre-claim context packages
+
+Backend context preparation can run before a launch claim exists, especially for
+prompt preview and non-PAW launch profiles. In that pre-claim state, Streamliner
+writes generated packages to
+`~/.streamliner/state/{projectKey}/{workstream-id}/launch-contexts/{contextId}/`
+with a manifest containing `launchNonce: null`. Launch-claim binding may later
+associate the returned `contextId` with a nonce-scoped launch archive or copy the
+package into `launches/{launchNonce}/context/`; context assembly itself does not
+require a nonce to produce a stable package reference.
+
 ## Open questions
 
 - **Archive retention policy**: How long are launch context archives kept? Options: last N launches per workstream, last N days, unbounded until manual clean. Resolve before launching multi-day PAW workflows routinely, because that is where forensic replay matters most.

@@ -78,6 +78,7 @@ Launch preparation output:
 | `cwd` | string | Worktree or checkout path where the session should run |
 | `branch` | string | Branch name created or checked out |
 | `contextPackagePath` | string | File path containing the generated Layer 0–3 context package |
+| `contextPackageManifestPath` | string | File path containing the generated context package manifest |
 | `launchProfileId` | string | Selected launch profile |
 | `cliArgs` | string[] | Copilot CLI arguments after layered defaults and builder overrides |
 | `environment` | string | `local` in this design |
@@ -174,12 +175,13 @@ Assembled from the graph and tracker:
 
 ### Delivery Mechanism
 
-Context is delivered as files written into a launch context directory. For a PAW profile, that directory may live under a PAW work directory created by profile-specific setup; for a non-PAW profile, it may live under Streamliner's local runtime state for the launch. The kickoff prompt points the worker session at these files during initialization. See [Decision 002](decisions/002-file-based-context-delivery.md) for the rationale.
+Context is delivered as files written into a launch context package directory. For a PAW profile, the caller may provide a package output directory created by profile-specific setup; for a non-PAW profile or prompt preview, Streamliner writes the package under local runtime state. The kickoff prompt points the worker session at these files during initialization. See [Decision 002](decisions/002-file-based-context-delivery.md) for the rationale.
 
-The assembled context is written to:
+The assembled package is written to:
 
 ```
-<launch-context-dir>/
+<launch-context-package-dir>/
+  manifest.json
   context/
     layer-0-design.md       ← front-loaded design docs + pointers into the wider design set
     layer-1-intent.md       ← extracted brief sections
@@ -187,7 +189,65 @@ The assembled context is written to:
     layer-3-node.md         ← node spec + wave context
 ```
 
-These files are generated, not manually maintained. They are excluded from Git and regenerated on each launch. Launch profiles decide how prominently the worker is instructed to read them.
+These files are generated, not manually maintained. They are excluded from Git and regenerated for each context preparation. Launch profiles decide how prominently the worker is instructed to read them. Each generated layer file starts with a header naming the context id, node id, launch nonce when one exists, brief freshness, generation time, and a "do not edit" marker.
+
+Before launch claims exist, backend context preview writes default packages to:
+
+```text
+~/.streamliner/state/{projectKey}/{workstreamId}/launch-contexts/{contextId}/
+```
+
+`contextId` is a stable per-package identifier returned by the backend. Repeated preparations create fresh package directories rather than overwriting earlier packages. Later launch-claim binding may associate a returned `contextId` with a `launchNonce` or copy the package into a nonce-scoped launch archive; this context assembly slice does not require a nonce up front.
+
+### Context Package Manifest
+
+`manifest.json` is the backend-facing package contract consumed by launch profiles, prompt preview, and terminal launch work:
+
+| Field | Meaning |
+|-------|---------|
+| `schemaVersion` | Manifest schema version. Starts at `1`. |
+| `generatorVersion` | Context assembler version. Starts at `1`. |
+| `contextId` | Stable identifier for this generated package. |
+| `launchNonce` | Launch nonce when known; `null` during prompt preview or pre-claim context preparation. |
+| `launchClaimRef` | Future launch-claim association; `null` until claim binding owns it. |
+| `projectKey`, `workstreamId`, `nodeId` | Source workstream identity. |
+| `targetRepoIds` | Graph repo ids targeted by the selected node. |
+| `graphPath`, `workstreamDir`, `repoRoot` | Local source locations used during preparation. |
+| `generatedAt` | ISO timestamp for package freshness. |
+| `contextPackagePath`, `manifestPath` | Absolute package and manifest paths for downstream local consumers. |
+| `layers` | Layer id, generated file path, relative file path, and source references for each Layer 0-3 file. |
+| `sourceReferences` | Graph, brief, design, tracker, and local-spec references with git object hashes or content hashes when available. |
+| `layer0Selection` | Deterministic design-doc selection with rationale and inclusion status. |
+| `unavailableInputs` | Missing or degraded optional inputs, such as unavailable tracker bodies or missing design docs. |
+
+### Backend Preparation API
+
+The local API exposes context assembly as:
+
+```http
+POST /api/launch-contexts
+```
+
+Request body:
+
+| Field | Required | Meaning |
+|-------|----------|---------|
+| `nodeId` | yes | Selected graph node id. |
+| `graphPath` | no | Graph file to use; defaults to the API-configured graph path. |
+| `outputDir` | no | Absolute package directory supplied by profile-specific setup. Defaults to runtime-state `launch-contexts/{contextId}`. |
+| `launchNonce` | no | Optional nonce when a caller already has one. |
+
+Response body:
+
+| Field | Meaning |
+|-------|---------|
+| `contextId` | Stable generated package id. |
+| `contextPackagePath` | Absolute package directory. |
+| `manifestPath` | Absolute manifest path. |
+| `manifest` | Full manifest object. |
+| `unavailableInputs` | Convenience copy of `manifest.unavailableInputs`. |
+
+Missing or invalid graph/node request inputs are client errors. Missing optional context sources are recorded in `unavailableInputs` while still producing a package.
 
 ## Session Lifecycle
 
