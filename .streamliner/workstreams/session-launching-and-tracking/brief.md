@@ -76,29 +76,22 @@ control-state integration). The workstream's intended design is written down,
 including the split between SDK-based launch preparation and Copilot CLI
 interactive worker launch.
 
-Wave 2 is the active focus, reoriented per issue #9 to deliver a **manual
-session registry** before the launch pipeline. Issue #13
-(`manual-session-registry-ui`) is complete via merged PR #14. It landed the local
-file-backed registry and Sessions surface, and hot work pulled trusted Copilot
-CLI session tracking into the same branch: plugin hook signals, trusted/default
-visibility, activity/context indexing, derived worktree/branch/GitHub refs,
-activity status, restart copy actions, and related design-doc updates. This
-remains the right Wave 2 center of gravity — restart-resilient session visibility
-before launch-from-graph — but the remaining planned observation and relaunch
-nodes need a scope review so they consume what #14 landed instead of duplicating
-it. Launch-from-graph and graph overlay remain later waves and should register
-into / project from the Wave 2 registry rather than introducing parallel
-surfaces. Issue #15 is complete: Windows Terminal tab color is feasible only as
-an optional launch-time convenience for new tabs via `wt new-tab --tabColor`, not
-as core relaunch behavior and not as a contract for recoloring existing tabs.
-Issue #17 (`session-dashboard-sync`) is complete. It accepted a standalone local
-Streamliner API process as the synchronization hub for the local session
-registry: dashboard pages, Vite dev/preview frontends, direct API callers, and
-future graph/session surfaces all talk to the same API process rather than each
-Vite instance owning registry workers independently. Issue #29 now tracks
-`session-relaunch` as the local Wave 2 relaunch task: restore a tracked session
-at its recorded `cwd` through the local API, with Copilot resume and Windows
-Terminal color treated as best-effort enhancements.
+Wave 2 is complete. The workstream reoriented per issue #9 to deliver a
+**manual session registry** before the launch pipeline, then completed the
+`manual-registry-usable` checkpoint through issues #13, #15, #17, and #29.
+Issue #13 (`manual-session-registry-ui`, PR #14) landed the local file-backed
+registry and Sessions surface, and hot work pulled trusted Copilot CLI session
+tracking into the same branch: plugin hook signals, trusted/default visibility,
+activity/context indexing, derived worktree/branch/GitHub refs, activity status,
+restart copy actions, and related design-doc updates. Issue #15 resolved Windows
+Terminal tab color as optional launch-time presentation metadata, not core
+relaunch behavior. Issue #17 accepted a standalone local Streamliner API process
+as the registry synchronization hub. Issue #29 completed local session relaunch:
+restore a tracked session at its recorded `cwd` through the local API, with
+Copilot resume and Windows Terminal color treated as best-effort enhancements.
+The next ready Wave 3 work is launch-from-graph preparation: backend context
+assembly and launch-claim binding. The remaining planned observation work still
+needs a scope review so it consumes what PR #14 landed instead of duplicating it.
 
 ## Decisions
 - Use repo-local `.streamliner/workstreams/` for Streamliner's committed

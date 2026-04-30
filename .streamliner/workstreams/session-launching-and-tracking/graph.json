@@ -7,7 +7,7 @@
   "status": "active",
   "attention": "focus",
   "createdAt": "2026-04-10T15:37:14.125Z",
-  "updatedAt": "2026-04-28T20:38:56.000Z",
+  "updatedAt": "2026-04-29T22:05:15.000Z",
   "trackingIssue": {
     "owner": "lossyrob",
     "repo": "streamliner",
@@ -168,8 +168,8 @@
       "id": "session-relaunch",
       "type": "task",
       "title": "Session relaunch",
-      "summary": "Reopen a tracked session after a restart: open a terminal at the recorded cwd and, when the Copilot CLI session id is still resolvable, resume that session directly. Minimum viable version restores the tab at the right cwd; Windows Terminal tab color is optional presentation metadata only and must not block relaunch. Copilot CLI resume is a stretch within the same node.",
-      "status": "ready",
+      "summary": "Completed: relaunch restores a tracked session at its recorded cwd through the local API. Copilot resume and Windows Terminal tab color remain best-effort enhancements; relaunch correctness is cwd recovery through the primary session registry surface.",
+      "status": "completed",
       "attention": "focus",
       "repoIds": ["streamliner"],
       "tracker": {
@@ -201,7 +201,7 @@
       "type": "task",
       "title": "Backend context assembly",
       "summary": "Assemble the Layer 0-3 launch payload inputs on the backend per the session system design: read design docs, extract brief sections, and resolve node specs so the SDK launch-prep step can write the context files after paw-init creates the PAW work directory.",
-      "status": "planned",
+      "status": "ready",
       "attention": "watch",
       "repoIds": ["streamliner"],
       "dependsOn": ["manual-session-registry-ui", "session-relaunch"]
@@ -211,7 +211,7 @@
       "type": "task",
       "title": "Launch claim binding",
       "summary": "Record launch claims before terminal startup and bind discovered sessions using a launch nonce plus cwd/branch/window guardrails so the visible Copilot CLI session attaches to the correct graph node. Launched sessions also register into the Wave 2 session registry rather than introducing a parallel tracking surface. Independent of the SDK-prep chain and can land in parallel.",
-      "status": "planned",
+      "status": "ready",
       "attention": "focus",
       "repoIds": ["streamliner"],
       "dependsOn": ["manual-session-registry-ui", "session-relaunch"]
@@ -289,7 +289,7 @@
       "id": "manual-registry-usable",
       "title": "Manual session registry usable",
       "summary": "Streamliner persists a local, graph-independent registry of Copilot sessions with autosaved titles/descriptions/colors and can relaunch them after a restart.",
-      "status": "planned",
+      "status": "completed",
       "nodeIds": [
         "registry-first-reorientation",
         "session-registry-model",
