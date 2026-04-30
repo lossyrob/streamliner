@@ -15,11 +15,11 @@ references_decisions:
 
 # Context Package
 
-AI agents start every session as blank slates. Human teams carry shared context in memory and habit. The context package replaces that with one generated orientation file containing layered sections and references.
+AI agents start every session as blank slates. Human teams carry shared context in memory and habit. The context package replaces that with one SDK-synthesized orientation file containing layered sections and references.
 
 The context package is designed to be:
 
-- **Complete enough to navigate** — enough orientation and links to act responsibly
+- **Complete enough to navigate** — enough synthesized orientation and links to act responsibly
 - **Layered conceptually** — each role gets what it needs without forcing multiple files
 - **Progressive** — broad context first, deeper context only when needed
 - **Bounded** — small enough to fit inside a useful context budget
@@ -30,19 +30,19 @@ The project's intended design: a reference index to the design docs and decision
 
 Answers: What system are we building? What constraints are in force? What rationale must be honored?
 
-## Layer 1 — Workstream Intent
+## Layer 1 — Worker Mission
 
-The workstream's durable intent: Purpose, Approach, Design References, and Boundaries.
+The selected node's concrete responsibility, key boundaries, and direct source-of-truth references.
 
-This is how the builder narrows project-level design into a specific effort — defining the workstream's boundaries and design surface. Design References are navigation hints about where to start, not an exhaustive allowlist over the wider design layer.
+This is where SDK synthesis matters most: the workstream's durable intent is source material, but the generated context must not make the worker think it owns the whole workstream.
 
-## Layer 2 — Operational State
+## Layer 2 — Relevant State
 
-The current situation: Current State, Decisions, and Open Questions.
+The current situation that affects this worker: relevant state, decisions, constraints, and missing inputs.
 
-This layer orients the orchestrator and builder to what just happened, what is in flight, and what comes next. It is a durable summary, not a telemetry feed. Session runtime state, tracker caches, and launch metadata live outside the committed artifact layer.
+This layer orients the worker to what just happened, what is in flight, and what matters for the selected node. Session runtime state, tracker caches, and launch metadata live outside the committed artifact layer.
 
-## Layer 3 — Node Context
+## Layer 3 — Coordination Context
 
 What a worker receives for a specific node: wave context, node spec reference, coordination notes, and any node-specific design narrowing.
 

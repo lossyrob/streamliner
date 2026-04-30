@@ -93,6 +93,22 @@ artifact. If Layer 0 selection logging later needs to be durable for forensic
 review, it belongs in backend metadata or launch records rather than a generated
 manifest file.
 
+### 2026-04-30 update: SDK-synthesized worker context
+
+The backend now uses Copilot SDK to synthesize the worker-facing `context.md`
+from deterministic source material: graph data, workstream brief, selected
+design docs, tracker/spec content when available, source references, freshness,
+and unavailable-input diagnostics. Deterministic code still owns source
+collection, metadata, package paths, and error reporting; Copilot SDK owns the
+markdown synthesis step.
+
+This is required because the workstream brief and graph contain process-level
+language that is useful background but can confuse a worker if copied or
+procedurally extracted. The SDK prompt must ask for context for exactly the
+selected node, distinguish worker responsibility from workstream background, and
+avoid converting sibling/wave/workstream descriptions into tasks assigned to the
+worker.
+
 ## Open questions
 
 - **Archive retention policy**: How long are launch context archives kept? Options: last N launches per workstream, last N days, unbounded until manual clean. Resolve before launching multi-day PAW workflows routinely, because that is where forensic replay matters most.

@@ -60,10 +60,10 @@ The launch is a two-phase process: a **launch preparation phase** that prepares 
 
 #### Phase 1 — Launch Preparation
 
-Streamliner's backend prepares a launch spec. It may use Copilot SDK for context assembly when an LLM is useful, but the contract is the structured launch spec, not a mandatory SDK or PAW workflow. Preparation:
+Streamliner's backend prepares a launch spec. Context assembly uses Copilot SDK to synthesize the worker-facing `context.md` from deterministic backend-collected sources; the visible worker session remains a separate Copilot CLI interactive session. The launch contract is the structured launch spec, not a mandatory PAW workflow. Preparation:
 
 1. **Resolves launch profile layers** — combines instance, project, workstream, and node-launch defaults for instruction text, workflow expectations, context references, terminal preferences, and CLI arguments
-2. **Assembles context** — builds a single worker-facing context file for the node with Layer 0–3 sections that index design docs, extract brief sections, reference node specs, and capture relevant sibling/upstream context
+2. **Assembles context** — collects graph, brief, design-doc, and tracker/spec source material, then asks Copilot SDK to build a single worker-facing context file for the selected node with Layer 0–3 sections
 3. **Prepares the execution location** — resolves the checkout or worktree path and branch according to the selected execution mode. A profile may run profile-specific setup, such as PAW initialization, but that setup is not required by the baseline launch contract.
 4. **Places the context file** — writes the assembled context package into a launch context directory that the kickoff prompt can reference
 5. **Generates launch claim data** — creates the launch nonce and expected binding metadata that Streamliner will record before starting Copilot CLI
@@ -134,7 +134,7 @@ Opening a terminal in the correct directory is not a launch. A launch is only co
 
 ## Context Assembly
 
-Context assembly builds a single worker-facing `context.md` that orients a worker session to a node's mission without copying authoritative source material wholesale. The file preserves the conceptual Layer 0–3 sections, but delivery is consolidated so the worker has one file to read. Context assembly runs inside launch preparation. Streamliner may use Copilot SDK or another LLM-backed helper to make intelligent decisions about what context to reference or synthesize, but the output is a file-based context package that launch profiles and the kickoff prompt can reference.
+Context assembly builds a single worker-facing `context.md` that orients a worker session to a node's mission without copying authoritative source material wholesale. The file preserves the conceptual Layer 0–3 sections, but delivery is consolidated so the worker has one file to read. Context assembly runs inside launch preparation. Streamliner deterministically collects source material and metadata, then uses Copilot SDK to synthesize the markdown so workstream-level background can be reframed as worker-relevant context instead of conflicting task instructions.
 
 ### Layer 0 — Project Design Context
 
@@ -147,26 +147,25 @@ Layer 0 starts from the repo's configured design docs path, using the workstream
 
 Design docs are already committed files. Layer 0 is a generated reference index, not a copied design-doc bundle. The worker reads the authoritative docs directly from the target repo (or registered design repo) at the current HEAD, using Layer 0 as a navigation aid.
 
-### Layer 1 — Workstream Intent
+### Layer 1 — Worker Mission
 
-Extracted from the workstream's `brief.md`:
+Synthesized from the selected node's tracker/spec, the graph node, and relevant workstream intent:
 
-- Purpose
-- Approach
-- Design References
-- Boundaries
+- The selected node's concrete responsibility
+- Key boundaries and non-goals for this worker
+- Relevant source-of-truth links the worker should read directly
 
-### Layer 2 — Operational State
+### Layer 2 — Relevant State
 
-Extracted from the workstream's `brief.md`:
+Synthesized from workstream state, decisions, and source metadata:
 
-- Current State
-- Decisions
-- Open Questions
+- Current state that affects this node
+- Decisions and constraints that change how the worker should approach the node
+- Missing or degraded context inputs when they are actionable
 
-### Layer 3 — Node Context
+### Layer 3 — Coordination Context
 
-Assembled from the graph and tracker reference:
+Synthesized from the graph neighborhood and tracker/spec references:
 
 - **Wave context**: which checkpoint/wave the node belongs to, what preceded it, what follows
 - **Node spec reference**: the GitHub issue URL or local spec file path; the worker reads that source directly
@@ -184,7 +183,7 @@ The assembled package is written to:
   context.md                ← worker-facing Layer 0-3 context sections
 ```
 
-This file is generated, not manually maintained. It is excluded from Git and regenerated for each context preparation. Launch profiles decide how prominently the worker is instructed to read it. Generated context should synthesize launch-time orientation and link to authoritative sources instead of restating design docs or tracker specs in full. Machine metadata remains in the backend/API response rather than in a worker-facing manifest file.
+This file is generated by Copilot SDK, not manually maintained. It is excluded from Git and regenerated for each context preparation. Launch profiles decide how prominently the worker is instructed to read it. The SDK prompt must instruct the generator to treat source documents as data, produce context for exactly the selected node, avoid turning workstream-level plans into worker instructions, and link to authoritative sources instead of restating design docs or tracker specs in full. Machine metadata remains in the backend/API response rather than in a worker-facing manifest file.
 
 Before launch claims exist, backend context preview writes default packages to:
 
