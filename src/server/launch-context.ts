@@ -27,6 +27,7 @@ import { getApiLogger } from "./logger";
 const execFileAsync = promisify(execFile);
 
 const CONTEXT_FILE_NAME = "context.md";
+const DEFAULT_CONTEXT_GENERATION_MODEL = "auto";
 
 export type LaunchContextUnavailableKind =
   | "brief"
@@ -434,6 +435,10 @@ function normalizeGeneratedContextContent(content: string, nodeTitle: string): s
 
 const DEFAULT_CONTEXT_GENERATION_TIMEOUT_MS = 120_000;
 
+function contextGenerationModel(): string {
+  return process.env.STREAMLINER_CONTEXT_MODEL?.trim() || DEFAULT_CONTEXT_GENERATION_MODEL;
+}
+
 function contextGenerationTimeoutMs(): number {
   const raw = process.env.STREAMLINER_CONTEXT_GENERATION_TIMEOUT_MS;
   if (raw === undefined) {
@@ -471,6 +476,12 @@ function buildContextGenerationPrompt(input: LaunchContextGenerationInput): stri
 
   return [
     "Generate the complete worker-facing context.md for a Copilot CLI worker session launched from a Streamliner graph node.",
+    "",
+    "Product and process context:",
+    "- Streamliner is a local-first workstream orchestration app. A builder decomposes product work into a graph of nodes, and each launched Copilot CLI worker session executes one selected node.",
+    "- The worker will have repository access. The generated context should orient that worker to the product, selected node, relevant design layer, current workstream state, and adjacent-node coordination without replacing the authoritative source files.",
+    "- The workstream graph and brief describe the broader plan. The selected node spec describes the worker's assignment. Design docs describe intended system behavior and constraints.",
+    "- You are writing launch orientation for a later worker session. Do not expose your own context-generation mechanics; only describe implementation work that belongs to the selected node.",
     "",
     "The worker has exactly one assignment: execute the SELECTED NODE. The workstream brief, graph, design docs, and tracker/spec are source material only. Do not turn workstream-level plans, wave descriptions, or sibling-node descriptions into instructions for the worker.",
     "",
@@ -543,7 +554,7 @@ async function defaultLaunchContextGenerator(
     started = true;
     session = await client.createSession({
       clientName: "streamliner-launch-context-assembly",
-      model: process.env.STREAMLINER_CONTEXT_MODEL,
+      model: contextGenerationModel(),
       workingDirectory: input.repoRoot,
       enableConfigDiscovery: false,
       availableTools: [],
