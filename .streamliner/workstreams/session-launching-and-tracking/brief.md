@@ -2,8 +2,10 @@
 
 ## Purpose
 Dogfood Streamliner by using it to manage the buildout of launching and tracking
-PAW worker sessions from the graph. Establish the repo-local workstream setup
-that Streamliner itself should support for small, single-repo projects.
+Copilot worker sessions from the graph. Establish the repo-local workstream
+setup that Streamliner itself should support for small, single-repo projects,
+with PAW treated as one configurable launch profile rather than the only
+workflow Streamliner can start.
 
 ## Approach
 Bootstrap Streamliner's own `docs/design/` set from the current root docs first,
@@ -16,7 +18,7 @@ Build the feature in waves:
   and run explicit design sessions so the launch contract, runtime model, and
   key design decisions are written down before the downstream implementation
   issue graph is finalized.
-- **Wave 2 — Manual session registry (current focus):** ship a local-first,
+- **Wave 2 — Manual session registry (done):** ship a local-first,
   graph-independent registry of Copilot CLI sessions. Persist per-session
   metadata (title, description, color, cwd, repo, status, last-seen) under the
   local runtime-state root, autosave on edit, import/discover existing sessions
@@ -25,13 +27,15 @@ Build the feature in waves:
   session context after a Windows restart — without needing the launch
   pipeline. Treats the registry as the primary session surface; the graph
   overlay is a later projection of it.
-- **Wave 3 — Launch from graph:** Copilot SDK launch prep (context assembly,
-  `paw-init`, kickoff-prompt compilation), launch-claim binding, and the
-  Copilot CLI interactive worker launch. Launches register into the Wave 2
-  registry rather than introducing a parallel tracking surface.
-- **Wave 4 — Runtime overlay on the graph:** extend observation with PAW
-  control state, turn boundaries, and hook signals, and project the registry
-  plus observed state onto graph nodes in the UI.
+- **Wave 3 — Launch from graph:** launch preparation (context assembly, launch
+  profile and prompt assembly, default CLI args, optional profile-specific setup
+  such as PAW initialization), launch-claim binding, and the Copilot CLI
+  interactive worker launch. Launches register into the Wave 2 registry rather
+  than introducing a parallel tracking surface.
+- **Wave 4 — Runtime overlay on the graph:** project registry state, launch
+  bindings, and observed session liveness onto graph nodes in the UI. PAW
+  control state is optional workflow enrichment for PAW-backed launches, not a
+  prerequisite for the graph launch and tracking loop.
 
 Keep committed workstream artifacts limited to durable planning state.
 Session IDs, observed session state, tracker snapshots, and launch metadata
@@ -53,17 +57,17 @@ derived UI state rather than written back into `graph.json`.
 
 ## Boundaries
 - **In scope:** Repo-local Streamliner initialization, design-doc bootstrap,
-  launch contract, context assembly, Copilot SDK preparation (`paw-init`,
-  context writing, kickoff-prompt compilation), Copilot CLI interactive
-  launch, manual session registry (local persistence, UI list/edit, color
-  assignment, relaunch at cwd), observation-based session tracking, runtime
-  overlay in the UI
-- **Out of scope:** Non-PAW launch modes, non-GitHub tracker integrations,
-  remote multi-machine tracking, devbox session observation, a general
-  orchestration platform
+  launch contract, context assembly, launch prompt profiles, layered launch
+  instructions, default Copilot CLI arguments, Copilot CLI interactive launch,
+  manual session registry (local persistence, UI list/edit, color assignment,
+  relaunch at cwd), observation-based session tracking, runtime overlay in the
+  UI
+- **Out of scope:** Non-Copilot worker runtimes, non-GitHub tracker
+  integrations, remote multi-machine tracking, devbox session observation, a
+  general orchestration platform
 - **Deferred:** Rich session control beyond launch/relaunch/status, full
   tracker abstraction across ADO/Linear, automatic promotion of runtime
-  facts into committed artifact state, automatic session-to-node binding,
+  facts into committed artifact state, deep PAW workflow orchestration,
   multi-machine sync of the registry
 
 ## Current State
@@ -73,8 +77,8 @@ shipped the repo-scoped `docs/design/` set. Issue #5
 design doc (`docs/design/session-system.md`) and three accepted decision
 records (observation-based session tracking, file-based context delivery, PAW
 control-state integration). The workstream's intended design is written down,
-including the split between SDK-based launch preparation and Copilot CLI
-interactive worker launch.
+including the split between launch preparation and Copilot CLI interactive
+worker launch.
 
 Wave 2 is complete. The workstream reoriented per issue #9 to deliver a
 **manual session registry** before the launch pipeline, then completed the
@@ -89,9 +93,17 @@ relaunch behavior. Issue #17 accepted a standalone local Streamliner API process
 as the registry synchronization hub. Issue #29 completed local session relaunch:
 restore a tracked session at its recorded `cwd` through the local API, with
 Copilot resume and Windows Terminal color treated as best-effort enhancements.
-The next ready Wave 3 work is launch-from-graph preparation: backend context
-assembly and launch-claim binding. The remaining planned observation work still
-needs a scope review so it consumes what PR #14 landed instead of duplicating it.
+Wave 3 is now framed around configurable launch from the graph rather than a
+mandatory PAW bootstrap path. The next ready work is backend context assembly,
+launch-claim binding, and launch prompt/profile definition: layered instruction
+text at Streamliner instance, project, workstream, and node-launch scopes; final
+editable prompt preview; context package references; and default Copilot CLI
+arguments such as `--yolo`. PAW remains an important preset/instruction style,
+but PAW workflow status is not a completion blocker for this workstream. The
+remaining observation work should consume what PR #14 landed instead of
+duplicating it. The ready Wave 3 nodes are now tracked by GitHub issues:
+`backend-context-assembly` is #31, `launch-claim-binding` is #32, and
+`launch-prompt-profiles` is #33.
 
 ## Decisions
 - Use repo-local `.streamliner/workstreams/` for Streamliner's committed
@@ -113,16 +125,22 @@ needs a scope review so it consumes what PR #14 landed instead of duplicating it
   workstream design is still implicit in the brief and graph.
 - Bootstrap `docs/design/` before building launch plumbing so later work uses
   real design references instead of transitional root documents.
-- Use Copilot SDK for launch preparation (context assembly, `paw-init`, kickoff
-  prompt compilation) and Copilot CLI interactive mode for the visible worker
-  session.
+- Use launch profiles and prompt profiles as first-class launch inputs. Profiles
+  may contribute instruction text, context references, workflow defaults,
+  terminal preferences, and Copilot CLI arguments from instance, project,
+  workstream, and node-launch scopes, with a final builder-editable prompt before
+  launch.
+- Keep PAW as one launch profile/instruction style, not the baseline launch
+  contract. A PAW profile may run profile-specific setup and point the worker at
+  PAW expectations, but launch-from-graph is complete when Streamliner can start
+  a correctly prompted Copilot CLI session, bind it to the node, and track it in
+  the registry.
 - Bind launched sessions through a launch claim keyed by launch nonce plus
   `cwd`/branch/window guardrails rather than `cwd` alone.
-- Read PAW `## Control State` (including `Workflow Identity`) from
-  `WorkflowContext.md` / `ReviewContext.md` as the authoritative source for
-  workflow progression in the runtime overlay, keeping session liveness
-  (Copilot session state) and workflow progression (PAW control state) as
-  two orthogonal observation sources.
+- For PAW-backed sessions, read PAW `## Control State` (including `Workflow
+  Identity`) from `WorkflowContext.md` / `ReviewContext.md` as optional workflow
+  enrichment in the runtime overlay. Session liveness and launch tracking remain
+  registry/Copilot-session concerns and must work when no PAW artifact exists.
 - Treat the **session registry as the primary session surface** ([Decision
   004](docs/design/decisions/004-session-registry-primary-surface.md)); the
   graph overlay is a projection of the registry. Pull manual tracking ahead of
@@ -148,5 +166,8 @@ needs a scope review so it consumes what PR #14 landed instead of duplicating it
   IDE terminal APIs?
 - How should Streamliner observe remote session-state roots for devbox-launched
   sessions?
-- Post-PR #14 scope review: how should `session-event-observation` be re-cut so
-  it only covers work not already absorbed by issue #13 / PR #14?
+- Which launch profile fields belong in committed project/workstream config
+  versus local builder defaults?
+- What is the minimum remaining `session-event-observation` scope after issue
+  #13 / PR #14's trusted hook signals, activity indexing, and registry status
+  work?
