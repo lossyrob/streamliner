@@ -28,6 +28,10 @@ const execFileAsync = promisify(execFile);
 
 const CONTEXT_FILE_NAME = "context.md";
 const DEFAULT_CONTEXT_GENERATION_MODEL = "auto";
+const DEFAULT_PROMPT_SOURCE_LIMIT_CHARS = 20_000;
+const JSON_PROMPT_SOURCE_LIMIT_CHARS = 24_000;
+const DESIGN_PROMPT_SOURCE_LIMIT_CHARS = 12_000;
+const TOTAL_PROMPT_SOURCE_LIMIT_CHARS = 120_000;
 
 export type LaunchContextUnavailableKind =
   | "brief"
@@ -79,6 +83,7 @@ export interface LaunchContextMetadata {
   generatedAt: string;
   contextPackagePath: string;
   contextFilePath: string;
+  contextModel: string;
   sourceReferences: LaunchContextSourceReference[];
   unavailableInputs: LaunchContextUnavailableInput[];
 }
@@ -185,6 +190,22 @@ function sourceDisplayPath(absPath: string, repoRoot: string): string {
     return normalizeManifestPath(rel);
   }
   return normalizeManifestPath(absPath);
+}
+
+function safeRelativeInputPath(path: string): string | null {
+  const normalized = normalizeManifestPath(path).trim();
+  if (!normalized || normalized.startsWith("/") || /^[A-Za-z]:/.test(path) || normalized.includes("\0")) {
+    return null;
+  }
+  const segments = normalized.split("/");
+  if (segments.some((segment) => !segment || segment === "." || segment === "..")) {
+    return null;
+  }
+  return segments.join("/");
+}
+
+function isDesignDocPath(path: string): boolean {
+  return path.startsWith("docs/design/") && path.endsWith(".md");
 }
 
 function isErrno(error: unknown, code: string): boolean {
@@ -358,15 +379,46 @@ function sourceBlockTitle(title: string): string {
   return title.replace(/[<>\r\n]+/g, " ").replace(/\s+/g, " ").trim() || "SOURCE";
 }
 
+class PromptSourceBudget {
+  private remaining = TOTAL_PROMPT_SOURCE_LIMIT_CHARS;
+
+  use(content: string | undefined, maxChars: number, label: string): string | undefined {
+    if (content === undefined) {
+      return undefined;
+    }
+    const trimmed = content.trim();
+    if (!trimmed) {
+      return trimmed;
+    }
+    if (this.remaining <= 0) {
+      return `[Source omitted from prompt budget: ${label}. Read the authoritative source directly if needed.]`;
+    }
+    const limit = Math.min(maxChars, this.remaining);
+    this.remaining -= Math.min(trimmed.length, limit);
+    if (trimmed.length <= limit) {
+      return trimmed;
+    }
+    const omitted = trimmed.length - limit;
+    return [
+      trimmed.slice(0, limit),
+      "",
+      `[Source truncated for prompt budget: ${omitted} characters omitted from ${label}. Read the authoritative source directly if needed.]`,
+    ].join("\n");
+  }
+}
+
 function sourceBlock(
   title: string,
   content: string | undefined,
   boundaryToken: string,
+  budget: PromptSourceBudget,
+  maxChars = DEFAULT_PROMPT_SOURCE_LIMIT_CHARS,
 ): string {
   const safeTitle = sourceBlockTitle(title);
+  const promptContent = budget.use(content, maxChars, safeTitle);
   return [
     `<<<${boundaryToken}:BEGIN ${safeTitle}>>>`,
-    content?.trim() || "_Unavailable._",
+    promptContent || "_Unavailable._",
     `<<<${boundaryToken}:END ${safeTitle}>>>`,
   ].join("\n");
 }
@@ -388,6 +440,24 @@ function promptSourceContents(input: LaunchContextGenerationInput): string[] {
     input.trackerSource?.content ?? "",
     ...input.designSources.map((source) => source.content ?? ""),
   ];
+}
+
+function workerFacingDesignHints(selection: LaunchContextLayer0Selection[]) {
+  return selection.map((entry) => ({
+    repoId: entry.repoId,
+    path: entry.path,
+    included: entry.included,
+  }));
+}
+
+function workerFacingSourceReferences(references: LaunchContextSourceReference[]) {
+  return references.map((reference) => ({
+    kind: reference.kind,
+    role: reference.role,
+    path: reference.path,
+    repoId: reference.repoId,
+    url: reference.url,
+  }));
 }
 
 function createPromptBoundaryToken(input: LaunchContextGenerationInput): string {
@@ -455,31 +525,35 @@ function contextGenerationTimeoutMs(): number {
   return DEFAULT_CONTEXT_GENERATION_TIMEOUT_MS;
 }
 
-function buildContextGenerationPrompt(input: LaunchContextGenerationInput): string {
+export function buildContextGenerationPrompt(input: LaunchContextGenerationInput): string {
   const boundaryToken = createPromptBoundaryToken(input);
-  const designSourceBlocks = input.designSources
+  const sourceBudget = new PromptSourceBudget();
+  const buildTrackerBlock = () => input.trackerSource
+    ? sourceBlock(
+      `SELECTED NODE SPEC ${input.trackerReference ?? ""}`.trim(),
+      input.trackerSource.content,
+      boundaryToken,
+      sourceBudget,
+    )
+    : sourceBlock("SELECTED NODE SPEC", input.trackerReference ?? undefined, boundaryToken, sourceBudget);
+  const buildDesignSourceBlocks = () => input.designSources
     .map((source) =>
       sourceBlock(
         `DESIGN ${source.reference.repoId ?? "repo"}:${source.reference.path ?? "unknown"}`,
         source.content,
         boundaryToken,
+        sourceBudget,
+        DESIGN_PROMPT_SOURCE_LIMIT_CHARS,
       ),
     )
     .join("\n\n");
-  const trackerBlock = input.trackerSource
-    ? sourceBlock(
-      `SELECTED NODE SPEC ${input.trackerReference ?? ""}`.trim(),
-      input.trackerSource.content,
-      boundaryToken,
-    )
-    : sourceBlock("SELECTED NODE SPEC", input.trackerReference ?? undefined, boundaryToken);
 
   return [
     "Generate the complete worker-facing context.md for a Copilot CLI worker session launched from a Streamliner graph node.",
     "",
     "Product and process context:",
     "- Streamliner is a local-first workstream orchestration app. A builder decomposes product work into a graph of nodes, and each launched Copilot CLI worker session executes one selected node.",
-    "- The worker will have repository access. The generated context should orient that worker to the product, selected node, relevant design layer, current workstream state, and adjacent-node coordination without replacing the authoritative source files.",
+    "- The worker is an AI coding agent (Copilot CLI session) with repository access. The generated context should orient that worker to the product, selected node, relevant design layer, current workstream state, and adjacent-node coordination without replacing the authoritative source files.",
     "- The workstream graph and brief describe the broader plan. The selected node spec describes the worker's assignment. Design docs describe intended system behavior and constraints.",
     "- You are writing launch orientation for a later worker session. Do not expose your own context-generation mechanics; only describe implementation work that belongs to the selected node.",
     "",
@@ -499,7 +573,9 @@ function buildContextGenerationPrompt(input: LaunchContextGenerationInput): stri
     "- Layer 0 is design navigation guidance for the worker. Tell the worker to use the repo's design docs directly, starting from docs/design/index.md when unsure.",
     "- Treat designSelection entries as non-binding hints, not a required reading list, fixed reading order, or exhaustive design scope.",
     "- If Layer 0 includes design paths, label them as hints or possible starting points and keep the list short. Do not present a rationale table that sounds like another agent assigning required reading.",
+    "- Do not mention source block names, JSON field names, source freshness hashes, or design-selection rationale labels unless they are useful worker-facing facts.",
     "- Do not include context-generation meta language such as 'generated worker context', 'synthesis step', or 'context generation constraints'.",
+    "- In Layer 3, include only nodes, checkpoints, or dependencies that directly affect or may be affected by the selected node; omit unrelated graph nodes.",
     "- Include sibling/upstream/downstream context only as coordination background, not as tasks assigned to this worker.",
     "- Include an 'Unavailable Inputs' section only when unavailable inputs are present and actionable.",
     "",
@@ -511,25 +587,25 @@ function buildContextGenerationPrompt(input: LaunchContextGenerationInput): stri
     "## Layer 3 - Coordination Context",
     "",
     "Selected node JSON:",
-    sourceBlock("SELECTED NODE JSON", JSON.stringify(input.node, null, 2), boundaryToken),
+    sourceBlock("SELECTED NODE JSON", JSON.stringify(input.node, null, 2), boundaryToken, sourceBudget, JSON_PROMPT_SOURCE_LIMIT_CHARS),
     "",
     "Workstream graph JSON:",
-    sourceBlock("WORKSTREAM GRAPH JSON", JSON.stringify(input.workstream, null, 2), boundaryToken),
+    sourceBlock("WORKSTREAM GRAPH JSON", JSON.stringify(input.workstream, null, 2), boundaryToken, sourceBudget, JSON_PROMPT_SOURCE_LIMIT_CHARS),
     "",
     "Design hint inputs JSON (non-binding starting points, not required reading):",
-    sourceBlock("DESIGN SELECTION JSON", JSON.stringify(input.designSelection, null, 2), boundaryToken),
+    sourceBlock("DESIGN HINT INPUTS JSON", JSON.stringify(workerFacingDesignHints(input.designSelection), null, 2), boundaryToken, sourceBudget, JSON_PROMPT_SOURCE_LIMIT_CHARS),
     "",
-    "Source references JSON:",
-    sourceBlock("SOURCE REFERENCES JSON", JSON.stringify(input.sourceReferences, null, 2), boundaryToken),
+    "Worker-facing source references JSON (paths and URLs only; do not print hashes or internal metadata):",
+    sourceBlock("WORKER-FACING SOURCE REFERENCES JSON", JSON.stringify(workerFacingSourceReferences(input.sourceReferences), null, 2), boundaryToken, sourceBudget, JSON_PROMPT_SOURCE_LIMIT_CHARS),
     "",
     "Unavailable inputs JSON:",
-    sourceBlock("UNAVAILABLE INPUTS JSON", JSON.stringify(input.unavailableInputs, null, 2), boundaryToken),
+    sourceBlock("UNAVAILABLE INPUTS JSON", JSON.stringify(input.unavailableInputs, null, 2), boundaryToken, sourceBudget, JSON_PROMPT_SOURCE_LIMIT_CHARS),
     "",
-    sourceBlock("WORKSTREAM BRIEF", input.briefSource.content, boundaryToken),
+    sourceBlock("WORKSTREAM BRIEF", input.briefSource.content, boundaryToken, sourceBudget),
     "",
-    trackerBlock,
+    buildTrackerBlock(),
     "",
-    designSourceBlocks || sourceBlock("DESIGN SOURCES", undefined, boundaryToken),
+    buildDesignSourceBlocks() || sourceBlock("DESIGN SOURCES", undefined, boundaryToken, sourceBudget),
   ].join("\n");
 }
 
@@ -699,7 +775,27 @@ async function resolveTrackerSource(options: {
     };
   }
 
-  const localPath = resolve(options.workstreamDir, options.tracker.path);
+  const trackerPath = safeRelativeInputPath(options.tracker.path);
+  if (!trackerPath) {
+    const source = normalizeManifestPath(options.tracker.path);
+    options.unavailableInputs.push({
+      kind: "local-tracker",
+      source,
+      reason: "invalid_path",
+      detail: "Local tracker paths must be relative paths inside the workstream directory.",
+    });
+    options.sourceReferences.push({
+      kind: "local-tracker",
+      role: "selected-node-spec",
+      path: source,
+    });
+    return {
+      referenceText: `- Local node spec: ${source} (unavailable: invalid path)`,
+      source: null,
+    };
+  }
+
+  const localPath = resolve(options.workstreamDir, ...trackerPath.split("/"));
   const source = await readSourceFile({
     absPath: localPath,
     repoRoot: options.repoRoot,
@@ -851,6 +947,7 @@ export async function prepareLaunchContextPackage(
   const workstreamDir = dirname(graphPath);
   const projectKey = workstream.projectKey ?? workstream.id;
   const stateRoot = resolve(options.stateRoot ?? defaultStateRoot());
+  const contextModel = contextGenerationModel();
   const packagePath = finalPackagePath({
     outputDir: options.outputDir,
     stateRoot,
@@ -897,31 +994,57 @@ export async function prepareLaunchContextPackage(
   const layer0Selection: LaunchContextLayer0Selection[] = [];
   const designSources: LaunchContextLoadedSource[] = [];
   for (const designReference of designReferences) {
-    if (designReference.repoId !== primaryRepoId) {
+    const designPath = safeRelativeInputPath(designReference.path);
+    if (!designPath || !isDesignDocPath(designPath)) {
+      const source = normalizeManifestPath(designReference.path);
       const reference: LaunchContextSourceReference = {
         kind: "design",
         role: "layer-0-design",
-        path: designReference.path,
+        path: source,
         repoId: designReference.repoId,
       };
       sourceReferences.push(reference);
       designSources.push({ reference });
       unavailableInputs.push({
         kind: "design",
-        source: `${designReference.repoId}:${designReference.path}`,
+        source: `${designReference.repoId}:${source}`,
+        reason: "invalid_path",
+        detail: "Design references must be relative docs/design/*.md paths.",
+      });
+      layer0Selection.push({
+        repoId: designReference.repoId,
+        path: source,
+        rationale: designReference.rationale,
+        included: false,
+      });
+      continue;
+    }
+
+    if (designReference.repoId !== primaryRepoId) {
+      const reference: LaunchContextSourceReference = {
+        kind: "design",
+        role: "layer-0-design",
+        path: designPath,
+        repoId: designReference.repoId,
+      };
+      sourceReferences.push(reference);
+      designSources.push({ reference });
+      unavailableInputs.push({
+        kind: "design",
+        source: `${designReference.repoId}:${designPath}`,
         reason: "cross_repo_unavailable",
         detail: "Context assembly currently reads design docs from the primary checkout only.",
       });
       layer0Selection.push({
         repoId: designReference.repoId,
-        path: designReference.path,
+        path: designPath,
         rationale: designReference.rationale,
         included: false,
       });
       continue;
     }
     const source = await readSourceFile({
-      absPath: join(repoRoot, ...designReference.path.split("/")),
+      absPath: join(repoRoot, ...designPath.split("/")),
       repoRoot,
       kind: "design",
       role: "layer-0-design",
@@ -933,7 +1056,7 @@ export async function prepareLaunchContextPackage(
     designSources.push(source);
     layer0Selection.push({
       repoId: designReference.repoId,
-      path: designReference.path,
+      path: designPath,
       rationale: designReference.rationale,
       included: source.content !== undefined,
     });
@@ -988,6 +1111,7 @@ export async function prepareLaunchContextPackage(
     generatedAt,
     contextPackagePath: normalizeManifestPath(packagePath),
     contextFilePath: normalizeManifestPath(contextFilePath),
+    contextModel,
     sourceReferences,
     unavailableInputs,
   };

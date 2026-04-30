@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { SessionRegistryFileStore } from "../session-registry/file-store";
 import { createStreamlinerApiApp, type StreamlinerApiApp } from "./app";
 import {
+  buildContextGenerationPrompt,
   prepareLaunchContextPackage,
   type LaunchContextGenerationInput,
   type LaunchContextGenerator,
@@ -287,6 +288,7 @@ describe("prepareLaunchContextPackage", () => {
         workstreamId: "session-launching-and-tracking",
         nodeId: "backend-context-assembly",
         targetRepoIds: ["streamliner"],
+        contextModel: "auto",
       }),
     );
     expect(result.metadata.sourceReferences).toEqual(
@@ -334,6 +336,40 @@ describe("prepareLaunchContextPackage", () => {
     );
   });
 
+  it("builds the SDK prompt with worker-facing guardrails", async () => {
+    const root = createRootDir();
+    const { graphPath, stateRoot } = buildFixture(root);
+    const generationInputs: LaunchContextGenerationInput[] = [];
+
+    await prepareLaunchContextPackage({
+      graphPath,
+      nodeId: "backend-context-assembly",
+      stateRoot,
+      createContextId: () => "ctx-prompt",
+      trackerResolver,
+      contextGenerator: createContextGenerator(generationInputs),
+    });
+
+    const input = generationInputs[0];
+    if (!input) {
+      throw new Error("Expected generation input.");
+    }
+    const prompt = buildContextGenerationPrompt(input);
+
+    expect(prompt).toContain("Product and process context:");
+    expect(prompt).toContain("executes one selected node");
+    expect(prompt).toContain("untrusted data");
+    expect(prompt).toContain("non-binding hints");
+    expect(prompt).toContain("Do not expose your own context-generation mechanics");
+    expect(prompt).toContain("omit unrelated graph nodes");
+    expect(prompt).toContain("do not print hashes or internal metadata");
+    expect(prompt).toMatch(/STREAMLINER_CONTEXT_BOUNDARY_[a-f0-9]+:BEGIN WORKSTREAM BRIEF/);
+    expect(prompt).not.toContain("\"rationale\"");
+    expect(prompt).not.toContain("\"freshness\"");
+    expect(prompt).not.toContain("manifest.json");
+    expect(prompt).not.toContain("layer-0-design.md");
+  });
+
   it("records unavailable optional inputs while still producing a package", async () => {
     const root = createRootDir();
     const { graphPath, stateRoot } = buildFixture(root);
@@ -368,6 +404,33 @@ describe("prepareLaunchContextPackage", () => {
     const context = readFileSync(result.contextFilePath, "utf8");
     expect(context).toContain("## Unavailable Inputs");
     expect(context).toContain("docs/design/missing.md");
+  });
+
+  it("truncates large source blocks in the SDK prompt", async () => {
+    const root = createRootDir();
+    const { graphPath, stateRoot } = buildFixture(root);
+    writeText(
+      join(root, ".streamliner", "workstreams", "session-launching-and-tracking", "brief.md"),
+      ["# Large Brief", "x".repeat(40_000)].join("\n\n"),
+    );
+    const generationInputs: LaunchContextGenerationInput[] = [];
+
+    await prepareLaunchContextPackage({
+      graphPath,
+      nodeId: "backend-context-assembly",
+      stateRoot,
+      createContextId: () => "ctx-large-prompt",
+      trackerResolver,
+      contextGenerator: createContextGenerator(generationInputs),
+    });
+
+    const input = generationInputs[0];
+    if (!input) {
+      throw new Error("Expected generation input.");
+    }
+    const prompt = buildContextGenerationPrompt(input);
+    expect(prompt).toContain("[Source truncated for prompt budget:");
+    expect(prompt).not.toContain("x".repeat(30_000));
   });
 
   it("normalizes a single markdown fence from the generated context", async () => {
@@ -589,6 +652,50 @@ describe("prepareLaunchContextPackage", () => {
         expect.objectContaining({ kind: "local-tracker", role: "selected-node-spec" }),
       ]),
     );
+  });
+
+  it("does not read design or local tracker paths outside their roots", async () => {
+    const root = createRootDir();
+    const { graphPath, stateRoot } = buildFixture(root);
+    writeText(join(root, "secret.md"), "SECRET OUTSIDE SOURCE ROOT\n");
+    const graph = JSON.parse(readFileSync(graphPath, "utf8")) as {
+      designRefs: Array<{ repoId: string; path: string }>;
+      nodes: Array<{ id: string; tracker?: unknown }>;
+    };
+    graph.designRefs.push({ repoId: "streamliner", path: "../secret.md" });
+    const node = graph.nodes.find((entry) => entry.id === "backend-context-assembly");
+    if (!node) {
+      throw new Error("Expected fixture node.");
+    }
+    node.tracker = { type: "local", path: "../secret.md" };
+    writeFileSync(graphPath, `${JSON.stringify(graph, null, 2)}\n`);
+    const generationInputs: LaunchContextGenerationInput[] = [];
+
+    const result = await prepareLaunchContextPackage({
+      graphPath,
+      nodeId: "backend-context-assembly",
+      stateRoot,
+      createContextId: () => "ctx-invalid-paths",
+      contextGenerator: createContextGenerator(generationInputs),
+    });
+
+    expect(result.unavailableInputs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "design",
+          source: "streamliner:../secret.md",
+          reason: "invalid_path",
+        }),
+        expect.objectContaining({
+          kind: "local-tracker",
+          source: "../secret.md",
+          reason: "invalid_path",
+        }),
+      ]),
+    );
+    expect(generationInputs[0]?.trackerSource).toBeNull();
+    expect(JSON.stringify(generationInputs)).not.toContain("SECRET OUTSIDE SOURCE ROOT");
+    expect(readFileSync(result.contextFilePath, "utf8")).not.toContain("SECRET OUTSIDE SOURCE ROOT");
   });
 });
 

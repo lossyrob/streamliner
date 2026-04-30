@@ -209,6 +209,7 @@ Context package metadata is a backend/API contract consumed by launch profiles, 
 | `graphPath`, `workstreamDir`, `repoRoot` | Local source locations used during preparation. |
 | `generatedAt` | ISO timestamp for package freshness. |
 | `contextPackagePath`, `contextFilePath` | Absolute package and context-file paths for downstream local consumers. Path strings use forward slashes for stable JSON/prompt rendering. |
+| `contextModel` | Requested Copilot SDK model id used for synthesis, defaulting to `auto` unless `STREAMLINER_CONTEXT_MODEL` is set. |
 | `sourceReferences` | Graph, brief, design, tracker, and local-spec references with git object hashes or content hashes when available. |
 | `unavailableInputs` | Missing or degraded optional inputs, such as missing design docs or local tracker files. |
 
