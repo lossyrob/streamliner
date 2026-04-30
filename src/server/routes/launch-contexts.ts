@@ -3,14 +3,12 @@ import { Router } from "express";
 import {
   LaunchContextPreparationError,
   prepareLaunchContextPackage,
-  type LaunchContextTrackerResolver,
 } from "../launch-context";
 
 export interface LaunchContextRouteDeps {
   stateRoot?: string;
   now?: () => Date;
   createContextId?: (now: Date) => string;
-  trackerResolver?: LaunchContextTrackerResolver;
 }
 
 export function createLaunchContextsRouter(options: {
@@ -41,7 +39,6 @@ export function createLaunchContextsRouter(options: {
         stateRoot: options.deps?.stateRoot,
         now: options.deps?.now,
         createContextId: options.deps?.createContextId,
-        trackerResolver: options.deps?.trackerResolver,
       });
       res.status(200).json(result);
     } catch (error: unknown) {

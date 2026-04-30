@@ -68,7 +68,6 @@ export interface LaunchContextLayerFile {
   id: LaunchContextLayerId;
   path: string;
   relativePath: string;
-  sources: LaunchContextSourceReference[];
 }
 
 export interface LaunchContextLayer0Selection {
@@ -96,7 +95,6 @@ export interface LaunchContextManifest {
   manifestPath: string;
   layers: LaunchContextLayerFile[];
   sourceReferences: LaunchContextSourceReference[];
-  layer0Selection: LaunchContextLayer0Selection[];
   unavailableInputs: LaunchContextUnavailableInput[];
 }
 
@@ -113,21 +111,6 @@ export interface LaunchContextPackage {
   unavailableInputs: LaunchContextUnavailableInput[];
 }
 
-export interface GithubIssueTrackerRequest {
-  owner: string;
-  repo: string;
-  number: number;
-}
-
-export interface TrackerResolution {
-  content?: string;
-  unavailableInputs?: LaunchContextUnavailableInput[];
-}
-
-export type LaunchContextTrackerResolver = (
-  request: GithubIssueTrackerRequest,
-) => Promise<TrackerResolution>;
-
 export interface PrepareLaunchContextPackageOptions {
   graphPath?: string;
   defaultGraphPath?: string;
@@ -137,7 +120,6 @@ export interface PrepareLaunchContextPackageOptions {
   stateRoot?: string;
   now?: () => Date;
   createContextId?: (now: Date) => string;
-  trackerResolver?: LaunchContextTrackerResolver;
 }
 
 export type LaunchContextPreparationErrorCode =
@@ -483,39 +465,33 @@ function generationHeader(options: {
   ].join("\n");
 }
 
-function fenceSource(path: string, content: string): string {
-  return [
-    `## ${path}`,
-    "",
-    `--- BEGIN ${path} ---`,
-    content.trimEnd(),
-    `--- END ${path} ---`,
-  ].join("\n");
-}
-
 function buildLayer0Content(
   header: string,
-  loadedDesignSources: LoadedSource[],
   selection: LaunchContextLayer0Selection[],
 ): string {
   const selected = selection
     .map((entry) =>
-      `- ${entry.included ? "included" : "unavailable"}: ${entry.path} (${entry.rationale})`,
+      `- ${entry.included ? "read" : "unavailable"}: \`${entry.repoId}:${entry.path}\` - ${entry.rationale}`,
     )
     .join("\n");
-  const docs = loadedDesignSources
-    .filter((source) => source.content)
-    .map((source) => fenceSource(source.reference.path ?? "design", source.content ?? ""))
-    .join("\n\n");
 
-  return `${header}# Layer 0 - Project Design Context\n\n## Layer 0 Selection\n\n${selected || "_No design references selected._"}\n\n${docs || "_No design content available._"}\n`;
+  return [
+    `${header}# Layer 0 - Design Context References`,
+    "",
+    "Layer 0 is intentionally link-based. Read the authoritative design documents directly from the repository instead of relying on copied excerpts in this generated package.",
+    "",
+    "## Design Documents to Read",
+    "",
+    selected || "_No design references selected._",
+    "",
+  ].join("\n");
 }
 
 function buildLayer3Content(options: {
   header: string;
   workstream: WorkstreamDocument;
   node: WorkstreamNode;
-  trackerContent: string | null;
+  trackerReference: string | null;
 }): string {
   const checkpoint = checkpointForNode(options.workstream, options.node.id);
   const upstream = options.node.dependsOn
@@ -554,65 +530,19 @@ function buildLayer3Content(options: {
     "",
     downstream.length > 0 ? downstream.map(nodeSummary).join("\n") : "_No downstream dependent nodes._",
     "",
-    "## Selected Node Tracker Context",
+    "## Selected Node Spec Reference",
     "",
-    options.trackerContent ?? "_No tracker content available._",
+    options.trackerReference ?? "_No tracker or local node spec reference._",
     "",
   ].join("\n");
 }
 
-async function defaultGithubIssueTrackerResolver(
-  request: GithubIssueTrackerRequest,
-): Promise<TrackerResolution> {
-  const repo = `${request.owner}/${request.repo}`;
-  try {
-    const { stdout } = await execFileAsync(
-      "gh",
-      [
-        "issue",
-        "view",
-        String(request.number),
-        "--repo",
-        repo,
-        "--json",
-        "title,body,url,state",
-      ],
-      { timeout: 10_000 },
-    );
-    const parsed = JSON.parse(stdout) as {
-      title?: unknown;
-      body?: unknown;
-      url?: unknown;
-      state?: unknown;
-    };
-    const title = typeof parsed.title === "string" ? parsed.title : `Issue #${request.number}`;
-    const state = typeof parsed.state === "string" ? parsed.state : "unknown";
-    const url = typeof parsed.url === "string" ? parsed.url : `https://github.com/${repo}/issues/${request.number}`;
-    const body = typeof parsed.body === "string" ? parsed.body : "";
-    return {
-      content: [`# ${title}`, "", `State: ${state}`, `URL: ${url}`, "", body].join("\n"),
-    };
-  } catch (error: unknown) {
-    return {
-      unavailableInputs: [
-        {
-          kind: "tracker",
-          source: `https://github.com/${repo}/issues/${request.number}`,
-          reason: "github_issue_unavailable",
-          detail: error instanceof Error ? error.message : String(error),
-        },
-      ],
-    };
-  }
-}
-
-async function resolveTrackerContent(options: {
+async function resolveTrackerReference(options: {
   tracker: WorkstreamTracker | undefined;
   workstreamDir: string;
   repoRoot: string;
   unavailableInputs: LaunchContextUnavailableInput[];
   sourceReferences: LaunchContextSourceReference[];
-  trackerResolver: LaunchContextTrackerResolver;
 }): Promise<string | null> {
   if (!options.tracker) {
     return null;
@@ -625,15 +555,7 @@ async function resolveTrackerContent(options: {
       role: "selected-node-spec",
       url,
     });
-    const resolution = await options.trackerResolver({
-      owner: options.tracker.owner,
-      repo: options.tracker.repo,
-      number: options.tracker.number,
-    });
-    for (const unavailable of resolution.unavailableInputs ?? []) {
-      options.unavailableInputs.push(unavailable);
-    }
-    return resolution.content ?? null;
+    return `- GitHub issue: ${url}`;
   }
 
   const localPath = resolve(options.workstreamDir, options.tracker.path);
@@ -646,7 +568,9 @@ async function resolveTrackerContent(options: {
     unavailableInputs: options.unavailableInputs,
   });
   options.sourceReferences.push(source.reference);
-  return source.content ?? null;
+  return source.reference.path
+    ? `- Local node spec: ${source.reference.path}`
+    : `- Local node spec: ${options.tracker.path}`;
 }
 
 async function readGraph(graphPath: string): Promise<string> {
@@ -833,7 +757,6 @@ export async function prepareLaunchContextPackage(
 
   const designReferences = collectDesignReferences(workstream, briefSource.content);
   const primaryRepoId = workstream.repos[0]?.id ?? "streamliner";
-  const loadedDesignSources: LoadedSource[] = [];
   const layer0Selection: LaunchContextLayer0Selection[] = [];
   for (const designReference of designReferences) {
     if (designReference.repoId !== primaryRepoId) {
@@ -844,7 +767,6 @@ export async function prepareLaunchContextPackage(
         repoId: designReference.repoId,
       };
       sourceReferences.push(reference);
-      loadedDesignSources.push({ reference });
       unavailableInputs.push({
         kind: "design",
         source: `${designReference.repoId}:${designReference.path}`,
@@ -869,7 +791,6 @@ export async function prepareLaunchContextPackage(
       repoId: designReference.repoId,
     });
     sourceReferences.push(source.reference);
-    loadedDesignSources.push(source);
     layer0Selection.push({
       repoId: designReference.repoId,
       path: designReference.path,
@@ -878,13 +799,12 @@ export async function prepareLaunchContextPackage(
     });
   }
 
-  const trackerContent = await resolveTrackerContent({
+  const trackerReference = await resolveTrackerReference({
     tracker: node.tracker,
     workstreamDir,
     repoRoot,
     unavailableInputs,
     sourceReferences,
-    trackerResolver: options.trackerResolver ?? defaultGithubIssueTrackerResolver,
   });
 
   const sections = briefSections(briefSource.content);
@@ -897,33 +817,21 @@ export async function prepareLaunchContextPackage(
     briefFreshness: briefSource.reference.freshness,
   });
   const layerContents: Record<LaunchContextLayerId, string> = {
-    "layer-0-design": buildLayer0Content(header, loadedDesignSources, layer0Selection),
+    "layer-0-design": buildLayer0Content(header, layer0Selection),
     "layer-1-intent": `${header}# Layer 1 - Workstream Intent\n\n${sections.layer1}\n`,
     "layer-2-state": `${header}# Layer 2 - Operational State\n\n${sections.layer2}\n`,
     "layer-3-node": buildLayer3Content({
       header,
       workstream,
       node,
-      trackerContent,
+      trackerReference,
     }),
-  };
-  const layerSources: Record<LaunchContextLayerId, LaunchContextSourceReference[]> = {
-    "layer-0-design": loadedDesignSources.map((source) => source.reference),
-    "layer-1-intent": [briefSource.reference],
-    "layer-2-state": [briefSource.reference],
-    "layer-3-node": [
-      graphReference,
-      ...sourceReferences.filter((source) =>
-        source.kind === "tracker" || source.kind === "local-tracker"
-      ),
-    ],
   };
   const layers = (Object.entries(LAYER_FILE_NAMES) as Array<[LaunchContextLayerId, string]>).map(
     ([id, fileName]) => ({
       id,
       path: normalizeManifestPath(join(contextDir, fileName)),
       relativePath: normalizeManifestPath(join("context", fileName)),
-      sources: layerSources[id],
     }),
   );
   const manifest: LaunchContextManifest = {
@@ -944,7 +852,6 @@ export async function prepareLaunchContextPackage(
     manifestPath: normalizeManifestPath(manifestPath),
     layers,
     sourceReferences,
-    layer0Selection,
     unavailableInputs,
   };
 

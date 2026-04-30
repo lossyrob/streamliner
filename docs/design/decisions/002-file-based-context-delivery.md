@@ -60,6 +60,22 @@ associate the returned `contextId` with a nonce-scoped launch archive or copy th
 package into `launches/{launchNonce}/context/`; context assembly itself does not
 require a nonce to produce a stable package reference.
 
+### 2026-04-30 update: reference-first context packages
+
+Generated context packages are navigation and launch-orientation artifacts, not
+copies of every authoritative source. Layer 0 records the selected design docs as
+repo/path references with rationale; it does not inline design doc bodies. Layer
+3 records the selected node spec reference, such as a GitHub issue URL or local
+spec path; it does not inline tracker bodies. Workers should read design docs and
+node specs directly from their source locations when they need the full text.
+
+`manifest.json` remains the compact package contract: stable package id and
+paths, generated layer index, source references with freshness where available,
+and unavailable-input diagnostics. Layer files should contain only synthesized or
+extracted launch-time orientation that is useful to the worker, plus links to the
+originals. Human-facing Layer 0 selection rationale lives in the generated Layer
+0 file instead of being duplicated as a separate manifest section.
+
 ## Open questions
 
 - **Archive retention policy**: How long are launch context archives kept? Options: last N launches per workstream, last N days, unbounded until manual clean. Resolve before launching multi-day PAW workflows routinely, because that is where forensic replay matters most.

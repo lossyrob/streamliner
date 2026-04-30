@@ -16,7 +16,6 @@ import { createStreamlinerApiApp, type StreamlinerApiApp } from "./app";
 import {
   bindLaunchContextPackage,
   prepareLaunchContextPackage,
-  type LaunchContextTrackerResolver,
 } from "./launch-context";
 
 const createdRoots: string[] = [];
@@ -201,10 +200,6 @@ function buildFixture(root: string): { graphPath: string; stateRoot: string } {
   return { graphPath, stateRoot };
 }
 
-const trackerResolver: LaunchContextTrackerResolver = async (issue) => ({
-  content: `# Issue ${issue.number}\n\nPrepared tracker context.`,
-});
-
 afterEach(() => {
   for (const app of activeApps.splice(0)) {
     app.close();
@@ -225,7 +220,6 @@ describe("prepareLaunchContextPackage", () => {
       stateRoot,
       now: () => new Date("2026-04-30T03:30:00.000Z"),
       createContextId: () => "ctx-fixed",
-      trackerResolver,
     });
 
     expect(result.contextId).toBe("ctx-fixed");
@@ -241,18 +235,6 @@ describe("prepareLaunchContextPackage", () => {
         nodeId: "backend-context-assembly",
         targetRepoIds: ["streamliner"],
       }),
-    );
-    expect(result.manifest.layer0Selection).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          path: "docs/design/index.md",
-          included: true,
-        }),
-        expect.objectContaining({
-          path: "docs/design/session-system.md",
-          included: true,
-        }),
-      ]),
     );
     expect(result.manifest.sourceReferences).toEqual(
       expect.arrayContaining([
@@ -282,7 +264,15 @@ describe("prepareLaunchContextPackage", () => {
     expect(layer3).toContain("Manual session registry UI");
     expect(layer3).toContain("Launch claim binding");
     expect(layer3).toContain("Terminal launch integration");
-    expect(layer3).toContain("Prepared tracker context");
+    expect(layer3).toContain("https://github.com/lossyrob/streamliner/issues/31");
+
+    const layer0 = readFileSync(
+      join(result.contextPackagePath, "context", "layer-0-design.md"),
+      "utf8",
+    );
+    expect(layer0).toContain("Design Documents to Read");
+    expect(layer0).toContain("`streamliner:docs/design/session-system.md`");
+    expect(layer0).not.toContain("Session System");
   });
 
   it("records unavailable optional inputs while still producing a package", async () => {
@@ -302,15 +292,6 @@ describe("prepareLaunchContextPackage", () => {
       nodeId: "backend-context-assembly",
       stateRoot,
       createContextId: () => "ctx-degraded",
-      trackerResolver: async () => ({
-        unavailableInputs: [
-          {
-            kind: "tracker",
-            source: "https://github.com/lossyrob/streamliner/issues/31",
-            reason: "github_issue_unavailable",
-          },
-        ],
-      }),
     });
 
     expect(result.unavailableInputs).toEqual(
@@ -319,10 +300,6 @@ describe("prepareLaunchContextPackage", () => {
           kind: "design",
           source: "docs/design/missing.md",
           reason: "missing",
-        }),
-        expect.objectContaining({
-          kind: "tracker",
-          reason: "github_issue_unavailable",
         }),
       ]),
     );
@@ -339,14 +316,12 @@ describe("prepareLaunchContextPackage", () => {
       nodeId: "backend-context-assembly",
       stateRoot,
       createContextId: () => ids.shift() ?? "ctx-extra",
-      trackerResolver,
     });
     const second = await prepareLaunchContextPackage({
       graphPath,
       nodeId: "backend-context-assembly",
       stateRoot,
       createContextId: () => ids.shift() ?? "ctx-extra",
-      trackerResolver,
     });
 
     expect(first.contextPackagePath).not.toBe(second.contextPackagePath);
@@ -366,14 +341,12 @@ describe("prepareLaunchContextPackage", () => {
       nodeId: "backend-context-assembly",
       outputDir,
       createContextId: () => ids.shift() ?? "ctx-extra",
-      trackerResolver,
     });
     const second = await prepareLaunchContextPackage({
       graphPath,
       nodeId: "backend-context-assembly",
       outputDir,
       createContextId: () => ids.shift() ?? "ctx-extra",
-      trackerResolver,
     });
 
     expect(first.contextPackagePath).toBe(normalizePath(join(outputDir, "ctx-output-one")));
@@ -395,7 +368,6 @@ describe("prepareLaunchContextPackage", () => {
       nodeId: "backend-context-assembly",
       stateRoot,
       createContextId: () => "ctx-odd-brief",
-      trackerResolver,
     });
 
     const layer1 = readFileSync(
@@ -426,7 +398,6 @@ describe("prepareLaunchContextPackage", () => {
       nodeId: "backend-context-assembly",
       stateRoot,
       createContextId: () => "ctx-loose",
-      trackerResolver,
     });
 
     expect(result.unavailableInputs).toEqual(
@@ -444,7 +415,7 @@ describe("prepareLaunchContextPackage", () => {
     );
   });
 
-  it("includes local tracker content and can bind a generated package to a launch claim", async () => {
+  it("references local tracker specs and can bind a generated package to a launch claim", async () => {
     const root = createRootDir();
     const { graphPath, stateRoot } = buildFixture(root);
     const graph = JSON.parse(readFileSync(graphPath, "utf8")) as {
@@ -471,7 +442,8 @@ describe("prepareLaunchContextPackage", () => {
       join(result.contextPackagePath, "context", "layer-3-node.md"),
       "utf8",
     );
-    expect(layer3).toContain("Assemble context from a local spec.");
+    expect(layer3).toContain("node-spec.md");
+    expect(layer3).not.toContain("Assemble context from a local spec.");
 
     const bound = await bindLaunchContextPackage(result.manifestPath, {
       launchNonce: "nonce-123",
@@ -493,7 +465,6 @@ describe("launch context API route", () => {
       launchContextDeps: {
         stateRoot,
         createContextId: () => "ctx-api",
-        trackerResolver,
       },
     });
     activeApps.push(api);
@@ -521,7 +492,7 @@ describe("launch context API route", () => {
     const api = createStreamlinerApiApp({
       store,
       graphPath,
-      launchContextDeps: { stateRoot, trackerResolver },
+      launchContextDeps: { stateRoot },
     });
     activeApps.push(api);
 
@@ -558,7 +529,7 @@ describe("launch context API route", () => {
     const store = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
     const api = createStreamlinerApiApp({
       store,
-      launchContextDeps: { stateRoot: join(root, "state"), trackerResolver },
+      launchContextDeps: { stateRoot: join(root, "state") },
     });
     activeApps.push(api);
 

@@ -63,7 +63,7 @@ The launch is a two-phase process: a **launch preparation phase** that prepares 
 Streamliner's backend prepares a launch spec. It may use Copilot SDK for context assembly when an LLM is useful, but the contract is the structured launch spec, not a mandatory SDK or PAW workflow. Preparation:
 
 1. **Resolves launch profile layers** — combines instance, project, workstream, and node-launch defaults for instruction text, workflow expectations, context references, terminal preferences, and CLI arguments
-2. **Assembles context** — builds the Layer 0–3 context package for the node by reading design docs, extracting brief sections, resolving node specs, and capturing relevant sibling/upstream context
+2. **Assembles context** — builds the Layer 0–3 context package for the node by indexing design docs, extracting brief sections, referencing node specs, and capturing relevant sibling/upstream context
 3. **Prepares the execution location** — resolves the checkout or worktree path and branch according to the selected execution mode. A profile may run profile-specific setup, such as PAW initialization, but that setup is not required by the baseline launch contract.
 4. **Places context files** — writes the assembled context package into a launch context directory that the kickoff prompt can reference
 5. **Generates launch claim data** — creates the launch nonce and expected binding metadata that Streamliner will record before starting Copilot CLI
@@ -134,18 +134,18 @@ Opening a terminal in the correct directory is not a launch. A launch is only co
 
 ## Context Assembly
 
-Context assembly builds the Layer 0–3 context package that gives a worker session everything it needs to execute a node's mission. It runs inside launch preparation. Streamliner may use Copilot SDK or another LLM-backed helper to make intelligent decisions about what context to include, but the output is a file-based context package that launch profiles and the kickoff prompt can reference.
+Context assembly builds the Layer 0–3 context package that orients a worker session to a node's mission without copying authoritative source material wholesale. It runs inside launch preparation. Streamliner may use Copilot SDK or another LLM-backed helper to make intelligent decisions about what context to reference or synthesize, but the output is a file-based context package that launch profiles and the kickoff prompt can reference.
 
 ### Layer 0 — Project Design Context
 
 Layer 0 starts from the repo's configured design docs path, using the workstream's `designRefs` as prioritization hints:
 
-- Read the design index (`docs/design/index.md`) as the cold-reader entry point
-- Front-load each `current` design doc referenced in `designRefs`
-- Follow the index and those front-loaded docs into other `current` design docs and accepted decision records when they are relevant to the node
-- Include `draft` design docs when they are explicitly referenced in `designRefs` or the node's spec
+- Reference the design index (`docs/design/index.md`) as the cold-reader entry point
+- Reference each `current` design doc named in `designRefs`
+- Follow the index and those referenced docs into other `current` design docs and accepted decision records when they are relevant to the node
+- Reference `draft` design docs when they are explicitly named in `designRefs` or the node's spec
 
-Design docs are already committed files. Context assembly may prioritize a subset for the generated Layer 0 bundle, but the worker is not restricted to that subset; it can continue reading the broader design set from the target repo (or registered design repo) at the current HEAD.
+Design docs are already committed files. Layer 0 is a generated reference index, not a copied design-doc bundle. The worker reads the authoritative docs directly from the target repo (or registered design repo) at the current HEAD, using Layer 0 and the manifest as navigation aids and freshness/provenance metadata.
 
 ### Layer 1 — Workstream Intent
 
@@ -166,10 +166,10 @@ Extracted from the workstream's `brief.md`:
 
 ### Layer 3 — Node Context
 
-Assembled from the graph and tracker:
+Assembled from the graph and tracker reference:
 
 - **Wave context**: which checkpoint/wave the node belongs to, what preceded it, what follows
-- **Node spec**: the issue body (from GitHub) or local spec file content
+- **Node spec reference**: the GitHub issue URL or local spec file path; the worker reads that source directly
 - **Coordination notes**: any cross-node coordination context from the orchestrator
 - **Relevant sibling context**: summaries of parallel and upstream nodes that might affect this node's work
 
@@ -183,13 +183,13 @@ The assembled package is written to:
 <launch-context-package-dir>/
   manifest.json
   context/
-    layer-0-design.md       ← front-loaded design docs + pointers into the wider design set
+    layer-0-design.md       ← design-doc reference index
     layer-1-intent.md       ← extracted brief sections
     layer-2-state.md        ← extracted operational state
-    layer-3-node.md         ← node spec + wave context
+    layer-3-node.md         ← node spec reference + wave context
 ```
 
-These files are generated, not manually maintained. They are excluded from Git and regenerated for each context preparation. Launch profiles decide how prominently the worker is instructed to read them. Each generated layer file starts with a header naming the context id, node id, launch nonce when one exists, brief freshness, generation time, and a "do not edit" marker.
+These files are generated, not manually maintained. They are excluded from Git and regenerated for each context preparation. Launch profiles decide how prominently the worker is instructed to read them. Each generated layer file starts with a header naming the context id, node id, launch nonce when one exists, brief freshness, generation time, and a "do not edit" marker. Generated layers should synthesize launch-time orientation and link to authoritative sources instead of restating design docs or tracker specs in full.
 
 Before launch claims exist, backend context preview writes default packages to:
 
@@ -215,10 +215,9 @@ Before launch claims exist, backend context preview writes default packages to:
 | `graphPath`, `workstreamDir`, `repoRoot` | Local source locations used during preparation. |
 | `generatedAt` | ISO timestamp for package freshness. |
 | `contextPackagePath`, `manifestPath` | Absolute package and manifest paths for downstream local consumers. Path strings use forward slashes for stable JSON/prompt rendering. |
-| `layers` | Layer id, generated file path, relative file path, and source references for each Layer 0-3 file. |
+| `layers` | Layer id, generated file path, and relative file path for each Layer 0-3 file. |
 | `sourceReferences` | Graph, brief, design, tracker, and local-spec references with git object hashes or content hashes when available. |
-| `layer0Selection` | Deterministic design-doc selection with rationale and inclusion status. |
-| `unavailableInputs` | Missing or degraded optional inputs, such as unavailable tracker bodies or missing design docs. |
+| `unavailableInputs` | Missing or degraded optional inputs, such as missing design docs or local tracker files. |
 
 ### Backend Preparation API
 
