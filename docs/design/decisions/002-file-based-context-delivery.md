@@ -50,9 +50,12 @@ The context directory is excluded from Git (via `.gitignore`) and regenerated on
 
 Backend context preparation can run before a launch claim exists, especially for
 prompt preview and non-PAW launch profiles. In that pre-claim state, Streamliner
-writes generated packages to
+writes generated packages under
 `~/.streamliner/state/{projectKey}/{workstream-id}/launch-contexts/{contextId}/`
-with a manifest containing `launchNonce: null`. Launch-claim binding may later
+with a manifest containing `launchNonce: null`. When a profile-specific setup
+provides an output parent directory, Streamliner creates the same `{contextId}`
+package shape under that parent rather than overwriting an existing directory.
+Launch-claim binding may later
 associate the returned `contextId` with a nonce-scoped launch archive or copy the
 package into `launches/{launchNonce}/context/`; context assembly itself does not
 require a nonce to produce a stable package reference.

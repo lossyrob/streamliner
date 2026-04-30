@@ -175,7 +175,7 @@ Assembled from the graph and tracker:
 
 ### Delivery Mechanism
 
-Context is delivered as files written into a launch context package directory. For a PAW profile, the caller may provide a package output directory created by profile-specific setup; for a non-PAW profile or prompt preview, Streamliner writes the package under local runtime state. The kickoff prompt points the worker session at these files during initialization. See [Decision 002](decisions/002-file-based-context-delivery.md) for the rationale.
+Context is delivered as files written into a launch context package directory. For a PAW profile, the caller may provide an output parent directory created by profile-specific setup; Streamliner creates a `{contextId}` package directory under that parent. For a non-PAW profile or prompt preview, Streamliner writes the package under local runtime state. The kickoff prompt points the worker session at these files during initialization. See [Decision 002](decisions/002-file-based-context-delivery.md) for the rationale.
 
 The assembled package is written to:
 
@@ -214,7 +214,7 @@ Before launch claims exist, backend context preview writes default packages to:
 | `targetRepoIds` | Graph repo ids targeted by the selected node. |
 | `graphPath`, `workstreamDir`, `repoRoot` | Local source locations used during preparation. |
 | `generatedAt` | ISO timestamp for package freshness. |
-| `contextPackagePath`, `manifestPath` | Absolute package and manifest paths for downstream local consumers. |
+| `contextPackagePath`, `manifestPath` | Absolute package and manifest paths for downstream local consumers. Path strings use forward slashes for stable JSON/prompt rendering. |
 | `layers` | Layer id, generated file path, relative file path, and source references for each Layer 0-3 file. |
 | `sourceReferences` | Graph, brief, design, tracker, and local-spec references with git object hashes or content hashes when available. |
 | `layer0Selection` | Deterministic design-doc selection with rationale and inclusion status. |
@@ -234,7 +234,7 @@ Request body:
 |-------|----------|---------|
 | `nodeId` | yes | Selected graph node id. |
 | `graphPath` | no | Graph file to use; defaults to the API-configured graph path. |
-| `outputDir` | no | Absolute package directory supplied by profile-specific setup. Defaults to runtime-state `launch-contexts/{contextId}`. |
+| `outputDir` | no | Absolute parent directory supplied by profile-specific setup. Streamliner creates `{outputDir}/{contextId}/`. Defaults to runtime-state `launch-contexts/{contextId}`. |
 | `launchNonce` | no | Optional nonce when a caller already has one. |
 
 Response body:
@@ -245,9 +245,9 @@ Response body:
 | `contextPackagePath` | Absolute package directory. |
 | `manifestPath` | Absolute manifest path. |
 | `manifest` | Full manifest object. |
-| `unavailableInputs` | Convenience copy of `manifest.unavailableInputs`. |
+| `unavailableInputs` | Convenience JSON copy of `manifest.unavailableInputs`; consumers should use one source to avoid duplicate warnings. |
 
-Missing or invalid graph/node request inputs are client errors. Missing optional context sources are recorded in `unavailableInputs` while still producing a package.
+Missing or invalid graph/node request inputs are client errors. Missing optional context sources are recorded in `unavailableInputs` while still producing a package. Path fields in the JSON response and manifest use forward slashes for stable string comparison and prompt rendering, even on Windows. They remain local absolute paths unless marked as relative paths.
 
 ## Session Lifecycle
 

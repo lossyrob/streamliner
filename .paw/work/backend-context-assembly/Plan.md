@@ -15,7 +15,7 @@ Implement backend context assembly as a deterministic server feature that prepar
   - Add `POST /api/launch-contexts` with request `{ graphPath?: string, nodeId: string, outputDir?: string, launchNonce?: string | null }`.
   - Return `{ contextId, contextPackagePath, manifestPath, manifest, unavailableInputs }`.
   - Return explicit 400/404 client errors for missing node id, missing graph configuration, missing graph file, invalid graph, unknown node id, or invalid output dir; reserve 500 for unexpected filesystem/git failures.
-  - Keep `outputDir` optional so future PAW launch profiles can direct files into `.paw/work/<work-id>/context/` after profile-specific setup, while non-PAW/default launches use runtime state.
+  - Keep `outputDir` optional as a profile-supplied parent directory; Streamliner creates `{outputDir}/{contextId}/` so future PAW launch profiles can prepare a parent under `.paw/work/<work-id>/` without package overwrites, while non-PAW/default launches use runtime state.
 - [x] Cover package generation, unavailable inputs, and route behavior with Vitest tests.
   - Happy path: dogfood-style graph + brief + design refs produce a manifest, source references, layer files, deterministic Layer 0 selection, and sibling/upstream node context.
   - Degraded path: missing design/tracker/local spec content records `unavailableInputs` while producing a usable package.
@@ -41,11 +41,11 @@ Implement backend context assembly as a deterministic server feature that prepar
   ```
 
   This deliberately differs from Decision 002's later `launches/{launchNonce}/context/` archive shape because backend context preview can run before launch-claim binding has created a nonce. The manifest keeps nullable `launchNonce` and `launchClaimRef` slots so #32 can associate or copy the package into a nonce-scoped launch archive later without changing the package contract.
-- `contextId` is a per-call generated id (`ctx-<timestamp>-<short-random>`). This is stable once returned, but repeated calls produce fresh packages. This issue does not implement retention cleanup; it explicitly defers archive retention to Decision 002's open question.
+- `contextId` is a per-call generated id (`ctx-<timestamp>-<short-random>`). This is stable once returned, but repeated calls produce fresh packages. Caller-supplied `outputDir` is a parent for `{contextId}` packages, not the package directory itself. This issue does not implement retention cleanup; it explicitly defers archive retention to Decision 002's open question.
 - Layer 0 selection is deterministic for this slice: include `docs/design/index.md`, all workstream `designRefs`, and paths listed in the brief's `## Design References` section after stripping `streamliner:` prefixes. Include whole files when available, and record each included path with a rationale in `layer0Selection`.
 - Layer 3 uses deterministic neighbor summaries: selected node details plus upstream dependency nodes, same-checkpoint sibling nodes, and downstream dependent nodes using `{ id, title, status, summary, trackerRef }` from `graph.json`. Tracker body/spec content is fetched only for the selected node to bound work.
 - Make tracker resolution injectable so tests avoid network access. Production should use a best-effort resolver that records GitHub/local tracker references and degrades to `unavailableInputs` on auth, network, missing-file, or unsupported-tracker failures rather than blocking context package generation.
-- Return metadata and paths from the API; keep the full context in generated files for downstream prompt/profile code.
+- Return metadata and forward-slash-normalized paths from the API; keep the full context in generated files for downstream prompt/profile code.
 - Treat missing optional context inputs as package metadata (`unavailableInputs`) while treating missing graph/node request inputs as errors.
 - Support single-checkout dogfood scope first. Multi-repo nodes are represented in `targetRepoIds` and source references, but the implementation assumes the graph/brief/design files are in the API checkout/workstream directory. Cross-repo design repositories are deferred.
 

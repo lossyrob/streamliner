@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { SessionRegistryFileStore } from "../session-registry/file-store";
 import { createStreamlinerApiApp, type StreamlinerApiApp } from "./app";
 import {
+  bindLaunchContextPackage,
   prepareLaunchContextPackage,
   type LaunchContextTrackerResolver,
 } from "./launch-context";
@@ -35,6 +36,10 @@ function createRootDir(): string {
 function writeText(path: string, content: string): void {
   mkdirSync(join(path, ".."), { recursive: true });
   writeFileSync(path, content, "utf8");
+}
+
+function normalizePath(path: string): string {
+  return path.replace(/\\/g, "/");
 }
 
 function buildFixture(root: string): { graphPath: string; stateRoot: string } {
@@ -347,6 +352,133 @@ describe("prepareLaunchContextPackage", () => {
     expect(first.contextPackagePath).not.toBe(second.contextPackagePath);
     expect(existsSync(first.manifestPath)).toBe(true);
     expect(existsSync(second.manifestPath)).toBe(true);
+  });
+
+  it("treats outputDir as a reusable parent for per-context packages", async () => {
+    const root = createRootDir();
+    const { graphPath } = buildFixture(root);
+    const outputDir = join(root, "prepared-contexts");
+    mkdirSync(outputDir, { recursive: true });
+    const ids = ["ctx-output-one", "ctx-output-two"];
+
+    const first = await prepareLaunchContextPackage({
+      graphPath,
+      nodeId: "backend-context-assembly",
+      outputDir,
+      createContextId: () => ids.shift() ?? "ctx-extra",
+      trackerResolver,
+    });
+    const second = await prepareLaunchContextPackage({
+      graphPath,
+      nodeId: "backend-context-assembly",
+      outputDir,
+      createContextId: () => ids.shift() ?? "ctx-extra",
+      trackerResolver,
+    });
+
+    expect(first.contextPackagePath).toBe(normalizePath(join(outputDir, "ctx-output-one")));
+    expect(second.contextPackagePath).toBe(normalizePath(join(outputDir, "ctx-output-two")));
+    expect(existsSync(join(outputDir, "ctx-output-one", "manifest.json"))).toBe(true);
+    expect(existsSync(join(outputDir, "ctx-output-two", "manifest.json"))).toBe(true);
+  });
+
+  it("falls back to raw brief content when canonical sections are absent", async () => {
+    const root = createRootDir();
+    const { graphPath, stateRoot } = buildFixture(root);
+    writeText(
+      join(root, ".streamliner", "workstreams", "session-launching-and-tracking", "brief.md"),
+      "# Odd Brief\n\nThis brief has useful content without standard headings.\n",
+    );
+
+    const result = await prepareLaunchContextPackage({
+      graphPath,
+      nodeId: "backend-context-assembly",
+      stateRoot,
+      createContextId: () => "ctx-odd-brief",
+      trackerResolver,
+    });
+
+    const layer1 = readFileSync(
+      join(result.contextPackagePath, "context", "layer-1-intent.md"),
+      "utf8",
+    );
+    expect(layer1).toContain("This brief has useful content without standard headings.");
+  });
+
+  it("records repo-root and cross-repo design degradations explicitly", async () => {
+    const root = createRootDir();
+    const { graphPath, stateRoot } = buildFixture(root);
+    const looseGraphPath = join(root, "loose-graph.json");
+    const graph = JSON.parse(readFileSync(graphPath, "utf8")) as {
+      repos: Array<{ id: string; owner: string; name: string; role?: string }>;
+      designRefs: Array<{ repoId: string; path: string }>;
+    };
+    graph.repos.push({
+      id: "other-repo",
+      owner: "lossyrob",
+      name: "other-repo",
+    });
+    graph.designRefs.push({ repoId: "other-repo", path: "docs/design/remote.md" });
+    writeFileSync(looseGraphPath, `${JSON.stringify(graph, null, 2)}\n`);
+
+    const result = await prepareLaunchContextPackage({
+      graphPath: looseGraphPath,
+      nodeId: "backend-context-assembly",
+      stateRoot,
+      createContextId: () => "ctx-loose",
+      trackerResolver,
+    });
+
+    expect(result.unavailableInputs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "graph",
+          reason: "repo_root_not_found",
+        }),
+        expect.objectContaining({
+          kind: "design",
+          source: "other-repo:docs/design/remote.md",
+          reason: "cross_repo_unavailable",
+        }),
+      ]),
+    );
+  });
+
+  it("includes local tracker content and can bind a generated package to a launch claim", async () => {
+    const root = createRootDir();
+    const { graphPath, stateRoot } = buildFixture(root);
+    const graph = JSON.parse(readFileSync(graphPath, "utf8")) as {
+      nodes: Array<{ id: string; tracker?: unknown }>;
+    };
+    const node = graph.nodes.find((entry) => entry.id === "backend-context-assembly");
+    if (!node) {
+      throw new Error("Expected fixture node.");
+    }
+    node.tracker = { type: "local", path: "node-spec.md" };
+    writeFileSync(graphPath, `${JSON.stringify(graph, null, 2)}\n`);
+    writeText(
+      join(root, ".streamliner", "workstreams", "session-launching-and-tracking", "node-spec.md"),
+      "# Local Node Spec\n\nAssemble context from a local spec.\n",
+    );
+
+    const result = await prepareLaunchContextPackage({
+      graphPath,
+      nodeId: "backend-context-assembly",
+      stateRoot,
+      createContextId: () => "ctx-local-tracker",
+    });
+    const layer3 = readFileSync(
+      join(result.contextPackagePath, "context", "layer-3-node.md"),
+      "utf8",
+    );
+    expect(layer3).toContain("Assemble context from a local spec.");
+
+    const bound = await bindLaunchContextPackage(result.manifestPath, {
+      launchNonce: "nonce-123",
+      launchClaimRef: "claim-123",
+    });
+    expect(bound.launchNonce).toBe("nonce-123");
+    expect(bound.launchClaimRef).toBe("claim-123");
   });
 });
 

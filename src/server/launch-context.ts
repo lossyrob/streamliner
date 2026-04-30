@@ -100,6 +100,11 @@ export interface LaunchContextManifest {
   unavailableInputs: LaunchContextUnavailableInput[];
 }
 
+export interface LaunchContextManifestBinding {
+  launchNonce: string;
+  launchClaimRef: string;
+}
+
 export interface LaunchContextPackage {
   contextId: string;
   contextPackagePath: string;
@@ -184,7 +189,7 @@ function sourceDisplayPath(absPath: string, repoRoot: string): string {
   if (!rel.startsWith("..") && !isAbsolute(rel)) {
     return normalizeManifestPath(rel);
   }
-  return absPath;
+  return normalizeManifestPath(absPath);
 }
 
 function isErrno(error: unknown, code: string): boolean {
@@ -212,18 +217,18 @@ function resolveGraphPath(options: PrepareLaunchContextPackageOptions): string {
   return resolve(graphPath);
 }
 
-function inferRepoRoot(graphPath: string): string {
+function inferRepoRoot(graphPath: string): { path: string; found: boolean } {
   let current = dirname(graphPath);
   while (dirname(current) !== current) {
     if (basename(current) === ".streamliner") {
-      return dirname(current);
+      return { path: dirname(current), found: true };
     }
     if (existsSync(join(current, ".git"))) {
-      return current;
+      return { path: current, found: true };
     }
     current = dirname(current);
   }
-  return dirname(graphPath);
+  return { path: dirname(graphPath), found: false };
 }
 
 function gitRootFor(repoRoot: string): string | null {
@@ -338,11 +343,14 @@ function formatSections(
   titles: string[],
   fallback: string,
 ): string {
+  if (!titles.some((title) => sections.has(title))) {
+    return fallback;
+  }
   const blocks = titles.map((title) => {
     const content = sections.get(title);
     return `## ${title}\n\n${content?.trim() || "_Not present._"}`;
   });
-  return blocks.length > 0 ? blocks.join("\n\n") : fallback;
+  return blocks.join("\n\n");
 }
 
 function briefSections(briefContent: string | undefined): BriefSections {
@@ -367,18 +375,24 @@ function briefSections(briefContent: string | undefined): BriefSections {
   };
 }
 
-function parseBriefDesignReferencePaths(briefContent: string | undefined): string[] {
+function parseBriefDesignReferences(
+  briefContent: string | undefined,
+  fallbackRepoId: string,
+): WorkstreamDesignReference[] {
   if (!briefContent) {
     return [];
   }
-  const designRefs = new Set<string>();
-  const pattern = /(?:streamliner:)?(docs\/design\/[A-Za-z0-9._/-]+\.md)/g;
+  const designRefs = new Map<string, WorkstreamDesignReference>();
+  const pattern = /(?:(?<repoId>[a-z0-9]+(?:-[a-z0-9]+)*):)?(?<path>docs\/design\/[A-Za-z0-9._/-]+\.md)/g;
   for (const match of briefContent.matchAll(pattern)) {
-    if (match[1]) {
-      designRefs.add(normalizeManifestPath(match[1]));
+    const path = match.groups?.path;
+    if (path) {
+      const repoId = match.groups?.repoId ?? fallbackRepoId;
+      const reference = { repoId, path: normalizeManifestPath(path) };
+      designRefs.set(designReferenceKey(reference), reference);
     }
   }
-  return [...designRefs];
+  return [...designRefs.values()];
 }
 
 function designReferenceKey(reference: Pick<WorkstreamDesignReference, "repoId" | "path">): string {
@@ -407,8 +421,8 @@ function collectDesignReferences(
   for (const reference of workstream.designRefs) {
     add(reference.repoId, reference.path, "workstream designRefs");
   }
-  for (const path of parseBriefDesignReferencePaths(briefContent)) {
-    add(primaryRepoId, path, "brief Design References section");
+  for (const reference of parseBriefDesignReferences(briefContent, primaryRepoId)) {
+    add(reference.repoId, reference.path, "brief Design References section");
   }
 
   return [...references.values()];
@@ -677,7 +691,7 @@ function finalPackagePath(options: {
         "outputDir must be an absolute path.",
       );
     }
-    return resolve(options.outputDir);
+    return join(resolve(options.outputDir), options.contextId);
   }
 
   return join(
@@ -694,7 +708,7 @@ async function ensurePathDoesNotExist(path: string): Promise<void> {
     await stat(path);
     throw new LaunchContextPreparationError(
       "output_dir_exists",
-      400,
+      409,
       `Launch context output directory already exists: ${path}`,
     );
   } catch (error: unknown) {
@@ -733,6 +747,13 @@ async function writePackageFiles(options: {
     if (error instanceof LaunchContextPreparationError) {
       throw error;
     }
+    if (isErrno(error, "EEXIST") || isErrno(error, "EPERM")) {
+      throw new LaunchContextPreparationError(
+        "output_dir_exists",
+        409,
+        `Launch context output directory already exists: ${options.packagePath}`,
+      );
+    }
     throw new LaunchContextPreparationError(
       "write_failed",
       500,
@@ -767,7 +788,8 @@ export async function prepareLaunchContextPackage(
     );
   }
 
-  const repoRoot = inferRepoRoot(graphPath);
+  const repoRootInfo = inferRepoRoot(graphPath);
+  const repoRoot = repoRootInfo.path;
   const workstreamDir = dirname(graphPath);
   const projectKey = workstream.projectKey ?? workstream.id;
   const stateRoot = resolve(options.stateRoot ?? defaultStateRoot());
@@ -782,6 +804,14 @@ export async function prepareLaunchContextPackage(
   const contextDir = join(packagePath, "context");
   const unavailableInputs: LaunchContextUnavailableInput[] = [];
   const sourceReferences: LaunchContextSourceReference[] = [];
+  if (!repoRootInfo.found) {
+    unavailableInputs.push({
+      kind: "graph",
+      source: normalizeManifestPath(graphPath),
+      reason: "repo_root_not_found",
+      detail: "Could not find a .streamliner or .git ancestor for the graph path.",
+    });
+  }
 
   const graphReference: LaunchContextSourceReference = {
     kind: "graph",
@@ -802,9 +832,33 @@ export async function prepareLaunchContextPackage(
   sourceReferences.push(briefSource.reference);
 
   const designReferences = collectDesignReferences(workstream, briefSource.content);
+  const primaryRepoId = workstream.repos[0]?.id ?? "streamliner";
   const loadedDesignSources: LoadedSource[] = [];
   const layer0Selection: LaunchContextLayer0Selection[] = [];
   for (const designReference of designReferences) {
+    if (designReference.repoId !== primaryRepoId) {
+      const reference: LaunchContextSourceReference = {
+        kind: "design",
+        role: "layer-0-design",
+        path: designReference.path,
+        repoId: designReference.repoId,
+      };
+      sourceReferences.push(reference);
+      loadedDesignSources.push({ reference });
+      unavailableInputs.push({
+        kind: "design",
+        source: `${designReference.repoId}:${designReference.path}`,
+        reason: "cross_repo_unavailable",
+        detail: "Context assembly currently reads design docs from the primary checkout only.",
+      });
+      layer0Selection.push({
+        repoId: designReference.repoId,
+        path: designReference.path,
+        rationale: designReference.rationale,
+        included: false,
+      });
+      continue;
+    }
     const source = await readSourceFile({
       absPath: join(repoRoot, ...designReference.path.split("/")),
       repoRoot,
@@ -867,7 +921,7 @@ export async function prepareLaunchContextPackage(
   const layers = (Object.entries(LAYER_FILE_NAMES) as Array<[LaunchContextLayerId, string]>).map(
     ([id, fileName]) => ({
       id,
-      path: join(contextDir, fileName),
+      path: normalizeManifestPath(join(contextDir, fileName)),
       relativePath: normalizeManifestPath(join("context", fileName)),
       sources: layerSources[id],
     }),
@@ -882,12 +936,12 @@ export async function prepareLaunchContextPackage(
     workstreamId: workstream.id,
     nodeId: node.id,
     targetRepoIds: [...node.repoIds],
-    graphPath,
-    workstreamDir,
-    repoRoot,
+    graphPath: normalizeManifestPath(graphPath),
+    workstreamDir: normalizeManifestPath(workstreamDir),
+    repoRoot: normalizeManifestPath(repoRoot),
     generatedAt,
-    contextPackagePath: packagePath,
-    manifestPath,
+    contextPackagePath: normalizeManifestPath(packagePath),
+    manifestPath: normalizeManifestPath(manifestPath),
     layers,
     sourceReferences,
     layer0Selection,
@@ -903,10 +957,37 @@ export async function prepareLaunchContextPackage(
 
   return {
     contextId,
-    contextPackagePath: packagePath,
-    manifestPath,
+    contextPackagePath: normalizeManifestPath(packagePath),
+    manifestPath: normalizeManifestPath(manifestPath),
     manifest,
     unavailableInputs,
   };
+}
+
+export async function readLaunchContextManifest(
+  manifestPath: string,
+): Promise<LaunchContextManifest> {
+  const raw = await readFile(manifestPath, "utf8");
+  const parsed = JSON.parse(raw) as LaunchContextManifest;
+  if (parsed.schemaVersion !== LAUNCH_CONTEXT_MANIFEST_SCHEMA_VERSION) {
+    throw new Error(
+      `Unsupported launch context manifest schema version: ${parsed.schemaVersion}`,
+    );
+  }
+  return parsed;
+}
+
+export async function bindLaunchContextPackage(
+  manifestPath: string,
+  binding: LaunchContextManifestBinding,
+): Promise<LaunchContextManifest> {
+  const manifest = await readLaunchContextManifest(manifestPath);
+  const updated: LaunchContextManifest = {
+    ...manifest,
+    launchNonce: binding.launchNonce,
+    launchClaimRef: binding.launchClaimRef,
+  };
+  await writeFile(manifestPath, `${JSON.stringify(updated, null, 2)}\n`, "utf8");
+  return updated;
 }
 
