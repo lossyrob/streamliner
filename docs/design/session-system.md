@@ -63,9 +63,9 @@ The launch is a two-phase process: a **launch preparation phase** that prepares 
 Streamliner's backend prepares a launch spec. It may use Copilot SDK for context assembly when an LLM is useful, but the contract is the structured launch spec, not a mandatory SDK or PAW workflow. Preparation:
 
 1. **Resolves launch profile layers** — combines instance, project, workstream, and node-launch defaults for instruction text, workflow expectations, context references, terminal preferences, and CLI arguments
-2. **Assembles context** — builds the Layer 0–3 context package for the node by indexing design docs, extracting brief sections, referencing node specs, and capturing relevant sibling/upstream context
+2. **Assembles context** — builds a single worker-facing context file for the node with Layer 0–3 sections that index design docs, extract brief sections, reference node specs, and capture relevant sibling/upstream context
 3. **Prepares the execution location** — resolves the checkout or worktree path and branch according to the selected execution mode. A profile may run profile-specific setup, such as PAW initialization, but that setup is not required by the baseline launch contract.
-4. **Places context files** — writes the assembled context package into a launch context directory that the kickoff prompt can reference
+4. **Places the context file** — writes the assembled context package into a launch context directory that the kickoff prompt can reference
 5. **Generates launch claim data** — creates the launch nonce and expected binding metadata that Streamliner will record before starting Copilot CLI
 6. **Compiles kickoff prompt** — turns the launch profile, work item identity, prepared context locations, CLI arguments, and launch nonce into the initial instruction for the worker session
 7. **Returns structured output** — returns the launch spec that the terminal launcher needs
@@ -77,8 +77,8 @@ Launch preparation output:
 | `launchId` | string | Streamliner launch attempt identifier |
 | `cwd` | string | Worktree or checkout path where the session should run |
 | `branch` | string | Branch name created or checked out |
-| `contextPackagePath` | string | File path containing the generated Layer 0–3 context package |
-| `contextPackageManifestPath` | string | File path containing the generated context package manifest |
+| `contextPackagePath` | string | Directory containing the generated context file |
+| `contextFilePath` | string | File path to the worker-facing `context.md` |
 | `launchProfileId` | string | Selected launch profile |
 | `cliArgs` | string[] | Copilot CLI arguments after layered defaults and builder overrides |
 | `environment` | string | `local` in this design |
@@ -107,7 +107,7 @@ A launch profile is reusable launch configuration, not a separate workflow engin
 
 Profile input is layered from broad to specific: Streamliner instance defaults, project defaults, workstream defaults, node defaults, and launch-time builder edits. Later layers override or append to earlier layers according to the profile field. The final composed prompt is shown to the builder before launch so it can be edited instead of forcing the builder to keep a separate notepad of reusable prompts.
 
-PAW is represented as one or more launch profiles. A PAW profile may point the worker at PAW expectations and context files, but Streamliner launch is not blocked on PAW workflow correctness. A non-PAW profile can still launch a graph node, bind the session, and track it through the registry.
+PAW is represented as one or more launch profiles. A PAW profile may point the worker at PAW expectations and the generated context file, but Streamliner launch is not blocked on PAW workflow correctness. A non-PAW profile can still launch a graph node, bind the session, and track it through the registry.
 
 ### Kickoff Prompt
 
@@ -134,7 +134,7 @@ Opening a terminal in the correct directory is not a launch. A launch is only co
 
 ## Context Assembly
 
-Context assembly builds the Layer 0–3 context package that orients a worker session to a node's mission without copying authoritative source material wholesale. It runs inside launch preparation. Streamliner may use Copilot SDK or another LLM-backed helper to make intelligent decisions about what context to reference or synthesize, but the output is a file-based context package that launch profiles and the kickoff prompt can reference.
+Context assembly builds a single worker-facing `context.md` that orients a worker session to a node's mission without copying authoritative source material wholesale. The file preserves the conceptual Layer 0–3 sections, but delivery is consolidated so the worker has one file to read. Context assembly runs inside launch preparation. Streamliner may use Copilot SDK or another LLM-backed helper to make intelligent decisions about what context to reference or synthesize, but the output is a file-based context package that launch profiles and the kickoff prompt can reference.
 
 ### Layer 0 — Project Design Context
 
@@ -145,7 +145,7 @@ Layer 0 starts from the repo's configured design docs path, using the workstream
 - Follow the index and those referenced docs into other `current` design docs and accepted decision records when they are relevant to the node
 - Reference `draft` design docs when they are explicitly named in `designRefs` or the node's spec
 
-Design docs are already committed files. Layer 0 is a generated reference index, not a copied design-doc bundle. The worker reads the authoritative docs directly from the target repo (or registered design repo) at the current HEAD, using Layer 0 and the manifest as navigation aids and freshness/provenance metadata.
+Design docs are already committed files. Layer 0 is a generated reference index, not a copied design-doc bundle. The worker reads the authoritative docs directly from the target repo (or registered design repo) at the current HEAD, using Layer 0 as a navigation aid.
 
 ### Layer 1 — Workstream Intent
 
@@ -175,21 +175,16 @@ Assembled from the graph and tracker reference:
 
 ### Delivery Mechanism
 
-Context is delivered as files written into a launch context package directory. For a PAW profile, the caller may provide an output parent directory created by profile-specific setup; Streamliner creates a `{contextId}` package directory under that parent. For a non-PAW profile or prompt preview, Streamliner writes the package under local runtime state. The kickoff prompt points the worker session at these files during initialization. See [Decision 002](decisions/002-file-based-context-delivery.md) for the rationale.
+Context is delivered as one `context.md` file written into a launch context package directory. For a PAW profile, the caller may provide an output parent directory created by profile-specific setup; Streamliner creates a `{contextId}` package directory under that parent. For a non-PAW profile or prompt preview, Streamliner writes the package under local runtime state. The kickoff prompt points the worker session at the single context file during initialization. See [Decision 002](decisions/002-file-based-context-delivery.md) for the rationale.
 
 The assembled package is written to:
 
 ```
 <launch-context-package-dir>/
-  manifest.json
-  context/
-    layer-0-design.md       ← design-doc reference index
-    layer-1-intent.md       ← extracted brief sections
-    layer-2-state.md        ← extracted operational state
-    layer-3-node.md         ← node spec reference + wave context
+  context.md                ← worker-facing Layer 0-3 context sections
 ```
 
-These files are generated, not manually maintained. They are excluded from Git and regenerated for each context preparation. Launch profiles decide how prominently the worker is instructed to read them. Each generated layer file starts with a header naming the context id, node id, launch nonce when one exists, brief freshness, generation time, and a "do not edit" marker. Generated layers should synthesize launch-time orientation and link to authoritative sources instead of restating design docs or tracker specs in full.
+This file is generated, not manually maintained. It is excluded from Git and regenerated for each context preparation. Launch profiles decide how prominently the worker is instructed to read it. Generated context should synthesize launch-time orientation and link to authoritative sources instead of restating design docs or tracker specs in full. Machine metadata remains in the backend/API response rather than in a worker-facing manifest file.
 
 Before launch claims exist, backend context preview writes default packages to:
 
@@ -199,14 +194,12 @@ Before launch claims exist, backend context preview writes default packages to:
 
 `contextId` is a stable per-package identifier returned by the backend. Repeated preparations create fresh package directories rather than overwriting earlier packages. Later launch-claim binding may associate a returned `contextId` with a `launchNonce` or copy the package into a nonce-scoped launch archive; this context assembly slice does not require a nonce up front.
 
-### Context Package Manifest
+### Context Package Metadata
 
-`manifest.json` is the backend-facing package contract consumed by launch profiles, prompt preview, and terminal launch work:
+Context package metadata is a backend/API contract consumed by launch profiles, prompt preview, and terminal launch work. It is not written into the worker-facing package as `manifest.json`:
 
 | Field | Meaning |
 |-------|---------|
-| `schemaVersion` | Manifest schema version. Starts at `1`. |
-| `generatorVersion` | Context assembler version. Starts at `1`. |
 | `contextId` | Stable identifier for this generated package. |
 | `launchNonce` | Launch nonce when known; `null` during prompt preview or pre-claim context preparation. |
 | `launchClaimRef` | Future launch-claim association; `null` until claim binding owns it. |
@@ -214,8 +207,7 @@ Before launch claims exist, backend context preview writes default packages to:
 | `targetRepoIds` | Graph repo ids targeted by the selected node. |
 | `graphPath`, `workstreamDir`, `repoRoot` | Local source locations used during preparation. |
 | `generatedAt` | ISO timestamp for package freshness. |
-| `contextPackagePath`, `manifestPath` | Absolute package and manifest paths for downstream local consumers. Path strings use forward slashes for stable JSON/prompt rendering. |
-| `layers` | Layer id, generated file path, and relative file path for each Layer 0-3 file. |
+| `contextPackagePath`, `contextFilePath` | Absolute package and context-file paths for downstream local consumers. Path strings use forward slashes for stable JSON/prompt rendering. |
 | `sourceReferences` | Graph, brief, design, tracker, and local-spec references with git object hashes or content hashes when available. |
 | `unavailableInputs` | Missing or degraded optional inputs, such as missing design docs or local tracker files. |
 
@@ -242,11 +234,11 @@ Response body:
 |-------|---------|
 | `contextId` | Stable generated package id. |
 | `contextPackagePath` | Absolute package directory. |
-| `manifestPath` | Absolute manifest path. |
-| `manifest` | Full manifest object. |
-| `unavailableInputs` | Convenience JSON copy of `manifest.unavailableInputs`; consumers should use one source to avoid duplicate warnings. |
+| `contextFilePath` | Absolute path to the generated worker-facing `context.md`. |
+| `metadata` | Structured system-level context metadata for launch profiles, prompt preview, and terminal launch work. |
+| `unavailableInputs` | Convenience JSON copy of `metadata.unavailableInputs`; consumers should use one source to avoid duplicate warnings. |
 
-Missing or invalid graph/node request inputs are client errors. Missing optional context sources are recorded in `unavailableInputs` while still producing a package. Path fields in the JSON response and manifest use forward slashes for stable string comparison and prompt rendering, even on Windows. They remain local absolute paths unless marked as relative paths.
+Missing or invalid graph/node request inputs are client errors. Missing optional context sources are recorded in `unavailableInputs` while still producing a package. Path fields in the JSON response use forward slashes for stable string comparison and prompt rendering, even on Windows. They remain local absolute paths unless marked as relative paths.
 
 ## Session Lifecycle
 
@@ -626,7 +618,7 @@ This keeps the binding in Streamliner's domain while relying on Copilot's files 
 
 Launch claims are transient. They must be actively reconciled or aged out, or they become ambient noise that corrupts future bindings.
 
-- **Claim creation** writes the claim atomically to runtime state before the terminal launch command runs. If launch preparation fails before the launch command is issued, the claim is deleted on the same failure path that cleans up context files.
+- **Claim creation** writes the claim atomically to runtime state before the terminal launch command runs. If launch preparation fails before the launch command is issued, the claim is deleted on the same failure path that cleans up the generated context package.
 - **Binding window**: a claim is eligible for binding only while its launch window is open. The default window is 5 minutes from `launchedAt`. Inside the window, the watcher attempts to bind discovered sessions by nonce plus `cwd`/branch guardrails.
 - **Claim expiry**: if no session binds within the window, the claim transitions to `abandoned`. Abandoned claims are retained for a short inspection period (default: 1 hour) so the builder can see that a launch failed to attach, then pruned.
 - **Nonce tampering**: the kickoff prompt includes the launch nonce on a dedicated line. If the builder edits or deletes the nonce line before pressing Enter, the session's early events will not contain the expected nonce. The claim expires normally; the orphan session is surfaced in the UI (see below) so the builder can rebind it manually or discard it.

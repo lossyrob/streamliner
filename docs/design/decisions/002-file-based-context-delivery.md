@@ -76,6 +76,23 @@ extracted launch-time orientation that is useful to the worker, plus links to th
 originals. Human-facing Layer 0 selection rationale lives in the generated Layer
 0 file instead of being duplicated as a separate manifest section.
 
+### 2026-04-30 update: single worker-facing context file
+
+The Layer 0-3 model remains conceptual, but generated delivery is consolidated
+into one worker-facing `context.md` file. Splitting small reference-first
+sections into separate files forced extra worker reads without meaningful
+progressive-disclosure value. `context.md` keeps Layer 0-3 headings so the
+orientation model is visible while giving the kickoff prompt one file to point
+at.
+
+The persisted `manifest.json` is removed from the generated package. Structured
+metadata, including source references, freshness, unavailable inputs,
+`contextId`, and `contextFilePath`, is a backend/API contract for launch
+profiles, prompt preview, and terminal launch plumbing. It is not a worker-facing
+artifact. If Layer 0 selection logging later needs to be durable for forensic
+review, it belongs in backend metadata or launch records rather than a generated
+manifest file.
+
 ## Open questions
 
 - **Archive retention policy**: How long are launch context archives kept? Options: last N launches per workstream, last N days, unbounded until manual clean. Resolve before launching multi-day PAW workflows routinely, because that is where forensic replay matters most.

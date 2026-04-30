@@ -15,18 +15,18 @@ references_decisions:
 
 # Context Package
 
-AI agents start every session as blank slates. Human teams carry shared context in memory and habit. The context package replaces that with an explicit, layered set of generated artifacts and references.
+AI agents start every session as blank slates. Human teams carry shared context in memory and habit. The context package replaces that with one generated orientation file containing layered sections and references.
 
 The context package is designed to be:
 
 - **Complete enough to navigate** — enough orientation and links to act responsibly
-- **Layered** — each role gets what it needs
+- **Layered conceptually** — each role gets what it needs without forcing multiple files
 - **Progressive** — broad context first, deeper context only when needed
 - **Bounded** — small enough to fit inside a useful context budget
 
 ## Layer 0 — Project Design Context
 
-The project's intended design: a reference index to the design docs and decision records that describe the system being built, with the design index as the cold-reader entry point. Layer 0 points at the authoritative docs; it does not copy their bodies into the generated package.
+The project's intended design: a reference index to the design docs and decision records that describe the system being built, with the design index as the cold-reader entry point. Layer 0 points at the authoritative docs from the generated `context.md`; it does not copy their bodies into the generated package.
 
 Answers: What system are we building? What constraints are in force? What rationale must be honored?
 
@@ -50,4 +50,4 @@ The worker never reconstructs the whole workstream. It receives references to pr
 
 ## Progressive Disclosure
 
-Workers retain access to the full design set through the repo. The generated Layer 0 reference index names the design index plus the most relevant design docs to read first, then the worker can keep reading deeper from the broader design layer as needed. Design References bias ordering and emphasis — they tell the session what to look at first, not what it is forbidden to read. Each successive layer narrows context further — from the entire project down to one node's mission.
+Workers retain access to the full design set through the repo. The generated Layer 0 reference index names the design index plus the most relevant design docs to read first, then the worker can keep reading deeper from the broader design layer as needed. Design References bias ordering and emphasis — they tell the session what to look at first, not what it is forbidden to read. Each successive section in `context.md` narrows context further — from the entire project down to one node's mission — without requiring separate file reads.
