@@ -26,7 +26,7 @@ The context package is designed to be:
 
 ## Layer 0 — Project Design Context
 
-The project's intended design: a reference index to the design docs and decision records that describe the system being built, with the design index as the cold-reader entry point. Layer 0 points at the authoritative docs from the generated `context.md`; it does not copy their bodies into the generated package.
+The project's intended design: direct navigation into the design docs and decision records that describe the system being built, with the design index as the cold-reader entry point. Layer 0 reminds the worker to read authoritative docs from the repo and may include non-binding path hints; it does not copy design bodies into the generated package or define a required reading list.
 
 Answers: What system are we building? What constraints are in force? What rationale must be honored?
 
@@ -50,4 +50,4 @@ The worker never reconstructs the whole workstream. It receives references to pr
 
 ## Progressive Disclosure
 
-Workers retain access to the full design set through the repo. The generated Layer 0 reference index names the design index plus the most relevant design docs to read first, then the worker can keep reading deeper from the broader design layer as needed. Design References bias ordering and emphasis — they tell the session what to look at first, not what it is forbidden to read. Each successive section in `context.md` narrows context further — from the entire project down to one node's mission — without requiring separate file reads.
+Workers retain access to the full design set through the repo. Generated Layer 0 guidance points them at the design index and may include a short list of possible starting points. Those hints bias discovery, but they are not required reading, an exhaustive design scope, or another agent's final judgment about what matters. Each successive section in `context.md` narrows context further — from the entire project down to one node's mission — without requiring separate file reads.

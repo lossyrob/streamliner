@@ -109,6 +109,22 @@ selected node, distinguish worker responsibility from workstream background, and
 avoid converting sibling/wave/workstream descriptions into tasks assigned to the
 worker.
 
+### 2026-04-30 update: Layer 0 design references are hints
+
+Layer 0 remains part of the worker-facing `context.md`, but its design paths are
+navigation hints rather than required reading or an exhaustive model-chosen
+design scope. The worker should navigate the repo's design docs directly,
+starting from `docs/design/index.md` when it needs orientation. Workstream
+`designRefs`, brief references, and node spec links can suggest likely starting
+points, but the worker retains responsibility for following the design layer as
+needed.
+
+The generated context should not present a long rationale table that sounds like
+another agent assigning required reading. If it lists design paths, it labels
+them as hints or possible starting points and keeps the list short. Source
+references and freshness remain backend/API metadata; they are not a
+worker-facing manifest or a durable record of an LLM-chosen Layer 0 selection.
+
 ## Open questions
 
 - **Archive retention policy**: How long are launch context archives kept? Options: last N launches per workstream, last N days, unbounded until manual clean. Resolve before launching multi-day PAW workflows routinely, because that is where forensic replay matters most.
