@@ -8,6 +8,10 @@ import { getApiLogger } from "./logger";
 import { createAccessLogMiddleware } from "./middleware/access-log";
 import { createFilePickerRouter } from "./routes/file-picker";
 import { createGraphRouter } from "./routes/graph";
+import {
+  createLaunchContextsRouter,
+  type LaunchContextRouteDeps,
+} from "./routes/launch-contexts";
 import { createRecentsRouter } from "./routes/recents";
 import { createSessionsRouter } from "./routes/sessions";
 import { SessionRegistryEventStream } from "./session-events";
@@ -23,6 +27,7 @@ export interface StreamlinerApiAppOptions {
   graphPath?: string;
   recentsPath?: string;
   relaunchDeps?: Partial<RelaunchDeps>;
+  launchContextDeps?: LaunchContextRouteDeps;
 }
 
 const malformedJsonHandler: ErrorRequestHandler = (error, _req, res, next) => {
@@ -76,6 +81,13 @@ export function createStreamlinerApiApp(
     createGraphRouter({
       defaultGraphPath: options.graphPath,
       recentsPath: options.recentsPath,
+    }),
+  );
+  app.use(
+    "/api",
+    createLaunchContextsRouter({
+      defaultGraphPath: options.graphPath,
+      deps: options.launchContextDeps,
     }),
   );
   app.use(
