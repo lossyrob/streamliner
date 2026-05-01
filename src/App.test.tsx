@@ -228,23 +228,53 @@ function setInputValue(
   });
 }
 
-async function chooseWorkstreamGraphFile(
-  container: HTMLElement,
-  graph: Record<string, unknown> = buildWorkstreamGraph(),
-): Promise<void> {
-  const input = findInputByLabel(container, "Choose workstream graph file");
-  const file = new File([JSON.stringify(graph)], "graph.json", {
-    type: "application/json",
-    lastModified: Date.parse("2026-05-01T12:00:00.000Z"),
-  });
-  Object.defineProperty(input, "files", {
-    configurable: true,
-    value: [file],
-  });
-  act(() => {
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-  });
-  await settle(100);
+function createWorkstreamDirectoryHandle(initialGraph: Record<string, unknown> = buildWorkstreamGraph()): {
+  handle: {
+    name: string;
+    kind: "directory";
+    queryPermission: () => Promise<PermissionState>;
+    getFileHandle: (name: string) => Promise<{
+      name: string;
+      kind: "file";
+      getFile: () => Promise<File>;
+    }>;
+  };
+  setGraph: (graph: Record<string, unknown>) => void;
+} {
+  let graph = initialGraph;
+  let version = 0;
+  const handle = {
+    name: "api-test",
+    kind: "directory" as const,
+    queryPermission: async () => "granted" as PermissionState,
+    getFileHandle: async (name: string) => {
+      if (name !== "graph.json") {
+        throw new DOMException("File not found.", "NotFoundError");
+      }
+      return {
+        name: "graph.json",
+        kind: "file" as const,
+        getFile: async () =>
+          new File([JSON.stringify(graph)], "graph.json", {
+            type: "application/json",
+            lastModified: Date.parse("2026-05-01T12:00:00.000Z") + version * 1000,
+          }),
+      };
+    },
+  };
+  return {
+    handle,
+    setGraph(nextGraph) {
+      graph = nextGraph;
+      version += 1;
+    },
+  };
+}
+
+function stubWorkstreamDirectoryPicker(
+  handle: ReturnType<typeof createWorkstreamDirectoryHandle>["handle"],
+): void {
+  vi.stubGlobal("showDirectoryPicker", vi.fn(async () => handle));
 }
 
 async function settle(delayMs = 25): Promise<void> {
@@ -436,8 +466,10 @@ describe("App sessions route", () => {
   );
 
   it(
-    "registers a browser-picked graph and navigates to its workstream route",
+    "registers a browser-picked workstream directory and refreshes from disk",
     async () => {
+      const directory = createWorkstreamDirectoryHandle();
+      stubWorkstreamDirectoryPicker(directory.handle);
       const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
         const path = requestPath(input);
         if (path === "/api/workstreams") {
@@ -456,11 +488,13 @@ describe("App sessions route", () => {
       act(() => {
         findButton(container, "Add workstream…").click();
       });
-      await settle();
-      await chooseWorkstreamGraphFile(container);
+      await settle(100);
 
       expect(window.location.pathname).toBe("/workstreams/streamliner/api-test");
       expect(container.textContent).toContain("API Test");
+      directory.setGraph(buildWorkstreamGraph({ title: "API Test Updated" }));
+      await settle(2_200);
+      expect(container.textContent).toContain("API Test Updated");
       expect(
         fetchMock.mock.calls.some(([input]) =>
           requestPath(input as RequestInfo | URL) === "/api/pick-file",
@@ -473,23 +507,22 @@ describe("App sessions route", () => {
   it(
     "soft-fails missing graph files and can relink the active workstream",
     async () => {
-      let graphAvailable = false;
-      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const directory = createWorkstreamDirectoryHandle(
+        buildWorkstreamGraph({ title: "API Test Relinked" }),
+      );
+      stubWorkstreamDirectoryPicker(directory.handle);
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
         const path = requestPath(input);
         if (path === "/api/workstreams") {
           return jsonResponse({
             version: 1,
             migrationWarnings: [],
-            workstreams: [buildTrackedWorkstream({ fileStatus: graphAvailable ? "available" : "missing" })],
+            workstreams: [buildTrackedWorkstream({ fileStatus: "missing" })],
           });
         }
         if (path === "/api/workstreams/streamliner/api-test/graph") {
-          if (!graphAvailable) {
-            return jsonResponse({ code: "workstream_file_missing", error: "Graph file is missing." }, 404);
-          }
-          return jsonResponse(buildWorkstreamGraph({ title: "API Test Relinked" }));
+          return jsonResponse({ code: "workstream_file_missing", error: "Graph file is missing." }, 404);
         }
-        void init;
         throw new Error(`Unexpected fetch: ${path}`);
       });
       vi.stubGlobal("fetch", fetchMock);
@@ -504,14 +537,9 @@ describe("App sessions route", () => {
       expect(container.textContent).toContain("Graph file is missing.");
 
       act(() => {
-        findButton(container, "Relink graph…").click();
+        findButton(container, "Relink directory…").click();
       });
-      await settle();
-      graphAvailable = true;
-      await chooseWorkstreamGraphFile(
-        container,
-        buildWorkstreamGraph({ title: "API Test Relinked" }),
-      );
+      await settle(100);
 
       expect(container.textContent).toContain("API Test Relinked");
       expect(window.location.pathname).toBe("/workstreams/streamliner/api-test");

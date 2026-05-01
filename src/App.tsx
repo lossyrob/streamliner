@@ -4,7 +4,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type ChangeEvent,
   type MouseEvent,
 } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
@@ -28,13 +27,12 @@ import { CheckpointStepper } from "./components/CheckpointStepper";
 import { WorkstreamHeader } from "./components/WorkstreamHeader";
 import { SessionsPage } from "./components/SessionsPage";
 import {
-  browserWorkstreamSelectionFromFile,
   deleteBrowserWorkstreamEntry,
   listBrowserWorkstreamEntries,
-  pickBrowserWorkstreamFile,
+  pickBrowserWorkstreamDirectory,
   readBrowserWorkstreamGraph,
-  storeBrowserWorkstreamSelection,
-  type BrowserWorkstreamSelection,
+  storeBrowserWorkstreamDirectory,
+  type BrowserWorkstreamDirectorySelection,
 } from "./browser-workstream-files";
 
 const POLL_INTERVAL_MS = 2000;
@@ -168,7 +166,7 @@ function registryEntryUrl(entry: { projectKey: string; workstreamId: string }): 
 }
 
 function isBrowserWorkstreamEntry(entry: WorkstreamRegistryListEntry): boolean {
-  return entry.source === "browser-file";
+  return entry.source === "browser-directory";
 }
 
 function mergeWorkstreamEntries(
@@ -335,21 +333,21 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
     };
   }, [activeWorkstream, enabled, error, loadRegistered]);
 
-  const registerBrowserFile = useCallback(
-    async (selection: BrowserWorkstreamSelection) => {
-      const entry = await storeBrowserWorkstreamSelection(selection);
+  const registerBrowserDirectory = useCallback(
+    async (selection: BrowserWorkstreamDirectorySelection) => {
+      const entry = await storeBrowserWorkstreamDirectory(selection);
       await fetchRegistry();
       return entry;
     },
     [fetchRegistry],
   );
 
-  const relinkBrowserFile = useCallback(
-    async (selection: BrowserWorkstreamSelection) => {
+  const relinkBrowserDirectory = useCallback(
+    async (selection: BrowserWorkstreamDirectorySelection) => {
       if (!activeWorkstream) {
         throw new Error("No active workstream to relink.");
       }
-      const entry = await storeBrowserWorkstreamSelection(selection, activeWorkstream);
+      const entry = await storeBrowserWorkstreamDirectory(selection, activeWorkstream);
       const entries = await fetchRegistry();
       await loadRegistered(activeWorkstream, { entries });
       return entry;
@@ -383,8 +381,8 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
     workstreams,
     migrationWarnings,
     activeWorkstream,
-    registerBrowserFile,
-    relinkBrowserFile,
+    registerBrowserDirectory,
+    relinkBrowserDirectory,
     untrack,
   };
 }
@@ -419,7 +417,7 @@ function LandingPage({
             <span className="sl-landing-card-kicker">Graph workspace</span>
             <span className="sl-landing-card-title">Workstreams</span>
             <span className="sl-landing-card-copy">
-              Open sticky graph URLs, add workstream files, and untrack completed work.
+              Open sticky graph URLs, add workstream directories, and untrack completed work.
             </span>
             <span className="sl-landing-card-meta">
               {workstreamCount === 1 ? "1 tracked workstream" : `${workstreamCount} tracked workstreams`}
@@ -462,7 +460,7 @@ function WorkstreamHome({
             <span className="sl-eyebrow">WORKSTREAMS</span>
             <h1 className="sl-title">Tracked workstreams</h1>
             <p className="sl-summary">
-              Open a registered graph, or add a graph file to keep it addressable by URL.
+              Open a registered graph, or add a workstream directory to keep it addressable by URL.
             </p>
           </div>
           <button className="sl-action-btn primary" onClick={() => void onAddWorkstream()}>
@@ -560,7 +558,7 @@ function GraphDashboard({
             {actionError && <div className="sl-action-error">{actionError}</div>}
             <div className="sl-header-actions" style={{ justifyContent: "flex-start" }}>
               <button className="sl-action-btn primary" onClick={() => void onRelinkWorkstream()}>
-                Relink graph…
+                Relink directory…
               </button>
               <button className="sl-action-btn danger" onClick={handleUntrackCurrent}>
                 Untrack workstream
@@ -709,9 +707,7 @@ export default function App() {
   const { route, setRoute } = useDashboardRoute();
   const graphLoader = useGraphLoader(route, route.view !== "sessions");
   const beforeLeaveRef = useRef<(() => Promise<boolean>) | null>(null);
-  const fallbackFileInputRef = useRef<HTMLInputElement>(null);
-  const pendingFileActionRef = useRef<"register" | "relink" | null>(null);
-  const [filePickerError, setFilePickerError] = useState<string | null>(null);
+  const [directoryPickerError, setDirectoryPickerError] = useState<string | null>(null);
 
   const handleRouteChange = useCallback(
     async (nextRoute: DashboardRoute) => {
@@ -740,74 +736,52 @@ export default function App() {
     [setRoute],
   );
 
-  const handleBrowserFileSelection = useCallback(
-    async (action: "register" | "relink", selection: BrowserWorkstreamSelection) => {
-      setFilePickerError(null);
+  const handleBrowserDirectorySelection = useCallback(
+    async (action: "register" | "relink", selection: BrowserWorkstreamDirectorySelection) => {
+      setDirectoryPickerError(null);
       try {
         const entry = action === "register"
-          ? await graphLoader.registerBrowserFile(selection)
-          : await graphLoader.relinkBrowserFile(selection);
+          ? await graphLoader.registerBrowserDirectory(selection)
+          : await graphLoader.relinkBrowserDirectory(selection);
         openWorkstream(entry);
       } catch (nextError) {
-        setFilePickerError(nextError instanceof Error ? nextError.message : String(nextError));
+        setDirectoryPickerError(nextError instanceof Error ? nextError.message : String(nextError));
       }
     },
     [graphLoader, openWorkstream],
   );
 
-  const openNativeFilePicker = useCallback(
+  const openNativeDirectoryPicker = useCallback(
     async (action: "register" | "relink") => {
-      setFilePickerError(null);
+      setDirectoryPickerError(null);
       try {
-        const picked = await pickBrowserWorkstreamFile();
+        const picked = await pickBrowserWorkstreamDirectory();
         if (picked === "unsupported") {
-          pendingFileActionRef.current = action;
-          fallbackFileInputRef.current?.click();
+          setDirectoryPickerError("Use Edge or Chrome to add a workstream directory.");
           return;
         }
         if (picked) {
-          await handleBrowserFileSelection(action, picked);
+          await handleBrowserDirectorySelection(action, picked);
         }
       } catch (nextError) {
-        setFilePickerError(nextError instanceof Error ? nextError.message : String(nextError));
+        setDirectoryPickerError(nextError instanceof Error ? nextError.message : String(nextError));
       }
     },
-    [handleBrowserFileSelection],
-  );
-
-  const handleFallbackFileChange = useCallback(
-    (event: ChangeEvent<HTMLInputElement>) => {
-      const action = pendingFileActionRef.current;
-      pendingFileActionRef.current = null;
-      const file = event.currentTarget.files?.[0] ?? null;
-      event.currentTarget.value = "";
-      if (!action || !file) {
-        return;
-      }
-      void (async () => {
-        try {
-          const selection = await browserWorkstreamSelectionFromFile(file);
-          await handleBrowserFileSelection(action, selection);
-        } catch (nextError) {
-          setFilePickerError(nextError instanceof Error ? nextError.message : String(nextError));
-        }
-      })();
-    },
-    [handleBrowserFileSelection],
+    [handleBrowserDirectorySelection],
   );
 
   const addWorkstream = useCallback(
     async () => {
-      await openNativeFilePicker("register");
+      await openNativeDirectoryPicker("register");
     },
-    [openNativeFilePicker],
+    [openNativeDirectoryPicker],
   );
 
   const relinkWorkstream = useCallback(
     async () => {
-      await openNativeFilePicker("relink");
+      await openNativeDirectoryPicker("relink");
     },
-    [openNativeFilePicker],
+    [openNativeDirectoryPicker],
   );
 
   const untrackFromHome = useCallback(
@@ -821,19 +795,11 @@ export default function App() {
     <div className="sl-root">
       <DashboardNav route={route} onRouteChange={handleRouteChange} />
       <MigrationWarningsBanner warnings={graphLoader.migrationWarnings} />
-      {filePickerError && (
+      {directoryPickerError && (
         <div className="sl-global-warning-list">
-          <div className="sl-warning-item">{filePickerError}</div>
+          <div className="sl-warning-item">{directoryPickerError}</div>
         </div>
       )}
-      <input
-        ref={fallbackFileInputRef}
-        className="sl-hidden-file-input"
-        type="file"
-        accept=".json,application/json"
-        aria-label="Choose workstream graph file"
-        onChange={handleFallbackFileChange}
-      />
       {route.view === "sessions" ? (
         <SessionsPage registerBeforeLeave={registerBeforeLeave} />
       ) : route.view === "workstream" ? (

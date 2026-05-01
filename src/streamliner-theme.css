@@ -319,10 +319,6 @@ body,
   text-align: center;
 }
 
-.sl-hidden-file-input {
-  display: none;
-}
-
 /* Buttons */
 .sl-action-btn,
 .sl-link-btn,

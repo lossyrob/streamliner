@@ -2,12 +2,12 @@ import type { WorkstreamRegistryListEntry } from "./workstream-registry-contract
 import { parseWorkstreamDocument } from "./workstream-view-model";
 import { summarizeWorkstreamDocument } from "./workstream-identity";
 
-const STORAGE_KEY = "streamliner:browserWorkstreamFiles";
+const STORAGE_KEY = "streamliner:browserWorkstreamDirectories";
 const HANDLE_DB_NAME = "streamliner-browser-workstreams";
 const HANDLE_DB_VERSION = 1;
 const HANDLE_STORE = "workstreams";
 
-interface BrowserFilePermissionDescriptor {
+interface BrowserPermissionDescriptor {
   mode: "read";
 }
 
@@ -15,35 +15,36 @@ interface BrowserFileHandle {
   name: string;
   kind?: "file";
   getFile: () => Promise<File>;
-  queryPermission?: (descriptor?: BrowserFilePermissionDescriptor) => Promise<PermissionState>;
-  requestPermission?: (descriptor?: BrowserFilePermissionDescriptor) => Promise<PermissionState>;
 }
 
-interface BrowserOpenFilePickerOptions {
+interface BrowserDirectoryHandle {
+  name: string;
+  kind?: "directory";
+  getFileHandle: (name: string) => Promise<BrowserFileHandle>;
+  queryPermission?: (descriptor?: BrowserPermissionDescriptor) => Promise<PermissionState>;
+}
+
+interface BrowserDirectoryPickerOptions {
   id?: string;
-  multiple?: boolean;
-  types?: Array<{
-    description: string;
-    accept: Record<string, string[]>;
-  }>;
+  mode?: "read";
 }
 
-interface BrowserWindowWithPicker extends Window {
-  showOpenFilePicker?: (options?: BrowserOpenFilePickerOptions) => Promise<BrowserFileHandle[]>;
+interface BrowserWindowWithDirectoryPicker extends Window {
+  showDirectoryPicker?: (options?: BrowserDirectoryPickerOptions) => Promise<BrowserDirectoryHandle>;
 }
 
-export interface BrowserWorkstreamSelection {
-  fileName: string;
+export interface BrowserWorkstreamDirectorySelection {
+  directoryName: string;
   content: string;
   lastModified: number;
-  handle?: BrowserFileHandle;
+  directoryHandle: BrowserDirectoryHandle;
 }
 
-interface BrowserWorkstreamRecord {
+interface BrowserWorkstreamDirectoryRecord {
   key: string;
-  source: "browser-file";
-  browserFileKey: string;
-  browserFileName: string;
+  source: "browser-directory";
+  browserDirectoryKey: string;
+  browserDirectoryName: string;
   projectKey: string;
   workstreamId: string;
   title: string;
@@ -51,12 +52,11 @@ interface BrowserWorkstreamRecord {
   path: string;
   addedAt: string;
   lastOpenedAt: string;
-  snapshotContent: string;
-  snapshotLastModified: number;
+  graphLastModified: number;
 }
 
-interface BrowserHandleRecord extends BrowserWorkstreamRecord {
-  handle?: BrowserFileHandle;
+interface BrowserDirectoryHandleRecord extends BrowserWorkstreamDirectoryRecord {
+  directoryHandle?: BrowserDirectoryHandle;
 }
 
 export interface BrowserWorkstreamGraphRead {
@@ -69,23 +69,23 @@ function registryKey(entry: { projectKey: string; workstreamId: string }): strin
   return `${entry.projectKey}/${entry.workstreamId}`;
 }
 
-function browserPathForKey(key: string, fileName: string): string {
-  return `browser-file://${key}/${encodeURIComponent(fileName)}`;
+function browserPathForKey(key: string, directoryName: string): string {
+  return `browser-directory://${key}/${encodeURIComponent(directoryName)}/graph.json`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function isBrowserWorkstreamRecord(value: unknown): value is BrowserWorkstreamRecord {
+function isBrowserWorkstreamDirectoryRecord(value: unknown): value is BrowserWorkstreamDirectoryRecord {
   if (!isRecord(value)) {
     return false;
   }
   return (
-    value.source === "browser-file" &&
+    value.source === "browser-directory" &&
     typeof value.key === "string" &&
-    typeof value.browserFileKey === "string" &&
-    typeof value.browserFileName === "string" &&
+    typeof value.browserDirectoryKey === "string" &&
+    typeof value.browserDirectoryName === "string" &&
     typeof value.projectKey === "string" &&
     typeof value.workstreamId === "string" &&
     typeof value.title === "string" &&
@@ -93,33 +93,32 @@ function isBrowserWorkstreamRecord(value: unknown): value is BrowserWorkstreamRe
     typeof value.path === "string" &&
     typeof value.addedAt === "string" &&
     typeof value.lastOpenedAt === "string" &&
-    typeof value.snapshotContent === "string" &&
-    typeof value.snapshotLastModified === "number"
+    typeof value.graphLastModified === "number"
   );
 }
 
-function readStoredRecords(): BrowserWorkstreamRecord[] {
+function readStoredRecords(): BrowserWorkstreamDirectoryRecord[] {
   const raw = window.localStorage.getItem(STORAGE_KEY);
   if (!raw) {
     return [];
   }
   try {
     const parsed = JSON.parse(raw) as unknown;
-    return Array.isArray(parsed) ? parsed.filter(isBrowserWorkstreamRecord) : [];
+    return Array.isArray(parsed) ? parsed.filter(isBrowserWorkstreamDirectoryRecord) : [];
   } catch {
     return [];
   }
 }
 
-function writeStoredRecords(records: BrowserWorkstreamRecord[]): void {
+function writeStoredRecords(records: BrowserWorkstreamDirectoryRecord[]): void {
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
 }
 
-function toListEntry(record: BrowserWorkstreamRecord): WorkstreamRegistryListEntry {
+function toListEntry(record: BrowserWorkstreamDirectoryRecord): WorkstreamRegistryListEntry {
   return {
-    source: "browser-file",
-    browserFileKey: record.browserFileKey,
-    browserFileName: record.browserFileName,
+    source: "browser-directory",
+    browserDirectoryKey: record.browserDirectoryKey,
+    browserDirectoryName: record.browserDirectoryName,
     projectKey: record.projectKey,
     workstreamId: record.workstreamId,
     title: record.title,
@@ -131,12 +130,9 @@ function toListEntry(record: BrowserWorkstreamRecord): WorkstreamRegistryListEnt
   };
 }
 
-function summarizeSelection(selection: BrowserWorkstreamSelection): {
+function summarizeSelection(selection: BrowserWorkstreamDirectorySelection): {
   key: string;
-  recordBase: Omit<
-    BrowserWorkstreamRecord,
-    "addedAt" | "lastOpenedAt" | "snapshotContent" | "snapshotLastModified"
-  >;
+  recordBase: Omit<BrowserWorkstreamDirectoryRecord, "addedAt" | "lastOpenedAt" | "graphLastModified">;
 } {
   const document = parseWorkstreamDocument(selection.content);
   const summary = summarizeWorkstreamDocument(document);
@@ -145,14 +141,14 @@ function summarizeSelection(selection: BrowserWorkstreamSelection): {
     key,
     recordBase: {
       key,
-      source: "browser-file",
-      browserFileKey: key,
-      browserFileName: selection.fileName,
+      source: "browser-directory",
+      browserDirectoryKey: key,
+      browserDirectoryName: selection.directoryName,
       projectKey: summary.projectKey,
       workstreamId: summary.workstreamId,
       title: summary.title,
       summary: summary.summary,
-      path: browserPathForKey(key, selection.fileName),
+      path: browserPathForKey(key, selection.directoryName),
     },
   };
 }
@@ -171,7 +167,7 @@ function openHandleDb(): Promise<IDBDatabase | null> {
       }
     };
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error("Unable to open browser file store."));
+    request.onerror = () => reject(request.error ?? new Error("Unable to open browser directory store."));
   });
 }
 
@@ -188,52 +184,60 @@ async function withHandleStore<T>(
     const transaction = db.transaction(HANDLE_STORE, mode);
     const request = operation(transaction.objectStore(HANDLE_STORE));
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error("Browser file store operation failed."));
+    request.onerror = () => reject(request.error ?? new Error("Browser directory store operation failed."));
     transaction.oncomplete = () => db.close();
     transaction.onerror = () => {
       db.close();
-      reject(transaction.error ?? new Error("Browser file store transaction failed."));
+      reject(transaction.error ?? new Error("Browser directory store transaction failed."));
     };
   });
 }
 
-async function writeHandleRecord(record: BrowserHandleRecord): Promise<void> {
-  if (!record.handle) {
-    return;
+const sessionDirectoryHandles = new Map<string, BrowserDirectoryHandleRecord>();
+
+async function writeHandleRecord(record: BrowserDirectoryHandleRecord): Promise<void> {
+  if (!record.directoryHandle) {
+    throw new Error("Expected the selected workstream directory handle to be available.");
   }
-  try {
-    await withHandleStore("readwrite", (store) => store.put(record));
-  } catch {
-    // A persisted handle is an enhancement; the snapshot in localStorage remains usable.
+  sessionDirectoryHandles.set(record.key, record);
+  const stored = await withHandleStore("readwrite", (store) => store.put(record));
+  if (stored === null && "indexedDB" in window) {
+    throw new Error("Unable to persist the selected workstream directory handle.");
   }
 }
 
-async function readHandleRecord(key: string): Promise<BrowserHandleRecord | null> {
-  try {
-    const record = await withHandleStore<BrowserHandleRecord | undefined>(
-      "readonly",
-      (store) => store.get(key),
-    );
-    return record ?? null;
-  } catch {
-    return null;
+async function readHandleRecord(key: string): Promise<BrowserDirectoryHandleRecord | null> {
+  const sessionRecord = sessionDirectoryHandles.get(key);
+  if (sessionRecord) {
+    return sessionRecord;
   }
+  const record = await withHandleStore<BrowserDirectoryHandleRecord | undefined>(
+    "readonly",
+    (store) => store.get(key),
+  );
+  return record ?? null;
 }
 
 async function deleteHandleRecord(key: string): Promise<void> {
-  try {
-    await withHandleStore("readwrite", (store) => store.delete(key));
-  } catch {
-    // The metadata delete below is the user-visible source of truth.
-  }
+  sessionDirectoryHandles.delete(key);
+  await withHandleStore("readwrite", (store) => store.delete(key));
 }
 
-async function fileFromHandle(handle: BrowserFileHandle): Promise<File | null> {
+async function graphFileFromDirectoryHandle(handle: BrowserDirectoryHandle): Promise<File> {
   const permission = await handle.queryPermission?.({ mode: "read" });
   if (permission && permission !== "granted") {
-    return null;
+    throw new Error("Browser permission to this workstream directory was not retained. Relink it to continue.");
   }
-  return handle.getFile();
+
+  try {
+    const graphHandle = await handle.getFileHandle("graph.json");
+    return graphHandle.getFile();
+  } catch (error: unknown) {
+    if (error instanceof DOMException && error.name === "NotFoundError") {
+      throw new Error("Expected the selected workstream directory to contain graph.json.");
+    }
+    throw error;
+  }
 }
 
 function lastModifiedHeader(lastModified: number): string {
@@ -245,35 +249,23 @@ function isNotModified(ifModifiedSince: string | null | undefined, lastModified:
     new Date(ifModifiedSince).getTime() >= Math.floor(lastModified / 1000) * 1000;
 }
 
-export async function pickBrowserWorkstreamFile(): Promise<BrowserWorkstreamSelection | null | "unsupported"> {
-  const picker = (window as BrowserWindowWithPicker).showOpenFilePicker;
+export async function pickBrowserWorkstreamDirectory(): Promise<BrowserWorkstreamDirectorySelection | null | "unsupported"> {
+  const picker = (window as BrowserWindowWithDirectoryPicker).showDirectoryPicker;
   if (!picker) {
     return "unsupported";
   }
 
   try {
-    const handles = await picker({
-      id: "streamliner-workstream-graph",
-      multiple: false,
-      types: [
-        {
-          description: "Workstream graph",
-          accept: {
-            "application/json": [".json"],
-          },
-        },
-      ],
+    const directoryHandle = await picker({
+      id: "streamliner-workstream-directory",
+      mode: "read",
     });
-    const handle = handles[0];
-    if (!handle) {
-      return null;
-    }
-    const file = await handle.getFile();
+    const file = await graphFileFromDirectoryHandle(directoryHandle);
     return {
-      fileName: file.name || handle.name || "graph.json",
+      directoryName: directoryHandle.name || "workstream",
       content: await file.text(),
       lastModified: file.lastModified,
-      handle,
+      directoryHandle,
     };
   } catch (error: unknown) {
     if (error instanceof DOMException && error.name === "AbortError") {
@@ -283,24 +275,14 @@ export async function pickBrowserWorkstreamFile(): Promise<BrowserWorkstreamSele
   }
 }
 
-export async function browserWorkstreamSelectionFromFile(
-  file: File,
-): Promise<BrowserWorkstreamSelection> {
-  return {
-    fileName: file.name || "graph.json",
-    content: await file.text(),
-    lastModified: file.lastModified,
-  };
-}
-
 export function listBrowserWorkstreamEntries(): WorkstreamRegistryListEntry[] {
   return readStoredRecords()
     .map(toListEntry)
     .sort((left, right) => Date.parse(right.lastOpenedAt) - Date.parse(left.lastOpenedAt));
 }
 
-export async function storeBrowserWorkstreamSelection(
-  selection: BrowserWorkstreamSelection,
+export async function storeBrowserWorkstreamDirectory(
+  selection: BrowserWorkstreamDirectorySelection,
   expectedEntry?: { projectKey: string; workstreamId: string },
 ): Promise<WorkstreamRegistryListEntry> {
   const { key, recordBase } = summarizeSelection(selection);
@@ -313,19 +295,18 @@ export async function storeBrowserWorkstreamSelection(
   const records = readStoredRecords();
   const current = records.find((record) => record.key === key);
   const timestamp = new Date().toISOString();
-  const nextRecord: BrowserWorkstreamRecord = {
+  const nextRecord: BrowserWorkstreamDirectoryRecord = {
     ...recordBase,
     addedAt: current?.addedAt ?? timestamp,
     lastOpenedAt: timestamp,
-    snapshotContent: selection.content,
-    snapshotLastModified: selection.lastModified,
+    graphLastModified: selection.lastModified,
   };
 
+  await writeHandleRecord({ ...nextRecord, directoryHandle: selection.directoryHandle });
   writeStoredRecords([
     nextRecord,
     ...records.filter((record) => record.key !== key),
   ]);
-  await writeHandleRecord({ ...nextRecord, handle: selection.handle });
   return toListEntry(nextRecord);
 }
 
@@ -351,14 +332,16 @@ export async function readBrowserWorkstreamGraph(
   const records = readStoredRecords();
   const record = records.find((candidate) => candidate.key === key);
   if (!record) {
-    throw new Error("This browser no longer has access to that selected graph file. Relink it to continue.");
+    throw new Error("This browser no longer has access to that selected workstream directory. Relink it to continue.");
   }
 
   const handleRecord = await readHandleRecord(key);
-  const file = handleRecord?.handle ? await fileFromHandle(handleRecord.handle) : null;
-  const content = file ? await file.text() : record.snapshotContent;
-  const lastModified = file ? file.lastModified : record.snapshotLastModified;
+  if (!handleRecord?.directoryHandle) {
+    throw new Error("This browser no longer has the workstream directory handle. Relink it to continue.");
+  }
 
+  const file = await graphFileFromDirectoryHandle(handleRecord.directoryHandle);
+  const lastModified = file.lastModified;
   if (isNotModified(ifModifiedSince, lastModified)) {
     return {
       lastModified: lastModifiedHeader(lastModified),
@@ -366,6 +349,7 @@ export async function readBrowserWorkstreamGraph(
     };
   }
 
+  const content = await file.text();
   const document = parseWorkstreamDocument(content);
   const summary = summarizeWorkstreamDocument(document);
   const actualKey = registryKey(summary);
@@ -373,13 +357,12 @@ export async function readBrowserWorkstreamGraph(
     throw new Error(`Selected graph now has identity '${actualKey}', expected '${key}'.`);
   }
 
-  const nextRecord: BrowserWorkstreamRecord = {
+  const nextRecord: BrowserWorkstreamDirectoryRecord = {
     ...record,
     title: summary.title,
     summary: summary.summary,
     lastOpenedAt: new Date().toISOString(),
-    snapshotContent: content,
-    snapshotLastModified: lastModified,
+    graphLastModified: lastModified,
   };
   writeStoredRecords([
     nextRecord,
