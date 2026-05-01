@@ -33,6 +33,8 @@ const registryStore = getSessionRegistryStore();
 const api = createStreamlinerApiApp({
   store: registryStore,
   graphPath: config.graphPath,
+  workstreamRegistryPath: config.workstreamRegistryPath,
+  recentsPath: config.recentsPath,
 });
 const server = createServer(api.app);
 

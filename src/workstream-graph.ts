@@ -10,9 +10,15 @@ const TASK_NODE_HEIGHT = 168;
 const GATE_NODE_WIDTH = 384;
 const GATE_NODE_HEIGHT = 96;
 
-const LANE_PADDING_X = 32;
-const LANE_PADDING_TOP = 72;
-const LANE_PADDING_BOTTOM = 32;
+const GRAPH_RANK_SEP = 144;
+const GRAPH_NODE_SEP = 96;
+const GRAPH_EDGE_SEP = 40;
+const GRAPH_MARGIN = 64;
+
+const LANE_PADDING_X = 48;
+const LANE_PADDING_TOP = 88;
+const LANE_PADDING_BOTTOM = 56;
+const LANE_GAP_Y = 72;
 
 export type WorkstreamCheckpointLaneState =
   | "completed"
@@ -259,6 +265,45 @@ function edgeHighlightFor(
   return "muted";
 }
 
+function separateCheckpointLanes(
+  viewModel: WorkstreamViewModel,
+  layoutNodes: WorkstreamGraphLayoutNode[],
+): WorkstreamGraphLayoutNode[] {
+  const separatedNodes = layoutNodes.map((node) => ({ ...node }));
+  const positionById = new Map(separatedNodes.map((node) => [node.id, node]));
+  let previousLaneBottom = -Infinity;
+
+  for (const progress of viewModel.checkpoints) {
+    const members = progress.checkpoint.nodeIds
+      .map((nodeId) => positionById.get(nodeId))
+      .filter((node): node is WorkstreamGraphLayoutNode => Boolean(node));
+    if (members.length === 0) {
+      continue;
+    }
+
+    const laneTop =
+      Math.min(...members.map((member) => member.y)) - LANE_PADDING_TOP;
+    const laneBottom =
+      Math.max(...members.map((member) => member.y + member.height)) +
+      LANE_PADDING_BOTTOM;
+    const requiredLaneTop = previousLaneBottom + LANE_GAP_Y;
+    const deltaY =
+      Number.isFinite(previousLaneBottom) && laneTop < requiredLaneTop
+        ? requiredLaneTop - laneTop
+        : 0;
+
+    if (deltaY > 0) {
+      for (const member of members) {
+        member.y += deltaY;
+      }
+    }
+
+    previousLaneBottom = laneBottom + deltaY;
+  }
+
+  return separatedNodes;
+}
+
 export function buildWorkstreamGraphLayout(
   workstream: WorkstreamDocument,
   viewModel: WorkstreamViewModel,
@@ -278,11 +323,11 @@ export function buildWorkstreamGraphLayout(
   graph.setGraph({
     rankdir: "TB",
     ranker: "network-simplex",
-    ranksep: 104,
-    nodesep: 72,
-    edgesep: 28,
-    marginx: 56,
-    marginy: 56,
+    ranksep: GRAPH_RANK_SEP,
+    nodesep: GRAPH_NODE_SEP,
+    edgesep: GRAPH_EDGE_SEP,
+    marginx: GRAPH_MARGIN,
+    marginy: GRAPH_MARGIN,
   });
   graph.setDefaultEdgeLabel(() => ({}));
 
@@ -297,8 +342,9 @@ export function buildWorkstreamGraphLayout(
 
   dagre.layout(graph);
 
-  const layoutNodes: WorkstreamGraphLayoutNode[] = viewModel.derivedNodes.map(
-    (entry) => {
+  const layoutNodes = separateCheckpointLanes(
+    viewModel,
+    viewModel.derivedNodes.map((entry) => {
       const { width, height } = nodeSizeForType(entry.node.type);
       const position = graph.node(entry.node.id) as
         | { x: number; y: number }
@@ -319,7 +365,7 @@ export function buildWorkstreamGraphLayout(
         repoLabel: repoLabelForNode(workstream, entry),
         entry,
       };
-    },
+    }),
   );
 
   const checkpointLanes = buildCheckpointLanes(viewModel, layoutNodes);

@@ -157,7 +157,7 @@ export function WorkstreamCanvas({
           height: maxY - minY,
         },
         {
-          padding: selectedNodeId ? 0.2 : 0.12,
+          padding: selectedNodeId ? 0.24 : 0.22,
           duration: 0,
         },
       );
@@ -181,7 +181,7 @@ export function WorkstreamCanvas({
         elementsSelectable={false}
       >
         <Background variant={BackgroundVariant.Dots} />
-        <Controls fitViewOptions={{ nodes: taskNodes, padding: 0.2, maxZoom: 0.7 }} />
+        <Controls fitViewOptions={{ nodes: taskNodes, padding: 0.28, maxZoom: 0.7 }} />
         <MiniMap pannable zoomable />
       </ReactFlow>
     </div>

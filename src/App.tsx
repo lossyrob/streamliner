@@ -15,6 +15,11 @@ import {
 } from "./workstream-view-model";
 import { buildWorkstreamGraphLayout } from "./workstream-graph";
 import type { WorkstreamDocument } from "./workstream-schema";
+import type {
+  WorkstreamRegistryListEntry,
+  WorkstreamRegistryListResponse,
+  WorkstreamRegistryWarning,
+} from "./workstream-registry-contract";
 import { WorkstreamCanvas } from "./components/WorkstreamCanvas";
 import { NodeInspector } from "./components/NodeInspector";
 import { OperationalStatusStrip } from "./components/OperationalStatusStrip";
@@ -26,78 +31,200 @@ const POLL_INTERVAL_MS = 2000;
 const LAST_GRAPH_KEY = "streamliner:lastGraphPath";
 const STREAMLINER_LOGO_URL = "/streamliner-logo.png";
 
-interface RecentEntry {
-  path: string;
-  title: string;
-  id: string;
-  lastOpened: string;
+type DashboardRoute =
+  | { view: "landing"; message?: string }
+  | { view: "workstreams"; message?: string }
+  | { view: "sessions" }
+  | { view: "workstream"; projectKey: string; workstreamId: string };
+
+interface GraphLoadError {
+  code?: string;
+  message: string;
 }
 
-type DashboardView = "graph" | "sessions";
+function encodeSegment(segment: string): string {
+  return encodeURIComponent(segment);
+}
 
-function readDashboardView(): DashboardView {
+function decodeSegment(segment: string): string | null {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return null;
+  }
+}
+
+function isKebabCaseId(value: string): boolean {
+  return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value);
+}
+
+function workstreamRoutePath(entry: {
+  projectKey: string;
+  workstreamId: string;
+}): string {
+  return `/workstreams/${encodeSegment(entry.projectKey)}/${encodeSegment(entry.workstreamId)}`;
+}
+
+function readDashboardRoute(): DashboardRoute {
   const searchParams = new URLSearchParams(window.location.search);
-  return searchParams.get("view") === "sessions" ? "sessions" : "graph";
+  if (searchParams.get("view") === "sessions" || window.location.pathname === "/sessions") {
+    return { view: "sessions" };
+  }
+  if (window.location.pathname === "/" || window.location.pathname === "") {
+    return { view: "landing" };
+  }
+
+  const segments = window.location.pathname.split("/").filter(Boolean);
+  if (segments[0] !== "workstreams") {
+    return { view: "landing", message: "Choose a Streamliner view." };
+  }
+  if (segments.length === 1) {
+    return { view: "workstreams" };
+  }
+  if (segments.length !== 3) {
+    return { view: "workstreams", message: "That workstream URL is incomplete." };
+  }
+
+  const projectKey = decodeSegment(segments[1]);
+  const workstreamId = decodeSegment(segments[2]);
+  if (
+    !projectKey ||
+    !workstreamId ||
+    !isKebabCaseId(projectKey) ||
+    !isKebabCaseId(workstreamId)
+  ) {
+    return { view: "workstreams", message: "That workstream URL is invalid." };
+  }
+  return { view: "workstream", projectKey, workstreamId };
 }
 
-function useDashboardView() {
-  const [view, setViewState] = useState<DashboardView>(() => readDashboardView());
+function routePath(route: DashboardRoute): string {
+  switch (route.view) {
+    case "sessions":
+      return "/sessions";
+    case "workstream":
+      return workstreamRoutePath(route);
+    case "workstreams":
+      return "/workstreams";
+    case "landing":
+      return "/";
+  }
+}
+
+function useDashboardRoute() {
+  const [route, setRouteState] = useState<DashboardRoute>(() => readDashboardRoute());
 
   useEffect(() => {
-    const handlePopState = () => setViewState(readDashboardView());
+    window.localStorage.removeItem(LAST_GRAPH_KEY);
+  }, []);
+
+  useEffect(() => {
+    const handlePopState = () => setRouteState(readDashboardRoute());
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
-  const setView = useCallback((nextView: DashboardView) => {
-    const nextUrl = new URL(window.location.href);
-    if (nextView === "graph") {
-      nextUrl.searchParams.delete("view");
-    } else {
-      nextUrl.searchParams.set("view", "sessions");
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("view") === "sessions") {
+      window.history.replaceState({}, "", "/sessions");
     }
-    window.history.pushState({}, "", nextUrl);
-    setViewState(nextView);
   }, []);
 
-  return { view, setView };
+  const setRoute = useCallback((nextRoute: DashboardRoute, mode: "push" | "replace" = "push") => {
+    const path = routePath(nextRoute);
+    if (`${window.location.pathname}${window.location.search}` !== path) {
+      if (mode === "replace") {
+        window.history.replaceState({}, "", path);
+      } else {
+        window.history.pushState({}, "", path);
+      }
+    }
+    setRouteState(nextRoute);
+  }, []);
+
+  return { route, setRoute };
 }
 
-function useGraphLoader(enabled: boolean) {
+function registryKey(entry: { projectKey: string; workstreamId: string }): string {
+  return `${entry.projectKey}/${entry.workstreamId}`;
+}
+
+function registryGraphUrl(entry: { projectKey: string; workstreamId: string }): string {
+  return `/api/workstreams/${encodeSegment(entry.projectKey)}/${encodeSegment(entry.workstreamId)}/graph`;
+}
+
+function registryEntryUrl(entry: { projectKey: string; workstreamId: string }): string {
+  return `/api/workstreams/${encodeSegment(entry.projectKey)}/${encodeSegment(entry.workstreamId)}`;
+}
+
+async function parseErrorResponse(res: Response): Promise<GraphLoadError> {
+  try {
+    const body = await res.json() as { code?: unknown; error?: unknown };
+    return {
+      code: typeof body.code === "string" ? body.code : undefined,
+      message: typeof body.error === "string" ? body.error : `Request failed (${res.status})`,
+    };
+  } catch {
+    return { message: `Request failed (${res.status})` };
+  }
+}
+
+function useGraphLoader(route: DashboardRoute, enabled: boolean) {
+  const activeProjectKey = route.view === "workstream" ? route.projectKey : null;
+  const activeWorkstreamId = route.view === "workstream" ? route.workstreamId : null;
+  const activeWorkstream = useMemo(
+    () =>
+      activeProjectKey && activeWorkstreamId
+        ? { projectKey: activeProjectKey, workstreamId: activeWorkstreamId }
+        : null,
+    [activeProjectKey, activeWorkstreamId],
+  );
   const [workstream, setWorkstream] = useState<WorkstreamDocument | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [source, setSource] = useState<"api" | "example" | "file" | null>(null);
-  const [recents, setRecents] = useState<RecentEntry[]>([]);
+  const [error, setError] = useState<GraphLoadError | null>(null);
+  const [registryError, setRegistryError] = useState<string | null>(null);
+  const [workstreams, setWorkstreams] = useState<WorkstreamRegistryListEntry[]>([]);
+  const [migrationWarnings, setMigrationWarnings] = useState<WorkstreamRegistryWarning[]>([]);
   const lastModifiedRef = useRef<string | null>(null);
-  const graphPathRef = useRef<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const fetchRecents = useCallback(async () => {
-    try {
-      const res = await fetch("/api/recents");
-      if (res.ok) setRecents(await res.json());
-    } catch {
-      /* ignore */
+  const fetchRegistry = useCallback(async () => {
+    const res = await fetch("/api/workstreams");
+    if (!res.ok) {
+      const parsed = await parseErrorResponse(res);
+      throw new Error(parsed.message);
     }
+    const body = await res.json() as WorkstreamRegistryListResponse;
+    setWorkstreams(body.workstreams);
+    setMigrationWarnings(body.migrationWarnings);
+    setRegistryError(null);
+    return body.workstreams;
   }, []);
 
-  const loadFromApi = useCallback(
-    async (path?: string) => {
-      const url = path ? `/api/graph.json?path=${encodeURIComponent(path)}` : "/api/graph.json";
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`Failed to fetch (${res.status})`);
+  const loadRegistered = useCallback(
+    async (entry: { projectKey: string; workstreamId: string }, options: { quiet?: boolean } = {}) => {
+      const res = await fetch(registryGraphUrl(entry), {
+        headers:
+          lastModifiedRef.current && options.quiet
+            ? { "If-Modified-Since": lastModifiedRef.current }
+            : undefined,
+      });
+      if (res.status === 304) {
+        return;
+      }
+      if (!res.ok) {
+        const parsed = await parseErrorResponse(res);
+        setWorkstream(null);
+        setError(parsed);
+        return;
+      }
       const text = await res.text();
       const doc = parseWorkstreamDocument(text);
       lastModifiedRef.current = res.headers.get("Last-Modified");
-      const effectivePath = path ?? "default";
-      graphPathRef.current = effectivePath;
-      localStorage.setItem(LAST_GRAPH_KEY, effectivePath);
       setWorkstream(doc);
-      setSource("api");
       setError(null);
-      await fetchRecents();
+      await fetchRegistry();
     },
-    [fetchRecents],
+    [fetchRegistry],
   );
 
   useEffect(() => {
@@ -106,62 +233,27 @@ function useGraphLoader(enabled: boolean) {
     }
 
     void (async () => {
-      const lastPath = localStorage.getItem(LAST_GRAPH_KEY);
       try {
-        if (lastPath && lastPath !== "default") {
-          await loadFromApi(lastPath);
+        await fetchRegistry();
+        if (activeWorkstream) {
+          await loadRegistered(activeWorkstream);
         } else {
-          await loadFromApi();
+          setWorkstream(null);
+          setError(null);
         }
-      } catch {
-        try {
-          if (lastPath && lastPath !== "default") {
-            await loadFromApi();
-          } else {
-            throw new Error("no default");
-          }
-        } catch {
-          try {
-            const res = await fetch("/example-project.json");
-            if (!res.ok) throw new Error(`${res.status}`);
-            const text = await res.text();
-            setWorkstream(parseWorkstreamDocument(text));
-            setSource("example");
-            setError(null);
-          } catch (nextError) {
-            setError(nextError instanceof Error ? nextError.message : String(nextError));
-          }
-        }
+      } catch (nextError) {
+        setRegistryError(nextError instanceof Error ? nextError.message : String(nextError));
       }
-      await fetchRecents();
     })();
-  }, [enabled, fetchRecents, loadFromApi]);
+  }, [activeWorkstream, enabled, fetchRegistry, loadRegistered]);
 
   useEffect(() => {
-    if (!enabled || source !== "api") return;
+    if (!enabled || !activeWorkstream || error) {
+      return;
+    }
 
-    pollRef.current = setInterval(async () => {
-      try {
-        const path = graphPathRef.current;
-        const url =
-          path && path !== "default"
-            ? `/api/graph.json?path=${encodeURIComponent(path)}`
-            : "/api/graph.json";
-        const headers: HeadersInit = {};
-        if (lastModifiedRef.current) {
-          headers["If-Modified-Since"] = lastModifiedRef.current;
-        }
-        const res = await fetch(url, { headers });
-        if (res.status === 304) return;
-        if (!res.ok) return;
-        const text = await res.text();
-        const doc = parseWorkstreamDocument(text);
-        lastModifiedRef.current = res.headers.get("Last-Modified");
-        setWorkstream(doc);
-        setError(null);
-      } catch {
-        /* ignore */
-      }
+    pollRef.current = setInterval(() => {
+      void loadRegistered(activeWorkstream, { quiet: true });
     }, POLL_INTERVAL_MS);
 
     return () => {
@@ -169,41 +261,227 @@ function useGraphLoader(enabled: boolean) {
         clearInterval(pollRef.current);
       }
     };
-  }, [enabled, source]);
+  }, [activeWorkstream, enabled, error, loadRegistered]);
 
-  const switchToRecent = useCallback(
+  const registerPath = useCallback(
     async (path: string) => {
-      try {
-        await loadFromApi(path);
-      } catch (nextError) {
-        setError(nextError instanceof Error ? nextError.message : String(nextError));
+      const res = await fetch("/api/workstreams", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path }),
+      });
+      if (!res.ok) {
+        throw new Error((await parseErrorResponse(res)).message);
       }
+      const body = await res.json() as { workstream: WorkstreamRegistryListEntry };
+      await fetchRegistry();
+      return body.workstream;
     },
-    [loadFromApi],
+    [fetchRegistry],
   );
 
-  const loadByPath = useCallback(
+  const relinkPath = useCallback(
     async (path: string) => {
-      try {
-        await loadFromApi(path);
-      } catch (nextError) {
-        setError(nextError instanceof Error ? nextError.message : String(nextError));
+      if (!activeWorkstream) {
+        throw new Error("No active workstream to relink.");
       }
+      const res = await fetch(registryEntryUrl(activeWorkstream), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path }),
+      });
+      if (!res.ok) {
+        throw new Error((await parseErrorResponse(res)).message);
+      }
+      const body = await res.json() as { workstream: WorkstreamRegistryListEntry };
+      await fetchRegistry();
+      await loadRegistered(activeWorkstream);
+      return body.workstream;
     },
-    [loadFromApi],
+    [activeWorkstream, fetchRegistry, loadRegistered],
   );
 
-  return { workstream, error, recents, loadByPath, switchToRecent };
+  const untrack = useCallback(
+    async (entry: { projectKey: string; workstreamId: string }) => {
+      const res = await fetch(registryEntryUrl(entry), { method: "DELETE" });
+      if (!res.ok && res.status !== 404) {
+        throw new Error((await parseErrorResponse(res)).message);
+      }
+      await fetchRegistry();
+    },
+    [fetchRegistry],
+  );
+
+  const pickAndRegister = useCallback(async () => {
+    const res = await fetch("/api/pick-file", { method: "POST" });
+    if (res.status === 204) return null;
+    if (!res.ok) {
+      throw new Error((await parseErrorResponse(res)).message);
+    }
+    const { path } = await res.json() as { path?: unknown };
+    if (typeof path !== "string" || path.trim().length === 0) {
+      return null;
+    }
+    return registerPath(path);
+  }, [registerPath]);
+
+  const pickAndRelink = useCallback(async () => {
+    const res = await fetch("/api/pick-file", { method: "POST" });
+    if (res.status === 204) return null;
+    if (!res.ok) {
+      throw new Error((await parseErrorResponse(res)).message);
+    }
+    const { path } = await res.json() as { path?: unknown };
+    if (typeof path !== "string" || path.trim().length === 0) {
+      return null;
+    }
+    return relinkPath(path);
+  }, [relinkPath]);
+
+  return {
+    workstream,
+    error,
+    registryError,
+    workstreams,
+    migrationWarnings,
+    activeWorkstream,
+    pickAndRegister,
+    pickAndRelink,
+    untrack,
+  };
+}
+
+function LandingPage({
+  message,
+  workstreamCount,
+  registryError,
+  onOpenSessions,
+  onOpenWorkstreams,
+}: {
+  message?: string;
+  workstreamCount: number;
+  registryError: string | null;
+  onOpenSessions: () => void | Promise<void>;
+  onOpenWorkstreams: () => void | Promise<void>;
+}) {
+  return (
+    <div className="sl-shell-panel">
+      <div className="sl-landing">
+        <section className="sl-landing-hero">
+          <span className="sl-eyebrow">STREAMLINER</span>
+          <h1>Keep parallel work visible.</h1>
+          <p>
+            Jump into tracked workstream graphs or review your active Copilot CLI sessions.
+          </p>
+          {message && <div className="sl-action-error">{message}</div>}
+          {registryError && <div className="sl-action-error">{registryError}</div>}
+        </section>
+        <div className="sl-landing-cards">
+          <button className="sl-landing-card" onClick={() => void onOpenWorkstreams()}>
+            <span className="sl-landing-card-kicker">Graph workspace</span>
+            <span className="sl-landing-card-title">Workstreams</span>
+            <span className="sl-landing-card-copy">
+              Open sticky graph URLs, add workstream files, and untrack completed work.
+            </span>
+            <span className="sl-landing-card-meta">
+              {workstreamCount === 1 ? "1 tracked workstream" : `${workstreamCount} tracked workstreams`}
+            </span>
+          </button>
+          <button className="sl-landing-card" onClick={() => void onOpenSessions()}>
+            <span className="sl-landing-card-kicker">Live activity</span>
+            <span className="sl-landing-card-title">Sessions</span>
+            <span className="sl-landing-card-copy">
+              Browse, label, relaunch, and manage local Copilot CLI sessions.
+            </span>
+            <span className="sl-landing-card-meta">Open session registry</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WorkstreamHome({
+  message,
+  registryError,
+  workstreams,
+  onOpenWorkstream,
+  onAddWorkstream,
+  onUntrackWorkstream,
+}: {
+  message?: string;
+  registryError: string | null;
+  workstreams: WorkstreamRegistryListEntry[];
+  onOpenWorkstream: (entry: WorkstreamRegistryListEntry) => void;
+  onAddWorkstream: () => void | Promise<void>;
+  onUntrackWorkstream: (entry: WorkstreamRegistryListEntry) => void | Promise<void>;
+}) {
+  return (
+    <div className="sl-shell-panel">
+      <div className="sl-workstreams-home">
+        <div className="sl-workstreams-home-header">
+          <div>
+            <span className="sl-eyebrow">WORKSTREAMS</span>
+            <h1 className="sl-title">Tracked workstreams</h1>
+            <p className="sl-summary">
+              Open a registered graph, or add a graph file to keep it addressable by URL.
+            </p>
+          </div>
+          <button className="sl-action-btn primary" onClick={() => void onAddWorkstream()}>
+            Add workstream…
+          </button>
+        </div>
+        {message && <div className="sl-action-error">{message}</div>}
+        {registryError && <div className="sl-action-error">{registryError}</div>}
+        {workstreams.length === 0 ? (
+          <div className="sl-empty-state">
+            <h2>No tracked workstreams yet</h2>
+            <p>Add a `graph.json` file to register it with Streamliner.</p>
+          </div>
+        ) : (
+          <div className="sl-workstreams-list">
+            {workstreams.map((entry) => (
+              <div className="sl-workstream-card" key={registryKey(entry)}>
+                <button className="sl-workstream-card-main" onClick={() => onOpenWorkstream(entry)}>
+                  <span className="sl-workstream-card-title">{entry.title}</span>
+                  <span className="sl-workstream-card-id">{registryKey(entry)}</span>
+                  <span className={`sl-pill ${entry.fileStatus === "available" ? "green" : "amber"}`}>
+                    {entry.fileStatus}
+                  </span>
+                </button>
+                <button
+                  className="sl-action-btn danger"
+                  onClick={() => void onUntrackWorkstream(entry)}
+                  aria-label={`Untrack ${entry.title}`}
+                >
+                  Untrack
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function GraphDashboard({
   workstream,
   error,
-  recents,
-  loadByPath,
-  switchToRecent,
-}: ReturnType<typeof useGraphLoader>) {
+  workstreams,
+  activeWorkstream,
+  pickAndRelink,
+  untrack,
+  onOpenWorkstream,
+  onAddWorkstream,
+  onRouteHome,
+}: ReturnType<typeof useGraphLoader> & {
+  onOpenWorkstream: (entry: WorkstreamRegistryListEntry) => void;
+  onAddWorkstream: () => void | Promise<void>;
+  onRouteHome: () => void;
+}) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const viewModel = useMemo(() => {
     if (!workstream) return null;
@@ -220,40 +498,54 @@ function GraphDashboard({
     return viewModel.derivedNodes.find((entry) => entry.node.id === selectedNodeId) ?? null;
   }, [selectedNodeId, viewModel]);
 
-  if (error) {
-    const handlePick = async () => {
-      try {
-        const res = await fetch("/api/pick-file", { method: "POST" });
-        if (res.status === 204 || !res.ok) return;
-        const { path } = await res.json();
-        if (path) {
-          await loadByPath(path);
-        }
-      } catch {
-        /* ignore */
+  const handleRelink = async () => {
+    setActionError(null);
+    try {
+      const entry = await pickAndRelink();
+      if (entry) {
+        onOpenWorkstream(entry);
       }
-    };
+    } catch (nextError) {
+      setActionError(nextError instanceof Error ? nextError.message : String(nextError));
+    }
+  };
 
+  const handleUntrackCurrent = async () => {
+    if (!activeWorkstream) {
+      return;
+    }
+    setActionError(null);
+    try {
+      await untrack(activeWorkstream);
+      onRouteHome();
+    } catch (nextError) {
+      setActionError(nextError instanceof Error ? nextError.message : String(nextError));
+    }
+  };
+
+  if (error) {
     return (
       <div className="sl-shell-panel">
         <div className="sl-status-shell">
           <div className="sl-status-card">
-            <h2 className="sl-status-title">Failed to load workstream</h2>
-            <div className="sl-action-error">{error}</div>
-            <button
-              className="sl-action-btn"
-              style={{ alignSelf: "flex-start" }}
-              onClick={handlePick}
-            >
-              Open graph…
-            </button>
+            <h2 className="sl-status-title">Workstream unavailable</h2>
+            <div className="sl-action-error">{error.message}</div>
+            {actionError && <div className="sl-action-error">{actionError}</div>}
+            <div className="sl-header-actions" style={{ justifyContent: "flex-start" }}>
+              <button className="sl-action-btn" onClick={handleRelink}>
+                Relink graph…
+              </button>
+              <button className="sl-action-btn danger" onClick={handleUntrackCurrent}>
+                Untrack workstream
+              </button>
+            </div>
           </div>
         </div>
       </div>
     );
   }
 
-  if (!workstream || !viewModel || !layout) {
+  if (!workstream || !viewModel || !layout || !activeWorkstream) {
     return (
       <div className="sl-shell-panel">
         <div className="sl-status-shell">
@@ -270,9 +562,18 @@ function GraphDashboard({
       <WorkstreamHeader
         workstream={workstream}
         viewModel={viewModel}
-        onLoadPath={loadByPath}
-        recents={recents}
-        onSwitchRecent={switchToRecent}
+        activeWorkstream={activeWorkstream}
+        trackedWorkstreams={workstreams}
+        onOpenWorkstream={onOpenWorkstream}
+        onAddWorkstream={onAddWorkstream}
+        onUntrackWorkstream={(entry) => {
+          void (async () => {
+            await untrack(entry);
+            if (registryKey(entry) === registryKey(activeWorkstream)) {
+              onRouteHome();
+            }
+          })();
+        }}
       />
       <OperationalStatusStrip viewModel={viewModel} />
       <CheckpointStepper checkpoints={viewModel.checkpoints} />
@@ -292,12 +593,32 @@ function GraphDashboard({
   );
 }
 
-function DashboardNav({
-  view,
-  onViewChange,
+function MigrationWarningsBanner({
+  warnings,
 }: {
-  view: DashboardView;
-  onViewChange: (view: DashboardView) => void | Promise<void>;
+  warnings: WorkstreamRegistryWarning[];
+}) {
+  if (warnings.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="sl-global-warning-list">
+      {warnings.map((warning, index) => (
+        <div className="sl-warning-item" key={`${warning.code}-${warning.path ?? index}`}>
+          {warning.message}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DashboardNav({
+  route,
+  onRouteChange,
+}: {
+  route: DashboardRoute;
+  onRouteChange: (route: DashboardRoute) => void | Promise<void>;
 }) {
   const handleBrandClick = (event: MouseEvent<HTMLAnchorElement>) => {
     if (
@@ -311,8 +632,10 @@ function DashboardNav({
       return;
     }
     event.preventDefault();
-    void onViewChange("graph");
+    void onRouteChange({ view: "landing" });
   };
+
+  const workstreamsActive = route.view === "workstreams" || route.view === "workstream";
 
   return (
     <div className="sl-shell-nav">
@@ -335,20 +658,20 @@ function DashboardNav({
       </a>
       <div className="sl-header-actions">
         <button
-          className={`sl-action-btn${view === "graph" ? " active" : ""}`}
+          className={`sl-action-btn${workstreamsActive ? " active" : ""}`}
           onClick={() => {
-            void onViewChange("graph");
+            void onRouteChange({ view: "workstreams" });
           }}
         >
-          Workstream
+          Workstreams
         </button>
         <button
-          className={`sl-action-btn${view === "sessions" ? " active" : ""}`}
+          className={`sl-action-btn${route.view === "sessions" ? " active" : ""}`}
           onClick={() => {
-            void onViewChange("sessions");
+            void onRouteChange({ view: "sessions" });
           }}
         >
-          My Sessions
+          Sessions
         </button>
       </div>
     </div>
@@ -356,37 +679,81 @@ function DashboardNav({
 }
 
 export default function App() {
-  const { view, setView } = useDashboardView();
-  const graphLoader = useGraphLoader(view === "graph");
+  const { route, setRoute } = useDashboardRoute();
+  const graphLoader = useGraphLoader(route, route.view !== "sessions");
   const beforeLeaveRef = useRef<(() => Promise<boolean>) | null>(null);
 
-  const handleViewChange = useCallback(
-    async (nextView: DashboardView) => {
-      if (nextView === view) {
+  const handleRouteChange = useCallback(
+    async (nextRoute: DashboardRoute) => {
+      if (routePath(nextRoute) === routePath(route)) {
         return;
       }
-      if (view === "sessions") {
+      if (route.view === "sessions") {
         const beforeLeave = beforeLeaveRef.current;
         if (beforeLeave && !(await beforeLeave())) {
           return;
         }
       }
-      setView(nextView);
+      setRoute(nextRoute);
     },
-    [setView, view],
+    [route, setRoute],
   );
 
   const registerBeforeLeave = useCallback((handler: (() => Promise<boolean>) | null) => {
     beforeLeaveRef.current = handler;
   }, []);
 
+  const openWorkstream = useCallback(
+    (entry: { projectKey: string; workstreamId: string }) => {
+      setRoute({ view: "workstream", projectKey: entry.projectKey, workstreamId: entry.workstreamId });
+    },
+    [setRoute],
+  );
+
+  const addWorkstream = useCallback(async () => {
+    const entry = await graphLoader.pickAndRegister();
+    if (entry) {
+      openWorkstream(entry);
+    }
+  }, [graphLoader, openWorkstream]);
+
+  const untrackFromHome = useCallback(
+    async (entry: WorkstreamRegistryListEntry) => {
+      await graphLoader.untrack(entry);
+    },
+    [graphLoader],
+  );
+
   return (
     <div className="sl-root">
-      <DashboardNav view={view} onViewChange={handleViewChange} />
-      {view === "graph" ? (
-        <GraphDashboard {...graphLoader} />
-      ) : (
+      <DashboardNav route={route} onRouteChange={handleRouteChange} />
+      <MigrationWarningsBanner warnings={graphLoader.migrationWarnings} />
+      {route.view === "sessions" ? (
         <SessionsPage registerBeforeLeave={registerBeforeLeave} />
+      ) : route.view === "workstream" ? (
+        <GraphDashboard
+          {...graphLoader}
+          onOpenWorkstream={openWorkstream}
+          onAddWorkstream={addWorkstream}
+          onRouteHome={() => setRoute({ view: "workstreams" }, "replace")}
+        />
+      ) : route.view === "workstreams" ? (
+        <WorkstreamHome
+          message={route.message}
+          registryError={graphLoader.registryError}
+          workstreams={graphLoader.workstreams}
+          onOpenWorkstream={openWorkstream}
+          onAddWorkstream={addWorkstream}
+          onUntrackWorkstream={untrackFromHome}
+        />
+      ) : (
+        <LandingPage
+          message={route.message}
+          registryError={graphLoader.registryError}
+          workstreamCount={graphLoader.workstreams.length}
+          onOpenSessions={() => handleRouteChange({ view: "sessions" })}
+          onOpenWorkstreams={() => handleRouteChange({ view: "workstreams" })}
+        />
       )}
     </div>
   );

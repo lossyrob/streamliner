@@ -7,6 +7,8 @@ export interface StreamlinerApiConfig {
   host: string;
   port: number;
   graphPath?: string;
+  workstreamRegistryPath?: string;
+  recentsPath?: string;
 }
 
 function parsePort(value: string | undefined): number {
@@ -28,6 +30,12 @@ export function readStreamlinerApiConfig(
     port: parsePort(env.STREAMLINER_API_PORT),
     graphPath: env.STREAMLINER_GRAPH
       ? resolve(env.STREAMLINER_GRAPH)
+      : undefined,
+    workstreamRegistryPath: env.STREAMLINER_WORKSTREAM_REGISTRY
+      ? resolve(env.STREAMLINER_WORKSTREAM_REGISTRY)
+      : undefined,
+    recentsPath: env.STREAMLINER_RECENTS_PATH
+      ? resolve(env.STREAMLINER_RECENTS_PATH)
       : undefined,
   };
 }
