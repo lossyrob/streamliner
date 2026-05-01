@@ -27,7 +27,7 @@ import { getApiLogger } from "./logger";
 const execFileAsync = promisify(execFile);
 
 const CONTEXT_FILE_NAME = "context.md";
-const DEFAULT_CONTEXT_GENERATION_MODEL = "auto";
+const DEFAULT_CONTEXT_GENERATION_MODEL = "claude-sonnet-4.6";
 const DEFAULT_PROMPT_SOURCE_LIMIT_CHARS = 20_000;
 const JSON_PROMPT_SOURCE_LIMIT_CHARS = 24_000;
 const DESIGN_PROMPT_SOURCE_LIMIT_CHARS = 12_000;
@@ -1129,4 +1129,3 @@ export async function prepareLaunchContextPackage(
     unavailableInputs,
   };
 }
-

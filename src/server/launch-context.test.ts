@@ -288,7 +288,7 @@ describe("prepareLaunchContextPackage", () => {
         workstreamId: "session-launching-and-tracking",
         nodeId: "backend-context-assembly",
         targetRepoIds: ["streamliner"],
-        contextModel: "auto",
+        contextModel: "claude-sonnet-4.6",
       }),
     );
     expect(result.metadata.sourceReferences).toEqual(
@@ -794,4 +794,3 @@ describe("launch context API route", () => {
       });
   });
 });
-

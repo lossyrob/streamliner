@@ -7,8 +7,11 @@ import {
 import { getSessionRegistryStore } from "../session-registry/runtime";
 import { createStreamlinerApiApp } from "./app";
 import { readStreamlinerApiConfig } from "./config";
+import { loadDotEnvFile } from "./env";
 import { getApiLogger } from "./logger";
 import { acquireApiProcessLock, StreamlinerApiLockError } from "./process-lock";
+
+loadDotEnvFile();
 
 const logger = getApiLogger().withScope("api");
 const config = readStreamlinerApiConfig();

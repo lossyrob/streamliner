@@ -1,5 +1,9 @@
 #!/usr/bin/env node
 
+import { loadDotEnvFile } from "./load-env.mjs";
+
+loadDotEnvFile();
+
 const DEFAULT_API_HOST = "127.0.0.1";
 const DEFAULT_API_PORT = "4319";
 const DEFAULT_TIMEOUT_MS = 45_000;

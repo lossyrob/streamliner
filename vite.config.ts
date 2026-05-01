@@ -2,7 +2,10 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
+import { loadDotEnvFile } from './src/server/env'
 import { createApiProxyConfig, STREAMLINER_VITE_HOST } from './src/server/vite-proxy-config'
+
+loadDotEnvFile()
 
 const apiProxy = createApiProxyConfig()
 
