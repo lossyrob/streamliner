@@ -32,7 +32,8 @@ const LAST_GRAPH_KEY = "streamliner:lastGraphPath";
 const STREAMLINER_LOGO_URL = "/streamliner-logo.png";
 
 type DashboardRoute =
-  | { view: "home"; message?: string }
+  | { view: "landing"; message?: string }
+  | { view: "workstreams"; message?: string }
   | { view: "sessions" }
   | { view: "workstream"; projectKey: string; workstreamId: string };
 
@@ -70,15 +71,18 @@ function readDashboardRoute(): DashboardRoute {
     return { view: "sessions" };
   }
   if (window.location.pathname === "/" || window.location.pathname === "") {
-    return { view: "home" };
+    return { view: "landing" };
   }
 
   const segments = window.location.pathname.split("/").filter(Boolean);
   if (segments[0] !== "workstreams") {
-    return { view: "home", message: "Choose a tracked workstream." };
+    return { view: "landing", message: "Choose a Streamliner view." };
+  }
+  if (segments.length === 1) {
+    return { view: "workstreams" };
   }
   if (segments.length !== 3) {
-    return { view: "home", message: "That workstream URL is incomplete." };
+    return { view: "workstreams", message: "That workstream URL is incomplete." };
   }
 
   const projectKey = decodeSegment(segments[1]);
@@ -89,7 +93,7 @@ function readDashboardRoute(): DashboardRoute {
     !isKebabCaseId(projectKey) ||
     !isKebabCaseId(workstreamId)
   ) {
-    return { view: "home", message: "That workstream URL is invalid." };
+    return { view: "workstreams", message: "That workstream URL is invalid." };
   }
   return { view: "workstream", projectKey, workstreamId };
 }
@@ -100,7 +104,9 @@ function routePath(route: DashboardRoute): string {
       return "/sessions";
     case "workstream":
       return workstreamRoutePath(route);
-    case "home":
+    case "workstreams":
+      return "/workstreams";
+    case "landing":
       return "/";
   }
 }
@@ -345,6 +351,56 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
   };
 }
 
+function LandingPage({
+  message,
+  workstreamCount,
+  registryError,
+  onOpenSessions,
+  onOpenWorkstreams,
+}: {
+  message?: string;
+  workstreamCount: number;
+  registryError: string | null;
+  onOpenSessions: () => void | Promise<void>;
+  onOpenWorkstreams: () => void | Promise<void>;
+}) {
+  return (
+    <div className="sl-shell-panel">
+      <div className="sl-landing">
+        <section className="sl-landing-hero">
+          <span className="sl-eyebrow">STREAMLINER</span>
+          <h1>Keep parallel work visible.</h1>
+          <p>
+            Jump into tracked workstream graphs or review your active Copilot CLI sessions.
+          </p>
+          {message && <div className="sl-action-error">{message}</div>}
+          {registryError && <div className="sl-action-error">{registryError}</div>}
+        </section>
+        <div className="sl-landing-cards">
+          <button className="sl-landing-card" onClick={() => void onOpenWorkstreams()}>
+            <span className="sl-landing-card-kicker">Graph workspace</span>
+            <span className="sl-landing-card-title">Workstreams</span>
+            <span className="sl-landing-card-copy">
+              Open sticky graph URLs, add workstream files, and untrack completed work.
+            </span>
+            <span className="sl-landing-card-meta">
+              {workstreamCount === 1 ? "1 tracked workstream" : `${workstreamCount} tracked workstreams`}
+            </span>
+          </button>
+          <button className="sl-landing-card" onClick={() => void onOpenSessions()}>
+            <span className="sl-landing-card-kicker">Live activity</span>
+            <span className="sl-landing-card-title">Sessions</span>
+            <span className="sl-landing-card-copy">
+              Browse, label, relaunch, and manage local Copilot CLI sessions.
+            </span>
+            <span className="sl-landing-card-meta">Open session registry</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function WorkstreamHome({
   message,
   registryError,
@@ -576,10 +632,10 @@ function DashboardNav({
       return;
     }
     event.preventDefault();
-    void onRouteChange({ view: "home" });
+    void onRouteChange({ view: "landing" });
   };
 
-  const workstreamsActive = route.view === "home" || route.view === "workstream";
+  const workstreamsActive = route.view === "workstreams" || route.view === "workstream";
 
   return (
     <div className="sl-shell-nav">
@@ -604,7 +660,7 @@ function DashboardNav({
         <button
           className={`sl-action-btn${workstreamsActive ? " active" : ""}`}
           onClick={() => {
-            void onRouteChange({ view: "home" });
+            void onRouteChange({ view: "workstreams" });
           }}
         >
           Workstreams
@@ -615,7 +671,7 @@ function DashboardNav({
             void onRouteChange({ view: "sessions" });
           }}
         >
-          My Sessions
+          Sessions
         </button>
       </div>
     </div>
@@ -679,9 +735,9 @@ export default function App() {
           {...graphLoader}
           onOpenWorkstream={openWorkstream}
           onAddWorkstream={addWorkstream}
-          onRouteHome={() => setRoute({ view: "home" }, "replace")}
+          onRouteHome={() => setRoute({ view: "workstreams" }, "replace")}
         />
-      ) : (
+      ) : route.view === "workstreams" ? (
         <WorkstreamHome
           message={route.message}
           registryError={graphLoader.registryError}
@@ -689,6 +745,14 @@ export default function App() {
           onOpenWorkstream={openWorkstream}
           onAddWorkstream={addWorkstream}
           onUntrackWorkstream={untrackFromHome}
+        />
+      ) : (
+        <LandingPage
+          message={route.message}
+          registryError={graphLoader.registryError}
+          workstreamCount={graphLoader.workstreams.length}
+          onOpenSessions={() => handleRouteChange({ view: "sessions" })}
+          onOpenWorkstreams={() => handleRouteChange({ view: "workstreams" })}
         />
       )}
     </div>

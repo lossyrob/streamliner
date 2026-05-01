@@ -306,7 +306,7 @@ describe("App sessions route", () => {
   });
 
   it(
-    "renders the sessions view directly and links the brand to the root view",
+    "renders sessions directly and links the brand to the landing page",
     async () => {
       const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
         const path = requestPath(input);
@@ -351,13 +351,24 @@ describe("App sessions route", () => {
       });
       await settle();
 
-      expect(container.textContent).toContain("Tracked workstreams");
+      expect(container.textContent).toContain("Keep parallel work visible.");
+      expect(container.textContent).toContain("Workstreams");
+      expect(container.textContent).toContain("Sessions");
+      expect(container.textContent).not.toContain("My Sessions");
       expect(window.location.search).toBe("");
       expect(
         fetchMock.mock.calls.some(([input]) =>
           requestPath(input as RequestInfo | URL).startsWith("/api/graph.json"),
         ),
       ).toBe(false);
+
+      act(() => {
+        findButton(container, "Workstreams").click();
+      });
+      await settle();
+
+      expect(window.location.pathname).toBe("/workstreams");
+      expect(container.textContent).toContain("Tracked workstreams");
     },
     15_000,
   );
@@ -425,6 +436,7 @@ describe("App sessions route", () => {
         throw new Error(`Unexpected fetch: ${path}`);
       });
       vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState({}, "", "/workstreams");
 
       act(() => {
         root.render(<App />);
