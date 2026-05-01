@@ -6,7 +6,10 @@ import {
   reduceTransitiveEdges,
 } from "./workstream-graph";
 
-function buildFixture(nodes: WorkstreamDocument["nodes"]): WorkstreamDocument {
+function buildFixture(
+  nodes: WorkstreamDocument["nodes"],
+  checkpoints: WorkstreamDocument["checkpoints"] = [],
+): WorkstreamDocument {
   return {
     schemaVersion: 1,
     id: "example-project",
@@ -25,7 +28,7 @@ function buildFixture(nodes: WorkstreamDocument["nodes"]): WorkstreamDocument {
     ],
     designRefs: [],
     nodes,
-    checkpoints: [],
+    checkpoints,
   };
 }
 
@@ -134,5 +137,86 @@ describe("buildWorkstreamGraphLayout", () => {
       "b->c",
       "c->d",
     ]);
+  });
+
+  it("keeps checkpoint lanes ordered even when dependencies would share a rank", () => {
+    const workstream = buildFixture(
+      [
+        {
+          id: "foundation",
+          type: "task",
+          title: "Foundation",
+          summary: "Foundation",
+          status: "completed",
+          attention: "focus",
+          repoIds: ["main"],
+          dependsOn: [],
+        },
+        {
+          id: "surface",
+          type: "task",
+          title: "Surface",
+          summary: "Surface",
+          status: "in-progress",
+          attention: "focus",
+          repoIds: ["main"],
+          dependsOn: ["foundation"],
+        },
+        {
+          id: "cleanup",
+          type: "task",
+          title: "Cleanup",
+          summary: "Cleanup",
+          status: "planned",
+          attention: "watch",
+          repoIds: ["main"],
+          dependsOn: ["foundation"],
+        },
+      ],
+      [
+        {
+          id: "wave-1",
+          title: "Foundation",
+          summary: "Foundation",
+          status: "completed",
+          nodeIds: ["foundation"],
+        },
+        {
+          id: "wave-2",
+          title: "Surface",
+          summary: "Surface",
+          status: "planned",
+          nodeIds: ["surface"],
+        },
+        {
+          id: "wave-3",
+          title: "Cleanup",
+          summary: "Cleanup",
+          status: "planned",
+          nodeIds: ["cleanup"],
+        },
+      ],
+    );
+    const viewModel = buildWorkstreamViewModel(
+      workstream,
+      undefined,
+      new Date("2026-03-30T20:06:10.348Z"),
+    );
+    const layout = buildWorkstreamGraphLayout(workstream, viewModel, null);
+
+    expect(layout.edges.map((edge) => edge.id)).toEqual([
+      "foundation->surface",
+      "foundation->cleanup",
+    ]);
+    expect(layout.checkpointLanes.map((lane) => lane.id)).toEqual([
+      "wave-1",
+      "wave-2",
+      "wave-3",
+    ]);
+    for (let index = 1; index < layout.checkpointLanes.length; index += 1) {
+      const previous = layout.checkpointLanes[index - 1];
+      const current = layout.checkpointLanes[index];
+      expect(previous.y + previous.height).toBeLessThan(current.y);
+    }
   });
 });
