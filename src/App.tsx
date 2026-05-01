@@ -16,9 +16,12 @@ import {
 import { buildWorkstreamGraphLayout } from "./workstream-graph";
 import type { WorkstreamDocument } from "./workstream-schema";
 import type {
+  WorkstreamConflict,
   WorkstreamRegistryListEntry,
   WorkstreamRegistryListResponse,
   WorkstreamRegistryWarning,
+  WorkstreamSourceListEntry,
+  WorkstreamSourceType,
 } from "./workstream-registry-contract";
 import { WorkstreamCanvas } from "./components/WorkstreamCanvas";
 import { NodeInspector } from "./components/NodeInspector";
@@ -29,10 +32,7 @@ import { SessionsPage } from "./components/SessionsPage";
 import {
   deleteBrowserWorkstreamEntry,
   listBrowserWorkstreamEntries,
-  pickBrowserWorkstreamDirectory,
   readBrowserWorkstreamGraph,
-  storeBrowserWorkstreamDirectory,
-  type BrowserWorkstreamDirectorySelection,
 } from "./browser-workstream-files";
 
 const POLL_INTERVAL_MS = 2000;
@@ -165,8 +165,24 @@ function registryEntryUrl(entry: { projectKey: string; workstreamId: string }): 
   return `/api/workstreams/${encodeSegment(entry.projectKey)}/${encodeSegment(entry.workstreamId)}`;
 }
 
+function registryArchiveUrl(entry: { projectKey: string; workstreamId: string }): string {
+  return `${registryEntryUrl(entry)}/archive`;
+}
+
+function sourceEntryUrl(sourceId: string): string {
+  return `/api/workstream-sources/${encodeSegment(sourceId)}`;
+}
+
 function isBrowserWorkstreamEntry(entry: WorkstreamRegistryListEntry): boolean {
   return entry.source === "browser-directory";
+}
+
+function isSourceWorkstreamEntry(entry: WorkstreamRegistryListEntry): boolean {
+  return entry.source === "source";
+}
+
+function isPathWorkstreamEntry(entry: WorkstreamRegistryListEntry): boolean {
+  return !entry.source || entry.source === "path";
 }
 
 function mergeWorkstreamEntries(
@@ -178,7 +194,9 @@ function mergeWorkstreamEntries(
     merged.set(registryKey(entry), entry);
   }
   for (const entry of browserEntries) {
-    merged.set(registryKey(entry), entry);
+    if (!merged.has(registryKey(entry))) {
+      merged.set(registryKey(entry), entry);
+    }
   }
   return [...merged.values()].sort(
     (left, right) => Date.parse(right.lastOpenedAt) - Date.parse(left.lastOpenedAt),
@@ -197,6 +215,20 @@ async function parseErrorResponse(res: Response): Promise<GraphLoadError> {
   }
 }
 
+function normalizeRegistryListResponse(
+  body: Partial<WorkstreamRegistryListResponse>,
+): WorkstreamRegistryListResponse {
+  return {
+    version: body.version ?? 1,
+    migratedFromRecentsAt: body.migratedFromRecentsAt,
+    migrationWarnings: body.migrationWarnings ?? [],
+    workstreams: body.workstreams ?? [],
+    archivedWorkstreams: body.archivedWorkstreams,
+    sources: body.sources,
+    conflicts: body.conflicts,
+  };
+}
+
 function useGraphLoader(route: DashboardRoute, enabled: boolean) {
   const activeProjectKey = route.view === "workstream" ? route.projectKey : null;
   const activeWorkstreamId = route.view === "workstream" ? route.workstreamId : null;
@@ -211,10 +243,25 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
   const [error, setError] = useState<GraphLoadError | null>(null);
   const [registryError, setRegistryError] = useState<string | null>(null);
   const [workstreams, setWorkstreams] = useState<WorkstreamRegistryListEntry[]>([]);
+  const [archivedWorkstreams, setArchivedWorkstreams] = useState<WorkstreamRegistryListEntry[]>([]);
+  const [sources, setSources] = useState<WorkstreamSourceListEntry[]>([]);
+  const [conflicts, setConflicts] = useState<WorkstreamConflict[]>([]);
   const [migrationWarnings, setMigrationWarnings] = useState<WorkstreamRegistryWarning[]>([]);
   const workstreamsRef = useRef<WorkstreamRegistryListEntry[]>([]);
   const lastModifiedRef = useRef<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const applyRegistryResponse = useCallback((body: WorkstreamRegistryListResponse) => {
+    const mergedWorkstreams = mergeWorkstreamEntries(body.workstreams, listBrowserWorkstreamEntries());
+    workstreamsRef.current = mergedWorkstreams;
+    setWorkstreams(mergedWorkstreams);
+    setArchivedWorkstreams(body.archivedWorkstreams ?? []);
+    setSources(body.sources ?? []);
+    setConflicts(body.conflicts ?? []);
+    setMigrationWarnings(body.migrationWarnings ?? []);
+    setRegistryError(null);
+    return mergedWorkstreams;
+  }, []);
 
   const fetchRegistry = useCallback(async () => {
     const res = await fetch("/api/workstreams");
@@ -222,14 +269,10 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
       const parsed = await parseErrorResponse(res);
       throw new Error(parsed.message);
     }
-    const body = await res.json() as WorkstreamRegistryListResponse;
-    const mergedWorkstreams = mergeWorkstreamEntries(body.workstreams, listBrowserWorkstreamEntries());
-    workstreamsRef.current = mergedWorkstreams;
-    setWorkstreams(mergedWorkstreams);
-    setMigrationWarnings(body.migrationWarnings);
-    setRegistryError(null);
-    return mergedWorkstreams;
-  }, []);
+    return applyRegistryResponse(normalizeRegistryListResponse(
+      await res.json() as Partial<WorkstreamRegistryListResponse>,
+    ));
+  }, [applyRegistryResponse]);
 
   const loadRegistered = useCallback(
     async (
@@ -333,26 +376,68 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
     };
   }, [activeWorkstream, enabled, error, loadRegistered]);
 
-  const registerBrowserDirectory = useCallback(
-    async (selection: BrowserWorkstreamDirectorySelection) => {
-      const entry = await storeBrowserWorkstreamDirectory(selection);
+  const addSource = useCallback(
+    async (type: WorkstreamSourceType, path: string) => {
+      const res = await fetch("/api/workstream-sources", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type, path }),
+      });
+      if (!res.ok) {
+        throw new Error((await parseErrorResponse(res)).message);
+      }
+      applyRegistryResponse(normalizeRegistryListResponse(
+        await res.json() as Partial<WorkstreamRegistryListResponse>,
+      ));
+    },
+    [applyRegistryResponse],
+  );
+
+  const refreshSources = useCallback(async () => {
+    const res = await fetch("/api/workstream-sources/refresh", { method: "POST" });
+    if (!res.ok) {
+      throw new Error((await parseErrorResponse(res)).message);
+    }
+    applyRegistryResponse(normalizeRegistryListResponse(
+      await res.json() as Partial<WorkstreamRegistryListResponse>,
+    ));
+  }, [applyRegistryResponse]);
+
+  const deleteSource = useCallback(
+    async (sourceId: string) => {
+      const res = await fetch(sourceEntryUrl(sourceId), { method: "DELETE" });
+      if (!res.ok && res.status !== 404) {
+        throw new Error((await parseErrorResponse(res)).message);
+      }
       await fetchRegistry();
-      return entry;
     },
     [fetchRegistry],
   );
 
-  const relinkBrowserDirectory = useCallback(
-    async (selection: BrowserWorkstreamDirectorySelection) => {
-      if (!activeWorkstream) {
-        throw new Error("No active workstream to relink.");
+  const archive = useCallback(
+    async (entry: { projectKey: string; workstreamId: string }) => {
+      const res = await fetch(registryArchiveUrl(entry), { method: "POST" });
+      if (!res.ok) {
+        throw new Error((await parseErrorResponse(res)).message);
       }
-      const entry = await storeBrowserWorkstreamDirectory(selection, activeWorkstream);
-      const entries = await fetchRegistry();
-      await loadRegistered(activeWorkstream, { entries });
-      return entry;
+      applyRegistryResponse(normalizeRegistryListResponse(
+        await res.json() as Partial<WorkstreamRegistryListResponse>,
+      ));
     },
-    [activeWorkstream, fetchRegistry, loadRegistered],
+    [applyRegistryResponse],
+  );
+
+  const restore = useCallback(
+    async (entry: { projectKey: string; workstreamId: string }) => {
+      const res = await fetch(registryArchiveUrl(entry), { method: "DELETE" });
+      if (!res.ok) {
+        throw new Error((await parseErrorResponse(res)).message);
+      }
+      applyRegistryResponse(normalizeRegistryListResponse(
+        await res.json() as Partial<WorkstreamRegistryListResponse>,
+      ));
+    },
+    [applyRegistryResponse],
   );
 
   const untrack = useCallback(
@@ -379,10 +464,16 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
     error,
     registryError,
     workstreams,
+    archivedWorkstreams,
+    sources,
+    conflicts,
     migrationWarnings,
     activeWorkstream,
-    registerBrowserDirectory,
-    relinkBrowserDirectory,
+    addSource,
+    refreshSources,
+    deleteSource,
+    archive,
+    restore,
     untrack,
   };
 }
@@ -441,17 +532,106 @@ function WorkstreamHome({
   message,
   registryError,
   workstreams,
+  archivedWorkstreams,
+  sources,
+  conflicts,
   onOpenWorkstream,
-  onAddWorkstream,
+  onAddSource,
+  onRefreshSources,
+  onDeleteSource,
+  onArchiveWorkstream,
+  onRestoreWorkstream,
   onUntrackWorkstream,
 }: {
   message?: string;
   registryError: string | null;
   workstreams: WorkstreamRegistryListEntry[];
+  archivedWorkstreams: WorkstreamRegistryListEntry[];
+  sources: WorkstreamSourceListEntry[];
+  conflicts: WorkstreamConflict[];
   onOpenWorkstream: (entry: WorkstreamRegistryListEntry) => void;
-  onAddWorkstream: () => void | Promise<void>;
+  onAddSource: (type: WorkstreamSourceType, path: string) => void | Promise<void>;
+  onRefreshSources: () => void | Promise<void>;
+  onDeleteSource: (sourceId: string) => void | Promise<void>;
+  onArchiveWorkstream: (entry: WorkstreamRegistryListEntry) => void | Promise<void>;
+  onRestoreWorkstream: (entry: WorkstreamRegistryListEntry) => void | Promise<void>;
   onUntrackWorkstream: (entry: WorkstreamRegistryListEntry) => void | Promise<void>;
 }) {
+  const [sourceType, setSourceType] = useState<WorkstreamSourceType>("workstreams-root");
+  const [sourcePath, setSourcePath] = useState("");
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const runAction = async (action: () => Promise<void> | void) => {
+    setActionError(null);
+    setBusy(true);
+    try {
+      await action();
+    } catch (nextError) {
+      setActionError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const addSource = async () => {
+    const trimmed = sourcePath.trim();
+    if (!trimmed) {
+      setActionError("Enter a local source path.");
+      return;
+    }
+    await runAction(async () => {
+      await onAddSource(sourceType, trimmed);
+      setSourcePath("");
+    });
+  };
+
+  const renderWorkstreamCard = (entry: WorkstreamRegistryListEntry, archived = false) => (
+    <div className="sl-workstream-card" key={`${archived ? "archived" : "active"}-${registryKey(entry)}`}>
+      <button className="sl-workstream-card-main" onClick={() => onOpenWorkstream(entry)}>
+        <span className="sl-workstream-card-title">{entry.title}</span>
+        <span className="sl-workstream-card-id">{registryKey(entry)}</span>
+        <span className="sl-workstream-card-meta">
+          <span className={`sl-pill ${entry.fileStatus === "available" ? "green" : "amber"}`}>
+            {entry.fileStatus}
+          </span>
+          <span className="sl-pill muted">{entry.source ?? "path"}</span>
+          {entry.sourceId && <span className="sl-pill muted">{entry.sourceId}</span>}
+        </span>
+        <span className="sl-path-value">{entry.path}</span>
+      </button>
+      <div className="sl-workstream-card-actions">
+        {archived ? (
+          <button
+            className="sl-action-btn"
+            disabled={busy}
+            onClick={() => void runAction(() => onRestoreWorkstream(entry))}
+          >
+            Restore
+          </button>
+        ) : (
+          <button
+            className="sl-action-btn"
+            disabled={busy}
+            onClick={() => void runAction(() => onArchiveWorkstream(entry))}
+          >
+            Archive
+          </button>
+        )}
+        {!archived && (isPathWorkstreamEntry(entry) || isBrowserWorkstreamEntry(entry)) && (
+          <button
+            className="sl-action-btn danger"
+            disabled={busy}
+            onClick={() => void runAction(() => onUntrackWorkstream(entry))}
+            aria-label={`Untrack ${entry.title}`}
+          >
+            Untrack
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
   return (
     <div className="sl-shell-panel">
       <div className="sl-workstreams-home">
@@ -460,41 +640,126 @@ function WorkstreamHome({
             <span className="sl-eyebrow">WORKSTREAMS</span>
             <h1 className="sl-title">Tracked workstreams</h1>
             <p className="sl-summary">
-              Open a registered graph, or add a workstream directory to keep it addressable by URL.
+              Register server-side source directories once, then open sticky workstream URLs from disk.
             </p>
           </div>
-          <button className="sl-action-btn primary" onClick={() => void onAddWorkstream()}>
-            Add workstream…
+          <button className="sl-action-btn" disabled={busy} onClick={() => void runAction(onRefreshSources)}>
+            Refresh sources
           </button>
         </div>
         {message && <div className="sl-action-error">{message}</div>}
         {registryError && <div className="sl-action-error">{registryError}</div>}
+        {actionError && <div className="sl-action-error">{actionError}</div>}
+        <section className="sl-source-panel">
+          <div>
+            <h2>Add source</h2>
+            <p>
+              Use a project root with <code>.streamliner\workstreams</code> or a workstreams root whose
+              child directories contain <code>graph.json</code>.
+            </p>
+          </div>
+          <div className="sl-source-form">
+            <select
+              className="sl-source-select"
+              value={sourceType}
+              onChange={(event) => setSourceType(event.target.value as WorkstreamSourceType)}
+              disabled={busy}
+            >
+              <option value="workstreams-root">Workstreams root</option>
+              <option value="project-root">Project root</option>
+            </select>
+            <input
+              className="sl-source-input"
+              value={sourcePath}
+              onChange={(event) => setSourcePath(event.target.value)}
+              placeholder="C:\Users\you\proj\example\workstreams"
+              disabled={busy}
+            />
+            <button className="sl-action-btn primary" disabled={busy} onClick={() => void addSource()}>
+              Add source
+            </button>
+          </div>
+        </section>
+        {sources.length > 0 && (
+          <section className="sl-source-section">
+            <h2>Sources</h2>
+            <div className="sl-source-list">
+              {sources.map((source) => (
+                <div className="sl-source-card" key={source.id}>
+                  <div>
+                    <div className="sl-source-title-row">
+                      <strong>{source.type}</strong>
+                      <span className={`sl-pill ${source.health === "available" ? "green" : "amber"}`}>
+                        {source.health}
+                      </span>
+                      <span className="sl-pill muted">{source.discoveredCount} discovered</span>
+                    </div>
+                    <div className="sl-path-value">{source.path}</div>
+                    {source.lastScanAt && (
+                      <div className="sl-source-meta">Last scan {new Date(source.lastScanAt).toLocaleString()}</div>
+                    )}
+                    {source.messages.length > 0 && (
+                      <div className="sl-warning-list">
+                        {source.messages.slice(0, 3).map((warning, index) => (
+                          <div className="sl-warning-item" key={`${source.id}-${warning.code}-${warning.path ?? index}`}>
+                            {warning.message}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    className="sl-action-btn danger"
+                    disabled={busy}
+                    onClick={() => void runAction(() => onDeleteSource(source.id))}
+                  >
+                    Delete source
+                  </button>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+        {conflicts.length > 0 && (
+          <section className="sl-source-section">
+            <h2>Conflicts</h2>
+            <div className="sl-warning-list">
+              {conflicts.map((conflict) => (
+                <div className="sl-warning-item" key={`${conflict.projectKey}/${conflict.workstreamId}`}>
+                  <strong>{conflict.projectKey}/{conflict.workstreamId}</strong>: {conflict.message}
+                  {conflict.archived ? " This identity is archived." : ""}
+                  <div className="sl-conflict-candidates">
+                    {conflict.candidates.map((candidate) => (
+                      <span key={`${candidate.source}-${candidate.path}`}>
+                        {candidate.selected ? "Using" : "Also found"} {candidate.source}: {candidate.path}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
         {workstreams.length === 0 ? (
           <div className="sl-empty-state">
             <h2>No tracked workstreams yet</h2>
-            <p>Add a graph.json file to register it with Streamliner.</p>
+            <p>Add a source directory to discover workstream graph files.</p>
           </div>
         ) : (
-          <div className="sl-workstreams-list">
-            {workstreams.map((entry) => (
-              <div className="sl-workstream-card" key={registryKey(entry)}>
-                <button className="sl-workstream-card-main" onClick={() => onOpenWorkstream(entry)}>
-                  <span className="sl-workstream-card-title">{entry.title}</span>
-                  <span className="sl-workstream-card-id">{registryKey(entry)}</span>
-                  <span className={`sl-pill ${entry.fileStatus === "available" ? "green" : "amber"}`}>
-                    {entry.fileStatus}
-                  </span>
-                </button>
-                <button
-                  className="sl-action-btn danger"
-                  onClick={() => void onUntrackWorkstream(entry)}
-                  aria-label={`Untrack ${entry.title}`}
-                >
-                  Untrack
-                </button>
-              </div>
-            ))}
-          </div>
+          <section className="sl-source-section">
+            <h2>Active workstreams</h2>
+            <div className="sl-workstreams-list">
+              {workstreams.map((entry) => renderWorkstreamCard(entry))}
+            </div>
+          </section>
+        )}
+        {archivedWorkstreams.length > 0 && (
+          <section className="sl-source-section">
+            <h2>Archived workstreams</h2>
+            <div className="sl-workstreams-list">
+              {archivedWorkstreams.map((entry) => renderWorkstreamCard(entry, true))}
+            </div>
+          </section>
         )}
       </div>
     </div>
@@ -506,15 +771,14 @@ function GraphDashboard({
   error,
   workstreams,
   activeWorkstream,
+  archive,
   untrack,
   onOpenWorkstream,
-  onAddWorkstream,
-  onRelinkWorkstream,
+  onManageSources,
   onRouteHome,
 }: ReturnType<typeof useGraphLoader> & {
   onOpenWorkstream: (entry: WorkstreamRegistryListEntry) => void;
-  onAddWorkstream: () => void | Promise<void>;
-  onRelinkWorkstream: () => void | Promise<void>;
+  onManageSources: () => void;
   onRouteHome: () => void;
 }) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -535,13 +799,13 @@ function GraphDashboard({
     return viewModel.derivedNodes.find((entry) => entry.node.id === selectedNodeId) ?? null;
   }, [selectedNodeId, viewModel]);
 
-  const handleUntrackCurrent = async () => {
+  const handleArchiveCurrent = async () => {
     if (!activeWorkstream) {
       return;
     }
     setActionError(null);
     try {
-      await untrack(activeWorkstream);
+      await archive(activeWorkstream);
       onRouteHome();
     } catch (nextError) {
       setActionError(nextError instanceof Error ? nextError.message : String(nextError));
@@ -557,11 +821,11 @@ function GraphDashboard({
             <div className="sl-action-error">{error.message}</div>
             {actionError && <div className="sl-action-error">{actionError}</div>}
             <div className="sl-header-actions" style={{ justifyContent: "flex-start" }}>
-              <button className="sl-action-btn primary" onClick={() => void onRelinkWorkstream()}>
-                Relink directory…
+              <button className="sl-action-btn primary" onClick={onManageSources}>
+                Manage sources
               </button>
-              <button className="sl-action-btn danger" onClick={handleUntrackCurrent}>
-                Untrack workstream
+              <button className="sl-action-btn danger" onClick={handleArchiveCurrent}>
+                Archive workstream
               </button>
             </div>
           </div>
@@ -587,16 +851,20 @@ function GraphDashboard({
       <WorkstreamHeader
         workstream={workstream}
         viewModel={viewModel}
-        activeWorkstream={activeWorkstream}
-        trackedWorkstreams={workstreams}
-        onOpenWorkstream={onOpenWorkstream}
-        onAddWorkstream={onAddWorkstream}
-        onUntrackWorkstream={(entry) => {
-          void (async () => {
-            await untrack(entry);
-            if (registryKey(entry) === registryKey(activeWorkstream)) {
-              onRouteHome();
-            }
+          activeWorkstream={activeWorkstream}
+          trackedWorkstreams={workstreams}
+          onOpenWorkstream={onOpenWorkstream}
+          onAddWorkstream={onManageSources}
+          onUntrackWorkstream={(entry) => {
+            void (async () => {
+              if (isSourceWorkstreamEntry(entry)) {
+                await archive(entry);
+              } else {
+                await untrack(entry);
+              }
+              if (registryKey(entry) === registryKey(activeWorkstream)) {
+                onRouteHome();
+              }
           })();
         }}
       />
@@ -707,7 +975,6 @@ export default function App() {
   const { route, setRoute } = useDashboardRoute();
   const graphLoader = useGraphLoader(route, route.view !== "sessions");
   const beforeLeaveRef = useRef<(() => Promise<boolean>) | null>(null);
-  const [directoryPickerError, setDirectoryPickerError] = useState<string | null>(null);
 
   const handleRouteChange = useCallback(
     async (nextRoute: DashboardRoute) => {
@@ -736,52 +1003,9 @@ export default function App() {
     [setRoute],
   );
 
-  const handleBrowserDirectorySelection = useCallback(
-    async (action: "register" | "relink", selection: BrowserWorkstreamDirectorySelection) => {
-      setDirectoryPickerError(null);
-      try {
-        const entry = action === "register"
-          ? await graphLoader.registerBrowserDirectory(selection)
-          : await graphLoader.relinkBrowserDirectory(selection);
-        openWorkstream(entry);
-      } catch (nextError) {
-        setDirectoryPickerError(nextError instanceof Error ? nextError.message : String(nextError));
-      }
-    },
-    [graphLoader, openWorkstream],
-  );
-
-  const openNativeDirectoryPicker = useCallback(
-    async (action: "register" | "relink") => {
-      setDirectoryPickerError(null);
-      try {
-        const picked = await pickBrowserWorkstreamDirectory();
-        if (picked === "unsupported") {
-          setDirectoryPickerError("Use Edge or Chrome to add a workstream directory.");
-          return;
-        }
-        if (picked) {
-          await handleBrowserDirectorySelection(action, picked);
-        }
-      } catch (nextError) {
-        setDirectoryPickerError(nextError instanceof Error ? nextError.message : String(nextError));
-      }
-    },
-    [handleBrowserDirectorySelection],
-  );
-
-  const addWorkstream = useCallback(
-    async () => {
-      await openNativeDirectoryPicker("register");
-    },
-    [openNativeDirectoryPicker],
-  );
-
-  const relinkWorkstream = useCallback(
-    async () => {
-      await openNativeDirectoryPicker("relink");
-    },
-    [openNativeDirectoryPicker],
+  const manageSources = useCallback(
+    () => setRoute({ view: "workstreams" }),
+    [setRoute],
   );
 
   const untrackFromHome = useCallback(
@@ -795,19 +1019,13 @@ export default function App() {
     <div className="sl-root">
       <DashboardNav route={route} onRouteChange={handleRouteChange} />
       <MigrationWarningsBanner warnings={graphLoader.migrationWarnings} />
-      {directoryPickerError && (
-        <div className="sl-global-warning-list">
-          <div className="sl-warning-item">{directoryPickerError}</div>
-        </div>
-      )}
       {route.view === "sessions" ? (
         <SessionsPage registerBeforeLeave={registerBeforeLeave} />
       ) : route.view === "workstream" ? (
         <GraphDashboard
           {...graphLoader}
           onOpenWorkstream={openWorkstream}
-          onAddWorkstream={addWorkstream}
-          onRelinkWorkstream={relinkWorkstream}
+          onManageSources={manageSources}
           onRouteHome={() => setRoute({ view: "workstreams" }, "replace")}
         />
       ) : route.view === "workstreams" ? (
@@ -815,8 +1033,15 @@ export default function App() {
           message={route.message}
           registryError={graphLoader.registryError}
           workstreams={graphLoader.workstreams}
+          archivedWorkstreams={graphLoader.archivedWorkstreams}
+          sources={graphLoader.sources}
+          conflicts={graphLoader.conflicts}
           onOpenWorkstream={openWorkstream}
-          onAddWorkstream={addWorkstream}
+          onAddSource={graphLoader.addSource}
+          onRefreshSources={graphLoader.refreshSources}
+          onDeleteSource={graphLoader.deleteSource}
+          onArchiveWorkstream={graphLoader.archive}
+          onRestoreWorkstream={graphLoader.restore}
           onUntrackWorkstream={untrackFromHome}
         />
       ) : (

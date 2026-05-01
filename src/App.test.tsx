@@ -141,6 +141,16 @@ function findButton(container: HTMLElement, label: string): HTMLButtonElement {
   return button;
 }
 
+function findWorkstreamCard(container: HTMLElement, title: string): HTMLButtonElement {
+  const button = [...container.querySelectorAll<HTMLButtonElement>(".sl-workstream-card-main")].find(
+    (candidate) => candidate.textContent?.includes(title),
+  );
+  if (!(button instanceof HTMLButtonElement)) {
+    throw new Error(`Could not find workstream card "${title}".`);
+  }
+  return button;
+}
+
 function findSessionList(container: HTMLElement): HTMLElement {
   const sessionList = container.querySelector(".sl-sessions-groups");
   if (!(sessionList instanceof HTMLElement)) {
@@ -226,55 +236,6 @@ function setInputValue(
     input.dispatchEvent(new Event("input", { bubbles: true }));
     input.dispatchEvent(new Event("change", { bubbles: true }));
   });
-}
-
-function createWorkstreamDirectoryHandle(initialGraph: Record<string, unknown> = buildWorkstreamGraph()): {
-  handle: {
-    name: string;
-    kind: "directory";
-    queryPermission: () => Promise<PermissionState>;
-    getFileHandle: (name: string) => Promise<{
-      name: string;
-      kind: "file";
-      getFile: () => Promise<File>;
-    }>;
-  };
-  setGraph: (graph: Record<string, unknown>) => void;
-} {
-  let graph = initialGraph;
-  let version = 0;
-  const handle = {
-    name: "api-test",
-    kind: "directory" as const,
-    queryPermission: async () => "granted" as PermissionState,
-    getFileHandle: async (name: string) => {
-      if (name !== "graph.json") {
-        throw new DOMException("File not found.", "NotFoundError");
-      }
-      return {
-        name: "graph.json",
-        kind: "file" as const,
-        getFile: async () =>
-          new File([JSON.stringify(graph)], "graph.json", {
-            type: "application/json",
-            lastModified: Date.parse("2026-05-01T12:00:00.000Z") + version * 1000,
-          }),
-      };
-    },
-  };
-  return {
-    handle,
-    setGraph(nextGraph) {
-      graph = nextGraph;
-      version += 1;
-    },
-  };
-}
-
-function stubWorkstreamDirectoryPicker(
-  handle: ReturnType<typeof createWorkstreamDirectoryHandle>["handle"],
-): void {
-  vi.stubGlobal("showDirectoryPicker", vi.fn(async () => handle));
 }
 
 async function settle(delayMs = 25): Promise<void> {
@@ -466,14 +427,60 @@ describe("App sessions route", () => {
   );
 
   it(
-    "registers a browser-picked workstream directory and refreshes from disk",
+    "adds a workstream source and refreshes graph content from disk",
     async () => {
-      const directory = createWorkstreamDirectoryHandle();
-      stubWorkstreamDirectoryPicker(directory.handle);
+      let graph = buildWorkstreamGraph();
+      let sourceAdded = false;
+      const trackedSourceWorkstream = buildTrackedWorkstream({
+        source: "source",
+        sourceId: "workstreams-root-test",
+        sourceType: "workstreams-root",
+        sourcePath: "C:\\sources",
+        path: "C:\\sources\\api-test\\graph.json",
+      });
       const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
         const path = requestPath(input);
         if (path === "/api/workstreams") {
-          return jsonResponse({ version: 1, migrationWarnings: [], workstreams: [] });
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: sourceAdded ? [trackedSourceWorkstream] : [],
+            sources: sourceAdded
+              ? [{
+                id: "workstreams-root-test",
+                type: "workstreams-root",
+                path: "C:\\sources",
+                addedAt: "2026-05-01T12:00:00.000Z",
+                updatedAt: "2026-05-01T12:00:00.000Z",
+                health: "available",
+                discoveredCount: 1,
+                messages: [],
+              }]
+              : [],
+            conflicts: [],
+            archivedWorkstreams: [],
+          });
+        }
+        if (path === "/api/workstream-sources") {
+          sourceAdded = true;
+          return jsonResponse({
+            workstreams: [trackedSourceWorkstream],
+            sources: [{
+              id: "workstreams-root-test",
+              type: "workstreams-root",
+              path: "C:\\sources",
+              addedAt: "2026-05-01T12:00:00.000Z",
+              updatedAt: "2026-05-01T12:00:00.000Z",
+              health: "available",
+              discoveredCount: 1,
+              messages: [],
+            }],
+            conflicts: [],
+            archivedWorkstreams: [],
+          }, 201);
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
         }
         throw new Error(`Unexpected fetch: ${path}`);
       });
@@ -485,14 +492,26 @@ describe("App sessions route", () => {
       });
       await settle();
 
+      const input = container.querySelector(".sl-source-input");
+      if (!(input instanceof HTMLInputElement)) {
+        throw new Error("Could not find source path input.");
+      }
+      setInputValue(input, "C:\\sources");
       act(() => {
-        findButton(container, "Add workstream…").click();
+        findButton(container, "Add source").click();
       });
       await settle(100);
 
-      expect(window.location.pathname).toBe("/workstreams/streamliner/api-test");
       expect(container.textContent).toContain("API Test");
-      directory.setGraph(buildWorkstreamGraph({ title: "API Test Updated" }));
+      expect(container.textContent).toContain("C:\\sources");
+
+      act(() => {
+        findWorkstreamCard(container, "API Test").click();
+      });
+      await settle(100);
+      expect(window.location.pathname).toBe("/workstreams/streamliner/api-test");
+
+      graph = buildWorkstreamGraph({ title: "API Test Updated" });
       await settle(2_200);
       expect(container.textContent).toContain("API Test Updated");
       expect(
@@ -505,23 +524,33 @@ describe("App sessions route", () => {
   );
 
   it(
-    "soft-fails missing graph files and can relink the active workstream",
+    "soft-fails missing graph files and can archive the active workstream",
     async () => {
-      const directory = createWorkstreamDirectoryHandle(
-        buildWorkstreamGraph({ title: "API Test Relinked" }),
-      );
-      stubWorkstreamDirectoryPicker(directory.handle);
+      const trackedWorkstream = buildTrackedWorkstream({ fileStatus: "missing" });
+      let archived = false;
       const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
         const path = requestPath(input);
         if (path === "/api/workstreams") {
           return jsonResponse({
             version: 1,
             migrationWarnings: [],
-            workstreams: [buildTrackedWorkstream({ fileStatus: "missing" })],
+            workstreams: archived ? [] : [trackedWorkstream],
+            archivedWorkstreams: archived ? [{ ...trackedWorkstream, archived: true }] : [],
+            sources: [],
+            conflicts: [],
           });
         }
         if (path === "/api/workstreams/streamliner/api-test/graph") {
           return jsonResponse({ code: "workstream_file_missing", error: "Graph file is missing." }, 404);
+        }
+        if (path === "/api/workstreams/streamliner/api-test/archive") {
+          archived = true;
+          return jsonResponse({
+            workstreams: [],
+            archivedWorkstreams: [{ ...trackedWorkstream, archived: true }],
+            sources: [],
+            conflicts: [],
+          });
         }
         throw new Error(`Unexpected fetch: ${path}`);
       });
@@ -537,12 +566,12 @@ describe("App sessions route", () => {
       expect(container.textContent).toContain("Graph file is missing.");
 
       act(() => {
-        findButton(container, "Relink directory…").click();
+        findButton(container, "Archive workstream").click();
       });
       await settle(100);
 
-      expect(container.textContent).toContain("API Test Relinked");
-      expect(window.location.pathname).toBe("/workstreams/streamliner/api-test");
+      expect(container.textContent).toContain("Archived workstreams");
+      expect(window.location.pathname).toBe("/workstreams");
     },
     15_000,
   );

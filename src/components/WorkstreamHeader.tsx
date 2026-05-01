@@ -119,7 +119,7 @@ export function WorkstreamHeader({
             className="sl-action-btn"
             onClick={() => setShowWorkstreams((v) => !v)}
           >
-            Tracked workstreams ▾
+            Workstreams ▾
           </button>
           {showWorkstreams && (
             <div className="sl-recents-dropdown">
@@ -164,7 +164,7 @@ export function WorkstreamHeader({
           className="sl-action-btn"
           onClick={handleAddWorkstream}
         >
-          Add workstream…
+          Manage sources…
         </button>
       </div>
     </header>

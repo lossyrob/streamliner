@@ -1,6 +1,6 @@
 import { createServer, get as httpGet, type Server } from "node:http";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Request, Response } from "express";
@@ -555,6 +555,172 @@ describe("createStreamlinerApiApp", () => {
       .send({ path: otherGraphPath })
       .expect(409);
     expect(response.body.code).toBe("workstream_identity_mismatch");
+  });
+
+  it("discovers workstreams from persisted project-root sources and reads graph updates from disk", async () => {
+    const rootDir = createRootDir();
+    const projectRoot = join(rootDir, "project");
+    const workstreamDir = join(projectRoot, ".streamliner", "workstreams", "api-test");
+    const graphPath = join(workstreamDir, "graph.json");
+    mkdirSync(workstreamDir, { recursive: true });
+    writeFileSync(graphPath, JSON.stringify(buildGraph()), "utf8");
+    const sourceRegistryPath = join(rootDir, "sources.json");
+    const api = createStreamlinerApiApp({
+      store: new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") }),
+      recentsPath: join(rootDir, "recent-graphs.json"),
+      workstreamRegistryPath: join(rootDir, "workstreams.json"),
+      workstreamSourceRegistryPath: sourceRegistryPath,
+    });
+    activeApps.push(api);
+
+    const addResponse = await request(api.app)
+      .post("/api/workstream-sources")
+      .send({ type: "project-root", path: projectRoot })
+      .expect(201);
+    expect(addResponse.body.source).toEqual(expect.objectContaining({
+      type: "project-root",
+      path: projectRoot,
+      health: "available",
+      discoveredCount: 1,
+    }));
+    expect(addResponse.body.workstreams[0]).toEqual(expect.objectContaining({
+      source: "source",
+      projectKey: "streamliner",
+      workstreamId: "api-test",
+      title: "API Test",
+    }));
+
+    const restartedApi = createStreamlinerApiApp({
+      store: new SessionRegistryFileStore({ rootDir: join(rootDir, "registry-restarted") }),
+      recentsPath: join(rootDir, "recent-graphs-restarted.json"),
+      workstreamRegistryPath: join(rootDir, "workstreams-restarted.json"),
+      workstreamSourceRegistryPath: sourceRegistryPath,
+    });
+    activeApps.push(restartedApi);
+    const restartedList = await request(restartedApi.app).get("/api/workstreams").expect(200);
+    expect(restartedList.body.workstreams[0]).toEqual(expect.objectContaining({
+      source: "source",
+      title: "API Test",
+    }));
+    const sourceRegistryAfterInitialScan = readFileSync(sourceRegistryPath, "utf8");
+
+    writeFileSync(graphPath, JSON.stringify(buildGraph({ title: "API Test Updated" })), "utf8");
+    const graphResponse = await request(restartedApi.app)
+      .get("/api/workstreams/streamliner/api-test/graph")
+      .expect(200);
+    expect(graphResponse.body.title).toBe("API Test Updated");
+    await request(restartedApi.app)
+      .get("/api/workstreams/streamliner/api-test/graph")
+      .set("If-Modified-Since", graphResponse.header["last-modified"])
+      .expect(304);
+    await request(restartedApi.app).get("/api/workstreams").expect(200);
+    expect(readFileSync(sourceRegistryPath, "utf8")).toBe(sourceRegistryAfterInitialScan);
+  });
+
+  it("surfaces path/source conflicts while preserving path-backed route precedence", async () => {
+    const rootDir = createRootDir();
+    const graphPath = join(rootDir, "registered-graph.json");
+    const sourceRoot = join(rootDir, "workstreams");
+    const sourceWorkstreamDir = join(sourceRoot, "api-test");
+    const sourceGraphPath = join(sourceWorkstreamDir, "graph.json");
+    mkdirSync(sourceWorkstreamDir, { recursive: true });
+    writeFileSync(graphPath, JSON.stringify(buildGraph({ title: "Path Graph" })), "utf8");
+    writeFileSync(sourceGraphPath, JSON.stringify(buildGraph({ title: "Source Graph" })), "utf8");
+    const api = createStreamlinerApiApp({
+      store: new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") }),
+      recentsPath: join(rootDir, "recent-graphs.json"),
+      workstreamRegistryPath: join(rootDir, "workstreams.json"),
+      workstreamSourceRegistryPath: join(rootDir, "sources.json"),
+    });
+    activeApps.push(api);
+
+    await request(api.app).post("/api/workstreams").send({ path: graphPath }).expect(201);
+    await request(api.app)
+      .post("/api/workstream-sources")
+      .send({ type: "workstreams-root", path: sourceRoot })
+      .expect(201);
+
+    const listResponse = await request(api.app).get("/api/workstreams").expect(200);
+    expect(listResponse.body.workstreams).toHaveLength(1);
+    expect(listResponse.body.workstreams[0]).toEqual(expect.objectContaining({
+      source: "path",
+      title: "Path Graph",
+    }));
+    expect(listResponse.body.conflicts[0]).toEqual(expect.objectContaining({
+      projectKey: "streamliner",
+      workstreamId: "api-test",
+      archived: false,
+    }));
+    expect(listResponse.body.conflicts[0].candidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source: "path", selected: true, path: graphPath }),
+        expect.objectContaining({ source: "source", selected: false, path: sourceGraphPath }),
+      ]),
+    );
+
+    const graphResponse = await request(api.app)
+      .get("/api/workstreams/streamliner/api-test/graph")
+      .expect(200);
+    expect(graphResponse.body.title).toBe("Path Graph");
+
+    const archiveResponse = await request(api.app)
+      .post("/api/workstreams/streamliner/api-test/archive")
+      .expect(200);
+    expect(archiveResponse.body.workstreams).toEqual([]);
+    expect(archiveResponse.body.archivedWorkstreams[0].title).toBe("Path Graph");
+    expect(archiveResponse.body.conflicts[0].archived).toBe(true);
+
+    const restoreResponse = await request(api.app)
+      .delete("/api/workstreams/streamliner/api-test/archive")
+      .expect(200);
+    expect(restoreResponse.body.workstreams[0].title).toBe("Path Graph");
+
+    const sourceId = listResponse.body.sources[0].id as string;
+    await request(api.app).delete(`/api/workstream-sources/${sourceId}`).expect(204);
+    const afterDelete = await request(api.app).get("/api/workstreams").expect(200);
+    expect(afterDelete.body.conflicts).toEqual([]);
+    expect(afterDelete.body.workstreams[0].title).toBe("Path Graph");
+  });
+
+  it("rejects invalid source paths and marks previously valid sources unhealthy when missing", async () => {
+    const rootDir = createRootDir();
+    const filePath = join(rootDir, "not-a-directory.json");
+    const sourceRoot = join(rootDir, "workstreams");
+    const workstreamDir = join(sourceRoot, "api-test");
+    mkdirSync(workstreamDir, { recursive: true });
+    writeFileSync(filePath, "{}", "utf8");
+    writeFileSync(join(workstreamDir, "graph.json"), JSON.stringify(buildGraph()), "utf8");
+    const api = createStreamlinerApiApp({
+      store: new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") }),
+      recentsPath: join(rootDir, "recent-graphs.json"),
+      workstreamRegistryPath: join(rootDir, "workstreams.json"),
+      workstreamSourceRegistryPath: join(rootDir, "sources.json"),
+    });
+    activeApps.push(api);
+
+    const invalidResponse = await request(api.app)
+      .post("/api/workstream-sources")
+      .send({ type: "workstreams-root", path: filePath })
+      .expect(400);
+    expect(invalidResponse.body.code).toBe("source_path_not_directory");
+
+    await request(api.app)
+      .post("/api/workstream-sources")
+      .send({ type: "workstreams-root", path: sourceRoot })
+      .expect(201);
+    rmSync(sourceRoot, { recursive: true, force: true });
+
+    const refreshResponse = await request(api.app)
+      .post("/api/workstream-sources/refresh")
+      .expect(200);
+    expect(refreshResponse.body.sources[0]).toEqual(expect.objectContaining({
+      path: sourceRoot,
+      health: "missing",
+    }));
+    expect(refreshResponse.body.sources[0].messages[0]).toEqual(expect.objectContaining({
+      code: "source-missing",
+      severity: "error",
+    }));
   });
 
   it("streams session registry events over SSE", async () => {

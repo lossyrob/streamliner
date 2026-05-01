@@ -1,6 +1,16 @@
 import { Router } from "express";
 
 import {
+  archiveWorkstreamIdentity,
+  combineWorkstreamCandidates,
+  addWorkstreamSource,
+  deleteWorkstreamSource,
+  readSourceWorkstreamGraph,
+  restoreWorkstreamIdentity,
+  scanWorkstreamSources,
+  type WorkstreamSourceAddRequest,
+} from "../workstream-sources";
+import {
   deleteRegisteredWorkstream,
   listRegisteredWorkstreams,
   readRegisteredGraph,
@@ -9,6 +19,7 @@ import {
   relinkRegisteredWorkstream,
   type WorkstreamRegistryOptions,
 } from "../workstream-registry";
+import type { WorkstreamSourceType } from "../../workstream-registry-contract";
 
 function requestPath(body: unknown): string | null {
   if (!body || typeof body !== "object") {
@@ -16,6 +27,21 @@ function requestPath(body: unknown): string | null {
   }
   const path = (body as { path?: unknown }).path;
   return typeof path === "string" && path.trim().length > 0 ? path : null;
+}
+
+function requestSource(body: unknown): WorkstreamSourceAddRequest | null {
+  if (!body || typeof body !== "object") {
+    return null;
+  }
+  const path = (body as { path?: unknown }).path;
+  const type = (body as { type?: unknown }).type;
+  if (typeof path !== "string" || path.trim().length === 0) {
+    return null;
+  }
+  if (type !== "project-root" && type !== "workstreams-root") {
+    return null;
+  }
+  return { path, type: type as WorkstreamSourceType };
 }
 
 function errorCode(error: unknown): string | undefined {
@@ -39,6 +65,9 @@ function sendRegistryError(res: {
     case "EINVAL":
       res.status(400).json({ code: "invalid_workstream_identity", error: message });
       return;
+    case "ENOTDIR":
+      res.status(400).json({ code: "source_path_not_directory", error: message });
+      return;
     default:
       res.status(500).json({ error: message });
   }
@@ -50,12 +79,67 @@ export function createWorkstreamsRouter(options: WorkstreamRegistryOptions = {})
   router.get("/workstreams", async (_req, res) => {
     try {
       const { registry, workstreams } = await listRegisteredWorkstreams(options);
+      const combined = await combineWorkstreamCandidates(workstreams, options);
       res.json({
         version: registry.version,
         migratedFromRecentsAt: registry.migratedFromRecentsAt,
         migrationWarnings: registry.migrationWarnings,
-        workstreams,
+        ...combined,
       });
+    } catch (error: unknown) {
+      sendRegistryError(res, error);
+    }
+  });
+
+  router.post("/workstream-sources", async (req, res) => {
+    const sourceRequest = requestSource(req.body);
+    if (!sourceRequest) {
+      res.status(400).json({
+        code: "source_required",
+        error: "Expected request body to include a source type and path.",
+      });
+      return;
+    }
+
+    try {
+      const source = await addWorkstreamSource(sourceRequest, options);
+      const { registry, workstreams } = await listRegisteredWorkstreams(options);
+      const combined = await combineWorkstreamCandidates(workstreams, options);
+      res.status(201).json({
+        version: registry.version,
+        migratedFromRecentsAt: registry.migratedFromRecentsAt,
+        migrationWarnings: registry.migrationWarnings,
+        source,
+        ...combined,
+      });
+    } catch (error: unknown) {
+      sendRegistryError(res, error);
+    }
+  });
+
+  router.post("/workstream-sources/refresh", async (_req, res) => {
+    try {
+      await scanWorkstreamSources(options);
+      const { registry, workstreams } = await listRegisteredWorkstreams(options);
+      res.json({
+        version: registry.version,
+        migratedFromRecentsAt: registry.migratedFromRecentsAt,
+        migrationWarnings: registry.migrationWarnings,
+        ...(await combineWorkstreamCandidates(workstreams, options)),
+      });
+    } catch (error: unknown) {
+      sendRegistryError(res, error);
+    }
+  });
+
+  router.delete("/workstream-sources/:sourceId", async (req, res) => {
+    try {
+      const deleted = await deleteWorkstreamSource(req.params.sourceId, options);
+      if (!deleted) {
+        res.status(404).json({ code: "source_not_found", error: "Workstream source is not registered." });
+        return;
+      }
+      res.status(204).end();
     } catch (error: unknown) {
       sendRegistryError(res, error);
     }
@@ -80,12 +164,25 @@ export function createWorkstreamsRouter(options: WorkstreamRegistryOptions = {})
     const { projectKey, workstreamId } = req.params;
     try {
       const ifModifiedSince = req.header("if-modified-since");
-      const graph = await readRegisteredGraph(
-        projectKey,
-        workstreamId,
-        options,
-        ifModifiedSince,
-      );
+      let graph: Awaited<ReturnType<typeof readRegisteredGraph>>;
+      try {
+        graph = await readRegisteredGraph(
+          projectKey,
+          workstreamId,
+          options,
+          ifModifiedSince,
+        );
+      } catch (error: unknown) {
+        if (errorCode(error) !== "ENOTREGISTERED") {
+          throw error;
+        }
+        graph = await readSourceWorkstreamGraph(
+          projectKey,
+          workstreamId,
+          options,
+          ifModifiedSince,
+        );
+      }
       if (graph.notModified) {
         res.status(304).end();
         return;
@@ -113,6 +210,40 @@ export function createWorkstreamsRouter(options: WorkstreamRegistryOptions = {})
         return;
       }
       res.status(500).json({ code: "workstream_file_unreadable", error: message });
+    }
+  });
+
+  router.post("/workstreams/:projectKey/:workstreamId/archive", async (req, res) => {
+    try {
+      await archiveWorkstreamIdentity(req.params.projectKey, req.params.workstreamId, options);
+      const { registry, workstreams } = await listRegisteredWorkstreams(options);
+      res.json({
+        version: registry.version,
+        migratedFromRecentsAt: registry.migratedFromRecentsAt,
+        migrationWarnings: registry.migrationWarnings,
+        ...(await combineWorkstreamCandidates(workstreams, options)),
+      });
+    } catch (error: unknown) {
+      sendRegistryError(res, error);
+    }
+  });
+
+  router.delete("/workstreams/:projectKey/:workstreamId/archive", async (req, res) => {
+    try {
+      const restored = await restoreWorkstreamIdentity(req.params.projectKey, req.params.workstreamId, options);
+      if (!restored) {
+        res.status(404).json({ code: "workstream_archive_not_found", error: "Workstream is not archived." });
+        return;
+      }
+      const { registry, workstreams } = await listRegisteredWorkstreams(options);
+      res.json({
+        version: registry.version,
+        migratedFromRecentsAt: registry.migratedFromRecentsAt,
+        migrationWarnings: registry.migrationWarnings,
+        ...(await combineWorkstreamCandidates(workstreams, options)),
+      });
+    } catch (error: unknown) {
+      sendRegistryError(res, error);
     }
   });
 
