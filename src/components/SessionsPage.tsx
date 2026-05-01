@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import type { SessionRegistryListItem, SessionRegistryPatch } from "../session-registry-contract";
 import type { SessionRegistryRecord } from "../session-registry-schema";
@@ -14,7 +22,6 @@ import {
 
 const SESSION_POLL_INTERVAL_MS = 15_000;
 const SESSION_EVENT_REFETCH_DEBOUNCE_MS = 150;
-const SESSION_AUTOSAVE_MS = 500;
 const DEFAULT_STALE_SESSION_DAYS = 7;
 const DEFAULT_RECENTLY_CLOSED_HOURS = 6;
 const SESSION_STALE_DAYS_STORAGE_KEY = "streamliner:sessionsStaleDays";
@@ -1039,6 +1046,16 @@ function useLatestValue<T>(value: T) {
   return ref;
 }
 
+function isPlainEnterKey(event: ReactKeyboardEvent<HTMLInputElement>): boolean {
+  return (
+    event.key === "Enter" &&
+    !event.shiftKey &&
+    !event.altKey &&
+    !event.ctrlKey &&
+    !event.metaKey
+  );
+}
+
 interface SessionSaveOptions {
   background?: boolean;
   keepalive?: boolean;
@@ -1074,7 +1091,6 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
   const [syncState, setSyncState] = useState<SyncState>("connecting");
   const [conflictPending, setConflictPending] = useState<SessionConflictState | null>(null);
   const [creatingState, setCreatingState] = useState<SaveState>("idle");
-  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const eventRefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipUnmountFlushRef = useRef(false);
   const saveRequestIdRef = useRef(0);
@@ -1337,19 +1353,8 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
     return applyFrozenOrder(computedGroups, frozen);
   }, [computedGroups, groupMode]);
 
-  const draftAutosaveKey = useMemo(() => draftKey(draft), [draft]);
-
-  const clearAutosaveTimer = useCallback(() => {
-    if (autosaveTimerRef.current) {
-      clearTimeout(autosaveTimerRef.current);
-      autosaveTimerRef.current = null;
-    }
-  }, []);
-
   const saveExistingSession = useCallback(
     async (options: SessionSaveOptions = {}): Promise<boolean> => {
-      clearAutosaveTimer();
-
       const currentSelectedSession =
         selectedSnapshotRef.current ?? selectedSessionRef.current;
       if (!currentSelectedSession || creatingRef.current) {
@@ -1492,7 +1497,6 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
       }
     },
     [
-      clearAutosaveTimer,
       conflictPendingRef,
       creatingRef,
       draftRef,
@@ -1545,14 +1549,13 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
     window.addEventListener("pagehide", handlePageHide);
     return () => {
       window.removeEventListener("pagehide", handlePageHide);
-      clearAutosaveTimer();
       if (skipUnmountFlushRef.current) {
         skipUnmountFlushRef.current = false;
         return;
       }
       flushDirtyDraftOnExit();
     };
-  }, [clearAutosaveTimer, flushDirtyDraftOnExit]);
+  }, [flushDirtyDraftOnExit]);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -1568,34 +1571,6 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
       window.localStorage.setItem(SESSION_GROUP_MODE_STORAGE_KEY, groupMode);
     }
   }, [groupMode]);
-
-  useEffect(() => {
-    if (
-      creating ||
-      !sheetOpen ||
-      !selectedSession ||
-      !getExistingDraftPatch() ||
-      conflictPending?.sessionId === selectedSession.id
-    ) {
-      return;
-    }
-
-    clearAutosaveTimer();
-    autosaveTimerRef.current = setTimeout(() => {
-      void saveExistingSession();
-    }, SESSION_AUTOSAVE_MS);
-
-    return clearAutosaveTimer;
-  }, [
-    clearAutosaveTimer,
-    conflictPending,
-    creating,
-    draftAutosaveKey,
-    getExistingDraftPatch,
-    saveExistingSession,
-    selectedSession,
-    sheetOpen,
-  ]);
 
   const openSessionSheet = useCallback(
     async (session: SessionRegistryListItem) => {
@@ -1802,6 +1777,17 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
     // transient no-op by re-setting sessions to a new array reference.
     setSessions((current) => current.slice());
   }, [groupMode]);
+
+  const commitSheetOnEnter = useCallback(
+    (event: ReactKeyboardEvent<HTMLInputElement>) => {
+      if (!isPlainEnterKey(event)) {
+        return;
+      }
+      event.preventDefault();
+      void closeSheet();
+    },
+    [closeSheet],
+  );
 
   const detailStatus = creating ? creatingState : saveState;
   const showDetailStatus = detailStatus !== "idle";
@@ -2190,6 +2176,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                       onChange={(event) =>
                         updateDraft((current) => ({ ...current, title: event.target.value }))
                       }
+                      onKeyDown={commitSheetOnEnter}
                     />
                   </div>
                 ) : (
@@ -2262,10 +2249,8 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                   creating={creating}
                   selectedSession={selectedSession}
                   onChange={updateDraft}
-                  onAutosave={() => {
-                    if (!creating) {
-                      void saveExistingSession();
-                    }
+                  onCommit={() => {
+                    void (creating ? handleCreate() : closeSheet());
                   }}
                 />
               )}
@@ -2881,7 +2866,7 @@ interface SessionSettingsFormProps {
   creating: boolean;
   selectedSession: SessionRegistryListItem | null;
   onChange: (updater: (current: SessionDraft) => SessionDraft) => void;
-  onAutosave: () => void;
+  onCommit: () => void;
 }
 
 function SessionSettingsForm({
@@ -2889,11 +2874,18 @@ function SessionSettingsForm({
   creating,
   selectedSession,
   onChange,
-  onAutosave,
+  onCommit,
 }: SessionSettingsFormProps) {
   const lifecycleLocked = selectedSession?.lifecycleStatus === "ended";
   const setColor = (color: string) => {
     onChange((current) => ({ ...current, color }));
+  };
+  const commitOnEnter = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (!isPlainEnterKey(event)) {
+      return;
+    }
+    event.preventDefault();
+    onCommit();
   };
   return (
     <div className="sl-session-editor">
@@ -2905,7 +2897,7 @@ function SessionSettingsForm({
           onChange={(event) =>
             onChange((current) => ({ ...current, title: event.target.value }))
           }
-          onBlur={onAutosave}
+          onKeyDown={commitOnEnter}
         />
       </label>
 
@@ -2917,7 +2909,6 @@ function SessionSettingsForm({
           onChange={(event) =>
             onChange((current) => ({ ...current, description: event.target.value }))
           }
-          onBlur={onAutosave}
         />
       </label>
 
@@ -2931,7 +2922,7 @@ function SessionSettingsForm({
               value={draft.color}
               onChange={(event) => setColor(event.target.value)}
               placeholder="#5b7fff"
-              onBlur={onAutosave}
+              onKeyDown={commitOnEnter}
             />
           </div>
         </label>
@@ -2947,7 +2938,6 @@ function SessionSettingsForm({
                 lifecycleStatus: event.target.value as SessionDraft["lifecycleStatus"],
               }))
             }
-            onBlur={onAutosave}
           >
             <option value="active">active</option>
             <option value="paused">paused</option>
@@ -3005,7 +2995,7 @@ function SessionSettingsForm({
           onChange={(event) =>
             onChange((current) => ({ ...current, tagsText: event.target.value }))
           }
-          onBlur={onAutosave}
+          onKeyDown={commitOnEnter}
           placeholder="paw-lite, ui, session-registry"
         />
       </label>

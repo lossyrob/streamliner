@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionRegistryListItem } from "./session-registry-contract";
 import App from "./App";
 
+const DEFAULT_TEST_SESSION_TIMESTAMP = new Date().toISOString();
+
 function buildSession(
   overrides: Partial<SessionRegistryListItem> = {},
 ): SessionRegistryListItem {
@@ -18,7 +20,7 @@ function buildSession(
     description: "Build the local-first sessions surface and persistence layer.",
     lifecycleStatus: "active",
     lastSeenAt: null,
-    updatedAt: "2026-04-23T12:00:00.000Z",
+    updatedAt: DEFAULT_TEST_SESSION_TIMESTAMP,
     color: "#5b7fff",
     cwd: "C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
     repo: "lossyrob/streamliner",
@@ -375,7 +377,7 @@ describe("App sessions route", () => {
       expect(sessionList.textContent).toContain("Follow Paw-Lite Process");
       expect(sessionList.textContent).toContain("richer conversation description");
       expect(sessionList.textContent).toContain("waiting for you");
-      expect(sessionList.textContent).toContain("worktree manual-session-registry");
+      expect(sessionList.textContent).toContain("folder manual-session-registry");
       expect(sessionList.textContent).toContain("PR #14");
       expect(sessionList.textContent).not.toContain("gpt-5.4-mini");
 
@@ -486,7 +488,7 @@ describe("App sessions route", () => {
         ...session,
         version: 4,
         title: "Edited elsewhere",
-        updatedAt: "2026-04-23T12:05:00.000Z",
+        updatedAt: DEFAULT_TEST_SESSION_TIMESTAMP,
       });
       const fetchMock = vi.fn(
         async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -543,6 +545,107 @@ describe("App sessions route", () => {
   );
 
   it(
+    "waits for explicit commit before saving session setting drafts",
+    async () => {
+      vi.useFakeTimers();
+      const session = buildSession({
+        id: "explicit-save-session",
+        version: 7,
+        title: "Explicit save session",
+      });
+      const fetchMock = vi.fn(
+        async (input: RequestInfo | URL, init?: RequestInit) => {
+          const path = requestPath(input);
+          if (path === "/api/sessions") {
+            return jsonResponse([session]);
+          }
+          if (path === "/api/sessions/explicit-save-session" && init?.method === "PATCH") {
+            const patch = JSON.parse(String(init.body)) as Partial<SessionRegistryListItem>;
+            return jsonResponse(
+              toRegistryRecord({
+                ...session,
+                ...patch,
+                version: session.version + 1,
+                updatedAt: "2026-04-23T12:05:00.000Z",
+              }),
+            );
+          }
+          throw new Error(`Unexpected fetch: ${path}`);
+        },
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      window.history.pushState({}, "", "/?view=sessions");
+
+      act(() => {
+        root.render(<App />);
+      });
+
+      await flushReact();
+      act(() => {
+        findSessionRow(container, "Explicit save session").click();
+      });
+      await flushReact();
+      const settingsTab = [...container.querySelectorAll<HTMLButtonElement>(".sl-sheet-tab")].find(
+        (btn) => btn.textContent?.trim() === "Settings",
+      );
+      if (!settingsTab) {
+        throw new Error("Could not find Settings tab.");
+      }
+      act(() => {
+        settingsTab.click();
+      });
+      await flushReact();
+
+      const [titleInput] = findSessionEditorInputs(container);
+      if (!titleInput) {
+        throw new Error("Could not find Settings title input.");
+      }
+      setInputValue(titleInput, "Explicit save draft");
+      act(() => {
+        titleInput.blur();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+      await flushReact();
+
+      const patchCallsBeforeCommit = fetchMock.mock.calls.filter(
+        ([input, init]) =>
+          requestPath(input as RequestInfo | URL) === "/api/sessions/explicit-save-session" &&
+          init?.method === "PATCH",
+      );
+      expect(patchCallsBeforeCommit).toHaveLength(0);
+
+      act(() => {
+        titleInput.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "Enter",
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      });
+      await flushReact();
+      await flushReact();
+
+      const patchCallsAfterCommit = fetchMock.mock.calls.filter(
+        ([input, init]) =>
+          requestPath(input as RequestInfo | URL) === "/api/sessions/explicit-save-session" &&
+          init?.method === "PATCH",
+      );
+      expect(patchCallsAfterCommit).toHaveLength(1);
+      expect(JSON.parse(String(patchCallsAfterCommit[0]?.[1]?.body))).toEqual(
+        expect.objectContaining({
+          expectedVersion: 7,
+          title: "Explicit save draft",
+        }),
+      );
+    },
+    15_000,
+  );
+
+  it(
     "does not treat observation-only refreshes as stale builder conflicts",
     async () => {
       vi.useFakeTimers();
@@ -553,12 +656,12 @@ describe("App sessions route", () => {
         id: "active-session",
         title: "Active session",
         version: 0,
-        lastSeenAt: "2026-04-23T12:00:00.000Z",
+        lastSeenAt: new Date(Date.now() - 60_000).toISOString(),
         activityStatus: "waiting_for_input",
       });
       const observedRefresh = buildSession({
         ...initial,
-        lastSeenAt: "2026-04-23T12:01:00.000Z",
+        lastSeenAt: new Date(Date.now()).toISOString(),
         activityStatus: "working",
       });
       const fetchMock = vi.fn(
