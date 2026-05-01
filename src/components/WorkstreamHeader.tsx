@@ -50,17 +50,11 @@ export function WorkstreamHeader({
   onUntrackWorkstream,
 }: WorkstreamHeaderProps) {
   const [showWorkstreams, setShowWorkstreams] = useState(false);
-  const [picking, setPicking] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  const handleAddWorkstream = async () => {
-    setPicking(true);
-    try {
-      await onAddWorkstream();
-      setShowWorkstreams(false);
-    } finally {
-      setPicking(false);
-    }
+  const handleAddWorkstream = () => {
+    void onAddWorkstream();
+    setShowWorkstreams(false);
   };
 
   useEffect(() => {
@@ -169,9 +163,8 @@ export function WorkstreamHeader({
         <button
           className="sl-action-btn"
           onClick={handleAddWorkstream}
-          disabled={picking}
         >
-          {picking ? "Opening…" : "Add workstream…"}
+          Add workstream…
         </button>
       </div>
     </header>

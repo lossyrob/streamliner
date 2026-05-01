@@ -6,7 +6,6 @@ import type { RelaunchDeps } from "../session-registry/relaunch";
 import type { SessionRegistryStore } from "../session-registry-contract";
 import { getApiLogger } from "./logger";
 import { createAccessLogMiddleware } from "./middleware/access-log";
-import { createFilePickerRouter } from "./routes/file-picker";
 import { createGraphRouter } from "./routes/graph";
 import {
   createLaunchContextsRouter,
@@ -84,7 +83,6 @@ export function createStreamlinerApiApp(
     }),
   );
   app.use("/api", createRecentsRouter({ recentsPath: options.recentsPath }));
-  app.use("/api", createFilePickerRouter());
   app.use(
     "/api",
     createGraphRouter({

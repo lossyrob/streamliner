@@ -417,7 +417,7 @@ describe("App sessions route", () => {
   );
 
   it(
-    "registers a picked graph and navigates to its workstream route",
+    "registers a graph path and navigates to its workstream route",
     async () => {
       const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = requestPath(input);
@@ -426,9 +426,6 @@ describe("App sessions route", () => {
         }
         if (path === "/api/workstreams") {
           return jsonResponse({ version: 1, migrationWarnings: [], workstreams: [] });
-        }
-        if (path === "/api/pick-file" && init?.method === "POST") {
-          return jsonResponse({ path: "C:\\graphs\\api-test\\graph.json" });
         }
         if (path === "/api/workstreams/streamliner/api-test/graph") {
           return jsonResponse(buildWorkstreamGraph());
@@ -446,10 +443,23 @@ describe("App sessions route", () => {
       act(() => {
         findButton(container, "Add workstream…").click();
       });
+      await settle();
+      setInputValue(
+        findInputByLabel(container, "Workstream graph path"),
+        "C:\\graphs\\api-test\\graph.json",
+      );
+      act(() => {
+        findButton(container, "Register workstream").click();
+      });
       await settle(100);
 
       expect(window.location.pathname).toBe("/workstreams/streamliner/api-test");
       expect(container.textContent).toContain("API Test");
+      expect(
+        fetchMock.mock.calls.some(([input]) =>
+          requestPath(input as RequestInfo | URL) === "/api/pick-file",
+        ),
+      ).toBe(false);
     },
     15_000,
   );
@@ -473,9 +483,6 @@ describe("App sessions route", () => {
           }
           return jsonResponse(buildWorkstreamGraph({ title: "API Test Relinked" }));
         }
-        if (path === "/api/pick-file" && init?.method === "POST") {
-          return jsonResponse({ path: "C:\\graphs\\api-test\\graph.json" });
-        }
         if (path === "/api/workstreams/streamliner/api-test" && init?.method === "PATCH") {
           graphAvailable = true;
           return jsonResponse({ workstream: buildTrackedWorkstream() });
@@ -493,8 +500,12 @@ describe("App sessions route", () => {
       expect(container.textContent).toContain("Workstream unavailable");
       expect(container.textContent).toContain("Graph file is missing.");
 
+      setInputValue(
+        findInputByLabel(container, "Workstream graph path"),
+        "C:\\graphs\\api-test\\graph.json",
+      );
       act(() => {
-        findButton(container, "Relink graph…").click();
+        findButton(container, "Relink workstream").click();
       });
       await settle(100);
 
