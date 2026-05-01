@@ -414,7 +414,11 @@ async function repairLegacyMigrationWarnings(
       keys.add(key);
       paths.add(absPath.toLowerCase());
       changed = true;
-    } catch {
+    } catch (error: unknown) {
+      if (isNotFound(error)) {
+        changed = true;
+        continue;
+      }
       migrationWarnings.push(warning);
     }
   }
