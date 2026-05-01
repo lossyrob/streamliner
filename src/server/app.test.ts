@@ -373,6 +373,81 @@ describe("createStreamlinerApiApp", () => {
     expect(secondList.body.migrationWarnings).toHaveLength(firstList.body.migrationWarnings.length);
   });
 
+  it("migrates legacy recent graphs that predate top-level summaries", async () => {
+    const rootDir = createRootDir();
+    const graphPath = join(rootDir, "graph.json");
+    const legacyGraph = buildGraph({ title: "Legacy Graph" });
+    delete legacyGraph.summary;
+    writeFileSync(graphPath, JSON.stringify(legacyGraph), "utf8");
+    const recentsPath = join(rootDir, "recent-graphs.json");
+    writeFileSync(
+      recentsPath,
+      JSON.stringify([
+        { path: graphPath, title: "Legacy Recent", id: "api-test", lastOpened: "2026-05-01T12:00:00.000Z" },
+      ]),
+      "utf8",
+    );
+    const api = createStreamlinerApiApp({
+      store: new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") }),
+      recentsPath,
+      workstreamRegistryPath: join(rootDir, "workstreams.json"),
+    });
+    activeApps.push(api);
+
+    const listResponse = await request(api.app).get("/api/workstreams").expect(200);
+    expect(listResponse.body.workstreams).toHaveLength(1);
+    expect(listResponse.body.workstreams[0]).toEqual(
+      expect.objectContaining({
+        projectKey: "streamliner",
+        workstreamId: "api-test",
+        title: "Legacy Graph",
+        summary: "Legacy Graph",
+      }),
+    );
+    expect(listResponse.body.migrationWarnings).toEqual([]);
+  });
+
+  it("repairs previously persisted unreadable warnings for legacy summary-less graphs", async () => {
+    const rootDir = createRootDir();
+    const graphPath = join(rootDir, "graph.json");
+    const registryPath = join(rootDir, "workstreams.json");
+    const legacyGraph = buildGraph({ title: "Legacy Graph" });
+    delete legacyGraph.summary;
+    writeFileSync(graphPath, JSON.stringify(legacyGraph), "utf8");
+    writeFileSync(
+      registryPath,
+      JSON.stringify({
+        version: 1,
+        migratedFromRecentsAt: "2026-05-01T12:00:00.000Z",
+        migrationWarnings: [
+          {
+            code: "legacy-recents-graph-unreadable",
+            message: "Expected workstream.summary to be a non-empty string.",
+            path: graphPath,
+          },
+        ],
+        workstreams: [],
+      }),
+      "utf8",
+    );
+    const api = createStreamlinerApiApp({
+      store: new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") }),
+      recentsPath: join(rootDir, "recent-graphs.json"),
+      workstreamRegistryPath: registryPath,
+    });
+    activeApps.push(api);
+
+    const listResponse = await request(api.app).get("/api/workstreams").expect(200);
+    expect(listResponse.body.workstreams).toHaveLength(1);
+    expect(listResponse.body.migrationWarnings).toEqual([]);
+    const persisted = JSON.parse(readFileSync(registryPath, "utf8")) as {
+      migrationWarnings: unknown[];
+      workstreams: unknown[];
+    };
+    expect(persisted.migrationWarnings).toEqual([]);
+    expect(persisted.workstreams).toHaveLength(1);
+  });
+
   it("keeps missing registered graph files addressable for relink or untrack", async () => {
     const rootDir = createRootDir();
     const graphPath = join(rootDir, "graph.json");

@@ -75,6 +75,21 @@ function isNotFound(error: unknown): boolean {
   return error instanceof Error && (error as NodeError).code === "ENOENT";
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function nonEmptyString(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`Expected ${label} to be a non-empty string.`);
+  }
+  return value;
+}
+
+function optionalNonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
 async function readRegistryFile(
   options: WorkstreamRegistryOptions,
 ): Promise<WorkstreamRegistryDocument | null> {
@@ -179,6 +194,69 @@ async function summarizeGraphFile(absPath: string): Promise<WorkstreamGraphSumma
   return summarizeWorkstream(parseWorkstreamDocument(graph.content));
 }
 
+function deriveLegacyProjectKey(record: Record<string, unknown>, workstreamId: string): string {
+  const projectKey = optionalNonEmptyString(record.projectKey);
+  if (projectKey) {
+    return projectKey;
+  }
+
+  const repos = Array.isArray(record.repos) ? record.repos.filter(isRecord) : [];
+  const repoIds = repos
+    .map((repo) => optionalNonEmptyString(repo.id))
+    .filter((id): id is string => Boolean(id));
+  if (repoIds.length === 1) {
+    return repoIds[0];
+  }
+
+  const primaryRepoIds = repos
+    .filter((repo) => repo.role === "primary")
+    .map((repo) => optionalNonEmptyString(repo.id))
+    .filter((id): id is string => Boolean(id));
+  if (primaryRepoIds.length === 1) {
+    return primaryRepoIds[0];
+  }
+
+  return workstreamId;
+}
+
+function summarizeLegacyGraphContent(
+  content: string,
+  legacyEntry?: LegacyRecentEntry,
+): WorkstreamGraphSummary {
+  const parsed = JSON.parse(content) as unknown;
+  if (!isRecord(parsed)) {
+    throw new Error("Expected legacy workstream graph JSON to be an object.");
+  }
+
+  const workstreamId = nonEmptyString(parsed.id, "workstream.id");
+  const projectKey = deriveLegacyProjectKey(parsed, workstreamId);
+  validateRouteSegment(projectKey, "workstream projectKey");
+  validateRouteSegment(workstreamId, "workstream id");
+
+  const title =
+    optionalNonEmptyString(parsed.title) ??
+    optionalNonEmptyString(legacyEntry?.title) ??
+    workstreamId;
+  return {
+    projectKey,
+    workstreamId,
+    title,
+    summary: optionalNonEmptyString(parsed.summary) ?? title,
+  };
+}
+
+async function summarizeLegacyGraphFile(
+  absPath: string,
+  legacyEntry?: LegacyRecentEntry,
+): Promise<WorkstreamGraphSummary> {
+  const graph = await readGraphFile(absPath);
+  try {
+    return summarizeWorkstream(parseWorkstreamDocument(graph.content));
+  } catch {
+    return summarizeLegacyGraphContent(graph.content, legacyEntry);
+  }
+}
+
 async function readLegacyRecents(
   options: WorkstreamRegistryOptions,
 ): Promise<{ entries: LegacyRecentEntry[]; warning?: WorkstreamRegistryWarning }> {
@@ -253,7 +331,7 @@ async function migrateLegacyRecents(
     }
 
     try {
-      const summary = await summarizeGraphFile(absPath);
+      const summary = await summarizeLegacyGraphFile(absPath, entry);
       const key = registryKey(summary.projectKey, summary.workstreamId);
       if (keys.has(key)) {
         migrationWarnings.push({
@@ -294,13 +372,67 @@ async function migrateLegacyRecents(
   };
 }
 
+async function repairLegacyMigrationWarnings(
+  registry: WorkstreamRegistryDocument,
+  options: WorkstreamRegistryOptions,
+): Promise<{
+  registry: WorkstreamRegistryDocument;
+  changed: boolean;
+}> {
+  const migrationWarnings: WorkstreamRegistryWarning[] = [];
+  const workstreams = [...registry.workstreams];
+  const keys = new Set(workstreams.map((entry) => registryKey(entry.projectKey, entry.workstreamId)));
+  const paths = new Set(workstreams.map((entry) => resolve(entry.path).toLowerCase()));
+  let changed = false;
+
+  for (const warning of registry.migrationWarnings) {
+    if (warning.code !== "legacy-recents-graph-unreadable" || !warning.path) {
+      migrationWarnings.push(warning);
+      continue;
+    }
+
+    const absPath = resolve(warning.path);
+    if (paths.has(absPath.toLowerCase())) {
+      changed = true;
+      continue;
+    }
+
+    try {
+      const summary = await summarizeLegacyGraphFile(absPath);
+      const key = registryKey(summary.projectKey, summary.workstreamId);
+      if (keys.has(key)) {
+        migrationWarnings.push(warning);
+        continue;
+      }
+      const timestamp = registry.migratedFromRecentsAt ?? nowIso(options);
+      workstreams.push({
+        ...summary,
+        path: absPath,
+        addedAt: timestamp,
+        lastOpenedAt: timestamp,
+      });
+      keys.add(key);
+      paths.add(absPath.toLowerCase());
+      changed = true;
+    } catch {
+      migrationWarnings.push(warning);
+    }
+  }
+
+  return {
+    registry: changed ? { ...registry, migrationWarnings, workstreams } : registry,
+    changed,
+  };
+}
+
 async function readMigratedRegistry(
   options: WorkstreamRegistryOptions,
 ): Promise<WorkstreamRegistryDocument> {
   return withRegistryMutation(async () => {
     const existing = await readRegistryFile(options);
-    const registry = await migrateLegacyRecents(existing ?? emptyRegistry(), options);
-    if (!existing || !existing.migratedFromRecentsAt) {
+    const migrated = await migrateLegacyRecents(existing ?? emptyRegistry(), options);
+    const { registry, changed } = await repairLegacyMigrationWarnings(migrated, options);
+    if (!existing || !existing.migratedFromRecentsAt || changed) {
       await writeRegistryFile(registry, options);
     }
     return registry;
