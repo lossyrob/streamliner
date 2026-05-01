@@ -94,16 +94,16 @@ as the registry synchronization hub. Issue #29 completed local session relaunch:
 restore a tracked session at its recorded `cwd` through the local API, with
 Copilot resume and Windows Terminal color treated as best-effort enhancements.
 Wave 3 is now framed around configurable launch from the graph rather than a
-mandatory PAW bootstrap path. The next ready work is backend context assembly,
-launch-claim binding, and launch prompt/profile definition: layered instruction
-text at Streamliner instance, project, workstream, and node-launch scopes; final
-editable prompt preview; context package references; and default Copilot CLI
-arguments such as `--yolo`. PAW remains an important preset/instruction style,
-but PAW workflow status is not a completion blocker for this workstream. The
-remaining observation work should consume what PR #14 landed instead of
-duplicating it. The ready Wave 3 nodes are now tracked by GitHub issues:
-`backend-context-assembly` is #31, `launch-claim-binding` is #32, and
-`launch-prompt-profiles` is #33.
+mandatory PAW bootstrap path. Issue #31 completed backend context assembly: a
+selected ready graph node can produce a launch context package reference for
+downstream launch code without requiring a PAW work directory or PAW workflow
+status. The remaining ready Wave 3 work is launch-claim binding (#32) and launch
+prompt/profile definition (#33): layered instruction text at Streamliner
+instance, project, workstream, and node-launch scopes; final editable prompt
+preview; context package references; and default Copilot CLI arguments such as
+`--yolo`. PAW remains an important preset/instruction style, but PAW workflow
+status is not a completion blocker for this workstream. The remaining observation
+work should consume what PR #14 landed instead of duplicating it.
 
 ## Decisions
 - Use repo-local `.streamliner/workstreams/` for Streamliner's committed

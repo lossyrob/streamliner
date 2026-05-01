@@ -7,7 +7,7 @@
   "status": "active",
   "attention": "focus",
   "createdAt": "2026-04-10T15:37:14.125Z",
-  "updatedAt": "2026-04-30T02:46:00.000Z",
+  "updatedAt": "2026-04-30T21:56:07.000Z",
   "trackingIssue": {
     "owner": "lossyrob",
     "repo": "streamliner",
@@ -200,8 +200,8 @@
       "id": "backend-context-assembly",
       "type": "task",
       "title": "Backend context assembly",
-      "summary": "Assemble the Layer 0-3 launch context package and source references for a graph node: read design docs, extract brief sections, resolve node specs, and produce the context bundle that launch profiles and prompt preview can point at. This is no longer coupled to a mandatory PAW work directory.",
-      "status": "ready",
+      "summary": "Completed: a selected ready graph node can produce a launch context package reference for downstream launch code, covering project design context, workstream intent/state, node/tracker context, source references, freshness, and unavailable inputs without requiring a PAW work directory or PAW workflow status.",
+      "status": "completed",
       "attention": "watch",
       "repoIds": ["streamliner"],
       "tracker": {
