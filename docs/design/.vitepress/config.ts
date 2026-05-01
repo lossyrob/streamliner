@@ -47,6 +47,7 @@ export default defineConfig({
           { text: '004 — Session Registry as the Primary Session Surface', link: '/decisions/004-session-registry-primary-surface' },
           { text: '005 — Session Registry Storage and Identity Model', link: '/decisions/005-session-registry-storage-and-identity' },
           { text: '006 — Local Streamliner API Service', link: '/decisions/006-local-streamliner-api-service' },
+          { text: '007 — Tracked Workstream Registry', link: '/decisions/007-tracked-workstream-registry' },
         ]
       }
     ],

@@ -43,6 +43,7 @@ function parseArgs(argv) {
   const args = {
     viewport: { width: 1600, height: 1000 },
     path: "/",
+    pathProvided: false,
     selector: ".react-flow__node",
     fullPage: false,
     delayMs: 600,
@@ -53,7 +54,7 @@ function parseArgs(argv) {
     switch (a) {
       case "--graph":      args.graph = next(); break;
       case "--out":        args.out = next(); break;
-      case "--path":       args.path = next(); break;
+      case "--path":       args.path = next(); args.pathProvided = true; break;
       case "--selector":   args.selector = next(); break;
       case "--select-node":args.selectNode = next(); break;
       case "--viewport": {
@@ -149,12 +150,16 @@ async function main() {
   const npxBin = process.platform === "win32" ? "npx.cmd" : "npx";
   const apiPort = String(await getFreePort());
   const apiRuntimeRoot = await mkdtemp(resolve(tmpdir(), "streamliner-screenshot-registry-"));
+  const workstreamRegistryPath = resolve(apiRuntimeRoot, "workstream-registry", "workstreams.json");
+  const recentsPath = resolve(apiRuntimeRoot, "recent-graphs.json");
   const childEnv = {
     ...process.env,
     STREAMLINER_GRAPH: args.graph,
     STREAMLINER_API_PORT: apiPort,
     STREAMLINER_API_HOST: "127.0.0.1",
     STREAMLINER_SESSION_REGISTRY_ROOT: apiRuntimeRoot,
+    STREAMLINER_WORKSTREAM_REGISTRY: workstreamRegistryPath,
+    STREAMLINER_RECENTS_PATH: recentsPath,
     STREAMLINER_INTERNAL_DISABLE_SESSION_WORKER: "1",
     BROWSER: "none",
   };
@@ -173,6 +178,15 @@ async function main() {
   let baseUrl;
   try {
     await waitForApiReady(`http://127.0.0.1:${apiPort}`);
+    const registerResponse = await fetch(`http://127.0.0.1:${apiPort}/api/workstreams`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: args.graph }),
+    });
+    if (registerResponse.ok && !args.pathProvided) {
+      const { workstream } = await registerResponse.json();
+      args.path = `/workstreams/${encodeURIComponent(workstream.projectKey)}/${encodeURIComponent(workstream.workstreamId)}`;
+    }
     baseUrl = await waitForViteReady(vite);
   } catch (e) {
     console.error(e.message);

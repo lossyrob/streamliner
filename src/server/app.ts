@@ -14,6 +14,7 @@ import {
 } from "./routes/launch-contexts";
 import { createRecentsRouter } from "./routes/recents";
 import { createSessionsRouter } from "./routes/sessions";
+import { createWorkstreamsRouter } from "./routes/workstreams";
 import { SessionRegistryEventStream } from "./session-events";
 
 export interface StreamlinerApiApp {
@@ -26,6 +27,7 @@ export interface StreamlinerApiAppOptions {
   store?: SessionRegistryStore;
   graphPath?: string;
   recentsPath?: string;
+  workstreamRegistryPath?: string;
   relaunchDeps?: Partial<RelaunchDeps>;
   launchContextDeps?: LaunchContextRouteDeps;
 }
@@ -74,6 +76,13 @@ export function createStreamlinerApiApp(
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true });
   });
+  app.use(
+    "/api",
+    createWorkstreamsRouter({
+      registryPath: options.workstreamRegistryPath,
+      recentsPath: options.recentsPath,
+    }),
+  );
   app.use("/api", createRecentsRouter({ recentsPath: options.recentsPath }));
   app.use("/api", createFilePickerRouter());
   app.use(

@@ -15,6 +15,7 @@ references_decisions:
   - 4
   - 5
   - 6
+  - 7
 ---
 
 # Streamliner — Design
@@ -58,6 +59,7 @@ Streamliner helps a single builder direct many concurrent AI coding agent workst
 | 004 | [Session registry as the primary session surface](decisions/004-session-registry-primary-surface.md) | accepted | 2026-04-21 |
 | 005 | [Session registry storage and identity model](decisions/005-session-registry-storage-and-identity.md) | accepted | 2026-04-21 |
 | 006 | [Local Streamliner API service](decisions/006-local-streamliner-api-service.md) | accepted | 2026-04-28 |
+| 007 | [Tracked workstream registry](decisions/007-tracked-workstream-registry.md) | accepted | 2026-05-01 |
 
 ## Open questions
 
