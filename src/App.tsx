@@ -4,7 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
-  type FormEvent,
+  type ChangeEvent,
   type MouseEvent,
 } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
@@ -27,6 +27,15 @@ import { OperationalStatusStrip } from "./components/OperationalStatusStrip";
 import { CheckpointStepper } from "./components/CheckpointStepper";
 import { WorkstreamHeader } from "./components/WorkstreamHeader";
 import { SessionsPage } from "./components/SessionsPage";
+import {
+  browserWorkstreamSelectionFromFile,
+  deleteBrowserWorkstreamEntry,
+  listBrowserWorkstreamEntries,
+  pickBrowserWorkstreamFile,
+  readBrowserWorkstreamGraph,
+  storeBrowserWorkstreamSelection,
+  type BrowserWorkstreamSelection,
+} from "./browser-workstream-files";
 
 const POLL_INTERVAL_MS = 2000;
 const LAST_GRAPH_KEY = "streamliner:lastGraphPath";
@@ -34,7 +43,7 @@ const STREAMLINER_LOGO_URL = "/streamliner-logo.png";
 
 type DashboardRoute =
   | { view: "landing"; message?: string }
-  | { view: "workstreams"; message?: string; startAddOpen?: boolean }
+  | { view: "workstreams"; message?: string }
   | { view: "sessions" }
   | { view: "workstream"; projectKey: string; workstreamId: string };
 
@@ -158,6 +167,26 @@ function registryEntryUrl(entry: { projectKey: string; workstreamId: string }): 
   return `/api/workstreams/${encodeSegment(entry.projectKey)}/${encodeSegment(entry.workstreamId)}`;
 }
 
+function isBrowserWorkstreamEntry(entry: WorkstreamRegistryListEntry): boolean {
+  return entry.source === "browser-file";
+}
+
+function mergeWorkstreamEntries(
+  serverEntries: WorkstreamRegistryListEntry[],
+  browserEntries: WorkstreamRegistryListEntry[],
+): WorkstreamRegistryListEntry[] {
+  const merged = new Map<string, WorkstreamRegistryListEntry>();
+  for (const entry of serverEntries) {
+    merged.set(registryKey(entry), entry);
+  }
+  for (const entry of browserEntries) {
+    merged.set(registryKey(entry), entry);
+  }
+  return [...merged.values()].sort(
+    (left, right) => Date.parse(right.lastOpenedAt) - Date.parse(left.lastOpenedAt),
+  );
+}
+
 async function parseErrorResponse(res: Response): Promise<GraphLoadError> {
   try {
     const body = await res.json() as { code?: unknown; error?: unknown };
@@ -185,6 +214,7 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
   const [registryError, setRegistryError] = useState<string | null>(null);
   const [workstreams, setWorkstreams] = useState<WorkstreamRegistryListEntry[]>([]);
   const [migrationWarnings, setMigrationWarnings] = useState<WorkstreamRegistryWarning[]>([]);
+  const workstreamsRef = useRef<WorkstreamRegistryListEntry[]>([]);
   const lastModifiedRef = useRef<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -195,14 +225,51 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
       throw new Error(parsed.message);
     }
     const body = await res.json() as WorkstreamRegistryListResponse;
-    setWorkstreams(body.workstreams);
+    const mergedWorkstreams = mergeWorkstreamEntries(body.workstreams, listBrowserWorkstreamEntries());
+    workstreamsRef.current = mergedWorkstreams;
+    setWorkstreams(mergedWorkstreams);
     setMigrationWarnings(body.migrationWarnings);
     setRegistryError(null);
-    return body.workstreams;
+    return mergedWorkstreams;
   }, []);
 
   const loadRegistered = useCallback(
-    async (entry: { projectKey: string; workstreamId: string }, options: { quiet?: boolean } = {}) => {
+    async (
+      entry: { projectKey: string; workstreamId: string },
+      options: { quiet?: boolean; entries?: WorkstreamRegistryListEntry[] } = {},
+    ) => {
+      const registryEntry = (options.entries ?? workstreamsRef.current).find(
+        (candidate) => registryKey(candidate) === registryKey(entry),
+      );
+      if (registryEntry && isBrowserWorkstreamEntry(registryEntry)) {
+        try {
+          const graph = await readBrowserWorkstreamGraph(
+            registryEntry,
+            options.quiet ? lastModifiedRef.current : null,
+          );
+          if (graph.notModified) {
+            return;
+          }
+          const doc = parseWorkstreamDocument(graph.content ?? "");
+          lastModifiedRef.current = graph.lastModified;
+          setWorkstream(doc);
+          setError(null);
+          const nextEntries = mergeWorkstreamEntries(
+            workstreamsRef.current.filter((candidate) => !isBrowserWorkstreamEntry(candidate)),
+            listBrowserWorkstreamEntries(),
+          );
+          workstreamsRef.current = nextEntries;
+          setWorkstreams(nextEntries);
+        } catch (nextError) {
+          setWorkstream(null);
+          setError({
+            code: "browser_file_unavailable",
+            message: nextError instanceof Error ? nextError.message : String(nextError),
+          });
+        }
+        return;
+      }
+
       const res = await fetch(registryGraphUrl(entry), {
         headers:
           lastModifiedRef.current && options.quiet
@@ -229,15 +296,19 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
   );
 
   useEffect(() => {
+    lastModifiedRef.current = null;
+  }, [activeProjectKey, activeWorkstreamId]);
+
+  useEffect(() => {
     if (!enabled) {
       return;
     }
 
     void (async () => {
       try {
-        await fetchRegistry();
+        const entries = await fetchRegistry();
         if (activeWorkstream) {
-          await loadRegistered(activeWorkstream);
+          await loadRegistered(activeWorkstream, { entries });
         } else {
           setWorkstream(null);
           setError(null);
@@ -264,46 +335,38 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
     };
   }, [activeWorkstream, enabled, error, loadRegistered]);
 
-  const registerPath = useCallback(
-    async (path: string) => {
-      const res = await fetch("/api/workstreams", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path }),
-      });
-      if (!res.ok) {
-        throw new Error((await parseErrorResponse(res)).message);
-      }
-      const body = await res.json() as { workstream: WorkstreamRegistryListEntry };
+  const registerBrowserFile = useCallback(
+    async (selection: BrowserWorkstreamSelection) => {
+      const entry = await storeBrowserWorkstreamSelection(selection);
       await fetchRegistry();
-      return body.workstream;
+      return entry;
     },
     [fetchRegistry],
   );
 
-  const relinkPath = useCallback(
-    async (path: string) => {
+  const relinkBrowserFile = useCallback(
+    async (selection: BrowserWorkstreamSelection) => {
       if (!activeWorkstream) {
         throw new Error("No active workstream to relink.");
       }
-      const res = await fetch(registryEntryUrl(activeWorkstream), {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path }),
-      });
-      if (!res.ok) {
-        throw new Error((await parseErrorResponse(res)).message);
-      }
-      const body = await res.json() as { workstream: WorkstreamRegistryListEntry };
-      await fetchRegistry();
-      await loadRegistered(activeWorkstream);
-      return body.workstream;
+      const entry = await storeBrowserWorkstreamSelection(selection, activeWorkstream);
+      const entries = await fetchRegistry();
+      await loadRegistered(activeWorkstream, { entries });
+      return entry;
     },
     [activeWorkstream, fetchRegistry, loadRegistered],
   );
 
   const untrack = useCallback(
     async (entry: { projectKey: string; workstreamId: string }) => {
+      const current = workstreamsRef.current.find(
+        (candidate) => registryKey(candidate) === registryKey(entry),
+      );
+      if (current && isBrowserWorkstreamEntry(current)) {
+        await deleteBrowserWorkstreamEntry(entry);
+        await fetchRegistry();
+        return;
+      }
       const res = await fetch(registryEntryUrl(entry), { method: "DELETE" });
       if (!res.ok && res.status !== 404) {
         throw new Error((await parseErrorResponse(res)).message);
@@ -320,76 +383,10 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
     workstreams,
     migrationWarnings,
     activeWorkstream,
-    registerPath,
-    relinkPath,
+    registerBrowserFile,
+    relinkBrowserFile,
     untrack,
   };
-}
-
-function WorkstreamPathForm({
-  title,
-  helpText,
-  submitLabel,
-  onSubmit,
-  onCancel,
-}: {
-  title: string;
-  helpText: string;
-  submitLabel: string;
-  onSubmit: (path: string) => void | Promise<void>;
-  onCancel?: () => void;
-}) {
-  const [path, setPath] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const nextPath = path.trim();
-    if (!nextPath) {
-      setError("Enter the absolute path to a graph.json file.");
-      return;
-    }
-    setSubmitting(true);
-    setError(null);
-    try {
-      await onSubmit(nextPath);
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : String(nextError));
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <form className="sl-path-card" onSubmit={(event) => void handleSubmit(event)}>
-      <div>
-        <h2>{title}</h2>
-        <p>{helpText}</p>
-      </div>
-      <label className="sl-field">
-        <span className="sl-field-label">Graph path</span>
-        <input
-          className="sl-path-field"
-          aria-label="Workstream graph path"
-          value={path}
-          onChange={(event) => setPath(event.target.value)}
-          placeholder="C:\Users\you\project\.streamliner\workstreams\example\graph.json"
-        />
-      </label>
-      {error && <div className="sl-action-error">{error}</div>}
-      <div className="sl-header-actions" style={{ justifyContent: "flex-start" }}>
-        <button className="sl-action-btn primary" type="submit" disabled={submitting}>
-          {submitting ? "Saving…" : submitLabel}
-        </button>
-        {onCancel && (
-          <button className="sl-action-btn" type="button" onClick={onCancel} disabled={submitting}>
-            Cancel
-          </button>
-        )}
-      </div>
-    </form>
-  );
 }
 
 function LandingPage({
@@ -446,21 +443,17 @@ function WorkstreamHome({
   message,
   registryError,
   workstreams,
-  startAddOpen,
   onOpenWorkstream,
-  onRegisterWorkstream,
+  onAddWorkstream,
   onUntrackWorkstream,
 }: {
   message?: string;
   registryError: string | null;
   workstreams: WorkstreamRegistryListEntry[];
-  startAddOpen?: boolean;
   onOpenWorkstream: (entry: WorkstreamRegistryListEntry) => void;
-  onRegisterWorkstream: (path: string) => void | Promise<void>;
+  onAddWorkstream: () => void | Promise<void>;
   onUntrackWorkstream: (entry: WorkstreamRegistryListEntry) => void | Promise<void>;
 }) {
-  const [showAddForm, setShowAddForm] = useState(Boolean(startAddOpen));
-
   return (
     <div className="sl-shell-panel">
       <div className="sl-workstreams-home">
@@ -472,25 +465,16 @@ function WorkstreamHome({
               Open a registered graph, or add a graph file to keep it addressable by URL.
             </p>
           </div>
-          <button className="sl-action-btn primary" onClick={() => setShowAddForm(true)}>
+          <button className="sl-action-btn primary" onClick={() => void onAddWorkstream()}>
             Add workstream…
           </button>
         </div>
         {message && <div className="sl-action-error">{message}</div>}
         {registryError && <div className="sl-action-error">{registryError}</div>}
-        {showAddForm && (
-          <WorkstreamPathForm
-            title="Register a graph file"
-            helpText="Paste the absolute path to a graph.json file on this machine or devbox. Streamliner keeps the path so this workstream gets a sticky URL."
-            submitLabel="Register workstream"
-            onSubmit={onRegisterWorkstream}
-            onCancel={() => setShowAddForm(false)}
-          />
-        )}
         {workstreams.length === 0 ? (
           <div className="sl-empty-state">
             <h2>No tracked workstreams yet</h2>
-            <p>Add a `graph.json` file to register it with Streamliner.</p>
+            <p>Add a graph.json file to register it with Streamliner.</p>
           </div>
         ) : (
           <div className="sl-workstreams-list">
@@ -524,14 +508,15 @@ function GraphDashboard({
   error,
   workstreams,
   activeWorkstream,
-  relinkPath,
   untrack,
   onOpenWorkstream,
   onAddWorkstream,
+  onRelinkWorkstream,
   onRouteHome,
 }: ReturnType<typeof useGraphLoader> & {
   onOpenWorkstream: (entry: WorkstreamRegistryListEntry) => void;
   onAddWorkstream: () => void | Promise<void>;
+  onRelinkWorkstream: () => void | Promise<void>;
   onRouteHome: () => void;
 }) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -573,16 +558,10 @@ function GraphDashboard({
             <h2 className="sl-status-title">Workstream unavailable</h2>
             <div className="sl-action-error">{error.message}</div>
             {actionError && <div className="sl-action-error">{actionError}</div>}
-            <WorkstreamPathForm
-              title="Relink graph file"
-              helpText="Paste the new absolute path to this workstream's graph.json file."
-              submitLabel="Relink workstream"
-              onSubmit={async (path) => {
-                const entry = await relinkPath(path);
-                onOpenWorkstream(entry);
-              }}
-            />
             <div className="sl-header-actions" style={{ justifyContent: "flex-start" }}>
+              <button className="sl-action-btn primary" onClick={() => void onRelinkWorkstream()}>
+                Relink graph…
+              </button>
               <button className="sl-action-btn danger" onClick={handleUntrackCurrent}>
                 Untrack workstream
               </button>
@@ -730,6 +709,9 @@ export default function App() {
   const { route, setRoute } = useDashboardRoute();
   const graphLoader = useGraphLoader(route, route.view !== "sessions");
   const beforeLeaveRef = useRef<(() => Promise<boolean>) | null>(null);
+  const fallbackFileInputRef = useRef<HTMLInputElement>(null);
+  const pendingFileActionRef = useRef<"register" | "relink" | null>(null);
+  const [filePickerError, setFilePickerError] = useState<string | null>(null);
 
   const handleRouteChange = useCallback(
     async (nextRoute: DashboardRoute) => {
@@ -758,16 +740,74 @@ export default function App() {
     [setRoute],
   );
 
-  const addWorkstream = useCallback(async () => {
-    setRoute({ view: "workstreams", startAddOpen: true });
-  }, [setRoute]);
-
-  const registerWorkstreamPath = useCallback(
-    async (path: string) => {
-      const entry = await graphLoader.registerPath(path);
-      openWorkstream(entry);
+  const handleBrowserFileSelection = useCallback(
+    async (action: "register" | "relink", selection: BrowserWorkstreamSelection) => {
+      setFilePickerError(null);
+      try {
+        const entry = action === "register"
+          ? await graphLoader.registerBrowserFile(selection)
+          : await graphLoader.relinkBrowserFile(selection);
+        openWorkstream(entry);
+      } catch (nextError) {
+        setFilePickerError(nextError instanceof Error ? nextError.message : String(nextError));
+      }
     },
     [graphLoader, openWorkstream],
+  );
+
+  const openNativeFilePicker = useCallback(
+    async (action: "register" | "relink") => {
+      setFilePickerError(null);
+      try {
+        const picked = await pickBrowserWorkstreamFile();
+        if (picked === "unsupported") {
+          pendingFileActionRef.current = action;
+          fallbackFileInputRef.current?.click();
+          return;
+        }
+        if (picked) {
+          await handleBrowserFileSelection(action, picked);
+        }
+      } catch (nextError) {
+        setFilePickerError(nextError instanceof Error ? nextError.message : String(nextError));
+      }
+    },
+    [handleBrowserFileSelection],
+  );
+
+  const handleFallbackFileChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const action = pendingFileActionRef.current;
+      pendingFileActionRef.current = null;
+      const file = event.currentTarget.files?.[0] ?? null;
+      event.currentTarget.value = "";
+      if (!action || !file) {
+        return;
+      }
+      void (async () => {
+        try {
+          const selection = await browserWorkstreamSelectionFromFile(file);
+          await handleBrowserFileSelection(action, selection);
+        } catch (nextError) {
+          setFilePickerError(nextError instanceof Error ? nextError.message : String(nextError));
+        }
+      })();
+    },
+    [handleBrowserFileSelection],
+  );
+
+  const addWorkstream = useCallback(
+    async () => {
+      await openNativeFilePicker("register");
+    },
+    [openNativeFilePicker],
+  );
+
+  const relinkWorkstream = useCallback(
+    async () => {
+      await openNativeFilePicker("relink");
+    },
+    [openNativeFilePicker],
   );
 
   const untrackFromHome = useCallback(
@@ -781,6 +821,19 @@ export default function App() {
     <div className="sl-root">
       <DashboardNav route={route} onRouteChange={handleRouteChange} />
       <MigrationWarningsBanner warnings={graphLoader.migrationWarnings} />
+      {filePickerError && (
+        <div className="sl-global-warning-list">
+          <div className="sl-warning-item">{filePickerError}</div>
+        </div>
+      )}
+      <input
+        ref={fallbackFileInputRef}
+        className="sl-hidden-file-input"
+        type="file"
+        accept=".json,application/json"
+        aria-label="Choose workstream graph file"
+        onChange={handleFallbackFileChange}
+      />
       {route.view === "sessions" ? (
         <SessionsPage registerBeforeLeave={registerBeforeLeave} />
       ) : route.view === "workstream" ? (
@@ -788,6 +841,7 @@ export default function App() {
           {...graphLoader}
           onOpenWorkstream={openWorkstream}
           onAddWorkstream={addWorkstream}
+          onRelinkWorkstream={relinkWorkstream}
           onRouteHome={() => setRoute({ view: "workstreams" }, "replace")}
         />
       ) : route.view === "workstreams" ? (
@@ -795,9 +849,8 @@ export default function App() {
           message={route.message}
           registryError={graphLoader.registryError}
           workstreams={graphLoader.workstreams}
-          startAddOpen={route.startAddOpen}
           onOpenWorkstream={openWorkstream}
-          onRegisterWorkstream={registerWorkstreamPath}
+          onAddWorkstream={addWorkstream}
           onUntrackWorkstream={untrackFromHome}
         />
       ) : (

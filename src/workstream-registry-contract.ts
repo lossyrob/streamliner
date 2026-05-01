@@ -1,13 +1,17 @@
 export const WORKSTREAM_REGISTRY_SCHEMA_VERSION = 1 as const;
 
 export type WorkstreamFileStatus = "available" | "missing" | "unreadable";
+export type WorkstreamRegistrySource = "path" | "browser-file";
 
 export interface WorkstreamRegistryEntry {
+  source?: WorkstreamRegistrySource;
   projectKey: string;
   workstreamId: string;
   title: string;
   summary: string;
   path: string;
+  browserFileKey?: string;
+  browserFileName?: string;
   addedAt: string;
   lastOpenedAt: string;
 }

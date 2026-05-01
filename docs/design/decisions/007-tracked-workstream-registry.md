@@ -16,4 +16,6 @@ Each registered workstream is addressed by `/workstreams/{projectKey}/{workstrea
 
 Opening a graph registers it. Existing `~/.streamliner/recent-graphs.json` data is migrated into the registry without deleting the legacy file. Missing, moved, or unreadable graph files soft-fail in the UI with relink and untrack actions; neither action mutates graph files or session attachments.
 
+The primary open/relink affordance is the browser's native file picker. For picker-selected files, the browser owns access to the file and Streamliner stores browser-local metadata plus the latest readable graph snapshot; path-based entries remain supported for legacy recents and server-side graph sources. A browser-selected workstream can reload by URL in the same browser, but another browser profile or machine must relink the graph file.
+
 This decision is a scoped portfolio-shell step. It makes workstream navigation durable across browser tabs and reloads without introducing project grouping, cross-workstream coordination, or new session attachment semantics.

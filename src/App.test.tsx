@@ -228,6 +228,25 @@ function setInputValue(
   });
 }
 
+async function chooseWorkstreamGraphFile(
+  container: HTMLElement,
+  graph: Record<string, unknown> = buildWorkstreamGraph(),
+): Promise<void> {
+  const input = findInputByLabel(container, "Choose workstream graph file");
+  const file = new File([JSON.stringify(graph)], "graph.json", {
+    type: "application/json",
+    lastModified: Date.parse("2026-05-01T12:00:00.000Z"),
+  });
+  Object.defineProperty(input, "files", {
+    configurable: true,
+    value: [file],
+  });
+  act(() => {
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await settle(100);
+}
+
 async function settle(delayMs = 25): Promise<void> {
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, delayMs));
@@ -417,18 +436,12 @@ describe("App sessions route", () => {
   );
 
   it(
-    "registers a graph path and navigates to its workstream route",
+    "registers a browser-picked graph and navigates to its workstream route",
     async () => {
-      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
         const path = requestPath(input);
-        if (path === "/api/workstreams" && init?.method === "POST") {
-          return jsonResponse({ workstream: buildTrackedWorkstream() }, 201);
-        }
         if (path === "/api/workstreams") {
           return jsonResponse({ version: 1, migrationWarnings: [], workstreams: [] });
-        }
-        if (path === "/api/workstreams/streamliner/api-test/graph") {
-          return jsonResponse(buildWorkstreamGraph());
         }
         throw new Error(`Unexpected fetch: ${path}`);
       });
@@ -444,14 +457,7 @@ describe("App sessions route", () => {
         findButton(container, "Add workstream…").click();
       });
       await settle();
-      setInputValue(
-        findInputByLabel(container, "Workstream graph path"),
-        "C:\\graphs\\api-test\\graph.json",
-      );
-      act(() => {
-        findButton(container, "Register workstream").click();
-      });
-      await settle(100);
+      await chooseWorkstreamGraphFile(container);
 
       expect(window.location.pathname).toBe("/workstreams/streamliner/api-test");
       expect(container.textContent).toContain("API Test");
@@ -483,10 +489,7 @@ describe("App sessions route", () => {
           }
           return jsonResponse(buildWorkstreamGraph({ title: "API Test Relinked" }));
         }
-        if (path === "/api/workstreams/streamliner/api-test" && init?.method === "PATCH") {
-          graphAvailable = true;
-          return jsonResponse({ workstream: buildTrackedWorkstream() });
-        }
+        void init;
         throw new Error(`Unexpected fetch: ${path}`);
       });
       vi.stubGlobal("fetch", fetchMock);
@@ -500,14 +503,15 @@ describe("App sessions route", () => {
       expect(container.textContent).toContain("Workstream unavailable");
       expect(container.textContent).toContain("Graph file is missing.");
 
-      setInputValue(
-        findInputByLabel(container, "Workstream graph path"),
-        "C:\\graphs\\api-test\\graph.json",
-      );
       act(() => {
-        findButton(container, "Relink workstream").click();
+        findButton(container, "Relink graph…").click();
       });
-      await settle(100);
+      await settle();
+      graphAvailable = true;
+      await chooseWorkstreamGraphFile(
+        container,
+        buildWorkstreamGraph({ title: "API Test Relinked" }),
+      );
 
       expect(container.textContent).toContain("API Test Relinked");
       expect(window.location.pathname).toBe("/workstreams/streamliner/api-test");
