@@ -3,6 +3,8 @@ import { join } from "node:path";
 
 import type { SessionRegistryListItem } from "../session-registry-contract";
 import {
+  type DiscoveredCopilotSession,
+  discoverCopilotSessions,
   getDefaultCopilotSessionStateRoot,
   syncDiscoveredCopilotSessions,
 } from "./copilot-session-discovery";
@@ -22,6 +24,16 @@ import {
   type SessionRegistryDerivedStatePatch,
 } from "./file-store";
 import { drainTrustedSessionSignalSpool } from "./trusted-session-signals";
+import { runLaunchClaimBindingPass } from "./launch-claim-binding";
+import {
+  reconcileOrphanReservedRows,
+  isClaimWindowOpen,
+  isClaimPastRetention,
+  isClaimTerminal,
+  applyReservedRowCleanup,
+} from "./launch-claims";
+import type { LaunchClaimStore } from "../launch-claim-contract";
+import type { ApiLogger } from "../server/logger";
 
 export const SESSION_REGISTRY_WORKER_POLL_INTERVAL_MS = 15_000;
 export const SESSION_REGISTRY_WORKER_MAX_CONCURRENCY = 2;
@@ -65,6 +77,16 @@ export interface SessionRegistryBackgroundWorkerOptions {
   now?: () => Date;
   logger?: Pick<Console, "info" | "warn" | "error">;
   summarizer?: Partial<SummarizerDependencies>;
+  /** Optional launch-claim store. When provided, the worker runs the
+   * launch-claim binding pass + sweep each cycle and runs
+   * reconcileOrphanReservedRows once on startup before the first poll
+   * cycle. When omitted, all launch-claim behavior is skipped (NFR-5
+   * backward compatibility). */
+  claimStore?: LaunchClaimStore;
+  /** Optional structured logger for launch-claim diagnostics. Required
+   * when `claimStore` is provided so binding-pass and sweep events can
+   * be emitted under `withScope("launch-claim")`. */
+  claimLogger?: ApiLogger;
 }
 
 function isLockedError(error: unknown): boolean {
@@ -126,10 +148,13 @@ export class SessionRegistryBackgroundWorker {
   private readonly now: () => Date;
   private readonly logger: Pick<Console, "info" | "warn" | "error">;
   private readonly summarizer: SummarizerDependencies;
+  private readonly claimStore: LaunchClaimStore | null;
+  private readonly claimLogger: ApiLogger | null;
 
   private timer: ReturnType<typeof setInterval> | null = null;
   private initialTimer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
+  private hasReconciledOnStartup = false;
 
   constructor(
     store: SessionRegistryFileStore,
@@ -147,6 +172,8 @@ export class SessionRegistryBackgroundWorker {
     this.signalSpoolRoot = options.signalSpoolRoot;
     this.now = options.now ?? (() => new Date());
     this.logger = options.logger ?? console;
+    this.claimStore = options.claimStore ?? null;
+    this.claimLogger = options.claimLogger ?? null;
     this.summarizer = {
       computeEventsFingerprint:
         options.summarizer?.computeEventsFingerprint ?? computeEventsFingerprint,
@@ -163,6 +190,22 @@ export class SessionRegistryBackgroundWorker {
   start(): void {
     if (this.timer) {
       return;
+    }
+    // Startup recovery for orphan reserved rows. Runs synchronously before
+    // the first poll cycle so a crash between row reservation and claim
+    // file write is recovered before anything else happens.
+    if (this.claimStore && !this.hasReconciledOnStartup) {
+      try {
+        const result = reconcileOrphanReservedRows(this.store, this.claimStore);
+        if (result.rowsDeleted > 0 || result.rowsGraphBindingCleared > 0) {
+          this.logger.info(
+            `[session-worker] launch-claim startup reconciliation: deleted=${result.rowsDeleted} graphBindingCleared=${result.rowsGraphBindingCleared}`,
+          );
+        }
+      } catch (error) {
+        this.logger.warn("[session-worker] launch-claim startup reconciliation failed", error);
+      }
+      this.hasReconciledOnStartup = true;
     }
     this.initialTimer = setTimeout(() => {
       this.initialTimer = null;
@@ -199,11 +242,45 @@ export class SessionRegistryBackgroundWorker {
       } catch (error) {
         this.logger.warn("[session-worker] trusted signal drain failed", error);
       }
+      // Capture one discovery snapshot for both the registry sync and the
+      // launch-claim binding pass to avoid double-scanning and to
+      // guarantee within-cycle consistency.
+      let discoveredSessions: DiscoveredCopilotSession[] = [];
       try {
-        syncDiscoveredCopilotSessions(this.store, this.sessionRoot);
+        discoveredSessions = discoverCopilotSessions(this.sessionRoot);
       } catch (error) {
         if (!isLockedError(error)) {
-          this.logger.warn("[session-worker] Copilot session discovery failed", error);
+          this.logger.warn("[session-worker] Copilot session discovery scan failed", error);
+        }
+      }
+      try {
+        syncDiscoveredCopilotSessions(this.store, this.sessionRoot, discoveredSessions);
+      } catch (error) {
+        if (!isLockedError(error)) {
+          this.logger.warn("[session-worker] Copilot session discovery sync failed", error);
+        }
+      }
+      if (this.claimStore && this.claimLogger) {
+        try {
+          await runLaunchClaimBindingPass({
+            registryStore: this.store,
+            claimStore: this.claimStore,
+            discoveredSessions,
+            sessionStateRoot: this.sessionRoot,
+            now: this.now,
+            logger: this.claimLogger.withScope("launch-claim.binding"),
+          });
+        } catch (error) {
+          if (!isLockedError(error)) {
+            this.logger.warn("[session-worker] launch-claim binding failed", error);
+          }
+        }
+        try {
+          this.runLaunchClaimSweep();
+        } catch (error) {
+          if (!isLockedError(error)) {
+            this.logger.warn("[session-worker] launch-claim sweep failed", error);
+          }
         }
       }
       this.indexSessionActivities();
@@ -214,6 +291,77 @@ export class SessionRegistryBackgroundWorker {
       this.logger.error("[session-worker] cycle failed", error);
     } finally {
       this.running = false;
+    }
+  }
+
+  private runLaunchClaimSweep(): void {
+    if (!this.claimStore || !this.claimLogger) return;
+    const sweepLogger = this.claimLogger.withScope("launch-claim.sweep");
+    const nowMs = this.now().getTime();
+    const nowIso = this.now().toISOString();
+    // Phase 4 extracts this into its own module; for Phase 3 wire-up we
+    // implement the minimum lifecycle transitions inline so claims past
+    // their binding window get expired/nonce-missing/cleanup applied.
+    const allClaims = this.claimStore.listClaims();
+    for (const entry of allClaims) {
+      const claim = this.claimStore.getClaim(entry.launchClaimId);
+      if (!claim) continue;
+      if (!isClaimTerminal(claim.status)) {
+        if (!isClaimWindowOpen(claim, nowMs)) {
+          // Transition to nonce-missing or expired.
+          const sawCandidates = claim.seenCandidateCopilotSessionIds.length > 0;
+          const nextStatus = sawCandidates ? "nonce-missing" : "expired";
+          this.claimStore.updateClaim(entry.launchClaimId, (current) => ({
+            ...current,
+            status: nextStatus,
+            failureCode: sawCandidates ? "expired-no-nonce" : "expired-no-candidates",
+          }));
+          if (sawCandidates) {
+            sweepLogger.warn("nonce-absent-after-window", {
+              event: "launch-claim.nonce-absent-after-window",
+              launchClaimId: claim.launchClaimId,
+              workstreamId: claim.workstreamId,
+              nodeId: claim.nodeId,
+              candidateCount: claim.seenCandidateCopilotSessionIds.length,
+              at: nowIso,
+            });
+            for (const cid of claim.seenCandidateCopilotSessionIds) {
+              sweepLogger.warn("orphan-session-no-nonce", {
+                event: "launch-claim.launch-claim-orphan-session",
+                case: "a",
+                launchClaimId: claim.launchClaimId,
+                workstreamId: claim.workstreamId,
+                nodeId: claim.nodeId,
+                copilotSessionId: cid,
+                at: nowIso,
+              });
+            }
+          }
+          // Apply FR-3 reserved-row cleanup.
+          if (claim.reservedRegistryId !== null) {
+            const cleanup = applyReservedRowCleanup(this.store, {
+              ...claim,
+              status: nextStatus,
+            });
+            if (cleanup.reservedRowGraphBindingCleared) {
+              sweepLogger.warn("orphan-session-reserved-preserved", {
+                event: "launch-claim.launch-claim-orphan-session",
+                case: "b",
+                launchClaimId: claim.launchClaimId,
+                workstreamId: claim.workstreamId,
+                nodeId: claim.nodeId,
+                registryId: claim.reservedRegistryId,
+                at: nowIso,
+              });
+            }
+          }
+        }
+      }
+      // Pruning: any claim past retention deadline.
+      const refreshed = this.claimStore.getClaim(entry.launchClaimId);
+      if (refreshed && isClaimPastRetention(refreshed, nowMs)) {
+        this.claimStore.deleteClaim(entry.launchClaimId);
+      }
     }
   }
 
