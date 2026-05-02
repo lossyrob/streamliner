@@ -55,7 +55,7 @@ Reconciliation: current
 - `plan-review` | `resolved` | `activity`
 - `planning-docs-review` | `resolved` | `activity`
 - `final-review` | `not_applicable` | `activity`
-- `final-pr` | `pending` | `activity`
+- `final-pr` | `resolved` | `activity`
 
 ### Gate Items
 - `transition:after-spec-review` | `resolved` | `transition`
