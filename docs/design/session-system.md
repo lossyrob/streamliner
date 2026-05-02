@@ -1,7 +1,7 @@
 ---
 kind: design-doc
 status: draft
-last_updated: 2026-04-29
+last_updated: 2026-05-01
 update_semantics: rewrite-in-place
 authoritative_for: "Session launching, lifecycle, registry contract, tracking, and runtime overlay"
 scope_tags:
@@ -761,8 +761,10 @@ when available, matching the existing restart-command behavior.
 **Terminal selection**:
 1. If Windows Terminal (`wt.exe`) is in PATH → `wt new-tab` with `--title`,
    `--tabColor` (valid `#RRGGBB` only), `-d <cwd>`, and optionally
-   `powershell -NoExit -Command "copilot --resume <id>"`.
-2. Otherwise → `powershell.exe -NoExit -Command "Set-Location ...; copilot --resume <id>"`.
+   `--appendCommandLine -NoExit -Command "copilot --resume <id>"` so the
+   builder's Windows Terminal default profile remains the shell.
+2. Otherwise → `pwsh.exe` when available, falling back to `powershell.exe`,
+   with `-NoExit -Command "Set-Location ...; copilot --resume <id>"`.
 
 **Process lifecycle**: Terminals are spawned `detached` with `stdio: 'ignore'`
 and `unref()`'d so they outlive the Streamliner API process. The relaunch

@@ -44,6 +44,15 @@ export function clearWindowsTerminalCache(): void {
   wtAvailabilityCache = null;
 }
 
+function isPowerShellCoreAvailable(): boolean {
+  try {
+    execSync("where pwsh", { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Launch a terminal with the given options.
  * Tries Windows Terminal first, falls back to PowerShell.
@@ -105,7 +114,7 @@ function launchWindowsTerminal(options: TerminalLaunchOptions): TerminalLaunchRe
   args.push("-d", escapeForWindowsTerminal(options.cwd));
 
   if (options.command) {
-    args.push("powershell", "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", options.command);
+    args.push("--appendCommandLine", "-NoExit", "-Command", options.command);
   }
 
   const child = spawn("wt.exe", args, {
@@ -129,6 +138,7 @@ function launchWindowsTerminal(options: TerminalLaunchOptions): TerminalLaunchRe
 function launchPowerShellTerminal(
   options: TerminalLaunchOptions
 ): TerminalLaunchResult {
+  const executable = isPowerShellCoreAvailable() ? "pwsh.exe" : "powershell.exe";
   let psCommand: string;
 
   if (options.command) {
@@ -143,7 +153,7 @@ function launchPowerShellTerminal(
 
   const args = ["-ExecutionPolicy", "Bypass", "-NoExit", "-Command", psCommand];
 
-  const child = spawn("powershell.exe", args, {
+  const child = spawn(executable, args, {
     detached: true,
     stdio: "ignore",
     env: buildSpawnEnv(),

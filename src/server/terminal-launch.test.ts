@@ -167,9 +167,7 @@ describe("terminal-launch", () => {
           "new-tab",
           "-d",
           "C:\\Users\\test\\workspace",
-          "powershell",
-          "-ExecutionPolicy",
-          "Bypass",
+          "--appendCommandLine",
           "-NoExit",
           "-Command",
           "npm run dev",
@@ -196,9 +194,7 @@ describe("terminal-launch", () => {
           "#00FF00",
           "-d",
           "C:\\Users\\test\\workspace",
-          "powershell",
-          "-ExecutionPolicy",
-          "Bypass",
+          "--appendCommandLine",
           "-NoExit",
           "-Command",
           "npm run dev",
@@ -266,6 +262,23 @@ describe("terminal-launch", () => {
 
       expect(spawn).toHaveBeenCalledWith(
         "powershell.exe",
+        ["-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "Set-Location -LiteralPath 'C:\\Users\\test\\workspace'"],
+        expect.objectContaining({ detached: true, stdio: "ignore" })
+      );
+    });
+
+    it("prefers PowerShell Core when WT is unavailable and pwsh is available", () => {
+      vi.mocked(execSync).mockImplementation((command) => {
+        if (command === "where pwsh") {
+          return Buffer.from("");
+        }
+        throw new Error("not found");
+      });
+
+      launchTerminal({ cwd: "C:\\Users\\test\\workspace" });
+
+      expect(spawn).toHaveBeenCalledWith(
+        "pwsh.exe",
         ["-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "Set-Location -LiteralPath 'C:\\Users\\test\\workspace'"],
         expect.objectContaining({ detached: true, stdio: "ignore" })
       );
@@ -409,7 +422,6 @@ describe("terminal-launch", () => {
     });
   });
 });
-
 
 
 
