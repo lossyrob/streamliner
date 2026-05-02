@@ -27,6 +27,7 @@ export interface StreamlinerApiAppOptions {
   graphPath?: string;
   recentsPath?: string;
   workstreamRegistryPath?: string;
+  workstreamSourceRegistryPath?: string;
   relaunchDeps?: Partial<RelaunchDeps>;
   launchContextDeps?: LaunchContextRouteDeps;
 }
@@ -79,6 +80,7 @@ export function createStreamlinerApiApp(
     "/api",
     createWorkstreamsRouter({
       registryPath: options.workstreamRegistryPath,
+      sourceRegistryPath: options.workstreamSourceRegistryPath,
       recentsPath: options.recentsPath,
     }),
   );

@@ -1113,6 +1113,90 @@ body,
   gap: 10px;
 }
 
+.sl-source-panel,
+.sl-source-section {
+  padding: 16px;
+  border: 1px solid rgba(20, 60, 130, 0.12);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.64);
+  display: grid;
+  gap: 12px;
+}
+
+.sl-source-panel h2,
+.sl-source-section h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.sl-source-panel p {
+  margin: 6px 0 0;
+  color: var(--sl-text-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.sl-source-form {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(260px, 1fr) auto;
+  gap: 10px;
+}
+
+.sl-source-select,
+.sl-source-input {
+  border: 1px solid rgba(20, 60, 130, 0.14);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--sl-text);
+  font: inherit;
+}
+
+.sl-source-list {
+  display: grid;
+  gap: 10px;
+}
+
+.sl-source-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  padding: 12px;
+  border: 1px solid rgba(20, 60, 130, 0.1);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.56);
+}
+
+.sl-source-title-row,
+.sl-workstream-card-meta,
+.sl-workstream-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.sl-source-title-row {
+  margin-bottom: 6px;
+}
+
+.sl-source-meta {
+  margin-top: 4px;
+  color: var(--sl-text-dim);
+  font-size: 12px;
+}
+
+.sl-conflict-candidates {
+  margin-top: 6px;
+  display: grid;
+  gap: 3px;
+  color: var(--sl-text-dim);
+  font-family: var(--sl-mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
 .sl-workstream-card {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1140,6 +1224,10 @@ body,
   width: max-content;
 }
 
+.sl-workstream-card-actions {
+  justify-content: flex-end;
+}
+
 .sl-workstream-card-title {
   color: var(--sl-text);
   font-size: 15px;
@@ -1149,6 +1237,10 @@ body,
 .sl-workstream-card-id {
   color: var(--sl-text-dim);
   font-size: 12px;
+  grid-column: 1 / -1;
+}
+
+.sl-workstream-card-main .sl-path-value {
   grid-column: 1 / -1;
 }
 

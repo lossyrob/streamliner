@@ -32,6 +32,7 @@ interface LegacyRecentEntry {
 
 export interface WorkstreamRegistryOptions {
   registryPath?: string;
+  sourceRegistryPath?: string;
   recentsPath?: string;
   now?: () => Date;
 }
