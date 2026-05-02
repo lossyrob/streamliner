@@ -49,6 +49,9 @@ Anything beyond those four keys is event-specific structured context
 | `signals` | Trusted hook signals received (`session.started`, `userPromptSubmitted`, `session.ended`) |
 | `relaunch` | Each `POST /api/sessions/:id/relaunch` attempt, success, or failure |
 | `worker` | Background worker errors (signal drain, discovery, summarization, indexing) |
+| `launch-claim.api` | Loopback rejections on `/api/launch-claims*` requests |
+| `launch-claim.binding` | Per-cycle binding-pass decisions and FR-12 events: `launch-claim.bound`, `launch-claim.launch-claim-ambiguous`, `launch-claim.launch-claim-rebind-attempt`, `launch-claim.fuse-deferred` |
+| `launch-claim.sweep` | Per-cycle lifecycle transitions and FR-12 events: `launch-claim.nonce-absent-after-window`, `launch-claim.launch-claim-orphan-session` (`case: "a"` / `case: "b"`) |
 
 ## Configuration
 
@@ -57,6 +60,7 @@ Anything beyond those four keys is event-specific structured context
 | `STREAMLINER_LOG_LEVEL` | `info` | Minimum level to emit (`debug`/`info`/`warn`/`error`) |
 | `STREAMLINER_LOG_DIR` | `~/.streamliner/state/logs` | Override the log directory |
 | `STREAMLINER_LOG_CONSOLE` | `1` | Set to `0` or `false` to suppress console mirroring |
+| `STREAMLINER_LAUNCH_CLAIMS_ROOT` | `~/.streamliner/state/launch-claims` | Override the launch-claim store root (see [session-system.md](../design/session-system.md#launch-claim-lifecycle)) |
 
 ## Reading the logs
 
@@ -70,6 +74,21 @@ Filter to just relaunch events:
 
 ```bash
 jq 'select(.scope == "relaunch")' ~/.streamliner/state/logs/api-2026-04-29.log
+```
+
+Filter to launch-claim binding-pass + sweep diagnostics:
+
+```bash
+jq 'select(.scope | startswith("launch-claim"))' \
+  ~/.streamliner/state/logs/api-$(date -u +%Y-%m-%d).log
+```
+
+Filter to a specific launch claim across binding and sweep:
+
+```bash
+jq --arg id "<launchClaimId>" \
+  'select(.launchClaimId == $id)' \
+  ~/.streamliner/state/logs/api-*.log
 ```
 
 Trace a specific session:

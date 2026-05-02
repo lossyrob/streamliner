@@ -624,12 +624,36 @@ This keeps the binding in Streamliner's domain while relying on Copilot's files 
 
 Launch claims are transient. They must be actively reconciled or aged out, or they become ambient noise that corrupts future bindings.
 
-- **Claim creation** writes the claim atomically to runtime state before the terminal launch command runs. If launch preparation fails before the launch command is issued, the claim is deleted on the same failure path that cleans up the generated context package.
+- **Claim creation** writes the claim atomically to runtime state before the terminal launch command runs. Streamliner's `createLaunchClaim` helper uses a row-first, claim-second canonical write order: it pre-mints both the launch-claim id and a reserved `SessionRegistryRecord` id, writes the registry row with `origin.kind = "launched"`, `origin.launchClaimId`, and `graphBinding`, then writes the claim file with `reservedRegistryId` populated. A crash between the two writes is recovered by the `reconcileOrphanReservedRows` startup routine in the background worker. If launch preparation fails before the launch command is issued, the claim is deleted on the same failure path that cleans up the generated context package.
+- **Path A (default) vs Path B**: with row reservation enabled (the default), discovery may transiently produce a duplicate observed row for the same Copilot session id. The binding pass detects this and fuses the duplicate into the reserved row atomically via the `fuseObservedRowIntoReservedRow` registry primitive, then deletes the duplicate. Path B (`reserveRegistryRow: false`, intended only for diagnostic / preview flows) writes `graphBinding` directly onto the existing observed row via `bindClaimToRow`; `origin.kind` stays `"observed"` and `graphBinding.launchClaimId` provides linkage.
 - **Binding window**: a claim is eligible for binding only while its launch window is open. The default window is 5 minutes from `launchedAt`. Inside the window, the watcher attempts to bind discovered sessions by nonce plus `cwd`/branch guardrails.
-- **Claim expiry**: if no session binds within the window, the claim transitions to `abandoned`. Abandoned claims are retained for a short inspection period (default: 1 hour) so the builder can see that a launch failed to attach, then pruned.
-- **Nonce tampering**: the kickoff prompt includes the launch nonce on a dedicated line. If the builder edits or deletes the nonce line before pressing Enter, the session's early events will not contain the expected nonce. The claim expires normally; the orphan session is surfaced in the UI (see below) so the builder can rebind it manually or discard it.
+- **Claim expiry**: if no session binds within the window, the claim transitions to one of two terminal states. `nonce-missing` indicates that at least one Copilot session was observed in `expectedCwd` during the window but never produced a nonce match (recorded in `seenCandidateCopilotSessionIds`). `expired` indicates that no candidate session ever appeared. The legacy term *abandoned* is preserved in older docs but is no longer a status — the two-bucket distinction is more useful for diagnostics. Terminal claims are retained for a short inspection period (default: 1 hour) so the builder can see that a launch failed to attach, then pruned by the sweep.
+- **Reserved-row cleanup**: when a non-`bound` terminal transition happens, the reserved row is conditionally deleted via the `deleteSessionIf(rowId, copilotSessionId === null)` primitive (predicate evaluated under the registry write lock). When a real session attached during the gap, the row is preserved and its `graphBinding` is cleared via `bindClaimToRow(..., { graphBinding: null })`; the row appears in the future "Unbound sessions" surface.
+- **Nonce tampering**: the kickoff prompt includes the launch nonce on a dedicated line (see `kickoffNonceLine` helper). If the builder edits or deletes the nonce token before pressing Enter, the session's early events will not contain the expected nonce. The claim transitions to `nonce-missing` after the binding window closes; the orphan session is surfaced in the UI so the builder can rebind it manually or discard it.
 - **Unbound-session surface**: sessions discovered by the watcher that match no claim within the binding window (or are deliberately launched outside Streamliner) appear in a dedicated "Unbound sessions" panel. The builder can bind them to a node explicitly, ignore them, or let them age out with the rest of the session history.
-- **Single session per claim**: a claim binds at most one session. Once bound, the claim is marked `bound` and subsequent discoveries matching the same nonce are logged as anomalies rather than rebinding.
+- **Single session per claim**: a claim binds at most one session. Once bound, the claim is marked `bound` and subsequent discoveries matching the same nonce are logged via the `launch-claim-rebind-attempt` diagnostic rather than rebinding.
+- **Ambiguity**: if more than one discovered Copilot session in `expectedCwd` matches the nonce in the same binding-pass cycle (defensive case; nonces are 128-bit), the claim transitions to the terminal `ambiguous` status and the sessions remain unbound for manual recovery.
+
+#### Atomicity primitives
+
+The race-free behavior above relies on three primitives on `SessionRegistryFileStore` (`src/session-registry/file-store.ts`), each acquiring the registry write lock once around its read–validate–write sequence:
+
+- `bindClaimToRow(id, expected, desired)` — re-reads the row under the lock, re-validates `cwd`/`branch`/`repo`/`graphBinding.launchClaimId` against the binding-pass decision, and writes `graphBinding` (or clears it). Returns a typed reason on mismatch so the caller can retry or surface a diagnostic.
+- `deleteSessionIf(id, predicate)` — predicate-checked delete under the lock; closes the gap between sweep decision and delete.
+- `fuseObservedRowIntoReservedRow(args)` — atomic transfer of observation fields onto the reserved row plus deletion of the duplicate observed row in a single locked transaction; emits one `upsert` then one `delete` so SSE consumers see a coherent state.
+
+The startup recovery routine `reconcileOrphanReservedRows(claimStore, registryStore)` (in `src/session-registry/launch-claims.ts`) lists launched-origin rows whose `origin.launchClaimId` is missing from the claim store and applies the same conditional cleanup. It runs synchronously inside `SessionRegistryBackgroundWorker.start()` once per process lifecycle, before the first poll cycle.
+
+The launch-claim store lives at `~/.streamliner/state/launch-claims/` (override via `STREAMLINER_LAUNCH_CLAIMS_ROOT`) with the same advisory-lock + write-then-rename + per-record JSON file layout as the session registry.
+
+#### Diagnostic surface
+
+A read-only HTTP API exposes the claim store for UI consumption:
+
+- `GET /api/launch-claims` — versioned envelope `{ apiVersion, items, nextCursor, meta: { total, serverTime, diagnosticsSummary } }` with summary entries (status, derived lifecycle phase, bound-session pointers); supports `?status`, `?workstreamId`, `?nodeId`, `?limit` (default 50, max 200).
+- `GET /api/launch-claims/:id` — full claim record plus `derived: { lifecyclePhase, bindingWindowExpiresAt, retentionExpiresAt }`.
+
+Both endpoints are loopback-only.
 
 ### Watcher Diagnostics
 
@@ -641,7 +665,7 @@ Each session carries:
 - **Last successful PAW parse** — when applicable, timestamp of the last `WorkflowContext.md` / `ReviewContext.md` read, along with the derivation path used (`control-state`, `inferred`, or `unparsable`; see [Decision 003](decisions/003-paw-control-state-integration.md)).
 - **Hook signal counters** — count of `sessionStart`, `agentStop`, `sessionEnd` signals received vs. equivalent transitions inferred from polling, so "hooks silently stopped firing" is visible.
 
-In addition, the watcher emits structured diagnostic events (not free-form logs) for every degradation mode it recognizes: `hook-miss`, `tail-truncation`, `nonce-absent-after-window`, `legacy-inference-used`, `unknown-control-state-token`, `copilot-compatibility-probe-failed`, `paw-contract-version-out-of-range`. PAW-specific diagnostics are emitted only for sessions with PAW artifacts or a PAW launch profile. These events are retained alongside session history and surfaced in the diagnostic view. The UI shows a compact degradation badge on any session whose diagnostics are non-empty so the builder never has to guess whether the overlay can be trusted.
+In addition, the watcher emits structured diagnostic events (not free-form logs) for every degradation mode it recognizes: `hook-miss`, `tail-truncation`, `nonce-absent-after-window`, `launch-claim-ambiguous`, `launch-claim-rebind-attempt`, `launch-claim-orphan-session` (case `"a"` for candidate-with-no-nonce, case `"b"` for preserved-reserved-row whose claim went non-bound), `legacy-inference-used`, `unknown-control-state-token`, `copilot-compatibility-probe-failed`, `paw-contract-version-out-of-range`. PAW-specific diagnostics are emitted only for sessions with PAW artifacts or a PAW launch profile. Launch-claim diagnostics are emitted as JSONL log lines under `withScope("launch-claim.binding")` and `withScope("launch-claim.sweep")` in the API logger; the durable per-claim inspection record is the claim's own `evidence` ledger, exposed via `GET /api/launch-claims/:id`. The UI shows a compact degradation badge on any session whose diagnostics are non-empty so the builder never has to guess whether the overlay can be trusted.
 
 ## Runtime Overlay
 

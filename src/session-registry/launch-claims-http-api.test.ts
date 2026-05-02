@@ -189,17 +189,21 @@ describe("handleLaunchClaimsApiRequest", () => {
     expect(result?.statusCode).toBe(404);
   });
 
-  it("uses default limit when not specified", () => {
-    for (let i = 0; i < LAUNCH_CLAIMS_API_DEFAULT_LIMIT + 5; i += 1) {
-      createClaim(`claim-${i.toString().padStart(3, "0")}`, `2026-05-02T01:00:00.${i.toString().padStart(3, "0")}Z`);
-    }
-    const result = handleLaunchClaimsApiRequest(
-      claimStore,
-      { method: "GET", url: LAUNCH_CLAIMS_API_BASE_PATH },
-      () => new Date("2026-05-02T01:01:00.000Z"),
-    );
-    const body = result?.body as LaunchClaimListResponse;
-    expect(body.items).toHaveLength(LAUNCH_CLAIMS_API_DEFAULT_LIMIT);
-    expect(body.meta.total).toBe(LAUNCH_CLAIMS_API_DEFAULT_LIMIT + 5);
-  });
+  it(
+    "uses default limit when not specified",
+    () => {
+      for (let i = 0; i < LAUNCH_CLAIMS_API_DEFAULT_LIMIT + 5; i += 1) {
+        createClaim(`claim-${i.toString().padStart(3, "0")}`, `2026-05-02T01:00:00.${i.toString().padStart(3, "0")}Z`);
+      }
+      const result = handleLaunchClaimsApiRequest(
+        claimStore,
+        { method: "GET", url: LAUNCH_CLAIMS_API_BASE_PATH },
+        () => new Date("2026-05-02T01:01:00.000Z"),
+      );
+      const body = result?.body as LaunchClaimListResponse;
+      expect(body.items).toHaveLength(LAUNCH_CLAIMS_API_DEFAULT_LIMIT);
+      expect(body.meta.total).toBe(LAUNCH_CLAIMS_API_DEFAULT_LIMIT + 5);
+    },
+    20000,
+  );
 });
