@@ -50,6 +50,45 @@ Where that `workstreams/` directory lives is up to the operator:
 
 The graph's `repos` array and `designRefs` use repo IDs to link across these boundaries, so the physical layout doesn't constrain the logical references.
 
+### Workstream support docs
+
+The `docs/` directory inside a workstream is for committed support documents
+that inform the workstream but are not the current operational source of truth.
+Use it when discovery, brainstorming, or shaping produced context worth
+preserving without bloating the brief.
+
+A common example is:
+
+```text
+workstreams/
+  {workstream-id}/
+    brief.md
+    graph.json
+    docs/
+      initial-shaping.md
+```
+
+`docs/initial-shaping.md` captures the richer thinking that led to the initial
+brief and graph: problem framing, discarded options, rationale, UI sketches,
+edge cases, open design tensions, or early implementation ideas. The brief then
+distills that material into current Purpose, Approach, Design References,
+Boundaries, Current State, Decisions, and Open Questions. The graph distills it
+into nodes, dependencies, gates, statuses, and tracker links.
+
+Support docs have these semantics:
+
+- they are committed workstream artifacts and may be referenced from the brief
+  or node specs
+- they provide background and rationale, not authoritative current state
+- they should not duplicate the brief, graph, node specs, or project design docs
+- they may become historical context once the workstream is underway
+- if a support doc changes intended project design, that change should be
+  promoted into the project design layer
+
+This keeps the brief small and current while still preserving the shaping context
+that helps future orchestrator or worker sessions understand why the workstream
+exists in its current form.
+
 ### Local runtime state
 
 Fast-changing operational data is **not** part of the committed workstream artifact set. Streamliner keeps that in a machine-local runtime store, namespaced by `projectKey` and workstream:
