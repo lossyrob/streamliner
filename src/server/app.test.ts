@@ -266,6 +266,7 @@ describe("createStreamlinerApiApp", () => {
       graphPath,
       recentsPath: join(rootDir, "recent-graphs.json"),
       workstreamRegistryPath: join(rootDir, "workstreams.json"),
+      workstreamSourceRegistryPath: join(rootDir, "sources.json"),
     });
     activeApps.push(api);
 
@@ -300,6 +301,7 @@ describe("createStreamlinerApiApp", () => {
       store: new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") }),
       recentsPath: join(rootDir, "recent-graphs.json"),
       workstreamRegistryPath: join(rootDir, "workstreams.json"),
+      workstreamSourceRegistryPath: join(rootDir, "sources.json"),
     });
     activeApps.push(api);
 
@@ -356,6 +358,7 @@ describe("createStreamlinerApiApp", () => {
       store: new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") }),
       recentsPath,
       workstreamRegistryPath: join(rootDir, "workstreams.json"),
+      workstreamSourceRegistryPath: join(rootDir, "sources.json"),
     });
     activeApps.push(api);
 
@@ -392,6 +395,7 @@ describe("createStreamlinerApiApp", () => {
       store: new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") }),
       recentsPath,
       workstreamRegistryPath: join(rootDir, "workstreams.json"),
+      workstreamSourceRegistryPath: join(rootDir, "sources.json"),
     });
     activeApps.push(api);
 
@@ -435,6 +439,7 @@ describe("createStreamlinerApiApp", () => {
       store: new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") }),
       recentsPath: join(rootDir, "recent-graphs.json"),
       workstreamRegistryPath: registryPath,
+      workstreamSourceRegistryPath: join(rootDir, "sources.json"),
     });
     activeApps.push(api);
 
@@ -472,6 +477,7 @@ describe("createStreamlinerApiApp", () => {
       store: new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") }),
       recentsPath: join(rootDir, "recent-graphs.json"),
       workstreamRegistryPath: registryPath,
+      workstreamSourceRegistryPath: join(rootDir, "sources.json"),
     });
     activeApps.push(api);
 
@@ -493,6 +499,7 @@ describe("createStreamlinerApiApp", () => {
     const api = createStreamlinerApiApp({
       store: new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") }),
       workstreamRegistryPath: join(rootDir, "workstreams.json"),
+      workstreamSourceRegistryPath: join(rootDir, "sources.json"),
     });
     activeApps.push(api);
 
@@ -516,6 +523,7 @@ describe("createStreamlinerApiApp", () => {
     const api = createStreamlinerApiApp({
       store: new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") }),
       workstreamRegistryPath: registryPath,
+      workstreamSourceRegistryPath: join(rootDir, "sources.json"),
     });
     activeApps.push(api);
 
@@ -546,6 +554,7 @@ describe("createStreamlinerApiApp", () => {
     const api = createStreamlinerApiApp({
       store: new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") }),
       workstreamRegistryPath: join(rootDir, "workstreams.json"),
+      workstreamSourceRegistryPath: join(rootDir, "sources.json"),
     });
     activeApps.push(api);
 

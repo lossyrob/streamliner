@@ -15,7 +15,7 @@ Session Policy: continuous
 Final Agent Review: enabled
 Final Review Mode: multi-model
 Final Review Interactive: smart
-Final Review Models: gpt-5.2, gemini-3-pro-preview, claude-opus-4.6
+Final Review Models: gpt-5.5, claude-opus-4.7, claude-opus-4.6-1m
 Final Review Specialists: all
 Final Review Interaction Mode: parallel
 Final Review Specialist Models: none
@@ -23,11 +23,11 @@ Final Review Perspectives: auto
 Final Review Perspective Cap: 2
 Implementation Model: none
 Plan Generation Mode: single-model
-Plan Generation Models: gpt-5.2, gemini-3-pro-preview, claude-opus-4.6
+Plan Generation Models: gpt-5.5, claude-opus-4.7, claude-opus-4.6-1m
 Planning Docs Review: enabled
 Planning Review Mode: multi-model
 Planning Review Interactive: smart
-Planning Review Models: gpt-5.2, gemini-3-pro-preview, claude-opus-4.6
+Planning Review Models: gpt-5.5, claude-opus-4.7, claude-opus-4.6-1m
 Planning Review Specialists: all
 Planning Review Interaction Mode: parallel
 Planning Review Specialist Models: none
@@ -44,26 +44,26 @@ Additional Inputs: none
 ## Control State
 
 TODO Mirror: active-required-items
-Reconciliation: not_run
+Reconciliation: current
 
 ### Required Workflow Items
 - `init` | `resolved` | `activity`
-- `spec` | `pending` | `activity`
-- `spec-review` | `pending` | `activity`
-- `code-research` | `pending` | `activity`
-- `planning` | `pending` | `activity`
-- `plan-review` | `pending` | `activity`
-- `planning-docs-review` | `pending` | `activity`
+- `spec` | `resolved` | `activity`
+- `spec-review` | `resolved` | `activity`
+- `code-research` | `resolved` | `activity`
+- `planning` | `resolved` | `activity`
+- `plan-review` | `resolved` | `activity`
+- `planning-docs-review` | `resolved` | `activity`
 - `final-review` | `pending` | `activity`
 - `final-pr` | `pending` | `activity`
 
 ### Gate Items
-- `transition:after-spec-review` | `pending` | `transition`
-- `transition:after-plan-review` | `pending` | `transition`
-- `transition:after-planning-docs-review` | `pending` | `transition`
+- `transition:after-spec-review` | `resolved` | `transition`
+- `transition:after-plan-review` | `resolved` | `transition`
+- `transition:after-planning-docs-review` | `resolved` | `transition`
 - `transition:after-phase:<n>` | `pending` | `transition`
 - `transition:after-final-review` | `pending` | `transition`
 
 ### Configured Procedure Items
-- `procedure:planning-review` | `pending` | `procedure`
+- `procedure:planning-review` | `resolved` | `procedure`
 - `procedure:final-review` | `pending` | `procedure`

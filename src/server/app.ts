@@ -11,6 +11,10 @@ import {
   createLaunchContextsRouter,
   type LaunchContextRouteDeps,
 } from "./routes/launch-contexts";
+import {
+  createLaunchPreparationsRouter,
+  type LaunchPreparationRouteDeps,
+} from "./routes/launch-preparations";
 import { createRecentsRouter } from "./routes/recents";
 import { createSessionsRouter } from "./routes/sessions";
 import { createWorkstreamsRouter } from "./routes/workstreams";
@@ -30,6 +34,7 @@ export interface StreamlinerApiAppOptions {
   workstreamSourceRegistryPath?: string;
   relaunchDeps?: Partial<RelaunchDeps>;
   launchContextDeps?: LaunchContextRouteDeps;
+  launchPreparationDeps?: LaunchPreparationRouteDeps;
 }
 
 const malformedJsonHandler: ErrorRequestHandler = (error, _req, res, next) => {
@@ -97,6 +102,13 @@ export function createStreamlinerApiApp(
     createLaunchContextsRouter({
       defaultGraphPath: options.graphPath,
       deps: options.launchContextDeps,
+    }),
+  );
+  app.use(
+    "/api",
+    createLaunchPreparationsRouter({
+      defaultGraphPath: options.graphPath,
+      deps: options.launchPreparationDeps,
     }),
   );
   app.use(
