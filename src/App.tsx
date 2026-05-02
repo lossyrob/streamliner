@@ -28,6 +28,12 @@ import { NodeInspector } from "./components/NodeInspector";
 import { OperationalStatusStrip } from "./components/OperationalStatusStrip";
 import { CheckpointStepper } from "./components/CheckpointStepper";
 import { WorkstreamHeader } from "./components/WorkstreamHeader";
+import {
+  PawLaunchDialog,
+  type PawLaunchDialogConfiguration,
+  type PawLaunchDialogDefaults,
+  type PawLaunchDialogHandoff,
+} from "./components/PawLaunchDialog";
 import { SessionsPage } from "./components/SessionsPage";
 import {
   deleteBrowserWorkstreamEntry,
@@ -48,6 +54,16 @@ type DashboardRoute =
 interface GraphLoadError {
   code?: string;
   message: string;
+}
+
+interface PawLaunchPreparationResponse extends PawLaunchDialogHandoff {
+  cwd: string;
+  launchMetadata: {
+    launchNonce: string | null;
+    projectKey: string;
+    workstreamId: string;
+    nodeId: string;
+  };
 }
 
 function encodeSegment(segment: string): string {
@@ -183,6 +199,17 @@ function isSourceWorkstreamEntry(entry: WorkstreamRegistryListEntry): boolean {
 
 function isPathWorkstreamEntry(entry: WorkstreamRegistryListEntry): boolean {
   return !entry.source || entry.source === "path";
+}
+
+function isBackendReadableWorkstreamEntry(entry: WorkstreamRegistryListEntry): boolean {
+  return !isBrowserWorkstreamEntry(entry) && entry.fileStatus === "available";
+}
+
+function createLaunchNonce(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `launch-${Date.now().toString(36)}`;
 }
 
 function mergeWorkstreamEntries(
@@ -783,6 +810,10 @@ function GraphDashboard({
 }) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [launchDialogOpen, setLaunchDialogOpen] = useState(false);
+  const [launchPreparing, setLaunchPreparing] = useState(false);
+  const [launchError, setLaunchError] = useState<string | null>(null);
+  const [launchHandoff, setLaunchHandoff] = useState<PawLaunchDialogHandoff | null>(null);
 
   const viewModel = useMemo(() => {
     if (!workstream) return null;
@@ -799,6 +830,36 @@ function GraphDashboard({
     return viewModel.derivedNodes.find((entry) => entry.node.id === selectedNodeId) ?? null;
   }, [selectedNodeId, viewModel]);
 
+  const activeWorkstreamEntry = useMemo(() => {
+    if (!activeWorkstream) return null;
+    return workstreams.find((entry) => registryKey(entry) === registryKey(activeWorkstream)) ?? null;
+  }, [activeWorkstream, workstreams]);
+
+  const launchDisabledReason = useMemo(() => {
+    if (!selectedEntry) return undefined;
+    if (selectedEntry.operationalStatus !== "ready") {
+      return "Only ready nodes can be launched.";
+    }
+    if (!activeWorkstreamEntry || !isBackendReadableWorkstreamEntry(activeWorkstreamEntry)) {
+      return "Browser-only or missing graph sources cannot be prepared by the backend.";
+    }
+    return undefined;
+  }, [activeWorkstreamEntry, selectedEntry]);
+
+  const canLaunchSelectedNode = Boolean(selectedEntry && !launchDisabledReason);
+
+  const launchDefaults = useMemo<PawLaunchDialogDefaults | null>(() => {
+    if (!selectedEntry || !activeWorkstreamEntry) return null;
+    return {
+      workTitle: selectedEntry.node.title,
+      workId: selectedEntry.node.id,
+      targetBranch: `feature/${selectedEntry.node.id}`,
+      cliArgsText: "--yolo",
+      graphPath: activeWorkstreamEntry.path,
+      terminalPreference: "Manual terminal launch after preparation",
+    };
+  }, [activeWorkstreamEntry, selectedEntry]);
+
   const handleArchiveCurrent = async () => {
     if (!activeWorkstream) {
       return;
@@ -809,6 +870,77 @@ function GraphDashboard({
       onRouteHome();
     } catch (nextError) {
       setActionError(nextError instanceof Error ? nextError.message : String(nextError));
+    }
+  };
+
+  const handleOpenLaunchDialog = () => {
+    setLaunchError(null);
+    setLaunchHandoff(null);
+    setLaunchDialogOpen(true);
+  };
+
+  const handleCloseLaunchDialog = () => {
+    if (launchPreparing) {
+      return;
+    }
+    setLaunchDialogOpen(false);
+    setLaunchError(null);
+    setLaunchHandoff(null);
+  };
+
+  const handleSubmitLaunch = async (configuration: PawLaunchDialogConfiguration) => {
+    if (!selectedEntry || !activeWorkstreamEntry) {
+      return;
+    }
+    setLaunchPreparing(true);
+    setLaunchError(null);
+    setLaunchHandoff(null);
+    try {
+      const response = await fetch("/api/launch-preparations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nodeId: selectedEntry.node.id,
+          graphPath: activeWorkstreamEntry.path,
+          launchNonce: createLaunchNonce(),
+          configuration: {
+            workTitle: configuration.workTitle,
+            workId: configuration.workId,
+            targetBranch: configuration.targetBranch,
+            cliArgs: configuration.cliArgs,
+            customMessage: configuration.customMessage,
+            paw: {
+              workflowIdentity: "paw",
+              workflowMode: "full",
+              reviewStrategy: "local",
+              reviewPolicy: "final-pr-only",
+              planningDocsReview: "enabled",
+              finalAgentReview: "disabled",
+            },
+            terminal: {
+              launchMode: "manual",
+              preferredTerminal: "default",
+            },
+          },
+        }),
+      });
+      if (!response.ok) {
+        const parsed = await parseErrorResponse(response);
+        throw new Error(parsed.message);
+      }
+      const handoff = await response.json() as PawLaunchPreparationResponse;
+      setLaunchHandoff({
+        branch: handoff.branch,
+        pawWorkDir: handoff.pawWorkDir,
+        workflowContextPath: handoff.workflowContextPath,
+        streamlinerContextPath: handoff.streamlinerContextPath,
+        cliArgs: handoff.cliArgs,
+        kickoffPrompt: handoff.kickoffPrompt,
+      });
+    } catch (nextError) {
+      setLaunchError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setLaunchPreparing(false);
     }
   };
 
@@ -879,9 +1011,28 @@ function GraphDashboard({
           />
         </ReactFlowProvider>
         <div className="sl-sidebar">
-          <NodeInspector entry={selectedEntry} layout={layout} workstream={workstream} />
+          <NodeInspector
+            entry={selectedEntry}
+            layout={layout}
+            workstream={workstream}
+            canLaunch={canLaunchSelectedNode}
+            launchDisabledReason={launchDisabledReason}
+            onLaunch={handleOpenLaunchDialog}
+          />
         </div>
       </div>
+      {launchDialogOpen && selectedEntry && launchDefaults ? (
+        <PawLaunchDialog
+          key={`${selectedEntry.node.id}:${launchDefaults.graphPath}`}
+          nodeTitle={selectedEntry.node.title}
+          defaults={launchDefaults}
+          preparing={launchPreparing}
+          error={launchError}
+          handoff={launchHandoff}
+          onCancel={handleCloseLaunchDialog}
+          onSubmit={handleSubmitLaunch}
+        />
+      ) : null}
     </div>
   );
 }

@@ -956,6 +956,14 @@ body,
   color: var(--sl-text-dim);
 }
 
+.sl-inspector-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  margin-top: 4px;
+}
+
 /* Signals */
 .sl-signal {
   padding: 12px 14px;
@@ -2110,6 +2118,124 @@ a.sl-session-context-ref {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+/* PAW launch dialog */
+.sl-paw-launch-dialog {
+  width: min(760px, 94vw);
+  height: min(780px, 90vh);
+}
+
+.sl-paw-launch-subtitle {
+  margin: 6px 0 0;
+  color: var(--sl-text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: 560px;
+}
+
+.sl-paw-launch-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.sl-paw-launch-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.sl-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--sl-text-mid);
+}
+
+.sl-field input,
+.sl-field textarea {
+  border: 1px solid rgba(20, 60, 130, 0.14);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--sl-text);
+  font: inherit;
+  font-weight: 500;
+  padding: 10px 12px;
+}
+
+.sl-field textarea {
+  resize: vertical;
+  line-height: 1.45;
+}
+
+.sl-paw-launch-summary,
+.sl-paw-launch-result {
+  border: 1px solid rgba(20, 60, 130, 0.08);
+  background: rgba(246, 249, 255, 0.76);
+  border-radius: 14px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sl-paw-launch-summary p {
+  margin: 4px 0 0;
+  color: var(--sl-text-mid);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.sl-paw-launch-result dl {
+  margin: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.sl-paw-launch-result dl div {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.sl-paw-launch-result dt {
+  color: var(--sl-text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.sl-paw-launch-result dd {
+  margin: 0;
+  color: var(--sl-text);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.sl-paw-launch-result details {
+  margin-top: 4px;
+}
+
+.sl-paw-launch-result summary {
+  cursor: pointer;
+  color: var(--sl-accent);
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.sl-paw-launch-result pre {
+  margin: 10px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border-radius: 12px;
+  background: rgba(10, 20, 40, 0.06);
+  padding: 12px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--sl-text-mid);
 }
 
 /* sheet content */

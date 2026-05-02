@@ -12,7 +12,7 @@ Workflow Mode: full
 Review Strategy: local
 Review Policy: final-pr-only
 Session Policy: continuous
-Final Agent Review: enabled
+Final Agent Review: disabled
 Final Review Mode: multi-model
 Final Review Interactive: smart
 Final Review Models: gpt-5.5, claude-opus-4.7, claude-opus-4.6-1m
@@ -33,7 +33,7 @@ Planning Review Interaction Mode: parallel
 Planning Review Specialist Models: none
 Planning Review Perspectives: auto
 Planning Review Perspective Cap: 2
-Custom Workflow Instructions: none
+Custom Workflow Instructions: final-pr-review-only; continue through implementation and documentation without intermediate local review pauses, and create the final PR unless a serious blocker is encountered.
 Initial Prompt: none
 Issue URL: https://github.com/lossyrob/streamliner/issues/33
 Remote: origin
@@ -54,16 +54,16 @@ Reconciliation: current
 - `planning` | `resolved` | `activity`
 - `plan-review` | `resolved` | `activity`
 - `planning-docs-review` | `resolved` | `activity`
-- `final-review` | `pending` | `activity`
+- `final-review` | `not_applicable` | `activity`
 - `final-pr` | `pending` | `activity`
 
 ### Gate Items
 - `transition:after-spec-review` | `resolved` | `transition`
 - `transition:after-plan-review` | `resolved` | `transition`
 - `transition:after-planning-docs-review` | `resolved` | `transition`
-- `transition:after-phase:<n>` | `pending` | `transition`
-- `transition:after-final-review` | `pending` | `transition`
+- `transition:after-phase:<n>` | `not_applicable` | `transition`
+- `transition:after-final-review` | `not_applicable` | `transition`
 
 ### Configured Procedure Items
 - `procedure:planning-review` | `resolved` | `procedure`
-- `procedure:final-review` | `pending` | `procedure`
+- `procedure:final-review` | `not_applicable` | `procedure`

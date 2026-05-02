@@ -25,6 +25,7 @@ const execFileAsync = promisify(execFile);
 
 const DEFAULT_CLI_ARGS = ["--yolo"];
 const DEFAULT_PAW_INIT_MODEL = "claude-sonnet-4.6";
+const DEFAULT_PAW_REVIEW_MODELS = "gpt-5.5, claude-opus-4.7, claude-opus-4.6-1m";
 const DEFAULT_PAW_INIT_TIMEOUT_MS = 120_000;
 const WORKFLOW_IDENTITIES = ["paw"] as const;
 const WORKFLOW_MODES = ["full", "minimal", "custom"] as const;
@@ -202,7 +203,7 @@ const DEFAULT_PAW_OPTIONS: PawLaunchWorkflowOptions = {
   reviewStrategy: "local",
   reviewPolicy: "final-pr-only",
   planningDocsReview: "enabled",
-  finalAgentReview: "enabled",
+  finalAgentReview: "disabled",
 };
 
 const DEFAULT_TERMINAL_PREFERENCES: PawLaunchTerminalPreferences = {
@@ -537,14 +538,14 @@ function buildWorkflowContextContent(
     `Final Agent Review: ${input.configuration.paw.finalAgentReview}`,
     "Final Review Mode: multi-model",
     "Final Review Interactive: smart",
-    "Final Review Models: latest GPT, latest Gemini, latest Claude Opus",
+    `Final Review Models: ${DEFAULT_PAW_REVIEW_MODELS}`,
     "Implementation Model: none",
     "Plan Generation Mode: single-model",
-    "Plan Generation Models: latest GPT, latest Gemini, latest Claude Opus",
+    `Plan Generation Models: ${DEFAULT_PAW_REVIEW_MODELS}`,
     `Planning Docs Review: ${input.configuration.paw.planningDocsReview}`,
     "Planning Review Mode: multi-model",
     "Planning Review Interactive: smart",
-    "Planning Review Models: latest GPT, latest Gemini, latest Claude Opus",
+    `Planning Review Models: ${DEFAULT_PAW_REVIEW_MODELS}`,
     "Custom Workflow Instructions: none",
     "Initial Prompt: streamliner-launch-kickoff",
     `Issue URL: ${issueUrl}`,

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SessionRegistryListItem } from "./session-registry-contract";
 import App from "./App";
+import { storeBrowserWorkstreamDirectory } from "./browser-workstream-files";
 
 const DEFAULT_TEST_SESSION_TIMESTAMP = new Date().toISOString();
 
@@ -98,6 +99,38 @@ function buildTrackedWorkstream(overrides: Record<string, unknown> = {}): Record
     fileStatus: "available",
     ...overrides,
   };
+}
+
+function buildLaunchGraph(status = "ready"): Record<string, unknown> {
+  return buildWorkstreamGraph({
+    nodes: [
+      {
+        id: "launch-prompt-profiles",
+        type: "task",
+        title: "Launch prompt profiles",
+        summary: "Configure the PAW launch prompt defaults.",
+        status,
+        attention: "focus",
+        repoIds: ["streamliner"],
+        tracker: {
+          type: "github",
+          owner: "lossyrob",
+          repo: "streamliner",
+          number: 33,
+        },
+        dependsOn: [],
+      },
+    ],
+    checkpoints: [
+      {
+        id: "launch",
+        title: "Launch",
+        summary: "Launch preparation.",
+        status: "planned",
+        nodeIds: ["launch-prompt-profiles"],
+      },
+    ],
+  });
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -212,6 +245,25 @@ function findInputByLabel(container: HTMLElement, label: string): HTMLInputEleme
   return input;
 }
 
+function findTextareaByLabel(container: HTMLElement, label: string): HTMLTextAreaElement {
+  const textarea = container.querySelector(`textarea[aria-label="${label}"]`);
+  if (!(textarea instanceof HTMLTextAreaElement)) {
+    throw new Error(`Could not find textarea with label "${label}".`);
+  }
+  return textarea;
+}
+
+function findCanvasNode(container: HTMLElement, title: string): HTMLElement {
+  const titleElement = [...container.querySelectorAll<HTMLElement>(".sl-node-title")].find(
+    (candidate) => candidate.textContent?.trim() === title,
+  );
+  const nodeElement = titleElement?.closest(".react-flow__node") ?? titleElement?.closest(".sl-node");
+  if (!(nodeElement instanceof HTMLElement)) {
+    throw new Error(`Could not find canvas node "${title}".`);
+  }
+  return nodeElement;
+}
+
 function findButtonByLabel(container: HTMLElement, label: string): HTMLButtonElement {
   const button = container.querySelector(`button[aria-label="${label}"]`);
   if (!(button instanceof HTMLButtonElement)) {
@@ -235,6 +287,24 @@ function setInputValue(
     valueSetter.call(input, value);
     input.dispatchEvent(new Event("input", { bubbles: true }));
     input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+}
+
+function setTextareaValue(
+  textarea: HTMLTextAreaElement,
+  value: string,
+): void {
+  const valueSetter = Object.getOwnPropertyDescriptor(
+    HTMLTextAreaElement.prototype,
+    "value",
+  )?.set;
+  if (!valueSetter) {
+    throw new Error("Could not find HTMLTextAreaElement value setter.");
+  }
+  act(() => {
+    valueSetter.call(textarea, value);
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    textarea.dispatchEvent(new Event("change", { bubbles: true }));
   });
 }
 
@@ -422,6 +492,297 @@ describe("App sessions route", () => {
           requestPath(input as RequestInfo | URL) === "/api/workstreams/streamliner/api-test/graph",
         ),
       ).toBe(true);
+    },
+    15_000,
+  );
+
+  it(
+    "opens and cancels the PAW launch dialog without preparing a launch",
+    async () => {
+      const graph = buildLaunchGraph();
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      act(() => {
+        findCanvasNode(container, "Launch prompt profiles").click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Launch PAW worker").click();
+      });
+      await settle();
+
+      expect(container.textContent).toContain("PAW launch");
+      expect(findInputByLabel(container, "PAW work ID").value).toBe("launch-prompt-profiles");
+
+      act(() => {
+        findButton(container, "Cancel").click();
+      });
+      await settle();
+
+      expect(container.querySelector('input[aria-label="PAW work ID"]')).toBeNull();
+      expect([...container.querySelectorAll("button")].some(
+        (button) => button.textContent?.trim() === "Prepare launch",
+      )).toBe(false);
+      expect(
+        fetchMock.mock.calls.some(([input]) =>
+          requestPath(input as RequestInfo | URL) === "/api/launch-preparations",
+        ),
+      ).toBe(false);
+    },
+    15_000,
+  );
+
+  it(
+    "prepares a PAW launch with custom message and explicit empty CLI args",
+    async () => {
+      const graph = buildLaunchGraph();
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        if (path === "/api/launch-preparations" && init?.method === "POST") {
+          return jsonResponse({
+            cwd: "C:\\graphs\\api-test",
+            branch: "feature/launch-prompt-profiles",
+            pawWorkDir: "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles",
+            workflowContextPath:
+              "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles\\WorkflowContext.md",
+            streamlinerContextPath:
+              "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles\\streamliner\\context.md",
+            cliArgs: [],
+            kickoffPrompt: "Start PAW launch prompt profiles.",
+            launchMetadata: {
+              launchNonce: "nonce",
+              projectKey: "streamliner",
+              workstreamId: "api-test",
+              nodeId: "launch-prompt-profiles",
+            },
+          });
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      act(() => {
+        findCanvasNode(container, "Launch prompt profiles").click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Launch PAW worker").click();
+      });
+      await settle();
+
+      setInputValue(findInputByLabel(container, "Copilot CLI args"), "");
+      setTextareaValue(
+        findTextareaByLabel(container, "Builder custom message"),
+        "Prefer the final PR review path.",
+      );
+      act(() => {
+        findButton(container, "Prepare launch").click();
+      });
+      await settle(100);
+
+      const launchCall = fetchMock.mock.calls.find(
+        ([input, init]) =>
+          requestPath(input as RequestInfo | URL) === "/api/launch-preparations" &&
+          init?.method === "POST",
+      );
+      expect(launchCall).toBeDefined();
+      expect(JSON.parse(String(launchCall?.[1]?.body))).toEqual(
+        expect.objectContaining({
+          nodeId: "launch-prompt-profiles",
+          graphPath: "C:\\graphs\\api-test\\graph.json",
+          configuration: expect.objectContaining({
+            workTitle: "Launch prompt profiles",
+            workId: "launch-prompt-profiles",
+            targetBranch: "feature/launch-prompt-profiles",
+            cliArgs: [],
+            customMessage: "Prefer the final PR review path.",
+            paw: expect.objectContaining({
+              workflowIdentity: "paw",
+              reviewPolicy: "final-pr-only",
+            }),
+            terminal: expect.objectContaining({
+              launchMode: "manual",
+            }),
+          }),
+        }),
+      );
+      expect(container.textContent).toContain("Prepared handoff");
+      expect(container.textContent).toContain("C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles");
+      expect(container.textContent).toContain("CLI args");
+      expect(container.textContent).toContain("none");
+    },
+    15_000,
+  );
+
+  it(
+    "surfaces PAW launch preparation errors",
+    async () => {
+      const graph = buildLaunchGraph();
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        if (path === "/api/launch-preparations" && init?.method === "POST") {
+          return jsonResponse({ code: "paw_init_failed", error: "PAW init failed." }, 500);
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      act(() => {
+        findCanvasNode(container, "Launch prompt profiles").click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Launch PAW worker").click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Prepare launch").click();
+      });
+      await settle(100);
+
+      expect(container.textContent).toContain("PAW init failed.");
+      expect(container.textContent).not.toContain("Prepared handoff");
+    },
+    15_000,
+  );
+
+  it(
+    "disables launch preparation for non-ready and browser-only graph sources",
+    async () => {
+      const nonReadyGraph = buildLaunchGraph("in-progress");
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(nonReadyGraph);
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      act(() => {
+        findCanvasNode(container, "Launch prompt profiles").click();
+      });
+      await settle();
+
+      expect(findButton(container, "Launch PAW worker").disabled).toBe(true);
+      expect(container.textContent).toContain("Only ready nodes can be launched.");
+
+      await act(async () => {
+        root.unmount();
+        await Promise.resolve();
+      });
+      container.innerHTML = "";
+      root = createRoot(container);
+
+      const browserGraph = buildLaunchGraph();
+      const browserContent = JSON.stringify(browserGraph);
+      await storeBrowserWorkstreamDirectory({
+        directoryName: "Browser graph",
+        content: browserContent,
+        lastModified: 1_777_777_777_000,
+        directoryHandle: {
+          name: "Browser graph",
+          kind: "directory",
+          queryPermission: async () => "granted" as PermissionState,
+          getFileHandle: async () => ({
+            name: "graph.json",
+            kind: "file",
+            getFile: async () =>
+              new File([browserContent], "graph.json", {
+                lastModified: 1_777_777_777_000,
+              }),
+          }),
+        },
+      } as Parameters<typeof storeBrowserWorkstreamDirectory>[0]);
+      const browserFetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({ version: 1, migrationWarnings: [], workstreams: [] });
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", browserFetchMock);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      act(() => {
+        findCanvasNode(container, "Launch prompt profiles").click();
+      });
+      await settle();
+
+      expect(findButton(container, "Launch PAW worker").disabled).toBe(true);
+      expect(container.textContent).toContain(
+        "Browser-only or missing graph sources cannot be prepared by the backend.",
+      );
     },
     15_000,
   );

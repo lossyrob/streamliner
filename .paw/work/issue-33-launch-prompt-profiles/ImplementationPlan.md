@@ -83,17 +83,17 @@ Phase 2 depends on the Phase 1 route/types. Phase 3 depends on the completed bac
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] UI tests pass: `npm test -- --run src/App.test.tsx`
-- [ ] Full test suite passes: `npm test -- --run`
-- [ ] Lint passes: `npm run lint`
+- [x] UI tests pass: `npm test -- --run src/App.test.tsx`
+- [x] Full test suite passes: `npm test -- --run`
+- [x] Lint passes: `npm run lint`
 
 #### Manual Verification:
-- [ ] Selecting a launchable node shows a launch action in the inspector.
-- [ ] Non-ready or backend-unreadable graph nodes are not presented as launchable.
-- [ ] Launch action opens the configuration dialog before any preparation request.
-- [ ] Cancel closes the dialog without calling preparation.
-- [ ] Submit displays preparation progress and then a handoff summary without starting a terminal.
-- [ ] Dialog remains visually usable on the representative session-launching graph.
+- [x] Selecting a launchable node shows a launch action in the inspector.
+- [x] Non-ready or backend-unreadable graph nodes are not presented as launchable.
+- [x] Launch action opens the configuration dialog before any preparation request.
+- [x] Cancel closes the dialog without calling preparation.
+- [x] Submit displays preparation progress and then a handoff summary without starting a terminal.
+- [x] Dialog remains visually usable on the representative session-launching graph.
 
 ---
 
@@ -108,14 +108,14 @@ Phase 2 depends on the Phase 1 route/types. Phase 3 depends on the completed bac
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Docs build passes: `npm run docs:build`
-- [ ] Final full verification passes: `npm test -- --run`, `npm run lint`, `npm run build`
+- [x] Docs build passes: `npm run docs:build`
+- [x] Final full verification passes: `npm test -- --run`, `npm run lint`, `npm run build`
 
 #### Manual Verification:
-- [ ] Docs accurately describe the implemented PAW-only launch preparation contract.
-- [ ] Code/docs review confirms no generic non-PAW launch-profile abstraction was introduced for the MVP.
-- [ ] Screenshot confirms the selected-node launch dialog is visible and readable on the representative graph.
-- [ ] Local screenshot artifacts are not staged for commit.
+- [x] Docs accurately describe the implemented PAW-only launch preparation contract.
+- [x] Code/docs review confirms no generic non-PAW launch-profile abstraction was introduced for the MVP.
+- [x] Screenshot confirms the selected-node launch dialog is visible and readable on the representative graph.
+- [x] Local screenshot artifacts are not staged for commit.
 
 ---
 
