@@ -856,7 +856,7 @@ function finalPackagePath(options: {
         "outputDir must be an absolute path.",
       );
     }
-    return join(resolve(options.outputDir), options.contextId);
+    return join(resolve(options.outputDir), "streamliner");
   }
 
   return join(
@@ -887,7 +887,25 @@ async function ensurePathDoesNotExist(path: string): Promise<void> {
 async function writePackageFiles(options: {
   packagePath: string;
   contextContent: string;
+  overwriteContextFile: boolean;
 }): Promise<void> {
+  if (options.overwriteContextFile) {
+    await mkdir(options.packagePath, { recursive: true });
+    const tempPath = join(options.packagePath, `.${CONTEXT_FILE_NAME}.tmp-${process.pid}-${randomUUID()}`);
+    try {
+      await writeFile(tempPath, options.contextContent, "utf8");
+      await rename(tempPath, join(options.packagePath, CONTEXT_FILE_NAME));
+      return;
+    } catch (error: unknown) {
+      await rm(tempPath, { force: true });
+      throw new LaunchContextPreparationError(
+        "write_failed",
+        500,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+
   await ensurePathDoesNotExist(options.packagePath);
   const parent = dirname(options.packagePath);
   await mkdir(parent, { recursive: true });
@@ -1120,6 +1138,7 @@ export async function prepareLaunchContextPackage(
   await writePackageFiles({
     packagePath,
     contextContent,
+    overwriteContextFile: options.outputDir !== undefined,
   });
 
   return {

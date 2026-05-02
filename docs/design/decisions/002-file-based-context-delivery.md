@@ -125,6 +125,20 @@ them as hints or possible starting points and keeps the list short. Source
 references and freshness remain backend/API metadata; they are not a
 worker-facing manifest or a durable record of an LLM-chosen Layer 0 selection.
 
+### 2026-05-02 update: PAW work-dir handoff path
+
+Pre-claim and preview context packages still use the runtime-state
+`launch-contexts/{contextId}/context.md` shape so repeated preparations do not
+overwrite each other. Once profile-specific setup supplies a PAW work directory,
+the worker-facing handoff is written to `streamliner/context.md` under that work
+directory instead of `{contextId}/context.md`.
+
+The `streamliner/` namespace keeps generated Streamliner launch artifacts out of
+the PAW control-artifact root next to `WorkflowContext.md`, while preserving a
+plain `context.md` filename for the worker. Repeated preparations for the same
+PAW work directory replace `streamliner/context.md`; the durable `contextId`
+remains backend metadata for preview, diagnostics, and any later launch archive.
+
 ## Open questions
 
 - **Archive retention policy**: How long are launch context archives kept? Options: last N launches per workstream, last N days, unbounded until manual clean. Resolve before launching multi-day PAW workflows routinely, because that is where forensic replay matters most.

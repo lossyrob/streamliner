@@ -581,10 +581,30 @@ describe("prepareLaunchContextPackage", () => {
     expect(existsSync(second.contextFilePath)).toBe(true);
   });
 
-  it("treats outputDir as a reusable parent for per-context packages", async () => {
+  it("writes outputDir contexts to a Streamliner namespace inside the work dir", async () => {
     const root = createRootDir();
     const { graphPath } = buildFixture(root);
-    const outputDir = join(root, "prepared-contexts");
+    const outputDir = join(root, ".paw", "work", "backend-context-assembly");
+    mkdirSync(outputDir, { recursive: true });
+
+    const result = await prepareLaunchContextPackage({
+      graphPath,
+      nodeId: "backend-context-assembly",
+      outputDir,
+      createContextId: () => "ctx-output",
+      trackerResolver,
+      contextGenerator: createContextGenerator(),
+    });
+
+    expect(result.contextPackagePath).toBe(normalizePath(join(outputDir, "streamliner")));
+    expect(result.contextFilePath).toBe(normalizePath(join(outputDir, "streamliner", "context.md")));
+    expect(existsSync(join(outputDir, "streamliner", "context.md"))).toBe(true);
+  });
+
+  it("overwrites outputDir contexts instead of creating sibling context id directories", async () => {
+    const root = createRootDir();
+    const { graphPath } = buildFixture(root);
+    const outputDir = join(root, ".paw", "work", "backend-context-assembly");
     mkdirSync(outputDir, { recursive: true });
     const ids = ["ctx-output-one", "ctx-output-two"];
 
@@ -594,7 +614,25 @@ describe("prepareLaunchContextPackage", () => {
       outputDir,
       createContextId: () => ids.shift() ?? "ctx-extra",
       trackerResolver,
-      contextGenerator: createContextGenerator(),
+      contextGenerator: async () => [
+        "# Launch Context - Backend context assembly",
+        "",
+        "## Layer 0 - Design Context Hints",
+        "",
+        "First generated context.",
+        "",
+        "## Layer 1 - Worker Mission",
+        "",
+        "First mission.",
+        "",
+        "## Layer 2 - Relevant State",
+        "",
+        "First state.",
+        "",
+        "## Layer 3 - Coordination Context",
+        "",
+        "First coordination.",
+      ].join("\n"),
     });
     const second = await prepareLaunchContextPackage({
       graphPath,
@@ -602,13 +640,33 @@ describe("prepareLaunchContextPackage", () => {
       outputDir,
       createContextId: () => ids.shift() ?? "ctx-extra",
       trackerResolver,
-      contextGenerator: createContextGenerator(),
+      contextGenerator: async () => [
+        "# Launch Context - Backend context assembly",
+        "",
+        "## Layer 0 - Design Context Hints",
+        "",
+        "Second generated context.",
+        "",
+        "## Layer 1 - Worker Mission",
+        "",
+        "Second mission.",
+        "",
+        "## Layer 2 - Relevant State",
+        "",
+        "Second state.",
+        "",
+        "## Layer 3 - Coordination Context",
+        "",
+        "Second coordination.",
+      ].join("\n"),
     });
 
-    expect(first.contextPackagePath).toBe(normalizePath(join(outputDir, "ctx-output-one")));
-    expect(second.contextPackagePath).toBe(normalizePath(join(outputDir, "ctx-output-two")));
-    expect(existsSync(join(outputDir, "ctx-output-one", "context.md"))).toBe(true);
-    expect(existsSync(join(outputDir, "ctx-output-two", "context.md"))).toBe(true);
+    expect(first.contextPackagePath).toBe(second.contextPackagePath);
+    expect(first.contextFilePath).toBe(second.contextFilePath);
+    expect(existsSync(join(outputDir, "ctx-output-one"))).toBe(false);
+    expect(existsSync(join(outputDir, "ctx-output-two"))).toBe(false);
+    expect(readFileSync(second.contextFilePath, "utf8")).toContain("Second generated context.");
+    expect(readFileSync(second.contextFilePath, "utf8")).not.toContain("First generated context.");
   });
 
   it("falls back to raw brief content when canonical sections are absent", async () => {
