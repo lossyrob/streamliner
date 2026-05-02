@@ -273,15 +273,24 @@ export class LaunchClaimFileStore implements LaunchClaimStore {
           `LaunchClaim mutator returned mismatched launchClaimId: expected ${launchClaimId}, got ${draft.launchClaimId}.`,
         );
       }
+      const isUnchanged = deepEquals(current, draft);
+      // If the mutator already advanced updatedAt (callers can pass a
+      // simulated `now` for sweep tests / deterministic scheduling),
+      // honor that timestamp; otherwise stamp wall-clock.
+      const nextUpdatedAt = isUnchanged
+        ? current.updatedAt
+        : draft.updatedAt !== current.updatedAt
+          ? draft.updatedAt
+          : isoNow();
       const next: LaunchClaim = {
         ...draft,
-        updatedAt: deepEquals(current, draft) ? current.updatedAt : isoNow(),
+        updatedAt: nextUpdatedAt,
       };
       const validated = parseLaunchClaim(JSON.parse(JSON.stringify(next)));
       records.set(launchClaimId, validated);
       this.persistEntry(validated);
       this.persistIndex(records);
-      if (!deepEquals(current, validated)) {
+      if (!isUnchanged) {
         this.emitChange({
           kind: "claim.upserted",
           launchClaimId: validated.launchClaimId,

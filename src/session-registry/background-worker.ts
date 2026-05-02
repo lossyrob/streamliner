@@ -25,13 +25,8 @@ import {
 } from "./file-store";
 import { drainTrustedSessionSignalSpool } from "./trusted-session-signals";
 import { runLaunchClaimBindingPass } from "./launch-claim-binding";
-import {
-  reconcileOrphanReservedRows,
-  isClaimWindowOpen,
-  isClaimPastRetention,
-  isClaimTerminal,
-  applyReservedRowCleanup,
-} from "./launch-claims";
+import { runLaunchClaimSweep } from "./launch-claim-sweep";
+import { reconcileOrphanReservedRows } from "./launch-claims";
 import type { LaunchClaimStore } from "../launch-claim-contract";
 import type { ApiLogger } from "../server/logger";
 
@@ -276,7 +271,12 @@ export class SessionRegistryBackgroundWorker {
           }
         }
         try {
-          this.runLaunchClaimSweep();
+          runLaunchClaimSweep({
+            registryStore: this.store,
+            claimStore: this.claimStore,
+            now: this.now,
+            logger: this.claimLogger.withScope("launch-claim.sweep"),
+          });
         } catch (error) {
           if (!isLockedError(error)) {
             this.logger.warn("[session-worker] launch-claim sweep failed", error);
@@ -291,77 +291,6 @@ export class SessionRegistryBackgroundWorker {
       this.logger.error("[session-worker] cycle failed", error);
     } finally {
       this.running = false;
-    }
-  }
-
-  private runLaunchClaimSweep(): void {
-    if (!this.claimStore || !this.claimLogger) return;
-    const sweepLogger = this.claimLogger.withScope("launch-claim.sweep");
-    const nowMs = this.now().getTime();
-    const nowIso = this.now().toISOString();
-    // Phase 4 extracts this into its own module; for Phase 3 wire-up we
-    // implement the minimum lifecycle transitions inline so claims past
-    // their binding window get expired/nonce-missing/cleanup applied.
-    const allClaims = this.claimStore.listClaims();
-    for (const entry of allClaims) {
-      const claim = this.claimStore.getClaim(entry.launchClaimId);
-      if (!claim) continue;
-      if (!isClaimTerminal(claim.status)) {
-        if (!isClaimWindowOpen(claim, nowMs)) {
-          // Transition to nonce-missing or expired.
-          const sawCandidates = claim.seenCandidateCopilotSessionIds.length > 0;
-          const nextStatus = sawCandidates ? "nonce-missing" : "expired";
-          this.claimStore.updateClaim(entry.launchClaimId, (current) => ({
-            ...current,
-            status: nextStatus,
-            failureCode: sawCandidates ? "expired-no-nonce" : "expired-no-candidates",
-          }));
-          if (sawCandidates) {
-            sweepLogger.warn("nonce-absent-after-window", {
-              event: "launch-claim.nonce-absent-after-window",
-              launchClaimId: claim.launchClaimId,
-              workstreamId: claim.workstreamId,
-              nodeId: claim.nodeId,
-              candidateCount: claim.seenCandidateCopilotSessionIds.length,
-              at: nowIso,
-            });
-            for (const cid of claim.seenCandidateCopilotSessionIds) {
-              sweepLogger.warn("orphan-session-no-nonce", {
-                event: "launch-claim.launch-claim-orphan-session",
-                case: "a",
-                launchClaimId: claim.launchClaimId,
-                workstreamId: claim.workstreamId,
-                nodeId: claim.nodeId,
-                copilotSessionId: cid,
-                at: nowIso,
-              });
-            }
-          }
-          // Apply FR-3 reserved-row cleanup.
-          if (claim.reservedRegistryId !== null) {
-            const cleanup = applyReservedRowCleanup(this.store, {
-              ...claim,
-              status: nextStatus,
-            });
-            if (cleanup.reservedRowGraphBindingCleared) {
-              sweepLogger.warn("orphan-session-reserved-preserved", {
-                event: "launch-claim.launch-claim-orphan-session",
-                case: "b",
-                launchClaimId: claim.launchClaimId,
-                workstreamId: claim.workstreamId,
-                nodeId: claim.nodeId,
-                registryId: claim.reservedRegistryId,
-                at: nowIso,
-              });
-            }
-          }
-        }
-      }
-      // Pruning: any claim past retention deadline.
-      const refreshed = this.claimStore.getClaim(entry.launchClaimId);
-      if (refreshed && isClaimPastRetention(refreshed, nowMs)) {
-        this.claimStore.deleteClaim(entry.launchClaimId);
-      }
     }
   }
 

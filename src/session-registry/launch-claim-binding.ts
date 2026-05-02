@@ -376,6 +376,7 @@ export async function runLaunchClaimBindingPass(
             status: "ambiguous",
             failureCode: "ambiguous-candidates",
             failureReason: "Multiple Copilot sessions in expectedCwd matched nonce.",
+            updatedAt: nowIso,
           };
         });
         result.claimsTransitionedToAmbiguous += 1;
@@ -546,6 +547,7 @@ export async function runLaunchClaimBindingPass(
               status: "bound",
               boundCopilotSessionId: candidateSessionId,
               boundRegistryId,
+              updatedAt: nowIso,
             };
           }
           return next;
