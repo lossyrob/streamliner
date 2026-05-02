@@ -37,7 +37,7 @@ Custom Workflow Instructions: none
 Initial Prompt: none
 Issue URL: https://github.com/lossyrob/streamliner/issues/33
 Remote: origin
-Artifact Lifecycle: commit-and-persist
+Artifact Lifecycle: commit-and-clean
 Artifact Paths: auto-derived
 Additional Inputs: none
 
