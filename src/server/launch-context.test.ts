@@ -363,11 +363,63 @@ describe("prepareLaunchContextPackage", () => {
     expect(prompt).toContain("Do not expose your own context-generation mechanics");
     expect(prompt).toContain("omit unrelated graph nodes");
     expect(prompt).toContain("do not print hashes or internal metadata");
+    expect(prompt).toContain("'## Additional Context'");
+    expect(prompt).toContain("Node hints: <node-id>");
+    expect(prompt).toContain("never invert it into worker instructions");
     expect(prompt).toMatch(/STREAMLINER_CONTEXT_BOUNDARY_[a-f0-9]+:BEGIN WORKSTREAM BRIEF/);
     expect(prompt).not.toContain("\"rationale\"");
     expect(prompt).not.toContain("\"freshness\"");
     expect(prompt).not.toContain("manifest.json");
     expect(prompt).not.toContain("layer-0-design.md");
+  });
+
+  it("carries an Additional Context section through to the brief source block", async () => {
+    const root = createRootDir();
+    const { graphPath, stateRoot } = buildFixture(root);
+    const briefPath = join(
+      root,
+      ".streamliner",
+      "workstreams",
+      "session-launching-and-tracking",
+      "brief.md",
+    );
+    const briefWithAdditionalContext = [
+      readFileSync(briefPath, "utf8"),
+      "",
+      "## Additional Context",
+      "",
+      "Operator collected this orientation while shaping the workstream.",
+      "",
+      "### Node hints: backend-context-assembly",
+      "",
+      "- Honor the existing brief source block ordering when extending the prompt.",
+    ].join("\n");
+    writeFileSync(briefPath, briefWithAdditionalContext, "utf8");
+    const generationInputs: LaunchContextGenerationInput[] = [];
+
+    await prepareLaunchContextPackage({
+      graphPath,
+      nodeId: "backend-context-assembly",
+      stateRoot,
+      createContextId: () => "ctx-additional-context",
+      trackerResolver,
+      contextGenerator: createContextGenerator(generationInputs),
+    });
+
+    const input = generationInputs[0];
+    if (!input) {
+      throw new Error("Expected generation input.");
+    }
+    expect(input.briefSource.content).toContain("## Additional Context");
+    expect(input.briefSource.content).toContain(
+      "### Node hints: backend-context-assembly",
+    );
+    const prompt = buildContextGenerationPrompt(input);
+    expect(prompt).toContain("## Additional Context");
+    expect(prompt).toContain(
+      "Operator collected this orientation while shaping the workstream.",
+    );
+    expect(prompt).toContain("### Node hints: backend-context-assembly");
   });
 
   it("records unavailable optional inputs while still producing a package", async () => {

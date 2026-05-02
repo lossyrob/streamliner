@@ -1,7 +1,7 @@
 ---
 kind: design-doc
 status: current
-last_updated: 2026-04-30
+last_updated: 2026-05-02
 update_semantics: rewrite-in-place
 authoritative_for: "Layered context package concept and progressive-disclosure model"
 scope_tags:
@@ -47,6 +47,10 @@ This layer orients the worker to what just happened, what is in flight, and what
 What a worker receives for a specific node: wave context, node spec reference, coordination notes, and any node-specific design narrowing.
 
 The worker never reconstructs the whole workstream. It receives references to project design, focused workstream intent and operational state, and the node's specific mission.
+
+## Supplementary brief context
+
+The workstream brief's optional `## Additional Context` section (see [workstream-format.md](../workstream-format.md)) is the supplementary-context channel into Layer 2/3 synthesis. It carries unstructured material the workstream-shaping agent has gathered — conversation excerpts, prior-art links, per-node hints, stakeholder color, exploratory threads — that does not belong in the brief's structured sections but may inform what the worker needs to know. The launch SDK extracts only the parts relevant to the selected node and never inverts that material into worker instructions.
 
 ## Progressive Disclosure
 

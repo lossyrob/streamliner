@@ -577,6 +577,7 @@ export function buildContextGenerationPrompt(input: LaunchContextGenerationInput
     "- Do not include context-generation meta language such as 'generated worker context', 'synthesis step', or 'context generation constraints'.",
     "- In Layer 3, include only nodes, checkpoints, or dependencies that directly affect or may be affected by the selected node; omit unrelated graph nodes.",
     "- Include sibling/upstream/downstream context only as coordination background, not as tasks assigned to this worker.",
+    "- The workstream brief may include an optional '## Additional Context' section containing unstructured supplementary material such as conversation excerpts, prior-art links, per-node hints, stakeholder color, or exploratory threads. Mine it for orientation that is directly relevant to the selected node and weave it into Layer 2 or Layer 3 as supporting context. Prefer subsections labeled 'Node hints: <node-id>' that match the selected node's id. If nothing in Additional Context is relevant to this node, omit it; never invert it into worker instructions.",
     "- Include an 'Unavailable Inputs' section only when unavailable inputs are present and actionable.",
     "",
     "Required top-level structure:",

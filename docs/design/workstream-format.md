@@ -1,7 +1,7 @@
 ---
 kind: design-doc
 status: current
-last_updated: 2026-04-21
+last_updated: 2026-05-02
 update_semantics: rewrite-in-place
 authoritative_for: "Workstream artifact format and runtime-state boundaries"
 scope_tags:
@@ -148,16 +148,20 @@ The brief is the narrative companion to the graph. It captures intent, boundarie
 
 ## Open Questions
 - {Question — removed when resolved}
+
+## Additional Context
+{Optional. Unstructured supplementary context the workstream-shaping agent has gathered: conversation excerpts worth preserving, prior-art links, per-node hints, stakeholder color, exploratory threads, references the structured sections deliberately leave out.}
 ```
 
 ### Brief guidelines
 
-- **Target length:** Under 400 lines. Push detail to node specs.
+- **Target length:** Structured sections (Purpose through Open Questions) target under 400 lines so a cold reader can absorb the workstream quickly. Push detail to node specs.
 - **Edit in place.** The brief reads as a coherent whole at any point; Git provides history.
 - **Written for a cold reader.** A new session reading the brief, graph, and design layer — starting with the referenced docs — is immediately productive.
 - **Decisions are workstream-local only.** Project-wide architectural choices belong in design docs or decision records.
 - **Current State is a durable summary, not a runtime telemetry log.** Rewrite it on meaningful direction changes, not every session pulse.
 - **Runtime telemetry stays outside the brief.** Session IDs, observed session state, launch claims, and tracker caches belong in the local runtime store.
+- **Additional Context is optional and supplementary.** It is the place for material the launch SDK can mine for node-relevant orientation — conversation excerpts, prior-art links, per-node hints, stakeholder color, exploratory threads. It is **not** a second home for Boundaries, Decisions, or Current State; those keep their dedicated sections so the structured part of the brief stays clean. Additional Context may extend the brief beyond the structured-section length target, but stays curated: stale items get pruned in the same rewrite-in-place spirit, not append-only. Per-node hints can use a `### Node hints: <node-id>` subsection convention so the launch SDK can preferentially extract material for the selected node.
 
 ## The Dependency Graph (`graph.json`)
 
