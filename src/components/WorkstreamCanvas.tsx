@@ -34,6 +34,33 @@ const EDGE_HIGHLIGHT_STYLES: Record<string, React.CSSProperties> = {
   none: { stroke: "#94a3b8", strokeWidth: 1.5 },
 };
 
+function minimapNodeColor(node: Node): string {
+  if (node.type === "workstreamSwimlane") {
+    return "rgba(147, 197, 253, 0.18)";
+  }
+  const data = node.data as Partial<WorkstreamGraphNodeData> | undefined;
+  switch (data?.entry?.operationalStatus) {
+    case "completed":
+      return "#2fa66f";
+    case "in-progress":
+      return "#1f7ae0";
+    case "ready":
+      return "#7c3aed";
+    case "blocked":
+      return "#dc2626";
+    case "waiting-for-review":
+      return "#b07808";
+    case "waiting-for-validation":
+      return "#d97706";
+    default:
+      return "#f59e0b";
+  }
+}
+
+function minimapNodeStrokeColor(node: Node): string {
+  return node.type === "workstreamSwimlane" ? "#93c5fd" : "rgba(20, 37, 64, 0.42)";
+}
+
 interface WorkstreamCanvasProps {
   layout: WorkstreamGraphLayoutResult;
   selectedNodeId: string | null;
@@ -58,6 +85,8 @@ export function WorkstreamCanvas({
           index: lane.index,
           state: lane.state,
         },
+        width: lane.width,
+        height: lane.height,
         style: { width: lane.width, height: lane.height },
         draggable: false,
         selectable: false,
@@ -79,6 +108,8 @@ export function WorkstreamCanvas({
           highlight: ln.highlight,
           showId: false,
         },
+        width: ln.width,
+        height: ln.height,
         style: { width: ln.width, height: ln.height },
       })),
     [layout],
@@ -182,7 +213,16 @@ export function WorkstreamCanvas({
       >
         <Background variant={BackgroundVariant.Dots} />
         <Controls fitViewOptions={{ nodes: taskNodes, padding: 0.28, maxZoom: 0.7 }} />
-        <MiniMap pannable zoomable />
+        <MiniMap
+          pannable
+          zoomable
+          bgColor="#ffffff"
+          maskColor="rgba(15, 23, 42, 0.08)"
+          nodeBorderRadius={4}
+          nodeColor={minimapNodeColor}
+          nodeStrokeColor={minimapNodeStrokeColor}
+          nodeStrokeWidth={1.5}
+        />
       </ReactFlow>
     </div>
   );
