@@ -400,7 +400,6 @@ export async function runLaunchClaimBindingPass(
 
       // Persist seenCandidate + bind action atomically via updateClaim AFTER successful row write.
       // First, attempt the row-side binding.
-      const cwdNormalized = pathKeyForCompare(claim.expectedCwd);
       let bindOutcome: "bound" | "wait" = "wait";
       let bindReason: LaunchClaimEvidenceReason = "row-attached-during-cleanup-window";
       let boundRegistryId: string | null = null;
@@ -487,7 +486,7 @@ export async function runLaunchClaimBindingPass(
             const bindResult = options.registryStore.bindClaimToRow(
               observedRowId,
               {
-                cwdAfterNormalize: cwdNormalized,
+                cwdAfterNormalize: claim.expectedCwd,
                 branch: claim.expectedBranch,
                 repo: claim.expectedRepo,
                 requireGraphBindingNullOrMatching: {
@@ -519,6 +518,10 @@ export async function runLaunchClaimBindingPass(
                   registryId: observedRowId,
                   detail: bindResult.detail ?? null,
                 });
+              } else if (bindResult.reason === "branch-changed") {
+                bindReason = "candidate-branch-mismatch";
+              } else if (bindResult.reason === "repo-changed") {
+                bindReason = "candidate-repo-mismatch";
               } else {
                 bindReason = "candidate-cwd-mismatch-after-recheck";
               }

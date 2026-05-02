@@ -54,6 +54,15 @@ export interface LaunchClaimListMeta {
 export interface LaunchClaimListResponse {
   apiVersion: typeof LAUNCH_CLAIMS_API_VERSION;
   items: LaunchClaimSummary[];
+  /**
+   * Reserved for future cursor-based pagination. Always null in this
+   * slice; consumers should use `meta.total` to detect when more
+   * records exist than `items.length` and either widen the
+   * `?status` / `?workstreamId` / `?nodeId` filter or raise
+   * `?limit` (max 200). A real cursor protocol is captured as a Phase
+   * Candidate; the field stays in the envelope so adding pagination
+   * later is non-breaking.
+   */
   nextCursor: string | null;
   meta: LaunchClaimListMeta;
 }
