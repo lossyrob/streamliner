@@ -32,6 +32,7 @@ export interface StreamlinerApiAppOptions {
   recentsPath?: string;
   workstreamRegistryPath?: string;
   workstreamSourceRegistryPath?: string;
+  readonlyMode?: boolean;
   relaunchDeps?: Partial<RelaunchDeps>;
   launchContextDeps?: LaunchContextRouteDeps;
   launchPreparationDeps?: LaunchPreparationRouteDeps;
@@ -61,6 +62,8 @@ const jsonErrorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
   res.status(status).json({ error: message });
 };
 
+const READONLY_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
 export function createStreamlinerApiApp(
   options: StreamlinerApiAppOptions = {},
 ): StreamlinerApiApp {
@@ -81,6 +84,18 @@ export function createStreamlinerApiApp(
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true });
   });
+  if (options.readonlyMode) {
+    app.use((req, res, next) => {
+      if (READONLY_METHODS.has(req.method)) {
+        next();
+        return;
+      }
+      res.status(403).json({
+        code: "preview_readonly",
+        error: "This Streamliner preview is read-only. Restart with --mode sandbox to allow mutations.",
+      });
+    });
+  }
   app.use(
     "/api",
     createWorkstreamsRouter({

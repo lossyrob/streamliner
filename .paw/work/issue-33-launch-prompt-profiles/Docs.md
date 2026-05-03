@@ -59,6 +59,23 @@ The builder can clear the CLI args field to intentionally launch with no Copilot
 
 The UI currently sends PAW defaults for a full local workflow with `reviewPolicy: "final-pr-only"`, planning docs review enabled, and final local agent review disabled. Terminal launch mode is manual because this feature prepares artifacts but does not open a terminal.
 
+### Worktree Preview Workflow
+
+To inspect this PR branch without disrupting a main Streamliner instance, start an isolated preview from the worktree:
+
+```powershell
+npm run preview:worktree -- --name pr-41 --graph .streamliner\workstreams\session-launching-and-tracking\graph.json
+```
+
+The preview launcher starts detached API and Vite processes on free ports, writes runtime state under `.streamliner-preview\<name>\`, disables the session background worker, and seeds an isolated workstream registry from the supplied graph. The default `readonly` mode blocks mutating API requests; use `--mode sandbox` only when intentionally testing write flows against disposable preview state.
+
+Stop or inspect the preview with:
+
+```powershell
+npm run preview:status -- --name pr-41
+npm run preview:stop -- --name pr-41
+```
+
 ## API Reference
 
 ### `POST /api/launch-preparations`

@@ -42,10 +42,38 @@ Use `npm run api` for a non-watch API process. The API serves `GET /api/health`,
 | `STREAMLINER_LOG_LEVEL` | `info` | Minimum log level (`debug`/`info`/`warn`/`error`) |
 | `STREAMLINER_LOG_DIR` | `~/.streamliner/state/logs` | Override the log file directory |
 | `STREAMLINER_LOG_CONSOLE` | `1` | Set to `0` to suppress console mirroring of log entries |
+| `STREAMLINER_WORKSTREAM_REGISTRY` | `~/.streamliner/state/workstream-registry/workstreams.json` | Override the tracked workstream registry path |
+| `STREAMLINER_WORKSTREAM_SOURCE_REGISTRY` | `~/.streamliner/state/workstream-registry/sources.json` | Override the workstream source registry path |
+| `STREAMLINER_RECENTS_PATH` | `~/.streamliner/recent-graphs.json` | Override the legacy recents path |
+| `STREAMLINER_PREVIEW_READONLY` | unset | Set to `1` for read-only preview API mode |
 
 When no `STREAMLINER_GRAPH` is set and no recent graph is available, `GET /api/graph.json` returns a 404. The dashboard handles that by falling back to Vite's static `public/example-project.json` fixture. Use the "Load workstream…" button to select a different workstream JSON file.
 
 The API process writes structured JSON-lines logs to `~/.streamliner/state/logs/api-YYYY-MM-DD.log`. See [`docs/operations/logging.md`](docs/operations/logging.md) for the format, scope reference, and grep/jq recipes.
+
+## Worktree preview instances
+
+Use a worktree preview when you want to inspect a PR without stopping the main
+Streamliner instance running from your primary checkout:
+
+```powershell
+npm run preview:worktree -- --name pr-41 --graph .streamliner\workstreams\session-launching-and-tracking\graph.json
+```
+
+The command starts detached API and Vite processes on free ports, seeds an
+isolated workstream registry from the graph, disables the session background
+worker, and writes runtime state under `.streamliner-preview\<name>\`. The
+default `readonly` mode blocks mutating API requests so accidental clicks do
+not create launch artifacts or edit preview registries. Use `--mode sandbox`
+only when you intentionally want to exercise mutating flows against the
+isolated preview state.
+
+Check or stop a preview with:
+
+```powershell
+npm run preview:status -- --name pr-41
+npm run preview:stop -- --name pr-41
+```
 
 ## Copilot CLI Streamliner plugin
 

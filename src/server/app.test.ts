@@ -291,6 +291,28 @@ describe("createStreamlinerApiApp", () => {
     );
   });
 
+  it("blocks mutating API requests in readonly preview mode", async () => {
+    const rootDir = createRootDir();
+    const api = createStreamlinerApiApp({
+      readonlyMode: true,
+      recentsPath: join(rootDir, "recent-graphs.json"),
+      workstreamRegistryPath: join(rootDir, "workstreams.json"),
+      workstreamSourceRegistryPath: join(rootDir, "sources.json"),
+    });
+    activeApps.push(api);
+
+    await request(api.app).get("/api/health").expect(200, { ok: true });
+    await request(api.app)
+      .post("/api/workstreams")
+      .send({ path: "C:\\graphs\\graph.json" })
+      .expect(403)
+      .expect((res) => {
+        expect(res.body).toEqual(expect.objectContaining({
+          code: "preview_readonly",
+        }));
+      });
+  });
+
   it("registers, loads, relinks, and deletes tracked workstreams", async () => {
     const rootDir = createRootDir();
     const graphPath = join(rootDir, "graph.json");

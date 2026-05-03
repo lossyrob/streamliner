@@ -18,6 +18,7 @@ dist-ssr
 test-results/
 playwright-report/
 .playwright/
+.streamliner-preview/
 
 # Editor directories and files
 .vscode/*
