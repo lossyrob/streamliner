@@ -85,7 +85,7 @@ To inspect this PR branch without disrupting a main Streamliner instance, start 
 npm run preview:worktree -- --name pr-41 --graph .streamliner\workstreams\session-launching-and-tracking\graph.json
 ```
 
-The preview launcher starts detached API and Vite processes on free ports, writes runtime state under `.streamliner-preview\<name>\`, disables the session background worker, and seeds an isolated workstream registry from the supplied graph. The default `readonly` mode blocks mutating API requests; use `--mode sandbox` only when intentionally testing write flows against disposable preview state.
+The preview launcher starts background API and Vite processes, writes runtime state under `.streamliner-preview\<name>\`, disables the session background worker, and seeds an isolated workstream registry from the supplied graph. Preview ports are persisted in `.streamliner-preview\<name>\ports.json`, so restarting the same preview name reuses the same browser URL when those ports are available. The default `readonly` mode blocks mutating API requests; use `--mode sandbox` only when intentionally testing write flows against disposable preview state.
 
 Stop or inspect the preview with:
 

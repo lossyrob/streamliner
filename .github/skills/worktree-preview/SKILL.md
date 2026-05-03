@@ -21,7 +21,8 @@ switching away from their main running Streamliner instance.
    npm run preview:worktree -- --name pr-41 --graph .streamliner\workstreams\session-launching-and-tracking\graph.json
    ```
 
-3. Report the `URL:` printed by the command.
+3. Report the `URL:` printed by the command. Reusing the same preview name
+   reuses the same URL when its persisted ports are available.
 4. Leave the preview running until the user is done, then stop it:
 
    ```powershell
@@ -56,6 +57,8 @@ npm run preview:status -- --name pr-41
 The launcher prints API/Vite log paths under
 `.streamliner-preview\<name>\logs\`. If startup fails, inspect those logs before
 retrying. Use `--force` only when the status command shows stale PIDs.
+Stable preview ports are stored in `.streamliner-preview\<name>\ports.json` and
+survive `preview:stop`.
 
 ## Agent notes
 

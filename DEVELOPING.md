@@ -60,13 +60,14 @@ Streamliner instance running from your primary checkout:
 npm run preview:worktree -- --name pr-41 --graph .streamliner\workstreams\session-launching-and-tracking\graph.json
 ```
 
-The command starts detached API and Vite processes on free ports, seeds an
-isolated workstream registry from the graph, disables the session background
-worker, and writes runtime state under `.streamliner-preview\<name>\`. The
-default `readonly` mode blocks mutating API requests so accidental clicks do
-not create launch artifacts or edit preview registries. Use `--mode sandbox`
-only when you intentionally want to exercise mutating flows against the
-isolated preview state.
+The command starts background API and Vite processes, seeds an isolated
+workstream registry from the graph, disables the session background worker, and
+writes runtime state under `.streamliner-preview\<name>\`. Ports are persisted
+in `.streamliner-preview\<name>\ports.json`, so restarting the same preview name
+reuses the same URL when those ports are available. The default `readonly` mode
+blocks mutating API requests so accidental clicks do not create launch artifacts
+or edit preview registries. Use `--mode sandbox` only when you intentionally
+want to exercise mutating flows against the isolated preview state.
 
 Check or stop a preview with:
 

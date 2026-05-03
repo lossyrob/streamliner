@@ -34,6 +34,7 @@ Defaults:
   --mode readonly
   --name <current-directory-name>
   --root .streamliner-preview\\<name>\\
+  Ports are reused from .streamliner-preview\\<name>\\ports.json when available.
 `);
 }
 
@@ -169,6 +170,7 @@ function previewPaths(args) {
     name,
     root,
     manifestPath: join(root, "preview.json"),
+    portsPath: join(root, "ports.json"),
     logsDir: join(root, "logs"),
     stateRoot: join(root, "state", "session-registry"),
     workstreamRegistryPath: join(root, "state", "workstream-registry", "workstreams.json"),
@@ -204,6 +206,96 @@ async function getFreePort(host) {
       });
     });
   });
+}
+
+async function isPortAvailable(host, port) {
+  return new Promise((resolveAvailability) => {
+    const server = createServer();
+    server.once("error", () => {
+      resolveAvailability(false);
+    });
+    server.listen(port, host, () => {
+      server.close(() => {
+        resolveAvailability(true);
+      });
+    });
+  });
+}
+
+function readSavedPorts(paths, host) {
+  if (!existsSync(paths.portsPath)) {
+    return {};
+  }
+  try {
+    const saved = JSON.parse(readFileSync(paths.portsPath, "utf8"));
+    if (saved.host && saved.host !== host) {
+      return {};
+    }
+    return {
+      apiPort: Number.isInteger(saved.apiPort) ? saved.apiPort : undefined,
+      webPort: Number.isInteger(saved.webPort) ? saved.webPort : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+function writePortCache(paths, host, apiPort, webPort) {
+  writeFileSync(
+    paths.portsPath,
+    JSON.stringify({
+      host,
+      apiPort,
+      webPort,
+      updatedAt: new Date().toISOString(),
+    }, null, 2),
+    "utf8",
+  );
+}
+
+function portFromUrl(url) {
+  try {
+    const parsed = new URL(url);
+    const port = Number(parsed.port);
+    return Number.isInteger(port) && port > 0 && port <= 65_535
+      ? port
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function cmdQuote(value) {
+  return `"${String(value).replace(/"/g, "\"\"")}"`;
+}
+
+async function resolvePort(host, explicitPort, savedPort, label) {
+  if (explicitPort !== undefined) {
+    return explicitPort;
+  }
+  if (savedPort !== undefined && await isPortAvailable(host, savedPort)) {
+    return savedPort;
+  }
+  const port = await getFreePort(host);
+  if (savedPort !== undefined) {
+    console.warn(`Saved ${label} port ${savedPort} is unavailable; using ${port}.`);
+  }
+  return port;
+}
+
+async function resolvePreviewPorts(args, paths) {
+  const saved = readSavedPorts(paths, args.host);
+  const apiPort = await resolvePort(args.host, args.apiPort, saved.apiPort, "API");
+  let webPort = await resolvePort(args.host, args.webPort, saved.webPort, "web");
+  if (apiPort === webPort) {
+    if (args.webPort !== undefined) {
+      throw new Error("API and web ports must be different.");
+    }
+    do {
+      webPort = await getFreePort(args.host);
+    } while (webPort === apiPort);
+  }
+  return { apiPort, webPort };
 }
 
 async function waitForUrl(url, label) {
@@ -314,7 +406,37 @@ async function writeEmptySourceRegistry(sourceRegistryPath) {
   );
 }
 
+function spawnWindowsHiddenNodeProcess(args, options) {
+  const script = [
+    "@echo off",
+    `cd /d ${cmdQuote(process.cwd())}`,
+    [
+      cmdQuote(process.execPath),
+      ...args.map(cmdQuote),
+      `1>>${cmdQuote(options.stdoutPath)}`,
+      `2>>${cmdQuote(options.stderrPath)}`,
+    ].join(" "),
+  ].join("\r\n");
+  writeFileSync(options.scriptPath, script, "utf8");
+  const child = spawn(process.env.ComSpec ?? "cmd.exe", [
+    "/d",
+    "/c",
+    options.scriptPath,
+  ], {
+    cwd: process.cwd(),
+    env: options.env,
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  child.unref();
+  return child;
+}
+
 function spawnNodeProcess(args, options) {
+  if (process.platform === "win32") {
+    return spawnWindowsHiddenNodeProcess(args, options);
+  }
   const stdout = openSync(options.stdoutPath, "a");
   const stderr = openSync(options.stderrPath, "a");
   const child = spawn(process.execPath, args, {
@@ -353,8 +475,7 @@ async function startPreview(args) {
     ? await seedWorkstreamRegistry(graphPath, paths.workstreamRegistryPath)
     : undefined;
 
-  const apiPort = args.apiPort ?? await getFreePort(args.host);
-  const webPort = args.webPort ?? await getFreePort(args.host);
+  const { apiPort, webPort } = await resolvePreviewPorts(args, paths);
   const apiUrl = `http://${args.host}:${apiPort}`;
   const webUrl = `http://${args.host}:${webPort}`;
   const workstreamUrl = seeded ? `${webUrl}${seeded.path}` : webUrl;
@@ -384,6 +505,7 @@ async function startPreview(args) {
     env,
     stdoutPath: join(paths.logsDir, "api.out.log"),
     stderrPath: join(paths.logsDir, "api.err.log"),
+    scriptPath: join(paths.logsDir, "api-launch.cmd"),
   });
   await waitForUrl(`${apiUrl}/api/health`, "Streamliner API");
 
@@ -391,6 +513,7 @@ async function startPreview(args) {
     env,
     stdoutPath: join(paths.logsDir, "vite.out.log"),
     stderrPath: join(paths.logsDir, "vite.err.log"),
+    scriptPath: join(paths.logsDir, "vite-launch.cmd"),
   });
   await waitForUrl(webUrl, "Vite preview");
 
@@ -415,6 +538,7 @@ async function startPreview(args) {
     },
   };
   writeFileSync(paths.manifestPath, JSON.stringify(manifest, null, 2), "utf8");
+  writePortCache(paths, args.host, apiPort, webPort);
 
   console.log(`Started Streamliner worktree preview '${paths.name}' (${args.mode}).`);
   console.log(`URL: ${workstreamUrl}`);
@@ -461,6 +585,11 @@ async function stopPreview(args) {
     return;
   }
   const manifest = JSON.parse(readFileSync(paths.manifestPath, "utf8"));
+  const apiPort = portFromUrl(manifest.apiUrl);
+  const webPort = portFromUrl(manifest.webUrl);
+  if (apiPort !== undefined && webPort !== undefined) {
+    writePortCache(paths, args.host, apiPort, webPort);
+  }
   await stopPid(manifest.webPid);
   await stopPid(manifest.apiPid);
   rmSync(paths.manifestPath, { force: true });
@@ -483,6 +612,7 @@ function statusPreview(args) {
     webAlive: isAlive(manifest.webPid),
     apiPid: manifest.apiPid,
     webPid: manifest.webPid,
+    apiUrl: manifest.apiUrl,
     logsDir: manifest.paths?.logsDir,
   }, null, 2));
 }
