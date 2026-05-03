@@ -69,6 +69,16 @@ blocks mutating API requests so accidental clicks do not create launch artifacts
 or edit preview registries. Use `--mode sandbox` only when you intentionally
 want to exercise mutating flows against the isolated preview state.
 
+When an agent starts a preview, it should add `--attached` and run the command
+in a Copilot-managed background shell instead of detaching the server processes:
+
+```powershell
+npm run preview:worktree:attached -- --name pr-41 --graph .streamliner\workstreams\session-launching-and-tracking\graph.json
+```
+
+Attached previews keep API/Vite as children of the launcher process, so Copilot
+can track the background task and stop it when the task or session ends.
+
 Check or stop a preview with:
 
 ```powershell

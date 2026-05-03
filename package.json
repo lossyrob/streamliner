@@ -14,6 +14,7 @@
     "preview": "concurrently -n api,preview --kill-others-on-fail \"npm:api\" \"npm:preview:web\"",
     "preview:web": "node scripts/wait-for-api.mjs && vite preview",
     "preview:worktree": "node scripts/preview-worktree.mjs",
+    "preview:worktree:attached": "node scripts/preview-worktree.mjs --attached",
     "preview:stop": "node scripts/preview-worktree.mjs --stop",
     "preview:status": "node scripts/preview-worktree.mjs --status",
     "test": "vitest run",

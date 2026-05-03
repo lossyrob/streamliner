@@ -26,7 +26,7 @@ const DEFAULT_GRAPH = ".streamliner\\workstreams\\session-launching-and-tracking
 
 function usage() {
   console.log(`Usage:
-  npm run preview:worktree -- [--graph <graph.json>] [--name <id>] [--mode readonly|sandbox] [--api-port <port>] [--web-port <port>]
+  npm run preview:worktree -- [--graph <graph.json>] [--name <id>] [--mode readonly|sandbox] [--api-port <port>] [--web-port <port>] [--attached]
   npm run preview:stop -- [--name <id>]
   npm run preview:status -- [--name <id>]
 
@@ -35,6 +35,7 @@ Defaults:
   --name <current-directory-name>
   --root .streamliner-preview\\<name>\\
   Ports are reused from .streamliner-preview\\<name>\\ports.json when available.
+  Use --attached when a Copilot-managed background shell should own the preview lifetime.
 `);
 }
 
@@ -87,6 +88,10 @@ function parseArgs(argv) {
         break;
       case "--force":
         args.force = true;
+        break;
+      case "--attached":
+      case "--foreground":
+        args.attached = true;
         break;
       default:
         if (arg.startsWith("--")) {
@@ -434,22 +439,92 @@ function spawnWindowsHiddenNodeProcess(args, options) {
 }
 
 function spawnNodeProcess(args, options) {
-  if (process.platform === "win32") {
-    return spawnWindowsHiddenNodeProcess(args, options);
-  }
   const stdout = openSync(options.stdoutPath, "a");
   const stderr = openSync(options.stderrPath, "a");
+  if (process.platform === "win32" && !options.attached) {
+    closeSync(stdout);
+    closeSync(stderr);
+    return spawnWindowsHiddenNodeProcess(args, options);
+  }
   const child = spawn(process.execPath, args, {
     cwd: process.cwd(),
     env: options.env,
-    detached: true,
+    detached: !options.attached,
     stdio: ["ignore", stdout, stderr],
     windowsHide: true,
   });
   closeSync(stdout);
   closeSync(stderr);
-  child.unref();
+  if (!options.attached) {
+    child.unref();
+  }
   return child;
+}
+
+async function waitForPreviewManifestRemoval(paths, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!existsSync(paths.manifestPath)) {
+      return true;
+    }
+    await delay(100);
+  }
+  return !existsSync(paths.manifestPath);
+}
+
+async function waitForAttachedPreview(paths, children) {
+  let stopping = false;
+  const cleanup = async () => {
+    if (stopping) {
+      return;
+    }
+    stopping = true;
+    for (const child of children) {
+      if (child.pid) {
+        await stopPid(child.pid);
+      }
+    }
+    rmSync(paths.manifestPath, { force: true });
+  };
+  const handleSignal = (signal) => {
+    cleanup()
+      .then(() => {
+        process.exit(signal === "SIGINT" ? 130 : 143);
+      })
+      .catch((error) => {
+        console.error(error instanceof Error ? error.message : String(error));
+        process.exit(1);
+      });
+  };
+  process.once("SIGINT", handleSignal);
+  process.once("SIGTERM", handleSignal);
+  await new Promise((resolveWait, rejectWait) => {
+    for (const child of children) {
+      child.once("exit", (code, signal) => {
+        if (stopping) {
+          resolveWait();
+          return;
+        }
+        waitForPreviewManifestRemoval(paths)
+          .then((stopped) => {
+            if (stopped) {
+              resolveWait();
+              return;
+            }
+            const name = child === children[0] ? "API" : "Vite";
+            rejectWait(new Error(`${name} preview process exited unexpectedly (code ${code ?? "null"}, signal ${signal ?? "null"}).`));
+          })
+          .catch((error) => {
+            rejectWait(error instanceof Error ? error : new Error(String(error)));
+          });
+      });
+      child.once("error", rejectWait);
+    }
+  }).finally(async () => {
+    process.removeListener("SIGINT", handleSignal);
+    process.removeListener("SIGTERM", handleSignal);
+    await cleanup();
+  });
 }
 
 async function startPreview(args) {
@@ -506,6 +581,7 @@ async function startPreview(args) {
     stdoutPath: join(paths.logsDir, "api.out.log"),
     stderrPath: join(paths.logsDir, "api.err.log"),
     scriptPath: join(paths.logsDir, "api-launch.cmd"),
+    attached: args.attached,
   });
   await waitForUrl(`${apiUrl}/api/health`, "Streamliner API");
 
@@ -514,6 +590,7 @@ async function startPreview(args) {
     stdoutPath: join(paths.logsDir, "vite.out.log"),
     stderrPath: join(paths.logsDir, "vite.err.log"),
     scriptPath: join(paths.logsDir, "vite-launch.cmd"),
+    attached: args.attached,
   });
   await waitForUrl(webUrl, "Vite preview");
 
@@ -545,6 +622,10 @@ async function startPreview(args) {
   console.log(`API: ${apiUrl}`);
   console.log(`Logs: ${paths.logsDir}`);
   console.log(`Stop: npm run preview:stop -- --name ${paths.name}`);
+  if (args.attached) {
+    console.log("Attached: this preview will stop when the owning shell exits.");
+    await waitForAttachedPreview(paths, [api, web]);
+  }
 }
 
 async function stopPid(pid) {
