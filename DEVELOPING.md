@@ -42,6 +42,7 @@ Use `npm run api` for a non-watch API process. The API serves `GET /api/health`,
 | `STREAMLINER_LOG_LEVEL` | `info` | Minimum log level (`debug`/`info`/`warn`/`error`) |
 | `STREAMLINER_LOG_DIR` | `~/.streamliner/state/logs` | Override the log file directory |
 | `STREAMLINER_LOG_CONSOLE` | `1` | Set to `0` to suppress console mirroring of log entries |
+| `STREAMLINER_LAUNCH_CLAIMS_ROOT` | `~/.streamliner/state/launch-claims` | Override the launch-claim store root used by `createLaunchClaim` and the binding pass (see `docs/design/session-system.md` Launch Claim Lifecycle) |
 
 When no `STREAMLINER_GRAPH` is set and no recent graph is available, `GET /api/graph.json` returns a 404. The dashboard handles that by falling back to Vite's static `public/example-project.json` fixture. Use the "Load workstream…" button to select a different workstream JSON file.
 

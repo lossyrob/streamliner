@@ -178,6 +178,16 @@ export interface SessionRegistryTrustedSignalInput {
   environmentId?: string | null;
   initialPromptLength?: number | null;
   promptLength?: number | null;
+  /**
+   * Tier 2 launch-claim binding: when the launcher sets
+   * STREAMLINER_LAUNCH_CLAIM_ID in the spawned Copilot CLI process
+   * environment, the plugin hook script forwards it here. Streamliner
+   * uses it to atomically bind the discovered session to the
+   * pre-reserved registry row without waiting for the events.jsonl
+   * nonce scan. Falls back to the Tier 1 nonce-in-prompt path when
+   * absent.
+   */
+  launchClaimId?: string | null;
 }
 
 export type SessionRegistryUpsertInput =

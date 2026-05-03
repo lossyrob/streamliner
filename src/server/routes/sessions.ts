@@ -4,9 +4,15 @@ import {
   handleSessionRegistryApiRequest,
   SESSION_REGISTRY_API_BASE_PATH,
 } from "../../session-registry/http-api";
+import type { LaunchClaimStore } from "../../launch-claim-contract";
+import { bindClaimViaTrustedSignal } from "../../session-registry/launch-claims";
 import { relaunchSession, type RelaunchDeps } from "../../session-registry/relaunch";
+import { SessionRegistryFileStore } from "../../session-registry/file-store";
 import { stopSession } from "../../session-registry/stop";
-import type { SessionRegistryStore } from "../../session-registry-contract";
+import type {
+  SessionRegistryStore,
+  SessionRegistryTrustedSignalInput,
+} from "../../session-registry-contract";
 import { isLoopbackAddress } from "../config";
 import { getApiLogger } from "../logger";
 import { SessionRegistryEventStream } from "../session-events";
@@ -30,11 +36,82 @@ export function createSessionsRouter(options: {
   store: SessionRegistryStore;
   eventStream: SessionRegistryEventStream;
   relaunchDeps?: Partial<RelaunchDeps>;
+  /**
+   * Optional launch-claim store. When provided, the trusted-signal
+   * intake (POST /api/sessions/signals) attempts Tier 2 launch-claim
+   * binding via `bindClaimViaTrustedSignal` after each successful
+   * signal record.
+   */
+  launchClaimStore?: LaunchClaimStore;
 }): Router {
   const router = Router();
   const signalsLogger = getApiLogger().withScope("signals");
   const relaunchLogger = getApiLogger().withScope("relaunch");
   const stopLogger = getApiLogger().withScope("stop");
+  const claimBindingLogger = options.launchClaimStore
+    ? getApiLogger().withScope("launch-claim.binding")
+    : null;
+
+  const onTrustedSignalApplied:
+    | ((signal: SessionRegistryTrustedSignalInput) => void)
+    | undefined = options.launchClaimStore && claimBindingLogger
+    ? (signal) => {
+        if (signal.event !== "session.started") return;
+        if (!signal.launchClaimId) return;
+        // The session-registry store is implementation-detail
+        // SessionRegistryFileStore in production; bindClaimViaTrustedSignal
+        // requires the file-store atomic primitives. Tests that supply
+        // a non-file-store SessionRegistryStore here will not perform
+        // Tier 2 binding (Tier 1 nonce path still applies).
+        if (!(options.store instanceof SessionRegistryFileStore)) return;
+        try {
+          const outcome = bindClaimViaTrustedSignal(
+            options.store,
+            options.launchClaimStore!,
+            {
+              launchClaimId: signal.launchClaimId,
+              copilotSessionId: signal.sessionId,
+              cwd: signal.cwd,
+              branch: signal.branch ?? null,
+              repo: signal.repo ?? null,
+              at: signal.timestamp,
+            },
+          );
+          if (outcome.ok) {
+            claimBindingLogger.info("bound-via-hook", {
+              event: "launch-claim.bound",
+              launchClaimId: outcome.claim.launchClaimId,
+              copilotSessionId: signal.sessionId,
+              registryId: outcome.registryId,
+              workstreamId: outcome.claim.workstreamId,
+              nodeId: outcome.claim.nodeId,
+              via: "trusted-signal",
+              at: signal.timestamp,
+            });
+          } else if (
+            outcome.reason !== "claim-not-found" &&
+            outcome.reason !== "already-bound"
+          ) {
+            claimBindingLogger.warn("bound-via-hook-deferred", {
+              event: "launch-claim.bound-via-hook-deferred",
+              launchClaimId: signal.launchClaimId,
+              copilotSessionId: signal.sessionId,
+              reason: outcome.reason,
+              detail: outcome.detail ?? null,
+            });
+          }
+        } catch (error) {
+          claimBindingLogger.warn("bound-via-hook-failed", {
+            event: "launch-claim.bound-via-hook-failed",
+            launchClaimId: signal.launchClaimId,
+            err:
+              error instanceof Error
+                ? { name: error.name, message: error.message }
+                : String(error),
+          });
+        }
+      }
+    : undefined;
 
   router.get("/events", options.eventStream.handle);
 
@@ -145,11 +222,15 @@ export function createSessionsRouter(options: {
       });
     }
 
-    const apiResponse = handleSessionRegistryApiRequest(options.store, {
-      method: req.method,
-      url: req.originalUrl || `${SESSION_REGISTRY_API_BASE_PATH}${req.url}`,
-      body: req.method === "POST" || req.method === "PATCH" ? req.body : undefined,
-    });
+    const apiResponse = handleSessionRegistryApiRequest(
+      options.store,
+      {
+        method: req.method,
+        url: req.originalUrl || `${SESSION_REGISTRY_API_BASE_PATH}${req.url}`,
+        body: req.method === "POST" || req.method === "PATCH" ? req.body : undefined,
+      },
+      onTrustedSignalApplied ? { onTrustedSignalApplied } : undefined,
+    );
     if (!apiResponse) {
       next();
       return;
