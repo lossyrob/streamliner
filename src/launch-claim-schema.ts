@@ -62,6 +62,7 @@ export const LAUNCH_CLAIM_EVIDENCE_REASONS = [
   "claim-out-of-window",
   "row-attached-during-cleanup-window",
   "duplicate-observed-row-deleted",
+  "trusted-signal-claim-id-match",
 ] as const;
 export type LaunchClaimEvidenceReason =
   (typeof LAUNCH_CLAIM_EVIDENCE_REASONS)[number];

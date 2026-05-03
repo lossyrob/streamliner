@@ -41,6 +41,15 @@ export interface TrustedSessionSignalSpoolOptions {
   rootDir?: string;
   now?: () => Date;
   logger?: Pick<Console, "warn">;
+  /**
+   * Optional Tier 2 launch-claim binding hook. When provided, after
+   * each successful `recordTrustedSessionSignal` call, the drain
+   * inspects the signal for a `launchClaimId` and calls
+   * `bindClaimViaTrustedSignal` to atomically bind the claim to the
+   * row that ingest just created. Errors are logged via `logger.warn`
+   * and never propagate.
+   */
+  onSignalApplied?: (signal: SessionRegistryTrustedSignalInput) => void;
 }
 
 export interface TrustedSessionSignalSpoolDrainResult {
@@ -186,6 +195,9 @@ export function parseTrustedSessionSignalInput(
   if (hasOwn(value, "promptLength")) {
     signal.promptLength = ensureOptionalInteger(value.promptLength, "signal.promptLength");
   }
+  if (hasOwn(value, "launchClaimId")) {
+    signal.launchClaimId = ensureOptionalString(value.launchClaimId, "signal.launchClaimId");
+  }
 
   return signal;
 }
@@ -236,6 +248,17 @@ export function drainTrustedSessionSignalSpool(
         continue;
       }
       store.recordTrustedSessionSignal(signal);
+      if (options.onSignalApplied) {
+        try {
+          options.onSignalApplied(signal);
+        } catch (callbackError) {
+          options.logger?.warn(
+            `[session-signals] onSignalApplied failed for ${fileName}: ${
+              callbackError instanceof Error ? callbackError.message : String(callbackError)
+            }`,
+          );
+        }
+      }
       rmSync(sourcePath, { force: true });
       processed += 1;
     } catch (error) {

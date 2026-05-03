@@ -113,7 +113,12 @@ export function createStreamlinerApiApp(
   }
   app.use(
     SESSION_REGISTRY_API_BASE_PATH,
-    createSessionsRouter({ store, eventStream, relaunchDeps: options.relaunchDeps }),
+    createSessionsRouter({
+      store,
+      eventStream,
+      relaunchDeps: options.relaunchDeps,
+      launchClaimStore: options.launchClaimStore,
+    }),
   );
   app.use(malformedJsonHandler);
   app.use(jsonErrorHandler);

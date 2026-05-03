@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import { resolve } from "node:path";
 
 import {
   LAUNCH_CLAIM_DEFAULT_BINDING_WINDOW_MS,
@@ -454,6 +455,210 @@ export function reconcileOrphanReservedRows(
     }
   }
   return { rowsDeleted, rowsGraphBindingCleared, rowsInspected };
+}
+
+/**
+ * Tier 2 launch-claim binding via trusted hook signal. Called after
+ * `recordTrustedSessionSignal` has applied a `session.started` signal
+ * carrying a `launchClaimId` (forwarded from
+ * `STREAMLINER_LAUNCH_CLAIM_ID` by the plugin hook script).
+ *
+ * This path complements the Tier 1 binding pass that scans the kickoff
+ * prompt's nonce in `events.jsonl`. When the plugin is installed and
+ * the launcher set the env var, Tier 2 wins the race and binds before
+ * the next worker poll cycle. When the plugin is missing, the env var
+ * is unset, or the hook signal arrives after the binding pass has
+ * already bound the claim via nonce, Tier 2 is a no-op (the atomic
+ * primitives reject the duplicate).
+ *
+ * Returns a structured outcome so callers (HTTP handler, spool drain)
+ * can record diagnostic logs without throwing.
+ */
+export type BindClaimViaTrustedSignalReason =
+  | "claim-not-found"
+  | "claim-not-pending"
+  | "claim-out-of-window"
+  | "expected-cwd-mismatch"
+  | "registry-row-missing"
+  | "fuse-deferred"
+  | "bind-deferred"
+  | "already-bound";
+
+export type BindClaimViaTrustedSignalOutcome =
+  | { ok: true; claim: LaunchClaim; registryId: string }
+  | { ok: false; reason: BindClaimViaTrustedSignalReason; detail?: string };
+
+export interface BindClaimViaTrustedSignalArgs {
+  launchClaimId: string;
+  copilotSessionId: string;
+  cwd: string;
+  branch?: string | null;
+  repo?: string | null;
+  /** ISO-8601 timestamp of the originating signal. */
+  at?: string;
+  /** Defaults to wall clock; tests inject. */
+  now?: () => Date;
+  /** Defaults to comparing pathKey-normalized strings. */
+  pathCompare?: (a: string, b: string) => boolean;
+}
+
+function pathKeyForCompare(value: string): string {
+  const resolved = resolve(value);
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+function defaultPathCompare(a: string, b: string): boolean {
+  return pathKeyForCompare(a) === pathKeyForCompare(b);
+}
+
+export function bindClaimViaTrustedSignal(
+  registryStore: SessionRegistryFileStore,
+  claimStore: LaunchClaimStore,
+  args: BindClaimViaTrustedSignalArgs,
+): BindClaimViaTrustedSignalOutcome {
+  const claim = claimStore.getClaim(args.launchClaimId);
+  if (!claim) {
+    return { ok: false, reason: "claim-not-found" };
+  }
+  if (claim.status === "bound") {
+    return { ok: false, reason: "already-bound" };
+  }
+  if (claim.status !== "pending") {
+    return { ok: false, reason: "claim-not-pending", detail: `status=${claim.status}` };
+  }
+  const now = args.now ? args.now() : new Date();
+  const nowMs = now.getTime();
+  if (!isClaimWindowOpen(claim, nowMs)) {
+    return { ok: false, reason: "claim-out-of-window" };
+  }
+  const pathCompare = args.pathCompare ?? defaultPathCompare;
+  // Defensive cwd guardrail: if the trusted signal's cwd doesn't match
+  // the claim's expectedCwd, refuse to bind. The hook payload is more
+  // trusted than discovery, but a misconfigured launcher could still
+  // pass a stale or wrong claim id.
+  if (!pathCompare(args.cwd, claim.expectedCwd)) {
+    return { ok: false, reason: "expected-cwd-mismatch" };
+  }
+
+  // The trusted-signal ingest must already have created an observed row
+  // with this copilotSessionId (or attached to an existing one).
+  const observedRowId = registryStore.findRecordIdByCopilotSession(args.copilotSessionId);
+  if (!observedRowId) {
+    return { ok: false, reason: "registry-row-missing" };
+  }
+
+  const nowIso = (args.at && args.at.length > 0 ? args.at : now.toISOString());
+  const bindClaim = {
+    workstreamId: claim.workstreamId,
+    nodeId: claim.nodeId,
+    launchClaimId: claim.launchClaimId,
+  };
+
+  let boundRegistryId: string;
+  if (claim.reservedRegistryId !== null) {
+    if (observedRowId === claim.reservedRegistryId) {
+      // Already attached to the reserved row — confirm graphBinding.
+      const reservedRow = registryStore.getSession(claim.reservedRegistryId);
+      if (!reservedRow) {
+        return { ok: false, reason: "registry-row-missing" };
+      }
+      const result = registryStore.bindClaimToRow(
+        claim.reservedRegistryId,
+        {
+          cwdAfterNormalize: reservedRow.cwd,
+          branch: claim.expectedBranch,
+          repo: claim.expectedRepo,
+          requireGraphBindingNullOrMatching: bindClaim,
+        },
+        { graphBinding: bindClaim },
+        pathCompare,
+      );
+      if (!result.ok) {
+        return {
+          ok: false,
+          reason: "bind-deferred",
+          detail: `${result.reason}${result.detail ? `: ${result.detail}` : ""}`,
+        };
+      }
+      boundRegistryId = claim.reservedRegistryId;
+    } else {
+      // Path A fusion: reserved row separate from the trusted-signal-created observed row.
+      const fuseResult = registryStore.fuseObservedRowIntoReservedRow({
+        reservedRowId: claim.reservedRegistryId,
+        observedRowId,
+        bindClaim,
+      });
+      if (!fuseResult.ok) {
+        return {
+          ok: false,
+          reason: "fuse-deferred",
+          detail: `${fuseResult.reason}${fuseResult.detail ? `: ${fuseResult.detail}` : ""}`,
+        };
+      }
+      boundRegistryId = claim.reservedRegistryId;
+    }
+  } else {
+    // Path B: write graphBinding directly onto the observed row.
+    const result = registryStore.bindClaimToRow(
+      observedRowId,
+      {
+        cwdAfterNormalize: claim.expectedCwd,
+        branch: claim.expectedBranch,
+        repo: claim.expectedRepo,
+        requireGraphBindingNullOrMatching: bindClaim,
+      },
+      { graphBinding: bindClaim },
+      pathCompare,
+    );
+    if (!result.ok) {
+      return {
+        ok: false,
+        reason: "bind-deferred",
+        detail: `${result.reason}${result.detail ? `: ${result.detail}` : ""}`,
+      };
+    }
+    boundRegistryId = observedRowId;
+  }
+
+  const updatedClaim = claimStore.updateClaim(claim.launchClaimId, (current) => {
+    if (current.status !== "pending") {
+      return current;
+    }
+    const seen = current.seenCandidateCopilotSessionIds.includes(args.copilotSessionId)
+      ? current.seenCandidateCopilotSessionIds
+      : [...current.seenCandidateCopilotSessionIds, args.copilotSessionId];
+    return {
+      ...current,
+      status: "bound",
+      boundCopilotSessionId: args.copilotSessionId,
+      boundRegistryId,
+      seenCandidateCopilotSessionIds: seen,
+      evidence: {
+        attempts: [
+          ...current.evidence.attempts,
+          {
+            at: nowIso,
+            candidateCopilotSessionId: args.copilotSessionId,
+            decision: "bind",
+            reason: "trusted-signal-claim-id-match",
+            nonceMatch: false,
+            nonceScanByteOffset: null,
+            nonceScanEventIndex: null,
+            cwdMatch: true,
+            branchMatch: claim.expectedBranch === null
+              ? null
+              : claim.expectedBranch === (args.branch ?? null),
+            repoMatch: claim.expectedRepo === null
+              ? null
+              : claim.expectedRepo === (args.repo ?? null),
+          },
+        ],
+      },
+      updatedAt: nowIso,
+    };
+  });
+
+  return { ok: true, claim: updatedClaim, registryId: boundRegistryId };
 }
 
 /**

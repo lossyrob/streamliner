@@ -26,8 +26,14 @@ import {
 import { drainTrustedSessionSignalSpool } from "./trusted-session-signals";
 import { runLaunchClaimBindingPass } from "./launch-claim-binding";
 import { runLaunchClaimSweep } from "./launch-claim-sweep";
-import { reconcileOrphanReservedRows } from "./launch-claims";
-import type { LaunchClaimStore } from "../launch-claim-contract";
+import {
+  bindClaimViaTrustedSignal,
+  reconcileOrphanReservedRows,
+} from "./launch-claims";
+import type {
+  LaunchClaimStore,
+} from "../launch-claim-contract";
+import type { SessionRegistryTrustedSignalInput } from "../session-registry-contract";
 import type { ApiLogger } from "../server/logger";
 
 export const SESSION_REGISTRY_WORKER_POLL_INTERVAL_MS = 15_000;
@@ -233,6 +239,11 @@ export class SessionRegistryBackgroundWorker {
         drainTrustedSessionSignalSpool(this.store, {
           rootDir: this.signalSpoolRoot,
           logger: this.logger,
+          onSignalApplied: this.claimStore && this.claimLogger
+            ? (signal) => {
+                this.tryBindClaimViaTrustedSignal(signal);
+              }
+            : undefined,
         });
       } catch (error) {
         this.logger.warn("[session-worker] trusted signal drain failed", error);
@@ -291,6 +302,58 @@ export class SessionRegistryBackgroundWorker {
       this.logger.error("[session-worker] cycle failed", error);
     } finally {
       this.running = false;
+    }
+  }
+
+  /**
+   * Tier 2 launch-claim binding hook. Called from the trusted-signal
+   * spool drain `onSignalApplied` callback after a `session.started`
+   * signal carrying `launchClaimId` has been recorded. Failures are
+   * logged via the claim logger and never propagate to the drain.
+   */
+  private tryBindClaimViaTrustedSignal(
+    signal: SessionRegistryTrustedSignalInput,
+  ): void {
+    if (!this.claimStore || !this.claimLogger) return;
+    if (signal.event !== "session.started") return;
+    if (!signal.launchClaimId) return;
+    const bindLogger = this.claimLogger.withScope("launch-claim.binding");
+    try {
+      const outcome = bindClaimViaTrustedSignal(this.store, this.claimStore, {
+        launchClaimId: signal.launchClaimId,
+        copilotSessionId: signal.sessionId,
+        cwd: signal.cwd,
+        branch: signal.branch ?? null,
+        repo: signal.repo ?? null,
+        at: signal.timestamp,
+        now: this.now,
+      });
+      if (outcome.ok) {
+        bindLogger.info("bound-via-hook", {
+          event: "launch-claim.bound",
+          launchClaimId: outcome.claim.launchClaimId,
+          copilotSessionId: signal.sessionId,
+          registryId: outcome.registryId,
+          workstreamId: outcome.claim.workstreamId,
+          nodeId: outcome.claim.nodeId,
+          via: "trusted-signal",
+          at: signal.timestamp,
+        });
+      } else if (outcome.reason !== "claim-not-found" && outcome.reason !== "already-bound") {
+        bindLogger.warn("bound-via-hook-deferred", {
+          event: "launch-claim.bound-via-hook-deferred",
+          launchClaimId: signal.launchClaimId,
+          copilotSessionId: signal.sessionId,
+          reason: outcome.reason,
+          detail: outcome.detail ?? null,
+        });
+      }
+    } catch (error) {
+      bindLogger.warn("bound-via-hook-failed", {
+        event: "launch-claim.bound-via-hook-failed",
+        launchClaimId: signal.launchClaimId,
+        err: error instanceof Error ? { name: error.name, message: error.message } : String(error),
+      });
     }
   }
 

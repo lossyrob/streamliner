@@ -50,7 +50,7 @@ Anything beyond those four keys is event-specific structured context
 | `relaunch` | Each `POST /api/sessions/:id/relaunch` attempt, success, or failure |
 | `worker` | Background worker errors (signal drain, discovery, summarization, indexing) |
 | `launch-claim.api` | Loopback rejections on `/api/launch-claims*` requests |
-| `launch-claim.binding` | Per-cycle binding-pass decisions and FR-12 events: `launch-claim.bound`, `launch-claim.launch-claim-ambiguous`, `launch-claim.launch-claim-rebind-attempt`, `launch-claim.fuse-deferred` |
+| `launch-claim.binding` | Per-cycle binding-pass decisions and FR-12 events: `launch-claim.bound`, `launch-claim.launch-claim-ambiguous`, `launch-claim.launch-claim-rebind-attempt`, `launch-claim.fuse-deferred`, plus Tier 2 hook-signal binding outcomes: `launch-claim.bound` (with `via: "trusted-signal"`), `launch-claim.bound-via-hook-deferred`, `launch-claim.bound-via-hook-failed` |
 | `launch-claim.sweep` | Per-cycle lifecycle transitions and FR-12 events: `launch-claim.nonce-absent-after-window`, `launch-claim.launch-claim-orphan-session` (`case: "a"` / `case: "b"`) |
 
 ## Configuration

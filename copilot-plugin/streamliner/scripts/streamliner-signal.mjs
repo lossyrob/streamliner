@@ -147,6 +147,22 @@ function buildSignal(hookName, payload) {
     signal.promptLength = promptLength;
   }
 
+  // Tier 2 launch-claim binding: when Streamliner spawns Copilot CLI, it
+  // sets STREAMLINER_LAUNCH_CLAIM_ID in the process env. We forward that
+  // identifier on the session.started signal only; subsequent prompt /
+  // end signals do not need it (the registry row already carries the
+  // binding). Limiting to session.started also defends against the
+  // scenario where a worker session spawns a child Copilot CLI that
+  // would inherit the env var — only the original sessionStart would
+  // attempt to bind, and the binding primitive's atomicity rejects
+  // duplicate attempts.
+  if (event === "session.started") {
+    const launchClaimId = stringValue(process.env.STREAMLINER_LAUNCH_CLAIM_ID);
+    if (launchClaimId) {
+      signal.launchClaimId = launchClaimId;
+    }
+  }
+
   return signal;
 }
 
