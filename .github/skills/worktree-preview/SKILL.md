@@ -27,11 +27,9 @@ switching away from their main running Streamliner instance.
 
 3. Report the `URL:` printed by the command. Reusing the same preview name
    reuses the same URL when its persisted ports are available.
-4. Leave the preview running until the user is done, then stop it:
-
-   ```powershell
-   npm run preview:stop -- --name pr-41
-   ```
+4. Leave the preview running until the user asks for it to stop. The agent owns
+   shutdown and should stop the preview itself when requested instead of asking
+   the user to run a stop command.
 
 Read-only mode is the default. It disables the session background worker and
 blocks mutating API requests, so browsing the preview does not create PAW
@@ -60,6 +58,12 @@ Check a running preview:
 npm run preview:status -- --name pr-41
 ```
 
+Stop a preview when the user asks:
+
+```powershell
+npm run preview:stop -- --name pr-41
+```
+
 The launcher prints API/Vite log paths under
 `.streamliner-preview\<name>\logs\`. If startup fails, inspect those logs before
 retrying. Use `--force` only when the status command shows stale PIDs.
@@ -75,5 +79,8 @@ Copilot background task also stops the preview.
   background task and no extra terminal windows appear.
 - Prefer the rich `session-launching-and-tracking` graph for visual review.
 - If another graph is relevant to the PR, pass it with `--graph <path>`.
-- Keep the preview URL and stop command in your response so the user can act
-  without searching terminal output.
+- Keep the preview URL in your response and say you can stop the preview on
+  request. Do not make the user responsible for stopping it.
+- Track the preview name and async shell id you used. If the user asks to stop
+  the preview, stop the owning Copilot background task when available, or run
+  `npm run preview:stop -- --name <name>` from the worktree.
