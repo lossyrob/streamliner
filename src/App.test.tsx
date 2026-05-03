@@ -527,7 +527,7 @@ describe("App sessions route", () => {
       });
       await settle();
       act(() => {
-        findButton(container, "Launch PAW worker").click();
+        findButton(container, "Initialize PAW launch").click();
       });
       await settle();
 
@@ -541,7 +541,7 @@ describe("App sessions route", () => {
 
       expect(container.querySelector('textarea[aria-label="PAW workflow instructions"]')).toBeNull();
       expect([...container.querySelectorAll("button")].some(
-        (button) => button.textContent?.trim() === "Prepare launch",
+        (button) => button.textContent?.trim() === "Run PAW init",
       )).toBe(false);
       expect(
         fetchMock.mock.calls.some(([input]) =>
@@ -553,7 +553,7 @@ describe("App sessions route", () => {
   );
 
   it(
-    "prepares a PAW launch with workflow instructions and explicit empty CLI args",
+    "runs PAW init with workflow instructions and explicit empty CLI args",
     async () => {
       const graph = buildLaunchGraph();
       const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -602,7 +602,7 @@ describe("App sessions route", () => {
       });
       await settle();
       act(() => {
-        findButton(container, "Launch PAW worker").click();
+        findButton(container, "Initialize PAW launch").click();
       });
       await settle();
 
@@ -612,7 +612,7 @@ describe("App sessions route", () => {
         "Prefer the final PR review path.",
       );
       act(() => {
-        findButton(container, "Prepare launch").click();
+        findButton(container, "Run PAW init").click();
       });
       await settle(100);
 
@@ -644,7 +644,7 @@ describe("App sessions route", () => {
   );
 
   it(
-    "requires PAW workflow instructions before preparing a launch",
+    "requires PAW workflow instructions before running PAW init",
     async () => {
       const graph = buildLaunchGraph();
       const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -674,7 +674,7 @@ describe("App sessions route", () => {
       });
       await settle();
       act(() => {
-        findButton(container, "Launch PAW worker").click();
+        findButton(container, "Initialize PAW launch").click();
       });
       await settle();
 
@@ -684,7 +684,7 @@ describe("App sessions route", () => {
       expect(container.textContent).toContain(
         "PAW workflow instructions are required so paw-init can derive the workflow.",
       );
-      expect(findButton(container, "Prepare launch").disabled).toBe(true);
+      expect(findButton(container, "Run PAW init").disabled).toBe(true);
       expect(
         fetchMock.mock.calls.some(([input]) =>
           requestPath(input as RequestInfo | URL) === "/api/launch-preparations",
@@ -695,7 +695,7 @@ describe("App sessions route", () => {
   );
 
   it(
-    "surfaces PAW launch preparation errors",
+    "surfaces PAW init errors",
     async () => {
       const graph = buildLaunchGraph();
       const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -728,11 +728,11 @@ describe("App sessions route", () => {
       });
       await settle();
       act(() => {
-        findButton(container, "Launch PAW worker").click();
+        findButton(container, "Initialize PAW launch").click();
       });
       await settle();
       act(() => {
-        findButton(container, "Prepare launch").click();
+        findButton(container, "Run PAW init").click();
       });
       await settle(100);
 
@@ -773,7 +773,7 @@ describe("App sessions route", () => {
       });
       await settle();
 
-      expect(findButton(container, "Launch PAW worker").disabled).toBe(true);
+      expect(findButton(container, "Initialize PAW launch").disabled).toBe(true);
       expect(container.textContent).toContain("Only ready nodes can be launched.");
 
       await act(async () => {
@@ -823,7 +823,7 @@ describe("App sessions route", () => {
       });
       await settle();
 
-      expect(findButton(container, "Launch PAW worker").disabled).toBe(true);
+      expect(findButton(container, "Initialize PAW launch").disabled).toBe(true);
       expect(container.textContent).toContain(
         "Browser-only or missing graph sources cannot be prepared by the backend.",
       );

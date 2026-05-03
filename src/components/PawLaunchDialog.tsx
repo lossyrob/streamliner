@@ -169,11 +169,12 @@ export function PawLaunchDialog({
               <span className="sl-pill accent">PAW init</span>
               <span className="sl-pill muted">Text-guided workflow</span>
             </div>
-            <h2 className="sl-sheet-title">Configure PAW launch</h2>
+            <h2 className="sl-sheet-title">Run PAW init</h2>
             <p className="sl-paw-launch-subtitle">
               Selected node: <strong>{nodeTitle}</strong>. Streamliner stages the
-              launch context first, then asks the PAW init skill to derive the
-              workflow and install that context into the PAW work directory.
+              launch context first, then runs the PAW init skill in a fully capable
+              SDK session to derive the workflow and install that context into the
+              PAW work directory.
             </p>
           </div>
           <button
@@ -192,8 +193,9 @@ export function PawLaunchDialog({
               <div>
                 <span className="sl-section-label">Workflow instructions</span>
                 <p>
-                  Describe the PAW workflow in natural language. The PAW init
-                  skill derives work title, work ID, target branch, review policy,
+                  Describe the PAW workflow in natural language. PAW init can read
+                  repository files, inspect git/GitHub context, use shell tools,
+                  and derive work title, work ID, target branch, review policy,
                   models, and WorkflowContext settings from this text.
                 </p>
               </div>
@@ -207,8 +209,9 @@ export function PawLaunchDialog({
               placeholder="Example: Use paw-lite, final-pr-only, no intermediate pauses unless blocked..."
             />
             <p className="sl-field-note">
-              If PAW init cannot proceed without a question, launch preparation
-              fails with that question instead of waiting indefinitely.
+              Running PAW init may read or write local repo state. If PAW init
+              cannot proceed without a question, Streamliner fails with that
+              question instead of waiting indefinitely.
             </p>
           </section>
 
@@ -292,7 +295,7 @@ export function PawLaunchDialog({
             Cancel
           </button>
           <button type="submit" className="sl-action-btn primary" disabled={preparing || Boolean(instructionError)}>
-            {preparing ? "Preparing..." : "Prepare launch"}
+            {preparing ? "Running PAW init..." : "Run PAW init"}
           </button>
         </div>
       </form>

@@ -37,7 +37,7 @@ The session system is how Streamliner launches, monitors, and surfaces AI coding
 
 ## Launch Contract
 
-The Wave 3 launch MVP is **PAW-only launch preparation**. The contract is the interface between the graph UI, which lets the builder configure a ready node launch, and the backend, which prepares the PAW work area, worker context, kickoff prompt, and structured handoff. The visible worker session is still a Copilot CLI interactive session, but starting that terminal and binding the discovered session to a launch claim remain separate downstream steps.
+The Wave 3 launch MVP is **PAW-only launch initialization**. The contract is the interface between the graph UI, which lets the builder configure and run PAW init for a ready node, and the backend, which prepares the PAW work area, worker context, kickoff prompt, and structured handoff. The visible worker session is still a Copilot CLI interactive session, but starting that terminal and binding the discovered session to a launch claim remain separate downstream steps.
 
 ### Launch Inputs
 
@@ -58,16 +58,16 @@ This design specifies **local launches only**. The launch contract keeps an envi
 
 ### Launch Sequence
 
-Launch is a two-phase process: a **PAW preparation phase** that prepares all worker artifacts, followed later by a **Copilot CLI interactive launch** that starts the visible worker session. The implemented MVP covers the preparation phase and returns the terminal handoff; it does not start Copilot CLI.
+Launch is a two-phase process: a **PAW init phase** that prepares all worker artifacts, followed later by a **Copilot CLI interactive launch** that starts the visible worker session. The implemented MVP covers the PAW init phase and returns the terminal handoff; it does not start the worker terminal.
 
-#### Phase 1 — PAW Launch Preparation
+#### Phase 1 — PAW Launch Initialization
 
-Streamliner's backend prepares a PAW handoff. Context assembly uses Copilot SDK to synthesize the worker-facing `context.md` from deterministic backend-collected sources. PAW initialization uses a separate constrained SDK session that preloads the installed `paw-init` skill and exposes only Streamliner-owned completion tooling. Preparation:
+Streamliner's backend prepares a PAW handoff. Context assembly uses Copilot SDK to synthesize the worker-facing `context.md` from deterministic backend-collected sources. PAW initialization uses a fully capable Copilot SDK session that preloads the installed `paw-init` skill, enables config discovery, approves built-in tool use, and adds Streamliner's `complete_paw_init` completion tool. Initialization:
 
 1. **Normalizes launch configuration** — applies defaults for workflow instruction text, CLI args, terminal mode, and environment values.
 2. **Stages context** — collects graph, brief, design-doc, and tracker/spec source material, then asks Copilot SDK to build a single worker-facing context file for the selected node with Layer 0-3 sections. Without an explicit output directory, the context package is written under Streamliner's local state at `launch-contexts/<context-id>/context.md`.
-3. **Initializes PAW** — runs an SDK session with the installed `paw-init` skill preloaded. The prompt supplies the builder workflow instructions, selected node, tracker URL, and staged context path, and tells PAW init to use documented defaults/best judgment rather than asking follow-up questions.
-4. **Installs the context file** — the only exposed SDK tool, `complete_paw_init`, copies the staged context package to `.paw/work/<work-id>/streamliner/context.md`, writes the PAW-derived `WorkflowContext.md`, and ensures `Additional Inputs` includes the installed Streamliner context path.
+3. **Runs PAW init** — runs an SDK session with Copilot CLI-style repository, shell, GitHub, configured MCP, and custom-tool access. The prompt supplies the builder workflow instructions, selected node, tracker URL, and staged context path, and tells PAW init to use documented defaults/best judgment rather than asking follow-up questions.
+4. **Installs the context file** — the Streamliner-owned completion tool, `complete_paw_init`, copies the staged context package to `.paw/work/<work-id>/streamliner/context.md`, writes the PAW-derived `WorkflowContext.md`, and ensures `Additional Inputs` includes the installed Streamliner context path.
 5. **Preserves launch metadata** — carries the launch nonce and future claim reference fields through metadata without owning claim persistence.
 6. **Compiles kickoff prompt** — turns PAW workflow context, installed Streamliner context path, work identity, branch, nonce, target repos, and tracker URL into the initial instruction for the worker session.
 7. **Returns structured output** — returns the handoff the terminal launcher needs.
@@ -90,7 +90,7 @@ Launch preparation output:
 
 #### Phase 2 — Copilot CLI Interactive Launch
 
-After PAW launch preparation completes, future terminal integration will:
+After PAW launch initialization completes, future terminal integration will:
 
 1. **Record launch claim** — write a launch claim to Streamliner's runtime state binding the node to the expected session location before the worker session starts
 2. **Launch Copilot CLI** — open a visible terminal in the returned `cwd` and start Copilot CLI interactive mode with the selected/default CLI arguments
@@ -179,7 +179,7 @@ Synthesized from the graph neighborhood and tracker/spec references:
 
 ### Delivery Mechanism
 
-Context is delivered as one `context.md` file. For PAW launch preparation, Streamliner initializes the PAW work directory first and then calls context assembly with that directory as `outputDir`; Streamliner writes the worker handoff to `streamliner/context.md` under the PAW work directory. For prompt preview or direct context assembly, Streamliner can still write a per-context package under local runtime state. The kickoff prompt points the worker session at the single context file during initialization. See [Decision 002](decisions/002-file-based-context-delivery.md) for the rationale.
+Context is delivered as one `context.md` file. For PAW launch initialization, Streamliner first stages the generated worker handoff under local runtime state, then gives PAW init the staged path. When PAW init completes, `complete_paw_init` copies that staged file to `streamliner/context.md` under the PAW work directory and records the installed path in `WorkflowContext.md` Additional Inputs. For prompt preview or direct context assembly, Streamliner can still write a per-context package under local runtime state. The kickoff prompt points the worker session at the installed PAW work-directory context file. See [Decision 002](decisions/002-file-based-context-delivery.md) for the rationale.
 
 The assembled package is written to:
 
@@ -192,7 +192,7 @@ The assembled package is written to:
   context.md                ← preview/runtime generated context
 ```
 
-This file is generated by Copilot SDK, not manually maintained. It is excluded from Git and regenerated for each context preparation. PAW launch preparation always instructs the worker to read it alongside `WorkflowContext.md`. The SDK prompt must give the context writer a concise product/process primer: Streamliner is a local-first workstream orchestration app where a builder launches a Copilot CLI worker to execute one selected graph node. It must then instruct the generator to treat source documents as data, produce context for exactly the selected node, avoid turning workstream-level plans into worker instructions, present Layer 0 design paths only as navigation hints, and link to authoritative sources instead of restating design docs or tracker specs in full. Machine metadata remains in the backend/API response rather than in a worker-facing manifest file.
+This file is generated by Copilot SDK, not manually maintained. It is excluded from Git and regenerated for each context preparation. PAW launch initialization always instructs the worker to read it alongside `WorkflowContext.md`. The SDK prompt must give the context writer a concise product/process primer: Streamliner is a local-first workstream orchestration app where a builder launches a Copilot CLI worker to execute one selected graph node. It must then instruct the generator to treat source documents as data, produce context for exactly the selected node, avoid turning workstream-level plans into worker instructions, present Layer 0 design paths only as navigation hints, and link to authoritative sources instead of restating design docs or tracker specs in full. Machine metadata remains in the backend/API response rather than in a worker-facing manifest file.
 
 The SDK session uses `STREAMLINER_CONTEXT_MODEL` when set. When unset or blank, Streamliner requests `claude-sonnet-4.6` by default for stable launch-context synthesis quality.
 
@@ -202,7 +202,7 @@ Before launch claims exist, backend context preview writes default packages to:
 ~/.streamliner/state/{projectKey}/{workstreamId}/launch-contexts/{contextId}/
 ```
 
-`contextId` is a stable per-package identifier returned by the backend. Repeated runtime-state preparations create fresh package directories rather than overwriting earlier packages. When a PAW work directory is supplied as `outputDir`, repeated preparations replace that work directory's `streamliner/context.md` handoff file because there is one generated worker context per PAW node session. Later launch-claim binding may associate a returned `contextId` with a `launchNonce` or copy the package into a nonce-scoped launch archive; this context assembly slice does not require a nonce up front.
+`contextId` is a stable per-package identifier returned by the backend. Repeated runtime-state preparations create fresh package directories rather than overwriting earlier packages. During PAW init, `complete_paw_init` replaces the PAW work directory's `streamliner/context.md` handoff file because there is one generated worker context per PAW node session. Later launch-claim binding may associate a returned `contextId` with a `launchNonce` or copy the package into a nonce-scoped launch archive; this context assembly slice does not require a nonce up front.
 
 ### Context Package Metadata
 
@@ -252,7 +252,7 @@ Response body:
 
 Validation, PAW initialization, and context-preparation failures return JSON with `code`, `error`, `step`, and `input` fields. The route never starts a terminal.
 
-The PAW launch dialog is intentionally text-guided for this MVP. It exposes workflow instructions, CLI args, terminal preference, graph source, and the prepared handoff after backend preparation. PAW-owned metadata, presets, specialists, and dependent WorkflowContext constraints are deferred to issue #43 so Streamliner does not duplicate PAW's configuration rules.
+The PAW launch dialog is intentionally text-guided for this MVP. It exposes workflow instructions, CLI args, terminal preference, graph source, and the prepared handoff after backend PAW init. The primary action is labeled as running PAW init because the SDK session may read repository files, inspect git/GitHub context, execute shell tools, and write the PAW work artifacts before returning the structured handoff. PAW-owned metadata, presets, specialists, and dependent WorkflowContext constraints are deferred to issue #43 so Streamliner does not duplicate PAW's configuration rules.
 
 The local API exposes context assembly as:
 

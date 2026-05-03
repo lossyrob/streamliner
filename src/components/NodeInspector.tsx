@@ -128,7 +128,7 @@ export function NodeInspector({
             onClick={onLaunch}
             type="button"
           >
-            Launch PAW worker
+            Initialize PAW launch
           </button>
           {!canLaunch && launchDisabledReason ? (
             <span className="sl-sidebar-note">{launchDisabledReason}</span>

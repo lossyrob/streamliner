@@ -4,9 +4,9 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import {
+  approveAll,
   CopilotClient,
   defineTool,
-  type PermissionHandler,
 } from "@github/copilot-sdk";
 
 import { getApiLogger } from "./logger";
@@ -20,7 +20,7 @@ import {
 } from "./launch-context";
 
 const DEFAULT_CLI_ARGS = ["--yolo"];
-const DEFAULT_PAW_INIT_MODEL = "claude-sonnet-4.6";
+const DEFAULT_PAW_INIT_MODEL = "gpt-5.5";
 const DEFAULT_PAW_INIT_TIMEOUT_MS = 120_000;
 const TERMINAL_LAUNCH_MODES = ["manual"] as const;
 const TERMINAL_PREFERENCES = ["default", "windows-terminal", "powershell"] as const;
@@ -445,13 +445,14 @@ function buildPawInitPrompt(input: PawInitRunnerInput): string {
     "Initialize a PAW workflow for a Streamliner graph launch.",
     "",
     "Use the preloaded `paw-init` skill as the source of truth for deriving the WorkflowContext.",
-    "PAW init is a skill, not a callable function, so follow its prompt contract and complete initialization through the Streamliner-owned `complete_paw_init` tool.",
+    "You are running in a fully capable Copilot SDK session with Copilot CLI-style tool access. Read repository files, inspect git state, and use GitHub or shell tools when PAW init needs that context.",
+    "PAW init is a skill, not a callable function, so follow its prompt contract and finish initialization through the Streamliner-owned `complete_paw_init` tool.",
     "",
     "Important behavior:",
     "- Do not ask follow-up questions during launch preparation.",
     "- If information is missing but PAW has a documented default or derivation rule, use that default and your best judgment.",
     "- If a serious blocker prevents safe initialization, do not call the tool; respond with JSON: {\"status\":\"blocked\",\"reason\":\"...\"}.",
-    "- Do not start the worker session or open a terminal.",
+    "- Do not start the worker session, open a terminal, create the final PR, or continue into implementation.",
     "- Do not inline the Streamliner context into WorkflowContext.md; install it into the PAW work directory via the tool.",
     "",
     "Selected Streamliner node:",
@@ -469,7 +470,7 @@ function buildPawInitPrompt(input: PawInitRunnerInput): string {
     input.configuration.workflowInstructions.trim(),
     "```",
     "",
-    "When you have derived the PAW initialization values, call `complete_paw_init` exactly once with:",
+    "When PAW init has completed its reasoning and any necessary setup work, call `complete_paw_init` exactly once with:",
     "- `workTitle`: the PAW work title derived by paw-init.",
     "- `workId`: the PAW work ID derived by paw-init.",
     "- `targetBranch`: the target branch derived by paw-init.",
@@ -485,11 +486,6 @@ function buildPawInitPrompt(input: PawInitRunnerInput): string {
     "}",
   ].join("\n");
 }
-
-const denyPawInitBuiltInTools: PermissionHandler = () => ({
-  kind: "reject",
-  feedback: "PAW launch initialization may only use Streamliner-owned PAW init tools.",
-});
 
 export async function defaultPawInitRunner(
   input: PawInitRunnerInput,
@@ -592,25 +588,24 @@ export async function defaultPawInitRunner(
       clientName: "streamliner-paw-launch-initializer",
       model: process.env.STREAMLINER_PAW_INIT_MODEL ?? DEFAULT_PAW_INIT_MODEL,
       workingDirectory: input.cwd,
-      enableConfigDiscovery: false,
+      enableConfigDiscovery: true,
       skillDirectories,
       tools: [completeTool],
-      availableTools: ["complete_paw_init"],
-      onPermissionRequest: denyPawInitBuiltInTools,
+      onPermissionRequest: approveAll,
       customAgents: [
         {
           name: "streamliner-paw-init",
           displayName: "Streamliner PAW Init",
-          description: "Initializes a PAW workflow for a Streamliner graph launch.",
-          tools: ["complete_paw_init"],
+          description: "Runs PAW init for a Streamliner graph launch with Copilot CLI-style tool access.",
+          tools: null,
           skills: ["paw-init"],
-          prompt: "Use the paw-init skill to initialize PAW workflows from user intent. For Streamliner launch preparation, complete initialization through the supplied complete_paw_init tool and never ask the user follow-up questions.",
+          prompt: "Use the paw-init skill to initialize PAW workflows from user intent. You have Copilot CLI-style tool access for repository, shell, GitHub, and configured MCP context. Complete Streamliner launch initialization through the supplied complete_paw_init tool and never ask the user follow-up questions.",
         },
       ],
       agent: "streamliner-paw-init",
       systemMessage: {
         mode: "append",
-        content: "You are a constrained Streamliner PAW launch initializer. You may only use Streamliner-owned PAW init tools supplied by this session.",
+        content: "You are a Streamliner PAW launch initializer running as a fully capable SDK session. Use the same kind of repository, shell, GitHub, and configured MCP context a Copilot CLI PAW init session would use, then return the structured launch handoff through Streamliner's completion tool.",
       },
     });
     const response = await session.sendAndWait(
