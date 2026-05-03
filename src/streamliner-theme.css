@@ -257,6 +257,7 @@ body,
   background: transparent;
   cursor: pointer;
   text-align: left;
+  text-decoration: none;
   transition: background 0.1s ease;
 }
 
@@ -376,6 +377,13 @@ body,
 .sl-action-btn.danger:hover:not(:disabled) {
   background: rgba(200, 50, 50, 0.08);
   border-color: var(--sl-red);
+}
+
+a.sl-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
 }
 
 .sl-copy-btn {
@@ -1049,6 +1057,7 @@ body,
   color: var(--sl-text);
   cursor: pointer;
   text-align: left;
+  text-decoration: none;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -1218,6 +1227,7 @@ body,
   cursor: pointer;
   padding: 0;
   text-align: left;
+  text-decoration: none;
 }
 
 .sl-workstream-card-main .sl-pill {
