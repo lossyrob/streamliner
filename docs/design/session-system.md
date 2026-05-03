@@ -239,7 +239,7 @@ Request body:
 | `nodeId` | yes | Selected graph node id. |
 | `graphPath` | no | Backend-readable graph file to use; the UI supplies the active workstream registry path. |
 | `launchNonce` | no | Optional nonce preserved in metadata and the kickoff prompt for later claim binding. |
-| `configuration` | no | PAW launch configuration overrides: work title/id, branch paths, CLI args, environment, custom message, PAW workflow options, and terminal preferences. |
+| `configuration` | no | PAW launch configuration overrides: work title/id, branch paths, CLI args, environment, custom message, PAW WorkflowContext options, and terminal preferences. |
 
 Response body:
 
@@ -253,6 +253,8 @@ Response body:
 | `contextPackage` | Full context package metadata produced by context assembly. |
 
 Validation, PAW initialization, and context-preparation failures return JSON with `code`, `error`, `step`, and `input` fields. The route never starts a terminal.
+
+The PAW launch dialog is intentionally a PAW `WorkflowContext.md` front end rather than a generic launch-profile editor. It exposes presets for common PAW shapes and advanced fields for workflow identity, workflow mode, review strategy/policy, session policy, planning docs review, final agent review, review modes, review interactivity, review/plan model lists, Society-of-Thought specialists/interaction/model routing/perspectives, implementation model, custom workflow instructions, initial prompt marker, remote, artifact lifecycle, artifact paths, CLI args, terminal preference, and builder kickoff guidance. Streamliner validates the same dependent relationships PAW expects: minimal mode requires local strategy, planning-only/final-PR-only require local strategy, PAW Lite requires custom/local/final-PR-only, Society-of-Thought reviews require their corresponding review gate to be enabled, single-model modes cannot carry multiple models, multi-model modes require multiple models, and perspective caps must be positive integers.
 
 The local API exposes context assembly as:
 

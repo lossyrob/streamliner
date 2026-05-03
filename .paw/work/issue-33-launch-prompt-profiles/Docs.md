@@ -2,7 +2,7 @@
 
 ## Overview
 
-Streamliner can now prepare a selected workstream graph node for a PAW worker session without starting the visible terminal session. The implementation adds a PAW-focused graph launch dialog, a backend launch-preparation route, constrained PAW workflow initialization, kickoff prompt generation, and a structured handoff for later terminal integration.
+Streamliner can now prepare a selected workstream graph node for a PAW worker session without starting the visible terminal session. The implementation adds a PAW-focused graph launch dialog, a backend launch-preparation route, constrained PAW workflow initialization, kickoff prompt generation, WorkflowContext configuration editing, and a structured handoff for later terminal integration.
 
 This work intentionally narrows the launch MVP to PAW. It does not introduce a general non-PAW launch profile system, and it keeps terminal start, launch-claim persistence, and session binding as separate follow-up responsibilities.
 
@@ -20,7 +20,7 @@ The visible Copilot CLI worker is not started by this feature. The returned hand
 
 ### Design Decisions
 
-**PAW-only MVP.** The issue originally references prompt profiles, but the implemented scope is deliberately PAW-only. The UI and API expose PAW-shaped fields instead of a generic profile abstraction, which keeps the first graph launch path concrete and avoids prematurely designing non-PAW launch modes.
+**PAW WorkflowContext front end.** The issue originally references prompt profiles, but the implemented scope is deliberately PAW-focused rather than a generic profile abstraction. After preview feedback, the dialog was hot-rescoped from a small defaults form into a front end for PAW `WorkflowContext.md` options. It includes PAW and PAW Lite identities because both are PAW WorkflowContext values, while non-PAW launch profiles remain deferred.
 
 **Preparation before terminal launch.** Streamliner prepares the launch artifacts first and shows the resulting handoff in the UI. This prevents a worker terminal from starting with incomplete context or a failed PAW initialization.
 
@@ -30,11 +30,14 @@ The visible Copilot CLI worker is not started by this feature. The returned hand
 
 **File-based context handoff.** Launch preparation reuses context assembly and passes the PAW work directory as `outputDir`, so the worker-facing context is written to `.paw/work/<work-id>/streamliner/context.md`. The kickoff prompt points to that file instead of inlining context content.
 
+**PAW-native validation.** The UI and backend use PAW's documented rules from `paw-init`, `paw-status`, planning/final review skills, and the PAW specification. Examples: minimal mode requires local review strategy; planning-only/final-PR-only policies require local strategy; PAW Lite requires custom/local/final-PR-only; Society-of-Thought review enables the corresponding planning/final review gate; single-model modes cannot carry multiple comma-separated models; multi-model modes require multiple models.
+
 ### Integration Points
 
 - `src/App.tsx` coordinates selected-node launch state, posts launch preparation requests, and renders success/error handoff state.
 - `src/components/NodeInspector.tsx` displays the launch action and unsupported-state messaging for the selected node.
 - `src/components/PawLaunchDialog.tsx` owns the editable PAW launch form and handoff summary.
+- `src/components/paw-launch-config.ts` defines shared PAW launch defaults and UI/backend request types.
 - `src/server/routes/launch-preparations.ts` exposes the preparation route under `/api/launch-preparations`.
 - `src/server/launch-preparation.ts` contains launch configuration normalization, PAW initialization, kickoff prompt generation, and handoff assembly.
 - `src/server/launch-context.ts` remains the source of the worker-facing Streamliner context package.
@@ -49,7 +52,7 @@ The visible Copilot CLI worker is not started by this feature. The returned hand
 
 ### Basic Usage
 
-Select a ready graph node, then use **Launch PAW worker** in the inspector. Streamliner opens a preparation dialog showing the work title, work ID, target branch, Copilot CLI args, terminal preference, graph source, and optional builder custom message.
+Select a ready graph node, then use **Launch PAW worker** in the inspector. Streamliner opens a preparation dialog showing presets, work identity, branches, WorkflowContext options, review modes, model fields, terminal preference, graph source, and optional builder custom message.
 
 Choose **Cancel** to close the dialog without contacting the preparation API. Choose **Prepare launch** to initialize the PAW work area and generate the handoff. On success, the dialog shows the branch, PAW work directory, workflow context path, Streamliner context path, CLI args, and a collapsible kickoff prompt.
 
@@ -57,7 +60,21 @@ Choose **Cancel** to close the dialog without contacting the preparation API. Ch
 
 The builder can clear the CLI args field to intentionally launch with no Copilot CLI arguments later; an explicit empty list is preserved rather than replaced with the default `--yolo`. The optional builder message is appended to the kickoff prompt in a `## Builder Custom Message` section and is omitted entirely when empty.
 
-The UI currently sends PAW defaults for a full local workflow with `reviewPolicy: "final-pr-only"`, planning docs review enabled, and final local agent review disabled. Terminal launch mode is manual because this feature prepares artifacts but does not open a terminal.
+The default preset sends PAW defaults for a full local workflow with `reviewPolicy: "final-pr-only"`, planning docs review enabled, final local agent review disabled, and concrete model ids `gpt-5.5`, `claude-opus-4.7`, and `claude-opus-4.6-1m`. The dialog also provides presets for full local reviews, planning-only, minimal handoff, and PAW Lite. Terminal launch mode is manual because this feature prepares artifacts but does not open a terminal.
+
+### WorkflowContext Options
+
+The launch dialog maps to the PAW `WorkflowContext.md` header fields:
+
+| Dialog group | WorkflowContext fields |
+| --- | --- |
+| Identity and execution | Work title/id, workflow identity, base/target branch, workflow mode, review strategy, review policy, session policy, remote, artifact lifecycle, artifact paths |
+| Planning and implementation | Planning docs review, planning review mode/interactive/models, plan generation mode/models, implementation model |
+| Final review | Final agent review, final review mode/interactive/models |
+| Society of Thought and specialist routing | Planning/final specialists, interaction mode, specialist models, perspectives, perspective caps |
+| Instructions and context | Custom workflow instructions, initial prompt marker, builder custom message |
+
+The UI keeps common fields visible and places Society-of-Thought routing behind an expandable section. Validation errors are shown inline and disable **Prepare launch** until the configuration is internally consistent.
 
 ### Worktree Preview Workflow
 
@@ -89,7 +106,7 @@ Request fields:
 | `launchNonce` | no | Optional launch token to preserve for later claim binding. |
 | `configuration` | no | PAW launch configuration overrides. |
 
-Configuration supports work title/id, base and target branch, cwd, PAW work directory, CLI args, environment variables, custom message, PAW workflow settings, and terminal preferences. Invalid fields return a typed validation error instead of silently falling back.
+Configuration supports work title/id, base and target branch, cwd, PAW work directory, CLI args, environment variables, custom message, PAW workflow settings, and terminal preferences. PAW workflow settings include WorkflowContext values for identity/mode, review strategy/policy, session policy, planning/final review enablement, review modes/interactivity/models, Society-of-Thought routing, implementation/plan-generation models, custom instructions, initial prompt, remote, artifact lifecycle, and artifact paths. Invalid fields return a typed validation error instead of silently falling back.
 
 Response fields:
 
@@ -129,6 +146,9 @@ For visual review, use the screenshot harness against `.streamliner\workstreams\
 - Non-ready nodes show a disabled launch action with an explanation.
 - Browser-directory and missing/unreadable graph sources show an unsupported-source explanation.
 - Empty CLI args are sent as `[]` and preserved.
+- Single-model review modes reject multiple comma-separated models; multi-model modes require at least two models.
+- PAW Lite requires workflow mode `custom`, review strategy `local`, and review policy `final-pr-only`.
+- Society-of-Thought final review requires final agent review enabled; Society-of-Thought planning review requires planning docs review enabled.
 - PAW init and context-preparation errors are shown in the dialog and do not produce a success-shaped handoff.
 - Missing context package paths are treated as a preparation error.
 
@@ -137,4 +157,4 @@ For visual review, use the screenshot harness against `.streamliner\workstreams\
 - The feature prepares launch artifacts only; it does not start Copilot CLI, create launch claims, or bind observed sessions to claims.
 - Browser-only graph sources cannot launch until a backend-readable source bridge exists.
 - Non-PAW launch profiles and persisted host-specific launch defaults are deferred.
-- The PAW initializer writes the current workflow context shape and can be expanded later if PAW adds first-class machine-readable init APIs.
+- The PAW initializer writes the current WorkflowContext text shape and can be expanded later if PAW adds first-class machine-readable init APIs.

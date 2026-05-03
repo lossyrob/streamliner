@@ -245,6 +245,14 @@ function findInputByLabel(container: HTMLElement, label: string): HTMLInputEleme
   return input;
 }
 
+function findSelectByLabel(container: HTMLElement, label: string): HTMLSelectElement {
+  const select = container.querySelector(`select[aria-label="${label}"]`);
+  if (!(select instanceof HTMLSelectElement)) {
+    throw new Error(`Could not find select with label "${label}".`);
+  }
+  return select;
+}
+
 function findTextareaByLabel(container: HTMLElement, label: string): HTMLTextAreaElement {
   const textarea = container.querySelector(`textarea[aria-label="${label}"]`);
   if (!(textarea instanceof HTMLTextAreaElement)) {
@@ -270,6 +278,24 @@ function findButtonByLabel(container: HTMLElement, label: string): HTMLButtonEle
     throw new Error(`Could not find button with label "${label}".`);
   }
   return button;
+}
+
+function setSelectValue(
+  select: HTMLSelectElement,
+  value: string,
+): void {
+  const valueSetter = Object.getOwnPropertyDescriptor(
+    HTMLSelectElement.prototype,
+    "value",
+  )?.set;
+  if (!valueSetter) {
+    throw new Error("Could not find HTMLSelectElement value setter.");
+  }
+  act(() => {
+    valueSetter.call(select, value);
+    select.dispatchEvent(new Event("input", { bubbles: true }));
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
 }
 
 function setInputValue(
@@ -629,12 +655,16 @@ describe("App sessions route", () => {
           configuration: expect.objectContaining({
             workTitle: "Launch prompt profiles",
             workId: "launch-prompt-profiles",
+            baseBranch: "main",
             targetBranch: "feature/launch-prompt-profiles",
             cliArgs: [],
             customMessage: "Prefer the final PR review path.",
             paw: expect.objectContaining({
               workflowIdentity: "paw",
               reviewPolicy: "final-pr-only",
+              finalReviewMode: "multi-model",
+              finalReviewModels: "gpt-5.5, claude-opus-4.7, claude-opus-4.6-1m",
+              planGenerationMode: "multi-model",
             }),
             terminal: expect.objectContaining({
               launchMode: "manual",
@@ -646,6 +676,57 @@ describe("App sessions route", () => {
       expect(container.textContent).toContain("C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles");
       expect(container.textContent).toContain("CLI args");
       expect(container.textContent).toContain("none");
+    },
+    15_000,
+  );
+
+  it(
+    "validates PAW model lists against selected review modes",
+    async () => {
+      const graph = buildLaunchGraph();
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      act(() => {
+        findCanvasNode(container, "Launch prompt profiles").click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Launch PAW worker").click();
+      });
+      await settle();
+
+      setSelectValue(findSelectByLabel(container, "Final review mode"), "single-model");
+      await settle();
+
+      expect(container.textContent).toContain(
+        "Final review uses multiple models, so choose multi-model mode or keep one model.",
+      );
+      expect(findButton(container, "Prepare launch").disabled).toBe(true);
+      expect(
+        fetchMock.mock.calls.some(([input]) =>
+          requestPath(input as RequestInfo | URL) === "/api/launch-preparations",
+        ),
+      ).toBe(false);
     },
     15_000,
   );

@@ -30,10 +30,14 @@ import { CheckpointStepper } from "./components/CheckpointStepper";
 import { WorkstreamHeader } from "./components/WorkstreamHeader";
 import {
   PawLaunchDialog,
-  type PawLaunchDialogConfiguration,
-  type PawLaunchDialogDefaults,
   type PawLaunchDialogHandoff,
 } from "./components/PawLaunchDialog";
+import {
+  DEFAULT_PAW_TERMINAL_CONFIGURATION,
+  DEFAULT_PAW_WORKFLOW_CONFIGURATION,
+  type PawLaunchDialogConfiguration,
+  type PawLaunchDialogDefaults,
+} from "./components/paw-launch-config";
 import { SessionsPage } from "./components/SessionsPage";
 import {
   deleteBrowserWorkstreamEntry,
@@ -853,10 +857,13 @@ function GraphDashboard({
     return {
       workTitle: selectedEntry.node.title,
       workId: selectedEntry.node.id,
+      baseBranch: "main",
       targetBranch: `feature/${selectedEntry.node.id}`,
       cliArgsText: "--yolo",
       graphPath: activeWorkstreamEntry.path,
       terminalPreference: "Manual terminal launch after preparation",
+      paw: { ...DEFAULT_PAW_WORKFLOW_CONFIGURATION },
+      terminal: { ...DEFAULT_PAW_TERMINAL_CONFIGURATION },
     };
   }, [activeWorkstreamEntry, selectedEntry]);
 
@@ -906,21 +913,12 @@ function GraphDashboard({
           configuration: {
             workTitle: configuration.workTitle,
             workId: configuration.workId,
+            baseBranch: configuration.baseBranch,
             targetBranch: configuration.targetBranch,
             cliArgs: configuration.cliArgs,
             customMessage: configuration.customMessage,
-            paw: {
-              workflowIdentity: "paw",
-              workflowMode: "full",
-              reviewStrategy: "local",
-              reviewPolicy: "final-pr-only",
-              planningDocsReview: "enabled",
-              finalAgentReview: "disabled",
-            },
-            terminal: {
-              launchMode: "manual",
-              preferredTerminal: "default",
-            },
+            paw: configuration.paw,
+            terminal: configuration.terminal,
           },
         }),
       });

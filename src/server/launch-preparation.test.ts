@@ -162,6 +162,15 @@ describe("preparePawLaunch", () => {
         workId: "launch-prompt-profiles",
         branch: "feature/issue-33-launch-prompt-profiles",
         streamlinerContextPath: join(expectedWorkDir, "streamliner", "context.md"),
+        configuration: expect.objectContaining({
+          paw: expect.objectContaining({
+            workflowIdentity: "paw",
+            reviewPolicy: "final-pr-only",
+            finalReviewMode: "multi-model",
+            finalReviewModels: "gpt-5.5, claude-opus-4.7, claude-opus-4.6-1m",
+            planGenerationMode: "multi-model",
+          }),
+        }),
       }),
     );
     expect(result).toEqual(
@@ -203,6 +212,52 @@ describe("preparePawLaunch", () => {
     });
 
     expect(result.cliArgs).toEqual([]);
+  });
+
+  it("validates dependent PAW review configuration", async () => {
+    const root = createRootDir();
+
+    await expect(
+      preparePawLaunch({
+        nodeId: "launch-prompt-profiles",
+        cwd: root,
+        stateRoot: join(root, "state"),
+        configuration: {
+          paw: {
+            finalReviewMode: "single-model",
+            finalReviewModels: "gpt-5.5, claude-opus-4.7",
+          },
+        },
+        pawInitRunner: createPawInitRunner(),
+        contextPreparer: createContextPreparer(root),
+      }),
+    ).rejects.toMatchObject({
+      code: "invalid_launch_configuration",
+      statusCode: 400,
+      step: "validation",
+      input: "configuration.paw.finalReviewModels",
+    });
+
+    await expect(
+      preparePawLaunch({
+        nodeId: "launch-prompt-profiles",
+        cwd: root,
+        stateRoot: join(root, "state"),
+        configuration: {
+          paw: {
+            workflowIdentity: "paw-lite",
+            workflowMode: "full",
+          },
+        },
+        pawInitRunner: createPawInitRunner(),
+        contextPreparer: createContextPreparer(root),
+      }),
+    ).rejects.toMatchObject({
+      code: "invalid_launch_configuration",
+      statusCode: 400,
+      step: "validation",
+      input: "configuration.paw.workflowIdentity",
+    });
   });
 
   it("builds kickoff prompts with context paths and optional multi-paragraph builder messages", async () => {

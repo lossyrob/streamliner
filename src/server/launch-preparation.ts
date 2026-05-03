@@ -27,11 +27,17 @@ const DEFAULT_CLI_ARGS = ["--yolo"];
 const DEFAULT_PAW_INIT_MODEL = "claude-sonnet-4.6";
 const DEFAULT_PAW_REVIEW_MODELS = "gpt-5.5, claude-opus-4.7, claude-opus-4.6-1m";
 const DEFAULT_PAW_INIT_TIMEOUT_MS = 120_000;
-const WORKFLOW_IDENTITIES = ["paw"] as const;
+const WORKFLOW_IDENTITIES = ["paw", "paw-lite"] as const;
 const WORKFLOW_MODES = ["full", "minimal", "custom"] as const;
 const REVIEW_STRATEGIES = ["local", "prs"] as const;
 const REVIEW_POLICIES = ["every-stage", "milestones", "planning-only", "final-pr-only"] as const;
+const SESSION_POLICIES = ["continuous", "pause-after-stage"] as const;
 const ENABLEMENT_VALUES = ["enabled", "disabled"] as const;
+const REVIEW_MODES = ["single-model", "multi-model", "society-of-thought"] as const;
+const PLAN_GENERATION_MODES = ["single-model", "multi-model"] as const;
+const REVIEW_INTERACTIVE_VALUES = ["true", "false", "smart"] as const;
+const REVIEW_INTERACTION_MODES = ["parallel", "debate"] as const;
+const ARTIFACT_LIFECYCLES = ["commit-and-clean", "commit-and-persist", "never-commit"] as const;
 const TERMINAL_LAUNCH_MODES = ["manual"] as const;
 const TERMINAL_PREFERENCES = ["default", "windows-terminal", "powershell"] as const;
 
@@ -72,12 +78,37 @@ export class LaunchPreparationError extends Error {
 }
 
 export interface PawLaunchWorkflowOptions {
-  workflowIdentity: "paw";
+  workflowIdentity: "paw" | "paw-lite";
   workflowMode: "full" | "minimal" | "custom";
   reviewStrategy: "local" | "prs";
   reviewPolicy: "every-stage" | "milestones" | "planning-only" | "final-pr-only";
+  sessionPolicy: "continuous" | "pause-after-stage";
   planningDocsReview: "enabled" | "disabled";
   finalAgentReview: "enabled" | "disabled";
+  finalReviewMode: "single-model" | "multi-model" | "society-of-thought";
+  finalReviewInteractive: "true" | "false" | "smart";
+  finalReviewModels: string;
+  finalReviewSpecialists: string;
+  finalReviewInteractionMode: "parallel" | "debate";
+  finalReviewSpecialistModels: string;
+  finalReviewPerspectives: string;
+  finalReviewPerspectiveCap: number;
+  implementationModel: string;
+  planGenerationMode: "single-model" | "multi-model";
+  planGenerationModels: string;
+  planningReviewMode: "single-model" | "multi-model" | "society-of-thought";
+  planningReviewInteractive: "true" | "false" | "smart";
+  planningReviewModels: string;
+  planningReviewSpecialists: string;
+  planningReviewInteractionMode: "parallel" | "debate";
+  planningReviewSpecialistModels: string;
+  planningReviewPerspectives: string;
+  planningReviewPerspectiveCap: number;
+  customWorkflowInstructions: string;
+  initialPrompt: string;
+  remote: string;
+  artifactLifecycle: "commit-and-clean" | "commit-and-persist" | "never-commit";
+  artifactPaths: string;
 }
 
 export interface PawLaunchTerminalPreferences {
@@ -202,8 +233,33 @@ const DEFAULT_PAW_OPTIONS: PawLaunchWorkflowOptions = {
   workflowMode: "full",
   reviewStrategy: "local",
   reviewPolicy: "final-pr-only",
+  sessionPolicy: "continuous",
   planningDocsReview: "enabled",
   finalAgentReview: "disabled",
+  finalReviewMode: "multi-model",
+  finalReviewInteractive: "smart",
+  finalReviewModels: DEFAULT_PAW_REVIEW_MODELS,
+  finalReviewSpecialists: "all",
+  finalReviewInteractionMode: "parallel",
+  finalReviewSpecialistModels: "none",
+  finalReviewPerspectives: "auto",
+  finalReviewPerspectiveCap: 2,
+  implementationModel: "none",
+  planGenerationMode: "multi-model",
+  planGenerationModels: DEFAULT_PAW_REVIEW_MODELS,
+  planningReviewMode: "multi-model",
+  planningReviewInteractive: "smart",
+  planningReviewModels: DEFAULT_PAW_REVIEW_MODELS,
+  planningReviewSpecialists: "all",
+  planningReviewInteractionMode: "parallel",
+  planningReviewSpecialistModels: "none",
+  planningReviewPerspectives: "auto",
+  planningReviewPerspectiveCap: 2,
+  customWorkflowInstructions: "final-pr-review-only; continue through implementation and documentation without intermediate local review pauses, and create the final PR unless a serious blocker is encountered.",
+  initialPrompt: "streamliner-launch-kickoff",
+  remote: "origin",
+  artifactLifecycle: "commit-and-clean",
+  artifactPaths: "auto-derived",
 };
 
 const DEFAULT_TERMINAL_PREFERENCES: PawLaunchTerminalPreferences = {
@@ -317,6 +373,30 @@ function assertOptionalEnum<T extends string>(
   return value as T;
 }
 
+function assertOptionalPositiveInteger(
+  value: unknown,
+  field: string,
+): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const parsed = typeof value === "number"
+    ? value
+    : typeof value === "string"
+      ? Number(value.trim())
+      : Number.NaN;
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new LaunchPreparationError(
+      "invalid_launch_configuration",
+      400,
+      `${field} must be a positive integer.`,
+      "validation",
+      field,
+    );
+  }
+  return parsed;
+}
+
 function assertOptionalRecord(value: unknown, field: string): Record<string, unknown> | undefined {
   if (value === undefined) {
     return undefined;
@@ -364,6 +444,161 @@ function titleFromNodeId(nodeId: string): string {
     .join(" ") || "Streamliner Launch";
 }
 
+function normalizeOptionalText(
+  value: unknown,
+  field: string,
+): string | undefined {
+  const raw = assertOptionalString(value, field);
+  if (raw === undefined) {
+    return undefined;
+  }
+  return raw.trim() || undefined;
+}
+
+function modelCount(value: string): number {
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.toLowerCase() === "none") {
+    return 0;
+  }
+  return trimmed
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean).length;
+}
+
+function assertModelModeCompatible(
+  mode: "single-model" | "multi-model",
+  models: string,
+  field: string,
+): void {
+  const count = modelCount(models);
+  if (mode === "single-model" && count > 1) {
+    throw new LaunchPreparationError(
+      "invalid_launch_configuration",
+      400,
+      `${field} can contain only one model when the matching mode is single-model.`,
+      "validation",
+      field,
+    );
+  }
+  if (mode === "multi-model" && count < 2) {
+    throw new LaunchPreparationError(
+      "invalid_launch_configuration",
+      400,
+      `${field} must contain at least two comma-separated models when the matching mode is multi-model.`,
+      "validation",
+      field,
+    );
+  }
+}
+
+function assertAdaptiveSpecialists(value: string, field: string): void {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("adaptive:")) {
+    return;
+  }
+  const cap = Number(trimmed.slice("adaptive:".length));
+  if (!Number.isInteger(cap) || cap <= 0) {
+    throw new LaunchPreparationError(
+      "invalid_launch_configuration",
+      400,
+      `${field} adaptive specialist count must be a positive integer.`,
+      "validation",
+      field,
+    );
+  }
+}
+
+function validatePawOptions(paw: PawLaunchWorkflowOptions): void {
+  if (paw.workflowMode === "minimal" && paw.reviewStrategy !== "local") {
+    throw new LaunchPreparationError(
+      "invalid_launch_configuration",
+      400,
+      "configuration.paw.reviewStrategy must be local when workflowMode is minimal.",
+      "validation",
+      "configuration.paw.reviewStrategy",
+    );
+  }
+  if (
+    (paw.reviewPolicy === "planning-only" || paw.reviewPolicy === "final-pr-only") &&
+    paw.reviewStrategy !== "local"
+  ) {
+    throw new LaunchPreparationError(
+      "invalid_launch_configuration",
+      400,
+      "configuration.paw.reviewStrategy must be local for planning-only or final-pr-only review policies.",
+      "validation",
+      "configuration.paw.reviewStrategy",
+    );
+  }
+  if (
+    paw.workflowMode === "custom" &&
+    paw.workflowIdentity !== "paw-lite" &&
+    (paw.customWorkflowInstructions === "none" || paw.customWorkflowInstructions.trim().length === 0)
+  ) {
+    throw new LaunchPreparationError(
+      "invalid_launch_configuration",
+      400,
+      "configuration.paw.customWorkflowInstructions is required when workflowMode is custom.",
+      "validation",
+      "configuration.paw.customWorkflowInstructions",
+    );
+  }
+  if (
+    paw.workflowIdentity === "paw-lite" &&
+    (paw.workflowMode !== "custom" ||
+      paw.reviewStrategy !== "local" ||
+      paw.reviewPolicy !== "final-pr-only")
+  ) {
+    throw new LaunchPreparationError(
+      "invalid_launch_configuration",
+      400,
+      "configuration.paw paw-lite requires workflowMode custom, reviewStrategy local, and reviewPolicy final-pr-only.",
+      "validation",
+      "configuration.paw.workflowIdentity",
+    );
+  }
+  if (paw.finalReviewMode === "society-of-thought" && paw.finalAgentReview !== "enabled") {
+    throw new LaunchPreparationError(
+      "invalid_launch_configuration",
+      400,
+      "configuration.paw.finalAgentReview must be enabled when finalReviewMode is society-of-thought.",
+      "validation",
+      "configuration.paw.finalAgentReview",
+    );
+  }
+  if (paw.planningReviewMode === "society-of-thought" && paw.planningDocsReview !== "enabled") {
+    throw new LaunchPreparationError(
+      "invalid_launch_configuration",
+      400,
+      "configuration.paw.planningDocsReview must be enabled when planningReviewMode is society-of-thought.",
+      "validation",
+      "configuration.paw.planningDocsReview",
+    );
+  }
+  if (paw.finalReviewMode !== "society-of-thought") {
+    assertModelModeCompatible(
+      paw.finalReviewMode,
+      paw.finalReviewModels,
+      "configuration.paw.finalReviewModels",
+    );
+  }
+  if (paw.planningReviewMode !== "society-of-thought") {
+    assertModelModeCompatible(
+      paw.planningReviewMode,
+      paw.planningReviewModels,
+      "configuration.paw.planningReviewModels",
+    );
+  }
+  assertModelModeCompatible(
+    paw.planGenerationMode,
+    paw.planGenerationModels,
+    "configuration.paw.planGenerationModels",
+  );
+  assertAdaptiveSpecialists(paw.finalReviewSpecialists, "configuration.paw.finalReviewSpecialists");
+  assertAdaptiveSpecialists(paw.planningReviewSpecialists, "configuration.paw.planningReviewSpecialists");
+}
+
 function normalizePawOptions(
   value: Partial<PawLaunchWorkflowOptions> | undefined,
 ): Partial<PawLaunchWorkflowOptions> {
@@ -392,6 +627,11 @@ function normalizePawOptions(
     REVIEW_POLICIES,
     "configuration.paw.reviewPolicy",
   );
+  const sessionPolicy = assertOptionalEnum(
+    record.sessionPolicy,
+    SESSION_POLICIES,
+    "configuration.paw.sessionPolicy",
+  );
   const planningDocsReview = assertOptionalEnum(
     record.planningDocsReview,
     ENABLEMENT_VALUES,
@@ -401,6 +641,54 @@ function normalizePawOptions(
     record.finalAgentReview,
     ENABLEMENT_VALUES,
     "configuration.paw.finalAgentReview",
+  );
+  const finalReviewMode = assertOptionalEnum(
+    record.finalReviewMode,
+    REVIEW_MODES,
+    "configuration.paw.finalReviewMode",
+  );
+  const finalReviewInteractive = assertOptionalEnum(
+    record.finalReviewInteractive,
+    REVIEW_INTERACTIVE_VALUES,
+    "configuration.paw.finalReviewInteractive",
+  );
+  const finalReviewInteractionMode = assertOptionalEnum(
+    record.finalReviewInteractionMode,
+    REVIEW_INTERACTION_MODES,
+    "configuration.paw.finalReviewInteractionMode",
+  );
+  const finalReviewPerspectiveCap = assertOptionalPositiveInteger(
+    record.finalReviewPerspectiveCap,
+    "configuration.paw.finalReviewPerspectiveCap",
+  );
+  const planGenerationMode = assertOptionalEnum(
+    record.planGenerationMode,
+    PLAN_GENERATION_MODES,
+    "configuration.paw.planGenerationMode",
+  );
+  const planningReviewMode = assertOptionalEnum(
+    record.planningReviewMode,
+    REVIEW_MODES,
+    "configuration.paw.planningReviewMode",
+  );
+  const planningReviewInteractive = assertOptionalEnum(
+    record.planningReviewInteractive,
+    REVIEW_INTERACTIVE_VALUES,
+    "configuration.paw.planningReviewInteractive",
+  );
+  const planningReviewInteractionMode = assertOptionalEnum(
+    record.planningReviewInteractionMode,
+    REVIEW_INTERACTION_MODES,
+    "configuration.paw.planningReviewInteractionMode",
+  );
+  const planningReviewPerspectiveCap = assertOptionalPositiveInteger(
+    record.planningReviewPerspectiveCap,
+    "configuration.paw.planningReviewPerspectiveCap",
+  );
+  const artifactLifecycle = assertOptionalEnum(
+    record.artifactLifecycle,
+    ARTIFACT_LIFECYCLES,
+    "configuration.paw.artifactLifecycle",
   );
   if (workflowIdentity !== undefined) {
     normalized.workflowIdentity = workflowIdentity;
@@ -414,11 +702,66 @@ function normalizePawOptions(
   if (reviewPolicy !== undefined) {
     normalized.reviewPolicy = reviewPolicy;
   }
+  if (sessionPolicy !== undefined) {
+    normalized.sessionPolicy = sessionPolicy;
+  }
   if (planningDocsReview !== undefined) {
     normalized.planningDocsReview = planningDocsReview;
   }
   if (finalAgentReview !== undefined) {
     normalized.finalAgentReview = finalAgentReview;
+  }
+  if (finalReviewMode !== undefined) {
+    normalized.finalReviewMode = finalReviewMode;
+  }
+  if (finalReviewInteractive !== undefined) {
+    normalized.finalReviewInteractive = finalReviewInteractive;
+  }
+  if (finalReviewInteractionMode !== undefined) {
+    normalized.finalReviewInteractionMode = finalReviewInteractionMode;
+  }
+  if (finalReviewPerspectiveCap !== undefined) {
+    normalized.finalReviewPerspectiveCap = finalReviewPerspectiveCap;
+  }
+  if (planGenerationMode !== undefined) {
+    normalized.planGenerationMode = planGenerationMode;
+  }
+  if (planningReviewMode !== undefined) {
+    normalized.planningReviewMode = planningReviewMode;
+  }
+  if (planningReviewInteractive !== undefined) {
+    normalized.planningReviewInteractive = planningReviewInteractive;
+  }
+  if (planningReviewInteractionMode !== undefined) {
+    normalized.planningReviewInteractionMode = planningReviewInteractionMode;
+  }
+  if (planningReviewPerspectiveCap !== undefined) {
+    normalized.planningReviewPerspectiveCap = planningReviewPerspectiveCap;
+  }
+  if (artifactLifecycle !== undefined) {
+    normalized.artifactLifecycle = artifactLifecycle;
+  }
+  const textFields = [
+    "finalReviewModels",
+    "finalReviewSpecialists",
+    "finalReviewSpecialistModels",
+    "finalReviewPerspectives",
+    "implementationModel",
+    "planGenerationModels",
+    "planningReviewModels",
+    "planningReviewSpecialists",
+    "planningReviewSpecialistModels",
+    "planningReviewPerspectives",
+    "customWorkflowInstructions",
+    "initialPrompt",
+    "remote",
+    "artifactPaths",
+  ] as const;
+  for (const field of textFields) {
+    const normalizedText = normalizeOptionalText(record[field], `configuration.paw.${field}`);
+    if (normalizedText !== undefined) {
+      normalized[field] = normalizedText;
+    }
   }
   return normalized;
 }
@@ -479,6 +822,11 @@ function normalizeConfiguration(
   const streamlinerContextPath = join(pawWorkDir, "streamliner", "context.md");
   const pawOverrides = normalizePawOptions(input?.paw);
   const terminalOverrides = normalizeTerminalPreferences(input?.terminal);
+  const paw = {
+    ...DEFAULT_PAW_OPTIONS,
+    ...pawOverrides,
+  };
+  validatePawOptions(paw);
 
   return {
     workTitle,
@@ -492,10 +840,7 @@ function normalizeConfiguration(
     cliArgs,
     environment,
     customMessage,
-    paw: {
-      ...DEFAULT_PAW_OPTIONS,
-      ...pawOverrides,
-    },
+    paw,
     terminal: {
       ...DEFAULT_TERMINAL_PREFERENCES,
       ...terminalOverrides,
@@ -534,24 +879,34 @@ function buildWorkflowContextContent(
     `Workflow Mode: ${input.configuration.paw.workflowMode}`,
     `Review Strategy: ${input.configuration.paw.reviewStrategy}`,
     `Review Policy: ${input.configuration.paw.reviewPolicy}`,
-    "Session Policy: continuous",
+    `Session Policy: ${input.configuration.paw.sessionPolicy}`,
     `Final Agent Review: ${input.configuration.paw.finalAgentReview}`,
-    "Final Review Mode: multi-model",
-    "Final Review Interactive: smart",
-    `Final Review Models: ${DEFAULT_PAW_REVIEW_MODELS}`,
-    "Implementation Model: none",
-    "Plan Generation Mode: single-model",
-    `Plan Generation Models: ${DEFAULT_PAW_REVIEW_MODELS}`,
+    `Final Review Mode: ${input.configuration.paw.finalReviewMode}`,
+    `Final Review Interactive: ${input.configuration.paw.finalReviewInteractive}`,
+    `Final Review Models: ${input.configuration.paw.finalReviewModels}`,
+    `Final Review Specialists: ${input.configuration.paw.finalReviewSpecialists}`,
+    `Final Review Interaction Mode: ${input.configuration.paw.finalReviewInteractionMode}`,
+    `Final Review Specialist Models: ${input.configuration.paw.finalReviewSpecialistModels}`,
+    `Final Review Perspectives: ${input.configuration.paw.finalReviewPerspectives}`,
+    `Final Review Perspective Cap: ${input.configuration.paw.finalReviewPerspectiveCap}`,
+    `Implementation Model: ${input.configuration.paw.implementationModel}`,
+    `Plan Generation Mode: ${input.configuration.paw.planGenerationMode}`,
+    `Plan Generation Models: ${input.configuration.paw.planGenerationModels}`,
     `Planning Docs Review: ${input.configuration.paw.planningDocsReview}`,
-    "Planning Review Mode: multi-model",
-    "Planning Review Interactive: smart",
-    `Planning Review Models: ${DEFAULT_PAW_REVIEW_MODELS}`,
-    "Custom Workflow Instructions: none",
-    "Initial Prompt: streamliner-launch-kickoff",
+    `Planning Review Mode: ${input.configuration.paw.planningReviewMode}`,
+    `Planning Review Interactive: ${input.configuration.paw.planningReviewInteractive}`,
+    `Planning Review Models: ${input.configuration.paw.planningReviewModels}`,
+    `Planning Review Specialists: ${input.configuration.paw.planningReviewSpecialists}`,
+    `Planning Review Interaction Mode: ${input.configuration.paw.planningReviewInteractionMode}`,
+    `Planning Review Specialist Models: ${input.configuration.paw.planningReviewSpecialistModels}`,
+    `Planning Review Perspectives: ${input.configuration.paw.planningReviewPerspectives}`,
+    `Planning Review Perspective Cap: ${input.configuration.paw.planningReviewPerspectiveCap}`,
+    `Custom Workflow Instructions: ${input.configuration.paw.customWorkflowInstructions}`,
+    `Initial Prompt: ${input.configuration.paw.initialPrompt}`,
     `Issue URL: ${issueUrl}`,
-    "Remote: origin",
-    "Artifact Lifecycle: commit-and-clean",
-    "Artifact Paths: auto-derived",
+    `Remote: ${input.configuration.paw.remote}`,
+    `Artifact Lifecycle: ${input.configuration.paw.artifactLifecycle}`,
+    `Artifact Paths: ${input.configuration.paw.artifactPaths}`,
     `Additional Inputs: node=${input.nodeId}, graph=${input.graphPath ?? "default"}, streamliner-context=${displayPath(input.streamlinerContextPath)}, launch-nonce=${input.launchNonce ?? "none"}, git-commit=${gitCommit}`,
     "",
   ].join("\n");
