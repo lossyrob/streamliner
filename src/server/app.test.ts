@@ -15,7 +15,11 @@ import type {
 } from "../session-registry-contract";
 import { SessionRegistryFileStore } from "../session-registry/file-store";
 import type { SessionRegistryRecord } from "../session-registry-schema";
-import { createStreamlinerApiApp, type StreamlinerApiApp } from "./app";
+import {
+  createStreamlinerApiApp,
+  type StreamlinerApiApp,
+  type StreamlinerApiAppOptions,
+} from "./app";
 import { SessionRegistryEventStream } from "./session-events";
 
 const createdRoots: string[] = [];
@@ -72,6 +76,19 @@ function createRootDir(): string {
   const root = mkdtempSync(join(tmpdir(), "streamliner-api-app-"));
   createdRoots.push(root);
   return root;
+}
+
+function createIsolatedApi(
+  rootDir: string,
+  options: StreamlinerApiAppOptions = {},
+): StreamlinerApiApp {
+  return createStreamlinerApiApp({
+    store: new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") }),
+    recentsPath: join(rootDir, "recent-graphs.json"),
+    workstreamRegistryPath: join(rootDir, "workstreams.json"),
+    workstreamSourceRegistryPath: join(rootDir, "sources.json"),
+    ...options,
+  });
 }
 
 async function listen(server: Server): Promise<number> {
@@ -261,11 +278,9 @@ describe("createStreamlinerApiApp", () => {
       "utf8",
     );
     const store = new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") });
-    const api = createStreamlinerApiApp({
+    const api = createIsolatedApi(rootDir, {
       store,
       graphPath,
-      recentsPath: join(rootDir, "recent-graphs.json"),
-      workstreamRegistryPath: join(rootDir, "workstreams.json"),
     });
     activeApps.push(api);
 
@@ -296,11 +311,7 @@ describe("createStreamlinerApiApp", () => {
     const movedGraphPath = join(rootDir, "moved-graph.json");
     writeFileSync(graphPath, JSON.stringify(buildGraph()), "utf8");
     writeFileSync(movedGraphPath, JSON.stringify(buildGraph({ title: "API Test Moved" })), "utf8");
-    const api = createStreamlinerApiApp({
-      store: new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") }),
-      recentsPath: join(rootDir, "recent-graphs.json"),
-      workstreamRegistryPath: join(rootDir, "workstreams.json"),
-    });
+    const api = createIsolatedApi(rootDir);
     activeApps.push(api);
 
     const registerResponse = await request(api.app)
@@ -352,10 +363,8 @@ describe("createStreamlinerApiApp", () => {
       ]),
       "utf8",
     );
-    const api = createStreamlinerApiApp({
-      store: new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") }),
+    const api = createIsolatedApi(rootDir, {
       recentsPath,
-      workstreamRegistryPath: join(rootDir, "workstreams.json"),
     });
     activeApps.push(api);
 
@@ -388,10 +397,8 @@ describe("createStreamlinerApiApp", () => {
       ]),
       "utf8",
     );
-    const api = createStreamlinerApiApp({
-      store: new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") }),
+    const api = createIsolatedApi(rootDir, {
       recentsPath,
-      workstreamRegistryPath: join(rootDir, "workstreams.json"),
     });
     activeApps.push(api);
 
@@ -431,9 +438,7 @@ describe("createStreamlinerApiApp", () => {
       }),
       "utf8",
     );
-    const api = createStreamlinerApiApp({
-      store: new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") }),
-      recentsPath: join(rootDir, "recent-graphs.json"),
+    const api = createIsolatedApi(rootDir, {
       workstreamRegistryPath: registryPath,
     });
     activeApps.push(api);
@@ -468,9 +473,7 @@ describe("createStreamlinerApiApp", () => {
       }),
       "utf8",
     );
-    const api = createStreamlinerApiApp({
-      store: new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") }),
-      recentsPath: join(rootDir, "recent-graphs.json"),
+    const api = createIsolatedApi(rootDir, {
       workstreamRegistryPath: registryPath,
     });
     activeApps.push(api);
@@ -490,10 +493,7 @@ describe("createStreamlinerApiApp", () => {
     const rootDir = createRootDir();
     const graphPath = join(rootDir, "graph.json");
     writeFileSync(graphPath, JSON.stringify(buildGraph()), "utf8");
-    const api = createStreamlinerApiApp({
-      store: new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") }),
-      workstreamRegistryPath: join(rootDir, "workstreams.json"),
-    });
+    const api = createIsolatedApi(rootDir);
     activeApps.push(api);
 
     await request(api.app).post("/api/workstreams").send({ path: graphPath }).expect(201);
@@ -513,8 +513,7 @@ describe("createStreamlinerApiApp", () => {
     const graphPath = join(rootDir, "graph.json");
     const registryPath = join(rootDir, "workstreams.json");
     writeFileSync(graphPath, JSON.stringify(buildGraph()), "utf8");
-    const api = createStreamlinerApiApp({
-      store: new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") }),
+    const api = createIsolatedApi(rootDir, {
       workstreamRegistryPath: registryPath,
     });
     activeApps.push(api);
@@ -543,10 +542,7 @@ describe("createStreamlinerApiApp", () => {
       JSON.stringify(buildGraph({ id: "other-workstream", title: "Other" })),
       "utf8",
     );
-    const api = createStreamlinerApiApp({
-      store: new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") }),
-      workstreamRegistryPath: join(rootDir, "workstreams.json"),
-    });
+    const api = createIsolatedApi(rootDir);
     activeApps.push(api);
 
     await request(api.app).post("/api/workstreams").send({ path: graphPath }).expect(201);
@@ -565,10 +561,7 @@ describe("createStreamlinerApiApp", () => {
     mkdirSync(workstreamDir, { recursive: true });
     writeFileSync(graphPath, JSON.stringify(buildGraph()), "utf8");
     const sourceRegistryPath = join(rootDir, "sources.json");
-    const api = createStreamlinerApiApp({
-      store: new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") }),
-      recentsPath: join(rootDir, "recent-graphs.json"),
-      workstreamRegistryPath: join(rootDir, "workstreams.json"),
+    const api = createIsolatedApi(rootDir, {
       workstreamSourceRegistryPath: sourceRegistryPath,
     });
     activeApps.push(api);
@@ -590,7 +583,7 @@ describe("createStreamlinerApiApp", () => {
       title: "API Test",
     }));
 
-    const restartedApi = createStreamlinerApiApp({
+    const restartedApi = createIsolatedApi(rootDir, {
       store: new SessionRegistryFileStore({ rootDir: join(rootDir, "registry-restarted") }),
       recentsPath: join(rootDir, "recent-graphs-restarted.json"),
       workstreamRegistryPath: join(rootDir, "workstreams-restarted.json"),
@@ -626,12 +619,7 @@ describe("createStreamlinerApiApp", () => {
     mkdirSync(sourceWorkstreamDir, { recursive: true });
     writeFileSync(graphPath, JSON.stringify(buildGraph({ title: "Path Graph" })), "utf8");
     writeFileSync(sourceGraphPath, JSON.stringify(buildGraph({ title: "Source Graph" })), "utf8");
-    const api = createStreamlinerApiApp({
-      store: new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") }),
-      recentsPath: join(rootDir, "recent-graphs.json"),
-      workstreamRegistryPath: join(rootDir, "workstreams.json"),
-      workstreamSourceRegistryPath: join(rootDir, "sources.json"),
-    });
+    const api = createIsolatedApi(rootDir);
     activeApps.push(api);
 
     await request(api.app).post("/api/workstreams").send({ path: graphPath }).expect(201);
@@ -690,12 +678,7 @@ describe("createStreamlinerApiApp", () => {
     mkdirSync(workstreamDir, { recursive: true });
     writeFileSync(filePath, "{}", "utf8");
     writeFileSync(join(workstreamDir, "graph.json"), JSON.stringify(buildGraph()), "utf8");
-    const api = createStreamlinerApiApp({
-      store: new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") }),
-      recentsPath: join(rootDir, "recent-graphs.json"),
-      workstreamRegistryPath: join(rootDir, "workstreams.json"),
-      workstreamSourceRegistryPath: join(rootDir, "sources.json"),
-    });
+    const api = createIsolatedApi(rootDir);
     activeApps.push(api);
 
     const invalidResponse = await request(api.app)

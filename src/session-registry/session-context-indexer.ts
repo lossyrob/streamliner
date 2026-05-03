@@ -14,6 +14,7 @@ import type { SessionRegistryDerivedStatePatch } from "./file-store";
 
 export const SESSION_CONTEXT_INDEX_MAX_BYTES_PER_CYCLE = 1024 * 1024;
 export const SESSION_CONTEXT_INDEX_MAX_OVERSIZED_RECORD_SKIP_BYTES = 16 * 1024 * 1024;
+const GIT_COMMAND_TIMEOUT_MS = 5000;
 
 interface SessionContextIndexOptions {
   maxBytesPerCycle?: number;
@@ -362,16 +363,29 @@ function resolveExistingPath(candidate: string): string | null {
 }
 
 function runGit(cwd: string, args: string[]): string | null {
-  const result = spawnSync("git", ["-C", cwd, ...args], {
-    encoding: "utf8",
-    timeout: 1000,
-    windowsHide: true,
-  });
-  if (result.status !== 0) {
-    return null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const result = spawnSync("git", ["-C", cwd, ...args], {
+      encoding: "utf8",
+      timeout: GIT_COMMAND_TIMEOUT_MS,
+      windowsHide: true,
+    });
+    if (result.status === 0) {
+      const output = result.stdout.trim();
+      return output.length > 0 ? output : null;
+    }
+    if (!result.error && !result.signal) {
+      return null;
+    }
   }
-  const output = result.stdout.trim();
-  return output.length > 0 ? output : null;
+  return null;
+}
+
+function resolveGitBranch(gitCwd: string): string | null {
+  return (
+    runGit(gitCwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]) ??
+    runGit(gitCwd, ["branch", "--show-current"]) ??
+    runGit(gitCwd, ["rev-parse", "--abbrev-ref", "HEAD"])
+  );
 }
 
 function resolveGitContext(candidatePaths: readonly string[]): GitContext | null {
@@ -387,9 +401,7 @@ function resolveGitContext(candidatePaths: readonly string[]): GitContext | null
     if (!worktreePath) {
       continue;
     }
-    const branch =
-      runGit(gitCwd, ["branch", "--show-current"]) ??
-      runGit(gitCwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
+    const branch = resolveGitBranch(gitCwd);
     const repo = repoFromGitRemote(runGit(gitCwd, ["remote", "get-url", "origin"]));
     return {
       worktreePath,
@@ -427,12 +439,14 @@ export function indexSessionContext(
   }
 
   const stat = statSync(eventsPath);
-  const needsRepoBackfill = session.repo === null && session.derivedWorktreePath !== null;
+  const needsGitBackfill =
+    session.derivedWorktreePath !== null &&
+    (session.repo === null || session.branch === null || session.derivedBranch === null);
   if (
     session.derivedContextEventsOffset === stat.size &&
     session.derivedContextEventsSize === stat.size &&
     session.derivedContextEventsMtimeMs === stat.mtimeMs &&
-    !needsRepoBackfill
+    !needsGitBackfill
   ) {
     return null;
   }

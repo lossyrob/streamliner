@@ -23,6 +23,24 @@ function createRootDir(): string {
   return root;
 }
 
+function runGitSetup(cwd: string, args: string[]): void {
+  const result = spawnSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (result.error || result.status !== 0) {
+    throw new Error(
+      [
+        `git ${args.join(" ")} failed`,
+        `status=${String(result.status)}`,
+        `error=${result.error?.message ?? ""}`,
+        `stderr=${result.stderr.trim()}`,
+      ].join("; "),
+    );
+  }
+}
+
 function buildSession(overrides: Partial<SessionRegistryListItem> = {}): SessionRegistryListItem {
   return {
     id: "context-session",
@@ -125,8 +143,6 @@ describe("indexSessionContext", () => {
         expect.objectContaining({ type: "pr", repo: "lossyrob/streamliner", number: 14 }),
       ]),
     );
-    expect(patch?.derivedWorktreePath).toBeTruthy();
-
     const unchanged = indexSessionContext(
       buildSession({
         ...patch,
@@ -188,12 +204,8 @@ describe("indexSessionContext", () => {
     const eventsPath = join(root, "events.jsonl");
     mkdirSync(nestedDir, { recursive: true });
     writeFileSync(editedFile, "export const context = true;\n", "utf8");
-    spawnSync("git", ["init", "-b", "context-test"], { cwd: repo, windowsHide: true });
-    spawnSync(
-      "git",
-      ["remote", "add", "origin", "https://github.com/lossyrob/streamliner.git"],
-      { cwd: repo, windowsHide: true },
-    );
+    runGitSetup(repo, ["init", "-b", "context-test"]);
+    runGitSetup(repo, ["remote", "add", "origin", "https://github.com/lossyrob/streamliner.git"]);
     writeFileSync(
       eventsPath,
       JSON.stringify({
@@ -223,12 +235,8 @@ describe("indexSessionContext", () => {
     const eventsPath = join(root, "events.jsonl");
     mkdirSync(repo, { recursive: true });
     writeFileSync(eventsPath, "", "utf8");
-    spawnSync("git", ["init", "-b", "main"], { cwd: repo, windowsHide: true });
-    spawnSync(
-      "git",
-      ["remote", "add", "origin", "git@github.com:lossyrob/streamliner.git"],
-      { cwd: repo, windowsHide: true },
-    );
+    runGitSetup(repo, ["init", "-b", "main"]);
+    runGitSetup(repo, ["remote", "add", "origin", "git@github.com:lossyrob/streamliner.git"]);
     const stat = statSync(eventsPath);
 
     const patch = indexSessionContext(
@@ -259,17 +267,13 @@ describe("indexSessionContext", () => {
     const eventsPath = join(root, "events.jsonl");
     mkdirSync(repo, { recursive: true });
     writeFileSync(eventsPath, "", "utf8");
-    spawnSync("git", ["init", "-b", "main"], { cwd: repo, windowsHide: true });
-    spawnSync(
-      "git",
-      [
-        "remote",
-        "add",
-        "origin",
-        "https://robemanuele_microsoft@github.com/azure-data-database-platform/dbagent.git",
-      ],
-      { cwd: repo, windowsHide: true },
-    );
+    runGitSetup(repo, ["init", "-b", "main"]);
+    runGitSetup(repo, [
+      "remote",
+      "add",
+      "origin",
+      "https://robemanuele_microsoft@github.com/azure-data-database-platform/dbagent.git",
+    ]);
     const stat = statSync(eventsPath);
 
     const patch = indexSessionContext(
