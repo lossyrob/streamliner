@@ -1,3 +1,5 @@
+import { join } from "node:path";
+
 import express, { type ErrorRequestHandler, type Express } from "express";
 
 import type { LaunchClaimStore } from "../launch-claim-contract";
@@ -13,7 +15,13 @@ import {
   createLaunchContextsRouter,
   type LaunchContextRouteDeps,
 } from "./routes/launch-contexts";
+import {
+  createLaunchPreparationsRouter,
+  type LaunchPreparationRouteDeps,
+} from "./routes/launch-preparations";
 import { createLaunchClaimsRouter } from "./routes/launch-claims";
+import { createPawLaunchPromptProfilesRouter } from "./routes/paw-launch-prompt-profiles";
+import { createPawWorkflowContextRouter } from "./routes/paw-workflow-context";
 import { createRecentsRouter } from "./routes/recents";
 import { createSessionsRouter } from "./routes/sessions";
 import { createWorkstreamsRouter } from "./routes/workstreams";
@@ -31,8 +39,12 @@ export interface StreamlinerApiAppOptions {
   recentsPath?: string;
   workstreamRegistryPath?: string;
   workstreamSourceRegistryPath?: string;
+  readonlyMode?: boolean;
   relaunchDeps?: Partial<RelaunchDeps>;
   launchContextDeps?: LaunchContextRouteDeps;
+  launchPreparationDeps?: LaunchPreparationRouteDeps;
+  promptProfilesPath?: string;
+  pawWorkRoot?: string;
   /** Optional launch-claim store. When provided, mounts
    * `GET /api/launch-claims[/:id]` for diagnostic UI consumption. */
   launchClaimStore?: LaunchClaimStore;
@@ -62,6 +74,8 @@ const jsonErrorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
   res.status(status).json({ error: message });
 };
 
+const READONLY_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
 export function createStreamlinerApiApp(
   options: StreamlinerApiAppOptions = {},
 ): StreamlinerApiApp {
@@ -82,6 +96,18 @@ export function createStreamlinerApiApp(
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true });
   });
+  if (options.readonlyMode) {
+    app.use((req, res, next) => {
+      if (READONLY_METHODS.has(req.method)) {
+        next();
+        return;
+      }
+      res.status(403).json({
+        code: "preview_readonly",
+        error: "This Streamliner preview is read-only. Restart with --mode sandbox to allow mutations.",
+      });
+    });
+  }
   app.use(
     "/api",
     createWorkstreamsRouter({
@@ -111,6 +137,29 @@ export function createStreamlinerApiApp(
       createLaunchClaimsRouter({ claimStore: options.launchClaimStore }),
     );
   }
+  app.use(
+    "/api",
+    createLaunchPreparationsRouter({
+      defaultGraphPath: options.graphPath,
+      deps: options.launchPreparationDeps,
+    }),
+  );
+  app.use(
+    "/api",
+    createPawLaunchPromptProfilesRouter({
+      profilesPath: options.promptProfilesPath,
+    }),
+  );
+  app.use(
+    "/api",
+    createPawWorkflowContextRouter({
+      pawWorkRoot: options.pawWorkRoot ?? (
+        options.launchPreparationDeps?.cwd
+          ? join(options.launchPreparationDeps.cwd, ".paw", "work")
+          : undefined
+      ),
+    }),
+  );
   app.use(
     SESSION_REGISTRY_API_BASE_PATH,
     createSessionsRouter({

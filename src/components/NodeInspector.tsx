@@ -8,6 +8,9 @@ interface NodeInspectorProps {
   entry: WorkstreamDerivedNode | null;
   layout: WorkstreamGraphLayoutResult;
   workstream: WorkstreamDocument;
+  canLaunch?: boolean;
+  launchDisabledReason?: string;
+  onLaunch?: () => void;
 }
 
 function formatStatus(status: string): string {
@@ -39,7 +42,14 @@ function attentionPillClass(attention: string): string {
   }
 }
 
-export function NodeInspector({ entry, layout, workstream }: NodeInspectorProps) {
+export function NodeInspector({
+  entry,
+  layout,
+  workstream,
+  canLaunch = false,
+  launchDisabledReason,
+  onLaunch,
+}: NodeInspectorProps) {
   if (!entry) {
     return (
       <div className="sl-sidebar-section">
@@ -111,6 +121,19 @@ export function NodeInspector({ entry, layout, workstream }: NodeInspectorProps)
             <span>Repos: {repoLabels.join(" · ")}</span>
           </div>
         )}
+        <div className="sl-inspector-actions">
+          <button
+            className="sl-action-btn primary"
+            disabled={!canLaunch}
+            onClick={onLaunch}
+            type="button"
+          >
+            Initialize PAW launch
+          </button>
+          {!canLaunch && launchDisabledReason ? (
+            <span className="sl-sidebar-note">{launchDisabledReason}</span>
+          ) : null}
+        </div>
       </div>
 
       {dependencies.length > 0 && (

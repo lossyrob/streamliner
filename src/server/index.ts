@@ -38,7 +38,9 @@ const api = createStreamlinerApiApp({
   store: registryStore,
   graphPath: config.graphPath,
   workstreamRegistryPath: config.workstreamRegistryPath,
+  workstreamSourceRegistryPath: config.workstreamSourceRegistryPath,
   recentsPath: config.recentsPath,
+  readonlyMode: config.previewReadonly,
   launchClaimStore,
 });
 const server = createServer(api.app);
