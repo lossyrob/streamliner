@@ -1,4 +1,4 @@
-import { copyFile, mkdir, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -167,7 +167,6 @@ interface CompletePawInitArgs {
   workTitle: string;
   workId: string;
   targetBranch: string;
-  workflowContextContent: string;
   pawWorkDir?: string;
   artifactLifecycle?: string;
 }
@@ -420,18 +419,10 @@ function assertNonEmpty(value: unknown, field: string): string {
   return value.trim();
 }
 
-function ensureAdditionalInputsLine(content: string, additions: string): string {
-  const trimmed = content.trimEnd();
+function hasStreamlinerContextAdditionalInput(content: string): boolean {
   const linePattern = /^Additional Inputs:\s*(.*)$/m;
-  const match = trimmed.match(linePattern);
-  if (!match) {
-    return `${trimmed}\nAdditional Inputs: ${additions}\n`;
-  }
-  const current = match[1]?.trim();
-  const nextValue = !current || current === "none"
-    ? additions
-    : `${current}, ${additions}`;
-  return `${trimmed.replace(linePattern, `Additional Inputs: ${nextValue}`)}\n`;
+  const match = content.match(linePattern);
+  return Boolean(match?.[1]?.includes("streamliner-context="));
 }
 
 function isPathInside(parent: string, child: string): boolean {
@@ -453,7 +444,8 @@ function buildPawInitPrompt(input: PawInitRunnerInput): string {
     "- If information is missing but PAW has a documented default or derivation rule, use that default and your best judgment.",
     "- If a serious blocker prevents safe initialization, do not call the tool; respond with JSON: {\"status\":\"blocked\",\"reason\":\"...\"}.",
     "- Do not start the worker session, open a terminal, create the final PR, or continue into implementation.",
-    "- Do not inline the Streamliner context into WorkflowContext.md; install it into the PAW work directory via the tool.",
+    "- Let the paw-init skill create WorkflowContext.md through its normal PAW workflow path. Do not ask Streamliner to generate or write WorkflowContext.md.",
+    "- Do not inline the Streamliner context into WorkflowContext.md. Reference the installed Streamliner context as an Additional Input instead.",
     "",
     "Selected Streamliner node:",
     `- Node ID: ${input.nodeId}`,
@@ -470,15 +462,18 @@ function buildPawInitPrompt(input: PawInitRunnerInput): string {
     input.configuration.workflowInstructions.trim(),
     "```",
     "",
-    "When PAW init has completed its reasoning and any necessary setup work, call `complete_paw_init` exactly once with:",
+    "Before calling `complete_paw_init`, use paw-init's normal file-writing path to create WorkflowContext.md in the PAW work directory.",
+    "The WorkflowContext Additional Inputs must include at least `streamliner-context=<installed-context-path>`, where the installed context path is `<pawWorkDir>/streamliner/context.md`.",
+    "Recommended Additional Inputs metadata: `streamliner-staged-context`, `streamliner-context-id`, `node`, `graph`, and `launch-nonce` using the values above.",
+    "",
+    "When PAW init has completed its reasoning and created WorkflowContext.md, call `complete_paw_init` exactly once with:",
     "- `workTitle`: the PAW work title derived by paw-init.",
     "- `workId`: the PAW work ID derived by paw-init.",
     "- `targetBranch`: the target branch derived by paw-init.",
     "- `pawWorkDir`: optional absolute PAW work directory. If omitted, Streamliner uses `<cwd>/.paw/work/<workId>`.",
     "- `artifactLifecycle`: optional artifact lifecycle if resolved.",
-    "- `workflowContextContent`: complete WorkflowContext.md content produced by paw-init.",
     "",
-    "The tool copies the staged Streamliner context into `<pawWorkDir>/streamliner/context.md`, writes WorkflowContext.md, and ensures Additional Inputs includes the installed Streamliner context path.",
+    "The tool copies the staged Streamliner context into `<pawWorkDir>/streamliner/context.md` and verifies that paw-init already created WorkflowContext.md with a `streamliner-context` Additional Input. It does not write WorkflowContext.md.",
     "",
     "After the tool succeeds, respond with only this JSON shape:",
     "{",
@@ -510,7 +505,7 @@ export async function defaultPawInitRunner(
     const completeTool = defineTool<CompletePawInitArgs>(
       "complete_paw_init",
       {
-        description: "Complete PAW initialization for a Streamliner launch by writing WorkflowContext.md and installing the staged context bundle.",
+        description: "Complete PAW initialization for a Streamliner launch after paw-init has written WorkflowContext.md by installing the staged context bundle.",
         parameters: {
           type: "object",
           properties: {
@@ -519,9 +514,8 @@ export async function defaultPawInitRunner(
             targetBranch: { type: "string" },
             pawWorkDir: { type: "string" },
             artifactLifecycle: { type: "string" },
-            workflowContextContent: { type: "string" },
           },
-          required: ["workTitle", "workId", "targetBranch", "workflowContextContent"],
+          required: ["workTitle", "workId", "targetBranch"],
           additionalProperties: false,
         },
         skipPermission: true,
@@ -532,10 +526,6 @@ export async function defaultPawInitRunner(
           const workTitle = assertNonEmpty(args.workTitle, "workTitle");
           const workId = assertSlug(assertNonEmpty(args.workId, "workId"), "workId");
           const targetBranch = assertNonEmpty(args.targetBranch, "targetBranch");
-          const workflowContextContent = assertNonEmpty(
-            args.workflowContextContent,
-            "workflowContextContent",
-          );
           const pawRoot = join(input.cwd, ".paw", "work");
           const pawWorkDir = typeof args.pawWorkDir === "string" && args.pawWorkDir.trim()
             ? resolve(args.pawWorkDir)
@@ -546,22 +536,16 @@ export async function defaultPawInitRunner(
 
           const workflowContextPath = join(pawWorkDir, "WorkflowContext.md");
           const streamlinerContextPath = join(pawWorkDir, "streamliner", "context.md");
-          const additionalInputs = [
-            `streamliner-context=${displayPath(streamlinerContextPath)}`,
-            `streamliner-staged-context=${input.stagedContextPackage.contextFilePath}`,
-            `streamliner-context-id=${input.stagedContextPackage.contextId}`,
-            `node=${input.nodeId}`,
-            `graph=${input.graphPath ?? "default"}`,
-            `launch-nonce=${input.launchNonce ?? "none"}`,
-          ].join(", ");
-          const finalWorkflowContextContent = ensureAdditionalInputsLine(
-            workflowContextContent,
-            additionalInputs,
-          );
+          if (!existsSync(workflowContextPath)) {
+            throw new Error("paw-init must create WorkflowContext.md before calling complete_paw_init.");
+          }
+          const workflowContextContent = await readFile(workflowContextPath, "utf8");
+          if (!hasStreamlinerContextAdditionalInput(workflowContextContent)) {
+            throw new Error("WorkflowContext.md must include a streamliner-context Additional Input before calling complete_paw_init.");
+          }
 
           await mkdir(dirname(streamlinerContextPath), { recursive: true });
           await copyFile(input.stagedContextPackage.contextFilePath, streamlinerContextPath);
-          await writeFile(workflowContextPath, finalWorkflowContextContent, "utf8");
 
           toolResult = {
             cwd: normalizeManifestPath(input.cwd),

@@ -26,7 +26,7 @@ The visible Copilot CLI worker is not started by this feature. The returned hand
 
 **Backend-readable graph gate.** The UI enables launch only for `entry.operationalStatus === "ready"` and workstream registry entries whose graph file is available to the backend. Browser-directory sources remain visible but unsupported for this MVP because the backend cannot read their graph path.
 
-**Fully capable SDK PAW initializer.** The default initializer uses `@github/copilot-sdk` with a custom PAW init agent that preloads the installed `paw-init` skill, enables config discovery, approves built-in tool use, and keeps `complete_paw_init` available as the structured completion hook. The PAW init session can use repository, git, GitHub, shell, configured MCP, and custom-tool context like a Copilot CLI PAW init session. `complete_paw_init` writes `WorkflowContext.md`, copies the staged Streamliner context into the PAW work directory, and appends the installed context path to `Additional Inputs`. Tests inject a runner to keep API behavior deterministic.
+**Fully capable SDK PAW initializer.** The default initializer uses `@github/copilot-sdk` with a custom PAW init agent that preloads the installed `paw-init` skill, enables config discovery, approves built-in tool use, and keeps `complete_paw_init` available as the structured completion hook. The PAW init session can use repository, git, GitHub, shell, configured MCP, and custom-tool context like a Copilot CLI PAW init session. PAW init writes `WorkflowContext.md` through its normal workflow path; `complete_paw_init` copies the staged Streamliner context into the PAW work directory and verifies that the workflow context already records the installed context path in `Additional Inputs`. Tests inject a runner to keep API behavior deterministic.
 
 **Staged context handoff.** Launch preparation first reuses context assembly without `outputDir`, so the worker-facing context is written to Streamliner's local state under `launch-contexts/<context-id>/context.md`. PAW init then installs that staged file into `.paw/work/<work-id>/streamliner/context.md` and records it as an additional workflow input. The kickoff prompt points to the installed file instead of inlining context content.
 
@@ -75,7 +75,7 @@ The PAW init SDK prompt is built in `src/server/launch-preparation.ts` by `build
 | Fully capable tool instruction | Tells PAW init it may use Copilot CLI-style repository, shell, GitHub, and configured MCP context |
 | Non-interactive rule | Tells PAW init to use defaults/best judgment and return blocked JSON for serious blockers |
 
-The `complete_paw_init` tool is responsible for copying the staged context to `.paw/work/<work-id>/streamliner/context.md`, writing WorkflowContext.md, and ensuring `Additional Inputs` includes `streamliner-context=<installed-path>`.
+The `complete_paw_init` tool is responsible for copying the staged context to `.paw/work/<work-id>/streamliner/context.md` after paw-init has created `WorkflowContext.md`. The tool verifies that `WorkflowContext.md` includes `streamliner-context=<installed-path>` in Additional Inputs, but it does not write or rewrite the workflow context.
 
 ### Worktree Preview Workflow
 
