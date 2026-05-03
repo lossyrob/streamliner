@@ -288,6 +288,14 @@ function findTextareaByLabel(container: HTMLElement, label: string): HTMLTextAre
   return textarea;
 }
 
+function findSelectByLabel(container: HTMLElement, label: string): HTMLSelectElement {
+  const select = container.querySelector(`select[aria-label="${label}"]`);
+  if (!(select instanceof HTMLSelectElement)) {
+    throw new Error(`Could not find select with label "${label}".`);
+  }
+  return select;
+}
+
 function findCanvasNode(container: HTMLElement, title: string): HTMLElement {
   const titleElement = [...container.querySelectorAll<HTMLElement>(".sl-node-title")].find(
     (candidate) => candidate.textContent?.trim() === title,
@@ -340,6 +348,23 @@ function setTextareaValue(
     valueSetter.call(textarea, value);
     textarea.dispatchEvent(new Event("input", { bubbles: true }));
     textarea.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+}
+
+function setSelectValue(
+  select: HTMLSelectElement,
+  value: string,
+): void {
+  const valueSetter = Object.getOwnPropertyDescriptor(
+    HTMLSelectElement.prototype,
+    "value",
+  )?.set;
+  if (!valueSetter) {
+    throw new Error("Could not find HTMLSelectElement value setter.");
+  }
+  act(() => {
+    valueSetter.call(select, value);
+    select.dispatchEvent(new Event("change", { bubbles: true }));
   });
 }
 
@@ -608,6 +633,7 @@ describe("App sessions route", () => {
     "runs PAW init with workflow instructions and explicit empty CLI args",
     async () => {
       const graph = buildLaunchGraph();
+      let savedWorkflowContext = "# WorkflowContext\nAdditional Inputs: streamliner-context=streamliner/context.md\n";
       const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = requestPath(input);
         if (path === "/api/workstreams") {
@@ -619,6 +645,26 @@ describe("App sessions route", () => {
         }
         if (path === "/api/workstreams/streamliner/api-test/graph") {
           return jsonResponse(graph);
+        }
+        if (path === "/api/paw-launch-prompt-profiles") {
+          return jsonResponse({
+            profiles: [{
+              id: "final-pr-only",
+              name: "Final PR only",
+              instructions: "Use saved final PR only workflow text.",
+              updatedAt: "2026-05-03T18:00:00.000Z",
+            }],
+          });
+        }
+        if (path === "/api/paw-launch-prompt-profiles/final-pr-only" && init?.method === "PUT") {
+          return jsonResponse({
+            profile: {
+              id: "final-pr-only",
+              name: "Final PR only",
+              instructions: JSON.parse(String(init.body)).instructions,
+              updatedAt: "2026-05-03T18:01:00.000Z",
+            },
+          });
         }
         if (path === "/api/launch-preparations" && init?.method === "POST") {
           return jsonResponse({
@@ -637,6 +683,21 @@ describe("App sessions route", () => {
               workstreamId: "api-test",
               nodeId: "launch-prompt-profiles",
             },
+          });
+        }
+        if (path.startsWith("/api/paw-workflow-context?") && (!init || init.method === "GET")) {
+          return jsonResponse({
+            path: "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles\\WorkflowContext.md",
+            content: savedWorkflowContext,
+            updatedAt: "2026-05-03T18:02:00.000Z",
+          });
+        }
+        if (path === "/api/paw-workflow-context" && init?.method === "PUT") {
+          savedWorkflowContext = JSON.parse(String(init.body)).content;
+          return jsonResponse({
+            path: "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles\\WorkflowContext.md",
+            content: savedWorkflowContext,
+            updatedAt: "2026-05-03T18:03:00.000Z",
           });
         }
         throw new Error(`Unexpected fetch: ${path}`);
@@ -658,11 +719,20 @@ describe("App sessions route", () => {
       });
       await settle();
 
+      setSelectValue(findSelectByLabel(container, "Prompt profile"), "final-pr-only");
+      await settle();
+      expect(findTextareaByLabel(container, "PAW workflow instructions").value).toBe(
+        "Use saved final PR only workflow text.",
+      );
       setInputValue(findInputByLabel(container, "Copilot CLI args"), "");
       setTextareaValue(
         findTextareaByLabel(container, "PAW workflow instructions"),
         "Prefer the final PR review path.",
       );
+      act(() => {
+        findButton(container, "Update selected").click();
+      });
+      await settle(100);
       act(() => {
         findButton(container, "Run PAW init").click();
       });
@@ -691,6 +761,16 @@ describe("App sessions route", () => {
       expect(container.textContent).toContain("C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles");
       expect(container.textContent).toContain("CLI args");
       expect(container.textContent).toContain("none");
+      expect(container.textContent).toContain("Review WorkflowContext.md");
+      setTextareaValue(
+        findTextareaByLabel(container, "WorkflowContext content"),
+        `${savedWorkflowContext}\n## Manual edits\nReview before terminal launch.\n`,
+      );
+      act(() => {
+        findButton(container, "Save WorkflowContext").click();
+      });
+      await settle(100);
+      expect(savedWorkflowContext).toContain("Review before terminal launch.");
     },
     15_000,
   );

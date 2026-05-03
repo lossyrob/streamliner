@@ -1,3 +1,5 @@
+import { join } from "node:path";
+
 import express, { type ErrorRequestHandler, type Express } from "express";
 
 import type { LaunchClaimStore } from "../launch-claim-contract";
@@ -18,6 +20,8 @@ import {
   type LaunchPreparationRouteDeps,
 } from "./routes/launch-preparations";
 import { createLaunchClaimsRouter } from "./routes/launch-claims";
+import { createPawLaunchPromptProfilesRouter } from "./routes/paw-launch-prompt-profiles";
+import { createPawWorkflowContextRouter } from "./routes/paw-workflow-context";
 import { createRecentsRouter } from "./routes/recents";
 import { createSessionsRouter } from "./routes/sessions";
 import { createWorkstreamsRouter } from "./routes/workstreams";
@@ -39,6 +43,8 @@ export interface StreamlinerApiAppOptions {
   relaunchDeps?: Partial<RelaunchDeps>;
   launchContextDeps?: LaunchContextRouteDeps;
   launchPreparationDeps?: LaunchPreparationRouteDeps;
+  promptProfilesPath?: string;
+  pawWorkRoot?: string;
   /** Optional launch-claim store. When provided, mounts
    * `GET /api/launch-claims[/:id]` for diagnostic UI consumption. */
   launchClaimStore?: LaunchClaimStore;
@@ -136,6 +142,22 @@ export function createStreamlinerApiApp(
     createLaunchPreparationsRouter({
       defaultGraphPath: options.graphPath,
       deps: options.launchPreparationDeps,
+    }),
+  );
+  app.use(
+    "/api",
+    createPawLaunchPromptProfilesRouter({
+      profilesPath: options.promptProfilesPath,
+    }),
+  );
+  app.use(
+    "/api",
+    createPawWorkflowContextRouter({
+      pawWorkRoot: options.pawWorkRoot ?? (
+        options.launchPreparationDeps?.cwd
+          ? join(options.launchPreparationDeps.cwd, ".paw", "work")
+          : undefined
+      ),
     }),
   );
   app.use(

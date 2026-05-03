@@ -48,6 +48,7 @@ The Wave 3 launch MVP is **PAW-only launch initialization**. The contract is the
 | Target repo | Graph `repos` + config | Where the code lives |
 | Backend-readable graph path | Workstream registry entry | Local `graph.json` path the backend can read |
 | PAW workflow instructions | Builder edit + default text | Natural-language instructions passed to `paw-init`, which derives work title, work ID, target branch, review policy, models, and WorkflowContext settings |
+| PAW prompt profile | Local Streamliner state | Optional reusable text snippet that can populate or update the workflow instructions field |
 | CLI arguments | Default + builder override | Copilot CLI flags for the later worker launch; an explicit empty list is valid |
 | Terminal preference | Default + builder edit | Manual terminal launch handoff in this MVP |
 | Launch nonce | Caller/downstream launch owner | Token preserved for later claim binding |
@@ -99,7 +100,7 @@ After PAW launch initialization completes, future terminal integration will:
 
 ### PAW Init Instructions
 
-The implemented launch surface is a text-guided PAW init dialog, not a general launch-profile editor and not the full PAW `WorkflowContext.md` configuration UI. Defaults are intentionally visible to the builder in the instructions textarea:
+The implemented launch surface is a text-guided PAW init dialog, not the full PAW `WorkflowContext.md` configuration UI. Defaults are intentionally visible to the builder in the instructions textarea:
 
 - PAW should use a local final-PR-only workflow.
 - PAW should not pause for intermediate review unless there is a serious blocker, unsafe ambiguity, missing credentials/infrastructure, or material scope mismatch.
@@ -107,6 +108,10 @@ The implemented launch surface is a text-guided PAW init dialog, not a general l
 - PAW should proceed through implementation and documentation, then create the final PR.
 - CLI args default to `--yolo`; an explicit empty override remains empty.
 - Terminal launch mode is `manual` with a default terminal preference because this phase returns a handoff rather than opening a terminal.
+
+The dialog supports lightweight PAW prompt profiles: named reusable text snippets stored at the local Streamliner server state level. Profiles are not PAW-owned metadata and do not encode structured constraints; selecting one only replaces the free-text workflow instructions, and the builder can edit the text before running PAW init. The dialog can save the current text as a new profile or update the selected profile.
+
+After PAW init succeeds, the dialog loads the generated `WorkflowContext.md` so the builder can review or make last-minute manual edits before future terminal launch. The edit surface is intentionally bounded to the prepared PAW work directory. It is a debugging and correction affordance for the launch MVP, not a replacement for PAW init's normal workflow generation.
 
 Reusable non-PAW launch profiles, persisted host-specific defaults, broader instance/project/workstream/node layering, and the rich PAW configuration form are deferred. The rich PAW form is tracked in issue #43 and should use PAW-owned metadata rather than reimplementing PAW init rules in Streamliner.
 
@@ -252,7 +257,26 @@ Response body:
 
 Validation, PAW initialization, and context-preparation failures return JSON with `code`, `error`, `step`, and `input` fields. The route never starts a terminal.
 
-The PAW launch dialog is intentionally text-guided for this MVP. It exposes workflow instructions, CLI args, terminal preference, graph source, and the prepared handoff after backend PAW init. The primary action is labeled as running PAW init because the SDK session may read repository files, inspect git/GitHub context, execute shell tools, and write the PAW work artifacts before returning the structured handoff. PAW-owned metadata, presets, specialists, and dependent WorkflowContext constraints are deferred to issue #43 so Streamliner does not duplicate PAW's configuration rules.
+The PAW launch dialog is intentionally text-guided for this MVP. It exposes workflow instructions, lightweight reusable text profiles, CLI args, terminal preference, graph source, and the prepared handoff after backend PAW init. The primary action is labeled as running PAW init because the SDK session may read repository files, inspect git/GitHub context, execute shell tools, and write the PAW work artifacts before returning the structured handoff. PAW-owned metadata, structured presets, specialists, and dependent WorkflowContext constraints are deferred to issue #43 so Streamliner does not duplicate PAW's configuration rules.
+
+Reusable text prompt profiles are exposed as:
+
+```http
+GET /api/paw-launch-prompt-profiles
+POST /api/paw-launch-prompt-profiles
+PUT /api/paw-launch-prompt-profiles/:id
+```
+
+Profiles are stored in local Streamliner state as `paw-launch-prompt-profiles.json`. Each record contains an id, name, instructions, created timestamp, and updated timestamp. `POST` creates a new profile from the current workflow text; `PUT` updates the selected profile. The server validates non-empty names and instruction text but does not interpret PAW semantics.
+
+The post-init review/edit surface for PAW WorkflowContext is exposed as:
+
+```http
+GET /api/paw-workflow-context?path=<WorkflowContext.md>
+PUT /api/paw-workflow-context
+```
+
+The workflow-context route only accepts `WorkflowContext.md` paths under `.paw/work` for the current server worktree. `GET` returns `{ path, content, updatedAt }`; `PUT` writes the supplied content and returns the same shape. This lets the builder inspect or edit PAW init output before a later terminal launch without giving the browser arbitrary filesystem write access.
 
 The local API exposes context assembly as:
 

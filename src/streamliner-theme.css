@@ -2202,6 +2202,20 @@ a.sl-session-context-ref {
   min-height: 180px;
 }
 
+.sl-paw-profile-tools {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.8fr) minmax(220px, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.sl-paw-profile-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .sl-paw-launch-actions {
   justify-content: flex-end;
 }
@@ -2351,6 +2365,35 @@ a.sl-session-context-ref {
   font-size: 11px;
   line-height: 1.45;
   color: var(--sl-text-mid);
+}
+
+.sl-paw-workflow-context-editor {
+  border-top: 1px solid rgba(20, 60, 130, 0.08);
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+}
+
+.sl-paw-workflow-context-editor textarea {
+  border: 1px solid rgba(20, 60, 130, 0.14);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--sl-text);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  min-height: 240px;
+  padding: 12px;
+  resize: vertical;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.sl-inline-status {
+  color: var(--sl-success);
+  font-size: 12px;
+  font-weight: 700;
+  margin: 0;
 }
 
 /* sheet content */
@@ -2640,6 +2683,14 @@ a.sl-session-context-ref {
 @media (max-width: 1000px) {
   .sl-session-row-body {
     grid-template-columns: 6px minmax(0, 1fr) minmax(240px, 280px);
+  }
+
+  .sl-paw-profile-tools {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sl-paw-profile-actions {
+    justify-content: flex-start;
   }
 }
 

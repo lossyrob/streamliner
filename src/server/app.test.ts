@@ -2,7 +2,7 @@ import { createServer, get as httpGet, type Server } from "node:http";
 import { EventEmitter } from "node:events";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Request, Response } from "express";
 
 import request from "supertest";
@@ -325,6 +325,82 @@ describe("createStreamlinerApiApp", () => {
           code: "preview_readonly",
         }));
       });
+  });
+
+  it("stores reusable PAW launch prompt profiles", async () => {
+    const rootDir = createRootDir();
+    const api = createIsolatedApi(rootDir, {
+      promptProfilesPath: join(rootDir, "profiles.json"),
+    });
+    activeApps.push(api);
+
+    await request(api.app)
+      .get("/api/paw-launch-prompt-profiles")
+      .expect(200, { profiles: [] });
+
+    const createResponse = await request(api.app)
+      .post("/api/paw-launch-prompt-profiles")
+      .send({
+        name: "Final PR only",
+        instructions: "Use PAW final-pr-only with no intermediate pauses.",
+      })
+      .expect(201);
+    expect(createResponse.body.profile).toEqual(expect.objectContaining({
+      id: "final-pr-only",
+      name: "Final PR only",
+      instructions: "Use PAW final-pr-only with no intermediate pauses.",
+    }));
+
+    const updateResponse = await request(api.app)
+      .put("/api/paw-launch-prompt-profiles/final-pr-only")
+      .send({
+        name: "Final PR only",
+        instructions: "Use PAW final-pr-review only.",
+      })
+      .expect(200);
+    expect(updateResponse.body.profile.instructions).toBe("Use PAW final-pr-review only.");
+
+    const listResponse = await request(api.app)
+      .get("/api/paw-launch-prompt-profiles")
+      .expect(200);
+    expect(listResponse.body.profiles).toEqual([
+      expect.objectContaining({
+        id: "final-pr-only",
+        instructions: "Use PAW final-pr-review only.",
+      }),
+    ]);
+  });
+
+  it("reads and updates PAW WorkflowContext files under .paw/work", async () => {
+    const rootDir = createRootDir();
+    const pawWorkRoot = join(rootDir, ".paw", "work");
+    const workflowContextPath = join(pawWorkRoot, "launch-prompt-profiles", "WorkflowContext.md");
+    mkdirSync(dirname(workflowContextPath), { recursive: true });
+    writeFileSync(
+      workflowContextPath,
+      "# WorkflowContext\nAdditional Inputs: streamliner-context=streamliner/context.md\n",
+      "utf8",
+    );
+    const api = createIsolatedApi(rootDir, { pawWorkRoot });
+    activeApps.push(api);
+
+    const readResponse = await request(api.app)
+      .get("/api/paw-workflow-context")
+      .query({ path: workflowContextPath })
+      .expect(200);
+    expect(readResponse.body.content).toContain("Additional Inputs");
+
+    const updatedContent = "# WorkflowContext\nAdditional Inputs: streamliner-context=streamliner/context.md\n\n## Notes\nEdited in browser.\n";
+    await request(api.app)
+      .put("/api/paw-workflow-context")
+      .send({ path: workflowContextPath, content: updatedContent })
+      .expect(200);
+    expect(readFileSync(workflowContextPath, "utf8")).toBe(updatedContent);
+
+    await request(api.app)
+      .put("/api/paw-workflow-context")
+      .send({ path: join(rootDir, "WorkflowContext.md"), content: updatedContent })
+      .expect(400);
   });
 
   it("registers, loads, relinks, and deletes tracked workstreams", async () => {

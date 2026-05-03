@@ -20,7 +20,7 @@ The visible Copilot CLI worker is not started by this feature. The returned hand
 
 ### Design Decisions
 
-**Text-guided PAW init.** The issue originally references prompt profiles, but the implemented scope is deliberately PAW-focused rather than a generic profile abstraction. After preview feedback, the richer `WorkflowContext.md` configuration form was deferred to follow-up issue #43 so it can use PAW-owned metadata. The current dialog accepts natural-language PAW workflow instructions and lets the PAW init skill derive work title, work ID, target branch, review policy, model choices, and WorkflowContext settings.
+**Text-guided PAW init with reusable snippets.** The launch surface is deliberately PAW-focused rather than a generic non-PAW profile abstraction. After preview feedback, the richer `WorkflowContext.md` configuration form was deferred to follow-up issue #43 so it can use PAW-owned metadata. The current dialog accepts natural-language PAW workflow instructions and lets the PAW init skill derive work title, work ID, target branch, review policy, model choices, and WorkflowContext settings. Lightweight prompt profiles provide reusable named text snippets that populate this instructions field and can be saved or updated from the dialog.
 
 **Preparation before terminal launch.** Streamliner prepares the launch artifacts first and shows the resulting handoff in the UI. This prevents a worker terminal from starting with incomplete context or a failed PAW initialization.
 
@@ -32,13 +32,17 @@ The visible Copilot CLI worker is not started by this feature. The returned hand
 
 **Question handling.** Launch preparation is non-interactive. The PAW init prompt explicitly tells the skill to use documented defaults and best judgment rather than asking follow-up questions. If PAW init still asks a question or cannot safely proceed, the API reports a typed `paw_init_failed` error instead of waiting indefinitely or returning a success-shaped handoff.
 
+**WorkflowContext review/edit.** After PAW init succeeds, the dialog loads the PAW-created `WorkflowContext.md` from the prepared PAW work directory. The builder can review it and save manual edits before the future terminal launch. The backend endpoint only accepts `WorkflowContext.md` paths under `.paw/work`, so the browser edit surface is bounded to prepared PAW workflow artifacts.
+
 ### Integration Points
 
 - `src/App.tsx` coordinates selected-node launch state, posts launch preparation requests, and renders success/error handoff state.
 - `src/components/NodeInspector.tsx` displays the launch action and unsupported-state messaging for the selected node.
-- `src/components/PawLaunchDialog.tsx` owns the editable PAW launch form and handoff summary.
+- `src/components/PawLaunchDialog.tsx` owns the editable PAW launch form, prompt-profile controls, handoff summary, and WorkflowContext review/edit surface.
 - `src/components/paw-launch-config.ts` defines shared PAW launch defaults and UI/backend request types.
 - `src/server/routes/launch-preparations.ts` exposes the preparation route under `/api/launch-preparations`.
+- `src/server/routes/paw-launch-prompt-profiles.ts` stores reusable workflow-instruction snippets under Streamliner local state.
+- `src/server/routes/paw-workflow-context.ts` reads and writes prepared PAW `WorkflowContext.md` files under `.paw/work`.
 - `src/server/launch-preparation.ts` contains launch configuration normalization, PAW initialization, kickoff prompt generation, and handoff assembly.
 - `src/server/launch-context.ts` remains the source of the worker-facing Streamliner context package.
 
@@ -52,13 +56,15 @@ The visible Copilot CLI worker is not started by this feature. The returned hand
 
 ### Basic Usage
 
-Select a ready graph node, then use **Initialize PAW launch** in the inspector. Streamliner opens a PAW init dialog showing a PAW workflow instructions textarea, Copilot CLI args, terminal preference, and graph source.
+Select a ready graph node, then use **Initialize PAW launch** in the inspector. Streamliner opens a PAW init dialog showing a PAW workflow instructions textarea, optional prompt-profile picker, Copilot CLI args, terminal preference, and graph source.
 
-Choose **Cancel** to close the dialog without contacting the preparation API. Choose **Run PAW init** to run a fully capable SDK PAW init session that may read and write local repo state, inspect git/GitHub context, and use shell tools before generating the handoff. On success, the dialog shows the branch, PAW work directory, workflow context path, Streamliner context path, CLI args, and a collapsible kickoff prompt.
+Choose **Cancel** to close the dialog without contacting the preparation API. Choose **Run PAW init** to run a fully capable SDK PAW init session that may read and write local repo state, inspect git/GitHub context, and use shell tools before generating the handoff. On success, the dialog shows the branch, PAW work directory, workflow context path, Streamliner context path, CLI args, a collapsible kickoff prompt, and an editable `WorkflowContext.md` review panel.
 
 ### Advanced Usage
 
 The builder can clear the CLI args field to intentionally launch with no Copilot CLI arguments later; an explicit empty list is preserved rather than replaced with the default `--yolo`.
+
+Prompt profiles are local named snippets for the workflow instructions field. Use the profile dropdown to paste a saved snippet into the textarea, edit it as needed, then either save it as a new profile or update the selected profile. Profiles are stored by the local Streamliner server, not in the repository.
 
 The default workflow instruction text asks PAW init for a local final-PR-only workflow, no intermediate pauses unless blocked, and concrete model ids `gpt-5.5`, `claude-opus-4.7`, and `claude-opus-4.6-1m` where PAW asks for multi-model planning or review choices. Terminal launch mode is manual because this feature prepares artifacts but does not open a terminal.
 
@@ -127,18 +133,26 @@ Response fields:
 
 Errors include `code`, `error`, `step`, and `input` so the UI can distinguish validation, PAW initialization, and context-preparation failures.
 
+### Prompt Profile and WorkflowContext APIs
+
+`GET /api/paw-launch-prompt-profiles` returns `{ profiles }` sorted by profile name. `POST /api/paw-launch-prompt-profiles` creates a profile from `{ name, instructions }`; `PUT /api/paw-launch-prompt-profiles/:id` updates the selected profile. Profiles are stored in Streamliner local state as `paw-launch-prompt-profiles.json`.
+
+`GET /api/paw-workflow-context?path=<WorkflowContext.md>` returns `{ path, content, updatedAt }` for prepared PAW workflow contexts under `.paw/work`. `PUT /api/paw-workflow-context` writes `{ path, content }` and returns the refreshed document. Paths outside `.paw/work` or not named `WorkflowContext.md` are rejected.
+
 ### Key Components
 
 - `preparePawLaunch` is the backend orchestration entry point.
 - `defaultPawInitRunner` is the production PAW initializer backed by a fully capable Copilot SDK session.
 - `buildKickoffPrompt` builds the worker prompt from context paths and launch metadata.
 - `PawLaunchDialog` is the UI component for editing workflow instructions and reading the returned handoff.
+- `createPawLaunchPromptProfilesRouter` owns local reusable workflow-instruction profiles.
+- `createPawWorkflowContextRouter` owns post-init `WorkflowContext.md` review/edit reads and writes.
 
 ## Testing
 
 ### How to Test
 
-As a human, open the dashboard on the session-launching workstream, select `launch-prompt-profiles`, and choose **Initialize PAW launch**. Confirm the dialog appears before any network preparation call, cancel closes it without running PAW init, and **Run PAW init** shows a handoff summary without opening a terminal.
+As a human, open the dashboard on the session-launching workstream, select `launch-prompt-profiles`, and choose **Initialize PAW launch**. Confirm the dialog appears before any network preparation call, cancel closes it without running PAW init, saved prompt profiles can populate the workflow instructions field, and **Run PAW init** shows a handoff summary plus editable WorkflowContext panel without opening a terminal.
 
 For visual review, use the screenshot harness against `.streamliner\workstreams\session-launching-and-tracking\graph.json` with the launch node selected and the launch button clicked.
 
@@ -148,9 +162,11 @@ For visual review, use the screenshot harness against `.streamliner\workstreams\
 - Browser-directory and missing/unreadable graph sources show an unsupported-source explanation.
 - Empty CLI args are sent as `[]` and preserved.
 - Empty workflow instructions disable **Run PAW init**.
+- Empty prompt profile names or instructions are rejected.
 - If PAW init asks a clarification question instead of using defaults, the API returns a `paw_init_failed` error and the dialog displays it.
 - PAW init and context-preparation errors are shown in the dialog and do not produce a success-shaped handoff.
 - Missing context package paths are treated as a preparation error.
+- WorkflowContext editing is limited to `WorkflowContext.md` files under `.paw/work`.
 
 ## Limitations and Future Work
 

@@ -1,7 +1,7 @@
 import { copyFile, mkdir, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import {
   approveAll,
@@ -428,7 +428,8 @@ function hasStreamlinerContextAdditionalInput(content: string): boolean {
 function isPathInside(parent: string, child: string): boolean {
   const normalizedParent = resolve(parent).toLowerCase();
   const normalizedChild = resolve(child).toLowerCase();
-  return normalizedChild === normalizedParent || normalizedChild.startsWith(`${normalizedParent}\\`);
+  const relativePath = relative(normalizedParent, normalizedChild);
+  return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
 }
 
 function buildPawInitPrompt(input: PawInitRunnerInput): string {

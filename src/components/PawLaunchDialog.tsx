@@ -1,5 +1,5 @@
 import type { FormEvent } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   type PawLaunchDialogConfiguration,
   type PawLaunchDialogDefaults,
@@ -25,6 +25,19 @@ interface PawLaunchDialogProps {
   onSubmit: (configuration: PawLaunchDialogConfiguration) => void;
 }
 
+interface PawPromptProfile {
+  id: string;
+  name: string;
+  instructions: string;
+  updatedAt: string;
+}
+
+interface WorkflowContextDocument {
+  path: string;
+  content: string;
+  updatedAt: string;
+}
+
 interface Option<T extends string> {
   value: T;
   label: string;
@@ -41,6 +54,67 @@ function parseCliArgs(value: string): string[] {
     .split(/\s+/g)
     .map((part) => part.trim())
     .filter(Boolean);
+}
+
+function responseErrorMessage(response: Response, fallback: string): string {
+  return `${fallback} (${response.status})`;
+}
+
+async function loadPromptProfiles(): Promise<PawPromptProfile[]> {
+  const response = await fetch("/api/paw-launch-prompt-profiles");
+  if (!response.ok) {
+    throw new Error(responseErrorMessage(response, "Could not load prompt profiles."));
+  }
+  const body = await response.json() as { profiles?: PawPromptProfile[] };
+  return Array.isArray(body.profiles) ? body.profiles : [];
+}
+
+async function savePromptProfile(input: {
+  id?: string;
+  name: string;
+  instructions: string;
+}): Promise<PawPromptProfile> {
+  const response = await fetch(
+    input.id
+      ? `/api/paw-launch-prompt-profiles/${encodeURIComponent(input.id)}`
+      : "/api/paw-launch-prompt-profiles",
+    {
+      method: input.id ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: input.name,
+        instructions: input.instructions,
+      }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(responseErrorMessage(response, "Could not save prompt profile."));
+  }
+  const body = await response.json() as { profile?: PawPromptProfile };
+  if (!body.profile) {
+    throw new Error("Prompt profile response was missing the saved profile.");
+  }
+  return body.profile;
+}
+
+async function loadWorkflowContext(path: string): Promise<WorkflowContextDocument> {
+  const response = await fetch(`/api/paw-workflow-context?path=${encodeURIComponent(path)}`);
+  if (!response.ok) {
+    throw new Error(responseErrorMessage(response, "Could not load WorkflowContext.md."));
+  }
+  return await response.json() as WorkflowContextDocument;
+}
+
+async function saveWorkflowContext(path: string, content: string): Promise<WorkflowContextDocument> {
+  const response = await fetch("/api/paw-workflow-context", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, content }),
+  });
+  if (!response.ok) {
+    throw new Error(responseErrorMessage(response, "Could not save WorkflowContext.md."));
+  }
+  return await response.json() as WorkflowContextDocument;
 }
 
 function TextField({
@@ -142,10 +216,157 @@ export function PawLaunchDialog({
   const [workflowInstructions, setWorkflowInstructions] = useState(defaults.workflowInstructions);
   const [cliArgsText, setCliArgsText] = useState(defaults.cliArgsText);
   const [terminal, setTerminal] = useState(defaults.terminal);
+  const [profiles, setProfiles] = useState<PawPromptProfile[]>([]);
+  const [selectedProfileId, setSelectedProfileId] = useState("");
+  const [profileName, setProfileName] = useState("");
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [profileStatus, setProfileStatus] = useState<string | null>(null);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [workflowContext, setWorkflowContext] = useState<WorkflowContextDocument | null>(null);
+  const [workflowContextText, setWorkflowContextText] = useState("");
+  const [workflowContextLoading, setWorkflowContextLoading] = useState(false);
+  const [workflowContextSaving, setWorkflowContextSaving] = useState(false);
+  const [workflowContextStatus, setWorkflowContextStatus] = useState<string | null>(null);
+  const [workflowContextError, setWorkflowContextError] = useState<string | null>(null);
   const trimmedInstructions = workflowInstructions.trim();
   const instructionError = trimmedInstructions.length === 0
     ? "PAW workflow instructions are required so paw-init can derive the workflow."
     : null;
+
+  useEffect(() => {
+    let cancelled = false;
+    setProfileError(null);
+    loadPromptProfiles()
+      .then((loadedProfiles) => {
+        if (!cancelled) {
+          setProfiles(loadedProfiles);
+        }
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) {
+          setProfiles([]);
+          setProfileError(loadError instanceof Error ? loadError.message : String(loadError));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!handoff) {
+      setWorkflowContext(null);
+      setWorkflowContextText("");
+      setWorkflowContextError(null);
+      setWorkflowContextStatus(null);
+      return;
+    }
+    let cancelled = false;
+    setWorkflowContextLoading(true);
+    setWorkflowContextError(null);
+    setWorkflowContextStatus(null);
+    loadWorkflowContext(handoff.workflowContextPath)
+      .then((document) => {
+        if (!cancelled) {
+          setWorkflowContext(document);
+          setWorkflowContextText(document.content);
+        }
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) {
+          setWorkflowContext(null);
+          setWorkflowContextText("");
+          setWorkflowContextError(loadError instanceof Error ? loadError.message : String(loadError));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setWorkflowContextLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [handoff]);
+
+  const selectedProfile = profiles.find((profile) => profile.id === selectedProfileId) ?? null;
+
+  const applyProfile = (profileId: string) => {
+    setSelectedProfileId(profileId);
+    setProfileStatus(null);
+    setProfileError(null);
+    const profile = profiles.find((candidate) => candidate.id === profileId);
+    if (profile) {
+      setWorkflowInstructions(profile.instructions);
+      setProfileName(profile.name);
+    }
+  };
+
+  const handleSaveNewProfile = async () => {
+    setProfileBusy(true);
+    setProfileStatus(null);
+    setProfileError(null);
+    try {
+      const saved = await savePromptProfile({
+        name: profileName || selectedProfile?.name || "PAW workflow profile",
+        instructions: trimmedInstructions,
+      });
+      setProfiles((current) => [...current.filter((profile) => profile.id !== saved.id), saved]
+        .sort((left, right) => left.name.localeCompare(right.name)));
+      setSelectedProfileId(saved.id);
+      setProfileName(saved.name);
+      setProfileStatus(`Saved "${saved.name}".`);
+    } catch (saveError: unknown) {
+      setProfileError(saveError instanceof Error ? saveError.message : String(saveError));
+    } finally {
+      setProfileBusy(false);
+    }
+  };
+
+  const handleUpdateSelectedProfile = async () => {
+    if (!selectedProfile) {
+      return;
+    }
+    setProfileBusy(true);
+    setProfileStatus(null);
+    setProfileError(null);
+    try {
+      const saved = await savePromptProfile({
+        id: selectedProfile.id,
+        name: profileName || selectedProfile.name,
+        instructions: trimmedInstructions,
+      });
+      setProfiles((current) => current.map((profile) =>
+        profile.id === saved.id ? saved : profile
+      ).sort((left, right) => left.name.localeCompare(right.name)));
+      setSelectedProfileId(saved.id);
+      setProfileName(saved.name);
+      setProfileStatus(`Updated "${saved.name}".`);
+    } catch (saveError: unknown) {
+      setProfileError(saveError instanceof Error ? saveError.message : String(saveError));
+    } finally {
+      setProfileBusy(false);
+    }
+  };
+
+  const handleSaveWorkflowContext = async () => {
+    if (!handoff) {
+      return;
+    }
+    setWorkflowContextSaving(true);
+    setWorkflowContextStatus(null);
+    setWorkflowContextError(null);
+    try {
+      const saved = await saveWorkflowContext(handoff.workflowContextPath, workflowContextText);
+      setWorkflowContext(saved);
+      setWorkflowContextText(saved.content);
+      setWorkflowContextStatus("Saved WorkflowContext.md.");
+    } catch (saveError: unknown) {
+      setWorkflowContextError(saveError instanceof Error ? saveError.message : String(saveError));
+    } finally {
+      setWorkflowContextSaving(false);
+    }
+  };
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -200,6 +421,53 @@ export function PawLaunchDialog({
                 </p>
               </div>
             </div>
+            <div className="sl-paw-profile-tools">
+              <label className="sl-field">
+                <span>Prompt profile</span>
+                <select
+                  value={selectedProfileId}
+                  aria-label="Prompt profile"
+                  onChange={(event) => applyProfile(event.target.value)}
+                >
+                  <option value="">Custom instructions</option>
+                  {profiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <TextField
+                label="Profile name"
+                ariaLabel="Profile name"
+                value={profileName}
+                onChange={setProfileName}
+                placeholder="Name this reusable workflow text"
+              />
+              <div className="sl-paw-profile-actions">
+                <button
+                  type="button"
+                  className="sl-action-btn"
+                  disabled={profileBusy || Boolean(instructionError)}
+                  onClick={handleSaveNewProfile}
+                >
+                  Save as profile
+                </button>
+                <button
+                  type="button"
+                  className="sl-action-btn"
+                  disabled={profileBusy || !selectedProfile || Boolean(instructionError)}
+                  onClick={handleUpdateSelectedProfile}
+                >
+                  Update selected
+                </button>
+              </div>
+            </div>
+            {(profileStatus || profileError) && (
+              <p className={profileError ? "sl-action-error" : "sl-inline-status"}>
+                {profileError ?? profileStatus}
+              </p>
+            )}
             <TextAreaField
               label="PAW workflow instructions"
               ariaLabel="PAW workflow instructions"
@@ -286,6 +554,49 @@ export function PawLaunchDialog({
                 <summary>Kickoff prompt</summary>
                 <pre>{handoff.kickoffPrompt}</pre>
               </details>
+              <div className="sl-paw-workflow-context-editor">
+                <div className="sl-paw-config-section-head">
+                  <div>
+                    <span className="sl-section-label">Review WorkflowContext.md</span>
+                    <p>
+                      PAW init has created the workflow context. Review or make
+                      last-minute edits before launching the terminal session.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="sl-action-btn"
+                    disabled={workflowContextLoading || workflowContextSaving || !workflowContextText}
+                    onClick={handleSaveWorkflowContext}
+                  >
+                    {workflowContextSaving ? "Saving..." : "Save WorkflowContext"}
+                  </button>
+                </div>
+                {workflowContextLoading ? (
+                  <p className="sl-field-note">Loading WorkflowContext.md...</p>
+                ) : (
+                  <textarea
+                    value={workflowContextText}
+                    aria-label="WorkflowContext content"
+                    rows={14}
+                    spellCheck={false}
+                    onChange={(event) => {
+                      setWorkflowContextText(event.target.value);
+                      setWorkflowContextStatus(null);
+                    }}
+                  />
+                )}
+                {workflowContext && (
+                  <p className="sl-field-note">
+                    Loaded from {workflowContext.path}. Last saved {new Date(workflowContext.updatedAt).toLocaleString()}.
+                  </p>
+                )}
+                {(workflowContextStatus || workflowContextError) && (
+                  <p className={workflowContextError ? "sl-action-error" : "sl-inline-status"}>
+                    {workflowContextError ?? workflowContextStatus}
+                  </p>
+                )}
+              </div>
             </section>
           )}
         </div>
