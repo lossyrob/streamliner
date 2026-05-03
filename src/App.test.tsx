@@ -245,14 +245,6 @@ function findInputByLabel(container: HTMLElement, label: string): HTMLInputEleme
   return input;
 }
 
-function findSelectByLabel(container: HTMLElement, label: string): HTMLSelectElement {
-  const select = container.querySelector(`select[aria-label="${label}"]`);
-  if (!(select instanceof HTMLSelectElement)) {
-    throw new Error(`Could not find select with label "${label}".`);
-  }
-  return select;
-}
-
 function findTextareaByLabel(container: HTMLElement, label: string): HTMLTextAreaElement {
   const textarea = container.querySelector(`textarea[aria-label="${label}"]`);
   if (!(textarea instanceof HTMLTextAreaElement)) {
@@ -278,24 +270,6 @@ function findButtonByLabel(container: HTMLElement, label: string): HTMLButtonEle
     throw new Error(`Could not find button with label "${label}".`);
   }
   return button;
-}
-
-function setSelectValue(
-  select: HTMLSelectElement,
-  value: string,
-): void {
-  const valueSetter = Object.getOwnPropertyDescriptor(
-    HTMLSelectElement.prototype,
-    "value",
-  )?.set;
-  if (!valueSetter) {
-    throw new Error("Could not find HTMLSelectElement value setter.");
-  }
-  act(() => {
-    valueSetter.call(select, value);
-    select.dispatchEvent(new Event("input", { bubbles: true }));
-    select.dispatchEvent(new Event("change", { bubbles: true }));
-  });
 }
 
 function setInputValue(
@@ -558,14 +532,14 @@ describe("App sessions route", () => {
       await settle();
 
       expect(container.textContent).toContain("PAW launch");
-      expect(findInputByLabel(container, "PAW work ID").value).toBe("launch-prompt-profiles");
+      expect(findTextareaByLabel(container, "PAW workflow instructions").value).toContain("final-pr-only");
 
       act(() => {
         findButton(container, "Cancel").click();
       });
       await settle();
 
-      expect(container.querySelector('input[aria-label="PAW work ID"]')).toBeNull();
+      expect(container.querySelector('textarea[aria-label="PAW workflow instructions"]')).toBeNull();
       expect([...container.querySelectorAll("button")].some(
         (button) => button.textContent?.trim() === "Prepare launch",
       )).toBe(false);
@@ -579,7 +553,7 @@ describe("App sessions route", () => {
   );
 
   it(
-    "prepares a PAW launch with custom message and explicit empty CLI args",
+    "prepares a PAW launch with workflow instructions and explicit empty CLI args",
     async () => {
       const graph = buildLaunchGraph();
       const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -634,7 +608,7 @@ describe("App sessions route", () => {
 
       setInputValue(findInputByLabel(container, "Copilot CLI args"), "");
       setTextareaValue(
-        findTextareaByLabel(container, "Builder custom message"),
+        findTextareaByLabel(container, "PAW workflow instructions"),
         "Prefer the final PR review path.",
       );
       act(() => {
@@ -653,19 +627,8 @@ describe("App sessions route", () => {
           nodeId: "launch-prompt-profiles",
           graphPath: "C:\\graphs\\api-test\\graph.json",
           configuration: expect.objectContaining({
-            workTitle: "Launch prompt profiles",
-            workId: "launch-prompt-profiles",
-            baseBranch: "main",
-            targetBranch: "feature/launch-prompt-profiles",
+            workflowInstructions: "Prefer the final PR review path.",
             cliArgs: [],
-            customMessage: "Prefer the final PR review path.",
-            paw: expect.objectContaining({
-              workflowIdentity: "paw",
-              reviewPolicy: "final-pr-only",
-              finalReviewMode: "multi-model",
-              finalReviewModels: "gpt-5.5, claude-opus-4.7, claude-opus-4.6-1m",
-              planGenerationMode: "multi-model",
-            }),
             terminal: expect.objectContaining({
               launchMode: "manual",
             }),
@@ -681,7 +644,7 @@ describe("App sessions route", () => {
   );
 
   it(
-    "validates PAW model lists against selected review modes",
+    "requires PAW workflow instructions before preparing a launch",
     async () => {
       const graph = buildLaunchGraph();
       const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -715,11 +678,11 @@ describe("App sessions route", () => {
       });
       await settle();
 
-      setSelectValue(findSelectByLabel(container, "Final review mode"), "single-model");
+      setTextareaValue(findTextareaByLabel(container, "PAW workflow instructions"), "");
       await settle();
 
       expect(container.textContent).toContain(
-        "Final review uses multiple models, so choose multi-model mode or keep one model.",
+        "PAW workflow instructions are required so paw-init can derive the workflow.",
       );
       expect(findButton(container, "Prepare launch").disabled).toBe(true);
       expect(

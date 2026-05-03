@@ -48,8 +48,15 @@ function fakeContextPackage(
     metadata?: Partial<LaunchContextPackage["metadata"]>;
   } = {},
 ): LaunchContextPackage {
-  const outputDir = options.outputDir ?? join(root, ".paw", "work", "launch-prompt-profiles");
-  const contextPackagePath = join(outputDir, "streamliner");
+  const contextPackagePath = options.outputDir
+    ? join(options.outputDir, "streamliner")
+    : join(
+      options.stateRoot ?? root,
+      "streamliner",
+      "session-launching-and-tracking",
+      "launch-contexts",
+      "ctx-prepared",
+    );
   const contextFilePath = join(contextPackagePath, "context.md");
   mkdirSync(contextPackagePath, { recursive: true });
   writeFileSync(contextFilePath, "# Streamliner Context\n\nPrepared context.\n", "utf8");
@@ -99,13 +106,21 @@ function createPawInitRunner(
 ): PawInitRunner {
   return async (input) => {
     calls.push(input);
-    mkdirSync(dirname(input.workflowContextPath), { recursive: true });
-    writeFileSync(input.workflowContextPath, "# WorkflowContext\n", "utf8");
+    const workId = "launch-prompt-profiles";
+    const pawWorkDir = join(input.cwd, ".paw", "work", workId);
+    const workflowContextPath = join(pawWorkDir, "WorkflowContext.md");
+    const streamlinerContextPath = join(pawWorkDir, "streamliner", "context.md");
+    mkdirSync(dirname(streamlinerContextPath), { recursive: true });
+    writeFileSync(workflowContextPath, "# WorkflowContext\nAdditional Inputs: streamliner-context=streamliner/context.md\n", "utf8");
+    writeFileSync(streamlinerContextPath, "# Streamliner Context\n", "utf8");
     return {
       cwd: normalizePath(input.cwd),
-      branch: input.branch,
-      pawWorkDir: normalizePath(input.pawWorkDir),
-      workflowContextPath: normalizePath(input.workflowContextPath),
+      branch: "feature/launch-prompt-profiles",
+      workId,
+      workTitle: "Launch Prompt Profiles",
+      pawWorkDir: normalizePath(pawWorkDir),
+      workflowContextPath: normalizePath(workflowContextPath),
+      streamlinerContextPath: normalizePath(streamlinerContextPath),
       environment: { ...input.configuration.environment },
       sessionStateRoot: normalizePath(input.sessionStateRoot),
     };
@@ -142,7 +157,7 @@ describe("preparePawLaunch", () => {
       stateRoot: join(root, "state"),
       launchNonce: "nonce-123",
       configuration: {
-        targetBranch: "feature/issue-33-launch-prompt-profiles",
+        workflowInstructions: "Use PAW final-pr-only with no intermediate pauses.",
         environment: { STREAMLINER_LOG_LEVEL: "debug" },
       },
       pawInitRunner: createPawInitRunner(pawCalls),
@@ -153,30 +168,25 @@ describe("preparePawLaunch", () => {
     expect(contextCalls[0]).toEqual(
       expect.objectContaining({
         nodeId: "launch-prompt-profiles",
-        outputDir: expectedWorkDir,
         launchNonce: "nonce-123",
       }),
     );
+    expect(contextCalls[0]).not.toHaveProperty("outputDir");
     expect(pawCalls[0]).toEqual(
       expect.objectContaining({
-        workId: "launch-prompt-profiles",
-        branch: "feature/issue-33-launch-prompt-profiles",
-        streamlinerContextPath: join(expectedWorkDir, "streamliner", "context.md"),
+        issueUrl: "https://github.com/lossyrob/streamliner/issues/33",
+        stagedContextPackage: expect.objectContaining({
+          contextFilePath: normalizePath(join(root, "state", "streamliner", "session-launching-and-tracking", "launch-contexts", "ctx-prepared", "context.md")),
+        }),
         configuration: expect.objectContaining({
-          paw: expect.objectContaining({
-            workflowIdentity: "paw",
-            reviewPolicy: "final-pr-only",
-            finalReviewMode: "multi-model",
-            finalReviewModels: "gpt-5.5, claude-opus-4.7, claude-opus-4.6-1m",
-            planGenerationMode: "multi-model",
-          }),
+          workflowInstructions: "Use PAW final-pr-only with no intermediate pauses.",
         }),
       }),
     );
     expect(result).toEqual(
       expect.objectContaining({
         cwd: normalizePath(root),
-        branch: "feature/issue-33-launch-prompt-profiles",
+        branch: "feature/launch-prompt-profiles",
         pawWorkDir: normalizePath(expectedWorkDir),
         workflowContextPath: normalizePath(join(expectedWorkDir, "WorkflowContext.md")),
         streamlinerContextPath: normalizePath(join(expectedWorkDir, "streamliner", "context.md")),
@@ -214,7 +224,7 @@ describe("preparePawLaunch", () => {
     expect(result.cliArgs).toEqual([]);
   });
 
-  it("validates dependent PAW review configuration", async () => {
+  it("validates launch configuration field types", async () => {
     const root = createRootDir();
 
     await expect(
@@ -223,10 +233,7 @@ describe("preparePawLaunch", () => {
         cwd: root,
         stateRoot: join(root, "state"),
         configuration: {
-          paw: {
-            finalReviewMode: "single-model",
-            finalReviewModels: "gpt-5.5, claude-opus-4.7",
-          },
+          workflowInstructions: 42 as unknown as string,
         },
         pawInitRunner: createPawInitRunner(),
         contextPreparer: createContextPreparer(root),
@@ -235,7 +242,7 @@ describe("preparePawLaunch", () => {
       code: "invalid_launch_configuration",
       statusCode: 400,
       step: "validation",
-      input: "configuration.paw.finalReviewModels",
+      input: "configuration.workflowInstructions",
     });
 
     await expect(
@@ -244,10 +251,7 @@ describe("preparePawLaunch", () => {
         cwd: root,
         stateRoot: join(root, "state"),
         configuration: {
-          paw: {
-            workflowIdentity: "paw-lite",
-            workflowMode: "full",
-          },
+          terminal: { preferredTerminal: "fish" as never },
         },
         pawInitRunner: createPawInitRunner(),
         contextPreparer: createContextPreparer(root),
@@ -256,26 +260,13 @@ describe("preparePawLaunch", () => {
       code: "invalid_launch_configuration",
       statusCode: 400,
       step: "validation",
-      input: "configuration.paw.workflowIdentity",
+      input: "configuration.terminal.preferredTerminal",
     });
   });
 
-  it("builds kickoff prompts with context paths and optional multi-paragraph builder messages", async () => {
+  it("builds kickoff prompts with prepared context paths", async () => {
     const root = createRootDir();
-    const customMessage = [
-      "Focus on the backend preparation route.",
-      "",
-      "Preserve the custom message as user-authored guidance.",
-    ].join("\n");
-    const withMessage = await preparePawLaunch({
-      nodeId: "launch-prompt-profiles",
-      cwd: root,
-      stateRoot: join(root, "state"),
-      configuration: { customMessage },
-      pawInitRunner: createPawInitRunner(),
-      contextPreparer: createContextPreparer(root),
-    });
-    const withoutMessage = await preparePawLaunch({
+    const result = await preparePawLaunch({
       nodeId: "launch-prompt-profiles",
       cwd: root,
       stateRoot: join(root, "state"),
@@ -283,16 +274,13 @@ describe("preparePawLaunch", () => {
       contextPreparer: createContextPreparer(root),
     });
 
-    expect(withMessage.kickoffPrompt).toContain(
-      `- PAW workflow context: ${withMessage.workflowContextPath}`,
+    expect(result.kickoffPrompt).toContain(
+      `- PAW workflow context: ${result.workflowContextPath}`,
     );
-    expect(withMessage.kickoffPrompt).toContain(
-      `- Streamliner launch context: ${withMessage.streamlinerContextPath}`,
+    expect(result.kickoffPrompt).toContain(
+      `- Streamliner launch context: ${result.streamlinerContextPath}`,
     );
-    expect(withMessage.kickoffPrompt).toContain(
-      `## Builder Custom Message\n\n${customMessage}`,
-    );
-    expect(withoutMessage.kickoffPrompt).not.toContain("## Builder Custom Message");
+    expect(result.kickoffPrompt).toContain("recorded as an Additional Input");
   });
 
   it("wraps PAW init failures with a typed preparation error", async () => {
@@ -391,16 +379,15 @@ describe("launch preparation API route", () => {
         nodeId: "launch-prompt-profiles",
         launchNonce: "nonce-route",
         configuration: {
-          targetBranch: "feature/route",
           cliArgs: [],
-          customMessage: "Route-level guidance.",
+          workflowInstructions: "Use PAW with local final-pr-only review.",
         },
       })
       .expect(200);
 
     expect(response.body).toEqual(
       expect.objectContaining({
-        branch: "feature/route",
+        branch: "feature/launch-prompt-profiles",
         cliArgs: [],
         streamlinerContextPath: expect.stringContaining("streamliner/context.md"),
         launchMetadata: expect.objectContaining({
@@ -409,7 +396,7 @@ describe("launch preparation API route", () => {
         }),
       }),
     );
-    expect(response.body.kickoffPrompt).toContain("## Builder Custom Message");
+    expect(response.body.kickoffPrompt).toContain("recorded as an Additional Input");
   });
 
   it("returns client errors for invalid launch preparation requests", async () => {

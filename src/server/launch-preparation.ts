@@ -1,9 +1,7 @@
-import { execFile } from "node:child_process";
+import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { promisify } from "node:util";
 
 import {
   CopilotClient,
@@ -21,25 +19,17 @@ import {
   type PrepareLaunchContextPackageOptions,
 } from "./launch-context";
 
-const execFileAsync = promisify(execFile);
-
 const DEFAULT_CLI_ARGS = ["--yolo"];
 const DEFAULT_PAW_INIT_MODEL = "claude-sonnet-4.6";
-const DEFAULT_PAW_REVIEW_MODELS = "gpt-5.5, claude-opus-4.7, claude-opus-4.6-1m";
 const DEFAULT_PAW_INIT_TIMEOUT_MS = 120_000;
-const WORKFLOW_IDENTITIES = ["paw", "paw-lite"] as const;
-const WORKFLOW_MODES = ["full", "minimal", "custom"] as const;
-const REVIEW_STRATEGIES = ["local", "prs"] as const;
-const REVIEW_POLICIES = ["every-stage", "milestones", "planning-only", "final-pr-only"] as const;
-const SESSION_POLICIES = ["continuous", "pause-after-stage"] as const;
-const ENABLEMENT_VALUES = ["enabled", "disabled"] as const;
-const REVIEW_MODES = ["single-model", "multi-model", "society-of-thought"] as const;
-const PLAN_GENERATION_MODES = ["single-model", "multi-model"] as const;
-const REVIEW_INTERACTIVE_VALUES = ["true", "false", "smart"] as const;
-const REVIEW_INTERACTION_MODES = ["parallel", "debate"] as const;
-const ARTIFACT_LIFECYCLES = ["commit-and-clean", "commit-and-persist", "never-commit"] as const;
 const TERMINAL_LAUNCH_MODES = ["manual"] as const;
 const TERMINAL_PREFERENCES = ["default", "windows-terminal", "powershell"] as const;
+const DEFAULT_WORKFLOW_INSTRUCTIONS = [
+  "Use PAW with a local final-pr-only review policy.",
+  "Do not pause for intermediate review unless there is a serious blocker, unsafe ambiguity, missing credentials/infrastructure, or material scope mismatch.",
+  "Use GPT 5.5, Claude Opus 4.7, and Claude Opus 4.6 1M for multi-model planning or review choices where PAW asks for concrete models.",
+  "Proceed through implementation and documentation, then create the final PR.",
+].join("\n");
 
 export type LaunchPreparationErrorCode =
   | "invalid_node_id"
@@ -77,72 +67,24 @@ export class LaunchPreparationError extends Error {
   }
 }
 
-export interface PawLaunchWorkflowOptions {
-  workflowIdentity: "paw" | "paw-lite";
-  workflowMode: "full" | "minimal" | "custom";
-  reviewStrategy: "local" | "prs";
-  reviewPolicy: "every-stage" | "milestones" | "planning-only" | "final-pr-only";
-  sessionPolicy: "continuous" | "pause-after-stage";
-  planningDocsReview: "enabled" | "disabled";
-  finalAgentReview: "enabled" | "disabled";
-  finalReviewMode: "single-model" | "multi-model" | "society-of-thought";
-  finalReviewInteractive: "true" | "false" | "smart";
-  finalReviewModels: string;
-  finalReviewSpecialists: string;
-  finalReviewInteractionMode: "parallel" | "debate";
-  finalReviewSpecialistModels: string;
-  finalReviewPerspectives: string;
-  finalReviewPerspectiveCap: number;
-  implementationModel: string;
-  planGenerationMode: "single-model" | "multi-model";
-  planGenerationModels: string;
-  planningReviewMode: "single-model" | "multi-model" | "society-of-thought";
-  planningReviewInteractive: "true" | "false" | "smart";
-  planningReviewModels: string;
-  planningReviewSpecialists: string;
-  planningReviewInteractionMode: "parallel" | "debate";
-  planningReviewSpecialistModels: string;
-  planningReviewPerspectives: string;
-  planningReviewPerspectiveCap: number;
-  customWorkflowInstructions: string;
-  initialPrompt: string;
-  remote: string;
-  artifactLifecycle: "commit-and-clean" | "commit-and-persist" | "never-commit";
-  artifactPaths: string;
-}
-
 export interface PawLaunchTerminalPreferences {
   launchMode: "manual";
   preferredTerminal: "default" | "windows-terminal" | "powershell";
 }
 
 export interface PawLaunchConfigurationInput {
-  workTitle?: string;
-  workId?: string;
-  baseBranch?: string;
-  targetBranch?: string;
   cwd?: string;
-  pawWorkDir?: string;
   cliArgs?: string[];
   environment?: Record<string, string>;
-  customMessage?: string | null;
-  paw?: Partial<PawLaunchWorkflowOptions>;
+  workflowInstructions?: string | null;
   terminal?: Partial<PawLaunchTerminalPreferences>;
 }
 
 export interface ResolvedPawLaunchConfiguration {
-  workTitle: string;
-  workId: string;
-  baseBranch: string;
-  targetBranch: string;
   cwd: string;
-  pawWorkDir: string;
-  workflowContextPath: string;
-  streamlinerContextPath: string;
   cliArgs: string[];
   environment: Record<string, string>;
-  customMessage: string | null;
-  paw: PawLaunchWorkflowOptions;
+  workflowInstructions: string;
   terminal: PawLaunchTerminalPreferences;
 }
 
@@ -150,24 +92,21 @@ export interface PawInitRunnerInput {
   nodeId: string;
   graphPath?: string;
   cwd: string;
-  branch: string;
-  pawWorkDir: string;
-  workflowContextPath: string;
-  streamlinerContextPath: string;
   sessionStateRoot: string;
-  workTitle: string;
-  workId: string;
-  baseBranch: string;
   issueUrl?: string;
   launchNonce: string | null;
   configuration: ResolvedPawLaunchConfiguration;
+  stagedContextPackage: LaunchContextPackage;
 }
 
 export interface PawInitRunnerResult {
   cwd: string;
   branch: string;
+  workId: string;
+  workTitle: string;
   pawWorkDir: string;
   workflowContextPath: string;
+  streamlinerContextPath: string;
   environment?: Record<string, string>;
   sessionStateRoot?: string;
 }
@@ -224,43 +163,14 @@ export interface PawLaunchHandoff {
   contextPackage: LaunchContextPackage;
 }
 
-interface InitializePawWorkflowArgs {
-  workflowContextPath: string;
+interface CompletePawInitArgs {
+  workTitle: string;
+  workId: string;
+  targetBranch: string;
+  workflowContextContent: string;
+  pawWorkDir?: string;
+  artifactLifecycle?: string;
 }
-
-const DEFAULT_PAW_OPTIONS: PawLaunchWorkflowOptions = {
-  workflowIdentity: "paw",
-  workflowMode: "full",
-  reviewStrategy: "local",
-  reviewPolicy: "final-pr-only",
-  sessionPolicy: "continuous",
-  planningDocsReview: "enabled",
-  finalAgentReview: "disabled",
-  finalReviewMode: "multi-model",
-  finalReviewInteractive: "smart",
-  finalReviewModels: DEFAULT_PAW_REVIEW_MODELS,
-  finalReviewSpecialists: "all",
-  finalReviewInteractionMode: "parallel",
-  finalReviewSpecialistModels: "none",
-  finalReviewPerspectives: "auto",
-  finalReviewPerspectiveCap: 2,
-  implementationModel: "none",
-  planGenerationMode: "multi-model",
-  planGenerationModels: DEFAULT_PAW_REVIEW_MODELS,
-  planningReviewMode: "multi-model",
-  planningReviewInteractive: "smart",
-  planningReviewModels: DEFAULT_PAW_REVIEW_MODELS,
-  planningReviewSpecialists: "all",
-  planningReviewInteractionMode: "parallel",
-  planningReviewSpecialistModels: "none",
-  planningReviewPerspectives: "auto",
-  planningReviewPerspectiveCap: 2,
-  customWorkflowInstructions: "final-pr-review-only; continue through implementation and documentation without intermediate local review pauses, and create the final PR unless a serious blocker is encountered.",
-  initialPrompt: "streamliner-launch-kickoff",
-  remote: "origin",
-  artifactLifecycle: "commit-and-clean",
-  artifactPaths: "auto-derived",
-};
 
 const DEFAULT_TERMINAL_PREFERENCES: PawLaunchTerminalPreferences = {
   launchMode: "manual",
@@ -287,7 +197,7 @@ function assertOptionalString(
   value: unknown,
   field: string,
 ): string | undefined {
-  if (value === undefined) {
+  if (value === undefined || value === null) {
     return undefined;
   }
   if (typeof value !== "string") {
@@ -373,30 +283,6 @@ function assertOptionalEnum<T extends string>(
   return value as T;
 }
 
-function assertOptionalPositiveInteger(
-  value: unknown,
-  field: string,
-): number | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  const parsed = typeof value === "number"
-    ? value
-    : typeof value === "string"
-      ? Number(value.trim())
-      : Number.NaN;
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new LaunchPreparationError(
-      "invalid_launch_configuration",
-      400,
-      `${field} must be a positive integer.`,
-      "validation",
-      field,
-    );
-  }
-  return parsed;
-}
-
 function assertOptionalRecord(value: unknown, field: string): Record<string, unknown> | undefined {
   if (value === undefined) {
     return undefined;
@@ -424,346 +310,6 @@ function normalizeAbsolutePath(path: string, field: string): string {
     );
   }
   return resolve(path);
-}
-
-function slugify(value: string): string {
-  const slug = value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .replace(/-{2,}/g, "-");
-  return slug || "streamliner-launch";
-}
-
-function titleFromNodeId(nodeId: string): string {
-  return nodeId
-    .split(/[-_]+/g)
-    .filter(Boolean)
-    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
-    .join(" ") || "Streamliner Launch";
-}
-
-function normalizeOptionalText(
-  value: unknown,
-  field: string,
-): string | undefined {
-  const raw = assertOptionalString(value, field);
-  if (raw === undefined) {
-    return undefined;
-  }
-  return raw.trim() || undefined;
-}
-
-function modelCount(value: string): number {
-  const trimmed = value.trim();
-  if (trimmed.length === 0 || trimmed.toLowerCase() === "none") {
-    return 0;
-  }
-  return trimmed
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean).length;
-}
-
-function assertModelModeCompatible(
-  mode: "single-model" | "multi-model",
-  models: string,
-  field: string,
-): void {
-  const count = modelCount(models);
-  if (mode === "single-model" && count > 1) {
-    throw new LaunchPreparationError(
-      "invalid_launch_configuration",
-      400,
-      `${field} can contain only one model when the matching mode is single-model.`,
-      "validation",
-      field,
-    );
-  }
-  if (mode === "multi-model" && count < 2) {
-    throw new LaunchPreparationError(
-      "invalid_launch_configuration",
-      400,
-      `${field} must contain at least two comma-separated models when the matching mode is multi-model.`,
-      "validation",
-      field,
-    );
-  }
-}
-
-function assertAdaptiveSpecialists(value: string, field: string): void {
-  const trimmed = value.trim();
-  if (!trimmed.startsWith("adaptive:")) {
-    return;
-  }
-  const cap = Number(trimmed.slice("adaptive:".length));
-  if (!Number.isInteger(cap) || cap <= 0) {
-    throw new LaunchPreparationError(
-      "invalid_launch_configuration",
-      400,
-      `${field} adaptive specialist count must be a positive integer.`,
-      "validation",
-      field,
-    );
-  }
-}
-
-function validatePawOptions(paw: PawLaunchWorkflowOptions): void {
-  if (paw.workflowMode === "minimal" && paw.reviewStrategy !== "local") {
-    throw new LaunchPreparationError(
-      "invalid_launch_configuration",
-      400,
-      "configuration.paw.reviewStrategy must be local when workflowMode is minimal.",
-      "validation",
-      "configuration.paw.reviewStrategy",
-    );
-  }
-  if (
-    (paw.reviewPolicy === "planning-only" || paw.reviewPolicy === "final-pr-only") &&
-    paw.reviewStrategy !== "local"
-  ) {
-    throw new LaunchPreparationError(
-      "invalid_launch_configuration",
-      400,
-      "configuration.paw.reviewStrategy must be local for planning-only or final-pr-only review policies.",
-      "validation",
-      "configuration.paw.reviewStrategy",
-    );
-  }
-  if (
-    paw.workflowMode === "custom" &&
-    paw.workflowIdentity !== "paw-lite" &&
-    (paw.customWorkflowInstructions === "none" || paw.customWorkflowInstructions.trim().length === 0)
-  ) {
-    throw new LaunchPreparationError(
-      "invalid_launch_configuration",
-      400,
-      "configuration.paw.customWorkflowInstructions is required when workflowMode is custom.",
-      "validation",
-      "configuration.paw.customWorkflowInstructions",
-    );
-  }
-  if (
-    paw.workflowIdentity === "paw-lite" &&
-    (paw.workflowMode !== "custom" ||
-      paw.reviewStrategy !== "local" ||
-      paw.reviewPolicy !== "final-pr-only")
-  ) {
-    throw new LaunchPreparationError(
-      "invalid_launch_configuration",
-      400,
-      "configuration.paw paw-lite requires workflowMode custom, reviewStrategy local, and reviewPolicy final-pr-only.",
-      "validation",
-      "configuration.paw.workflowIdentity",
-    );
-  }
-  if (paw.finalReviewMode === "society-of-thought" && paw.finalAgentReview !== "enabled") {
-    throw new LaunchPreparationError(
-      "invalid_launch_configuration",
-      400,
-      "configuration.paw.finalAgentReview must be enabled when finalReviewMode is society-of-thought.",
-      "validation",
-      "configuration.paw.finalAgentReview",
-    );
-  }
-  if (paw.planningReviewMode === "society-of-thought" && paw.planningDocsReview !== "enabled") {
-    throw new LaunchPreparationError(
-      "invalid_launch_configuration",
-      400,
-      "configuration.paw.planningDocsReview must be enabled when planningReviewMode is society-of-thought.",
-      "validation",
-      "configuration.paw.planningDocsReview",
-    );
-  }
-  if (paw.finalReviewMode !== "society-of-thought") {
-    assertModelModeCompatible(
-      paw.finalReviewMode,
-      paw.finalReviewModels,
-      "configuration.paw.finalReviewModels",
-    );
-  }
-  if (paw.planningReviewMode !== "society-of-thought") {
-    assertModelModeCompatible(
-      paw.planningReviewMode,
-      paw.planningReviewModels,
-      "configuration.paw.planningReviewModels",
-    );
-  }
-  assertModelModeCompatible(
-    paw.planGenerationMode,
-    paw.planGenerationModels,
-    "configuration.paw.planGenerationModels",
-  );
-  assertAdaptiveSpecialists(paw.finalReviewSpecialists, "configuration.paw.finalReviewSpecialists");
-  assertAdaptiveSpecialists(paw.planningReviewSpecialists, "configuration.paw.planningReviewSpecialists");
-}
-
-function normalizePawOptions(
-  value: Partial<PawLaunchWorkflowOptions> | undefined,
-): Partial<PawLaunchWorkflowOptions> {
-  const record = assertOptionalRecord(value, "configuration.paw");
-  if (!record) {
-    return {};
-  }
-  const normalized: Partial<PawLaunchWorkflowOptions> = {};
-  const workflowIdentity = assertOptionalEnum(
-    record.workflowIdentity,
-    WORKFLOW_IDENTITIES,
-    "configuration.paw.workflowIdentity",
-  );
-  const workflowMode = assertOptionalEnum(
-    record.workflowMode,
-    WORKFLOW_MODES,
-    "configuration.paw.workflowMode",
-  );
-  const reviewStrategy = assertOptionalEnum(
-    record.reviewStrategy,
-    REVIEW_STRATEGIES,
-    "configuration.paw.reviewStrategy",
-  );
-  const reviewPolicy = assertOptionalEnum(
-    record.reviewPolicy,
-    REVIEW_POLICIES,
-    "configuration.paw.reviewPolicy",
-  );
-  const sessionPolicy = assertOptionalEnum(
-    record.sessionPolicy,
-    SESSION_POLICIES,
-    "configuration.paw.sessionPolicy",
-  );
-  const planningDocsReview = assertOptionalEnum(
-    record.planningDocsReview,
-    ENABLEMENT_VALUES,
-    "configuration.paw.planningDocsReview",
-  );
-  const finalAgentReview = assertOptionalEnum(
-    record.finalAgentReview,
-    ENABLEMENT_VALUES,
-    "configuration.paw.finalAgentReview",
-  );
-  const finalReviewMode = assertOptionalEnum(
-    record.finalReviewMode,
-    REVIEW_MODES,
-    "configuration.paw.finalReviewMode",
-  );
-  const finalReviewInteractive = assertOptionalEnum(
-    record.finalReviewInteractive,
-    REVIEW_INTERACTIVE_VALUES,
-    "configuration.paw.finalReviewInteractive",
-  );
-  const finalReviewInteractionMode = assertOptionalEnum(
-    record.finalReviewInteractionMode,
-    REVIEW_INTERACTION_MODES,
-    "configuration.paw.finalReviewInteractionMode",
-  );
-  const finalReviewPerspectiveCap = assertOptionalPositiveInteger(
-    record.finalReviewPerspectiveCap,
-    "configuration.paw.finalReviewPerspectiveCap",
-  );
-  const planGenerationMode = assertOptionalEnum(
-    record.planGenerationMode,
-    PLAN_GENERATION_MODES,
-    "configuration.paw.planGenerationMode",
-  );
-  const planningReviewMode = assertOptionalEnum(
-    record.planningReviewMode,
-    REVIEW_MODES,
-    "configuration.paw.planningReviewMode",
-  );
-  const planningReviewInteractive = assertOptionalEnum(
-    record.planningReviewInteractive,
-    REVIEW_INTERACTIVE_VALUES,
-    "configuration.paw.planningReviewInteractive",
-  );
-  const planningReviewInteractionMode = assertOptionalEnum(
-    record.planningReviewInteractionMode,
-    REVIEW_INTERACTION_MODES,
-    "configuration.paw.planningReviewInteractionMode",
-  );
-  const planningReviewPerspectiveCap = assertOptionalPositiveInteger(
-    record.planningReviewPerspectiveCap,
-    "configuration.paw.planningReviewPerspectiveCap",
-  );
-  const artifactLifecycle = assertOptionalEnum(
-    record.artifactLifecycle,
-    ARTIFACT_LIFECYCLES,
-    "configuration.paw.artifactLifecycle",
-  );
-  if (workflowIdentity !== undefined) {
-    normalized.workflowIdentity = workflowIdentity;
-  }
-  if (workflowMode !== undefined) {
-    normalized.workflowMode = workflowMode;
-  }
-  if (reviewStrategy !== undefined) {
-    normalized.reviewStrategy = reviewStrategy;
-  }
-  if (reviewPolicy !== undefined) {
-    normalized.reviewPolicy = reviewPolicy;
-  }
-  if (sessionPolicy !== undefined) {
-    normalized.sessionPolicy = sessionPolicy;
-  }
-  if (planningDocsReview !== undefined) {
-    normalized.planningDocsReview = planningDocsReview;
-  }
-  if (finalAgentReview !== undefined) {
-    normalized.finalAgentReview = finalAgentReview;
-  }
-  if (finalReviewMode !== undefined) {
-    normalized.finalReviewMode = finalReviewMode;
-  }
-  if (finalReviewInteractive !== undefined) {
-    normalized.finalReviewInteractive = finalReviewInteractive;
-  }
-  if (finalReviewInteractionMode !== undefined) {
-    normalized.finalReviewInteractionMode = finalReviewInteractionMode;
-  }
-  if (finalReviewPerspectiveCap !== undefined) {
-    normalized.finalReviewPerspectiveCap = finalReviewPerspectiveCap;
-  }
-  if (planGenerationMode !== undefined) {
-    normalized.planGenerationMode = planGenerationMode;
-  }
-  if (planningReviewMode !== undefined) {
-    normalized.planningReviewMode = planningReviewMode;
-  }
-  if (planningReviewInteractive !== undefined) {
-    normalized.planningReviewInteractive = planningReviewInteractive;
-  }
-  if (planningReviewInteractionMode !== undefined) {
-    normalized.planningReviewInteractionMode = planningReviewInteractionMode;
-  }
-  if (planningReviewPerspectiveCap !== undefined) {
-    normalized.planningReviewPerspectiveCap = planningReviewPerspectiveCap;
-  }
-  if (artifactLifecycle !== undefined) {
-    normalized.artifactLifecycle = artifactLifecycle;
-  }
-  const textFields = [
-    "finalReviewModels",
-    "finalReviewSpecialists",
-    "finalReviewSpecialistModels",
-    "finalReviewPerspectives",
-    "implementationModel",
-    "planGenerationModels",
-    "planningReviewModels",
-    "planningReviewSpecialists",
-    "planningReviewSpecialistModels",
-    "planningReviewPerspectives",
-    "customWorkflowInstructions",
-    "initialPrompt",
-    "remote",
-    "artifactPaths",
-  ] as const;
-  for (const field of textFields) {
-    const normalizedText = normalizeOptionalText(record[field], `configuration.paw.${field}`);
-    if (normalizedText !== undefined) {
-      normalized[field] = normalizedText;
-    }
-  }
-  return normalized;
 }
 
 function normalizeTerminalPreferences(
@@ -794,153 +340,31 @@ function normalizeTerminalPreferences(
 }
 
 function normalizeConfiguration(
-  nodeId: string,
   input: PawLaunchConfigurationInput | undefined,
-  options: { cwd?: string; stateRoot: string },
+  options: { cwd?: string },
 ): ResolvedPawLaunchConfiguration {
-  const rawWorkTitle = assertOptionalString(input?.workTitle, "configuration.workTitle");
-  const rawWorkId = assertOptionalString(input?.workId, "configuration.workId");
-  const rawBaseBranch = assertOptionalString(input?.baseBranch, "configuration.baseBranch");
-  const rawTargetBranch = assertOptionalString(input?.targetBranch, "configuration.targetBranch");
   const rawCwd = assertOptionalString(input?.cwd, "configuration.cwd");
-  const rawPawWorkDir = assertOptionalString(input?.pawWorkDir, "configuration.pawWorkDir");
+  const workflowInstructions = assertOptionalString(
+    input?.workflowInstructions,
+    "configuration.workflowInstructions",
+  )?.trim() || DEFAULT_WORKFLOW_INSTRUCTIONS;
   const cliArgs = assertOptionalStringArray(input?.cliArgs, "configuration.cliArgs")
     ?? [...DEFAULT_CLI_ARGS];
   const environment = assertOptionalStringRecord(input?.environment, "configuration.environment")
     ?? {};
-  const customMessage = input?.customMessage === undefined || input.customMessage === null
-    ? null
-    : assertOptionalString(input.customMessage, "configuration.customMessage") ?? null;
-  const workTitle = rawWorkTitle?.trim() || titleFromNodeId(nodeId);
-  const workId = slugify(rawWorkId ?? nodeId);
-  const cwd = normalizeAbsolutePath(rawCwd ?? options.cwd ?? process.cwd(), "configuration.cwd");
-  const pawWorkDir = normalizeAbsolutePath(
-    rawPawWorkDir ?? join(cwd, ".paw", "work", workId),
-    "configuration.pawWorkDir",
-  );
-  const workflowContextPath = join(pawWorkDir, "WorkflowContext.md");
-  const streamlinerContextPath = join(pawWorkDir, "streamliner", "context.md");
-  const pawOverrides = normalizePawOptions(input?.paw);
   const terminalOverrides = normalizeTerminalPreferences(input?.terminal);
-  const paw = {
-    ...DEFAULT_PAW_OPTIONS,
-    ...pawOverrides,
-  };
-  validatePawOptions(paw);
+  const cwd = normalizeAbsolutePath(rawCwd ?? options.cwd ?? process.cwd(), "configuration.cwd");
 
   return {
-    workTitle,
-    workId,
-    baseBranch: rawBaseBranch?.trim() || "main",
-    targetBranch: rawTargetBranch?.trim() || `feature/${workId}`,
     cwd,
-    pawWorkDir,
-    workflowContextPath,
-    streamlinerContextPath,
     cliArgs,
     environment,
-    customMessage,
-    paw,
+    workflowInstructions,
     terminal: {
       ...DEFAULT_TERMINAL_PREFERENCES,
       ...terminalOverrides,
     },
   };
-}
-
-async function currentCommit(cwd: string): Promise<string> {
-  try {
-    const { stdout } = await execFileAsync("git", ["rev-parse", "--short", "HEAD"], {
-      cwd,
-      timeout: 5_000,
-    });
-    return stdout.trim() || "unknown";
-  } catch {
-    return "unknown";
-  }
-}
-
-function buildWorkflowContextContent(
-  input: PawInitRunnerInput,
-  gitCommit: string,
-): string {
-  const issueUrl = input.issueUrl ?? "none";
-  return [
-    "# WorkflowContext",
-    "",
-    `Work Title: ${input.workTitle}`,
-    `Work ID: ${input.workId}`,
-    `Workflow Identity: ${input.configuration.paw.workflowIdentity}`,
-    `Base Branch: ${input.baseBranch}`,
-    `Target Branch: ${input.branch}`,
-    "Execution Mode: worktree",
-    "Repository Identity: none",
-    `Execution Binding: streamliner-launch:${input.workId}`,
-    `Workflow Mode: ${input.configuration.paw.workflowMode}`,
-    `Review Strategy: ${input.configuration.paw.reviewStrategy}`,
-    `Review Policy: ${input.configuration.paw.reviewPolicy}`,
-    `Session Policy: ${input.configuration.paw.sessionPolicy}`,
-    `Final Agent Review: ${input.configuration.paw.finalAgentReview}`,
-    `Final Review Mode: ${input.configuration.paw.finalReviewMode}`,
-    `Final Review Interactive: ${input.configuration.paw.finalReviewInteractive}`,
-    `Final Review Models: ${input.configuration.paw.finalReviewModels}`,
-    `Final Review Specialists: ${input.configuration.paw.finalReviewSpecialists}`,
-    `Final Review Interaction Mode: ${input.configuration.paw.finalReviewInteractionMode}`,
-    `Final Review Specialist Models: ${input.configuration.paw.finalReviewSpecialistModels}`,
-    `Final Review Perspectives: ${input.configuration.paw.finalReviewPerspectives}`,
-    `Final Review Perspective Cap: ${input.configuration.paw.finalReviewPerspectiveCap}`,
-    `Implementation Model: ${input.configuration.paw.implementationModel}`,
-    `Plan Generation Mode: ${input.configuration.paw.planGenerationMode}`,
-    `Plan Generation Models: ${input.configuration.paw.planGenerationModels}`,
-    `Planning Docs Review: ${input.configuration.paw.planningDocsReview}`,
-    `Planning Review Mode: ${input.configuration.paw.planningReviewMode}`,
-    `Planning Review Interactive: ${input.configuration.paw.planningReviewInteractive}`,
-    `Planning Review Models: ${input.configuration.paw.planningReviewModels}`,
-    `Planning Review Specialists: ${input.configuration.paw.planningReviewSpecialists}`,
-    `Planning Review Interaction Mode: ${input.configuration.paw.planningReviewInteractionMode}`,
-    `Planning Review Specialist Models: ${input.configuration.paw.planningReviewSpecialistModels}`,
-    `Planning Review Perspectives: ${input.configuration.paw.planningReviewPerspectives}`,
-    `Planning Review Perspective Cap: ${input.configuration.paw.planningReviewPerspectiveCap}`,
-    `Custom Workflow Instructions: ${input.configuration.paw.customWorkflowInstructions}`,
-    `Initial Prompt: ${input.configuration.paw.initialPrompt}`,
-    `Issue URL: ${issueUrl}`,
-    `Remote: ${input.configuration.paw.remote}`,
-    `Artifact Lifecycle: ${input.configuration.paw.artifactLifecycle}`,
-    `Artifact Paths: ${input.configuration.paw.artifactPaths}`,
-    `Additional Inputs: node=${input.nodeId}, graph=${input.graphPath ?? "default"}, streamliner-context=${displayPath(input.streamlinerContextPath)}, launch-nonce=${input.launchNonce ?? "none"}, git-commit=${gitCommit}`,
-    "",
-  ].join("\n");
-}
-
-function buildPawInitPrompt(
-  input: PawInitRunnerInput,
-  workflowContextContent: string,
-): string {
-  return [
-    "Initialize a PAW workflow for a Streamliner graph launch.",
-    `Selected node: ${input.nodeId}`,
-    `Graph path: ${input.graphPath ?? "default graph"}`,
-    "",
-    "You must call the `initialize_paw_workflow` tool exactly once with this path:",
-    displayPath(input.workflowContextPath),
-    "",
-    "The tool is Streamliner-owned and writes the canonical WorkflowContext.md content.",
-    "Do not use any filesystem or shell tools. Do not start Copilot CLI. Do not open a terminal.",
-    "",
-    "After the tool succeeds, respond with only this JSON shape:",
-    "{",
-    '  "status": "ready",',
-    `  "cwd": ${JSON.stringify(displayPath(input.cwd))},`,
-    `  "branch": ${JSON.stringify(input.branch)},`,
-    `  "pawWorkDir": ${JSON.stringify(displayPath(input.pawWorkDir))},`,
-    `  "workflowContextPath": ${JSON.stringify(displayPath(input.workflowContextPath))}`,
-    "}",
-    "",
-    "WorkflowContext.md content that the tool will write:",
-    "```markdown",
-    workflowContextContent.trimEnd(),
-    "```",
-  ].join("\n");
 }
 
 function parseSdkJsonResponse(content: string): Record<string, unknown> {
@@ -965,6 +389,103 @@ function pawInitTimeoutMs(): number {
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_PAW_INIT_TIMEOUT_MS;
 }
 
+function pawSkillDirectories(): string[] {
+  const configured = process.env.STREAMLINER_PAW_SKILL_DIR
+    ?.split(";")
+    .map((entry) => entry.trim())
+    .filter(Boolean) ?? [];
+  const candidates = [
+    ...configured,
+    join(homedir(), ".copilot", "skills"),
+    join(homedir(), ".copilot", "installed-plugins", "_direct", "lossyrob--phased-agent-workflow", "skills"),
+  ];
+  return candidates.filter((candidate, index) =>
+    candidates.indexOf(candidate) === index &&
+    existsSync(join(candidate, "paw-init", "SKILL.md"))
+  );
+}
+
+function assertSlug(value: string, field: string): string {
+  const trimmed = value.trim();
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(trimmed)) {
+    throw new Error(`${field} must be kebab-case.`);
+  }
+  return trimmed;
+}
+
+function assertNonEmpty(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${field} must be a non-empty string.`);
+  }
+  return value.trim();
+}
+
+function ensureAdditionalInputsLine(content: string, additions: string): string {
+  const trimmed = content.trimEnd();
+  const linePattern = /^Additional Inputs:\s*(.*)$/m;
+  const match = trimmed.match(linePattern);
+  if (!match) {
+    return `${trimmed}\nAdditional Inputs: ${additions}\n`;
+  }
+  const current = match[1]?.trim();
+  const nextValue = !current || current === "none"
+    ? additions
+    : `${current}, ${additions}`;
+  return `${trimmed.replace(linePattern, `Additional Inputs: ${nextValue}`)}\n`;
+}
+
+function isPathInside(parent: string, child: string): boolean {
+  const normalizedParent = resolve(parent).toLowerCase();
+  const normalizedChild = resolve(child).toLowerCase();
+  return normalizedChild === normalizedParent || normalizedChild.startsWith(`${normalizedParent}\\`);
+}
+
+function buildPawInitPrompt(input: PawInitRunnerInput): string {
+  return [
+    "Initialize a PAW workflow for a Streamliner graph launch.",
+    "",
+    "Use the preloaded `paw-init` skill as the source of truth for deriving the WorkflowContext.",
+    "PAW init is a skill, not a callable function, so follow its prompt contract and complete initialization through the Streamliner-owned `complete_paw_init` tool.",
+    "",
+    "Important behavior:",
+    "- Do not ask follow-up questions during launch preparation.",
+    "- If information is missing but PAW has a documented default or derivation rule, use that default and your best judgment.",
+    "- If a serious blocker prevents safe initialization, do not call the tool; respond with JSON: {\"status\":\"blocked\",\"reason\":\"...\"}.",
+    "- Do not start the worker session or open a terminal.",
+    "- Do not inline the Streamliner context into WorkflowContext.md; install it into the PAW work directory via the tool.",
+    "",
+    "Selected Streamliner node:",
+    `- Node ID: ${input.nodeId}`,
+    `- Graph path: ${input.graphPath ?? "default graph"}`,
+    `- Tracker/issue URL: ${input.issueUrl ?? "none"}`,
+    `- Launch nonce: ${input.launchNonce ?? "none"}`,
+    "",
+    "Staged Streamliner context package:",
+    `- Staged context file: ${input.stagedContextPackage.contextFilePath}`,
+    `- Staged context package directory: ${input.stagedContextPackage.contextPackagePath}`,
+    "",
+    "Workflow instructions from the builder:",
+    "```text",
+    input.configuration.workflowInstructions.trim(),
+    "```",
+    "",
+    "When you have derived the PAW initialization values, call `complete_paw_init` exactly once with:",
+    "- `workTitle`: the PAW work title derived by paw-init.",
+    "- `workId`: the PAW work ID derived by paw-init.",
+    "- `targetBranch`: the target branch derived by paw-init.",
+    "- `pawWorkDir`: optional absolute PAW work directory. If omitted, Streamliner uses `<cwd>/.paw/work/<workId>`.",
+    "- `artifactLifecycle`: optional artifact lifecycle if resolved.",
+    "- `workflowContextContent`: complete WorkflowContext.md content produced by paw-init.",
+    "",
+    "The tool copies the staged Streamliner context into `<pawWorkDir>/streamliner/context.md`, writes WorkflowContext.md, and ensures Additional Inputs includes the installed Streamliner context path.",
+    "",
+    "After the tool succeeds, respond with only this JSON shape:",
+    "{",
+    "  \"status\": \"ready\"",
+    "}",
+  ].join("\n");
+}
+
 const denyPawInitBuiltInTools: PermissionHandler = () => ({
   kind: "reject",
   feedback: "PAW launch initialization may only use Streamliner-owned PAW init tools.",
@@ -973,8 +494,11 @@ const denyPawInitBuiltInTools: PermissionHandler = () => ({
 export async function defaultPawInitRunner(
   input: PawInitRunnerInput,
 ): Promise<PawInitRunnerResult> {
-  const gitCommit = await currentCommit(input.cwd);
-  const workflowContextContent = buildWorkflowContextContent(input, gitCommit);
+  const skillDirectories = pawSkillDirectories();
+  if (skillDirectories.length === 0) {
+    throw new Error("Could not find the installed paw-init skill. Set STREAMLINER_PAW_SKILL_DIR to the PAW skills directory.");
+  }
+
   const client = new CopilotClient({
     cwd: input.cwd,
     logLevel: "error",
@@ -987,71 +511,132 @@ export async function defaultPawInitRunner(
   try {
     await client.start();
     started = true;
-    const initializeTool = defineTool<InitializePawWorkflowArgs>(
-      "initialize_paw_workflow",
+    const completeTool = defineTool<CompletePawInitArgs>(
+      "complete_paw_init",
       {
-        description: "Create the PAW launch work directory and WorkflowContext.md file for a Streamliner graph launch.",
+        description: "Complete PAW initialization for a Streamliner launch by writing WorkflowContext.md and installing the staged context bundle.",
         parameters: {
           type: "object",
           properties: {
-            workflowContextPath: {
-              type: "string",
-              description: "Absolute path to the WorkflowContext.md file to create.",
-            },
+            workTitle: { type: "string" },
+            workId: { type: "string" },
+            targetBranch: { type: "string" },
+            pawWorkDir: { type: "string" },
+            artifactLifecycle: { type: "string" },
+            workflowContextContent: { type: "string" },
           },
-          required: ["workflowContextPath"],
+          required: ["workTitle", "workId", "targetBranch", "workflowContextContent"],
           additionalProperties: false,
         },
         skipPermission: true,
         handler: async (args) => {
-          if (
-            !isRecord(args) ||
-            typeof args.workflowContextPath !== "string" ||
-            resolve(args.workflowContextPath) !== resolve(input.workflowContextPath)
-          ) {
-            throw new Error("initialize_paw_workflow received an unexpected workflowContextPath.");
+          if (!isRecord(args)) {
+            throw new Error("complete_paw_init received invalid arguments.");
           }
-          await mkdir(dirname(input.workflowContextPath), { recursive: true });
-          await writeFile(input.workflowContextPath, workflowContextContent, "utf8");
+          const workTitle = assertNonEmpty(args.workTitle, "workTitle");
+          const workId = assertSlug(assertNonEmpty(args.workId, "workId"), "workId");
+          const targetBranch = assertNonEmpty(args.targetBranch, "targetBranch");
+          const workflowContextContent = assertNonEmpty(
+            args.workflowContextContent,
+            "workflowContextContent",
+          );
+          const pawRoot = join(input.cwd, ".paw", "work");
+          const pawWorkDir = typeof args.pawWorkDir === "string" && args.pawWorkDir.trim()
+            ? resolve(args.pawWorkDir)
+            : join(pawRoot, workId);
+          if (!isPathInside(pawRoot, pawWorkDir)) {
+            throw new Error("pawWorkDir must be inside the repository .paw/work directory.");
+          }
+
+          const workflowContextPath = join(pawWorkDir, "WorkflowContext.md");
+          const streamlinerContextPath = join(pawWorkDir, "streamliner", "context.md");
+          const additionalInputs = [
+            `streamliner-context=${displayPath(streamlinerContextPath)}`,
+            `streamliner-staged-context=${input.stagedContextPackage.contextFilePath}`,
+            `streamliner-context-id=${input.stagedContextPackage.contextId}`,
+            `node=${input.nodeId}`,
+            `graph=${input.graphPath ?? "default"}`,
+            `launch-nonce=${input.launchNonce ?? "none"}`,
+          ].join(", ");
+          const finalWorkflowContextContent = ensureAdditionalInputsLine(
+            workflowContextContent,
+            additionalInputs,
+          );
+
+          await mkdir(dirname(streamlinerContextPath), { recursive: true });
+          await copyFile(input.stagedContextPackage.contextFilePath, streamlinerContextPath);
+          await writeFile(workflowContextPath, finalWorkflowContextContent, "utf8");
+
           toolResult = {
             cwd: normalizeManifestPath(input.cwd),
-            branch: input.branch,
-            pawWorkDir: normalizeManifestPath(input.pawWorkDir),
-            workflowContextPath: normalizeManifestPath(input.workflowContextPath),
+            branch: targetBranch,
+            workId,
+            workTitle,
+            pawWorkDir: normalizeManifestPath(pawWorkDir),
+            workflowContextPath: normalizeManifestPath(workflowContextPath),
+            streamlinerContextPath: normalizeManifestPath(streamlinerContextPath),
             environment: { ...input.configuration.environment },
             sessionStateRoot: normalizeManifestPath(input.sessionStateRoot),
           };
-          return toolResult;
+          return {
+            ...toolResult,
+            artifactLifecycle: typeof args.artifactLifecycle === "string"
+              ? args.artifactLifecycle
+              : "unspecified",
+          };
         },
       },
     );
+
     session = await client.createSession({
       clientName: "streamliner-paw-launch-initializer",
       model: process.env.STREAMLINER_PAW_INIT_MODEL ?? DEFAULT_PAW_INIT_MODEL,
       workingDirectory: input.cwd,
       enableConfigDiscovery: false,
-      tools: [initializeTool],
-      availableTools: ["initialize_paw_workflow"],
+      skillDirectories,
+      tools: [completeTool],
+      availableTools: ["complete_paw_init"],
       onPermissionRequest: denyPawInitBuiltInTools,
+      customAgents: [
+        {
+          name: "streamliner-paw-init",
+          displayName: "Streamliner PAW Init",
+          description: "Initializes a PAW workflow for a Streamliner graph launch.",
+          tools: ["complete_paw_init"],
+          skills: ["paw-init"],
+          prompt: "Use the paw-init skill to initialize PAW workflows from user intent. For Streamliner launch preparation, complete initialization through the supplied complete_paw_init tool and never ask the user follow-up questions.",
+        },
+      ],
+      agent: "streamliner-paw-init",
       systemMessage: {
         mode: "append",
         content: "You are a constrained Streamliner PAW launch initializer. You may only use Streamliner-owned PAW init tools supplied by this session.",
       },
     });
     const response = await session.sendAndWait(
-      { prompt: buildPawInitPrompt(input, workflowContextContent) },
+      { prompt: buildPawInitPrompt(input) },
       pawInitTimeoutMs(),
     );
     const content = response?.data.content ?? "";
+    if (!toolResult) {
+      const trimmed = content.trim();
+      if (trimmed.includes("?")) {
+        throw new Error(`PAW init asked for clarification instead of using defaults: ${trimmed}`);
+      }
+      throw new Error(`PAW init did not call complete_paw_init. Response: ${trimmed || "(empty)"}`);
+    }
     const parsed = parseSdkJsonResponse(content);
+    if (parsed.status === "blocked") {
+      throw new Error(typeof parsed.reason === "string" ? parsed.reason : "PAW init reported blocked status.");
+    }
     if (parsed.status !== "ready") {
       throw new Error("Copilot SDK PAW init did not report ready status.");
     }
-    if (!toolResult) {
-      throw new Error("Copilot SDK did not invoke initialize_paw_workflow.");
-    }
-    if (!existsSync(input.workflowContextPath)) {
+    if (!existsSync(toolResult.workflowContextPath)) {
       throw new Error("PAW init completed without creating WorkflowContext.md.");
+    }
+    if (!existsSync(toolResult.streamlinerContextPath)) {
+      throw new Error("PAW init completed without installing the Streamliner context.");
     }
     return toolResult;
   } finally {
@@ -1112,7 +697,6 @@ export function buildKickoffPrompt(input: {
   workflowContextPath: string;
   streamlinerContextPath: string;
   launchMetadata: PawLaunchMetadata;
-  customMessage: string | null;
 }): string {
   const lines = [
     "You are a Streamliner node session launched from a workstream graph node.",
@@ -1136,16 +720,8 @@ export function buildKickoffPrompt(input: {
   }
   lines.push(
     "",
-    "Proceed through the PAW workflow using the WorkflowContext.md as the durable source of truth. Do not inline the Streamliner context; treat the file path above as the authoritative launch context artifact.",
+    "Proceed through the PAW workflow using WorkflowContext.md as the durable source of truth. The Streamliner context has already been installed into the PAW work directory and recorded as an Additional Input.",
   );
-  if (input.customMessage !== null && input.customMessage.trim().length > 0) {
-    lines.push(
-      "",
-      "## Builder Custom Message",
-      "",
-      input.customMessage.trimEnd(),
-    );
-  }
   return `${lines.join("\n")}\n`;
 }
 
@@ -1163,50 +739,17 @@ export async function preparePawLaunch(
   }
 
   const sessionStateRoot = resolve(options.stateRoot ?? defaultStateRoot());
-  const configuration = normalizeConfiguration(options.nodeId, options.configuration, {
+  const configuration = normalizeConfiguration(options.configuration, {
     cwd: options.cwd,
-    stateRoot: sessionStateRoot,
   });
-  const runner = options.pawInitRunner ?? defaultPawInitRunner;
-  let pawInit: PawInitRunnerResult;
-  try {
-    pawInit = await runner({
-      nodeId: options.nodeId,
-      graphPath: options.graphPath,
-      cwd: configuration.cwd,
-      branch: configuration.targetBranch,
-      pawWorkDir: configuration.pawWorkDir,
-      workflowContextPath: configuration.workflowContextPath,
-      streamlinerContextPath: configuration.streamlinerContextPath,
-      sessionStateRoot,
-      workTitle: configuration.workTitle,
-      workId: configuration.workId,
-      baseBranch: configuration.baseBranch,
-      launchNonce: options.launchNonce ?? null,
-      configuration,
-    });
-  } catch (error: unknown) {
-    throw new LaunchPreparationError(
-      "paw_init_failed",
-      500,
-      error instanceof Error ? error.message : String(error),
-      "paw-init",
-      "pawInitRunner",
-    );
-  }
 
   const contextPreparer = options.contextPreparer ?? prepareLaunchContextPackage;
-  let contextPackage: LaunchContextPackage;
+  let stagedContextPackage: LaunchContextPackage;
   try {
-    const pawWorkDirForContext = normalizeAbsolutePath(
-      pawInit.pawWorkDir || configuration.pawWorkDir,
-      "pawInitRunner.pawWorkDir",
-    );
-    contextPackage = await contextPreparer({
+    stagedContextPackage = await contextPreparer({
       graphPath: options.graphPath,
       defaultGraphPath: options.defaultGraphPath,
       nodeId: options.nodeId,
-      outputDir: pawWorkDirForContext,
       launchNonce: options.launchNonce,
       stateRoot: sessionStateRoot,
       now: options.now,
@@ -1214,7 +757,7 @@ export async function preparePawLaunch(
       trackerResolver: options.trackerResolver,
       contextGenerator: options.contextGenerator,
     });
-    assertContextPackageAvailable(contextPackage);
+    assertContextPackageAvailable(stagedContextPackage);
   } catch (error: unknown) {
     if (error instanceof LaunchPreparationError) {
       throw error;
@@ -1231,33 +774,54 @@ export async function preparePawLaunch(
     );
   }
 
+  const runner = options.pawInitRunner ?? defaultPawInitRunner;
+  let pawInit: PawInitRunnerResult;
+  try {
+    pawInit = await runner({
+      nodeId: options.nodeId,
+      graphPath: options.graphPath,
+      cwd: configuration.cwd,
+      sessionStateRoot,
+      issueUrl: trackerUrlOf(stagedContextPackage) ?? undefined,
+      launchNonce: options.launchNonce ?? null,
+      configuration,
+      stagedContextPackage,
+    });
+  } catch (error: unknown) {
+    throw new LaunchPreparationError(
+      "paw_init_failed",
+      500,
+      error instanceof Error ? error.message : String(error),
+      "paw-init",
+      "pawInitRunner",
+    );
+  }
+
   const launchMetadata: PawLaunchMetadata = {
-    launchNonce: contextPackage.metadata.launchNonce,
-    launchClaimRef: contextPackage.metadata.launchClaimRef,
-    projectKey: contextPackage.metadata.projectKey,
-    workstreamId: contextPackage.metadata.workstreamId,
-    nodeId: contextPackage.metadata.nodeId,
-    targetRepoIds: [...contextPackage.metadata.targetRepoIds],
-    graphPath: contextPackage.metadata.graphPath,
+    launchNonce: stagedContextPackage.metadata.launchNonce,
+    launchClaimRef: stagedContextPackage.metadata.launchClaimRef,
+    projectKey: stagedContextPackage.metadata.projectKey,
+    workstreamId: stagedContextPackage.metadata.workstreamId,
+    nodeId: stagedContextPackage.metadata.nodeId,
+    targetRepoIds: [...stagedContextPackage.metadata.targetRepoIds],
+    graphPath: stagedContextPackage.metadata.graphPath,
     branch: pawInit.branch,
-    workId: configuration.workId,
-    workTitle: configuration.workTitle,
-    trackerUrl: trackerUrlOf(contextPackage),
+    workId: pawInit.workId,
+    workTitle: pawInit.workTitle,
+    trackerUrl: trackerUrlOf(stagedContextPackage),
   };
-  const workflowContextPath = pawInit.workflowContextPath || configuration.workflowContextPath;
   const kickoffPrompt = buildKickoffPrompt({
-    workflowContextPath,
-    streamlinerContextPath: contextPackage.contextFilePath,
+    workflowContextPath: pawInit.workflowContextPath,
+    streamlinerContextPath: pawInit.streamlinerContextPath,
     launchMetadata,
-    customMessage: configuration.customMessage,
   });
 
   return {
     cwd: pawInit.cwd || normalizeManifestPath(configuration.cwd),
     branch: pawInit.branch,
-    pawWorkDir: pawInit.pawWorkDir || normalizeManifestPath(configuration.pawWorkDir),
-    workflowContextPath,
-    streamlinerContextPath: contextPackage.contextFilePath,
+    pawWorkDir: pawInit.pawWorkDir,
+    workflowContextPath: pawInit.workflowContextPath,
+    streamlinerContextPath: pawInit.streamlinerContextPath,
     kickoffPrompt,
     cliArgs: [...configuration.cliArgs],
     environment: {
@@ -1266,6 +830,6 @@ export async function preparePawLaunch(
     },
     sessionStateRoot: pawInit.sessionStateRoot ?? normalizeManifestPath(sessionStateRoot),
     launchMetadata,
-    contextPackage,
+    contextPackage: stagedContextPackage,
   };
 }

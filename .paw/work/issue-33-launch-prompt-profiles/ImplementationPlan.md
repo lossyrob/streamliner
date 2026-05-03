@@ -2,11 +2,11 @@
 
 ## Overview
 
-Implement the PAW graph launch preparation slice for issue #33. The work adds a backend launch-preparation contract that runs PAW initialization through a prep runner, places the generated Streamliner context under the PAW work area, builds a kickoff prompt with identity/nonce/custom-message sections, and returns a structured handoff for later terminal launch. The graph UI exposes a configuration dialog from the selected node inspector before invoking preparation.
+Implement the PAW graph launch preparation slice for issue #33. The work adds a backend launch-preparation contract that stages the generated Streamliner context, runs PAW initialization through a prep runner using the real `paw-init` skill prompt, has PAW init install the staged context into the PAW work area, builds a kickoff prompt with identity/nonce sections, and returns a structured handoff for later terminal launch. The graph UI exposes a text-guided PAW init dialog from the selected node inspector before invoking preparation.
 
-### Hot Rescope: WorkflowContext Configuration Front End
+### Hot Rescope: Text-Guided PAW Init
 
-After previewing PR #41, the dialog scope expanded from a small set of PAW launch defaults to a front end for the PAW `WorkflowContext.md` header fields. The implementation must now expose PAW presets plus advanced controls for workflow identity, workflow mode, review strategy/policy, session policy, planning docs review, final agent review, review modes, review interactivity, model lists, Society-of-Thought specialist routing, implementation/plan-generation models, custom workflow instructions, artifact lifecycle, artifact paths, remote, terminal preference, CLI args, and builder kickoff guidance. The backend validation must follow PAW's own rules from `paw-init`, `paw-status`, and `C:\Users\robemanuele\proj\paw\phased-agent-workflow\paw-specification.md`, including dependent model validation such as "multiple models require multi-model mode" and exact handling for society-of-thought review settings.
+After previewing PR #41, the dialog briefly expanded into a front end for the PAW `WorkflowContext.md` header fields. That richer form was then deferred to follow-up issue #43 because it should use PAW-owned metadata for presets, specialists, constraints, and derived fields. The implemented PR scope returns to a natural-language PAW workflow instructions textarea. Streamliner stages the worker-facing context in local state before PAW init, then asks the SDK `paw-init` session to derive the workflow and install the staged context into the PAW work directory through a constrained `complete_paw_init` tool. If PAW init asks a clarification question, launch preparation reports a typed error instead of waiting indefinitely.
 
 ## Current State Analysis
 
@@ -20,17 +20,18 @@ The session-system design doc already documents launch preparation, context deli
 
 ## Desired End State
 
-The selected-node inspector exposes a PAW launch action for ready graph nodes whose graph source has a backend-readable local path. Activating it opens a configuration dialog that shows PAW presets, editable WorkflowContext options, default Copilot CLI args, terminal/worktree preferences, and an optional builder message field before any backend preparation request is made.
+The selected-node inspector exposes a PAW launch action for ready graph nodes whose graph source has a backend-readable local path. Activating it opens a configuration dialog that shows natural-language PAW workflow instructions, default Copilot CLI args, terminal preference, and graph source before any backend preparation request is made.
 
-The backend provides a preparation endpoint that accepts the selected node and launch configuration, runs PAW initialization through a constrained `PawInitRunner` contract, generates the Streamliner context into the PAW work directory, builds a kickoff prompt referencing the PAW workflow context and Streamliner context file, and returns a structured handoff containing cwd/worktree, branch, PAW work directory, context path, kickoff prompt, CLI args, environment/session-state data, launch metadata, and context package references. The default SDK-backed runner must expose only Streamliner-owned PAW-init tools and must not rely on unconstrained agent filesystem access.
+The backend provides a preparation endpoint that accepts the selected node and launch configuration, stages the Streamliner context package in Streamliner state, runs PAW initialization through a constrained `PawInitRunner` contract using the installed `paw-init` skill, installs the staged context into the PAW work directory, builds a kickoff prompt referencing the PAW workflow context and installed Streamliner context file, and returns a structured handoff containing cwd/worktree, branch, PAW work directory, context path, kickoff prompt, CLI args, environment/session-state data, launch metadata, and context package references. The default SDK-backed runner must expose only Streamliner-owned PAW-init tools and must not rely on unconstrained agent filesystem access.
 
-Verification will cover backend contract behavior, prompt generation with and without custom builder messages, explicit empty CLI-arg overrides, API route errors, UI dialog behavior, cancel/no-request behavior, and a representative screenshot of the graph UI with the launch dialog open.
+Verification will cover backend contract behavior, staged context handoff, PAW init failure/question handling, explicit empty CLI-arg overrides, API route errors, UI dialog behavior, cancel/no-request behavior, and a representative screenshot of the graph UI with the launch dialog open.
 
 ## What We're NOT Doing
 
 - Starting Copilot CLI, spawning terminals, or wiring visible worker launch.
 - Creating, storing, or binding launch claims beyond preserving supplied launch nonce/identity metadata in the handoff and prompt.
-- Building a generic non-PAW launch-profile system. PAW Lite is allowed as a PAW workflow identity because it is a valid WorkflowContext value and is governed by PAW's own validation constraints.
+- Building a generic non-PAW launch-profile system.
+- Building the full PAW WorkflowContext configuration UI; that work is tracked in issue #43.
 - Changing backend context assembly source collection or Layer 0-3 context-generation behavior except where needed to consume its existing output.
 - Treating PAW control state as Streamliner's runtime workflow-progress source.
 - Supporting browser-directory graph launch preparation when the backend lacks a local graph path; the UI should avoid presenting those nodes as launchable or surface an unsupported-source preparation error.
@@ -40,8 +41,8 @@ Verification will cover backend contract behavior, prompt generation with and wi
 
 - [x] **Phase 1: Backend PAW launch preparation contract** - Add typed launch configuration defaults, constrained PAW init runner abstraction, kickoff prompt builder, structured handoff, route, and server tests.
 - [x] **Phase 2: Graph launch configuration UI** - Add selected-node launch action, modal configuration dialog, preparation request handling, result/error display, styles, and UI tests.
-- [ ] **Phase 3: Documentation and verification** - Update session-system design, create PAW Docs.md as-built reference, run project checks, and capture a representative UI screenshot.
-- [x] **Phase 4: Expanded WorkflowContext configuration UI** - Hot-rescope the dialog and backend model to cover PAW WorkflowContext fields, presets, dependent validation, Society-of-Thought settings, and PAW Lite constraints.
+- [x] **Phase 3: Documentation and verification** - Update session-system design, create PAW Docs.md as-built reference, run project checks, and capture a representative UI screenshot.
+- [x] **Phase 4: Text-guided PAW init rescope** - Replace the temporary expanded WorkflowContext form with natural-language PAW init instructions, staged context installation, and SDK question/failure handling.
 
 Phase 2 depends on the Phase 1 route/types. Phase 3 depends on the completed backend and UI behavior so the as-built docs and screenshot match the implementation.
 
@@ -53,9 +54,9 @@ Phase 2 depends on the Phase 1 route/types. Phase 3 depends on the completed bac
 
 ### Changes Required:
 
-- **`src/server/launch-preparation.ts`**: Add the preparation domain module. Define PAW launch configuration, normalized request input, typed committed defaults, explicit defaults-merge semantics, structured handoff output, launch metadata, and a `PawInitRunner` abstraction. Committed non-secret defaults should start as source-controlled TypeScript constants in this module; host-specific preferences are accepted as launch-time request overrides for this MVP and are not persisted by issue #33. The defaults merge must distinguish omitted CLI args (`undefined`, use defaults) from an explicit empty array (builder cleared args). The structured handoff output should expose named fields for `cwd`, `branch`, `pawWorkDir`, `workflowContextPath`, `streamlinerContextPath`, `kickoffPrompt`, `cliArgs`, `environment`, `sessionStateRoot`, `launchMetadata`, and `contextPackage`.
-- **`PawInitRunner` default implementation**: Implement the default runner as a constrained Copilot SDK session that provides only Streamliner-owned PAW-init tools/commands needed to create the PAW work directory and `WorkflowContext.md`, plus a completion contract returning structured JSON. This is grounded in the SDK's documented `tools`, `onPermissionRequest`, and `sendAndWait` session APIs; tests should use an injected runner to avoid invoking the real SDK. The runner contract should record the concrete PAW workflow context artifact as `<pawWorkDir>\WorkflowContext.md`.
-- **`prepareLaunchContextPackage` integration**: Call the existing context assembly contract after the PAW work directory is known, using `nodeId`, optional `graphPath`, `outputDir`, `launchNonce`, and the returned `LaunchContextPackage` metadata shape documented in CodeResearch. The prepared handoff identity should be sourced from current launch context metadata plus the selected graph node, current branch, target repo, optional tracker/issue, and supplied nonce; `launchClaimRef` may remain absent until issue #32 owns claim binding.
+- **`src/server/launch-preparation.ts`**: Add the preparation domain module. Define launch configuration, normalized request input, typed committed defaults, explicit defaults-merge semantics, structured handoff output, launch metadata, and a `PawInitRunner` abstraction. Committed non-secret defaults should start as source-controlled TypeScript constants in this module; host-specific preferences are accepted as launch-time request overrides for this MVP and are not persisted by issue #33. The defaults merge must distinguish omitted CLI args (`undefined`, use defaults) from an explicit empty array (builder cleared args). The structured handoff output should expose named fields for `cwd`, `branch`, `pawWorkDir`, `workflowContextPath`, `streamlinerContextPath`, `kickoffPrompt`, `cliArgs`, `environment`, `sessionStateRoot`, `launchMetadata`, and `contextPackage`.
+- **`PawInitRunner` default implementation**: Implement the default runner as a constrained Copilot SDK session that preloads the installed `paw-init` skill and provides only the Streamliner-owned `complete_paw_init` tool. The prompt instructs PAW init to derive workflow settings from natural-language instructions, use defaults instead of asking questions, and call the tool with work title/id, target branch, and WorkflowContext content. The tool writes `WorkflowContext.md`, copies the staged Streamliner context into `<pawWorkDir>\streamliner\context.md`, and records the installed context as an Additional Input. Tests should use an injected runner to avoid invoking the real SDK.
+- **`prepareLaunchContextPackage` integration**: Call the existing context assembly contract before PAW init without `outputDir`, so it writes a staged context package under Streamliner state. Pass that staged package to PAW init so `complete_paw_init` can install it into the PAW work directory. The prepared handoff identity should be sourced from current launch context metadata plus the PAW init result, selected graph node, target repo, optional tracker/issue, and supplied nonce; `launchClaimRef` may remain absent until issue #32 owns claim binding.
 - **`src/server/routes/launch-preparations.ts`**: Add `POST /api/launch-preparations` route parsing the selected `nodeId`, optional `graphPath`, optional `launchNonce`, and launch configuration. Return structured JSON on success and typed preparation errors on client/server failures.
 - **`src/server/app.ts`**: Register the new route and expose route dependencies for tests, following the existing `launchContextDeps` pattern ([src/server/app.ts:25-33](src/server/app.ts#L25-L33), [src/server/app.ts:95-101](src/server/app.ts#L95-L101)).
 - **Tests: `src/server/launch-preparation.test.ts` and/or `src/server/launch-context.test.ts` additions**: Cover default config, explicit empty CLI args versus omitted args, context output under PAW work directory, named handoff shape, workflow context path, kickoff prompt with no custom message, kickoff prompt with a multi-paragraph builder custom message, route success, route validation errors, PAW init failure, context-preparation failure, a missing/unavailable selected-node context package producing a typed error naming the missing context as the blocking input, and preservation of nonce/identity metadata. Expected identity fields in assertions are workstream ID, node ID, tracker/issue reference when available, branch, target repo, and nonce. Use injected runners/context generators so tests do not invoke the real SDK.
@@ -81,7 +82,7 @@ Phase 2 depends on the Phase 1 route/types. Phase 3 depends on the completed bac
 
 - **`src/App.tsx`**: Add launch dialog state to `GraphDashboard`, derive defaults for the selected node, call `POST /api/launch-preparations` only after the builder confirms, and display prepared handoff/error state. Pass a launch callback into `NodeInspector`.
 - **`src/components/NodeInspector.tsx`**: Add a PAW launch action only for selected launchable nodes, defined for this MVP as `entry.operationalStatus === "ready"` on the researched `WorkstreamDerivedNode` view-model entry plus a backend-readable graph path. Preserve the current metadata/dependency rendering and show a clear disabled/unsupported state for selected nodes that are not ready or lack a backend-readable source.
-- **`src/components/PawLaunchDialog.tsx`**: Render the PAW-focused configuration dialog as a dedicated component. Fields should include PAW work title/id or equivalent init defaults, workflow/review options, worktree/terminal preferences, CLI argument defaults/overrides, and optional builder custom message. The dialog should support cancel without network requests. Under the hot rescope, the dialog is grouped into presets, identity/execution, planning/implementation, final review, Society-of-Thought routing, instructions/context, validation, and handoff sections.
+- **`src/components/PawLaunchDialog.tsx`**: Render the PAW-focused configuration dialog as a dedicated component. Fields should include natural-language PAW workflow instructions, terminal preference, CLI argument defaults/overrides, graph source, and prepared handoff state. The dialog should support cancel without network requests.
 - **`src/streamliner-theme.css`**: Add styles for the launch dialog and any inspector launch affordance, reusing existing sheet/action patterns where practical ([src/streamliner-theme.css:842-957](src/streamliner-theme.css#L842-L957), [src/streamliner-theme.css:1986-2050](src/streamliner-theme.css#L1986-L2050)).
 - **Tests: `src/App.test.tsx`**: Add UI tests for opening the dialog from a ready selected graph node, hiding/disabling launch for non-ready or backend-unreadable sources, canceling without preparation, submitting defaults/custom message to the preparation route, honoring empty CLI args, and displaying success/error feedback. Follow existing fetch mock and helper patterns ([src/App.test.tsx:1-245](src/App.test.tsx#L1-L245)).
 
@@ -124,26 +125,27 @@ Phase 2 depends on the Phase 1 route/types. Phase 3 depends on the completed bac
 
 ---
 
-## Phase 4: Expanded WorkflowContext configuration UI
+## Phase 4: Text-guided PAW init rescope
 
 ### Changes Required:
 
-- **PAW reference alignment**: Use `paw-status`, `paw-init`, `paw-planning-docs-review`, `paw-final-review`, and `C:\Users\robemanuele\proj\paw\phased-agent-workflow\paw-specification.md` as the source of truth for WorkflowContext option names, allowed values, and dependent validation.
-- **Backend model**: Extend `PawLaunchWorkflowOptions` so launch preparation accepts and writes WorkflowContext fields for workflow identity/mode, review strategy/policy, session policy, planning/final review enablement, review modes/interactivity/models, Society-of-Thought specialists/interactions/model routing/perspectives, implementation model, plan generation mode/models, custom workflow instructions, initial prompt marker, remote, artifact lifecycle, and artifact paths.
-- **Validation**: Enforce PAW constraints before PAW init starts: minimal mode requires local strategy; planning-only/final-PR-only require local strategy; non-lite custom mode requires custom workflow instructions; PAW Lite requires custom/local/final-PR-only; Society-of-Thought final review requires final agent review enabled; Society-of-Thought planning review requires planning docs review enabled; single-model modes cannot carry multiple models; multi-model modes require multiple models; perspective caps must be positive integers.
-- **Dialog UX**: Present presets first, then grouped advanced configuration sections rather than a long unstructured form. Keep common review/model fields visible, tuck specialist routing behind a details section, and show validation errors inline with the disabled prepare button.
-- **Tests**: Extend backend and UI tests to cover expanded defaults and dependent validation, especially the multiple-model/single-model mismatch.
+- **Dialog UX**: Replace the temporary expanded WorkflowContext configuration form with a natural-language PAW workflow instructions textarea, CLI args, terminal preference, graph source, and handoff state. The prepare button is disabled when instructions are empty.
+- **Backend ordering**: Stage the Streamliner context package before PAW init by calling `prepareLaunchContextPackage` without `outputDir`.
+- **PAW init prompt**: Build the SDK prompt in `buildPawInitPrompt`, preload `paw-init`, and instruct the skill to use defaults/best judgment instead of asking questions. If it cannot proceed, it should return blocked JSON.
+- **Context installation tool**: Provide `complete_paw_init` as the only SDK tool. It writes the PAW-derived WorkflowContext, copies the staged context into the PAW work dir, and ensures `Additional Inputs` records the installed Streamliner context.
+- **Failure handling**: Treat SDK clarification questions, missing tool calls, blocked status, missing WorkflowContext, or missing installed Streamliner context as typed `paw_init_failed` errors.
+- **Tests**: Update backend and UI tests to cover staged context handoff, workflow instructions submission, empty-instructions blocking, explicit empty CLI args, and route behavior.
 
 ### Success Criteria:
 
 #### Automated Verification:
 - [x] Targeted launch prep and UI tests pass: `npm test -- --run src/server/launch-preparation.test.ts src/App.test.tsx`
-- [x] Lint passes: `npm run lint`
-- [x] Type/build check passes: `npm run build`
+- [ ] Lint passes: `npm run lint`
+- [ ] Type/build check passes: `npm run build`
 
 #### Manual Verification:
-- [ ] Screenshot confirms the expanded WorkflowContext configuration dialog remains readable on the representative graph.
-- [ ] PR preview is restarted so the user can test the expanded configuration surface.
+- [ ] Screenshot confirms the text-guided PAW init dialog remains readable on the representative graph.
+- [ ] PR preview is restarted so the user can test the PAW init prompt flow.
 
 ---
 

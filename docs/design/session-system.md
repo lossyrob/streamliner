@@ -1,7 +1,7 @@
 ---
 kind: design-doc
 status: draft
-last_updated: 2026-05-02
+last_updated: 2026-05-03
 update_semantics: rewrite-in-place
 authoritative_for: "Session launching, lifecycle, registry contract, tracking, and runtime overlay"
 scope_tags:
@@ -47,12 +47,9 @@ The Wave 3 launch MVP is **PAW-only launch preparation**. The contract is the in
 | Node ID | Graph selection | Which node to execute |
 | Target repo | Graph `repos` + config | Where the code lives |
 | Backend-readable graph path | Workstream registry entry | Local `graph.json` path the backend can read |
-| PAW work title and ID | Node defaults + builder edit | Human title and slug used for `.paw/work/<work-id>` |
-| Target branch | Builder choice or default | Defaults to `feature/<work-id>` |
-| PAW workflow options | PAW defaults + builder edit | PAW identity, workflow mode, local/final-PR review policy, and review enablement |
+| PAW workflow instructions | Builder edit + default text | Natural-language instructions passed to `paw-init`, which derives work title, work ID, target branch, review policy, models, and WorkflowContext settings |
 | CLI arguments | Default + builder override | Copilot CLI flags for the later worker launch; an explicit empty list is valid |
 | Terminal preference | Default + builder edit | Manual terminal launch handoff in this MVP |
-| Builder custom message | Builder edit | Optional guidance appended to the kickoff prompt in a labeled section |
 | Launch nonce | Caller/downstream launch owner | Token preserved for later claim binding |
 
 The builder selects a node in the graph and initiates launch from the inspector. Streamliner only enables the action when the selected `WorkstreamDerivedNode` is operationally ready and the active workstream registry entry is backend-readable. Browser-directory workstreams remain visible in the graph UI, but they are not launchable in this MVP because the backend cannot read their graph file.
@@ -65,14 +62,14 @@ Launch is a two-phase process: a **PAW preparation phase** that prepares all wor
 
 #### Phase 1 — PAW Launch Preparation
 
-Streamliner's backend prepares a PAW handoff. Context assembly uses Copilot SDK to synthesize the worker-facing `context.md` from deterministic backend-collected sources; PAW initialization uses a separate constrained SDK session with only Streamliner-owned PAW init tooling available. Preparation:
+Streamliner's backend prepares a PAW handoff. Context assembly uses Copilot SDK to synthesize the worker-facing `context.md` from deterministic backend-collected sources. PAW initialization uses a separate constrained SDK session that preloads the installed `paw-init` skill and exposes only Streamliner-owned completion tooling. Preparation:
 
-1. **Normalizes PAW configuration** — applies PAW-only defaults for work ID/title, branch, CLI args, workflow mode, review policy, terminal mode, and optional custom message.
-2. **Initializes PAW** — creates `.paw/work/<work-id>/WorkflowContext.md` through the constrained `initialize_paw_workflow` tool. The generated workflow context uses `Workflow Identity: paw`, local strategy, `Review Policy: final-pr-only`, planning docs review enabled, final local agent review disabled, and the configured model list.
-3. **Assembles context** — collects graph, brief, design-doc, and tracker/spec source material, then asks Copilot SDK to build a single worker-facing context file for the selected node with Layer 0-3 sections.
-4. **Places the context file** — writes the assembled context package to `.paw/work/<work-id>/streamliner/context.md`.
+1. **Normalizes launch configuration** — applies defaults for workflow instruction text, CLI args, terminal mode, and environment values.
+2. **Stages context** — collects graph, brief, design-doc, and tracker/spec source material, then asks Copilot SDK to build a single worker-facing context file for the selected node with Layer 0-3 sections. Without an explicit output directory, the context package is written under Streamliner's local state at `launch-contexts/<context-id>/context.md`.
+3. **Initializes PAW** — runs an SDK session with the installed `paw-init` skill preloaded. The prompt supplies the builder workflow instructions, selected node, tracker URL, and staged context path, and tells PAW init to use documented defaults/best judgment rather than asking follow-up questions.
+4. **Installs the context file** — the only exposed SDK tool, `complete_paw_init`, copies the staged context package to `.paw/work/<work-id>/streamliner/context.md`, writes the PAW-derived `WorkflowContext.md`, and ensures `Additional Inputs` includes the installed Streamliner context path.
 5. **Preserves launch metadata** — carries the launch nonce and future claim reference fields through metadata without owning claim persistence.
-6. **Compiles kickoff prompt** — turns PAW workflow context, Streamliner context path, work identity, branch, nonce, target repos, tracker URL, and optional custom message into the initial instruction for the worker session.
+6. **Compiles kickoff prompt** — turns PAW workflow context, installed Streamliner context path, work identity, branch, nonce, target repos, and tracker URL into the initial instruction for the worker session.
 7. **Returns structured output** — returns the handoff the terminal launcher needs.
 
 Launch preparation output:
@@ -100,18 +97,18 @@ After PAW launch preparation completes, future terminal integration will:
 3. **Pass the kickoff prompt** — launch the worker session with the initial prompt already populated, conceptually equivalent to `copilot <cli-args> -i "<kickoff prompt>" .`
 4. **Bind on discovery** — when the session watcher detects the new Copilot session, bind it to the launch claim
 
-### PAW Configuration Defaults
+### PAW Init Instructions
 
-The implemented launch surface is a PAW configuration form, not a general launch-profile editor. Defaults are intentionally small and visible to the builder:
+The implemented launch surface is a text-guided PAW init dialog, not a general launch-profile editor and not the full PAW `WorkflowContext.md` configuration UI. Defaults are intentionally visible to the builder in the instructions textarea:
 
-- Work ID defaults to the selected node id slug; work title defaults to the node title.
-- Target branch defaults to `feature/<work-id>`.
-- PAW workflow defaults to identity `paw`, workflow mode `full`, review strategy `local`, review policy `final-pr-only`, planning docs review enabled, and final local agent review disabled.
-- Planning/review model fields in generated workflow context use `gpt-5.5`, `claude-opus-4.7`, and `claude-opus-4.6-1m`.
+- PAW should use a local final-PR-only workflow.
+- PAW should not pause for intermediate review unless there is a serious blocker, unsafe ambiguity, missing credentials/infrastructure, or material scope mismatch.
+- PAW should use `gpt-5.5`, `claude-opus-4.7`, and `claude-opus-4.6-1m` where it asks for concrete multi-model planning or review choices.
+- PAW should proceed through implementation and documentation, then create the final PR.
 - CLI args default to `--yolo`; an explicit empty override remains empty.
 - Terminal launch mode is `manual` with a default terminal preference because this phase returns a handoff rather than opening a terminal.
 
-Reusable non-PAW launch profiles, persisted host-specific defaults, and broader instance/project/workstream/node layering are deferred. They should build on this handoff shape rather than changing the preparation/terminal boundary.
+Reusable non-PAW launch profiles, persisted host-specific defaults, broader instance/project/workstream/node layering, and the rich PAW configuration form are deferred. The rich PAW form is tracked in issue #43 and should use PAW-owned metadata rather than reimplementing PAW init rules in Streamliner.
 
 ### Kickoff Prompt
 
@@ -126,7 +123,7 @@ The kickoff prompt is a first-class launch artifact, not ad hoc terminal text. I
 
 Opening a terminal in the correct directory is not a launch. A launch is only complete once Streamliner has prepared the kickoff prompt and started Copilot CLI interactive mode with that prompt.
 
-For the PAW MVP, the kickoff prompt starts by telling the worker to read both `WorkflowContext.md` and `streamliner/context.md`. It then lists launch identity fields including project, workstream, node, branch, work ID, launch nonce, future claim reference, target repos, and tracker URL when one is available. Builder-authored guidance is appended only when provided, under a `## Builder Custom Message` heading, so generated launch instructions and builder guidance remain distinct.
+For the PAW MVP, the kickoff prompt starts by telling the worker to read both `WorkflowContext.md` and `streamliner/context.md`. It then lists launch identity fields including project, workstream, node, branch, work ID, launch nonce, future claim reference, target repos, and tracker URL when one is available. The prompt states that the Streamliner context has already been installed into the PAW work directory and recorded as an Additional Input.
 
 ### Failure Modes
 
@@ -137,6 +134,7 @@ For the PAW MVP, the kickoff prompt starts by telling the worker to read both `W
 | Target repo not registered or inaccessible | Reject with explanation |
 | Branch conflict (already exists, dirty state) | Prompt builder for resolution |
 | Launch preparation failure (PAW initialization, context assembly, prompt compilation) | Report typed error with step/input details; do not start terminal |
+| PAW init asks a clarification question during preparation | Treat as `paw_init_failed`; surface the question/error in the dialog rather than waiting indefinitely |
 | Copilot CLI launch failure | Report error, clean up launch claim |
 
 ## Context Assembly
@@ -239,7 +237,7 @@ Request body:
 | `nodeId` | yes | Selected graph node id. |
 | `graphPath` | no | Backend-readable graph file to use; the UI supplies the active workstream registry path. |
 | `launchNonce` | no | Optional nonce preserved in metadata and the kickoff prompt for later claim binding. |
-| `configuration` | no | PAW launch configuration overrides: work title/id, branch paths, CLI args, environment, custom message, PAW WorkflowContext options, and terminal preferences. |
+| `configuration` | no | PAW launch configuration overrides: workflow instruction text, CLI args, environment, and terminal preferences. |
 
 Response body:
 
@@ -254,7 +252,7 @@ Response body:
 
 Validation, PAW initialization, and context-preparation failures return JSON with `code`, `error`, `step`, and `input` fields. The route never starts a terminal.
 
-The PAW launch dialog is intentionally a PAW `WorkflowContext.md` front end rather than a generic launch-profile editor. It exposes presets for common PAW shapes and advanced fields for workflow identity, workflow mode, review strategy/policy, session policy, planning docs review, final agent review, review modes, review interactivity, review/plan model lists, Society-of-Thought specialists/interaction/model routing/perspectives, implementation model, custom workflow instructions, initial prompt marker, remote, artifact lifecycle, artifact paths, CLI args, terminal preference, and builder kickoff guidance. Streamliner validates the same dependent relationships PAW expects: minimal mode requires local strategy, planning-only/final-PR-only require local strategy, PAW Lite requires custom/local/final-PR-only, Society-of-Thought reviews require their corresponding review gate to be enabled, single-model modes cannot carry multiple models, multi-model modes require multiple models, and perspective caps must be positive integers.
+The PAW launch dialog is intentionally text-guided for this MVP. It exposes workflow instructions, CLI args, terminal preference, graph source, and the prepared handoff after backend preparation. PAW-owned metadata, presets, specialists, and dependent WorkflowContext constraints are deferred to issue #43 so Streamliner does not duplicate PAW's configuration rules.
 
 The local API exposes context assembly as:
 

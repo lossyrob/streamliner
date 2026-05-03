@@ -34,7 +34,7 @@ import {
 } from "./components/PawLaunchDialog";
 import {
   DEFAULT_PAW_TERMINAL_CONFIGURATION,
-  DEFAULT_PAW_WORKFLOW_CONFIGURATION,
+  DEFAULT_PAW_WORKFLOW_INSTRUCTIONS,
   type PawLaunchDialogConfiguration,
   type PawLaunchDialogDefaults,
 } from "./components/paw-launch-config";
@@ -855,14 +855,10 @@ function GraphDashboard({
   const launchDefaults = useMemo<PawLaunchDialogDefaults | null>(() => {
     if (!selectedEntry || !activeWorkstreamEntry) return null;
     return {
-      workTitle: selectedEntry.node.title,
-      workId: selectedEntry.node.id,
-      baseBranch: "main",
-      targetBranch: `feature/${selectedEntry.node.id}`,
+      workflowInstructions: DEFAULT_PAW_WORKFLOW_INSTRUCTIONS,
       cliArgsText: "--yolo",
       graphPath: activeWorkstreamEntry.path,
       terminalPreference: "Manual terminal launch after preparation",
-      paw: { ...DEFAULT_PAW_WORKFLOW_CONFIGURATION },
       terminal: { ...DEFAULT_PAW_TERMINAL_CONFIGURATION },
     };
   }, [activeWorkstreamEntry, selectedEntry]);
@@ -911,13 +907,8 @@ function GraphDashboard({
           graphPath: activeWorkstreamEntry.path,
           launchNonce: createLaunchNonce(),
           configuration: {
-            workTitle: configuration.workTitle,
-            workId: configuration.workId,
-            baseBranch: configuration.baseBranch,
-            targetBranch: configuration.targetBranch,
+            workflowInstructions: configuration.workflowInstructions,
             cliArgs: configuration.cliArgs,
-            customMessage: configuration.customMessage,
-            paw: configuration.paw,
             terminal: configuration.terminal,
           },
         }),

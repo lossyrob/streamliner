@@ -2169,6 +2169,8 @@ a.sl-session-context-ref {
   font: inherit;
   font-weight: 500;
   padding: 10px 12px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .sl-field select {
@@ -2184,6 +2186,14 @@ a.sl-session-context-ref {
 .sl-field textarea {
   resize: vertical;
   line-height: 1.45;
+}
+
+.sl-paw-instructions-section .sl-field textarea {
+  min-height: 180px;
+}
+
+.sl-paw-launch-actions {
+  justify-content: flex-end;
 }
 
 .sl-paw-config-section {
