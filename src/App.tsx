@@ -4,7 +4,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type MouseEvent,
 } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
@@ -44,16 +43,17 @@ import {
   listBrowserWorkstreamEntries,
   readBrowserWorkstreamGraph,
 } from "./browser-workstream-files";
+import {
+  encodeRouteSegment,
+  handleInAppLinkClick,
+  routePath,
+  workstreamRoutePath,
+  type DashboardRoute,
+} from "./dashboard-routing";
 
 const POLL_INTERVAL_MS = 2000;
 const LAST_GRAPH_KEY = "streamliner:lastGraphPath";
 const STREAMLINER_LOGO_URL = "/streamliner-logo.png";
-
-type DashboardRoute =
-  | { view: "landing"; message?: string }
-  | { view: "workstreams"; message?: string }
-  | { view: "sessions" }
-  | { view: "workstream"; projectKey: string; workstreamId: string };
 
 interface GraphLoadError {
   code?: string;
@@ -70,10 +70,6 @@ interface PawLaunchPreparationResponse extends PawLaunchDialogHandoff {
   };
 }
 
-function encodeSegment(segment: string): string {
-  return encodeURIComponent(segment);
-}
-
 function decodeSegment(segment: string): string | null {
   try {
     return decodeURIComponent(segment);
@@ -84,13 +80,6 @@ function decodeSegment(segment: string): string | null {
 
 function isKebabCaseId(value: string): boolean {
   return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value);
-}
-
-function workstreamRoutePath(entry: {
-  projectKey: string;
-  workstreamId: string;
-}): string {
-  return `/workstreams/${encodeSegment(entry.projectKey)}/${encodeSegment(entry.workstreamId)}`;
 }
 
 function readDashboardRoute(): DashboardRoute {
@@ -124,19 +113,6 @@ function readDashboardRoute(): DashboardRoute {
     return { view: "workstreams", message: "That workstream URL is invalid." };
   }
   return { view: "workstream", projectKey, workstreamId };
-}
-
-function routePath(route: DashboardRoute): string {
-  switch (route.view) {
-    case "sessions":
-      return "/sessions";
-    case "workstream":
-      return workstreamRoutePath(route);
-    case "workstreams":
-      return "/workstreams";
-    case "landing":
-      return "/";
-  }
 }
 
 function useDashboardRoute() {
@@ -178,11 +154,11 @@ function registryKey(entry: { projectKey: string; workstreamId: string }): strin
 }
 
 function registryGraphUrl(entry: { projectKey: string; workstreamId: string }): string {
-  return `/api/workstreams/${encodeSegment(entry.projectKey)}/${encodeSegment(entry.workstreamId)}/graph`;
+  return `/api/workstreams/${encodeRouteSegment(entry.projectKey)}/${encodeRouteSegment(entry.workstreamId)}/graph`;
 }
 
 function registryEntryUrl(entry: { projectKey: string; workstreamId: string }): string {
-  return `/api/workstreams/${encodeSegment(entry.projectKey)}/${encodeSegment(entry.workstreamId)}`;
+  return `/api/workstreams/${encodeRouteSegment(entry.projectKey)}/${encodeRouteSegment(entry.workstreamId)}`;
 }
 
 function registryArchiveUrl(entry: { projectKey: string; workstreamId: string }): string {
@@ -190,7 +166,7 @@ function registryArchiveUrl(entry: { projectKey: string; workstreamId: string })
 }
 
 function sourceEntryUrl(sourceId: string): string {
-  return `/api/workstream-sources/${encodeSegment(sourceId)}`;
+  return `/api/workstream-sources/${encodeRouteSegment(sourceId)}`;
 }
 
 function isBrowserWorkstreamEntry(entry: WorkstreamRegistryListEntry): boolean {
@@ -535,7 +511,11 @@ function LandingPage({
           {registryError && <div className="sl-action-error">{registryError}</div>}
         </section>
         <div className="sl-landing-cards">
-          <button className="sl-landing-card" onClick={() => void onOpenWorkstreams()}>
+          <a
+            className="sl-landing-card"
+            href={routePath({ view: "workstreams" })}
+            onClick={(event) => handleInAppLinkClick(event, onOpenWorkstreams)}
+          >
             <span className="sl-landing-card-kicker">Graph workspace</span>
             <span className="sl-landing-card-title">Workstreams</span>
             <span className="sl-landing-card-copy">
@@ -544,15 +524,19 @@ function LandingPage({
             <span className="sl-landing-card-meta">
               {workstreamCount === 1 ? "1 tracked workstream" : `${workstreamCount} tracked workstreams`}
             </span>
-          </button>
-          <button className="sl-landing-card" onClick={() => void onOpenSessions()}>
+          </a>
+          <a
+            className="sl-landing-card"
+            href={routePath({ view: "sessions" })}
+            onClick={(event) => handleInAppLinkClick(event, onOpenSessions)}
+          >
             <span className="sl-landing-card-kicker">Live activity</span>
             <span className="sl-landing-card-title">Sessions</span>
             <span className="sl-landing-card-copy">
               Browse, label, relaunch, and manage local Copilot CLI sessions.
             </span>
             <span className="sl-landing-card-meta">Open session registry</span>
-          </button>
+          </a>
         </div>
       </div>
     </div>
@@ -619,7 +603,11 @@ function WorkstreamHome({
 
   const renderWorkstreamCard = (entry: WorkstreamRegistryListEntry, archived = false) => (
     <div className="sl-workstream-card" key={`${archived ? "archived" : "active"}-${registryKey(entry)}`}>
-      <button className="sl-workstream-card-main" onClick={() => onOpenWorkstream(entry)}>
+      <a
+        className="sl-workstream-card-main"
+        href={workstreamRoutePath(entry)}
+        onClick={(event) => handleInAppLinkClick(event, () => onOpenWorkstream(entry))}
+      >
         <span className="sl-workstream-card-title">{entry.title}</span>
         <span className="sl-workstream-card-id">{registryKey(entry)}</span>
         <span className="sl-workstream-card-meta">
@@ -630,7 +618,7 @@ function WorkstreamHome({
           {entry.sourceId && <span className="sl-pill muted">{entry.sourceId}</span>}
         </span>
         <span className="sl-path-value">{entry.path}</span>
-      </button>
+      </a>
       <div className="sl-workstream-card-actions">
         {archived ? (
           <button
@@ -942,9 +930,13 @@ function GraphDashboard({
             <div className="sl-action-error">{error.message}</div>
             {actionError && <div className="sl-action-error">{actionError}</div>}
             <div className="sl-header-actions" style={{ justifyContent: "flex-start" }}>
-              <button className="sl-action-btn primary" onClick={onManageSources}>
+              <a
+                className="sl-action-btn primary"
+                href={routePath({ view: "workstreams" })}
+                onClick={(event) => handleInAppLinkClick(event, onManageSources)}
+              >
                 Manage sources
-              </button>
+              </a>
               <button className="sl-action-btn danger" onClick={handleArchiveCurrent}>
                 Archive workstream
               </button>
@@ -1053,21 +1045,6 @@ function DashboardNav({
   route: DashboardRoute;
   onRouteChange: (route: DashboardRoute) => void | Promise<void>;
 }) {
-  const handleBrandClick = (event: MouseEvent<HTMLAnchorElement>) => {
-    if (
-      event.defaultPrevented ||
-      event.button !== 0 ||
-      event.metaKey ||
-      event.altKey ||
-      event.ctrlKey ||
-      event.shiftKey
-    ) {
-      return;
-    }
-    event.preventDefault();
-    void onRouteChange({ view: "landing" });
-  };
-
   const workstreamsActive = route.view === "workstreams" || route.view === "workstream";
 
   return (
@@ -1076,7 +1053,7 @@ function DashboardNav({
         className="sl-shell-brand"
         href="/"
         aria-label="Streamliner home"
-        onClick={handleBrandClick}
+        onClick={(event) => handleInAppLinkClick(event, () => onRouteChange({ view: "landing" }))}
       >
         <img
           className="sl-shell-brand-logo"
@@ -1090,22 +1067,22 @@ function DashboardNav({
         </div>
       </a>
       <div className="sl-header-actions">
-        <button
+        <a
           className={`sl-action-btn${workstreamsActive ? " active" : ""}`}
-          onClick={() => {
-            void onRouteChange({ view: "workstreams" });
-          }}
+          href={routePath({ view: "workstreams" })}
+          aria-current={workstreamsActive ? "page" : undefined}
+          onClick={(event) => handleInAppLinkClick(event, () => onRouteChange({ view: "workstreams" }))}
         >
           Workstreams
-        </button>
-        <button
+        </a>
+        <a
           className={`sl-action-btn${route.view === "sessions" ? " active" : ""}`}
-          onClick={() => {
-            void onRouteChange({ view: "sessions" });
-          }}
+          href={routePath({ view: "sessions" })}
+          aria-current={route.view === "sessions" ? "page" : undefined}
+          onClick={(event) => handleInAppLinkClick(event, () => onRouteChange({ view: "sessions" }))}
         >
           Sessions
-        </button>
+        </a>
       </div>
     </div>
   );

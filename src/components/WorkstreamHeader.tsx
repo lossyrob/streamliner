@@ -3,6 +3,7 @@ import type { WorkstreamDocument } from "../workstream-schema";
 import type { WorkstreamRegistryListEntry } from "../workstream-registry-contract";
 import type { WorkstreamViewModel } from "../workstream-view-model";
 import { issueLabel, issueUrl } from "../workstream-links";
+import { handleInAppLinkClick, routePath, workstreamRoutePath } from "../dashboard-routing";
 
 interface WorkstreamHeaderProps {
   workstream: WorkstreamDocument;
@@ -115,12 +116,13 @@ export function WorkstreamHeader({
       </div>
       <div className="sl-header-actions">
         <div className="sl-recents-container" ref={dropdownRef}>
-          <button
+          <a
             className="sl-action-btn"
-            onClick={() => setShowWorkstreams((v) => !v)}
+            href={routePath({ view: "workstreams" })}
+            onClick={(event) => handleInAppLinkClick(event, () => setShowWorkstreams((v) => !v))}
           >
             Workstreams ▾
-          </button>
+          </a>
           {showWorkstreams && (
             <div className="sl-recents-dropdown">
               {trackedWorkstreams.length === 0 ? (
@@ -133,16 +135,17 @@ export function WorkstreamHeader({
                       key={key}
                       className={`sl-recents-item-row${key === activeKey ? " active" : ""}`}
                     >
-                      <button
+                      <a
                         className="sl-recents-item"
-                        onClick={() => {
+                        href={workstreamRoutePath(entry)}
+                        onClick={(event) => handleInAppLinkClick(event, () => {
                           onOpenWorkstream(entry);
                           setShowWorkstreams(false);
-                        }}
+                        })}
                       >
                         <span className="sl-recents-title">{entry.title}</span>
                         <span className="sl-recents-id">{key}</span>
-                      </button>
+                      </a>
                       <button
                         className="sl-recents-remove"
                         onClick={() => {
@@ -160,12 +163,13 @@ export function WorkstreamHeader({
             </div>
           )}
         </div>
-        <button
+        <a
           className="sl-action-btn"
-          onClick={handleAddWorkstream}
+          href={routePath({ view: "workstreams" })}
+          onClick={(event) => handleInAppLinkClick(event, handleAddWorkstream)}
         >
           Manage sources…
-        </button>
+        </a>
       </div>
     </header>
   );

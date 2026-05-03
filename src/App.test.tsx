@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionRegistryListItem } from "./session-registry-contract";
 import App from "./App";
 import { storeBrowserWorkstreamDirectory } from "./browser-workstream-files";
+import { handleInAppLinkClick } from "./dashboard-routing";
 
 const DEFAULT_TEST_SESSION_TIMESTAMP = new Date().toISOString();
 
@@ -174,14 +175,48 @@ function findButton(container: HTMLElement, label: string): HTMLButtonElement {
   return button;
 }
 
-function findWorkstreamCard(container: HTMLElement, title: string): HTMLButtonElement {
-  const button = [...container.querySelectorAll<HTMLButtonElement>(".sl-workstream-card-main")].find(
+function findLink(container: HTMLElement, label: string): HTMLAnchorElement {
+  const link = [...container.querySelectorAll("a")].find(
+    (candidate) => candidate.textContent?.trim() === label,
+  );
+  if (!(link instanceof HTMLAnchorElement)) {
+    throw new Error(`Could not find link "${label}".`);
+  }
+  return link;
+}
+
+function findWorkstreamCard(container: HTMLElement, title: string): HTMLAnchorElement {
+  const button = [...container.querySelectorAll<HTMLAnchorElement>(".sl-workstream-card-main")].find(
     (candidate) => candidate.textContent?.includes(title),
   );
-  if (!(button instanceof HTMLButtonElement)) {
+  if (!(button instanceof HTMLAnchorElement)) {
     throw new Error(`Could not find workstream card "${title}".`);
   }
   return button;
+}
+
+function runInAppLinkClick(overrides: Partial<{
+  defaultPrevented: boolean;
+  button: number;
+  metaKey: boolean;
+  altKey: boolean;
+  ctrlKey: boolean;
+  shiftKey: boolean;
+}> = {}) {
+  const preventDefault = vi.fn();
+  const action = vi.fn();
+  const event = {
+    defaultPrevented: false,
+    button: 0,
+    metaKey: false,
+    altKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    preventDefault,
+    ...overrides,
+  } as unknown as Parameters<typeof handleInAppLinkClick>[0];
+  handleInAppLinkClick(event, action);
+  return { action, preventDefault };
 }
 
 function findSessionList(container: HTMLElement): HTMLElement {
@@ -443,15 +478,32 @@ describe("App sessions route", () => {
       ).toBe(false);
 
       act(() => {
-        findButton(container, "Workstreams").click();
+        findLink(container, "Workstreams").click();
       });
       await settle();
 
       expect(window.location.pathname).toBe("/workstreams");
       expect(container.textContent).toContain("Tracked workstreams");
+
+      const sessionsLink = findLink(container, "Sessions");
+      expect(sessionsLink.getAttribute("href")).toBe("/sessions");
     },
     15_000,
   );
+
+  it("keeps plain route clicks in-app and leaves modified clicks to the browser", () => {
+    const plainClick = runInAppLinkClick();
+    expect(plainClick.preventDefault).toHaveBeenCalledOnce();
+    expect(plainClick.action).toHaveBeenCalledOnce();
+
+    const ctrlClick = runInAppLinkClick({ ctrlKey: true });
+    expect(ctrlClick.preventDefault).not.toHaveBeenCalled();
+    expect(ctrlClick.action).not.toHaveBeenCalled();
+
+    const middleClick = runInAppLinkClick({ button: 1 });
+    expect(middleClick.preventDefault).not.toHaveBeenCalled();
+    expect(middleClick.action).not.toHaveBeenCalled();
+  });
 
   it(
     "loads a workstream from a sticky path route and clears the legacy last-graph key",
@@ -910,8 +962,11 @@ describe("App sessions route", () => {
       expect(container.textContent).toContain("API Test");
       expect(container.textContent).toContain("C:\\sources");
 
+      const workstreamCard = findWorkstreamCard(container, "API Test");
+      expect(workstreamCard.getAttribute("href")).toBe("/workstreams/streamliner/api-test");
+
       act(() => {
-        findWorkstreamCard(container, "API Test").click();
+        workstreamCard.click();
       });
       await settle(100);
       expect(window.location.pathname).toBe("/workstreams/streamliner/api-test");
@@ -1539,7 +1594,7 @@ describe("App sessions route", () => {
       setInputValue(titleInput, "Manual session registry (dirty)");
 
       act(() => {
-        findButton(container, "Workstreams").click();
+        findLink(container, "Workstreams").click();
       });
 
       await settle(75);

@@ -46,6 +46,7 @@ Use `npm run api` for a non-watch API process. The API serves `GET /api/health`,
 | `STREAMLINER_WORKSTREAM_SOURCE_REGISTRY` | `~/.streamliner/state/workstream-registry/sources.json` | Override the workstream source registry path |
 | `STREAMLINER_RECENTS_PATH` | `~/.streamliner/recent-graphs.json` | Override the legacy recents path |
 | `STREAMLINER_PREVIEW_READONLY` | unset | Set to `1` for read-only preview API mode |
+| `STREAMLINER_LAUNCH_CLAIMS_ROOT` | `~/.streamliner/state/launch-claims` | Override the launch-claim store root used by `createLaunchClaim` and the binding pass (see `docs/design/session-system.md` Launch Claim Lifecycle) |
 
 When no `STREAMLINER_GRAPH` is set and no recent graph is available, `GET /api/graph.json` returns a 404. The dashboard handles that by falling back to Vite's static `public/example-project.json` fixture. Use the "Load workstream…" button to select a different workstream JSON file.
 

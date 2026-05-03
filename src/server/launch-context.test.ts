@@ -461,9 +461,10 @@ describe("prepareLaunchContextPackage", () => {
   it("truncates large source blocks in the SDK prompt", async () => {
     const root = createRootDir();
     const { graphPath, stateRoot } = buildFixture(root);
+    const truncatedTail = "TAIL_SENTINEL_AFTER_PROMPT_LIMIT";
     writeText(
       join(root, ".streamliner", "workstreams", "session-launching-and-tracking", "brief.md"),
-      ["# Large Brief", "x".repeat(40_000)].join("\n\n"),
+      ["# Large Brief", `${"x".repeat(40_000)}${truncatedTail}`].join("\n\n"),
     );
     const generationInputs: LaunchContextGenerationInput[] = [];
 
@@ -482,7 +483,7 @@ describe("prepareLaunchContextPackage", () => {
     }
     const prompt = buildContextGenerationPrompt(input);
     expect(prompt).toContain("[Source truncated for prompt budget:");
-    expect(prompt).not.toContain("x".repeat(30_000));
+    expect(prompt).not.toContain(truncatedTail);
   });
 
   it("normalizes a single markdown fence from the generated context", async () => {

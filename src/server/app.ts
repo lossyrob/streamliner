@@ -1,7 +1,9 @@
 import express, { type ErrorRequestHandler, type Express } from "express";
 
+import type { LaunchClaimStore } from "../launch-claim-contract";
 import { getSessionRegistryStore } from "../session-registry/runtime";
 import { SESSION_REGISTRY_API_BASE_PATH } from "../session-registry/http-api";
+import { LAUNCH_CLAIMS_API_BASE_PATH } from "../session-registry/launch-claims-http-api";
 import type { RelaunchDeps } from "../session-registry/relaunch";
 import type { SessionRegistryStore } from "../session-registry-contract";
 import { getApiLogger } from "./logger";
@@ -15,6 +17,7 @@ import {
   createLaunchPreparationsRouter,
   type LaunchPreparationRouteDeps,
 } from "./routes/launch-preparations";
+import { createLaunchClaimsRouter } from "./routes/launch-claims";
 import { createRecentsRouter } from "./routes/recents";
 import { createSessionsRouter } from "./routes/sessions";
 import { createWorkstreamsRouter } from "./routes/workstreams";
@@ -36,6 +39,9 @@ export interface StreamlinerApiAppOptions {
   relaunchDeps?: Partial<RelaunchDeps>;
   launchContextDeps?: LaunchContextRouteDeps;
   launchPreparationDeps?: LaunchPreparationRouteDeps;
+  /** Optional launch-claim store. When provided, mounts
+   * `GET /api/launch-claims[/:id]` for diagnostic UI consumption. */
+  launchClaimStore?: LaunchClaimStore;
 }
 
 const malformedJsonHandler: ErrorRequestHandler = (error, _req, res, next) => {
@@ -119,6 +125,12 @@ export function createStreamlinerApiApp(
       deps: options.launchContextDeps,
     }),
   );
+  if (options.launchClaimStore) {
+    app.use(
+      LAUNCH_CLAIMS_API_BASE_PATH,
+      createLaunchClaimsRouter({ claimStore: options.launchClaimStore }),
+    );
+  }
   app.use(
     "/api",
     createLaunchPreparationsRouter({
@@ -128,7 +140,12 @@ export function createStreamlinerApiApp(
   );
   app.use(
     SESSION_REGISTRY_API_BASE_PATH,
-    createSessionsRouter({ store, eventStream, relaunchDeps: options.relaunchDeps }),
+    createSessionsRouter({
+      store,
+      eventStream,
+      relaunchDeps: options.relaunchDeps,
+      launchClaimStore: options.launchClaimStore,
+    }),
   );
   app.use(malformedJsonHandler);
   app.use(jsonErrorHandler);
