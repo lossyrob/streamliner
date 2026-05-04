@@ -879,11 +879,13 @@ when available, matching the existing restart-command behavior.
 **Terminal selection**:
 1. If Windows Terminal (`wt.exe`) is in PATH → `wt new-tab` with `--title`,
    `--tabColor` (valid `#RRGGBB` only), `-d <cwd>`, and optionally
-   positional `pwsh.exe -NoExit -EncodedCommand <base64>` so the new tab keeps
-   the builder's Windows Terminal profile appearance while command execution is
-   explicit and not parsed as additional `wt` subcommands.
+   positional `pwsh.exe -NoExit -File <streamliner-launch.ps1>` against a
+   transient, self-deleting Streamliner launch script so the new tab
+   keeps the builder's Windows Terminal profile appearance while command
+   execution is explicit and not parsed as additional `wt` subcommands.
 2. Otherwise → `pwsh.exe` when available, falling back to `powershell.exe`,
-   with `-NoExit -Command "Set-Location ...; copilot --resume <id>"`.
+   with `-NoExit -Command "Set-Location ..."` for cwd-only launches or
+   `-NoExit -File <streamliner-launch.ps1>` for command launches.
 
 **Process lifecycle**: Terminals are spawned `detached` with `stdio: 'ignore'`
 and `unref()`'d so they outlive the Streamliner API process. The relaunch
