@@ -983,6 +983,43 @@ function GraphDashboard({
     setLaunchProgressEvents([]);
   };
 
+  const launchTerminalFromHandoff = async (
+    handoff: PawLaunchPreparationResponse,
+    input: PawTerminalLaunchInput,
+  ) => {
+    setTerminalLaunching(true);
+    setLaunchError(null);
+    try {
+      const response = await fetch("/api/node-launches", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          handoff: {
+            ...handoff,
+            kickoffPrompt: input.kickoffPrompt,
+            terminal: {
+              ...handoff.terminal,
+              title: input.terminalTitle,
+              tabColor: input.terminalColor,
+            },
+          },
+        }),
+      });
+      if (!response.ok) {
+        const parsed = await parseErrorResponse(response);
+        throw new Error(parsed.message);
+      }
+      const result = await response.json() as NodeTerminalLaunchResponse;
+      setTerminalLaunchResult(result);
+      setNodeLaunchRecordRefreshKey((current) => current + 1);
+    } catch (nextError) {
+      setLaunchError(nextError instanceof Error ? nextError.message : String(nextError));
+      setNodeLaunchRecordRefreshKey((current) => current + 1);
+    } finally {
+      setTerminalLaunching(false);
+    }
+  };
+
   const handleSubmitLaunch = async (configuration: PawLaunchDialogConfiguration) => {
     if (!selectedEntry || !activeWorkstreamEntry) {
       return;
@@ -1016,7 +1053,7 @@ function GraphDashboard({
         throw new Error("Launch preparation did not return a run id.");
       }
 
-      await new Promise<void>((resolve, reject) => {
+      const preparedHandoff = await new Promise<PawLaunchPreparationResponse>((resolve, reject) => {
         const source = new EventSource(
           `/api/launch-preparations/runs/${encodeURIComponent(started.runId ?? "")}/events`,
         );
@@ -1032,7 +1069,7 @@ function GraphDashboard({
             reject(new Error("Launch preparation completed without a handoff."));
             return;
           }
-          setLaunchHandoff({
+          const nextHandoff: PawLaunchPreparationResponse = {
             cwd: handoff.cwd,
             branch: handoff.branch,
             pawWorkDir: handoff.pawWorkDir,
@@ -1046,10 +1083,11 @@ function GraphDashboard({
             kickoffAdditionalInstructions: handoff.kickoffAdditionalInstructions,
             launchMetadata: handoff.launchMetadata,
             contextPackage: handoff.contextPackage,
-          });
+          };
+          setLaunchHandoff(nextHandoff);
           setTerminalLaunchResult(null);
           setNodeLaunchRecordRefreshKey((current) => current + 1);
-          resolve();
+          resolve(nextHandoff);
         });
         source.addEventListener("failed", (event) => {
           const payload = parseMessageEventData<PawLaunchRunFinishedPayload>(event);
@@ -1059,6 +1097,13 @@ function GraphDashboard({
           reject(new Error("Lost connection to launch preparation progress stream."));
         };
       });
+      if (configuration.launchAfterInit) {
+        await launchTerminalFromHandoff(preparedHandoff, {
+          kickoffPrompt: preparedHandoff.kickoffPrompt,
+          terminalTitle: preparedHandoff.terminal.title ?? preparedHandoff.launchMetadata.workTitle,
+          terminalColor: preparedHandoff.terminal.tabColor ?? null,
+        });
+      }
     } catch (nextError) {
       setLaunchError(nextError instanceof Error ? nextError.message : String(nextError));
     } finally {
@@ -1071,37 +1116,7 @@ function GraphDashboard({
     if (!launchHandoff) {
       return;
     }
-    setTerminalLaunching(true);
-    setLaunchError(null);
-    try {
-      const response = await fetch("/api/node-launches", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          handoff: {
-            ...launchHandoff,
-            kickoffPrompt: input.kickoffPrompt,
-            terminal: {
-              ...launchHandoff.terminal,
-              title: input.terminalTitle,
-              tabColor: input.terminalColor,
-            },
-          },
-        }),
-      });
-      if (!response.ok) {
-        const parsed = await parseErrorResponse(response);
-        throw new Error(parsed.message);
-      }
-      const result = await response.json() as NodeTerminalLaunchResponse;
-      setTerminalLaunchResult(result);
-      setNodeLaunchRecordRefreshKey((current) => current + 1);
-    } catch (nextError) {
-      setLaunchError(nextError instanceof Error ? nextError.message : String(nextError));
-      setNodeLaunchRecordRefreshKey((current) => current + 1);
-    } finally {
-      setTerminalLaunching(false);
-    }
+    await launchTerminalFromHandoff(launchHandoff, input);
   };
 
   if (error) {

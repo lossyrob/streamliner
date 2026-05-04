@@ -1226,6 +1226,180 @@ describe("App sessions route", () => {
   );
 
   it(
+    "launches the terminal automatically when launch after init is checked",
+    async () => {
+      const graph = buildLaunchGraph();
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return emptyNodeLaunchRecordResponse();
+        }
+        if (path === "/api/paw-launch-prompt-profiles") {
+          return jsonResponse({ profiles: [] });
+        }
+        if (path === "/api/launch-preparations/runs" && init?.method === "POST") {
+          return jsonResponse({ runId: "run-auto", status: "queued" }, 202);
+        }
+        if (path.startsWith("/api/paw-workflow-context?") && (!init || init.method === "GET")) {
+          return jsonResponse({
+            path: "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles\\WorkflowContext.md",
+            content: "# WorkflowContext\n",
+            updatedAt: "2026-05-03T18:02:00.000Z",
+          });
+        }
+        if (path === "/api/node-launches" && init?.method === "POST") {
+          return jsonResponse({
+            launchClaim: {
+              launchClaimId: "claim-auto",
+              status: "pending",
+              launchedAt: "2026-05-03T18:04:00.000Z",
+              updatedAt: "2026-05-03T18:04:00.000Z",
+              bindingWindowExpiresAt: "2026-05-03T18:09:00.000Z",
+              reservedRegistryId: "reserved-auto",
+              boundRegistryId: null,
+              boundCopilotSessionId: null,
+              failureCode: null,
+              failureReason: null,
+              blocksLaunch: true,
+              retryable: false,
+            },
+            terminal: {
+              method: "powershell",
+              pid: 778,
+            },
+            cwd: "C:\\graphs\\api-test",
+            branch: "feature/launch-prompt-profiles",
+            command: {
+              cliArgs: ["--yolo"],
+              promptNonceLine: "Streamliner launch nonce: nonce",
+            },
+          }, 201);
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      MockEventSource.instances = [];
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      act(() => {
+        findCanvasNode(container, "Launch prompt profiles").click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Initialize PAW launch").click();
+      });
+      await settle();
+
+      setInputValue(findInputByLabel(container, "Terminal tab title"), "Auto launch worker");
+      act(() => {
+        findButtonByLabel(container, "Use terminal color #4891c8").click();
+      });
+      await settle();
+      act(() => {
+        findInputByLabel(container, "Launch after init").click();
+      });
+      await settle();
+      expect(findButton(container, "Run PAW init and launch")).toBeDefined();
+      act(() => {
+        findButton(container, "Run PAW init and launch").click();
+      });
+      await settle(100);
+
+      expect(
+        fetchMock.mock.calls.some(
+          ([input, init]) =>
+            requestPath(input as RequestInfo | URL) === "/api/node-launches" &&
+            init?.method === "POST",
+        ),
+      ).toBe(false);
+      act(() => {
+        MockEventSource.instances.at(-1)?.emit("completed", {
+          status: "succeeded",
+          result: {
+            cwd: "C:\\graphs\\api-test",
+            branch: "feature/launch-prompt-profiles",
+            pawWorkDir: "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles",
+            workflowContextPath:
+              "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles\\WorkflowContext.md",
+            streamlinerContextPath:
+              "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles\\streamliner\\context.md",
+            cliArgs: ["--yolo"],
+            terminal: {
+              launchMode: "manual",
+              preferredTerminal: "powershell",
+              title: "Auto launch worker",
+              tabColor: "#4891c8",
+            },
+            environment: {
+              STREAMLINER_LOG_LEVEL: "debug",
+            },
+            sessionStateRoot: "C:\\streamliner-state",
+            kickoffPrompt: "Start automatic PAW worker.",
+            launchMetadata: {
+              launchNonce: "nonce",
+              launchClaimRef: null,
+              projectKey: "streamliner",
+              workstreamId: "api-test",
+              nodeId: "launch-prompt-profiles",
+              targetRepoIds: ["streamliner"],
+              graphPath: "C:\\graphs\\api-test\\graph.json",
+              branch: "feature/launch-prompt-profiles",
+              workId: "launch-prompt-profiles",
+              workTitle: "Launch prompt profiles",
+              trackerUrl: "https://github.com/lossyrob/streamliner/issues/33",
+            },
+            contextPackage: {
+              contextId: "ctx",
+              contextPackagePath: "C:\\streamliner-state\\launch-contexts\\ctx",
+              contextFilePath: "C:\\streamliner-state\\launch-contexts\\ctx\\context.md",
+              metadata: {},
+              unavailableInputs: [],
+            },
+          },
+          timestamp: "2026-05-03T18:02:10.000Z",
+        });
+      });
+      await settle(150);
+
+      const terminalLaunchCall = fetchMock.mock.calls.find(
+        ([input, init]) =>
+          requestPath(input as RequestInfo | URL) === "/api/node-launches" &&
+          init?.method === "POST",
+      );
+      expect(terminalLaunchCall).toBeDefined();
+      expect(JSON.parse(String(terminalLaunchCall?.[1]?.body))).toEqual(
+        expect.objectContaining({
+          handoff: expect.objectContaining({
+            kickoffPrompt: "Start automatic PAW worker.",
+            terminal: expect.objectContaining({
+              title: "Auto launch worker",
+              tabColor: "#4891c8",
+            }),
+          }),
+        }),
+      );
+      expect(container.textContent).toContain("Started with powershell");
+    },
+    15_000,
+  );
+
+  it(
     "requires launch instructions before running PAW init",
     async () => {
       const graph = buildLaunchGraph();

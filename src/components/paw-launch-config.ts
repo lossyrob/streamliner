@@ -34,4 +34,5 @@ export interface PawLaunchDialogConfiguration {
   workflowInstructions: string;
   cliArgs: string[];
   terminal: PawLaunchTerminalConfiguration;
+  launchAfterInit: boolean;
 }
