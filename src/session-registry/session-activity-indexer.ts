@@ -353,7 +353,7 @@ function parseActivityFromEvents(
           openAskUserToolCalls.delete(toolCallId);
         } else if (anonymousAskUserRequests > 0) {
           const completedToolName = getToolName(event.data);
-          if (isAskUserToolName(completedToolName) || completedToolName === null) {
+          if (isAskUserToolName(completedToolName)) {
             anonymousAskUserRequests -= 1;
           }
         }
@@ -444,7 +444,10 @@ function patchChanged(
 ): boolean {
   const comparableActivityEvidence = (
     evidence: SessionRegistryActivityEvidence,
-  ): Omit<SessionRegistryActivityEvidence, "eventsScannedAt"> => {
+  ): Omit<
+    SessionRegistryActivityEvidence,
+    "eventsScannedAt" | "eventsOffset" | "eventsSize" | "eventsMtimeMs"
+  > => {
     return {
       statusReason: evidence.statusReason,
       confidence: evidence.confidence,
@@ -457,9 +460,6 @@ function patchChanged(
       lastActivityEventAt: evidence.lastActivityEventAt,
       userMessageCount: evidence.userMessageCount,
       assistantTurnCount: evidence.assistantTurnCount,
-      eventsOffset: evidence.eventsOffset,
-      eventsSize: evidence.eventsSize,
-      eventsMtimeMs: evidence.eventsMtimeMs,
     };
   };
 

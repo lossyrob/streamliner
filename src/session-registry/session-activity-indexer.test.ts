@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -122,6 +122,31 @@ describe("indexSessionActivity", () => {
     ).toBeNull();
   });
 
+  it("does not emit another patch when only scan metadata changes", () => {
+    const eventsPath = writeEvents([
+      { type: "assistant.turn_start", timestamp: "2026-04-26T15:02:00.000Z" },
+      { type: "assistant.turn_end", timestamp: "2026-04-26T15:04:00.000Z" },
+    ]);
+
+    const firstPatch = indexSessionActivity(buildSession(), eventsPath, {
+      now: () => new Date("2026-04-26T15:08:00.000Z"),
+    });
+    if (!firstPatch) {
+      throw new Error("expected first activity patch");
+    }
+    appendFileSync(
+      eventsPath,
+      `\n${JSON.stringify({ type: "hook.start", timestamp: "2026-04-26T15:05:00.000Z" })}`,
+      "utf8",
+    );
+
+    expect(
+      indexSessionActivity(buildSession(firstPatch), eventsPath, {
+        now: () => new Date("2026-04-26T15:09:00.000Z"),
+      }),
+    ).toBeNull();
+  });
+
   it("marks sessions as waiting when the assistant turn ended", () => {
     const eventsPath = writeEvents([
       { type: "assistant.turn_start", timestamp: "2026-04-26T15:02:00.000Z" },
@@ -208,7 +233,45 @@ describe("indexSessionActivity", () => {
     );
   });
 
-  it("clears anonymous ask_user requests on anonymous tool completion", () => {
+  it("clears anonymous ask_user requests on named ask_user tool completion", () => {
+    const eventsPath = writeEvents([
+      { type: "assistant.turn_start", timestamp: "2026-04-26T15:02:00.000Z" },
+      {
+        type: "assistant.message",
+        timestamp: "2026-04-26T15:03:00.000Z",
+        data: {
+          toolRequests: [
+            {
+              name: "ask_user",
+            },
+          ],
+        },
+      },
+      {
+        type: "tool.execution_complete",
+        timestamp: "2026-04-26T15:04:00.000Z",
+        data: {
+          toolName: "ask_user",
+          success: true,
+        },
+      },
+    ]);
+
+    expect(indexSessionActivity(buildSession(), eventsPath)).toEqual(
+      expect.objectContaining({
+        activityStatus: "working",
+        activityStatusUpdatedAt: "2026-04-26T15:04:00.000Z",
+        activityEvidence: expect.objectContaining({
+          statusReason: "tool_execution_complete",
+          pendingInputRequest: false,
+          pendingInputRequestCount: 0,
+          lastActivityEventAt: "2026-04-26T15:04:00.000Z",
+        }),
+      }),
+    );
+  });
+
+  it("keeps anonymous ask_user requests pending on unidentified tool completion", () => {
     const eventsPath = writeEvents([
       { type: "assistant.turn_start", timestamp: "2026-04-26T15:02:00.000Z" },
       {
@@ -233,13 +296,13 @@ describe("indexSessionActivity", () => {
 
     expect(indexSessionActivity(buildSession(), eventsPath)).toEqual(
       expect.objectContaining({
-        activityStatus: "working",
-        activityStatusUpdatedAt: "2026-04-26T15:04:00.000Z",
+        activityStatus: "waiting_for_input",
+        activityStatusUpdatedAt: "2026-04-26T15:03:00.000Z",
         activityEvidence: expect.objectContaining({
-          statusReason: "tool_execution_complete",
-          pendingInputRequest: false,
-          pendingInputRequestCount: 0,
-          lastActivityEventAt: "2026-04-26T15:04:00.000Z",
+          statusReason: "pending_input",
+          pendingInputRequest: true,
+          pendingInputRequestCount: 1,
+          lastActivityEventAt: "2026-04-26T15:03:00.000Z",
         }),
       }),
     );
