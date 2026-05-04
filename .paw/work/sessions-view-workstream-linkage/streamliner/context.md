@@ -6,13 +6,13 @@ Use the repo's design layer directly when implementation choices need grounding.
 
 Possible starting points for this node:
 
-- `docs/design/session-system.md` - session registry, launch binding, graphBinding, and runtime overlay intent.
+- `docs/design/session-system.md` - session registry, launch binding, `graphBinding`, and runtime overlay intent.
 - `docs/design/workstream-format.md` - committed graph/brief artifacts versus local runtime state separation.
 - `docs/design/decisions/004-session-registry-primary-surface.md` - Sessions is the primary surface; graph overlay is a projection.
 - `docs/design/decisions/005-session-registry-storage-and-identity.md` - registry storage and identity contract.
-- `docs/design/decisions/001-observation-based-session-tracking.md` - observation-derived lifecycle/attention state remains separate from durable registry metadata.
+- `docs/design/decisions/001-observation-based-session-tracking.md` - observation-derived lifecycle and attention state remain separate from durable registry metadata.
 
-Treat these as navigation hints, not a fixed reading list. If the implementation touches UI rendering, also use the existing dashboard patterns in `src/components/SessionsPage.tsx`, `src/components/WorkstreamGraphNode.tsx`, and `src/streamliner-theme.css` as the local design system authority.
+Treat these as navigation hints, not a fixed reading list. If the implementation touches rendered UI, also use existing dashboard patterns in `src/components/SessionsPage.tsx`, related graph/inspector components, and `src/streamliner-theme.css` as the local design system authority.
 
 ## Layer 1 - Worker Mission
 
@@ -25,7 +25,7 @@ This node is about the **My Sessions / session registry UI linkage**. Do not tak
 Expected implementation shape:
 
 - Reuse `SessionRegistryListItem.graphBinding` as the linkage contract; do not introduce a second UI-only binding store.
-- Preserve existing session list behavior: trusted/default visibility, ended/stale filters, search, SSE refetch, optimistic editing, relaunch/restart actions, and manual session creation.
+- Preserve existing session list behavior: trusted/default visibility, ended/stale filters, search, SSE refetch, optimistic editing, relaunch/restart actions, stop actions, and manual session creation.
 - Add user-facing workstream/node context for bound rows, with clear fallback labeling for IDs that cannot currently resolve to a known graph or node.
 - Keep unbound/manual sessions first-class and easy to find.
 - Add or update tests around Sessions grouping/filtering/rendering and any helper functions introduced for workstream/node labels or links.
@@ -37,14 +37,14 @@ The workstream is in Wave 4. Wave 3 launch-from-graph is complete: launch prepar
 Current linkage contract and likely code entry points:
 
 - `src/session-registry-schema.ts` defines `SessionRegistryGraphBinding` as `workstreamId`, `nodeId`, and optional `launchClaimId`.
-- `src/session-registry-contract.ts` exposes `graphBinding` on `SessionRegistryListItem`, list options include `workstreamId` and `nodeId`, and patches can explicitly set or clear `graphBinding`.
-- `src/session-registry/file-store.ts` already validates, persists, filters, and patches `graphBinding`; launch-claim tests cover binding behavior. Prefer consuming this surface rather than changing the storage model unless you find a concrete gap.
+- `src/session-registry-contract.ts` exposes `graphBinding` on `SessionRegistryListItem`; list options include `workstreamId` and `nodeId`; patches can explicitly set or clear `graphBinding`.
+- `src/session-registry/file-store.ts` validates, persists, filters, and patches `graphBinding`; launch-claim tests cover binding behavior. Prefer consuming this surface rather than changing the storage model unless you find a concrete gap.
 - `src/session-registry/launch-claims.ts` and `src/session-registry/launch-claim-binding.ts` create or fuse graph-launched rows and write `graphBinding` as part of launch binding.
-- `src/server/node-launch.ts` creates launch claims for a `workstreamId`/`nodeId` and reserves launched registry rows with descriptions like `Graph launch for workstream ..., node ...`.
+- `src/server/node-launch.ts` creates launch claims for a `workstreamId`/`nodeId` and reserves launched registry rows with graph-launch descriptions.
 - `src/server/routes/sessions.ts` wires `/api/sessions` and `/api/sessions/events`; the Sessions page currently receives raw registry list items from this API.
 - `src/components/SessionsPage.tsx` is the main UI surface. It already copies `record.graphBinding` into list items, preserves it in snapshot keys, and has grouping modes for recency, repo, folder, and flat. It does not yet render bound workstream/node labels or expose a workstream grouping/filter.
 - `src/components/session-policies.ts` owns relevance/relaunch behavior; avoid entangling graph linkage with liveness policy unless tests show a direct need.
-- `src/workstream-links.ts` has tracker-link helpers, not workstream graph deep links. If adding links, follow existing route/link conventions in `src/App.tsx`, `src/components/NodeInspector.tsx`, and workstream graph components.
+- `src/workstream-links.ts` has tracker-link helpers, not necessarily workstream graph deep links. If adding links, follow existing route/link conventions in `src/App.tsx`, `src/components/NodeInspector.tsx`, and workstream graph components.
 - `src/workstream-view-model.ts` parses durable graph artifacts and derives node state. It is useful for resolving node titles when the Sessions UI can access a workstream graph/model.
 
 The selected workstream graph is `.streamliner/workstreams/session-launching-and-tracking/graph.json`. The relevant selected node ID is `sessions-workstream-linkage-ui`, title `Sessions view workstream linkage`. The workstream title is `Session launching and tracking`. If you need sample bound data, use this workstream/node shape rather than inventing a different contract.
@@ -57,7 +57,7 @@ The current Sessions UI behavior to preserve:
 - Rows show title, AI summary/description, repo, branch, folder, derived GitHub refs, tags, activity pill/pulse, copy restart, relaunch, and stop actions.
 - The detail sheet already shows lifecycle/origin/trusted/observed pills and editable builder-owned fields. Consider whether bound workstream/node context belongs in both rows and detail sheet.
 
-Use graphBinding as display metadata only. General session liveness and attention state still come from observation/trusted signals; PAW workflow progress remains a future artifact-derived enrichment.
+Use `graphBinding` as display metadata only. General session liveness and attention state still come from observation/trusted signals; PAW workflow progress remains a future artifact-derived enrichment.
 
 ## Layer 3 - Coordination Context
 
