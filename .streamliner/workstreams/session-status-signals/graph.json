@@ -1,0 +1,188 @@
+{
+  "schemaVersion": 1,
+  "id": "session-status-signals",
+  "projectKey": "streamliner",
+  "title": "Session status signals",
+  "summary": "Design and implement session status lanes that distinguish operational action status from informational interpretation signals, including a neutral heat index for hot-work detection and AI-backed session status summaries.",
+  "status": "active",
+  "attention": "focus",
+  "createdAt": "2026-05-02T06:51:20.633Z",
+  "updatedAt": "2026-05-02T06:51:20.633Z",
+  "repos": [
+    {
+      "id": "streamliner",
+      "owner": "lossyrob",
+      "name": "streamliner",
+      "role": "primary"
+    }
+  ],
+  "designRefs": [
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/index.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/product.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/operating-model.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/workstream-format.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/session-system.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/001-observation-based-session-tracking.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/004-session-registry-primary-surface.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/005-session-registry-storage-and-identity.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/008-paw-artifacts-for-workflow-status.md"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "initial-shaping-capture",
+      "type": "research",
+      "title": "Capture initial shaping",
+      "summary": "Preserve the session status brainstorming as a workstream support doc and distill it into the initial brief and graph without making the support doc the current operational source of truth.",
+      "status": "completed",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": []
+    },
+    {
+      "id": "status-lane-design-contract",
+      "type": "research",
+      "title": "Status lane design contract",
+      "summary": "Turn the shaping into a project design update that defines operational status versus informational signals, the neutral heat-index concept, UI hierarchy, runtime status ownership, and boundaries with existing session registry and PAW artifact status.",
+      "status": "ready",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["initial-shaping-capture"]
+    },
+    {
+      "id": "status-summarizer-contract",
+      "type": "research",
+      "title": "Status summarizer contract",
+      "summary": "Define the structured runtime summary emitted from session state, event history, process/heartbeat state, tracker/PR signals, and AI summary: operational status, reasons, suggested action, informational signals, confidence, and freshness.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["status-lane-design-contract"]
+    },
+    {
+      "id": "operational-status-classifier",
+      "type": "task",
+      "title": "Operational status classifier",
+      "summary": "Classify sessions into action statuses such as working, needs-builder, ready-review, blocked, stale, and closed, with reasons that distinguish conversation-needed from artifact-review-needed from external-blocker-needed.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["status-summarizer-contract"]
+    },
+    {
+      "id": "heat-index-detection",
+      "type": "task",
+      "title": "Heat index detection",
+      "summary": "Compute current, peak, and trend heat signals from builder-agent interaction density, recency, user/assistant alternation, and iteration cues, while making clear that heat is not urgency, quality, or success/failure.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["status-summarizer-contract"]
+    },
+    {
+      "id": "informational-signal-surface",
+      "type": "task",
+      "title": "Informational signal surface",
+      "summary": "Surface secondary interpretation signals such as needs-reconciliation, boundary pressure, design impact, attachment, environment, and confidence through the session status overlay without making them primary action status.",
+      "status": "planned",
+      "attention": "watch",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["status-summarizer-contract"]
+    },
+    {
+      "id": "session-card-status-lanes",
+      "type": "task",
+      "title": "Session card status lanes",
+      "summary": "Update the session card/subcard UI so operational status is visually dominant and informational signals appear as secondary chips or thermal indicators, including an accessible neutral heat dot/ring instead of a fire emoji.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": [
+        "operational-status-classifier",
+        "heat-index-detection",
+        "informational-signal-surface"
+      ]
+    },
+    {
+      "id": "graph-overlay-status-consumption",
+      "type": "task",
+      "title": "Graph overlay status consumption",
+      "summary": "Define the minimal way graph node overlays consume the same session operational-status and informational-signal contract without expanding this workstream into the whole runtime-overlay or portfolio-shell effort.",
+      "status": "planned",
+      "attention": "watch",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["session-card-status-lanes"]
+    },
+    {
+      "id": "real-session-validation-gate",
+      "type": "gate",
+      "title": "Real session validation",
+      "summary": "Validate the status lanes, heat index, and waiting-vs-review classifier against real cool, warm, hot, blocked, needs-builder, and ready-review sessions before promoting the model as the default session status surface.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["session-card-status-lanes", "graph-overlay-status-consumption"]
+    }
+  ],
+  "checkpoints": [
+    {
+      "id": "status-model-shaped",
+      "title": "Status model shaped",
+      "summary": "Initial shaping is preserved and the project design contract for operational status lanes, informational signals, and heat index semantics is accepted.",
+      "status": "planned",
+      "nodeIds": ["initial-shaping-capture", "status-lane-design-contract"]
+    },
+    {
+      "id": "status-detection-contract",
+      "title": "Status detection contract",
+      "summary": "The summarizer contract, operational classifier, heat index, and informational signal model are defined and usable by the session UI.",
+      "status": "planned",
+      "nodeIds": [
+        "status-summarizer-contract",
+        "operational-status-classifier",
+        "heat-index-detection",
+        "informational-signal-surface"
+      ]
+    },
+    {
+      "id": "status-ui-usable",
+      "title": "Status UI usable",
+      "summary": "The Sessions surface separates action status from interpretation signals and graph overlays can consume the same contract without duplicating semantics.",
+      "status": "planned",
+      "nodeIds": ["session-card-status-lanes", "graph-overlay-status-consumption"]
+    },
+    {
+      "id": "session-status-signals-gate",
+      "title": "Session status signals validated",
+      "summary": "Real sessions demonstrate that the status model distinguishes needs-builder, ready-review, working, blocked, stale, and heat states well enough for the builder to operate from.",
+      "status": "planned",
+      "nodeIds": ["real-session-validation-gate"]
+    }
+  ]
+}
