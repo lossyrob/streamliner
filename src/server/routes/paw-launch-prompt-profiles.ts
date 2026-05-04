@@ -66,6 +66,38 @@ function slugify(value: string): string {
   return slug || "profile";
 }
 
+function profileNameKey(value: string): string {
+  return value.toLocaleLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function findProfileByName(
+  profiles: PawLaunchPromptProfile[],
+  name: string,
+  exceptId?: string,
+): PawLaunchPromptProfile | undefined {
+  const key = profileNameKey(name);
+  return profiles.find((profile) =>
+    profile.id !== exceptId && profileNameKey(profile.name) === key
+  );
+}
+
+function profileUpdatedAtMs(profile: PawLaunchPromptProfile): number {
+  const parsed = Date.parse(profile.updatedAt);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function dedupeProfilesByName(profiles: PawLaunchPromptProfile[]): PawLaunchPromptProfile[] {
+  const byName = new Map<string, PawLaunchPromptProfile>();
+  for (const profile of profiles) {
+    const key = profileNameKey(profile.name);
+    const existing = byName.get(key);
+    if (!existing || profileUpdatedAtMs(profile) >= profileUpdatedAtMs(existing)) {
+      byName.set(key, profile);
+    }
+  }
+  return [...byName.values()];
+}
+
 function uniqueProfileId(name: string, profiles: PawLaunchPromptProfile[]): string {
   const base = slugify(name);
   const used = new Set(profiles.map((profile) => profile.id));
@@ -91,13 +123,13 @@ async function readDocument(path: string): Promise<PromptProfileDocument> {
   }
   return {
     version: 1,
-    profiles: parsed.profiles.filter(isRecord).map((profile) => ({
+    profiles: dedupeProfilesByName(parsed.profiles.filter(isRecord).map((profile) => ({
       id: typeof profile.id === "string" ? profile.id : "",
       name: typeof profile.name === "string" ? profile.name : "",
       instructions: typeof profile.instructions === "string" ? profile.instructions : "",
       createdAt: typeof profile.createdAt === "string" ? profile.createdAt : new Date(0).toISOString(),
       updatedAt: typeof profile.updatedAt === "string" ? profile.updatedAt : new Date(0).toISOString(),
-    })).filter((profile) => profile.id && profile.name && profile.instructions),
+    })).filter((profile) => profile.id && profile.name && profile.instructions)),
   };
 }
 
@@ -130,9 +162,19 @@ export function createPawLaunchPromptProfilesRouter(options: {
       const body = isRecord(req.body) ? req.body : {};
       const now = new Date().toISOString();
       const document = await readDocument(profilesPath);
+      const name = normalizeProfileName(body.name);
+      const duplicate = findProfileByName(document.profiles, name);
+      if (duplicate) {
+        res.status(409).json({
+          code: "prompt_profile_name_conflict",
+          error: `A prompt profile named "${duplicate.name}" already exists.`,
+          profile: duplicate,
+        });
+        return;
+      }
       const profile: PawLaunchPromptProfile = {
-        id: uniqueProfileId(normalizeProfileName(body.name), document.profiles),
-        name: normalizeProfileName(body.name),
+        id: uniqueProfileId(name, document.profiles),
+        name,
         instructions: normalizeInstructions(body.instructions),
         createdAt: now,
         updatedAt: now,
@@ -155,9 +197,19 @@ export function createPawLaunchPromptProfilesRouter(options: {
         return;
       }
       const current = document.profiles[index];
+      const name = normalizeProfileName(body.name ?? current.name);
+      const duplicate = findProfileByName(document.profiles, name, current.id);
+      if (duplicate) {
+        res.status(409).json({
+          code: "prompt_profile_name_conflict",
+          error: `A prompt profile named "${duplicate.name}" already exists.`,
+          profile: duplicate,
+        });
+        return;
+      }
       const updated: PawLaunchPromptProfile = {
         ...current,
-        name: normalizeProfileName(body.name ?? current.name),
+        name,
         instructions: normalizeInstructions(body.instructions ?? current.instructions),
         updatedAt: new Date().toISOString(),
       };

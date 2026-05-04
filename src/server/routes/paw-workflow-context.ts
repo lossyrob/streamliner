@@ -17,13 +17,35 @@ function isPathInside(parent: string, child: string): boolean {
   return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
 }
 
+function checkoutRootForPawWorkRoot(pawWorkRoot: string): string {
+  return dirname(dirname(resolve(pawWorkRoot)));
+}
+
+function isValidWorkflowContextPath(root: string, path: string): boolean {
+  if (basename(path) !== "WorkflowContext.md") {
+    return false;
+  }
+  const pawWorkDir = dirname(path);
+  const workRoot = dirname(pawWorkDir);
+  if (basename(workRoot) !== "work") {
+    return false;
+  }
+  const pawRoot = dirname(workRoot);
+  if (basename(pawRoot) !== ".paw") {
+    return false;
+  }
+  const checkoutRoot = dirname(pawRoot);
+  const trustedCheckoutRoot = checkoutRootForPawWorkRoot(root);
+  return isPathInside(root, path) || isPathInside(dirname(trustedCheckoutRoot), checkoutRoot);
+}
+
 function resolveWorkflowContextPath(value: unknown, root: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw Object.assign(new Error("WorkflowContext path is required."), { statusCode: 400 });
   }
   const resolved = resolve(value);
-  if (basename(resolved) !== "WorkflowContext.md" || !isPathInside(root, resolved)) {
-    throw Object.assign(new Error("WorkflowContext path must be a WorkflowContext.md file under .paw/work."), { statusCode: 400 });
+  if (!isValidWorkflowContextPath(root, resolved)) {
+    throw Object.assign(new Error("WorkflowContext path must be a WorkflowContext.md file under .paw/work in the launch checkout or a sibling worktree."), { statusCode: 400 });
   }
   return resolved;
 }

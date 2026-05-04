@@ -87,6 +87,7 @@ function createIsolatedApi(
     recentsPath: join(rootDir, "recent-graphs.json"),
     workstreamRegistryPath: join(rootDir, "workstreams.json"),
     workstreamSourceRegistryPath: join(rootDir, "sources.json"),
+    nodeLaunchRecordsPath: join(rootDir, "node-launch-records.json"),
     ...options,
   });
 }
@@ -351,6 +352,19 @@ describe("createStreamlinerApiApp", () => {
       instructions: "Use PAW final-pr-only with no intermediate pauses.",
     }));
 
+    await request(api.app)
+      .post("/api/paw-launch-prompt-profiles")
+      .send({
+        name: " final   pr ONLY ",
+        instructions: "Duplicate names should not create another profile.",
+      })
+      .expect(409)
+      .expect((res) => {
+        expect(res.body).toEqual(expect.objectContaining({
+          code: "prompt_profile_name_conflict",
+        }));
+      });
+
     const updateResponse = await request(api.app)
       .put("/api/paw-launch-prompt-profiles/final-pr-only")
       .send({
@@ -367,6 +381,42 @@ describe("createStreamlinerApiApp", () => {
       expect.objectContaining({
         id: "final-pr-only",
         instructions: "Use PAW final-pr-review only.",
+      }),
+    ]);
+  });
+
+  it("dedupes existing PAW launch prompt profiles by name", async () => {
+    const rootDir = createRootDir();
+    const profilesPath = join(rootDir, "profiles.json");
+    writeFileSync(profilesPath, JSON.stringify({
+      version: 1,
+      profiles: [
+        {
+          id: "paw-lite-old",
+          name: "Paw-lite",
+          instructions: "Old instructions",
+          createdAt: "2026-05-03T18:00:00.000Z",
+          updatedAt: "2026-05-03T18:00:00.000Z",
+        },
+        {
+          id: "paw-lite-new",
+          name: "PAW lite",
+          instructions: "New instructions",
+          createdAt: "2026-05-03T18:01:00.000Z",
+          updatedAt: "2026-05-03T18:02:00.000Z",
+        },
+      ],
+    }), "utf8");
+    const api = createIsolatedApi(rootDir, { promptProfilesPath: profilesPath });
+    activeApps.push(api);
+
+    const listResponse = await request(api.app)
+      .get("/api/paw-launch-prompt-profiles")
+      .expect(200);
+    expect(listResponse.body.profiles).toEqual([
+      expect.objectContaining({
+        id: "paw-lite-new",
+        instructions: "New instructions",
       }),
     ]);
   });
@@ -396,6 +446,22 @@ describe("createStreamlinerApiApp", () => {
       .send({ path: workflowContextPath, content: updatedContent })
       .expect(200);
     expect(readFileSync(workflowContextPath, "utf8")).toBe(updatedContent);
+
+    const siblingRootDir = createRootDir();
+    const siblingWorkflowContextPath = join(
+      siblingRootDir,
+      ".paw",
+      "work",
+      "terminal-launch-integration",
+      "WorkflowContext.md",
+    );
+    mkdirSync(dirname(siblingWorkflowContextPath), { recursive: true });
+    writeFileSync(siblingWorkflowContextPath, updatedContent, "utf8");
+    const siblingReadResponse = await request(api.app)
+      .get("/api/paw-workflow-context")
+      .query({ path: siblingWorkflowContextPath })
+      .expect(200);
+    expect(siblingReadResponse.body.content).toContain("Edited in browser.");
 
     await request(api.app)
       .put("/api/paw-workflow-context")

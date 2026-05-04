@@ -123,6 +123,7 @@ function createPawInitRunner(
       streamlinerContextPath: normalizePath(streamlinerContextPath),
       environment: { ...input.configuration.environment },
       sessionStateRoot: normalizePath(input.sessionStateRoot),
+      kickoffAdditionalInstructions: "Only pause for blockers before the final PR.",
     };
   };
 }
@@ -270,17 +271,19 @@ describe("preparePawLaunch", () => {
       nodeId: "launch-prompt-profiles",
       cwd: root,
       stateRoot: join(root, "state"),
+      configuration: {
+        workflowInstructions: "Prefer final PR review only unless blocked.",
+      },
       pawInitRunner: createPawInitRunner(),
       contextPreparer: createContextPreparer(root),
     });
 
-    expect(result.kickoffPrompt).toContain(
-      `- PAW workflow context: ${result.workflowContextPath}`,
-    );
-    expect(result.kickoffPrompt).toContain(
-      `- Streamliner launch context: ${result.streamlinerContextPath}`,
-    );
-    expect(result.kickoffPrompt).toContain("recorded as an Additional Input");
+    expect(result.kickoffPrompt).toContain("GitHub Issue: https://github.com/lossyrob/streamliner/issues/33");
+    expect(result.kickoffPrompt).toContain(`PAW workflow context:\n${result.workflowContextPath}`);
+    expect(result.kickoffPrompt).toContain(`Streamliner Launch Context:\n${result.streamlinerContextPath}`);
+    expect(result.kickoffPrompt).toContain("Start by loading the paw-lite workflow");
+    expect(result.kickoffPrompt).toContain("Only pause for blockers before the final PR.");
+    expect(result.kickoffPrompt).not.toContain("Prefer final PR review only unless blocked.");
   });
 
   it("wraps PAW init failures with a typed preparation error", async () => {
@@ -396,7 +399,78 @@ describe("launch preparation API route", () => {
         }),
       }),
     );
-    expect(response.body.kickoffPrompt).toContain("recorded as an Additional Input");
+    expect(response.body.kickoffPrompt).toContain("Start by loading the paw-lite workflow");
+  });
+
+  it("starts a PAW launch preparation run and exposes the completed result", async () => {
+    const root = createRootDir();
+    const store = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const api = createStreamlinerApiApp({
+      store,
+      launchPreparationDeps: {
+        cwd: root,
+        stateRoot: join(root, "state"),
+        pawInitRunner: createPawInitRunner(),
+        contextPreparer: createContextPreparer(root),
+      },
+    });
+    activeApps.push(api);
+
+    const started = await request(api.app)
+      .post("/api/launch-preparations/runs")
+      .send({
+        nodeId: "launch-prompt-profiles",
+        configuration: {
+          cliArgs: [],
+          workflowInstructions: "Use PAW with local final-pr-only review.",
+        },
+      })
+      .expect(202);
+
+    expect(started.body).toEqual(expect.objectContaining({
+      runId: expect.any(String),
+    }));
+    let snapshot = await request(api.app)
+      .get(`/api/launch-preparations/runs/${started.body.runId}`)
+      .expect(200);
+    for (let attempt = 0; attempt < 20 && snapshot.body.status !== "succeeded"; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      snapshot = await request(api.app)
+        .get(`/api/launch-preparations/runs/${started.body.runId}`)
+        .expect(200);
+    }
+
+    expect(snapshot.body).toEqual(expect.objectContaining({
+      runId: started.body.runId,
+      status: "succeeded",
+      result: expect.objectContaining({
+        branch: "feature/launch-prompt-profiles",
+        cliArgs: [],
+      }),
+      events: expect.arrayContaining([
+        expect.objectContaining({ name: "completed" }),
+      ]),
+    }));
+
+    const launchRecord = await request(api.app)
+      .get("/api/node-launch-records")
+      .query({
+        graphPath: normalizePath(join(root, ".streamliner", "workstreams", "session-launching-and-tracking", "graph.json")),
+        nodeId: "launch-prompt-profiles",
+      })
+      .expect(200);
+
+    expect(launchRecord.body.record).toEqual(expect.objectContaining({
+      branch: "feature/launch-prompt-profiles",
+      nodeId: "launch-prompt-profiles",
+      pawWorkDir: expect.stringContaining(".paw"),
+      workflowContextPath: expect.stringContaining("WorkflowContext.md"),
+      streamlinerContextPath: expect.stringContaining("streamliner/context.md"),
+      pathStatus: expect.objectContaining({
+        workflowContextExists: true,
+        streamlinerContextExists: true,
+      }),
+    }));
   });
 
   it("returns client errors for invalid launch preparation requests", async () => {

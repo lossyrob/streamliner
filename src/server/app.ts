@@ -10,6 +10,7 @@ import type { RelaunchDeps } from "../session-registry/relaunch";
 import type { SessionRegistryStore } from "../session-registry-contract";
 import { getApiLogger } from "./logger";
 import { createAccessLogMiddleware } from "./middleware/access-log";
+import { NodeLaunchRecordStore } from "./node-launch-record-store";
 import { createGraphRouter } from "./routes/graph";
 import {
   createLaunchContextsRouter,
@@ -20,6 +21,7 @@ import {
   type LaunchPreparationRouteDeps,
 } from "./routes/launch-preparations";
 import { createLaunchClaimsRouter } from "./routes/launch-claims";
+import { createNodeLaunchRecordsRouter } from "./routes/node-launch-records";
 import { createPawLaunchPromptProfilesRouter } from "./routes/paw-launch-prompt-profiles";
 import { createPawWorkflowContextRouter } from "./routes/paw-workflow-context";
 import { createRecentsRouter } from "./routes/recents";
@@ -44,6 +46,7 @@ export interface StreamlinerApiAppOptions {
   launchContextDeps?: LaunchContextRouteDeps;
   launchPreparationDeps?: LaunchPreparationRouteDeps;
   promptProfilesPath?: string;
+  nodeLaunchRecordsPath?: string;
   pawWorkRoot?: string;
   /** Optional launch-claim store. When provided, mounts
    * `GET /api/launch-claims[/:id]` for diagnostic UI consumption. */
@@ -82,6 +85,14 @@ export function createStreamlinerApiApp(
   const app = express();
   const store = options.store ?? getSessionRegistryStore();
   const eventStream = new SessionRegistryEventStream(store);
+  const nodeLaunchRecordStore = options.launchPreparationDeps?.nodeLaunchRecordStore
+    ?? new NodeLaunchRecordStore({
+      recordsPath: options.nodeLaunchRecordsPath ?? (
+        options.launchPreparationDeps?.stateRoot
+          ? join(options.launchPreparationDeps.stateRoot, "node-launch-records.json")
+          : undefined
+      ),
+    });
 
   app.disable("x-powered-by");
   app.use(express.json({ limit: "1mb" }));
@@ -89,7 +100,9 @@ export function createStreamlinerApiApp(
   app.use(
     createAccessLogMiddleware({
       logger: getApiLogger().withScope("http"),
-      skip: (path) => path.startsWith(`${SESSION_REGISTRY_API_BASE_PATH}/events`),
+      skip: (path) =>
+        path.startsWith(`${SESSION_REGISTRY_API_BASE_PATH}/events`) ||
+        /^\/api\/launch-preparations\/runs\/[^/]+\/events(?:\?|$)/.test(path),
     }),
   );
 
@@ -141,7 +154,16 @@ export function createStreamlinerApiApp(
     "/api",
     createLaunchPreparationsRouter({
       defaultGraphPath: options.graphPath,
-      deps: options.launchPreparationDeps,
+      deps: {
+        ...options.launchPreparationDeps,
+        nodeLaunchRecordStore,
+      },
+    }),
+  );
+  app.use(
+    "/api",
+    createNodeLaunchRecordsRouter({
+      store: nodeLaunchRecordStore,
     }),
   );
   app.use(

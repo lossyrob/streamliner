@@ -30,6 +30,7 @@ import { WorkstreamHeader } from "./components/WorkstreamHeader";
 import {
   PawLaunchDialog,
   type PawLaunchDialogHandoff,
+  type PawLaunchProgressEvent,
 } from "./components/PawLaunchDialog";
 import {
   DEFAULT_PAW_TERMINAL_CONFIGURATION,
@@ -43,6 +44,10 @@ import {
   listBrowserWorkstreamEntries,
   readBrowserWorkstreamGraph,
 } from "./browser-workstream-files";
+import type {
+  NodeLaunchRecord,
+  NodeLaunchRecordResponse,
+} from "./node-launch-record-contract";
 import {
   encodeRouteSegment,
   handleInAppLinkClick,
@@ -70,6 +75,23 @@ interface PawLaunchPreparationResponse extends PawLaunchDialogHandoff {
   };
 }
 
+interface PawLaunchRunStartResponse {
+  runId?: string;
+  status?: string;
+}
+
+interface PawLaunchRunError {
+  error?: string;
+  code?: string;
+  step?: string;
+  input?: string;
+}
+
+interface PawLaunchRunFinishedPayload {
+  result?: PawLaunchPreparationResponse;
+  error?: PawLaunchRunError;
+}
+
 function decodeSegment(segment: string): string | null {
   try {
     return decodeURIComponent(segment);
@@ -80,6 +102,10 @@ function decodeSegment(segment: string): string | null {
 
 function isKebabCaseId(value: string): boolean {
   return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value);
+}
+
+function parseMessageEventData<T>(event: Event): T {
+  return JSON.parse((event as MessageEvent<string>).data) as T;
 }
 
 function readDashboardRoute(): DashboardRoute {
@@ -220,6 +246,20 @@ async function parseErrorResponse(res: Response): Promise<GraphLoadError> {
   } catch {
     return { message: `Request failed (${res.status})` };
   }
+}
+
+async function loadNodeLaunchRecord(
+  graphPath: string,
+  nodeId: string,
+): Promise<NodeLaunchRecord | null> {
+  const params = new URLSearchParams({ graphPath, nodeId });
+  const response = await fetch(`/api/node-launch-records?${params.toString()}`);
+  if (!response.ok) {
+    const parsed = await parseErrorResponse(response);
+    throw new Error(parsed.message);
+  }
+  const body = await response.json() as NodeLaunchRecordResponse;
+  return body.record ?? null;
 }
 
 function normalizeRegistryListResponse(
@@ -806,6 +846,11 @@ function GraphDashboard({
   const [launchPreparing, setLaunchPreparing] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [launchHandoff, setLaunchHandoff] = useState<PawLaunchDialogHandoff | null>(null);
+  const [launchProgressEvents, setLaunchProgressEvents] = useState<PawLaunchProgressEvent[]>([]);
+  const [nodeLaunchRecord, setNodeLaunchRecord] = useState<NodeLaunchRecord | null>(null);
+  const [nodeLaunchRecordLoading, setNodeLaunchRecordLoading] = useState(false);
+  const [nodeLaunchRecordError, setNodeLaunchRecordError] = useState<string | null>(null);
+  const [nodeLaunchRecordRefreshKey, setNodeLaunchRecordRefreshKey] = useState(0);
 
   const viewModel = useMemo(() => {
     if (!workstream) return null;
@@ -851,6 +896,38 @@ function GraphDashboard({
     };
   }, [activeWorkstreamEntry, selectedEntry]);
 
+  useEffect(() => {
+    if (!selectedEntry || !activeWorkstreamEntry || !isBackendReadableWorkstreamEntry(activeWorkstreamEntry)) {
+      setNodeLaunchRecord(null);
+      setNodeLaunchRecordLoading(false);
+      setNodeLaunchRecordError(null);
+      return;
+    }
+    let cancelled = false;
+    setNodeLaunchRecordLoading(true);
+    setNodeLaunchRecordError(null);
+    loadNodeLaunchRecord(activeWorkstreamEntry.path, selectedEntry.node.id)
+      .then((record) => {
+        if (!cancelled) {
+          setNodeLaunchRecord(record);
+        }
+      })
+      .catch((recordError: unknown) => {
+        if (!cancelled) {
+          setNodeLaunchRecord(null);
+          setNodeLaunchRecordError(recordError instanceof Error ? recordError.message : String(recordError));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setNodeLaunchRecordLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkstreamEntry, nodeLaunchRecordRefreshKey, selectedEntry]);
+
   const handleArchiveCurrent = async () => {
     if (!activeWorkstream) {
       return;
@@ -867,6 +944,7 @@ function GraphDashboard({
   const handleOpenLaunchDialog = () => {
     setLaunchError(null);
     setLaunchHandoff(null);
+    setLaunchProgressEvents([]);
     setLaunchDialogOpen(true);
   };
 
@@ -877,6 +955,7 @@ function GraphDashboard({
     setLaunchDialogOpen(false);
     setLaunchError(null);
     setLaunchHandoff(null);
+    setLaunchProgressEvents([]);
   };
 
   const handleSubmitLaunch = async (configuration: PawLaunchDialogConfiguration) => {
@@ -886,8 +965,10 @@ function GraphDashboard({
     setLaunchPreparing(true);
     setLaunchError(null);
     setLaunchHandoff(null);
+    setLaunchProgressEvents([]);
+    let closeProgressStream: (() => void) | undefined;
     try {
-      const response = await fetch("/api/launch-preparations", {
+      const response = await fetch("/api/launch-preparations/runs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -905,18 +986,50 @@ function GraphDashboard({
         const parsed = await parseErrorResponse(response);
         throw new Error(parsed.message);
       }
-      const handoff = await response.json() as PawLaunchPreparationResponse;
-      setLaunchHandoff({
-        branch: handoff.branch,
-        pawWorkDir: handoff.pawWorkDir,
-        workflowContextPath: handoff.workflowContextPath,
-        streamlinerContextPath: handoff.streamlinerContextPath,
-        cliArgs: handoff.cliArgs,
-        kickoffPrompt: handoff.kickoffPrompt,
+      const started = await response.json() as PawLaunchRunStartResponse;
+      if (!started.runId) {
+        throw new Error("Launch preparation did not return a run id.");
+      }
+
+      await new Promise<void>((resolve, reject) => {
+        const source = new EventSource(
+          `/api/launch-preparations/runs/${encodeURIComponent(started.runId ?? "")}/events`,
+        );
+        closeProgressStream = () => source.close();
+        source.addEventListener("progress", (event) => {
+          const progress = parseMessageEventData<PawLaunchProgressEvent>(event);
+          setLaunchProgressEvents((current) => [...current, progress].slice(-50));
+        });
+        source.addEventListener("completed", (event) => {
+          const payload = parseMessageEventData<PawLaunchRunFinishedPayload>(event);
+          const handoff = payload.result;
+          if (!handoff) {
+            reject(new Error("Launch preparation completed without a handoff."));
+            return;
+          }
+          setLaunchHandoff({
+            branch: handoff.branch,
+            pawWorkDir: handoff.pawWorkDir,
+            workflowContextPath: handoff.workflowContextPath,
+            streamlinerContextPath: handoff.streamlinerContextPath,
+            cliArgs: handoff.cliArgs,
+            kickoffPrompt: handoff.kickoffPrompt,
+          });
+          setNodeLaunchRecordRefreshKey((current) => current + 1);
+          resolve();
+        });
+        source.addEventListener("failed", (event) => {
+          const payload = parseMessageEventData<PawLaunchRunFinishedPayload>(event);
+          reject(new Error(payload.error?.error ?? "Launch preparation failed."));
+        });
+        source.onerror = () => {
+          reject(new Error("Lost connection to launch preparation progress stream."));
+        };
       });
     } catch (nextError) {
       setLaunchError(nextError instanceof Error ? nextError.message : String(nextError));
     } finally {
+      closeProgressStream?.();
       setLaunchPreparing(false);
     }
   };
@@ -998,6 +1111,9 @@ function GraphDashboard({
             workstream={workstream}
             canLaunch={canLaunchSelectedNode}
             launchDisabledReason={launchDisabledReason}
+            launchRecord={nodeLaunchRecord}
+            launchRecordLoading={nodeLaunchRecordLoading}
+            launchRecordError={nodeLaunchRecordError}
             onLaunch={handleOpenLaunchDialog}
           />
         </div>
@@ -1010,6 +1126,7 @@ function GraphDashboard({
           preparing={launchPreparing}
           error={launchError}
           handoff={launchHandoff}
+          progressEvents={launchProgressEvents}
           onCancel={handleCloseLaunchDialog}
           onSubmit={handleSubmitLaunch}
         />
