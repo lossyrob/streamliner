@@ -140,10 +140,22 @@ export function quotePowerShellLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
-export function buildCopilotInteractiveCommand(options: {
+export interface CopilotInteractiveCommandOptions {
+  /** Copilot CLI flags kept as distinct argv-style values and PowerShell-literal quoted. */
   cliArgs: string[];
+  /** Arbitrary prompt text; encoded before embedding so multiline/user text is never shell-interpolated. */
   kickoffPrompt: string;
-}): string {
+}
+
+/**
+ * Builds the PowerShell command used for visible Copilot CLI worker launches.
+ *
+ * The kickoff prompt and CLI args intentionally use different encoding paths:
+ * prompt text is base64-encoded and decoded inside PowerShell because it may
+ * contain arbitrary multiline prose, while `cliArgs` remain individual Copilot
+ * CLI flags that are PowerShell-literal quoted and parsed normally by Copilot.
+ */
+export function buildCopilotInteractiveCommand(options: CopilotInteractiveCommandOptions): string {
   const encodedPrompt = Buffer.from(options.kickoffPrompt, "utf8").toString("base64");
   const decodedPrompt =
     `$streamlinerKickoffPrompt = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${encodedPrompt}'))`;
