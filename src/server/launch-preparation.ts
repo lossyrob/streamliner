@@ -136,6 +136,7 @@ export interface PawInitRunnerResult {
   environment?: Record<string, string>;
   sessionStateRoot?: string;
   sdkSession?: PawLaunchSdkSessionDebug;
+  kickoffAdditionalInstructions?: string;
 }
 
 export type PawInitRunner = (
@@ -211,6 +212,7 @@ export interface PawLaunchHandoff {
   workflowContextPath: string;
   streamlinerContextPath: string;
   kickoffPrompt: string;
+  kickoffAdditionalInstructions?: string;
   cliArgs: string[];
   environment: Record<string, string>;
   sessionStateRoot: string;
@@ -225,6 +227,7 @@ interface CompletePawInitArgs {
   targetBranch: string;
   pawWorkDir?: string;
   artifactLifecycle?: string;
+  additionalKickoffInstructions?: string;
 }
 
 const DEFAULT_TERMINAL_PREFERENCES: PawLaunchTerminalPreferences = {
@@ -500,6 +503,17 @@ function assertNonEmpty(value: unknown, field: string): string {
   return value.trim();
 }
 
+function optionalTrimmedString(value: unknown, field: string): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw new Error(`${field} must be a string.`);
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 function hasStreamlinerContextAdditionalInput(content: string): boolean {
   const linePattern = /^Additional Inputs:\s*(.*)$/m;
   const match = content.match(linePattern);
@@ -685,12 +699,19 @@ function buildPawInitPrompt(input: PawInitRunnerInput): string {
     "The WorkflowContext Additional Inputs must include at least `streamliner-context=<installed-context-path>`, where the installed context path is `<pawWorkDir>/streamliner/context.md`.",
     "Do not add Streamliner internal metadata such as `streamliner-staged-context`, `streamliner-context-id`, `node`, `graph`, or `launch-nonce` to WorkflowContext Additional Inputs; those remain launch metadata, not PAW input files.",
     "",
+    "Also derive the optional `additionalKickoffInstructions` value for `complete_paw_init`:",
+    "- Include only concise worker-startup guidance that should appear in the final launched session prompt.",
+    "- Exclude workflow configuration already encoded in WorkflowContext.md, such as workflow identity, review policy, model choices, stage sequence, artifact lifecycle, branch/work ID, and other durable PAW config fields.",
+    "- Preserve guidance that is not otherwise durable PAW configuration, such as blocker handling, issue/PR communication preferences, documentation expectations, or other session operating notes.",
+    "- Pass an empty string if all builder instructions were fully encoded into WorkflowContext.md.",
+    "",
     "When PAW init has completed its reasoning and created WorkflowContext.md, call `complete_paw_init` exactly once with:",
     "- `workTitle`: the PAW work title derived by paw-init.",
     "- `workId`: the PAW work ID derived by paw-init.",
     "- `targetBranch`: the target branch derived by paw-init.",
     "- `pawWorkDir`: optional absolute PAW work directory. If omitted, Streamliner uses `<cwd>/.paw/work/<workId>`.",
     "- `artifactLifecycle`: optional artifact lifecycle if resolved.",
+    "- `additionalKickoffInstructions`: optional filtered worker-startup guidance that should be appended to the final kickoff prompt.",
     "",
     "The tool copies the staged Streamliner context into `<pawWorkDir>/streamliner/context.md` and verifies that paw-init already created WorkflowContext.md with a `streamliner-context` Additional Input. It does not write WorkflowContext.md.",
     "",
@@ -733,6 +754,7 @@ export async function defaultPawInitRunner(
             targetBranch: { type: "string" },
             pawWorkDir: { type: "string" },
             artifactLifecycle: { type: "string" },
+            additionalKickoffInstructions: { type: "string" },
           },
           required: ["workTitle", "workId", "targetBranch"],
           additionalProperties: false,
@@ -745,6 +767,10 @@ export async function defaultPawInitRunner(
           const workTitle = assertNonEmpty(args.workTitle, "workTitle");
           const workId = assertSlug(assertNonEmpty(args.workId, "workId"), "workId");
           const targetBranch = assertNonEmpty(args.targetBranch, "targetBranch");
+          const kickoffAdditionalInstructions = optionalTrimmedString(
+            args.additionalKickoffInstructions,
+            "additionalKickoffInstructions",
+          );
           const pawWorkDir = resolvePawWorkDir(input.cwd, workId, args.pawWorkDir);
 
           const workflowContextPath = join(pawWorkDir, "WorkflowContext.md");
@@ -770,6 +796,7 @@ export async function defaultPawInitRunner(
             streamlinerContextPath: normalizeManifestPath(streamlinerContextPath),
             environment: { ...input.configuration.environment },
             sessionStateRoot: normalizeManifestPath(input.sessionStateRoot),
+            kickoffAdditionalInstructions,
           };
           return {
             ...toolResult,
@@ -987,6 +1014,10 @@ export async function defaultPawLaunchSessionRunner(
           const workTitle = assertNonEmpty(args.workTitle, "workTitle");
           const workId = assertSlug(assertNonEmpty(args.workId, "workId"), "workId");
           const targetBranch = assertNonEmpty(args.targetBranch, "targetBranch");
+          const kickoffAdditionalInstructions = optionalTrimmedString(
+            args.additionalKickoffInstructions,
+            "additionalKickoffInstructions",
+          );
           const pawWorkDir = resolvePawWorkDir(input.cwd, workId, args.pawWorkDir);
 
           const workflowContextPath = join(pawWorkDir, "WorkflowContext.md");
@@ -1012,6 +1043,7 @@ export async function defaultPawLaunchSessionRunner(
             streamlinerContextPath: normalizeManifestPath(streamlinerContextPath),
             environment: { ...input.configuration.environment },
             sessionStateRoot: normalizeManifestPath(input.sessionStateRoot),
+            kickoffAdditionalInstructions,
             sdkSession: session
               ? {
                   sessionId: session.sessionId,
@@ -1189,16 +1221,32 @@ export function buildKickoffPrompt(input: {
   workflowContextPath: string;
   streamlinerContextPath: string;
   launchMetadata: PawLaunchMetadata;
-  launchInstructions?: string;
+  kickoffAdditionalInstructions?: string;
 }): string {
   const lines = [
-    "You are a Streamliner node session launched from a workstream graph node.",
+    "You are a Streamliner node session that is completing an implementation task that is part of a broader Streamliner Workstream using the paw-lite workflow.",
     "",
-    "Start by reading the prepared PAW workflow context and Streamliner launch context:",
-    `- PAW workflow context: ${displayPath(input.workflowContextPath)}`,
-    `- Streamliner launch context: ${displayPath(input.streamlinerContextPath)}`,
+  ];
+  if (input.launchMetadata.trackerUrl) {
+    lines.push(
+      `GitHub Issue: ${input.launchMetadata.trackerUrl}`,
+      "",
+    );
+  }
+  lines.push(
+    "PAW workflow context:",
+    displayPath(input.workflowContextPath),
     "",
-    "Launch identity:",
+    "Streamliner Launch Context:",
+    displayPath(input.streamlinerContextPath),
+    "",
+    "Start by loading the paw-lite workflow and reading the pre-initialized `WorkflowContext.md`.",
+    "",
+    input.launchMetadata.trackerUrl
+      ? "Then read the GitHub Issue, Streamliner Launch Context and complete the work described by proceeding through the PAW workflow."
+      : "Then read the Streamliner Launch Context and complete the work described by proceeding through the PAW workflow.",
+    "",
+    "Streamliner launch metadata:",
     `- Project: ${input.launchMetadata.projectKey}`,
     `- Workstream: ${input.launchMetadata.workstreamId}`,
     `- Node: ${input.launchMetadata.nodeId}`,
@@ -1207,24 +1255,14 @@ export function buildKickoffPrompt(input: {
     `- Launch nonce: ${input.launchMetadata.launchNonce ?? "none"}`,
     `- Launch claim: ${input.launchMetadata.launchClaimRef ?? "not-created"}`,
     `- Target repos: ${input.launchMetadata.targetRepoIds.join(", ") || "none"}`,
-  ];
-  if (input.launchMetadata.trackerUrl) {
-    lines.push(`- Tracker: ${input.launchMetadata.trackerUrl}`);
-  }
-  const launchInstructions = input.launchInstructions?.trim();
-  if (launchInstructions) {
+  );
+  const kickoffAdditionalInstructions = input.kickoffAdditionalInstructions?.trim();
+  if (kickoffAdditionalInstructions) {
     lines.push(
       "",
-      "Launch instructions from graph settings:",
-      "```text",
-      launchInstructions,
-      "```",
+      kickoffAdditionalInstructions,
     );
   }
-  lines.push(
-    "",
-    "Proceed through the PAW workflow using WorkflowContext.md as the durable source of truth. The Streamliner context has already been installed into the PAW work directory and recorded as an Additional Input.",
-  );
   return `${lines.join("\n")}\n`;
 }
 
@@ -1376,7 +1414,7 @@ export async function preparePawLaunch(
     workflowContextPath: pawInit.workflowContextPath,
     streamlinerContextPath: pawInit.streamlinerContextPath,
     launchMetadata,
-    launchInstructions: configuration.workflowInstructions,
+    kickoffAdditionalInstructions: pawInit.kickoffAdditionalInstructions,
   });
 
   return {
@@ -1386,6 +1424,7 @@ export async function preparePawLaunch(
     workflowContextPath: pawInit.workflowContextPath,
     streamlinerContextPath: pawInit.streamlinerContextPath,
     kickoffPrompt,
+    kickoffAdditionalInstructions: pawInit.kickoffAdditionalInstructions,
     cliArgs: [...configuration.cliArgs],
     environment: {
       ...configuration.environment,

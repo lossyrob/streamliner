@@ -123,6 +123,7 @@ function createPawInitRunner(
       streamlinerContextPath: normalizePath(streamlinerContextPath),
       environment: { ...input.configuration.environment },
       sessionStateRoot: normalizePath(input.sessionStateRoot),
+      kickoffAdditionalInstructions: "Only pause for blockers before the final PR.",
     };
   };
 }
@@ -277,15 +278,12 @@ describe("preparePawLaunch", () => {
       contextPreparer: createContextPreparer(root),
     });
 
-    expect(result.kickoffPrompt).toContain(
-      `- PAW workflow context: ${result.workflowContextPath}`,
-    );
-    expect(result.kickoffPrompt).toContain(
-      `- Streamliner launch context: ${result.streamlinerContextPath}`,
-    );
-    expect(result.kickoffPrompt).toContain("Launch instructions from graph settings");
-    expect(result.kickoffPrompt).toContain("Prefer final PR review only unless blocked.");
-    expect(result.kickoffPrompt).toContain("recorded as an Additional Input");
+    expect(result.kickoffPrompt).toContain("GitHub Issue: https://github.com/lossyrob/streamliner/issues/33");
+    expect(result.kickoffPrompt).toContain(`PAW workflow context:\n${result.workflowContextPath}`);
+    expect(result.kickoffPrompt).toContain(`Streamliner Launch Context:\n${result.streamlinerContextPath}`);
+    expect(result.kickoffPrompt).toContain("Start by loading the paw-lite workflow");
+    expect(result.kickoffPrompt).toContain("Only pause for blockers before the final PR.");
+    expect(result.kickoffPrompt).not.toContain("Prefer final PR review only unless blocked.");
   });
 
   it("wraps PAW init failures with a typed preparation error", async () => {
@@ -401,7 +399,7 @@ describe("launch preparation API route", () => {
         }),
       }),
     );
-    expect(response.body.kickoffPrompt).toContain("recorded as an Additional Input");
+    expect(response.body.kickoffPrompt).toContain("Start by loading the paw-lite workflow");
   });
 
   it("starts a PAW launch preparation run and exposes the completed result", async () => {
