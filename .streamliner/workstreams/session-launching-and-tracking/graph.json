@@ -7,7 +7,7 @@
   "status": "active",
   "attention": "focus",
   "createdAt": "2026-04-10T15:37:14.125Z",
-  "updatedAt": "2026-04-30T21:56:07.000Z",
+  "updatedAt": "2026-05-04T00:38:20.000Z",
   "trackingIssue": {
     "owner": "lossyrob",
     "repo": "streamliner",
@@ -56,7 +56,7 @@
     },
     {
       "repoId": "streamliner",
-      "path": "docs/design/decisions/003-paw-control-state-integration.md"
+      "path": "docs/design/decisions/008-paw-artifacts-for-workflow-status.md"
     },
     {
       "repoId": "streamliner",
@@ -200,7 +200,7 @@
       "id": "backend-context-assembly",
       "type": "task",
       "title": "Backend context assembly",
-      "summary": "Completed: a selected ready graph node can produce a launch context package reference for downstream launch code, covering project design context, workstream intent/state, node/tracker context, source references, freshness, and unavailable inputs without requiring a PAW work directory or PAW workflow status.",
+      "summary": "Completed: a selected ready graph node can produce a launch context package reference for downstream launch code, covering project design context, workstream intent/state, node/tracker context, source references, freshness, and unavailable inputs before the PAW work directory exists. The Wave 3 launch path will place/reference the generated context from the PAW work directory after paw-init.",
       "status": "completed",
       "attention": "watch",
       "repoIds": ["streamliner"],
@@ -216,8 +216,8 @@
       "id": "launch-claim-binding",
       "type": "task",
       "title": "Launch claim binding",
-      "summary": "Record launch claims before terminal startup and bind discovered sessions using a launch nonce plus cwd/branch/window guardrails so the visible Copilot CLI session attaches to the correct graph node. Launched sessions also register into the Wave 2 session registry rather than introducing a parallel tracking surface. Independent of context/prompt prep and can land in parallel.",
-      "status": "ready",
+      "summary": "Completed: PR #42 added the launch-claim subsystem for graph-launched sessions, including the local launch-claim store, reserved registry rows, createLaunchClaim/markClaimFailed, Tier 1 prompt-nonce binding, Tier 2 trusted-hook binding via STREAMLINER_LAUNCH_CLAIM_ID, sweep/diagnostics, read-only launch-claim APIs, and graphBinding on registry rows.",
+      "status": "completed",
       "attention": "focus",
       "repoIds": ["streamliner"],
       "tracker": {
@@ -231,9 +231,9 @@
     {
       "id": "launch-prompt-profiles",
       "type": "task",
-      "title": "Launch prompt profiles and CLI defaults",
-      "summary": "Define and implement launch profiles that layer instruction text, context-package references, workflow defaults, terminal preferences, and Copilot CLI arguments from instance, project, workstream, and node-launch scopes. The builder gets an editable final prompt before launch; PAW is one profile style rather than a required launch path.",
-      "status": "ready",
+      "title": "PAW launch configuration and prompt defaults",
+      "summary": "Completed: PR #41 added the PAW-only launch preparation flow. The graph action opens an Initialize PAW launch dialog, captures natural-language PAW workflow instructions and reusable prompt-profile snippets, normalizes Copilot CLI args and terminal preferences, runs fully capable SDK paw-init, installs streamliner/context.md under the PAW work directory, exposes bounded WorkflowContext.md review/editing, and returns a structured terminal handoff without starting the visible worker. Rich PAW WorkflowContext configuration UI is deferred to #43.",
+      "status": "completed",
       "attention": "focus",
       "repoIds": ["streamliner"],
       "tracker": {
@@ -248,7 +248,7 @@
       "id": "terminal-launch-integration",
       "type": "task",
       "title": "Terminal launch integration",
-      "summary": "Launch a visible Copilot CLI interactive session from the graph with the selected launch profile, editable kickoff prompt, context references, cwd, and default/overridden CLI arguments so the operator can watch and intervene. Creates/updates the corresponding registry entry on launch and consumes the bound launch claim.",
+      "summary": "After PAW launch preparation succeeds, launch a visible Copilot CLI interactive session from an API-callable launch service using the prepared cwd, initial prompt, context reference, and default/overridden CLI arguments. The graph button is the MVP caller, but the service should remain reusable by future CLI/skill/MCP agent launch surfaces. Reuse the lower-level terminal spawning path from session relaunch, create/update the corresponding registry entry, and consume the bound launch claim.",
       "status": "planned",
       "attention": "focus",
       "repoIds": ["streamliner"],
@@ -265,10 +265,30 @@
       "dependsOn": ["session-registry-model"]
     },
     {
-      "id": "paw-control-state-observation",
+      "id": "sessions-workstream-linkage-ui",
       "type": "task",
-      "title": "Optional PAW control-state enrichment",
-      "summary": "For sessions launched with a PAW profile or manually linked to PAW artifacts, read PAW `## Control State` from `WorkflowContext.md` / `ReviewContext.md` as optional workflow-progress enrichment. This is not required for launch-from-graph or baseline runtime overlay.",
+      "title": "Sessions view workstream linkage",
+      "summary": "Use graphBinding metadata on launched registry rows to declare the source workstream/node in My Sessions: group or filter sessions by workstream, show workstream/node labels, and provide links back into the workstream graph or selected node. Manual/unbound sessions remain visible in an unbound/default grouping.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["launch-claim-binding", "terminal-launch-integration"]
+    },
+    {
+      "id": "graph-node-session-status-ui",
+      "type": "task",
+      "title": "Graph node session status indicators",
+      "summary": "Render bound session status directly on graph nodes using the same status pulse/pill language as My Sessions. Nodes with active launched sessions show the highest-attention session state and session count, with details linking back to the corresponding Sessions entries.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["session-event-observation", "sessions-workstream-linkage-ui"]
+    },
+    {
+      "id": "paw-artifact-status-observation",
+      "type": "task",
+      "title": "PAW artifact status observation",
+      "summary": "For sessions launched through Streamliner's PAW launch flow or manually linked to PAW artifacts, inspect the PAW work directory and derive coarse workflow status from durable artifacts such as specs, plans, research, implementation phase artifacts, reviews, and PR/finalization artifacts. Copilot session observation remains the source for liveness and attention state; `## Control State` is not authoritative.",
       "status": "planned",
       "attention": "watch",
       "repoIds": ["streamliner"],
@@ -278,21 +298,71 @@
       "id": "runtime-overlay-ui",
       "type": "task",
       "title": "Runtime overlay in UI",
-      "summary": "Project registry entries, launch bindings, and event observation state onto the committed graph in the UI, combining committed node status with runtime session status per the overlay model in the session system design. PAW control state may enrich PAW-backed sessions, but the overlay is useful without it.",
+      "summary": "Compose the linked Sessions and graph-node status surfaces into the committed graph runtime overlay, combining committed node status, bound Copilot session status, tracker state, and PAW artifact status for PAW-backed sessions without turning graph.json into a telemetry log.",
       "status": "planned",
       "attention": "watch",
       "repoIds": ["streamliner"],
-      "dependsOn": ["session-event-observation", "terminal-launch-integration"]
+      "dependsOn": ["graph-node-session-status-ui", "paw-artifact-status-observation"]
     },
     {
       "id": "launch-and-tracking-gate",
       "type": "gate",
       "title": "Launch and tracking usable on the graph",
-      "summary": "A node can launch a Copilot CLI session into a visible terminal with editable profile-based instructions, context references, default CLI args, and a launch claim; Streamliner binds the resulting registry entry back to the node and shows useful runtime state on the graph without committing telemetry into workstream artifacts.",
+      "summary": "A node can launch a PAW-backed Copilot CLI session into a visible terminal through an API-first launch pipeline after a launch configuration dialog, context assembly, SDK paw-init, prompt templating, CLI default resolution, and launch-claim creation; Streamliner binds the resulting registry entry back to the node, shows it grouped/linked in My Sessions, and renders matching session status on the graph without committing telemetry into workstream artifacts. Future CLI/skill/MCP agent launch surfaces should call this same pipeline rather than inventing a second path.",
       "status": "planned",
       "attention": "focus",
       "repoIds": ["streamliner"],
       "dependsOn": ["runtime-overlay-ui"]
+    },
+    {
+      "id": "follow-on-review-policy",
+      "type": "task",
+      "title": "Follow-on PAW Review automation policy",
+      "summary": "Define the Wave 5 automation policy for follow-on sessions: when auto PAW Review may run, how the builder configures PAW Review options in the UI, what safety confirmations are required, how session roles are represented, and how to prevent uncontrolled review/address loops.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["launch-and-tracking-gate"]
+    },
+    {
+      "id": "pr-review-trigger-detection",
+      "type": "task",
+      "title": "PR trigger detection for node issues",
+      "summary": "Watch for the PR that resolves or is otherwise associated with the GitHub issue attached to a graph node. Use that PR as the trigger source for configured follow-on PAW Review automation rather than treating terminal completion alone as the authority.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["follow-on-review-policy"]
+    },
+    {
+      "id": "auto-paw-review-launch",
+      "type": "task",
+      "title": "Automatic PAW Review session launch",
+      "summary": "When auto-review is enabled and the node-associated PR is detected, launch a separate PAW Review Copilot CLI session with the configured review options, PR identity, node/workstream context, launch claim, and session role metadata. Do not reuse or prompt-inject into the implementation terminal.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["pr-review-trigger-detection", "terminal-launch-integration", "sessions-workstream-linkage-ui"]
+    },
+    {
+      "id": "review-comment-addressing-launch",
+      "type": "task",
+      "title": "Review comment addressing session launch",
+      "summary": "Define and implement the optional auto-address path: when review comments are available and the builder enables/approves addressing, launch a separate address-review worker session on the same PR/branch/worktree context with review comments and PAW Review output as context. Avoid injecting prompts into an existing interactive implementation terminal.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["auto-paw-review-launch"]
+    },
+    {
+      "id": "review-session-chain-overlay",
+      "type": "task",
+      "title": "Review session chain overlay",
+      "summary": "Show implementation, PAW Review, and address-review sessions as a related chain in My Sessions and on the graph node, using session role metadata, PR links, and status pills so the builder can see which follow-on automation has run or is waiting.",
+      "status": "planned",
+      "attention": "watch",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["review-comment-addressing-launch", "runtime-overlay-ui"]
     }
   ],
   "checkpoints": [
@@ -320,7 +390,7 @@
     {
       "id": "launch-from-graph",
       "title": "Launch from graph works",
-      "summary": "Streamliner assembles context, resolves a launch profile and default CLI args, binds a launch claim, previews/compiles the kickoff prompt, and launches a visible Copilot CLI interactive session from a node, registering it into the Wave 2 registry.",
+      "summary": "Streamliner assembles context, collects PAW init options and CLI defaults through a launch configuration dialog, runs paw-init through Copilot SDK, binds a launch claim, compiles the initial prompt from a template, and launches a visible PAW-backed Copilot CLI interactive session from a node, registering it into the Wave 2 registry.",
       "status": "planned",
       "nodeIds": [
         "backend-context-assembly",
@@ -332,12 +402,28 @@
     {
       "id": "tracking-visible",
       "title": "Tracking visible on the graph",
-      "summary": "Streamliner overlays the registry, launch bindings, and event observation onto the graph without turning graph.json into a telemetry log. PAW control state remains optional enrichment for PAW-backed sessions.",
+      "summary": "Streamliner links My Sessions and the graph through registry graphBinding metadata, overlays bound Copilot session status onto graph nodes with matching status pills/pulses, derives PAW workflow status from artifacts, and keeps telemetry out of graph.json.",
       "status": "planned",
       "nodeIds": [
         "session-event-observation",
+        "sessions-workstream-linkage-ui",
+        "graph-node-session-status-ui",
+        "paw-artifact-status-observation",
         "runtime-overlay-ui",
         "launch-and-tracking-gate"
+      ]
+    },
+    {
+      "id": "follow-on-review-automation",
+      "title": "Follow-on PAW Review automation",
+      "summary": "Streamliner can detect the PR associated with a node's GitHub issue, optionally launch a separate configured PAW Review session, optionally launch a separate address-review worker for comments, and display the related session chain without injecting prompts into existing interactive terminals.",
+      "status": "planned",
+      "nodeIds": [
+        "follow-on-review-policy",
+        "pr-review-trigger-detection",
+        "auto-paw-review-launch",
+        "review-comment-addressing-launch",
+        "review-session-chain-overlay"
       ]
     }
   ]
