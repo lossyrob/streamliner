@@ -30,6 +30,8 @@ export interface PawLaunchDialogDefaults {
   cwdPreferenceKey: string | null;
   graphPath: string;
   terminalPreference: string;
+  githubIssueLabel?: string | null;
+  githubIssueUrl?: string | null;
   terminal: PawLaunchTerminalConfiguration;
 }
 

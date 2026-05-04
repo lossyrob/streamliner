@@ -370,6 +370,12 @@ body,
   border-color: var(--sl-accent);
 }
 
+.sl-action-btn.primary:disabled {
+  background: rgba(80, 100, 135, 0.32);
+  border-color: rgba(80, 100, 135, 0.12);
+  color: rgba(255, 255, 255, 0.86);
+}
+
 .sl-action-btn.primary:hover:not(:disabled) {
   background: #1a5dc0;
   border-color: #1a5dc0;
@@ -2202,6 +2208,13 @@ a.sl-session-context-ref {
   max-width: 560px;
 }
 
+.sl-paw-launch-tracker {
+  margin: 6px 0 0;
+  color: var(--sl-text-mid);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .sl-paw-launch-body {
   display: flex;
   flex-direction: column;
@@ -2929,6 +2942,25 @@ a.sl-session-context-ref {
   background: rgba(200, 50, 50, 0.08);
   color: var(--sl-red);
   font-size: 13px;
+}
+
+.sl-action-warning {
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--sl-amber-border);
+  background: var(--sl-amber-bg);
+  color: var(--sl-amber);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.sl-action-warning > p {
+  margin: 0;
+}
+
+.sl-action-warning > p + p,
+.sl-action-warning > p + .sl-action-btn {
+  margin-top: 8px;
 }
 
 .sl-action-error ul {

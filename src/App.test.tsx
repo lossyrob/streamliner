@@ -1558,6 +1558,130 @@ describe("App sessions route", () => {
   );
 
   it(
+    "keeps the launch dialog reopenable and shows the GitHub issue when a launch claim exists",
+    async () => {
+      const graph = buildLaunchGraph();
+      let claimBlocksLaunch = true;
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return jsonResponse({
+            record: {
+              projectKey: "streamliner",
+              workstreamId: "api-test",
+              nodeId: "launch-prompt-profiles",
+              workId: "launch-prompt-profiles",
+              branch: "feature/launch-prompt-profiles",
+              cwd: "C:\\streamliner\\launch-prompt-profiles",
+              pawWorkDir: "C:\\streamliner\\launch-prompt-profiles\\.paw\\work\\launch-prompt-profiles",
+              workflowContextPath:
+                "C:\\streamliner\\launch-prompt-profiles\\.paw\\work\\launch-prompt-profiles\\WorkflowContext.md",
+              streamlinerContextPath:
+                "C:\\streamliner\\launch-prompt-profiles\\.paw\\work\\launch-prompt-profiles\\streamliner\\context.md",
+              updatedAt: "2026-05-03T18:00:00.000Z",
+              pathStatus: {
+                cwdExists: true,
+                pawWorkDirExists: true,
+                workflowContextExists: true,
+                streamlinerContextExists: true,
+              },
+              latestClaim: {
+                launchClaimId: "claim-1",
+                status: claimBlocksLaunch ? "pending" : "failed",
+                launchedAt: "2026-05-03T18:00:00.000Z",
+                updatedAt: "2026-05-03T18:00:00.000Z",
+                bindingWindowExpiresAt: "2026-05-03T18:05:00.000Z",
+                reservedRegistryId: "registry-1",
+                boundRegistryId: "registry-1",
+                boundCopilotSessionId: "copilot-1",
+                failureCode: claimBlocksLaunch ? null : "user-cancelled",
+                failureReason: claimBlocksLaunch ? null : "Released.",
+                blocksLaunch: claimBlocksLaunch,
+                retryable: !claimBlocksLaunch,
+              },
+            },
+          });
+        }
+        if (path === "/api/node-launch-records/launch-claims/claim-1/release" && init?.method === "POST") {
+          claimBlocksLaunch = false;
+          return jsonResponse({
+            launchClaim: {
+              launchClaimId: "claim-1",
+              status: "failed",
+              launchedAt: "2026-05-03T18:00:00.000Z",
+              updatedAt: "2026-05-03T18:01:00.000Z",
+              bindingWindowExpiresAt: "2026-05-03T18:05:00.000Z",
+              reservedRegistryId: "registry-1",
+              boundRegistryId: "registry-1",
+              boundCopilotSessionId: "copilot-1",
+              failureCode: "user-cancelled",
+              failureReason: "Released.",
+              blocksLaunch: false,
+              retryable: true,
+            },
+            detachedRegistryIds: ["registry-1"],
+          });
+        }
+        if (path === "/api/paw-launch-prompt-profiles") {
+          return jsonResponse({ profiles: [] });
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      act(() => {
+        findCanvasNode(container, "Launch prompt profiles").click();
+      });
+      await settle();
+
+      const launchButton = findButton(container, "Open PAW launch");
+      expect(launchButton.disabled).toBe(false);
+
+      act(() => {
+        launchButton.click();
+      });
+      await settle();
+
+      expect(container.textContent).toContain("GitHub Issue");
+      const issueLink = findLink(container, "lossyrob/streamliner#33");
+      expect(issueLink.href).toBe("https://github.com/lossyrob/streamliner/issues/33");
+      expect(container.textContent).toContain("already active for this node");
+      expect(findButton(container, "Run PAW init").disabled).toBe(true);
+
+      await act(async () => {
+        findButton(container, "Release stuck launch").click();
+      });
+      await settle(100);
+
+      expect(container.textContent).toContain("Released the launch claim and detached the linked session.");
+      expect(findButton(container, "Run PAW init").disabled).toBe(false);
+      expect(
+        fetchMock.mock.calls.some(([input, init]) =>
+          requestPath(input as RequestInfo | URL) === "/api/node-launch-records/launch-claims/claim-1/release" &&
+          init?.method === "POST"
+        ),
+      ).toBe(true);
+    },
+    15_000,
+  );
+
+  it(
     "surfaces PAW init errors",
     async () => {
       const graph = buildLaunchGraph();

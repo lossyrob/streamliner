@@ -53,7 +53,7 @@ The Wave 3 launch MVP is **PAW-only graph launch**. The contract is the interfac
 | Terminal preference | Default + builder edit | Preferred visible terminal host for the worker launch |
 | Launch nonce | Graph launch caller | Token preserved across preparation, claim creation, and final Copilot prompt binding |
 
-The builder selects a node in the graph and initiates launch from the inspector. Streamliner only enables the action when the selected `WorkstreamDerivedNode` is operationally ready, the active workstream registry entry is backend-readable, and there is no active or already-bound launch claim for the same workstream node. Browser-directory workstreams remain visible in the graph UI, but they are not launchable in this MVP because the backend cannot read their graph file. Failed launch claims remain visible and retryable.
+The builder selects a node in the graph and opens launch context from the inspector when the selected `WorkstreamDerivedNode` is operationally ready and the active workstream registry entry is backend-readable. Browser-directory workstreams remain visible in the graph UI, but they are not launchable in this MVP because the backend cannot read their graph file. Active or already-bound launch claims keep the dialog available for issue and prepared-launch context, but disable new PAW init or terminal launch actions for that node. Failed launch claims remain visible and retryable.
 
 This design specifies **local launches only**. The launch contract keeps an environment dimension so future remote execution can fit the same shape, but `devbox` launch is not defined here. Devbox observation is defined later as an extension of the session-tracking model, not as a launch mode.
 
@@ -278,7 +278,7 @@ The dialog uses the run route. `POST /api/launch-preparations/runs` returns a `r
 
 Internal SDK launch sessions persist under Streamliner's local state rather than the normal Copilot session-state root. The default root is `~/.streamliner/state/copilot-sdk/paw-launch/<context-id>/`, with `STREAMLINER_COPILOT_SDK_STATE_ROOT` available for override. Run progress and API logs surface the SDK `sessionId` and workspace path for debugging, but these internal sessions are not intended to appear in Streamliner's observed Sessions view.
 
-The PAW launch dialog is intentionally text-guided for this MVP. It exposes launch instructions, lightweight reusable text profiles, CLI args, terminal preference, graph source, and the prepared handoff after backend PAW init. Once preparation completes, the prepared kickoff prompt is editable before terminal launch so the builder can inspect or refine the exact initial prompt sent to the visible worker. The primary action is labeled as running PAW init because the SDK session may read repository files, inspect git/GitHub context, execute shell tools, and write the PAW work artifacts before returning the structured handoff. PAW-owned metadata, structured presets, specialists, and dependent WorkflowContext constraints are deferred to issue #43 so Streamliner does not duplicate PAW's configuration rules.
+The PAW launch dialog is intentionally text-guided for this MVP. It exposes launch instructions, lightweight reusable text profiles, CLI args, terminal preference, graph source, a GitHub issue link when the selected node has one, and the prepared handoff after backend PAW init. Once preparation completes, the prepared kickoff prompt is editable before terminal launch so the builder can inspect or refine the exact initial prompt sent to the visible worker. The primary action is labeled as running PAW init because the SDK session may read repository files, inspect git/GitHub context, execute shell tools, and write the PAW work artifacts before returning the structured handoff. PAW-owned metadata, structured presets, specialists, and dependent WorkflowContext constraints are deferred to issue #43 so Streamliner does not duplicate PAW's configuration rules.
 
 Reusable text prompt profiles are exposed as:
 
@@ -887,6 +887,15 @@ for the launch claim's reserved session row, so later claim binding can preserve
 the same display identity in Sessions. Users may also opt into launching the
 terminal immediately after PAW init completes, bypassing the prepared-context
 review step for routine launches.
+
+The inspector launch button remains a dialog-entry affordance even when an
+active launch claim exists. The dialog surfaces that active-claim state and
+disables new PAW init or terminal launch actions so the builder can still check
+the issue and prepared context without creating a duplicate worker. It also
+offers an explicit release action for stuck claims; release marks the claim as
+`failed` with `user-cancelled`, detaches the linked registry row from the graph
+node when present, and makes the node retryable without requiring direct state
+file edits.
 
 **Terminal selection**:
 1. If Windows Terminal (`wt.exe`) is in PATH → `wt new-tab` with `--title`,
