@@ -140,6 +140,10 @@ export function quotePowerShellLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
+export function encodePowerShellCommand(value: string): string {
+  return Buffer.from(value, "utf16le").toString("base64");
+}
+
 export interface CopilotInteractiveCommandOptions {
   /** Copilot CLI flags kept as distinct argv-style values and PowerShell-literal quoted. */
   cliArgs: string[];
@@ -185,7 +189,7 @@ function launchWindowsTerminal(options: TerminalLaunchOptions): TerminalLaunchRe
   args.push("-d", escapeForWindowsTerminal(options.cwd));
 
   if (options.command) {
-    args.push("--appendCommandLine", "-NoExit", "-Command", options.command);
+    args.push("--appendCommandLine", "-NoExit", "-EncodedCommand", encodePowerShellCommand(options.command));
   }
 
   const child = spawn("wt.exe", args, {

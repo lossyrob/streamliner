@@ -3,6 +3,7 @@ import type { ChildProcess } from "node:child_process";
 import {
   buildSpawnEnv,
   buildCopilotInteractiveCommand,
+  encodePowerShellCommand,
   isWindowsTerminalAvailable,
   clearWindowsTerminalCache,
   launchTerminal,
@@ -162,6 +163,7 @@ describe("terminal-launch", () => {
         cwd: "C:\\Users\\test\\workspace",
         command: "npm run dev",
       });
+      const encoded = encodePowerShellCommand("npm run dev");
 
       expect(spawn).toHaveBeenCalledWith(
         "wt.exe",
@@ -171,8 +173,8 @@ describe("terminal-launch", () => {
           "C:\\Users\\test\\workspace",
           "--appendCommandLine",
           "-NoExit",
-          "-Command",
-          "npm run dev",
+          "-EncodedCommand",
+          encoded,
         ],
         expect.objectContaining({ detached: true, stdio: "ignore" })
       );
@@ -198,6 +200,7 @@ describe("terminal-launch", () => {
         tabColor: "#00FF00",
         command: "npm run dev",
       });
+      const encoded = encodePowerShellCommand("npm run dev");
 
       expect(spawn).toHaveBeenCalledWith(
         "wt.exe",
@@ -211,8 +214,8 @@ describe("terminal-launch", () => {
           "C:\\Users\\test\\workspace",
           "--appendCommandLine",
           "-NoExit",
-          "-Command",
-          "npm run dev",
+          "-EncodedCommand",
+          encoded,
         ],
         expect.objectContaining({ detached: true, stdio: "ignore" })
       );
@@ -420,6 +423,16 @@ describe("terminal-launch", () => {
     });
   });
 
+  describe("encodePowerShellCommand", () => {
+    it("encodes commands as UTF-16LE base64 for PowerShell -EncodedCommand", () => {
+      const command = "$prompt = 'hello'; copilot --yolo -i $prompt .";
+      const encoded = encodePowerShellCommand(command);
+
+      expect(Buffer.from(encoded, "base64").toString("utf16le")).toBe(command);
+      expect(encoded).not.toContain(";");
+    });
+  });
+
   describe("spawn options", () => {
     beforeEach(() => {
       vi.mocked(execSync).mockImplementation(() => Buffer.from(""));
@@ -497,5 +510,4 @@ describe("terminal-launch", () => {
     });
   });
 });
-
 

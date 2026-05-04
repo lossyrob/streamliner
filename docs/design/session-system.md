@@ -879,8 +879,9 @@ when available, matching the existing restart-command behavior.
 **Terminal selection**:
 1. If Windows Terminal (`wt.exe`) is in PATH → `wt new-tab` with `--title`,
    `--tabColor` (valid `#RRGGBB` only), `-d <cwd>`, and optionally
-   `--appendCommandLine -NoExit -Command "copilot --resume <id>"` so the
-   builder's Windows Terminal default profile remains the shell.
+   `--appendCommandLine -NoExit -EncodedCommand <base64>` so the builder's
+   Windows Terminal default profile remains the shell while Streamliner avoids
+   `wt` parsing PowerShell command separators such as `;`.
 2. Otherwise → `pwsh.exe` when available, falling back to `powershell.exe`,
    with `-NoExit -Command "Set-Location ...; copilot --resume <id>"`.
 
