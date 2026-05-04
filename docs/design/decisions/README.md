@@ -1,7 +1,7 @@
 ---
 kind: design-doc
 status: current
-last_updated: 2026-04-28
+last_updated: 2026-05-02
 update_semantics: rewrite-in-place
 authoritative_for: "Decision record conventions and catalog"
 scope_tags:
@@ -15,6 +15,8 @@ references_decisions:
   - 4
   - 5
   - 6
+  - 7
+  - 8
 ---
 
 # Decision Records
@@ -63,7 +65,9 @@ What follows from this choice.
 |---|---|---|---|
 | 001 | [Observation-based session tracking](001-observation-based-session-tracking.md) | accepted | 2026-04-14 |
 | 002 | [File-based context delivery](002-file-based-context-delivery.md) | accepted | 2026-04-14 |
-| 003 | [PAW control state as the workflow progression source](003-paw-control-state-integration.md) | accepted | 2026-04-20 |
+| 003 | [PAW control state as the workflow progression source](003-paw-control-state-integration.md) | superseded | 2026-04-20 |
 | 004 | [Session registry as the primary session surface](004-session-registry-primary-surface.md) | accepted | 2026-04-21 |
 | 005 | [Session registry storage and identity model](005-session-registry-storage-and-identity.md) | accepted | 2026-04-21 |
 | 006 | [Local Streamliner API service](006-local-streamliner-api-service.md) | accepted | 2026-04-28 |
+| 007 | [Tracked workstream registry](007-tracked-workstream-registry.md) | accepted | 2026-05-01 |
+| 008 | [PAW artifacts for workflow status](008-paw-artifacts-for-workflow-status.md) | accepted | 2026-05-02 |

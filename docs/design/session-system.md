@@ -22,10 +22,10 @@ code_paths:
 references_decisions:
   - 1
   - 2
-  - 3
   - 4
   - 5
   - 6
+  - 8
 ---
 
 # Session System
@@ -34,7 +34,7 @@ The session system is how Streamliner launches, monitors, and surfaces AI coding
 
 ## Launch Contract
 
-The launch contract is the interface between the graph UI (where the builder initiates work), the backend (which prepares the launch spec), and the terminal integration (which starts the worker session through Copilot CLI interactive mode). Launch preparation and worker launch are distinct: Streamliner may use Copilot SDK or other backend helpers to prepare context and prompts, but the visible worker session is always a Copilot CLI session.
+The launch contract is the interface between the graph UI (where the builder initiates work), the backend (which prepares the launch spec), and the terminal integration (which starts the worker session through Copilot CLI interactive mode). The MVP graph launch path starts **PAW-backed** worker sessions only. Launch preparation and worker launch are distinct: Streamliner uses Copilot SDK to prepare context, run PAW initialization, and compile prompts, but the visible worker session is always a Copilot CLI session.
 
 ### Launch Inputs
 
@@ -46,28 +46,28 @@ The launch contract is the interface between the graph UI (where the builder ini
 | Branch strategy | Builder choice | New branch, existing branch, or worktree |
 | Execution mode | Builder choice or default | `current-checkout` or `worktree` |
 | Environment | Builder choice or default | `local` in this design; remote environments are deferred |
-| Launch profile | Layered config + builder choice | Prompt/workflow profile, such as general Copilot work, PAW full workflow, or PAW lite |
-| Prompt overrides | Builder edit | Final launch-time edits applied after profile/context composition |
+| PAW init options | Launch configuration dialog | PAW workflow configuration shown with defaults and selectable overrides |
+| Custom message | Builder edit | Optional builder-authored text inserted into a clearly labeled section of the initial prompt |
 | CLI arguments | Layered config + builder override | Default and launch-specific Copilot CLI flags, such as `--yolo` or model flags |
 
-The builder selects a node in the graph and initiates a launch. Streamliner resolves the node's workstream, target repository, branch strategy, launch profile, prompt text, and CLI arguments. The builder may override the branch strategy or accept the default (new feature branch from the repo's main branch), and may edit the final prompt before the terminal session starts.
+The builder selects a node in the graph and presses launch. Streamliner opens a launch configuration dialog that resolves the node's workstream, target repository, branch strategy, PAW init options, custom message, and CLI arguments. The builder may override the branch strategy or accept the default (new feature branch from the repo's main branch), choose PAW configuration values from defaulted inputs, and add an optional custom message before launch preparation starts.
 
 This design specifies **local launches only**. The launch contract keeps an environment dimension so future remote execution can fit the same shape, but `devbox` launch is not defined here. Devbox observation is defined later as an extension of the session-tracking model, not as a launch mode.
 
 ### Launch Sequence
 
-The launch is a two-phase process: a **launch preparation phase** that prepares the launch spec, followed by a **Copilot CLI interactive launch** that starts the visible worker session. The preparation phase is not the worker session itself; it exists to assemble the context, prompt, CLI arguments, working directory, and launch-claim metadata that the terminal integration needs.
+The launch is a two-phase process: a **launch preparation phase** that prepares the PAW launch spec, followed by a **Copilot CLI interactive launch** that starts the visible worker session. The preparation phase is not the worker session itself; it exists to assemble the context, initialize PAW, compile the prompt, resolve CLI arguments, select the working directory, and produce launch-claim metadata for terminal integration.
 
 #### Phase 1 — Launch Preparation
 
-Streamliner's backend prepares a launch spec. Context assembly uses Copilot SDK to synthesize the worker-facing `context.md` from deterministic backend-collected sources; the visible worker session remains a separate Copilot CLI interactive session. The launch contract is the structured launch spec, not a mandatory PAW workflow. Preparation:
+Streamliner's backend prepares a PAW launch spec. Context assembly uses Copilot SDK to synthesize the worker-facing `context.md` from deterministic backend-collected sources; a separate SDK preparation step runs `paw-init` with Streamliner-specific instructions and the builder's selected PAW configuration. The visible worker session remains a separate Copilot CLI interactive session. Preparation:
 
-1. **Resolves launch profile layers** — combines instance, project, workstream, and node-launch defaults for instruction text, workflow expectations, context references, terminal preferences, and CLI arguments
+1. **Resolves launch configuration** — combines graph-node defaults, workstream/project defaults, local builder defaults, selected PAW init options, optional custom message, terminal preferences, and CLI arguments
 2. **Assembles context** — collects graph, brief, design-doc, and tracker/spec source material, then asks Copilot SDK to build a single worker-facing context file for the selected node with Layer 0–3 sections
-3. **Prepares the execution location** — resolves the checkout or worktree path and branch according to the selected execution mode. A profile may run profile-specific setup, such as PAW initialization, but that setup is not required by the baseline launch contract.
-4. **Places the context file** — writes the assembled context package into a launch context directory that the kickoff prompt can reference
+3. **Runs PAW initialization** — invokes `paw-init` through Copilot SDK with the selected PAW configuration and additional Streamliner instructions, producing the work identifier, branch/worktree/cwd, and PAW work directory. The SDK prep agent initializes PAW and returns structured launch data; it does not start the visible worker session.
+4. **Places the context file** — writes or copies the generated `context.md` to `streamliner/context.md` under the PAW work directory
 5. **Generates launch claim data** — creates the launch nonce and expected binding metadata that Streamliner will record before starting Copilot CLI
-6. **Compiles kickoff prompt** — turns the launch profile, work item identity, prepared context locations, CLI arguments, and launch nonce into the initial instruction for the worker session
+6. **Compiles kickoff prompt** — renders the initial prompt from a template using the work item identity, PAW work directory, context path, CLI arguments, launch nonce, and optional custom message
 7. **Returns structured output** — returns the launch spec that the terminal launcher needs
 
 Launch preparation output:
@@ -79,7 +79,8 @@ Launch preparation output:
 | `branch` | string | Branch name created or checked out |
 | `contextPackagePath` | string | Directory containing the generated context file |
 | `contextFilePath` | string | File path to the worker-facing `context.md` |
-| `launchProfileId` | string | Selected launch profile |
+| `pawWorkDir` | string | Full path to the PAW work directory created by `paw-init` |
+| `pawInitOptions` | object | Selected PAW launch configuration values |
 | `cliArgs` | string[] | Copilot CLI arguments after layered defaults and builder overrides |
 | `environment` | string | `local` in this design |
 | `sessionStateRoot` | string | Path to Copilot session state directory in the local environment |
@@ -91,34 +92,36 @@ Launch preparation output:
 After launch preparation completes, Streamliner:
 
 1. **Records launch claim** — writes a launch claim to Streamliner's runtime state binding the node to the expected session location before the worker session starts
-2. **Launches Copilot CLI** — opens a visible terminal in the returned `cwd` and starts Copilot CLI interactive mode with the selected/default CLI arguments
+2. **Launches Copilot CLI** — reuses the same lower-level terminal spawning path used by session relaunch, opening a visible terminal in the returned `cwd` and starting Copilot CLI interactive mode with the selected/default CLI arguments
 3. **Passes the kickoff prompt** — launches the worker session with the initial prompt already populated, conceptually equivalent to `copilot <cli-args> -i "<kickoff prompt>" .`
 4. **Binds on discovery** — when the session watcher detects the new Copilot session (via its session state directory appearing), Streamliner binds it to the launch claim
 
-### Launch Profiles
+### PAW Launch Configuration
 
-A launch profile is reusable launch configuration, not a separate workflow engine. Profiles can contribute:
+The MVP launch dialog configures a PAW workflow launch, not a general profile system. The dialog appears after the builder presses launch on a workstream graph node and before SDK preparation begins. It can contribute:
 
-- Instruction text and workflow expectations
-- Context package references and context-reading guidance
+- PAW init options and workflow expectations
+- Context file references and context-reading guidance
 - Default Copilot CLI arguments
 - Branch/worktree and terminal preferences
-- Optional profile-specific setup, such as PAW initialization
+- An optional custom message for the worker
 
-Profile input is layered from broad to specific: Streamliner instance defaults, project defaults, workstream defaults, node defaults, and launch-time builder edits. Later layers override or append to earlier layers according to the profile field. The final composed prompt is shown to the builder before launch so it can be edited instead of forcing the builder to keep a separate notepad of reusable prompts.
+Configuration input is layered from broad to specific: Streamliner instance defaults, project defaults, workstream defaults, node defaults, and launch-time builder edits. Later layers override or append to earlier layers according to the field. The dialog shows defaults and lets the builder select PAW configuration values without editing raw prompt text.
 
-PAW is represented as one or more launch profiles. A PAW profile may point the worker at PAW expectations and the generated context file, but Streamliner launch is not blocked on PAW workflow correctness. A non-PAW profile can still launch a graph node, bind the session, and track it through the registry.
+The resulting initial prompt is generated from a template. The builder's optional custom message is inserted only into a clearly designated section so the worker can distinguish direct builder guidance from Streamliner-generated launch instructions. Non-PAW graph launch modes are deferred beyond the MVP.
+
+The SDK `paw-init` instruction template is part of this contract. It must tell the prep agent which node and workstream are being launched, which PAW configuration values were selected, where the generated Streamliner context can be found, and that its job is limited to PAW initialization plus structured launch-spec output. Starting Copilot CLI belongs to the terminal launch phase, not to the SDK preparation session.
 
 ### Kickoff Prompt
 
 The kickoff prompt is a first-class launch artifact, not ad hoc terminal text. It tells the worker session what kind of run this is and how to begin. At minimum it must encode:
 
-- The selected launch profile and workflow expectations
+- The selected PAW configuration and workflow expectations
 - The work item identity (workstream, node, repo, branch/worktree)
 - Where the prepared context artifacts live
 - The launch nonce on a dedicated line so the watcher can confirm the intended binding
 - Any CLI-argument assumptions, review-policy expectations, or launch-time operating constraints
-- Any profile-specific startup guidance, such as PAW configuration text for a PAW profile
+- Any PAW-specific startup guidance and the custom-message section when present
 
 Opening a terminal in the correct directory is not a launch. A launch is only complete once Streamliner has prepared the kickoff prompt and started Copilot CLI interactive mode with that prompt.
 
@@ -129,7 +132,7 @@ Opening a terminal in the correct directory is not a launch. A launch is only co
 | Node not launchable (wrong status, unmet deps) | Reject with explanation |
 | Target repo not registered or inaccessible | Reject with explanation |
 | Branch conflict (already exists, dirty state) | Prompt builder for resolution |
-| Launch preparation failure (profile resolution, context assembly, branch/worktree setup, prompt compilation) | Report error, clean up partial state |
+| Launch preparation failure (PAW config resolution, context assembly, `paw-init`, branch/worktree setup, prompt compilation) | Report error, clean up partial state |
 | Copilot CLI launch failure | Report error, clean up launch claim |
 
 ## Context Assembly
@@ -174,7 +177,7 @@ Synthesized from the graph neighborhood and tracker/spec references:
 
 ### Delivery Mechanism
 
-Context is delivered as one `context.md` file. For a PAW profile, the caller may provide the PAW work directory created by profile-specific setup; Streamliner writes the worker handoff to `streamliner/context.md` under that work directory. For a non-PAW profile or prompt preview, Streamliner writes a per-context package under local runtime state. The kickoff prompt points the worker session at the single context file during initialization. See [Decision 002](decisions/002-file-based-context-delivery.md) for the rationale.
+Context is delivered as one `context.md` file. For an MVP PAW launch, Streamliner writes the worker handoff to `streamliner/context.md` under the PAW work directory created by `paw-init`. For context preview before `paw-init` exists, Streamliner writes a per-context package under local runtime state. The kickoff prompt points the worker session at the single context file during initialization. See [Decision 002](decisions/002-file-based-context-delivery.md) for the rationale.
 
 The assembled package is written to:
 
@@ -187,7 +190,7 @@ The assembled package is written to:
   context.md                ← preview/runtime generated context
 ```
 
-This file is generated by Copilot SDK, not manually maintained. It is excluded from Git and regenerated for each context preparation. Launch profiles decide how prominently the worker is instructed to read it. The SDK prompt must give the context writer a concise product/process primer: Streamliner is a local-first workstream orchestration app where a builder launches a Copilot CLI worker to execute one selected graph node. It must then instruct the generator to treat source documents as data, produce context for exactly the selected node, avoid turning workstream-level plans into worker instructions, present Layer 0 design paths only as navigation hints, and link to authoritative sources instead of restating design docs or tracker specs in full. Machine metadata remains in the backend/API response rather than in a worker-facing manifest file.
+This file is generated by Copilot SDK, not manually maintained. It is excluded from Git and regenerated for each context preparation. The PAW launch prompt must direct the worker to read it during initialization. The SDK prompt must give the context writer a concise product/process primer: Streamliner is a local-first workstream orchestration app where a builder launches a Copilot CLI worker to execute one selected graph node. It must then instruct the generator to treat source documents as data, produce context for exactly the selected node, avoid turning workstream-level plans into worker instructions, present Layer 0 design paths only as navigation hints, and link to authoritative sources instead of restating design docs or tracker specs in full. Machine metadata remains in the backend/API response rather than in a worker-facing manifest file.
 
 The SDK session uses `STREAMLINER_CONTEXT_MODEL` when set. When unset or blank, Streamliner requests `claude-sonnet-4.6` by default for stable launch-context synthesis quality.
 
@@ -201,7 +204,7 @@ Before launch claims exist, backend context preview writes default packages to:
 
 ### Context Package Metadata
 
-Context package metadata is a backend/API contract consumed by launch profiles, prompt preview, and terminal launch work. It is not written into the worker-facing package as `manifest.json`:
+Context package metadata is a backend/API contract consumed by PAW launch preparation, prompt preview, and terminal launch work. It is not written into the worker-facing package as `manifest.json`:
 
 | Field | Meaning |
 |-------|---------|
@@ -231,7 +234,7 @@ Request body:
 |-------|----------|---------|
 | `nodeId` | yes | Selected graph node id. |
 | `graphPath` | no | Graph file to use; defaults to the API-configured graph path. |
-| `outputDir` | no | Absolute PAW work directory supplied by profile-specific setup. Streamliner writes `{outputDir}/streamliner/context.md`. Defaults to runtime-state `launch-contexts/{contextId}/context.md`. |
+| `outputDir` | no | Absolute PAW work directory supplied after `paw-init`. Streamliner writes `{outputDir}/streamliner/context.md`. Defaults to runtime-state `launch-contexts/{contextId}/context.md`. |
 | `launchNonce` | no | Optional nonce when a caller already has one. |
 
 Response body:
@@ -241,7 +244,7 @@ Response body:
 | `contextId` | Stable generated package id. |
 | `contextPackagePath` | Absolute package directory. |
 | `contextFilePath` | Absolute path to the generated worker-facing `context.md`. |
-| `metadata` | Structured system-level context metadata for launch profiles, prompt preview, and terminal launch work. |
+| `metadata` | Structured system-level context metadata for PAW launch preparation, prompt preview, and terminal launch work. |
 | `unavailableInputs` | Convenience JSON copy of `metadata.unavailableInputs`; consumers should use one source to avoid duplicate warnings. |
 
 Missing or invalid graph/node request inputs are client errors. Missing optional context sources are recorded in `unavailableInputs` while still producing a package. Path fields in the JSON response use forward slashes for stable string comparison and prompt rendering, even on Windows. They remain local absolute paths unless marked as relative paths.
@@ -274,7 +277,7 @@ Beyond the core lifecycle state, the session watcher derives additional fields f
 | `phase` | Latest event types in `events.jsonl` | Human-readable: "reasoning", "tool-calling", "idle" |
 | `endReason` | Hook signal or inactivity | Why the session ended: "hook-signal", "idle-timeout", "user_exit" |
 | `turnCount` | Count of `user.message` events | How many user turns have occurred |
-| `pawWorkflow` | PAW work directory on disk, when present | Work ID, work title, `Workflow Identity` (`paw` or `paw-lite`), current activity, and gate/procedure state read from `## Control State` in `WorkflowContext.md` / `ReviewContext.md` when present; legacy inference from artifact presence otherwise. See [Decision 003](decisions/003-paw-control-state-integration.md). |
+| `pawWorkflow` | PAW work directory on disk, when present | Artifact-derived workflow summary: work id/title when discoverable, likely workflow kind, latest/coarsest stage indicated by PAW artifacts, artifact freshness, and any ambiguity diagnostics. See [Decision 008](decisions/008-paw-artifacts-for-workflow-status.md). |
 
 ### Key Distinction: Idle vs. Ended
 
@@ -344,6 +347,8 @@ Each registry entry is a persisted `SessionRegistryRecord`. The stored lifecycle
 `lifecycleStatus` is intentionally coarse and durable. The fine-grained, observation-derived liveness of a currently-live Copilot session (`launching`, `discovered`, `active`, `idle`, `ended`) is an orthogonal derived view layered on top of the registry row at render time, not a field stored on the row. A single registry entry can be `lifecycleStatus: active` and observation-`idle` simultaneously — those are independent axes and the overlay composes them.
 
 Only observed rows may carry `origin.importedFromCopilotSessionId`; only launched rows may carry `origin.launchClaimId`; manual rows carry neither. Persisted schema and API types should encode that constraint directly rather than relying on convention.
+
+`graphBinding` is the shared linkage contract between My Sessions and the graph. The registry stores stable IDs only; display labels, grouping names, and navigation targets are derived by joining `{ workstreamId, nodeId }` against the current workstream catalog and graph. When the workstream or node cannot be resolved, the Sessions view keeps the row visible with degraded "unknown workstream/node" labeling rather than dropping the linkage.
 
 Registry entries are created in three ways:
 
@@ -521,16 +526,16 @@ The watcher polls `events.jsonl` modification times at a configurable interval (
 2. Extract metadata: repository, branch, turn count
 3. Detect turn boundaries: look for `assistant.turn_end` events or `agentStop` hook events without a subsequent `assistant.turn_start`
 4. Detect pending input: maintain a **per-session incremental index of open tool requests**. As each `assistant.message.toolRequests` entry is observed, record its tool-call ID in the session's open-requests set; as each `tool.execution_complete` is observed, remove the matching ID. `pendingInputRequest` is true iff the open-requests set contains an `ask_user` call. The index persists across watcher restarts (rehydrated from runtime state) so long-running sessions do not lose pending-input detection when an unresolved request falls outside any bounded tail window.
-5. Detect PAW workflow state when applicable: for sessions with a PAW launch profile or reachable `.paw/work/*/` directory, parse `WorkflowContext.md` (and `ReviewContext.md` for PAW Review sessions). When a `## Control State` section is present, use its `Workflow Identity`, required-item statuses, gate items, procedure items, and `Reconciliation` marker as the PAW workflow-progression view. When absent, fall back to legacy inference from artifact presence. See [Decision 003](decisions/003-paw-control-state-integration.md).
+5. Detect PAW artifact status when applicable: for sessions launched through Streamliner's PAW flow or with a reachable `.paw/work/*/` directory, inspect the durable PAW artifact set and derive a coarse workflow-status summary. `WorkflowContext.md` and `ReviewContext.md` may contribute artifact identity or headings, but `## Control State` is not authoritative. See [Decision 008](decisions/008-paw-artifacts-for-workflow-status.md).
 
 ### Two Orthogonal State Sources
 
-Session tracking combines a required liveness source with optional workflow-progression sources that should not be collapsed:
+Session tracking combines a required liveness source with optional workflow-artifact sources that should not be collapsed:
 
 - **Copilot session state** (`~/.copilot/session-state/{id}/`) — liveness, turn boundaries, pending input requests, end reasons. Authoritative for *is the session alive and does it need attention?*
-- **PAW control state** (`.paw/work/<work-id>/*Context.md`) — for PAW-backed sessions only: workflow identity, required activities, gate items, procedure items, reconciliation markers. Authoritative for *where is this PAW workflow and can PAW decisions be trusted?*
+- **PAW artifact state** (`.paw/work/<work-id>/...`) — for PAW-backed sessions only: durable workflow artifacts such as specs, plans, research, implementation phase artifacts, review artifacts, and PR/finalization artifacts. Authoritative for *what PAW artifacts exist and what coarse workflow status they imply?*
 
-Streamliner overlays Copilot session state onto every bound graph node and overlays PAW state when a session has PAW artifacts or a PAW launch profile. Neither subsumes the other: a session can be idle while the PAW workflow is mid-activity, and PAW state can advance across sessions that this watcher never observed. Baseline launch and tracking do not require PAW state.
+Streamliner overlays Copilot session state onto every bound graph node and overlays PAW artifact status when a session has PAW artifacts or was launched through Streamliner's PAW flow. Neither subsumes the other: a session can be idle while PAW artifacts indicate mid-workflow progress, and PAW artifacts can advance across sessions that this watcher never observed. Launch and tracking require PAW initialization for the MVP graph-launch path, but they do not require `## Control State` parsing to succeed.
 
 ### Hook Signals
 
@@ -638,14 +643,14 @@ Because session tracking combines several independent observation sources, the w
 Each session carries:
 
 - **Last successful Copilot parse** — timestamp and byte offset of the last `events.jsonl` read that succeeded, plus the number of open tool requests in the incremental index.
-- **Last successful PAW parse** — when applicable, timestamp of the last `WorkflowContext.md` / `ReviewContext.md` read, along with the derivation path used (`control-state`, `inferred`, or `unparsable`; see [Decision 003](decisions/003-paw-control-state-integration.md)).
+- **Last successful PAW artifact scan** — when applicable, timestamp of the last PAW work directory scan, the artifact patterns recognized, and any ambiguity or unavailable-path diagnostics. See [Decision 008](decisions/008-paw-artifacts-for-workflow-status.md).
 - **Hook signal counters** — count of `sessionStart`, `agentStop`, `sessionEnd` signals received vs. equivalent transitions inferred from polling, so "hooks silently stopped firing" is visible.
 
-In addition, the watcher emits structured diagnostic events (not free-form logs) for every degradation mode it recognizes: `hook-miss`, `tail-truncation`, `nonce-absent-after-window`, `legacy-inference-used`, `unknown-control-state-token`, `copilot-compatibility-probe-failed`, `paw-contract-version-out-of-range`. PAW-specific diagnostics are emitted only for sessions with PAW artifacts or a PAW launch profile. These events are retained alongside session history and surfaced in the diagnostic view. The UI shows a compact degradation badge on any session whose diagnostics are non-empty so the builder never has to guess whether the overlay can be trusted.
+In addition, the watcher emits structured diagnostic events (not free-form logs) for every degradation mode it recognizes: `hook-miss`, `tail-truncation`, `nonce-absent-after-window`, `copilot-compatibility-probe-failed`, `paw-workdir-unavailable`, `paw-artifact-ambiguous`, `paw-artifact-layout-unknown`. PAW-specific diagnostics are emitted only for sessions with PAW artifacts or Streamliner PAW launch metadata. These events are retained alongside session history and surfaced in the diagnostic view. The UI shows a compact degradation badge on any session whose diagnostics are non-empty so the builder never has to guess whether the overlay can be trusted.
 
 ## Runtime Overlay
 
-The runtime overlay is how Streamliner presents live session and tracker state in the UI without modifying the committed graph. The overlay is a **projection of the session registry** ([Decision 004](decisions/004-session-registry-primary-surface.md)) filtered to entries whose `graphBinding` resolves to a visible node, joined with that node's committed status, observed liveness, tracker state, and optional workflow details such as PAW control state. Sessions without `graphBinding` remain visible in the registry UI but do not render on the graph.
+The runtime overlay is how Streamliner presents live session and tracker state in the UI without modifying the committed graph. The overlay is a **projection of the session registry** ([Decision 004](decisions/004-session-registry-primary-surface.md)) filtered to entries whose `graphBinding` resolves to a visible node, joined with that node's committed status, observed liveness, tracker state, and PAW artifact status when artifacts are available. Sessions without `graphBinding` remain visible in the registry UI but do not render on the graph.
 
 ### Overlay Model
 
@@ -668,14 +673,17 @@ Displayed state = committed graph status
 | `in-progress` | any | Session status takes precedence |
 | `completed` | any | Completed |
 
-### Control-State Trust Rendering
+Graph nodes use the same compact status pulse/pill language as My Sessions for bound runtime state. When multiple non-archived sessions bind to one node, the graph shows the highest-attention state first (`needs input` before `idle`, `active`, `launching`, then ended/history) and includes a count so the builder can open the linked session list for details.
 
-For PAW-backed sessions, the `pawWorkflow` field carries a derivation-path annotation (see [Decision 003](decisions/003-paw-control-state-integration.md)) and, when control state is present, a `Reconciliation` marker. Both drive UI trust for PAW-specific affordances:
+### PAW Artifact Status Rendering
 
-- **`control-state` + `Reconciliation: current`** — full confidence. All affordances rendered, including "ready to launch next activity."
-- **`control-state` + `Reconciliation: stale | external_unverified | not_run`** — overlay visibly downgrades confidence (muted colors, "reconciliation stale" badge). "Ready to launch next activity" affordances are suppressed until reconciliation is refreshed. The builder may still inspect state but cannot trigger mutation-affecting actions from the overlay.
-- **`inferred`** — legacy artifact-presence fallback. Overlay renders with a "legacy inference" badge. Mutation-affecting affordances are suppressed.
-- **`unparsable`** — control state present but rejected by the parser (unknown tokens, out-of-range contract version). Overlay shows an error badge and the underlying diagnostic. No activity-status rendering until the parser is updated or the builder acknowledges the condition.
+For PAW-backed sessions, the `pawWorkflow` field carries an artifact-derived status summary (see [Decision 008](decisions/008-paw-artifacts-for-workflow-status.md)). It is intentionally coarse: it reports the artifact evidence Streamliner can see, not a guaranteed workflow automaton state.
+
+- **Recognized artifact set** — overlay shows the coarse status implied by known PAW artifacts and can link to the relevant artifact paths.
+- **Ambiguous artifact set** — overlay shows a degraded/ambiguous badge and the artifact evidence rather than guessing a precise activity.
+- **Unavailable artifact path** — overlay shows liveness/session status from Copilot state and a PAW artifact diagnostic, but does not invent workflow progress.
+
+Mutation-affecting affordances must not depend solely on artifact-derived status until the workstream explicitly defines the artifact patterns and confidence thresholds for that affordance.
 
 ### Artifact Promotion
 
@@ -707,18 +715,19 @@ Presence does not change the session's tracking state. The session watcher conti
 
 ### Session List in UI
 
-Streamliner surfaces a session panel or overlay showing:
+Streamliner surfaces My Sessions as the primary list of tracked sessions. Rows launched from a workstream declare their `graphBinding`, so the list can group or filter by workstream and link back to the workstream graph or selected node. Manual or unbound sessions remain visible in a default/unbound grouping.
 
 | Column | Source |
 |--------|--------|
+| Workstream | Registry `graphBinding.workstreamId` joined to workstream catalog; fallback "Unbound" or "Unknown workstream" |
 | Node | Launch claim binding → graph node title |
-| Status | Observed lifecycle state |
+| Status | Observed lifecycle state using the same pulse/pill component rendered on graph nodes |
 | Phase | Derived from recent events |
 | Needs Input | `pendingInputRequest` present |
 | Duration | `now - createdAt` from `workspace.yaml` |
 | Last Activity | `events.jsonl` mtime |
 
-Clicking a session in the list focuses its terminal (when the terminal integration supports it) or shows the session's details.
+Clicking a session in the list focuses its terminal (when the terminal integration supports it) or shows the session's details. Workstream and node affordances navigate back to the workstream graph with the node selected when a binding exists.
 
 ## Session Relaunch
 
@@ -800,15 +809,16 @@ A session is eligible for relaunch when:
 ### Wave 3 Separation
 
 Relaunch (`POST /api/sessions/:id/relaunch`) operates on an **existing**
-registry row. The future launch-from-graph flow (Wave 3) will use a separate
-endpoint (e.g., `POST /api/sessions/launch`) that creates a new registry row
-and then launches, sharing the same terminal-launch infrastructure.
+registry row. The launch-from-graph flow (Wave 3) uses a separate endpoint
+(e.g., `POST /api/sessions/launch`) that creates a new registry row after PAW
+launch preparation and then launches, sharing the same terminal-launch
+infrastructure.
 
 ## Scope Boundaries
 
 ### In This Design
 
-- Launch from the graph with launch preparation, profile-based prompt compilation, context package references, configurable Copilot CLI arguments, and Copilot CLI interactive worker-session launch
+- MVP launch from the graph for PAW-backed Copilot CLI worker sessions, including a launch configuration dialog, SDK context assembly, SDK `paw-init`, prompt-template compilation, configurable Copilot CLI arguments, launch-claim binding, and terminal launch
 - Observation-based session tracking via Copilot state files
 - Plugin hook signals for low-latency status hints
 - Registered-devbox observation vocabulary for trusted hook forwarding and remote session-state access
@@ -819,7 +829,7 @@ and then launches, sharing the same terminal-launch infrastructure.
 ### Not In This Design
 
 - Using Copilot SDK as the worker-session runtime instead of Copilot CLI interactive mode
-- Requiring PAW workflow artifacts for baseline launch, registry binding, or graph visibility
+- Non-PAW graph launch modes in the MVP
 - Multi-machine registry sync, devbox launch, or remote control actions beyond observation
 - Automatic crash recovery or relaunch implementation beyond the explicit `POST /api/sessions/:id/relaunch` action (this doc defines the registry contract relaunch consumes and the relaunch API contract; automatic recovery is not in scope)
 - Session-to-session communication
@@ -830,7 +840,7 @@ and then launches, sharing the same terminal-launch infrastructure.
 ## Open Questions
 
 - **Terminal multiplexer integration**: Should Streamliner manage terminal tabs directly, or delegate to tmux/screen/IDE terminal APIs? (See terminal note for tmux-based approach.)
-- **Launch profile persistence**: Which profile fields belong in committed project/workstream config, and which belong in local builder defaults?
+- **PAW launch configuration persistence**: Which PAW init/configuration fields belong in committed project/workstream config, and which belong in local builder defaults?
 - **Multiple sessions per node**: Can a node have multiple concurrent sessions (e.g., after a crash and relaunch)? If so, how are they reconciled?
 - **Context staleness**: If a session runs long enough that the workstream state changes (brief updated, graph refined), should the session be notified or continue with its original context?
 - **Devbox bridge lifecycle**: Should the production bridge remain a user-started helper, be launched by Streamliner through the configured access channel, or be installed as a user login task/service after an explicit ADR?

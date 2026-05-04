@@ -1,10 +1,10 @@
 ---
 kind: decision
 number: 3
-status: accepted
+status: superseded
 date: 2026-04-20
 update_semantics: append-only
-superseded_by: null
+superseded_by: 8
 supersedes: null
 ---
 
@@ -61,3 +61,7 @@ Streamliner never writes to `## Control State`. PAW skills own that contract; St
 - **Contract versioning handshake**: How do Streamliner and PAW coordinate contract-version bumps? Does `## Control State` carry an explicit revision marker, or does Streamliner infer compatibility from token recognition? Decide before the first post-launch PAW contract change.
 - **Partial-parse policy**: When a control-state section parses but a single item is malformed, should the whole overlay degrade to `unparsable`, or should the recognized items render while flagging the malformed item? Default is all-or-nothing degradation; revisit if that proves too brittle.
 - **Reconciliation-driven auto-actions**: When reconciliation is not `current`, should Streamliner prompt the builder to run a PAW reconciliation, or only surface that it's needed passively? Default is passive surfacing.
+
+## Superseded
+
+Superseded on 2026-05-02 by [Decision 008](008-paw-artifacts-for-workflow-status.md). Streamliner now derives PAW workflow status from PAW artifacts and uses Copilot session state for liveness/attention, rather than treating `## Control State` as authoritative.
