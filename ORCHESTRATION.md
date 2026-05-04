@@ -274,6 +274,28 @@ This keeps reconciliation from becoming invisible automation. Streamliner should
 not merely keep the workstream plan synchronized with reality; it should help
 the builder learn why reality diverged from the plan.
 
+### Reconciliation notes and promotion
+
+When a wave, gate, hot-work burst, or completed workstream teaches something
+about the work geometry, reconciliation should be able to emit a compact
+reconciliation note. This is not a generic retrospective. It is a lower-authority
+learning artifact about boundaries, contracts, context gaps, gate timing,
+attention allocation, and downstream impact.
+
+A reconciliation note can include:
+
+- what changed;
+- which boundaries held, leaked, or needed expansion;
+- which contracts or exports were missing, underdefined, or validated;
+- what context was stale, missing, or over-prescriptive;
+- what future shaping should preserve or change;
+- promotion candidates.
+
+Promotion keeps authority explicit. A lesson may remain a notebook lesson, become
+a workstream-local brief decision, turn into node-spec guidance, become a
+checkpoint contract, or be promoted into the design layer or a decision record.
+Nothing becomes authoritative merely because an agent wrote it down.
+
 ## Authority boundaries
 
 Reconciliation is allowed to maintain artifact truth. It is not allowed to

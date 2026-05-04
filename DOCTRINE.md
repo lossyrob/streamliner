@@ -13,7 +13,7 @@ worked and what did not.
 This document describes the operating model: the context system that solves the
 blank-slate problem, the roles that execute work, how information flows through
 artifacts, how the developer exercises presence, and how the operating rhythm
-creates feedback loops on work design quality.
+creates feedback loops on work geometry quality.
 
 Streamliner uses three durable context surfaces:
 
@@ -87,6 +87,10 @@ and design mismatches.
 **Design principle:** The developer should be able to step away for hours or
 days, then return to a clear picture of what changed, what is healthy, and what
 requires judgment.
+
+Autonomy by default does not mean fire-and-forget. It means designed distance:
+the developer has already encoded enough intent, boundaries, contracts, gates,
+and escalation semantics into the work that the system knows when not to ask.
 
 ### Orchestrator
 
@@ -490,6 +494,28 @@ Structured workstream data: nodes, edges, durable statuses, attention levels, ch
 - session heartbeats and launch metadata
 - tracker caches and PR snapshot overlays
 - memory of what was "probably intended"
+
+### Context accumulation and authority
+
+Streamliner should accumulate context only where it improves future work
+shaping, execution boundaries, or review quality. It should not treat memory as
+authority.
+
+The rule is:
+
+> Capture lessons cheaply. Promote them deliberately. Keep authority explicit.
+
+Runtime facts stay local and uncommitted. Workstream artifacts describe durable
+execution state for one body of work. Design docs and decision records describe
+intended system design. Future notebook entries, reconciliation notes, or
+shaping lessons are lower-authority learning surfaces: useful, inspectable, and
+promotable, but not binding by default.
+
+A lesson from a wave may start as a reconciliation note. If it affects future
+workstream shaping, it may become a notebook pattern. If it affects the current
+workstream, it may become a brief decision or node-spec guideline. If it changes
+intended system design, it must be promoted into the design layer. Nothing
+becomes authoritative merely because an agent wrote it down.
 
 ---
 

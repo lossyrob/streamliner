@@ -77,6 +77,23 @@ UI-launched worker sessions, and be reconciled by an SDK-backed invocation. The
 artifact set remains the durable truth; runtime state and pending orchestration
 facts feed reconciliation back into the brief and graph.
 
+### Work geometry
+
+**Work geometry** is the explicit structure that lets many cold-starting agents
+execute safely in parallel: workstream boundaries, node dependencies, exported
+checkpoints, design references, gate criteria, and attention levels.
+
+The geometry metaphor maps to existing product concepts:
+
+- workstream = bounded region of ownership
+- graph = structural map
+- node = executable unit
+- checkpoint = public milestone that may expose downstream-consumable exports
+- gate = human judgment surface
+- design docs = intended-system reference plane
+- context package = coordinate system for a cold-starting worker
+- reconciliation = map-territory correction after reality changes
+
 ### The brief
 
 The workstream brief is a single markdown file with defined sections and update semantics:
@@ -169,6 +186,7 @@ When workstream boundaries are wrong, the developer should see it:
 - too many cross-workstream blockers signal hidden dependencies
 - sessions that don't fit the structure signal unclear boundaries
 - outputs that can't be consumed downstream signal implicit contracts
+- branch-local exports reveal integration risk
 - `decision-needed` escalations signal design gaps
 
 Each wave teaches the developer what makes a good workstream boundary. The

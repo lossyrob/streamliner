@@ -10,16 +10,16 @@
 
 | Document | What it covers |
 |---|---|
-| [PRODUCT-THESIS.md](PRODUCT-THESIS.md) | **Start here.** Why Streamliner exists: execution compression relocates the bottleneck from doing work to designing work. The three-stage cognitive transition (task conductor → workstream architect → portfolio operator), the failure modes of poorly designed parallel work, and what Streamliner is for. |
-| [PRODUCT-SPEC.md](PRODUCT-SPEC.md) | The full product specification: who it's for, core concepts (design layer, workstreams, briefs, nodes, waves, context package, attention levels), the three pillars, operating rhythm, architecture, V1 scope, and open questions. |
+| [PRODUCT-THESIS.md](PRODUCT-THESIS.md) | **Start here.** Why Streamliner exists: execution compression relocates the bottleneck from doing work to designing work geometry. The three-stage cognitive transition (task conductor → workstream architect → portfolio operator), the failure modes of poorly designed parallel work, and what Streamliner is for. |
+| [PRODUCT-SPEC.md](PRODUCT-SPEC.md) | The full product specification: who it's for, core concepts (design layer, workstreams, work geometry, briefs, nodes, waves, context package, attention levels), the three pillars, operating rhythm, architecture, V1 scope, and open questions. |
 | [PORTFOLIO-LAYER.md](PORTFOLIO-LAYER.md) | Working draft for the product layer above individual workstreams: startup shell, cross-workstream coordination through public checkpoints, session visibility across environments, ad-hoc session handling, and UI direction. |
 
 ## Operating model
 
 | Document | What it covers |
 |---|---|
-| [DOCTRINE.md](DOCTRINE.md) | How the operating model makes workstream-level thinking work in practice. Roles (developer, orchestrator, worker), the Layer 0–3 context package, information flow through artifacts, presence and engagement spectrum, the operating rhythm (shape → execute → wave transition → gate review), feedback loops, and design influences from military command doctrine. |
-| [ORCHESTRATION.md](ORCHESTRATION.md) | How workstream-level orchestration happens when interactive sessions, SDK-backed tasks, UI actions, runtime state, and artifact reconciliation coexist. Orchestration as a workstream function rather than a single session's authority. |
+| [DOCTRINE.md](DOCTRINE.md) | How the operating model makes workstream-level thinking work in practice. Roles (developer, orchestrator, worker), the Layer 0–3 context package, information flow through artifacts, presence and engagement spectrum, the operating rhythm (shape → execute → wave transition → gate review), feedback loops, context authority, and design influences from military command doctrine. |
+| [ORCHESTRATION.md](ORCHESTRATION.md) | How workstream-level orchestration happens when interactive sessions, SDK-backed tasks, UI actions, runtime state, and artifact reconciliation coexist. Orchestration as a workstream function rather than a single session's authority, with reconciliation as work-geometry feedback. |
 | [HOT-WORK.md](HOT-WORK.md) | The phase-change moment when steady autonomous execution gives way to rapid, high-context developer–agent iteration. What hot work is, why it's a named concept, and how the operating model accounts for it. |
 
 ## Artifact formats and references

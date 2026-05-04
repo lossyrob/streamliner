@@ -1,8 +1,8 @@
 # Streamliner — Product Design
 
-When AI coding agents compress execution time, the bottleneck moves from implementation to the design of the work itself — the boundaries, contracts, and sequencing of the workstreams that build a system. Streamliner exists for builders who have crossed that threshold.
+When AI coding agents compress execution time, the bottleneck moves from implementation to the design of the work itself — the boundaries, contracts, sequencing, and cross-workstream geometry of the workstreams that build a system. Streamliner exists for builders who have crossed that threshold.
 
-Streamliner is a local-first web application that makes workstream-level thinking the natural operating mode. The builder designs workstreams with explicit boundaries, contracts, and gates, then monitors autonomous execution through an operational picture that reserves attention for high-leverage moments.
+Streamliner is a local-first web application that makes workstream-level thinking the natural operating mode. The builder designs workstreams with explicit boundaries, contracts, imports, exports, and gates, then monitors autonomous execution through an operational picture that reserves attention for high-leverage moments.
 
 ## Target User
 
@@ -65,7 +65,7 @@ The dependency graph is the primary interface. It shows what is done, in flight,
 
 ### 2. Work-design quality is visible
 
-When workstream boundaries are wrong, the builder sees it: too many cross-workstream blockers signal hidden dependencies, sessions that don't fit the structure signal unclear boundaries, outputs that can't be consumed downstream signal implicit contracts, and unresolved design escalations signal design gaps.
+When workstream boundaries are wrong, the builder sees it: too many cross-workstream blockers signal hidden dependencies, sessions that don't fit the structure signal unclear boundaries, outputs that can't be consumed downstream signal implicit contracts, branch-local exports reveal integration risk, and unresolved design escalations signal design gaps.
 
 ### 3. Attention goes to high-leverage moments by default
 

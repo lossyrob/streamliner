@@ -135,7 +135,7 @@ Healthy autonomy is visible from the graph: nodes progressing, PRs appearing, wi
 
 The builder and orchestrator align on relevant project design, update design docs first if direction is changing, then produce the brief and graph. Wave 1 is detailed; later waves are sketched.
 
-This is the most attention-intensive phase. Good workstream design here determines how much autonomous execution is possible later.
+This is the most attention-intensive phase. Good workstream design here determines how much autonomous execution is possible later. Shaping focuses on the work geometry: boundaries, contracts, imports, exports, checkpoints, gates, and the feedback signals that would show the geometry is wrong.
 
 Shaping can be incremental. A workstream can start with a provisional graph — the brief and graph do not need to be final before execution starts. For GitHub-backed workstreams, create the parent issue plus the first execution and design-session issues first, then create more node issues after the design is explicit and the graph is refined. The parent issue is a first-class artifact: it is the GitHub-visible grouping and progress surface for the workstream.
 
@@ -187,7 +187,7 @@ Everything important is a committed file. Nothing important lives only in chat h
 
 Each wave is a cycle: **Shape → Execute → Review → Reshape.**
 
-When boundaries are well-drawn, execution runs without intervention. When they are not, the builder sees it: cross-workstream blockers, sessions that don't fit the structure, outputs that can't be consumed downstream, escalations revealing hidden coupling.
+When boundaries are well-drawn, execution runs without intervention. When they are not, the builder sees it: cross-workstream blockers, sessions that don't fit the structure, outputs that can't be consumed downstream, branch-local exports that other workstreams accidentally depend on, and escalations revealing hidden coupling.
 
 The speed of this feedback loop makes workstream design a learnable skill. An engineering manager running human teams gets this feedback over quarters. A builder directing autonomous agents gets it in days.
 
