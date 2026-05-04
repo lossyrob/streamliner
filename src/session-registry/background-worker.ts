@@ -3,6 +3,8 @@ import { join } from "node:path";
 
 import type { SessionRegistryListItem } from "../session-registry-contract";
 import {
+  type DiscoveredCopilotSession,
+  discoverCopilotSessions,
   getDefaultCopilotSessionStateRoot,
   syncDiscoveredCopilotSessions,
 } from "./copilot-session-discovery";
@@ -22,6 +24,17 @@ import {
   type SessionRegistryDerivedStatePatch,
 } from "./file-store";
 import { drainTrustedSessionSignalSpool } from "./trusted-session-signals";
+import { runLaunchClaimBindingPass } from "./launch-claim-binding";
+import { runLaunchClaimSweep } from "./launch-claim-sweep";
+import {
+  bindClaimViaTrustedSignal,
+  reconcileOrphanReservedRows,
+} from "./launch-claims";
+import type {
+  LaunchClaimStore,
+} from "../launch-claim-contract";
+import type { SessionRegistryTrustedSignalInput } from "../session-registry-contract";
+import type { ApiLogger } from "../server/logger";
 
 export const SESSION_REGISTRY_WORKER_POLL_INTERVAL_MS = 15_000;
 export const SESSION_REGISTRY_WORKER_MAX_CONCURRENCY = 2;
@@ -65,6 +78,16 @@ export interface SessionRegistryBackgroundWorkerOptions {
   now?: () => Date;
   logger?: Pick<Console, "info" | "warn" | "error">;
   summarizer?: Partial<SummarizerDependencies>;
+  /** Optional launch-claim store. When provided, the worker runs the
+   * launch-claim binding pass + sweep each cycle and runs
+   * reconcileOrphanReservedRows once on startup before the first poll
+   * cycle. When omitted, all launch-claim behavior is skipped (NFR-5
+   * backward compatibility). */
+  claimStore?: LaunchClaimStore;
+  /** Optional structured logger for launch-claim diagnostics. Required
+   * when `claimStore` is provided so binding-pass and sweep events can
+   * be emitted under `withScope("launch-claim")`. */
+  claimLogger?: ApiLogger;
 }
 
 function isLockedError(error: unknown): boolean {
@@ -126,10 +149,13 @@ export class SessionRegistryBackgroundWorker {
   private readonly now: () => Date;
   private readonly logger: Pick<Console, "info" | "warn" | "error">;
   private readonly summarizer: SummarizerDependencies;
+  private readonly claimStore: LaunchClaimStore | null;
+  private readonly claimLogger: ApiLogger | null;
 
   private timer: ReturnType<typeof setInterval> | null = null;
   private initialTimer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
+  private hasReconciledOnStartup = false;
 
   constructor(
     store: SessionRegistryFileStore,
@@ -147,6 +173,8 @@ export class SessionRegistryBackgroundWorker {
     this.signalSpoolRoot = options.signalSpoolRoot;
     this.now = options.now ?? (() => new Date());
     this.logger = options.logger ?? console;
+    this.claimStore = options.claimStore ?? null;
+    this.claimLogger = options.claimLogger ?? null;
     this.summarizer = {
       computeEventsFingerprint:
         options.summarizer?.computeEventsFingerprint ?? computeEventsFingerprint,
@@ -163,6 +191,22 @@ export class SessionRegistryBackgroundWorker {
   start(): void {
     if (this.timer) {
       return;
+    }
+    // Startup recovery for orphan reserved rows. Runs synchronously before
+    // the first poll cycle so a crash between row reservation and claim
+    // file write is recovered before anything else happens.
+    if (this.claimStore && !this.hasReconciledOnStartup) {
+      try {
+        const result = reconcileOrphanReservedRows(this.store, this.claimStore);
+        if (result.rowsDeleted > 0 || result.rowsGraphBindingCleared > 0) {
+          this.logger.info(
+            `[session-worker] launch-claim startup reconciliation: deleted=${result.rowsDeleted} graphBindingCleared=${result.rowsGraphBindingCleared}`,
+          );
+        }
+      } catch (error) {
+        this.logger.warn("[session-worker] launch-claim startup reconciliation failed", error);
+      }
+      this.hasReconciledOnStartup = true;
     }
     this.initialTimer = setTimeout(() => {
       this.initialTimer = null;
@@ -195,15 +239,59 @@ export class SessionRegistryBackgroundWorker {
         drainTrustedSessionSignalSpool(this.store, {
           rootDir: this.signalSpoolRoot,
           logger: this.logger,
+          onSignalApplied: this.claimStore && this.claimLogger
+            ? (signal) => {
+                this.tryBindClaimViaTrustedSignal(signal);
+              }
+            : undefined,
         });
       } catch (error) {
         this.logger.warn("[session-worker] trusted signal drain failed", error);
       }
+      // Capture one discovery snapshot for both the registry sync and the
+      // launch-claim binding pass to avoid double-scanning and to
+      // guarantee within-cycle consistency.
+      let discoveredSessions: DiscoveredCopilotSession[] = [];
       try {
-        syncDiscoveredCopilotSessions(this.store, this.sessionRoot);
+        discoveredSessions = discoverCopilotSessions(this.sessionRoot);
       } catch (error) {
         if (!isLockedError(error)) {
-          this.logger.warn("[session-worker] Copilot session discovery failed", error);
+          this.logger.warn("[session-worker] Copilot session discovery scan failed", error);
+        }
+      }
+      try {
+        syncDiscoveredCopilotSessions(this.store, this.sessionRoot, discoveredSessions);
+      } catch (error) {
+        if (!isLockedError(error)) {
+          this.logger.warn("[session-worker] Copilot session discovery sync failed", error);
+        }
+      }
+      if (this.claimStore && this.claimLogger) {
+        try {
+          await runLaunchClaimBindingPass({
+            registryStore: this.store,
+            claimStore: this.claimStore,
+            discoveredSessions,
+            sessionStateRoot: this.sessionRoot,
+            now: this.now,
+            logger: this.claimLogger.withScope("launch-claim.binding"),
+          });
+        } catch (error) {
+          if (!isLockedError(error)) {
+            this.logger.warn("[session-worker] launch-claim binding failed", error);
+          }
+        }
+        try {
+          runLaunchClaimSweep({
+            registryStore: this.store,
+            claimStore: this.claimStore,
+            now: this.now,
+            logger: this.claimLogger.withScope("launch-claim.sweep"),
+          });
+        } catch (error) {
+          if (!isLockedError(error)) {
+            this.logger.warn("[session-worker] launch-claim sweep failed", error);
+          }
         }
       }
       this.indexSessionActivities();
@@ -214,6 +302,58 @@ export class SessionRegistryBackgroundWorker {
       this.logger.error("[session-worker] cycle failed", error);
     } finally {
       this.running = false;
+    }
+  }
+
+  /**
+   * Tier 2 launch-claim binding hook. Called from the trusted-signal
+   * spool drain `onSignalApplied` callback after a `session.started`
+   * signal carrying `launchClaimId` has been recorded. Failures are
+   * logged via the claim logger and never propagate to the drain.
+   */
+  private tryBindClaimViaTrustedSignal(
+    signal: SessionRegistryTrustedSignalInput,
+  ): void {
+    if (!this.claimStore || !this.claimLogger) return;
+    if (signal.event !== "session.started") return;
+    if (!signal.launchClaimId) return;
+    const bindLogger = this.claimLogger.withScope("launch-claim.binding");
+    try {
+      const outcome = bindClaimViaTrustedSignal(this.store, this.claimStore, {
+        launchClaimId: signal.launchClaimId,
+        copilotSessionId: signal.sessionId,
+        cwd: signal.cwd,
+        branch: signal.branch ?? null,
+        repo: signal.repo ?? null,
+        at: signal.timestamp,
+        now: this.now,
+      });
+      if (outcome.ok) {
+        bindLogger.info("bound-via-hook", {
+          event: "launch-claim.bound",
+          launchClaimId: outcome.claim.launchClaimId,
+          copilotSessionId: signal.sessionId,
+          registryId: outcome.registryId,
+          workstreamId: outcome.claim.workstreamId,
+          nodeId: outcome.claim.nodeId,
+          via: "trusted-signal",
+          at: signal.timestamp,
+        });
+      } else if (outcome.reason !== "claim-not-found" && outcome.reason !== "already-bound") {
+        bindLogger.warn("bound-via-hook-deferred", {
+          event: "launch-claim.bound-via-hook-deferred",
+          launchClaimId: signal.launchClaimId,
+          copilotSessionId: signal.sessionId,
+          reason: outcome.reason,
+          detail: outcome.detail ?? null,
+        });
+      }
+    } catch (error) {
+      bindLogger.warn("bound-via-hook-failed", {
+        event: "launch-claim.bound-via-hook-failed",
+        launchClaimId: signal.launchClaimId,
+        err: error instanceof Error ? { name: error.name, message: error.message } : String(error),
+      });
     }
   }
 

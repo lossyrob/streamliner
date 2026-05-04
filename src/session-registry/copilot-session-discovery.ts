@@ -17,7 +17,7 @@ const DEFAULT_COPILOT_SESSION_STATE_ROOT = resolve(
   "session-state",
 );
 
-interface DiscoveredCopilotSession {
+export interface DiscoveredCopilotSession {
   sessionId: string;
   title: string;
   description: string;
@@ -458,6 +458,7 @@ function isRegistryNotFoundError(error: unknown): boolean {
 export function syncDiscoveredCopilotSessions(
   store: SessionRegistryFileStore,
   sessionRoot: string = getDefaultCopilotSessionStateRoot(),
+  precomputed?: ReadonlyArray<DiscoveredCopilotSession>,
 ): number {
   const existingSessions = store.listSessions({ includeArchived: true });
   const existingByCopilotSessionId = new Map<string, SessionRegistryListItem>();
@@ -483,7 +484,7 @@ export function syncDiscoveredCopilotSessions(
     }
   }
 
-  const discovered = discoverCopilotSessions(sessionRoot).filter(
+  const discovered = (precomputed ?? discoverCopilotSessions(sessionRoot)).filter(
     (session) => session.observedSessionKind !== "helper",
   );
   if (discovered.length === 0) {

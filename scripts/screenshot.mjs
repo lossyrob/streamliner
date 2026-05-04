@@ -13,6 +13,7 @@
  *       [--viewport 1600x1000] \
  *       [--full-page] \
  *       [--select-node <node-id>] \
+ *       [--click <playwright-selector>] \
  *       [--delay-ms 600]
  *
  * Exit codes:
@@ -47,6 +48,7 @@ function parseArgs(argv) {
     selector: ".react-flow__node",
     fullPage: false,
     delayMs: 600,
+    clickSelectors: [],
   };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
@@ -57,6 +59,7 @@ function parseArgs(argv) {
       case "--path":       args.path = next(); args.pathProvided = true; break;
       case "--selector":   args.selector = next(); break;
       case "--select-node":args.selectNode = next(); break;
+      case "--click":      args.clickSelectors.push(next()); break;
       case "--viewport": {
         const [w, h] = next().split("x").map(Number);
         args.viewport = { width: w, height: h };
@@ -208,6 +211,9 @@ async function main() {
     await page.waitForSelector(args.selector, { timeout: 20_000 });
     if (args.selectNode) {
       await page.click(`.react-flow__node[data-id="${args.selectNode}"]`, { timeout: 5_000 });
+    }
+    for (const selector of args.clickSelectors) {
+      await page.click(selector, { timeout: 5_000 });
     }
     // Small settle delay for xyflow animations / fit-view.
     await page.waitForTimeout(args.delayMs);

@@ -2478,6 +2478,331 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
     });
   }
 
+  /**
+   * Atomic conditional delete: acquires the write lock, re-reads the row,
+   * invokes `predicate(current)` against the freshly-loaded record, and
+   * deletes only if the predicate returns true. Used by the launch-claim
+   * sweep and reserved-row recovery to avoid racing with observation
+   * writes.
+   */
+  deleteSessionIf(
+    id: string,
+    predicate: (current: SessionRegistryRecord) => boolean,
+  ): {
+    deleted: boolean;
+    reason: "deleted" | "predicate-false" | "not-found";
+  } {
+    return this.withWriteLock(() => {
+      const records = this.loadEntriesFromDisk();
+      const current = records.get(id);
+      if (!current) {
+        return { deleted: false, reason: "not-found" as const };
+      }
+      const verdict = predicate(cloneValue(current));
+      if (!verdict) {
+        return { deleted: false, reason: "predicate-false" as const };
+      }
+      records.delete(id);
+      const nextIndex = buildIndex(records.values());
+      const entryFileName = `${id}${ENTRY_EXTENSION}`;
+      const entryPath = join(this.entriesDir, entryFileName);
+      rmSync(entryPath, { force: true });
+      if (this.cachedEntryRecords) {
+        this.cachedEntryRecords.delete(id);
+      }
+      if (this.cachedEntryFingerprints) {
+        this.cachedEntryFingerprints.delete(entryFileName);
+      }
+      this.persistIndex(records, nextIndex);
+      this.commitSnapshot(records, nextIndex);
+      this.emitChange({
+        kind: SESSION_REGISTRY_CHANGE_EVENT_KINDS[1],
+        registryId: id,
+      });
+      return { deleted: true, reason: "deleted" as const };
+    });
+  }
+
+  /**
+   * Atomic launch-claim binding write. Acquires the write lock, re-reads
+   * the row, re-validates that the binding-pass invariants
+   * (cwd/branch/repo/launchClaimId compatibility) still hold against the
+   * latest persisted state, and only then writes `graphBinding`.
+   * Returns a typed outcome so the binding pass can decide whether to
+   * retry on the next cycle.
+   *
+   * The `bindClaimToRow` primitive exists because observation paths
+   * (`attachObservedSession`, `recordTrustedSessionSignal`) intentionally
+   * do not bump `version`, so `expectedVersion` cannot detect a
+   * cwd-changed-since-decision race. This method closes the loop by
+   * re-validating cwd (and optionally branch/repo) inside the same
+   * critical section as the write.
+   */
+  bindClaimToRow(
+    id: string,
+    expected: {
+      cwdAfterNormalize: string;
+      branch: string | null;
+      repo: string | null;
+      requireGraphBindingNullOrMatching: {
+        workstreamId: string;
+        nodeId: string;
+        launchClaimId: string;
+      };
+    },
+    desired: {
+      graphBinding: SessionRegistryGraphBinding | null;
+    },
+    pathCompare: (a: string, b: string) => boolean = (a, b) => a === b,
+  ):
+    | { ok: true; record: SessionRegistryRecord }
+    | {
+        ok: false;
+        reason:
+          | "row-vanished"
+          | "cwd-changed"
+          | "branch-changed"
+          | "repo-changed"
+          | "graph-binding-conflict";
+        detail?: string;
+      } {
+    return this.withWriteLock(() => {
+      const records = this.loadEntriesFromDisk();
+      const current = records.get(id);
+      if (!current) {
+        return { ok: false as const, reason: "row-vanished" as const };
+      }
+      if (!pathCompare(current.cwd, expected.cwdAfterNormalize)) {
+        return {
+          ok: false as const,
+          reason: "cwd-changed" as const,
+          detail: `expected cwd "${expected.cwdAfterNormalize}", row has "${current.cwd}"`,
+        };
+      }
+      if (expected.branch !== null && current.branch !== expected.branch) {
+        return {
+          ok: false as const,
+          reason: "branch-changed" as const,
+          detail: `expected branch "${expected.branch}", row has "${String(current.branch)}"`,
+        };
+      }
+      if (expected.repo !== null && current.repo !== expected.repo) {
+        return {
+          ok: false as const,
+          reason: "repo-changed" as const,
+          detail: `expected repo "${expected.repo}", row has "${String(current.repo)}"`,
+        };
+      }
+      if (
+        current.graphBinding !== null &&
+        current.graphBinding.launchClaimId !==
+          expected.requireGraphBindingNullOrMatching.launchClaimId
+      ) {
+        return {
+          ok: false as const,
+          reason: "graph-binding-conflict" as const,
+          detail: `existing graphBinding launchClaimId differs`,
+        };
+      }
+      const desiredBinding = desired.graphBinding;
+      const isChange =
+        JSON.stringify(current.graphBinding) !== JSON.stringify(desiredBinding);
+      const nextRecord: SessionRegistryRecord = {
+        ...cloneValue(current),
+        graphBinding: desiredBinding,
+        version: isChange ? current.version + 1 : current.version,
+        updatedAt: isChange ? isoNow() : current.updatedAt,
+      };
+      const storedRecord = mergeStoredRecord(current, nextRecord);
+      // Force graphBinding to the desired value, defeating the merge's
+      // shallow-merge behavior when desired is null but existing is non-null.
+      storedRecord.graphBinding = desiredBinding;
+      records.set(id, storedRecord);
+      const nextIndex = buildIndex(records.values());
+      this.persistEntry(storedRecord);
+      this.persistIndex(records, nextIndex);
+      this.commitSnapshot(records, nextIndex);
+      if (isChange) {
+        this.emitChange({
+          kind: SESSION_REGISTRY_CHANGE_EVENT_KINDS[0],
+          registryId: id,
+          snapshot: cloneValue(storedRecord),
+        });
+      }
+      return { ok: true as const, record: cloneValue(storedRecord) };
+    });
+  }
+
+  /**
+   * Atomic launch-claim row fusion. When discovery (or trusted-signal
+   * intake) has created a separate observed row for a Copilot session id
+   * that should belong to a launch-claim's reserved row, this method:
+   *
+   * 1. Re-reads both rows under the registry write lock.
+   * 2. Validates that the reserved row is still unattached or already
+   *    attached to the same `copilotSessionId`, and that its
+   *    `graphBinding.launchClaimId` matches the caller's claim.
+   * 3. Copies the observation-owned fields (`copilotSessionId`, `cwd`,
+   *    `repo`, `branch`, `lastSeenAt`, observation-derived
+   *    lifecycle/process state, trusted signal fields) from the observed
+   *    row onto the reserved row.
+   * 4. Deletes the observed row.
+   * 5. Confirms the reserved row's `graphBinding` matches the claim
+   *    (sets it if it was null; rejects if it points to a different
+   *    claim).
+   *
+   * All five steps occur within one `withWriteLock` acquisition. SSE
+   * subscribers see one `upsert` for the reserved row and one `delete`
+   * for the observed row, in that order.
+   */
+  fuseObservedRowIntoReservedRow(args: {
+    reservedRowId: string;
+    observedRowId: string;
+    bindClaim: {
+      workstreamId: string;
+      nodeId: string;
+      launchClaimId: string;
+    };
+  }):
+    | {
+        ok: true;
+        reservedRecord: SessionRegistryRecord;
+        deletedObservedId: string;
+      }
+    | {
+        ok: false;
+        reason:
+          | "reserved-row-vanished"
+          | "observed-row-vanished"
+          | "reserved-row-already-attached"
+          | "graph-binding-conflict";
+        detail?: string;
+      } {
+    return this.withWriteLock(() => {
+      const records = this.loadEntriesFromDisk();
+      const reserved = records.get(args.reservedRowId);
+      if (!reserved) {
+        return { ok: false as const, reason: "reserved-row-vanished" as const };
+      }
+      const observed = records.get(args.observedRowId);
+      if (!observed) {
+        return { ok: false as const, reason: "observed-row-vanished" as const };
+      }
+      if (
+        reserved.copilotSessionId !== null &&
+        reserved.copilotSessionId !== observed.copilotSessionId
+      ) {
+        return {
+          ok: false as const,
+          reason: "reserved-row-already-attached" as const,
+          detail: `reserved row already bound to a different copilot session ${reserved.copilotSessionId}`,
+        };
+      }
+      if (
+        reserved.graphBinding !== null &&
+        reserved.graphBinding.launchClaimId !== args.bindClaim.launchClaimId
+      ) {
+        return {
+          ok: false as const,
+          reason: "graph-binding-conflict" as const,
+          detail: `reserved row graphBinding launchClaimId differs from claim`,
+        };
+      }
+      const desiredGraphBinding: SessionRegistryGraphBinding = {
+        workstreamId: args.bindClaim.workstreamId,
+        nodeId: args.bindClaim.nodeId,
+        launchClaimId: args.bindClaim.launchClaimId,
+      };
+      const fusedReserved: SessionRegistryRecord = {
+        ...cloneValue(reserved),
+        cwd: observed.cwd,
+        repo: observed.repo,
+        branch: observed.branch,
+        copilotSessionId: observed.copilotSessionId,
+        lastSeenAt: observed.lastSeenAt,
+        observedSessionKind: observed.observedSessionKind,
+        copilotProcessState: observed.copilotProcessState,
+        copilotProcessId: observed.copilotProcessId,
+        activityStatus: observed.activityStatus,
+        activityStatusUpdatedAt: observed.activityStatusUpdatedAt,
+        trustedSignalSource: observed.trustedSignalSource,
+        trustedStartedAt: observed.trustedStartedAt,
+        trustedEndedAt: observed.trustedEndedAt,
+        trustedLastSignalAt: observed.trustedLastSignalAt,
+        trustedStartSource: observed.trustedStartSource,
+        trustedEndReason: observed.trustedEndReason,
+        trustedExecutionKind: observed.trustedExecutionKind,
+        trustedInitialPromptLength: observed.trustedInitialPromptLength,
+        trustedLastPromptLength: observed.trustedLastPromptLength,
+        graphBinding: desiredGraphBinding,
+        updatedAt: isoNow(),
+      };
+      const storedFused = mergeStoredRecord(reserved, fusedReserved);
+      storedFused.graphBinding = desiredGraphBinding;
+      records.set(args.reservedRowId, storedFused);
+      records.delete(args.observedRowId);
+      const observedFileName = `${args.observedRowId}${ENTRY_EXTENSION}`;
+      const observedPath = join(this.entriesDir, observedFileName);
+      rmSync(observedPath, { force: true });
+      if (this.cachedEntryRecords) {
+        this.cachedEntryRecords.delete(args.observedRowId);
+      }
+      if (this.cachedEntryFingerprints) {
+        this.cachedEntryFingerprints.delete(observedFileName);
+      }
+      const nextIndex = buildIndex(records.values());
+      this.persistEntry(storedFused);
+      this.persistIndex(records, nextIndex);
+      this.commitSnapshot(records, nextIndex);
+      this.emitChange({
+        kind: SESSION_REGISTRY_CHANGE_EVENT_KINDS[0],
+        registryId: args.reservedRowId,
+        snapshot: cloneValue(storedFused),
+      });
+      this.emitChange({
+        kind: SESSION_REGISTRY_CHANGE_EVENT_KINDS[1],
+        registryId: args.observedRowId,
+      });
+      return {
+        ok: true as const,
+        reservedRecord: cloneValue(storedFused),
+        deletedObservedId: args.observedRowId,
+      };
+    });
+  }
+
+  /**
+   * Returns the registry id of the row whose `origin.kind === "launched"`
+   * and `origin.launchClaimId` equals the supplied id, or null. Used by
+   * launch-claim startup recovery to find orphan reserved rows.
+   */
+  findRecordIdByLaunchClaimId(launchClaimId: string): string | null {
+    this.refreshFromDisk();
+    for (const record of this.records.values()) {
+      if (
+        record.origin.kind === "launched" &&
+        record.origin.launchClaimId === launchClaimId
+      ) {
+        return record.id;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Returns the registry id of the row whose `copilotSessionId` matches
+   * the supplied id, or null. Used by the launch-claim binding pass.
+   */
+  findRecordIdByCopilotSession(copilotSessionId: string): string | null {
+    this.refreshFromDisk();
+    for (const record of this.records.values()) {
+      if (record.copilotSessionId === copilotSessionId) {
+        return record.id;
+      }
+    }
+    return null;
+  }
+
   subscribe(listener: SessionRegistryChangeListener): () => void {
     this.listeners.add(listener);
     return () => {

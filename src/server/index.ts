@@ -4,7 +4,10 @@ import {
   ensureSessionRegistryBackgroundWorkerStarted,
   stopSessionRegistryBackgroundWorker,
 } from "../session-registry/background-worker";
-import { getSessionRegistryStore } from "../session-registry/runtime";
+import {
+  getLaunchClaimStore,
+  getSessionRegistryStore,
+} from "../session-registry/runtime";
 import { createStreamlinerApiApp } from "./app";
 import { readStreamlinerApiConfig } from "./config";
 import { loadDotEnvFile } from "./env";
@@ -30,11 +33,15 @@ try {
   process.exit(1);
 }
 const registryStore = getSessionRegistryStore();
+const launchClaimStore = getLaunchClaimStore();
 const api = createStreamlinerApiApp({
   store: registryStore,
   graphPath: config.graphPath,
   workstreamRegistryPath: config.workstreamRegistryPath,
+  workstreamSourceRegistryPath: config.workstreamSourceRegistryPath,
   recentsPath: config.recentsPath,
+  readonlyMode: config.previewReadonly,
+  launchClaimStore,
 });
 const server = createServer(api.app);
 
@@ -59,6 +66,8 @@ async function shutdown(exitCode = 0): Promise<void> {
 if (process.env.STREAMLINER_INTERNAL_DISABLE_SESSION_WORKER !== "1") {
   ensureSessionRegistryBackgroundWorkerStarted(registryStore, {
     logger: getApiLogger().withScope("worker"),
+    claimStore: launchClaimStore,
+    claimLogger: getApiLogger(),
   });
 }
 
