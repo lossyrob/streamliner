@@ -932,6 +932,11 @@ describe("App sessions route", () => {
         "Use saved final PR only workflow text.",
       );
       setInputValue(findInputByLabel(container, "Copilot CLI args"), "");
+      setInputValue(findInputByLabel(container, "Terminal tab title"), "Launch profile worker");
+      act(() => {
+        findButtonByLabel(container, "Use terminal color #ff8c0a").click();
+      });
+      await settle();
       setTextareaValue(
         findTextareaByLabel(container, "Launch instructions"),
         "Prefer the final PR review path.",
@@ -960,6 +965,8 @@ describe("App sessions route", () => {
             cliArgs: [],
             terminal: expect.objectContaining({
               launchMode: "manual",
+              title: "Launch profile worker",
+              tabColor: "#ff8c0a",
             }),
           }),
         }),
@@ -1093,6 +1100,10 @@ describe("App sessions route", () => {
             cwd: "C:\\graphs\\api-test",
             kickoffPrompt: "Edited PAW launch kickoff prompt.",
             environment: { STREAMLINER_LOG_LEVEL: "debug" },
+            terminal: expect.objectContaining({
+              title: "Launch profile worker",
+              tabColor: "#ff8c0a",
+            }),
           }),
         }),
       );

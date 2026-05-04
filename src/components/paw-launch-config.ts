@@ -11,11 +11,15 @@ export type PreferredTerminal = "default" | "windows-terminal" | "powershell";
 export interface PawLaunchTerminalConfiguration {
   launchMode: TerminalLaunchMode;
   preferredTerminal: PreferredTerminal;
+  title: string;
+  tabColor: string | null;
 }
 
 export const DEFAULT_PAW_TERMINAL_CONFIGURATION: PawLaunchTerminalConfiguration = {
   launchMode: "manual",
   preferredTerminal: "default",
+  title: "",
+  tabColor: null,
 };
 
 export interface PawLaunchDialogDefaults {

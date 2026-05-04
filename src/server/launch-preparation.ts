@@ -76,6 +76,8 @@ export class LaunchPreparationError extends Error {
 export interface PawLaunchTerminalPreferences {
   launchMode: "manual";
   preferredTerminal: "default" | "windows-terminal" | "powershell";
+  title: string | null;
+  tabColor: string | null;
 }
 
 export interface PawLaunchConfigurationInput {
@@ -254,6 +256,8 @@ export function completePawInitToolParameters() {
 const DEFAULT_TERMINAL_PREFERENCES: PawLaunchTerminalPreferences = {
   launchMode: "manual",
   preferredTerminal: "default",
+  title: null,
+  tabColor: null,
 };
 
 function defaultStateRoot(): string {
@@ -362,6 +366,36 @@ function assertOptionalEnum<T extends string>(
   return value as T;
 }
 
+function normalizeOptionalString(value: unknown, field: string): string | null | undefined {
+  const parsed = assertOptionalString(value, field);
+  if (parsed === undefined) {
+    return undefined;
+  }
+  const trimmed = parsed.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeOptionalHexColor(value: unknown, field: string): string | null | undefined {
+  const parsed = assertOptionalString(value, field);
+  if (parsed === undefined) {
+    return undefined;
+  }
+  const trimmed = parsed.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+  if (!/^#[0-9a-f]{6}$/i.test(trimmed)) {
+    throw new LaunchPreparationError(
+      "invalid_launch_configuration",
+      400,
+      `${field} must be a #RRGGBB color.`,
+      "validation",
+      field,
+    );
+  }
+  return trimmed.toLowerCase();
+}
+
 function assertOptionalRecord(value: unknown, field: string): Record<string, unknown> | undefined {
   if (value === undefined) {
     return undefined;
@@ -409,11 +443,19 @@ function normalizeTerminalPreferences(
     TERMINAL_PREFERENCES,
     "configuration.terminal.preferredTerminal",
   );
+  const title = normalizeOptionalString(record.title, "configuration.terminal.title");
+  const tabColor = normalizeOptionalHexColor(record.tabColor, "configuration.terminal.tabColor");
   if (launchMode !== undefined) {
     normalized.launchMode = launchMode;
   }
   if (preferredTerminal !== undefined) {
     normalized.preferredTerminal = preferredTerminal;
+  }
+  if (title !== undefined) {
+    normalized.title = title;
+  }
+  if (tabColor !== undefined) {
+    normalized.tabColor = tabColor;
   }
   return normalized;
 }
@@ -1441,6 +1483,10 @@ export async function preparePawLaunch(
     }
   }
 
+  const terminal: PawLaunchTerminalPreferences = {
+    ...configuration.terminal,
+    title: configuration.terminal.title ?? pawInit.workTitle,
+  };
   const launchMetadata: PawLaunchMetadata = {
     launchNonce: stagedContextPackage.metadata.launchNonce,
     launchClaimRef: stagedContextPackage.metadata.launchClaimRef,
@@ -1470,7 +1516,7 @@ export async function preparePawLaunch(
     kickoffPrompt,
     kickoffAdditionalInstructions: pawInit.kickoffAdditionalInstructions,
     cliArgs: [...configuration.cliArgs],
-    terminal: { ...configuration.terminal },
+    terminal,
     environment: {
       ...configuration.environment,
       ...(pawInit.environment ?? {}),

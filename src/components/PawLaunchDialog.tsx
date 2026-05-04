@@ -10,10 +10,17 @@ import type {
   NodeTerminalLaunchResponse,
 } from "../node-launch-record-contract";
 import { humanizeLaunchClaim } from "./launch-claim-display";
+import { TerminalColorQuickPicker } from "./SessionColorPicker";
 
 export type PawLaunchDialogHandoff = NodeLaunchHandoff;
 
 export type PawTerminalLaunchResult = NodeTerminalLaunchResponse;
+
+export interface PawTerminalLaunchInput {
+  kickoffPrompt: string;
+  terminalTitle: string;
+  terminalColor: string | null;
+}
 
 export interface PawLaunchProgressEvent {
   type: string;
@@ -33,7 +40,7 @@ interface PawLaunchDialogProps {
   progressEvents: PawLaunchProgressEvent[];
   onCancel: () => void;
   onSubmit: (configuration: PawLaunchDialogConfiguration) => void;
-  onLaunchTerminal: (kickoffPrompt: string) => void;
+  onLaunchTerminal: (input: PawTerminalLaunchInput) => void;
 }
 
 interface PawPromptProfile {
@@ -269,6 +276,10 @@ export function PawLaunchDialog({
   const [workflowInstructions, setWorkflowInstructions] = useState(defaults.workflowInstructions);
   const [cliArgsText, setCliArgsText] = useState(defaults.cliArgsText);
   const [terminal, setTerminal] = useState(defaults.terminal);
+  const [terminalTitle, setTerminalTitle] = useState(defaults.terminal.title || nodeTitle);
+  const [terminalColor, setTerminalColor] = useState(defaults.terminal.tabColor ?? "");
+  const [terminalTitleEdited, setTerminalTitleEdited] = useState(false);
+  const [terminalColorEdited, setTerminalColorEdited] = useState(false);
   const [profiles, setProfiles] = useState<PawPromptProfile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState("");
   const [profileName, setProfileName] = useState("");
@@ -293,6 +304,12 @@ export function PawLaunchDialog({
   const kickoffPromptError = handoff && trimmedKickoffPrompt.length === 0
     ? "Kickoff prompt is required before launching the terminal."
     : null;
+  const trimmedTerminalTitle = terminalTitle.trim();
+  const terminalTitleError = handoff && trimmedTerminalTitle.length === 0
+    ? "Terminal tab title is required before launching the terminal."
+    : null;
+  const terminalColorValue = terminalColor.trim();
+  const terminalTabColor = terminalColorValue.length > 0 ? terminalColorValue : null;
   const latestProgress = progressEvents.at(-1) ?? null;
   const recentProgress = progressEvents.slice(-8);
   const debugPath = progressEvents
@@ -355,6 +372,18 @@ export function PawLaunchDialog({
       cancelled = true;
     };
   }, [handoff]);
+
+  useEffect(() => {
+    if (!handoff) {
+      return;
+    }
+    if (!terminalTitleEdited) {
+      setTerminalTitle(handoff.terminal.title ?? handoff.launchMetadata.workTitle);
+    }
+    if (!terminalColorEdited) {
+      setTerminalColor(handoff.terminal.tabColor ?? "");
+    }
+  }, [handoff, terminalColorEdited, terminalTitleEdited]);
 
   const selectedProfile = profiles.find((profile) => profile.id === selectedProfileId) ?? null;
   const trimmedProfileName = profileName.trim();
@@ -450,8 +479,22 @@ export function PawLaunchDialog({
     onSubmit({
       workflowInstructions: trimmedInstructions,
       cliArgs: parseCliArgs(cliArgsText),
-      terminal,
+      terminal: {
+        ...terminal,
+        title: trimmedTerminalTitle,
+        tabColor: terminalTabColor,
+      },
     });
+  };
+
+  const handleTerminalTitleChange = (value: string) => {
+    setTerminalTitle(value);
+    setTerminalTitleEdited(true);
+  };
+
+  const handleTerminalColorChange = (value: string) => {
+    setTerminalColor(value);
+    setTerminalColorEdited(true);
   };
 
   return (
@@ -588,16 +631,16 @@ export function PawLaunchDialog({
             <div className="sl-paw-config-section-head">
               <div>
                 <span className="sl-section-label">Launch shell</span>
-                  <p>These values are used when Streamliner starts the visible Copilot CLI worker terminal.</p>
+                <p>These values are used when Streamliner starts the visible Copilot CLI worker terminal.</p>
               </div>
             </div>
             <div className="sl-paw-launch-grid">
               <TextField
-                label="Copilot CLI args"
-                ariaLabel="Copilot CLI args"
-                value={cliArgsText}
-                onChange={setCliArgsText}
-                placeholder="Leave empty for no CLI args"
+                label="Terminal tab title"
+                ariaLabel="Terminal tab title"
+                value={terminalTitle}
+                onChange={handleTerminalTitleChange}
+                placeholder="Name the launched session"
               />
               <SelectField
                 label="Preferred terminal"
@@ -606,7 +649,27 @@ export function PawLaunchDialog({
                 options={TERMINAL_OPTIONS}
                 onChange={(value) => setTerminal((current) => ({ ...current, preferredTerminal: value }))}
               />
+              <TextField
+                label="Copilot CLI args"
+                ariaLabel="Copilot CLI args"
+                value={cliArgsText}
+                onChange={setCliArgsText}
+                placeholder="Leave empty for no CLI args"
+              />
+              <div className="sl-field sl-paw-launch-color-field">
+                <span>Terminal tab color</span>
+                <TerminalColorQuickPicker
+                  value={terminalColor}
+                  onChange={handleTerminalColorChange}
+                />
+                <p className="sl-field-note">
+                  {terminalTabColor ? `Selected ${terminalTabColor}` : "Default terminal color"}
+                </p>
+              </div>
             </div>
+            {terminalTitleError && (
+              <div className="sl-action-error">{terminalTitleError}</div>
+            )}
           </section>
 
           <section className="sl-paw-launch-summary">
@@ -617,6 +680,10 @@ export function PawLaunchDialog({
             <div>
               <span className="sl-section-label">Terminal</span>
               <p>{defaults.terminalPreference} ({terminal.preferredTerminal})</p>
+            </div>
+            <div>
+              <span className="sl-section-label">Session display</span>
+              <p>{trimmedTerminalTitle || "Untitled"}{terminalTabColor ? ` · ${terminalTabColor}` : ""}</p>
             </div>
           </section>
 
@@ -649,6 +716,14 @@ export function PawLaunchDialog({
                 <div>
                   <dt>CLI args</dt>
                   <dd>{handoff.cliArgs.length > 0 ? handoff.cliArgs.join(" ") : "(none)"}</dd>
+                </div>
+                <div>
+                  <dt>Terminal title</dt>
+                  <dd>{trimmedTerminalTitle}</dd>
+                </div>
+                <div>
+                  <dt>Terminal color</dt>
+                  <dd>{terminalTabColor ?? "(default)"}</dd>
                 </div>
               </dl>
               <div className="sl-paw-workflow-context-editor">
@@ -751,9 +826,16 @@ export function PawLaunchDialog({
                 launching ||
                 workflowContextSaving ||
                 Boolean(kickoffPromptError) ||
+                Boolean(terminalTitleError) ||
                 Boolean(terminalLaunchResult?.launchClaim.blocksLaunch)
               }
-              onClick={() => onLaunchTerminal(trimmedKickoffPrompt)}
+              onClick={() =>
+                onLaunchTerminal({
+                  kickoffPrompt: trimmedKickoffPrompt,
+                  terminalTitle: trimmedTerminalTitle,
+                  terminalColor: terminalTabColor,
+                })
+              }
             >
               {launching ? "Launching terminal..." : terminalLaunchResult ? "Terminal launched" : "Launch terminal"}
             </button>

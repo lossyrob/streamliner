@@ -3,6 +3,8 @@ export type NodeLaunchPreferredTerminal = "default" | "windows-terminal" | "powe
 export interface NodeLaunchTerminalPreferences {
   launchMode: "manual";
   preferredTerminal: NodeLaunchPreferredTerminal;
+  title?: string | null;
+  tabColor?: string | null;
 }
 
 export interface NodeLaunchMetadata {

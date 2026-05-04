@@ -880,6 +880,12 @@ when available, matching the existing restart-command behavior.
 Copilot and pass the session identity as a single `--resume=<id>` option value.
 No positional path argument is passed to Copilot.
 
+**Node launch display metadata**: the PAW launch dialog lets the user choose
+the terminal tab title and a color from the same quick-pick palette used by the
+Sessions view. Streamliner uses those values for the Windows Terminal tab and
+for the launch claim's reserved session row, so later claim binding can preserve
+the same display identity in Sessions.
+
 **Terminal selection**:
 1. If Windows Terminal (`wt.exe`) is in PATH → `wt new-tab` with `--title`,
    `--tabColor` (valid `#RRGGBB` only), `-d <cwd>`, and optionally

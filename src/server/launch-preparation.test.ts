@@ -202,6 +202,12 @@ describe("preparePawLaunch", () => {
         workflowContextPath: normalizePath(join(expectedWorkDir, "WorkflowContext.md")),
         streamlinerContextPath: normalizePath(join(expectedWorkDir, "streamliner", "context.md")),
         cliArgs: ["--yolo"],
+        terminal: {
+          launchMode: "manual",
+          preferredTerminal: "default",
+          title: "Launch Prompt Profiles",
+          tabColor: null,
+        },
         environment: { STREAMLINER_LOG_LEVEL: "debug" },
         sessionStateRoot: normalizePath(join(root, "state")),
       }),

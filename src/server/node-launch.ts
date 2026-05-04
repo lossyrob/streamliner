@@ -177,17 +177,24 @@ export function appendLaunchBindingPromptLines(
 }
 
 function lineageMetadataFor(handoff: PawLaunchHandoff): Record<string, unknown> {
+  const terminalTitle = terminalTitleFor(handoff);
   return {
     graphPath: handoff.launchMetadata.graphPath,
     branch: handoff.branch,
     workId: handoff.launchMetadata.workId,
     workTitle: handoff.launchMetadata.workTitle,
+    terminalTitle,
+    terminalColor: handoff.terminal.tabColor ?? null,
     pawWorkDir: handoff.pawWorkDir,
     workflowContextPath: handoff.workflowContextPath,
     streamlinerContextPath: handoff.streamlinerContextPath,
     contextPackagePath: handoff.contextPackage.contextPackagePath,
     trackerUrl: handoff.launchMetadata.trackerUrl,
   };
+}
+
+function terminalTitleFor(handoff: PawLaunchHandoff): string {
+  return handoff.terminal.title?.trim() || handoff.launchMetadata.workTitle;
 }
 
 function errorLogDetails(error: unknown): Record<string, string> | string {
@@ -225,6 +232,7 @@ export function launchPreparedNode(
     );
   }
 
+  const terminalTitle = terminalTitleFor(handoff);
   const claimOutcome = createLaunchClaim(registryStore, claimStore, {
     workstreamId: handoff.launchMetadata.workstreamId,
     nodeId: handoff.launchMetadata.nodeId,
@@ -233,7 +241,8 @@ export function launchPreparedNode(
     expectedRepo: null,
     contextId: handoff.contextPackage.contextId,
     launchNonce: handoff.launchMetadata.launchNonce,
-    reservedRowTitle: `Launch: ${handoff.launchMetadata.workTitle}`,
+    reservedRowTitle: terminalTitle,
+    reservedRowColor: handoff.terminal.tabColor ?? null,
     reservedRowDescription: `Graph launch for workstream ${handoff.launchMetadata.workstreamId}, node ${handoff.launchMetadata.nodeId}.`,
     lineageMetadata: lineageMetadataFor(handoff),
   });
@@ -263,7 +272,8 @@ export function launchPreparedNode(
       STREAMLINER_LAUNCH_CLAIM_ID: claim.launchClaimId,
     },
     preferredTerminal: handoff.terminal.preferredTerminal,
-    title: handoff.launchMetadata.workTitle,
+    title: terminalTitle,
+    tabColor: handoff.terminal.tabColor ?? undefined,
   };
 
   try {
