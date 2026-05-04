@@ -277,7 +277,7 @@ export function PawLaunchDialog({
   const [workflowContextError, setWorkflowContextError] = useState<string | null>(null);
   const trimmedInstructions = workflowInstructions.trim();
   const instructionError = trimmedInstructions.length === 0
-    ? "PAW workflow instructions are required so paw-init can derive the workflow."
+    ? "Launch instructions are required so paw-init can derive the workflow setup and worker prompt."
     : null;
   const latestProgress = progressEvents.at(-1) ?? null;
   const recentProgress = progressEvents.slice(-8);
@@ -504,12 +504,11 @@ export function PawLaunchDialog({
           <section className="sl-paw-config-section sl-paw-instructions-section">
             <div className="sl-paw-config-section-head">
               <div>
-                <span className="sl-section-label">Workflow instructions</span>
+                <span className="sl-section-label">Launch instructions</span>
                 <p>
-                  Describe the PAW workflow in natural language. PAW init can read
-                  repository files, inspect git/GitHub context, use shell tools,
-                  and derive work title, work ID, target branch, review policy,
-                  models, and WorkflowContext settings from this text.
+                  Describe how this launched PAW session should behave. PAW init
+                  can derive setup fields from this text, and Streamliner includes
+                  the guidance in the final worker kickoff prompt.
                 </p>
               </div>
             </div>
@@ -521,7 +520,7 @@ export function PawLaunchDialog({
                   aria-label="Load profile"
                   onChange={(event) => applyProfile(event.target.value)}
                 >
-                  <option value="">Custom instructions</option>
+                  <option value="">Custom launch instructions</option>
                   {profiles.map((profile) => (
                     <option key={profile.id} value={profile.id}>
                       {profile.name}
@@ -534,7 +533,7 @@ export function PawLaunchDialog({
                 ariaLabel="Save name"
                 value={profileName}
                 onChange={setProfileName}
-                placeholder="Name this reusable workflow text"
+                placeholder="Name this reusable launch text"
               />
               <div className="sl-paw-profile-actions">
                 <button
@@ -554,17 +553,17 @@ export function PawLaunchDialog({
               </p>
             )}
             <TextAreaField
-              label="PAW workflow instructions"
-              ariaLabel="PAW workflow instructions"
+              label="Launch instructions"
+              ariaLabel="Launch instructions"
               value={workflowInstructions}
               onChange={setWorkflowInstructions}
               rows={8}
               placeholder="Example: Use paw-lite, final-pr-only, no intermediate pauses unless blocked..."
             />
             <p className="sl-field-note">
-              Running PAW init may read or write local repo state. If PAW init
-              cannot proceed without a question, Streamliner fails with that
-              question instead of waiting indefinitely.
+              Streamliner does not copy general pause/review/PR guidance into
+              PAW custom workflow-stage settings unless you explicitly describe
+              a custom PAW stage sequence.
             </p>
           </section>
 

@@ -618,14 +618,14 @@ describe("App sessions route", () => {
       await settle();
 
       expect(container.textContent).toContain("PAW launch");
-      expect(findTextareaByLabel(container, "PAW workflow instructions").value).toContain("final-pr-only");
+      expect(findTextareaByLabel(container, "Launch instructions").value).toContain("final-pr-only");
 
       act(() => {
         findButton(container, "Cancel").click();
       });
       await settle();
 
-      expect(container.querySelector('textarea[aria-label="PAW workflow instructions"]')).toBeNull();
+      expect(container.querySelector('textarea[aria-label="Launch instructions"]')).toBeNull();
       expect([...container.querySelectorAll("button")].some(
         (button) => button.textContent?.trim() === "Run PAW init",
       )).toBe(false);
@@ -696,7 +696,7 @@ describe("App sessions route", () => {
 
       setInputValue(findInputByLabel(container, "Save name"), "Final PR only");
       setTextareaValue(
-        findTextareaByLabel(container, "PAW workflow instructions"),
+        findTextareaByLabel(container, "Launch instructions"),
         savedProfile.instructions,
       );
       act(() => {
@@ -791,7 +791,7 @@ describe("App sessions route", () => {
       await settle();
       setInputValue(findInputByLabel(container, "Save name"), "Final PR copy");
       setTextareaValue(
-        findTextareaByLabel(container, "PAW workflow instructions"),
+        findTextareaByLabel(container, "Launch instructions"),
         "Use copied final PR workflow text.",
       );
       expect(container.textContent).toContain(
@@ -819,7 +819,7 @@ describe("App sessions route", () => {
   );
 
   it(
-    "runs PAW init with workflow instructions and explicit empty CLI args",
+    "runs PAW init with launch instructions and explicit empty CLI args",
     async () => {
       const graph = buildLaunchGraph();
       let savedWorkflowContext = "# WorkflowContext\nAdditional Inputs: streamliner-context=streamliner/context.md\n";
@@ -900,12 +900,12 @@ describe("App sessions route", () => {
 
       setSelectValue(findSelectByLabel(container, "Load profile"), "final-pr-only");
       await settle();
-      expect(findTextareaByLabel(container, "PAW workflow instructions").value).toBe(
+      expect(findTextareaByLabel(container, "Launch instructions").value).toBe(
         "Use saved final PR only workflow text.",
       );
       setInputValue(findInputByLabel(container, "Copilot CLI args"), "");
       setTextareaValue(
-        findTextareaByLabel(container, "PAW workflow instructions"),
+        findTextareaByLabel(container, "Launch instructions"),
         "Prefer the final PR review path.",
       );
       act(() => {
@@ -1024,7 +1024,7 @@ describe("App sessions route", () => {
   );
 
   it(
-    "requires PAW workflow instructions before running PAW init",
+    "requires launch instructions before running PAW init",
     async () => {
       const graph = buildLaunchGraph();
       const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -1061,11 +1061,11 @@ describe("App sessions route", () => {
       });
       await settle();
 
-      setTextareaValue(findTextareaByLabel(container, "PAW workflow instructions"), "");
+      setTextareaValue(findTextareaByLabel(container, "Launch instructions"), "");
       await settle();
 
       expect(container.textContent).toContain(
-        "PAW workflow instructions are required so paw-init can derive the workflow.",
+        "Launch instructions are required so paw-init can derive the workflow setup and worker prompt.",
       );
       expect(findButton(container, "Run PAW init").disabled).toBe(true);
       expect(

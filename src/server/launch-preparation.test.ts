@@ -270,6 +270,9 @@ describe("preparePawLaunch", () => {
       nodeId: "launch-prompt-profiles",
       cwd: root,
       stateRoot: join(root, "state"),
+      configuration: {
+        workflowInstructions: "Prefer final PR review only unless blocked.",
+      },
       pawInitRunner: createPawInitRunner(),
       contextPreparer: createContextPreparer(root),
     });
@@ -280,6 +283,8 @@ describe("preparePawLaunch", () => {
     expect(result.kickoffPrompt).toContain(
       `- Streamliner launch context: ${result.streamlinerContextPath}`,
     );
+    expect(result.kickoffPrompt).toContain("Launch instructions from graph settings");
+    expect(result.kickoffPrompt).toContain("Prefer final PR review only unless blocked.");
     expect(result.kickoffPrompt).toContain("recorded as an Additional Input");
   });
 

@@ -672,14 +672,18 @@ function buildPawInitPrompt(input: PawInitRunnerInput): string {
     `- Staged context file: ${input.stagedContextPackage.contextFilePath}`,
     `- Staged context package directory: ${input.stagedContextPackage.contextPackagePath}`,
     "",
-    "Workflow instructions from the builder:",
+    "Launch/session instructions from the builder:",
     "```text",
     input.configuration.workflowInstructions.trim(),
     "```",
     "",
+    "Treat the builder instructions as launch guidance and as input for deriving PAW configuration fields.",
+    "Do not copy this block verbatim into `Custom Workflow Instructions` unless it explicitly defines a custom PAW stage sequence or other custom-mode control-state override.",
+    "If it is general operating guidance (for example pause policy, review expectations, PR description preferences, or blocker handling), leave `Custom Workflow Instructions` as `none`; Streamliner will include that guidance in the final worker kickoff prompt.",
+    "",
     "Before calling `complete_paw_init`, use paw-init's normal file-writing path to create WorkflowContext.md in the PAW work directory.",
     "The WorkflowContext Additional Inputs must include at least `streamliner-context=<installed-context-path>`, where the installed context path is `<pawWorkDir>/streamliner/context.md`.",
-    "Recommended Additional Inputs metadata: `streamliner-staged-context`, `streamliner-context-id`, `node`, `graph`, and `launch-nonce` using the values above.",
+    "Do not add Streamliner internal metadata such as `streamliner-staged-context`, `streamliner-context-id`, `node`, `graph`, or `launch-nonce` to WorkflowContext Additional Inputs; those remain launch metadata, not PAW input files.",
     "",
     "When PAW init has completed its reasoning and created WorkflowContext.md, call `complete_paw_init` exactly once with:",
     "- `workTitle`: the PAW work title derived by paw-init.",
@@ -1185,6 +1189,7 @@ export function buildKickoffPrompt(input: {
   workflowContextPath: string;
   streamlinerContextPath: string;
   launchMetadata: PawLaunchMetadata;
+  launchInstructions?: string;
 }): string {
   const lines = [
     "You are a Streamliner node session launched from a workstream graph node.",
@@ -1205,6 +1210,16 @@ export function buildKickoffPrompt(input: {
   ];
   if (input.launchMetadata.trackerUrl) {
     lines.push(`- Tracker: ${input.launchMetadata.trackerUrl}`);
+  }
+  const launchInstructions = input.launchInstructions?.trim();
+  if (launchInstructions) {
+    lines.push(
+      "",
+      "Launch instructions from graph settings:",
+      "```text",
+      launchInstructions,
+      "```",
+    );
   }
   lines.push(
     "",
@@ -1361,6 +1376,7 @@ export async function preparePawLaunch(
     workflowContextPath: pawInit.workflowContextPath,
     streamlinerContextPath: pawInit.streamlinerContextPath,
     launchMetadata,
+    launchInstructions: configuration.workflowInstructions,
   });
 
   return {
