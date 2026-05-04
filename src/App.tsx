@@ -29,7 +29,6 @@ import { CheckpointStepper } from "./components/CheckpointStepper";
 import { WorkstreamHeader } from "./components/WorkstreamHeader";
 import {
   PawLaunchDialog,
-  type PawLaunchDialogHandoff,
   type PawLaunchProgressEvent,
 } from "./components/PawLaunchDialog";
 import {
@@ -45,8 +44,10 @@ import {
   readBrowserWorkstreamGraph,
 } from "./browser-workstream-files";
 import type {
+  NodeLaunchHandoff,
   NodeLaunchRecord,
   NodeLaunchRecordResponse,
+  NodeTerminalLaunchResponse,
 } from "./node-launch-record-contract";
 import {
   encodeRouteSegment,
@@ -65,15 +66,7 @@ interface GraphLoadError {
   message: string;
 }
 
-interface PawLaunchPreparationResponse extends PawLaunchDialogHandoff {
-  cwd: string;
-  launchMetadata: {
-    launchNonce: string | null;
-    projectKey: string;
-    workstreamId: string;
-    nodeId: string;
-  };
-}
+type PawLaunchPreparationResponse = NodeLaunchHandoff;
 
 interface PawLaunchRunStartResponse {
   runId?: string;
@@ -844,8 +837,10 @@ function GraphDashboard({
   const [actionError, setActionError] = useState<string | null>(null);
   const [launchDialogOpen, setLaunchDialogOpen] = useState(false);
   const [launchPreparing, setLaunchPreparing] = useState(false);
+  const [terminalLaunching, setTerminalLaunching] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
-  const [launchHandoff, setLaunchHandoff] = useState<PawLaunchDialogHandoff | null>(null);
+  const [launchHandoff, setLaunchHandoff] = useState<PawLaunchPreparationResponse | null>(null);
+  const [terminalLaunchResult, setTerminalLaunchResult] = useState<NodeTerminalLaunchResponse | null>(null);
   const [launchProgressEvents, setLaunchProgressEvents] = useState<PawLaunchProgressEvent[]>([]);
   const [nodeLaunchRecord, setNodeLaunchRecord] = useState<NodeLaunchRecord | null>(null);
   const [nodeLaunchRecordLoading, setNodeLaunchRecordLoading] = useState(false);
@@ -880,8 +875,11 @@ function GraphDashboard({
     if (!activeWorkstreamEntry || !isBackendReadableWorkstreamEntry(activeWorkstreamEntry)) {
       return "Browser-only or missing graph sources cannot be prepared by the backend.";
     }
+    if (nodeLaunchRecord?.latestClaim?.blocksLaunch) {
+      return `Terminal launch already ${nodeLaunchRecord.latestClaim.status}.`;
+    }
     return undefined;
-  }, [activeWorkstreamEntry, selectedEntry]);
+  }, [activeWorkstreamEntry, nodeLaunchRecord, selectedEntry]);
 
   const canLaunchSelectedNode = Boolean(selectedEntry && !launchDisabledReason);
 
@@ -944,17 +942,19 @@ function GraphDashboard({
   const handleOpenLaunchDialog = () => {
     setLaunchError(null);
     setLaunchHandoff(null);
+    setTerminalLaunchResult(null);
     setLaunchProgressEvents([]);
     setLaunchDialogOpen(true);
   };
 
   const handleCloseLaunchDialog = () => {
-    if (launchPreparing) {
+    if (launchPreparing || terminalLaunching) {
       return;
     }
     setLaunchDialogOpen(false);
     setLaunchError(null);
     setLaunchHandoff(null);
+    setTerminalLaunchResult(null);
     setLaunchProgressEvents([]);
   };
 
@@ -1008,13 +1008,21 @@ function GraphDashboard({
             return;
           }
           setLaunchHandoff({
+            cwd: handoff.cwd,
             branch: handoff.branch,
             pawWorkDir: handoff.pawWorkDir,
             workflowContextPath: handoff.workflowContextPath,
             streamlinerContextPath: handoff.streamlinerContextPath,
             cliArgs: handoff.cliArgs,
+            terminal: handoff.terminal,
+            environment: handoff.environment,
+            sessionStateRoot: handoff.sessionStateRoot,
             kickoffPrompt: handoff.kickoffPrompt,
+            kickoffAdditionalInstructions: handoff.kickoffAdditionalInstructions,
+            launchMetadata: handoff.launchMetadata,
+            contextPackage: handoff.contextPackage,
           });
+          setTerminalLaunchResult(null);
           setNodeLaunchRecordRefreshKey((current) => current + 1);
           resolve();
         });
@@ -1031,6 +1039,33 @@ function GraphDashboard({
     } finally {
       closeProgressStream?.();
       setLaunchPreparing(false);
+    }
+  };
+
+  const handleLaunchTerminal = async () => {
+    if (!launchHandoff) {
+      return;
+    }
+    setTerminalLaunching(true);
+    setLaunchError(null);
+    try {
+      const response = await fetch("/api/node-launches", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ handoff: launchHandoff }),
+      });
+      if (!response.ok) {
+        const parsed = await parseErrorResponse(response);
+        throw new Error(parsed.message);
+      }
+      const result = await response.json() as NodeTerminalLaunchResponse;
+      setTerminalLaunchResult(result);
+      setNodeLaunchRecordRefreshKey((current) => current + 1);
+    } catch (nextError) {
+      setLaunchError(nextError instanceof Error ? nextError.message : String(nextError));
+      setNodeLaunchRecordRefreshKey((current) => current + 1);
+    } finally {
+      setTerminalLaunching(false);
     }
   };
 
@@ -1124,11 +1159,14 @@ function GraphDashboard({
           nodeTitle={selectedEntry.node.title}
           defaults={launchDefaults}
           preparing={launchPreparing}
+          launching={terminalLaunching}
           error={launchError}
           handoff={launchHandoff}
+          terminalLaunchResult={terminalLaunchResult}
           progressEvents={launchProgressEvents}
           onCancel={handleCloseLaunchDialog}
           onSubmit={handleSubmitLaunch}
+          onLaunchTerminal={handleLaunchTerminal}
         />
       ) : null}
     </div>

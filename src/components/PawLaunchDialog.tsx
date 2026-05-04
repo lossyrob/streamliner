@@ -5,15 +5,14 @@ import {
   type PawLaunchDialogDefaults,
   type PreferredTerminal,
 } from "./paw-launch-config";
+import type {
+  NodeLaunchHandoff,
+  NodeTerminalLaunchResponse,
+} from "../node-launch-record-contract";
 
-export interface PawLaunchDialogHandoff {
-  branch: string;
-  pawWorkDir: string;
-  workflowContextPath: string;
-  streamlinerContextPath: string;
-  cliArgs: string[];
-  kickoffPrompt: string;
-}
+export type PawLaunchDialogHandoff = NodeLaunchHandoff;
+
+export type PawTerminalLaunchResult = NodeTerminalLaunchResponse;
 
 export interface PawLaunchProgressEvent {
   type: string;
@@ -26,11 +25,14 @@ interface PawLaunchDialogProps {
   nodeTitle: string;
   defaults: PawLaunchDialogDefaults;
   preparing: boolean;
+  launching: boolean;
   error: string | null;
   handoff: PawLaunchDialogHandoff | null;
+  terminalLaunchResult: PawTerminalLaunchResult | null;
   progressEvents: PawLaunchProgressEvent[];
   onCancel: () => void;
   onSubmit: (configuration: PawLaunchDialogConfiguration) => void;
+  onLaunchTerminal: () => void;
 }
 
 interface PawPromptProfile {
@@ -254,11 +256,14 @@ export function PawLaunchDialog({
   nodeTitle,
   defaults,
   preparing,
+  launching,
   error,
   handoff,
+  terminalLaunchResult,
   progressEvents,
   onCancel,
   onSubmit,
+  onLaunchTerminal,
 }: PawLaunchDialogProps) {
   const [workflowInstructions, setWorkflowInstructions] = useState(defaults.workflowInstructions);
   const [cliArgsText, setCliArgsText] = useState(defaults.cliArgsText);
@@ -448,11 +453,12 @@ export function PawLaunchDialog({
               <span className="sl-pill accent">PAW init</span>
               <span className="sl-pill muted">Text-guided workflow</span>
             </div>
-            <h2 className="sl-sheet-title">Run PAW init</h2>
+            <h2 className="sl-sheet-title">Launch PAW session</h2>
             <p className="sl-paw-launch-subtitle">
               Selected node: <strong>{nodeTitle}</strong>. Streamliner runs one
               fully capable SDK session to assemble launch context, run the PAW
-              init skill, and install that context into the PAW work directory.
+              init skill, install that context into the PAW work directory, and
+              then starts a visible Copilot CLI worker terminal.
             </p>
           </div>
           <button
@@ -571,7 +577,7 @@ export function PawLaunchDialog({
             <div className="sl-paw-config-section-head">
               <div>
                 <span className="sl-section-label">Launch shell</span>
-                <p>Terminal launch is still manual; these values are included in the handoff.</p>
+                  <p>These values are used when Streamliner starts the visible Copilot CLI worker terminal.</p>
               </div>
             </div>
             <div className="sl-paw-launch-grid">
@@ -681,17 +687,43 @@ export function PawLaunchDialog({
                   </p>
                 )}
               </div>
+              {terminalLaunchResult && (
+                <div className="sl-paw-launch-summary">
+                  <div>
+                    <span className="sl-section-label">Terminal launch</span>
+                    <p>
+                      Started with {terminalLaunchResult.terminal.method}
+                      {terminalLaunchResult.terminal.pid ? ` (PID ${terminalLaunchResult.terminal.pid})` : ""}.
+                    </p>
+                  </div>
+                  <div>
+                    <span className="sl-section-label">Launch claim</span>
+                    <p>{terminalLaunchResult.launchClaim.status} · {terminalLaunchResult.launchClaim.launchClaimId}</p>
+                  </div>
+                </div>
+              )}
             </section>
           )}
         </div>
 
         <div className="sl-sheet-foot sl-paw-launch-actions">
-          <button type="button" className="sl-action-btn" onClick={onCancel} disabled={preparing}>
-            Cancel
+          <button type="button" className="sl-action-btn" onClick={onCancel} disabled={preparing || launching}>
+            {terminalLaunchResult ? "Close" : "Cancel"}
           </button>
-          <button type="submit" className="sl-action-btn primary" disabled={preparing || Boolean(instructionError)}>
-            {preparing ? "Running PAW init..." : "Run PAW init"}
-          </button>
+          {handoff ? (
+            <button
+              type="button"
+              className="sl-action-btn primary"
+              disabled={launching || workflowContextSaving || Boolean(terminalLaunchResult?.launchClaim.blocksLaunch)}
+              onClick={onLaunchTerminal}
+            >
+              {launching ? "Launching terminal..." : terminalLaunchResult ? "Terminal launched" : "Launch terminal"}
+            </button>
+          ) : (
+            <button type="submit" className="sl-action-btn primary" disabled={preparing || Boolean(instructionError)}>
+              {preparing ? "Running PAW init..." : "Run PAW init"}
+            </button>
+          )}
         </div>
       </form>
     </>

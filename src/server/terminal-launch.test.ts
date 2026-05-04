@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { ChildProcess } from "node:child_process";
 import {
+  buildCopilotInteractiveCommand,
   isWindowsTerminalAvailable,
   clearWindowsTerminalCache,
   launchTerminal,
@@ -174,6 +175,19 @@ describe("terminal-launch", () => {
         ],
         expect.objectContaining({ detached: true, stdio: "ignore" })
       );
+    });
+
+    it("passes additional environment values to the spawned terminal", () => {
+      launchTerminal({
+        cwd: "C:\\Users\\test\\workspace",
+        env: { STREAMLINER_LAUNCH_CLAIM_ID: "claim-1" },
+      });
+
+      const callArgs = vi.mocked(spawn).mock.calls[0];
+      const spawnedEnv = (callArgs[2] as { env?: NodeJS.ProcessEnv }).env;
+      expect(spawnedEnv).toEqual(expect.objectContaining({
+        STREAMLINER_LAUNCH_CLAIM_ID: "claim-1",
+      }));
     });
 
     it("includes title, color, and command together", () => {
@@ -368,6 +382,43 @@ describe("terminal-launch", () => {
     });
   });
 
+  describe("terminal preference", () => {
+    it("uses PowerShell directly when requested", () => {
+      vi.mocked(execSync).mockImplementation((command) => {
+        if (command === "where pwsh") {
+          throw new Error("not found");
+        }
+        return Buffer.from("");
+      });
+
+      launchTerminal({
+        cwd: "C:\\Users\\test\\workspace",
+        preferredTerminal: "powershell",
+      });
+
+      expect(spawn).toHaveBeenCalledWith(
+        "powershell.exe",
+        ["-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "Set-Location -LiteralPath 'C:\\Users\\test\\workspace'"],
+        expect.objectContaining({ detached: true, stdio: "ignore" }),
+      );
+      expect(execSync).not.toHaveBeenCalledWith("where wt", { stdio: "ignore" });
+    });
+  });
+
+  describe("buildCopilotInteractiveCommand", () => {
+    it("builds a PowerShell command that decodes the prompt and quotes args", () => {
+      const command = buildCopilotInteractiveCommand({
+        cliArgs: ["--yolo", "--model", "Rob's model"],
+        kickoffPrompt: "Line 1\nLine 2",
+      });
+
+      expect(command).toContain("[System.Convert]::FromBase64String");
+      expect(command).toContain("'--yolo' '--model' 'Rob''s model'");
+      expect(command).toContain("-i $streamlinerKickoffPrompt .");
+      expect(command).not.toContain("Line 1");
+    });
+  });
+
   describe("spawn options", () => {
     beforeEach(() => {
       vi.mocked(execSync).mockImplementation(() => Buffer.from(""));
@@ -422,6 +473,5 @@ describe("terminal-launch", () => {
     });
   });
 });
-
 
 
