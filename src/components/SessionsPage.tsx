@@ -1,5 +1,6 @@
 import {
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -10,6 +11,21 @@ import {
 
 import type { SessionRegistryListItem, SessionRegistryPatch } from "../session-registry-contract";
 import type { SessionRegistryRecord } from "../session-registry-schema";
+import {
+  handleInAppLinkClick,
+  workstreamRoutePath,
+} from "../dashboard-routing";
+import {
+  canLoadWorkstreamGraph,
+  findGraphBindingWorkstreamMatches,
+  resolveSessionWorkstreamLinkage,
+  workstreamRegistryKey,
+  type SessionWorkstreamLinkageResolution,
+  type WorkstreamGraphLoadState,
+  type WorkstreamRouteTarget,
+} from "../session-workstream-linkage";
+import type { WorkstreamRegistryListEntry } from "../workstream-registry-contract";
+import { parseWorkstreamDocument } from "../workstream-view-model";
 import {
   buildRestartCommand,
   canManuallyStop,
@@ -30,17 +46,19 @@ const DEFAULT_RECENTLY_CLOSED_HOURS = 6;
 const SESSION_STALE_DAYS_STORAGE_KEY = "streamliner:sessionsStaleDays";
 const SESSION_GROUP_MODE_STORAGE_KEY = "streamliner:sessionsGroupMode";
 
-type GroupMode = "recency" | "repo" | "folder" | "flat";
+type GroupMode = "recency" | "repo" | "folder" | "workstream" | "flat";
 type SheetTab = "overview" | "activity" | "settings";
 
 const GROUP_MODES: Array<{ mode: GroupMode; label: string }> = [
   { mode: "recency", label: "Recency" },
   { mode: "repo", label: "Repo" },
   { mode: "folder", label: "Folder" },
+  { mode: "workstream", label: "Workstream" },
   { mode: "flat", label: "Flat" },
 ];
 
 const DEFAULT_GROUP_MODE: GroupMode = "recency";
+const EMPTY_WORKSTREAMS: WorkstreamRegistryListEntry[] = [];
 
 interface SessionDraft {
   title: string;
@@ -660,7 +678,13 @@ function readGroupMode(): GroupMode {
     return DEFAULT_GROUP_MODE;
   }
   const stored = window.localStorage.getItem(SESSION_GROUP_MODE_STORAGE_KEY);
-  if (stored === "recency" || stored === "repo" || stored === "folder" || stored === "flat") {
+  if (
+    stored === "recency" ||
+    stored === "repo" ||
+    stored === "folder" ||
+    stored === "workstream" ||
+    stored === "flat"
+  ) {
     return stored;
   }
   return DEFAULT_GROUP_MODE;
@@ -816,6 +840,129 @@ function GithubRefChip({ refItem, session, className, showRepo = false }: Github
   );
 }
 
+interface WorkstreamLinkChipProps {
+  target: WorkstreamRouteTarget | null;
+  className: string;
+  label: string;
+  title?: string;
+  onOpenWorkstream?: (target: WorkstreamRouteTarget) => void | Promise<void>;
+  children: ReactNode;
+}
+
+function WorkstreamLinkChip({
+  target,
+  className,
+  label,
+  title,
+  onOpenWorkstream,
+  children,
+}: WorkstreamLinkChipProps) {
+  if (!target) {
+    return (
+      <span className={className} title={title}>
+        {children}
+      </span>
+    );
+  }
+
+  return (
+    <a
+      className={`${className} linkable`}
+      href={workstreamRoutePath(target)}
+      title={title}
+      aria-label={label}
+      onClick={(event) => {
+        event.stopPropagation();
+        if (onOpenWorkstream) {
+          handleInAppLinkClick(event, () => onOpenWorkstream(target));
+        }
+      }}
+    >
+      {children}
+    </a>
+  );
+}
+
+function workstreamLinkageTitle(
+  linkage: SessionWorkstreamLinkageResolution,
+): string {
+  switch (linkage.status) {
+    case "resolved":
+      return "Open bound workstream node";
+    case "graph-loading":
+      return linkage.note ?? "Resolving bound workstream node";
+    case "graph-unavailable":
+    case "node-unresolved":
+    case "missing-workstream":
+    case "ambiguous-workstream":
+      return linkage.note ?? "Bound workstream context is unresolved";
+    case "unbound":
+      return "This session is not bound to a workstream";
+  }
+}
+
+function workstreamLinkageStatusLabel(
+  linkage: SessionWorkstreamLinkageResolution,
+): string {
+  switch (linkage.status) {
+    case "resolved":
+      return "Resolved";
+    case "graph-loading":
+      return "Resolving node";
+    case "graph-unavailable":
+      return "Graph unavailable";
+    case "node-unresolved":
+      return "Node not found";
+    case "missing-workstream":
+      return "Workstream not tracked";
+    case "ambiguous-workstream":
+      return "Ambiguous workstream";
+    case "unbound":
+      return "Unbound";
+  }
+}
+
+function SessionWorkstreamContextChips({
+  linkage,
+  onOpenWorkstream,
+}: {
+  linkage: SessionWorkstreamLinkageResolution;
+  onOpenWorkstream?: (target: WorkstreamRouteTarget) => void | Promise<void>;
+}) {
+  if (linkage.status === "unbound") {
+    return null;
+  }
+
+  const title = workstreamLinkageTitle(linkage);
+  const workstreamLabel = linkage.workstreamLabel ?? linkage.workstreamId ?? "unknown";
+  const nodeLabel = linkage.nodeLabel ?? linkage.nodeId;
+
+  return (
+    <>
+      <WorkstreamLinkChip
+        target={linkage.workstreamRouteTarget}
+        className="sl-session-row-context-chip important"
+        label={`Open workstream ${workstreamLabel}`}
+        title={title}
+        onOpenWorkstream={onOpenWorkstream}
+      >
+        workstream {workstreamLabel}
+      </WorkstreamLinkChip>
+      {nodeLabel && (
+        <WorkstreamLinkChip
+          target={linkage.nodeRouteTarget}
+          className="sl-session-row-context-chip"
+          label={`Open workstream node ${nodeLabel}`}
+          title={title}
+          onOpenWorkstream={onOpenWorkstream}
+        >
+          node {nodeLabel}
+        </WorkstreamLinkChip>
+      )}
+    </>
+  );
+}
+
 type RecencyBucketKey =
   | "trusted-active"
   | "trusted-interrupted"
@@ -869,6 +1016,7 @@ interface SessionGroup {
   label: string;
   code: string | null;
   latestTs: number;
+  order: number;
   sessions: SessionRegistryListItem[];
 }
 
@@ -899,9 +1047,17 @@ function displayFolderLabel(folderKey: string): { label: string; code: string | 
   return { label: short || folderKey, code: folderKey };
 }
 
+function workstreamGraphApiUrl(entry: {
+  projectKey: string;
+  workstreamId: string;
+}): string {
+  return `/api/workstreams/${encodeURIComponent(entry.projectKey)}/${encodeURIComponent(entry.workstreamId)}/graph`;
+}
+
 function groupSessions(
   sessions: SessionRegistryListItem[],
   mode: GroupMode,
+  linkages: ReadonlyMap<string, SessionWorkstreamLinkageResolution>,
 ): SessionGroup[] {
   if (mode === "flat") {
     const sorted = [...sessions].sort(
@@ -914,18 +1070,26 @@ function groupSessions(
         label: "All sessions",
         code: null,
         latestTs,
+        order: 0,
         sessions: sorted,
       },
     ];
   }
 
   const buckets = new Map<string, SessionRegistryListItem[]>();
+  const workstreamGroups = new Map<string, SessionWorkstreamLinkageResolution["group"]>();
   for (const session of sessions) {
     let key: string;
     if (mode === "recency") {
       key = recencyBucket(session).key;
     } else if (mode === "repo") {
       key = repoGroupKey(session);
+    } else if (mode === "workstream") {
+      const group = linkages.get(session.id)?.group;
+      key = group?.key ?? "__unbound__";
+      if (group) {
+        workstreamGroups.set(key, group);
+      }
     } else {
       key = folderGroupKey(session);
     }
@@ -946,22 +1110,31 @@ function groupSessions(
 
     let label = key;
     let code: string | null = null;
+    let order = Number.MAX_SAFE_INTEGER;
     if (mode === "recency") {
       // label comes from the bucket metadata
       const sample = sorted[0];
       const info = recencyBucket(sample);
       label = info.label;
+      order = info.order;
     } else if (mode === "repo") {
       const display = displayRepoLabel(key);
       label = display.label;
       code = display.code;
+    } else if (mode === "workstream") {
+      const group = workstreamGroups.get(key);
+      if (group) {
+        label = group.label;
+        code = group.code;
+        order = group.order;
+      }
     } else {
       const display = displayFolderLabel(key);
       label = display.label;
       code = display.code;
     }
 
-    groups.push({ key, label, code, latestTs, sessions: sorted });
+    groups.push({ key, label, code, latestTs, order, sessions: sorted });
   }
 
   if (mode === "recency") {
@@ -980,6 +1153,13 @@ function groupSessions(
       never: 10,
     };
     groups.sort((a, b) => (order[a.key as RecencyBucketKey] ?? 99) - (order[b.key as RecencyBucketKey] ?? 99));
+  } else if (mode === "workstream") {
+    groups.sort((a, b) => {
+      if (a.order !== b.order) {
+        return a.order - b.order;
+      }
+      return a.label.localeCompare(b.label);
+    });
   }
   return groups;
 }
@@ -1042,10 +1222,19 @@ interface SessionSaveOptions {
 
 interface SessionsPageProps {
   registerBeforeLeave?: (handler: (() => Promise<boolean>) | null) => void;
+  workstreams?: WorkstreamRegistryListEntry[];
+  onOpenWorkstream?: (target: WorkstreamRouteTarget) => void | Promise<void>;
 }
 
-export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
+export function SessionsPage({
+  registerBeforeLeave,
+  workstreams = EMPTY_WORKSTREAMS,
+  onOpenWorkstream,
+}: SessionsPageProps) {
   const [sessions, setSessions] = useState<SessionRegistryListItem[]>([]);
+  const [workstreamGraphs, setWorkstreamGraphs] = useState<
+    Record<string, WorkstreamGraphLoadState>
+  >({});
   const [query, setQuery] = useState("");
   const [showArchived, setShowArchived] = useState(false);
   const [showEnded, setShowEnded] = useState(false);
@@ -1079,6 +1268,9 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
   const selectedSnapshotRef = useLatestValue(selectedSnapshot);
   const saveStateRef = useLatestValue(saveState);
   const conflictPendingRef = useLatestValue(conflictPending);
+  const workstreamGraphsRef = useLatestValue(workstreamGraphs);
+  const mountedRef = useRef(false);
+  const loadingWorkstreamGraphKeysRef = useRef(new Set<string>());
 
   const applySessionList = useCallback(
     (nextSessions: SessionRegistryListItem[], keepSelection = true) => {
@@ -1311,13 +1503,118 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
   const hiddenStaleSessionCount =
     endedFilteredSessions.length - visibleSessions.length;
 
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const entriesToLoad = new Map<string, WorkstreamRegistryListEntry>();
+    const graphStateSnapshot = workstreamGraphsRef.current;
+    for (const session of visibleSessions) {
+      const binding = session.graphBinding;
+      if (!binding) {
+        continue;
+      }
+      const matches = findGraphBindingWorkstreamMatches(
+        binding.workstreamId,
+        workstreams,
+      );
+      if (matches.length !== 1 || !canLoadWorkstreamGraph(matches[0])) {
+        continue;
+      }
+      const key = workstreamRegistryKey(matches[0]);
+      if (!graphStateSnapshot[key] && !loadingWorkstreamGraphKeysRef.current.has(key)) {
+        entriesToLoad.set(key, matches[0]);
+      }
+    }
+
+    if (entriesToLoad.size === 0) {
+      return;
+    }
+
+    setWorkstreamGraphs((current) => {
+      const next = { ...current };
+      for (const key of entriesToLoad.keys()) {
+        next[key] = { status: "loading" };
+        loadingWorkstreamGraphKeysRef.current.add(key);
+      }
+      return next;
+    });
+
+    for (const [key, entry] of entriesToLoad) {
+      void (async () => {
+        try {
+          const response = await fetch(workstreamGraphApiUrl(entry));
+          if (!response.ok) {
+            throw new Error(`Failed to load workstream graph (${response.status})`);
+          }
+          const document = parseWorkstreamDocument(await response.text());
+          if (mountedRef.current) {
+            setWorkstreamGraphs((current) => ({
+              ...current,
+              [key]: { status: "loaded", document },
+            }));
+          }
+        } catch (nextError) {
+          if (mountedRef.current) {
+            setWorkstreamGraphs((current) => ({
+              ...current,
+              [key]: {
+                status: "error",
+                message:
+                  nextError instanceof Error ? nextError.message : String(nextError),
+              },
+            }));
+          }
+        } finally {
+          loadingWorkstreamGraphKeysRef.current.delete(key);
+        }
+      })();
+    }
+  }, [visibleSessions, workstreamGraphsRef, workstreams]);
+
+  const workstreamGraphStateMap = useMemo(
+    () => new Map(Object.entries(workstreamGraphs)),
+    [workstreamGraphs],
+  );
+
+  const sessionLinkages = useMemo(
+    () =>
+      new Map(
+        sessions.map((session) => [
+          session.id,
+          resolveSessionWorkstreamLinkage(
+            session,
+            workstreams,
+            workstreamGraphStateMap,
+          ),
+        ]),
+      ),
+    [sessions, workstreamGraphStateMap, workstreams],
+  );
+
+  const selectedSessionLinkage = useMemo(
+    () =>
+      selectedSession
+        ? resolveSessionWorkstreamLinkage(
+            selectedSession,
+            workstreams,
+            workstreamGraphStateMap,
+          )
+        : null,
+    [selectedSession, workstreamGraphStateMap, workstreams],
+  );
+
   const computedGroups = useMemo(
-    () => groupSessions(visibleSessions, groupMode),
-    [visibleSessions, groupMode],
+    () => groupSessions(visibleSessions, groupMode, sessionLinkages),
+    [visibleSessions, groupMode, sessionLinkages],
   );
 
   const orderedGroups = useMemo(() => {
-    if (groupMode === "recency" || groupMode === "flat") {
+    if (groupMode === "recency" || groupMode === "flat" || groupMode === "workstream") {
       return computedGroups;
     }
     const frozen = frozenOrderRef.current[groupMode];
@@ -1781,7 +2078,9 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
       ? "Recency buckets — order is semantic"
       : groupMode === "flat"
         ? "No grouping — rows sorted by most recent activity"
-        : "Group order frozen at page load · use ↻ Resort to refresh";
+        : groupMode === "workstream"
+          ? "Workstream groups — unbound first, then tracked order"
+          : "Group order frozen at page load · use ↻ Resort to refresh";
 
   return (
     <div className="sl-sessions sl-sessions-v2">
@@ -1864,7 +2163,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
         </div>
         <button
           className="sl-seg-resort"
-          disabled={groupMode === "recency" || groupMode === "flat"}
+          disabled={groupMode === "recency" || groupMode === "flat" || groupMode === "workstream"}
           onClick={handleResort}
           title="Re-sort groups by most recent activity"
         >
@@ -1953,6 +2252,13 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                     const signalClass = activitySignalClass(session.activityStatus);
                     const signalDetail = trustedStatus ?? observedStatus ?? session.originKind;
                     const rowFolderLeaf = leafName(rowWorktree ?? session.cwd);
+                    const rowLinkage =
+                      sessionLinkages.get(session.id) ??
+                      resolveSessionWorkstreamLinkage(
+                        session,
+                        workstreams,
+                        workstreamGraphStateMap,
+                      );
                     const rowDetail =
                       summary.text && summary.status !== "missing"
                         ? summary.text
@@ -2018,6 +2324,10 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                                   folder {rowFolderLeaf}
                                 </span>
                               )}
+                              <SessionWorkstreamContextChips
+                                linkage={rowLinkage}
+                                onOpenWorkstream={onOpenWorkstream}
+                              />
                               {session.derivedGithubRefs.slice(0, 3).map((ref) => (
                                 <GithubRefChip
                                   key={`${ref.type}-${ref.repo ?? ""}-${ref.number}`}
@@ -2213,7 +2523,11 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
               {saveError && <div className="sl-action-error">{saveError}</div>}
 
               {sheetTab === "overview" && selectedSession && !creating && (
-                <SessionOverview session={selectedSession} />
+                <SessionOverview
+                  session={selectedSession}
+                  workstreamLinkage={selectedSessionLinkage}
+                  onOpenWorkstream={onOpenWorkstream}
+                />
               )}
 
               {sheetTab === "activity" && selectedSession && !creating && (
@@ -2281,6 +2595,8 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
 
 interface SessionOverviewProps {
   session: SessionRegistryListItem;
+  workstreamLinkage: SessionWorkstreamLinkageResolution | null;
+  onOpenWorkstream?: (target: WorkstreamRouteTarget) => void | Promise<void>;
 }
 
 type CopyState = "idle" | "copied" | "error";
@@ -2565,7 +2881,11 @@ function CopyableValue({ value, label }: CopyableValueProps) {
   );
 }
 
-function SessionOverview({ session }: SessionOverviewProps) {
+function SessionOverview({
+  session,
+  workstreamLinkage,
+  onOpenWorkstream,
+}: SessionOverviewProps) {
   const summary = getSessionSummaryDisplay(session);
   const latestDescription = getSessionLatestDescription(session, summary);
   const contextBranch = displayBranch(session);
@@ -2615,6 +2935,55 @@ function SessionOverview({ session }: SessionOverviewProps) {
         </div>
         {summary.note && <div className="sl-session-overview-note">{summary.note}</div>}
       </section>
+
+      {workstreamLinkage && workstreamLinkage.status !== "unbound" && (
+        <section className="sl-session-overview-section">
+          <h3 className="sl-session-overview-heading">Workstream binding</h3>
+          <dl className="sl-session-kv">
+            <dt>Workstream</dt>
+            <dd>
+              <WorkstreamLinkChip
+                target={workstreamLinkage.workstreamRouteTarget}
+                className="sl-session-context-ref"
+                label={`Open workstream ${workstreamLinkage.workstreamLabel ?? workstreamLinkage.workstreamId ?? "unknown"}`}
+                title={workstreamLinkageTitle(workstreamLinkage)}
+                onOpenWorkstream={onOpenWorkstream}
+              >
+                {workstreamLinkage.workstreamLabel ??
+                  workstreamLinkage.workstreamId ??
+                  "unknown"}
+              </WorkstreamLinkChip>
+            </dd>
+            {workstreamLinkage.nodeId && (
+              <>
+                <dt>Node</dt>
+                <dd>
+                  <WorkstreamLinkChip
+                    target={workstreamLinkage.nodeRouteTarget}
+                    className="sl-session-context-ref"
+                    label={`Open workstream node ${workstreamLinkage.nodeLabel ?? workstreamLinkage.nodeId}`}
+                    title={workstreamLinkageTitle(workstreamLinkage)}
+                    onOpenWorkstream={onOpenWorkstream}
+                  >
+                    {workstreamLinkage.nodeLabel ?? workstreamLinkage.nodeId}
+                  </WorkstreamLinkChip>
+                </dd>
+              </>
+            )}
+            <dt>Binding status</dt>
+            <dd>{workstreamLinkageStatusLabel(workstreamLinkage)}</dd>
+            {workstreamLinkage.matchCount > 1 && (
+              <>
+                <dt>Matches</dt>
+                <dd>{workstreamLinkage.matchCount} tracked workstreams</dd>
+              </>
+            )}
+          </dl>
+          {workstreamLinkage.note && (
+            <div className="sl-session-overview-note">{workstreamLinkage.note}</div>
+          )}
+        </section>
+      )}
 
       {(contextBranch || contextWorktree || session.derivedGithubRefs.length > 0) && (
         <section className="sl-session-overview-section">

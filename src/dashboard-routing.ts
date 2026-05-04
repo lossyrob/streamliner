@@ -4,7 +4,12 @@ export type DashboardRoute =
   | { view: "landing"; message?: string }
   | { view: "workstreams"; message?: string }
   | { view: "sessions" }
-  | { view: "workstream"; projectKey: string; workstreamId: string };
+  | {
+      view: "workstream";
+      projectKey: string;
+      workstreamId: string;
+      nodeId?: string | null;
+    };
 
 export function encodeRouteSegment(segment: string): string {
   return encodeURIComponent(segment);
@@ -13,8 +18,12 @@ export function encodeRouteSegment(segment: string): string {
 export function workstreamRoutePath(entry: {
   projectKey: string;
   workstreamId: string;
+  nodeId?: string | null;
 }): string {
-  return `/workstreams/${encodeRouteSegment(entry.projectKey)}/${encodeRouteSegment(entry.workstreamId)}`;
+  const base = `/workstreams/${encodeRouteSegment(entry.projectKey)}/${encodeRouteSegment(entry.workstreamId)}`;
+  return entry.nodeId
+    ? `${base}/nodes/${encodeRouteSegment(entry.nodeId)}`
+    : base;
 }
 
 export function routePath(route: DashboardRoute): string {

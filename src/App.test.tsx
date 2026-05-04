@@ -520,6 +520,117 @@ describe("App sessions route", () => {
     15_000,
   );
 
+  it(
+    "shows bound session workstream context and opens the selected node route",
+    async () => {
+      const graph = buildWorkstreamGraph({
+        id: "session-launching-and-tracking",
+        title: "Session launching and tracking",
+        summary: "Connect launched sessions to graph nodes.",
+        nodes: [
+          {
+            id: "sessions-workstream-linkage-ui",
+            type: "task",
+            title: "Sessions view workstream linkage",
+            summary: "Show graph bindings in My Sessions.",
+            status: "ready",
+            attention: "focus",
+            repoIds: ["streamliner"],
+            dependsOn: [],
+          },
+        ],
+        checkpoints: [
+          {
+            id: "tracking-visible",
+            title: "Tracking visible",
+            summary: "Make launch bindings visible.",
+            status: "planned",
+            nodeIds: ["sessions-workstream-linkage-ui"],
+          },
+        ],
+      });
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path.startsWith("/api/sessions")) {
+          return jsonResponse([
+            buildSession({
+              id: "bound-session",
+              title: "Graph-launched worker",
+              originKind: "launched",
+              graphBinding: {
+                workstreamId: "session-launching-and-tracking",
+                nodeId: "sessions-workstream-linkage-ui",
+              },
+            }),
+          ]);
+        }
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [
+              buildTrackedWorkstream({
+                workstreamId: "session-launching-and-tracking",
+                title: "Session launching and tracking",
+                summary: "Connect launched sessions to graph nodes.",
+                path: "C:\\graphs\\session-launching-and-tracking\\graph.json",
+              }),
+            ],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/session-launching-and-tracking/graph") {
+          return jsonResponse(graph);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return emptyNodeLaunchRecordResponse();
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState({}, "", "/sessions");
+
+      act(() => {
+        root.render(<App />);
+      });
+
+      await settle(200);
+
+      expect(container.textContent).toContain("Graph-launched worker");
+      expect(container.textContent).toContain("Session launching and tracking");
+      expect(container.textContent).toContain("Sessions view workstream linkage");
+
+      act(() => {
+        findButton(container, "Workstream").click();
+      });
+      await settle();
+      const groupTitle = container.querySelector(".sl-session-group-title");
+      expect(groupTitle?.textContent).toContain("Session launching and tracking");
+      expect(groupTitle?.textContent).toContain("streamliner/session-launching-and-tracking");
+
+      const nodeLink = [...container.querySelectorAll<HTMLAnchorElement>("a.sl-session-row-context-chip")].find(
+        (candidate) => candidate.textContent?.includes("Sessions view workstream linkage"),
+      );
+      expect(nodeLink).toBeInstanceOf(HTMLAnchorElement);
+
+      act(() => {
+        nodeLink?.click();
+      });
+      await settle(200);
+
+      expect(window.location.pathname).toBe(
+        "/workstreams/streamliner/session-launching-and-tracking/nodes/sessions-workstream-linkage-ui",
+      );
+      expect(
+        fetchMock.mock.calls.some(([input]) =>
+          requestPath(input as RequestInfo | URL).startsWith(
+            "/api/node-launch-records?",
+          ),
+        ),
+      ).toBe(true);
+    },
+    15_000,
+  );
+
   it("keeps plain route clicks in-app and leaves modified clicks to the browser", () => {
     const plainClick = runInAppLinkClick();
     expect(plainClick.preventDefault).toHaveBeenCalledOnce();

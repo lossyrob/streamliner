@@ -118,7 +118,7 @@ function readDashboardRoute(): DashboardRoute {
   if (segments.length === 1) {
     return { view: "workstreams" };
   }
-  if (segments.length !== 3) {
+  if (segments.length !== 3 && segments.length !== 5) {
     return { view: "workstreams", message: "That workstream URL is incomplete." };
   }
 
@@ -132,7 +132,18 @@ function readDashboardRoute(): DashboardRoute {
   ) {
     return { view: "workstreams", message: "That workstream URL is invalid." };
   }
-  return { view: "workstream", projectKey, workstreamId };
+  if (segments.length === 3) {
+    return { view: "workstream", projectKey, workstreamId };
+  }
+
+  if (segments[3] !== "nodes") {
+    return { view: "workstreams", message: "That workstream URL is incomplete." };
+  }
+  const nodeId = decodeSegment(segments[4]);
+  if (!nodeId || !isKebabCaseId(nodeId)) {
+    return { view: "workstreams", message: "That workstream node URL is invalid." };
+  }
+  return { view: "workstream", projectKey, workstreamId, nodeId };
 }
 
 function useDashboardRoute() {
@@ -598,7 +609,7 @@ function WorkstreamHome({
   archivedWorkstreams: WorkstreamRegistryListEntry[];
   sources: WorkstreamSourceListEntry[];
   conflicts: WorkstreamConflict[];
-  onOpenWorkstream: (entry: WorkstreamRegistryListEntry) => void;
+  onOpenWorkstream: (entry: WorkstreamRegistryListEntry) => void | Promise<void>;
   onAddSource: (type: WorkstreamSourceType, path: string) => void | Promise<void>;
   onRefreshSources: () => void | Promise<void>;
   onDeleteSource: (sourceId: string) => void | Promise<void>;
@@ -829,12 +840,16 @@ function GraphDashboard({
   onOpenWorkstream,
   onManageSources,
   onRouteHome,
+  selectedNodeIdFromRoute,
 }: ReturnType<typeof useGraphLoader> & {
-  onOpenWorkstream: (entry: WorkstreamRegistryListEntry) => void;
+  onOpenWorkstream: (entry: WorkstreamRegistryListEntry) => void | Promise<void>;
   onManageSources: () => void;
   onRouteHome: () => void;
+  selectedNodeIdFromRoute?: string | null;
 }) {
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(
+    selectedNodeIdFromRoute ?? null,
+  );
   const [actionError, setActionError] = useState<string | null>(null);
   const [launchDialogOpen, setLaunchDialogOpen] = useState(false);
   const [launchPreparing, setLaunchPreparing] = useState(false);
@@ -847,6 +862,11 @@ function GraphDashboard({
   const [nodeLaunchRecordLoading, setNodeLaunchRecordLoading] = useState(false);
   const [nodeLaunchRecordError, setNodeLaunchRecordError] = useState<string | null>(null);
   const [nodeLaunchRecordRefreshKey, setNodeLaunchRecordRefreshKey] = useState(0);
+  const activeWorkstreamKey = activeWorkstream ? registryKey(activeWorkstream) : "";
+
+  useEffect(() => {
+    setSelectedNodeId(selectedNodeIdFromRoute ?? null);
+  }, [activeWorkstreamKey, selectedNodeIdFromRoute]);
 
   const viewModel = useMemo(() => {
     if (!workstream) return null;
@@ -1260,7 +1280,7 @@ function DashboardNav({
 
 export default function App() {
   const { route, setRoute } = useDashboardRoute();
-  const graphLoader = useGraphLoader(route, route.view !== "sessions");
+  const graphLoader = useGraphLoader(route, true);
   const beforeLeaveRef = useRef<(() => Promise<boolean>) | null>(null);
 
   const handleRouteChange = useCallback(
@@ -1284,10 +1304,15 @@ export default function App() {
   }, []);
 
   const openWorkstream = useCallback(
-    (entry: { projectKey: string; workstreamId: string }) => {
-      setRoute({ view: "workstream", projectKey: entry.projectKey, workstreamId: entry.workstreamId });
+    async (entry: { projectKey: string; workstreamId: string; nodeId?: string | null }) => {
+      await handleRouteChange({
+        view: "workstream",
+        projectKey: entry.projectKey,
+        workstreamId: entry.workstreamId,
+        nodeId: entry.nodeId ?? undefined,
+      });
     },
-    [setRoute],
+    [handleRouteChange],
   );
 
   const manageSources = useCallback(
@@ -1307,13 +1332,18 @@ export default function App() {
       <DashboardNav route={route} onRouteChange={handleRouteChange} />
       <MigrationWarningsBanner warnings={graphLoader.migrationWarnings} />
       {route.view === "sessions" ? (
-        <SessionsPage registerBeforeLeave={registerBeforeLeave} />
+        <SessionsPage
+          registerBeforeLeave={registerBeforeLeave}
+          workstreams={graphLoader.workstreams}
+          onOpenWorkstream={openWorkstream}
+        />
       ) : route.view === "workstream" ? (
         <GraphDashboard
           {...graphLoader}
           onOpenWorkstream={openWorkstream}
           onManageSources={manageSources}
           onRouteHome={() => setRoute({ view: "workstreams" }, "replace")}
+          selectedNodeIdFromRoute={route.nodeId ?? null}
         />
       ) : route.view === "workstreams" ? (
         <WorkstreamHome
