@@ -6,6 +6,7 @@ import request from "supertest";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { LaunchClaimFileStore } from "../session-registry/launch-claim-store";
+import type { LaunchClaimStore } from "../launch-claim-contract";
 import { SessionRegistryFileStore } from "../session-registry/file-store";
 import type { PawLaunchHandoff } from "./launch-preparation";
 import {
@@ -212,6 +213,41 @@ describe("launchPreparedNode", () => {
       failureReason: "spawn exploded",
     }));
     expect(registryStore.listSessions()).toEqual([]);
+  });
+
+  it("reports claim transition errors when terminal spawn failure cleanup fails", () => {
+    const root = createRootDir();
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const failingClaimStore: LaunchClaimStore = {
+      createClaim: claimStore.createClaim.bind(claimStore),
+      getClaim: claimStore.getClaim.bind(claimStore),
+      listClaims: claimStore.listClaims.bind(claimStore),
+      updateClaim: () => {
+        throw new Error("claim store write failed");
+      },
+      deleteClaim: claimStore.deleteClaim.bind(claimStore),
+      subscribe: claimStore.subscribe.bind(claimStore),
+    };
+
+    expect(() =>
+      launchPreparedNode(
+        registryStore,
+        failingClaimStore,
+        fakeHandoff(root),
+        {
+          launchTerminal: () => {
+            throw new Error("spawn exploded");
+          },
+        },
+      )
+    ).toThrow(/spawn exploded; also failed to mark launch claim failed: claim store write failed/);
+
+    const [entry] = claimStore.listClaims();
+    expect(claimStore.getClaim(entry.launchClaimId)).toEqual(expect.objectContaining({
+      status: "pending",
+      failureCode: null,
+    }));
   });
 
   it("rejects duplicate active launches before creating another claim", () => {

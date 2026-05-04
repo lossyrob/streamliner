@@ -174,6 +174,16 @@ function lineageMetadataFor(handoff: PawLaunchHandoff): Record<string, unknown> 
   };
 }
 
+function errorLogDetails(error: unknown): Record<string, string> | string {
+  return error instanceof Error
+    ? { name: error.name, message: error.message }
+    : String(error);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export function launchPreparedNode(
   registryStore: SessionRegistryFileStore,
   claimStore: LaunchClaimStore,
@@ -250,28 +260,48 @@ export function launchPreparedNode(
       },
     };
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
-    const failed = markClaimFailed(
-      registryStore,
-      claimStore,
-      claim.launchClaimId,
-      "terminal-spawn-failed",
-      message,
-      deps.now ? { now: deps.now } : undefined,
-    );
-    getApiLogger().withScope("node-launch").error("terminal spawn failed", {
+    const logger = getApiLogger().withScope("node-launch");
+    const message = errorMessage(error);
+    let failedClaim: LaunchClaim | null = claim;
+    let failureTransitionError: string | null = null;
+    try {
+      const failed = markClaimFailed(
+        registryStore,
+        claimStore,
+        claim.launchClaimId,
+        "terminal-spawn-failed",
+        message,
+        deps.now ? { now: deps.now } : undefined,
+      );
+      if (failed.ok && failed.claim) {
+        failedClaim = failed.claim;
+      } else {
+        failureTransitionError = "launch claim was not found while marking terminal spawn failure";
+      }
+    } catch (markError: unknown) {
+      failureTransitionError = errorMessage(markError);
+      logger.error("terminal spawn failure claim transition failed", {
+        launchClaimId: claim.launchClaimId,
+        workstreamId: claim.workstreamId,
+        nodeId: claim.nodeId,
+        err: errorLogDetails(markError),
+      });
+    }
+    logger.error("terminal spawn failed", {
       launchClaimId: claim.launchClaimId,
       workstreamId: claim.workstreamId,
       nodeId: claim.nodeId,
-      err: error instanceof Error
-        ? { name: error.name, message: error.message }
-        : String(error),
+      failureTransition: failureTransitionError ? "failed" : "recorded",
+      err: errorLogDetails(error),
     });
+    const transitionMessage = failureTransitionError
+      ? `; also failed to mark launch claim failed: ${failureTransitionError}`
+      : "";
     throw new NodeLaunchError(
       "terminal_spawn_failed",
       500,
-      `Failed to launch terminal: ${message}`,
-      failed.claim,
+      `Failed to launch terminal: ${message}${transitionMessage}`,
+      failedClaim,
     );
   }
 }
