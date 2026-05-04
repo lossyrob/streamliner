@@ -10,6 +10,7 @@ import {
   type SessionEvent,
 } from "@github/copilot-sdk";
 
+import type { NodeLaunchRecord } from "../node-launch-record-contract";
 import { getApiLogger } from "./logger";
 import {
   LaunchContextPreparationError,
@@ -102,6 +103,7 @@ export interface PawInitRunnerInput {
   launchNonce: string | null;
   configuration: ResolvedPawLaunchConfiguration;
   stagedContextPackage: LaunchContextPackage;
+  existingLaunch?: NodeLaunchRecord | null;
 }
 
 export type PawLaunchProgressEventType =
@@ -158,6 +160,7 @@ export interface PawLaunchSessionRunnerInput {
   launchNonce: string | null;
   configuration: ResolvedPawLaunchConfiguration;
   preparedContext: PreparedLaunchContextPackage;
+  existingLaunch?: NodeLaunchRecord | null;
   onProgress?: PawLaunchProgressSink;
 }
 
@@ -189,6 +192,7 @@ export interface PreparePawLaunchOptions {
   onProgress?: PawLaunchProgressSink;
   pawInitRunner?: PawInitRunner;
   contextPreparer?: LaunchContextPreparer;
+  existingLaunch?: NodeLaunchRecord | null;
 }
 
 export interface PawLaunchMetadata {
@@ -596,6 +600,38 @@ function compactProgressText(value: unknown, maxLength = 500): string {
   return compacted.length > maxLength ? `${compacted.slice(0, maxLength - 1)}…` : compacted;
 }
 
+function pathStatusLabel(value: boolean | undefined): string {
+  if (value === undefined) {
+    return "unknown";
+  }
+  return value ? "present" : "missing";
+}
+
+function existingLaunchRecordPromptLines(record: NodeLaunchRecord | null | undefined): string[] {
+  if (!record) {
+    return [
+      "Existing Streamliner launch record: none",
+    ];
+  }
+
+  const latestClaim = record.latestClaim
+    ? `${record.latestClaim.status}${record.latestClaim.blocksLaunch ? " (blocks launch)" : ""}`
+    : "none";
+  return [
+    "Existing Streamliner launch record:",
+    `- Work title: ${record.workTitle}`,
+    `- Work ID: ${record.workId}`,
+    `- Branch: ${record.branch}`,
+    `- Worktree/CWD: ${record.cwd} (${pathStatusLabel(record.pathStatus.cwdExists)})`,
+    `- PAW work dir: ${record.pawWorkDir} (${pathStatusLabel(record.pathStatus.pawWorkDirExists)})`,
+    `- WorkflowContext.md: ${record.workflowContextPath} (${pathStatusLabel(record.pathStatus.workflowContextExists)})`,
+    `- Streamliner context: ${record.streamlinerContextPath} (${pathStatusLabel(record.pathStatus.streamlinerContextExists)})`,
+    `- Previous context package: ${record.contextFilePath} (${pathStatusLabel(record.pathStatus.contextFileExists)})`,
+    `- Last prepared: ${record.updatedAt}`,
+    `- Latest launch claim: ${latestClaim}`,
+  ];
+}
+
 function emitSdkProgressEvent(
   sink: PawLaunchProgressSink | undefined,
   event: SessionEvent,
@@ -690,10 +726,12 @@ function buildPawInitPrompt(input: PawInitRunnerInput): string {
     "- If information is missing but PAW has a documented default or derivation rule, use that default and your best judgment.",
     "- If a serious blocker prevents safe initialization, do not call the tool; respond with JSON: {\"status\":\"blocked\",\"reason\":\"...\"}.",
     "- Do not start the worker session, open a terminal, create the final PR, or continue into implementation.",
-    "- Let the paw-init skill create WorkflowContext.md through its normal PAW workflow path. Do not ask Streamliner to generate or write WorkflowContext.md.",
+    "- Let the paw-init skill create WorkflowContext.md through its normal PAW workflow path, or validate and reuse an existing WorkflowContext.md. Do not ask Streamliner to generate or write WorkflowContext.md.",
     "- Do not inline the Streamliner context into WorkflowContext.md. Reference the installed Streamliner context as an Additional Input instead.",
     "- Do not place kickoff-prompt text, generated context content, or node-orientation prose into WorkflowContext.md.",
     "- Set `Initial Prompt: none`; Streamliner owns the actual kickoff prompt that will be sent to the launched Copilot session.",
+    "- If an existing Streamliner launch record is provided, treat this as an idempotent resume candidate. Inspect the existing worktree, PAW work dir, WorkflowContext.md, and Streamliner context. If they are present, match this selected node/work, and are still valid, reuse them instead of rerunning PAW init or overwriting durable PAW state. Repair or regenerate only missing, stale, or invalid artifacts.",
+    "- Do not fail merely because WorkflowContext.md or the PAW work directory already exists.",
     "",
     "Selected Streamliner node:",
     `- Node ID: ${input.nodeId}`,
@@ -705,6 +743,8 @@ function buildPawInitPrompt(input: PawInitRunnerInput): string {
     `- Staged context file: ${input.stagedContextPackage.contextFilePath}`,
     `- Staged context package directory: ${input.stagedContextPackage.contextPackagePath}`,
     "",
+    ...existingLaunchRecordPromptLines(input.existingLaunch),
+    "",
     "Launch/session instructions from the builder:",
     "```text",
     input.configuration.workflowInstructions.trim(),
@@ -715,7 +755,7 @@ function buildPawInitPrompt(input: PawInitRunnerInput): string {
     "If it is general operating guidance (for example pause policy, review expectations, PR description preferences, or blocker handling), leave `Custom Workflow Instructions` as `none`; Streamliner will include that guidance in the final worker kickoff prompt.",
     "For Streamliner PAW Lite node launches, WorkflowContext.md is only durable PAW configuration, execution binding, issue URL, review settings, artifact lifecycle, Additional Inputs, and control state; launch-time instructions belong in the Streamliner kickoff prompt or generated launch context.md.",
     "",
-    "Before calling `complete_paw_init`, use paw-init's normal file-writing path to create WorkflowContext.md in the PAW work directory.",
+    "Before calling `complete_paw_init`, use paw-init's normal file-writing path to create WorkflowContext.md in the PAW work directory, or validate and reuse an existing WorkflowContext.md when the existing launch record is still correct.",
     "The WorkflowContext Additional Inputs must include at least `streamliner-context=<installed-context-path>`, where the installed context path is `<pawWorkDir>/streamliner/context.md`.",
     "Do not add Streamliner internal metadata such as `streamliner-staged-context`, `streamliner-context-id`, `node`, `graph`, or `launch-nonce` to WorkflowContext Additional Inputs; those remain launch metadata, not PAW input files.",
     "",
@@ -726,7 +766,7 @@ function buildPawInitPrompt(input: PawInitRunnerInput): string {
     "- Preserve guidance that is not otherwise durable PAW configuration, such as blocker handling, issue/PR communication preferences, documentation expectations, or other session operating notes.",
     "- Pass an empty string if all builder instructions were fully encoded into WorkflowContext.md.",
     "",
-    "When PAW init has completed its reasoning and created WorkflowContext.md, call `complete_paw_init` exactly once with:",
+    "When PAW init has completed its reasoning and WorkflowContext.md is present, call `complete_paw_init` exactly once with:",
     "- `workTitle`: the PAW work title derived by paw-init.",
     "- `workId`: the PAW work ID derived by paw-init.",
     "- `targetBranch`: the target branch derived by paw-init.",
@@ -767,7 +807,7 @@ export async function defaultPawInitRunner(
     const completeTool = defineTool<CompletePawInitArgs>(
       "complete_paw_init",
       {
-        description: "Complete PAW initialization for a Streamliner launch after paw-init has written WorkflowContext.md by installing the staged context bundle.",
+        description: "Complete PAW initialization for a Streamliner launch after paw-init has written or validated WorkflowContext.md by installing the staged context bundle.",
         parameters: completePawInitToolParameters(),
         skipPermission: true,
         handler: async (args) => {
@@ -920,12 +960,15 @@ function buildStreamlinerContextSavePrompt(input: PawLaunchSessionRunnerInput): 
     "- Prefer links/paths to authoritative design docs and tracker specs instead of copying them wholesale.",
     "- After you produce the complete Markdown, call `save_streamliner_context` exactly once with that Markdown in the `content` argument.",
     "- Do not create PAW files, branches, worktrees, or WorkflowContext.md in this step.",
+    "- If an existing Streamliner launch record is provided, inspect the existing Streamliner context file when helpful, but still save one current context through `save_streamliner_context` so Streamliner can install or refresh it.",
     "",
     "Selected Streamliner node:",
     `- Node ID: ${input.nodeId}`,
     `- Graph path: ${input.graphPath ?? "default graph"}`,
     `- Tracker/issue URL: ${input.issueUrl ?? "none"}`,
     `- Launch nonce: ${input.launchNonce ?? "none"}`,
+    "",
+    ...existingLaunchRecordPromptLines(input.existingLaunch),
     "",
     "Context markdown requirements:",
     "```text",
@@ -1000,7 +1043,7 @@ export async function defaultPawLaunchSessionRunner(
     const completeTool = defineTool<CompletePawInitArgs>(
       "complete_paw_init",
       {
-        description: "Complete PAW initialization for a Streamliner launch after paw-init has written WorkflowContext.md by installing the saved Streamliner context bundle.",
+        description: "Complete PAW initialization for a Streamliner launch after paw-init has written or validated WorkflowContext.md by installing the saved Streamliner context bundle.",
         parameters: completePawInitToolParameters(),
         skipPermission: true,
         handler: async (args) => {
@@ -1332,6 +1375,7 @@ export async function preparePawLaunch(
         launchNonce: options.launchNonce ?? null,
         configuration,
         stagedContextPackage,
+        existingLaunch: options.existingLaunch ?? null,
       });
     } catch (error: unknown) {
       throw new LaunchPreparationError(
@@ -1380,6 +1424,7 @@ export async function preparePawLaunch(
         launchNonce: options.launchNonce ?? null,
         configuration,
         preparedContext,
+        existingLaunch: options.existingLaunch ?? null,
         onProgress: options.onProgress,
       });
       pawInit = launchResult;

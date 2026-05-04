@@ -61,10 +61,10 @@ export function createLaunchPreparationsRouter(options: {
   const router = Router();
   const runManager = options.deps?.runManager ?? new LaunchPreparationRunManager();
 
-  const buildPrepareOptions = (
+  const buildPrepareOptions = async (
     body: Record<string, unknown>,
     onProgress?: Parameters<typeof preparePawLaunch>[0]["onProgress"],
-  ): Parameters<typeof preparePawLaunch>[0] => {
+  ): Promise<Parameters<typeof preparePawLaunch>[0]> => {
     const nodeId = typeof body.nodeId === "string" ? body.nodeId : "";
     const graphPath = typeof body.graphPath === "string" ? body.graphPath : undefined;
     const launchNonce =
@@ -73,6 +73,10 @@ export function createLaunchPreparationsRouter(options: {
         : body.launchNonce === null
           ? null
           : undefined;
+    const lookupGraphPath = graphPath ?? options.defaultGraphPath;
+    const existingLaunch = nodeId.trim() && lookupGraphPath
+      ? await options.deps?.nodeLaunchRecordStore?.get(lookupGraphPath, nodeId)
+      : null;
     return {
       nodeId,
       graphPath,
@@ -88,6 +92,7 @@ export function createLaunchPreparationsRouter(options: {
       pawLaunchRunner: options.deps?.pawLaunchRunner,
       pawInitRunner: options.deps?.pawInitRunner,
       contextPreparer: options.deps?.contextPreparer,
+      existingLaunch,
       onProgress,
     };
   };
@@ -96,7 +101,7 @@ export function createLaunchPreparationsRouter(options: {
     const body = requestBodyRecord(req.body);
 
     try {
-      const result = await preparePawLaunch(buildPrepareOptions(body));
+      const result = await preparePawLaunch(await buildPrepareOptions(body));
       await options.deps?.nodeLaunchRecordStore?.upsertFromHandoff(result);
       res.status(200).json(result);
     } catch (error: unknown) {
@@ -113,10 +118,10 @@ export function createLaunchPreparationsRouter(options: {
     }
   });
 
-  router.post("/launch-preparations/runs", (req, res, next) => {
+  router.post("/launch-preparations/runs", async (req, res, next) => {
     const body = requestBodyRecord(req.body);
     try {
-      const prepareOptions = buildPrepareOptions(body);
+      const prepareOptions = await buildPrepareOptions(body);
       const snapshot = runManager.start(async (onProgress) => {
         const result = await preparePawLaunch({
           ...prepareOptions,
