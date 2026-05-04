@@ -97,16 +97,36 @@ function escapeForWindowsTerminal(value: string): string {
  * Strip any `node_modules/.bin` entry from PATH so the spawned shell falls
  * through to the user's normal command resolution.
  */
-function buildSpawnEnv(extraEnv: Record<string, string> | undefined): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  if (extraEnv) {
-    for (const [key, value] of Object.entries(extraEnv)) {
-      env[key] = value;
+export function buildSpawnEnv(
+  extraEnv: Record<string, string> | undefined,
+  baseEnv: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...baseEnv };
+  const pathKey = platform === "win32" ? "Path" : "PATH";
+  if (platform === "win32") {
+    const pathValue = env[pathKey]
+      ?? Object.entries(env).find(([key]) => key.toUpperCase() === "PATH")?.[1];
+    for (const key of Object.keys(env)) {
+      if (key.toUpperCase() === "PATH") {
+        delete env[key];
+      }
+    }
+    if (pathValue !== undefined) {
+      env[pathKey] = pathValue;
     }
   }
-  const pathKey = Object.keys(env).find((key) => key.toUpperCase() === "PATH");
+  if (extraEnv) {
+    for (const [key, value] of Object.entries(extraEnv)) {
+      if (platform === "win32" && key.toUpperCase() === "PATH") {
+        env[pathKey] = value;
+      } else {
+        env[key] = value;
+      }
+    }
+  }
   if (pathKey && typeof env[pathKey] === "string") {
-    const separator = process.platform === "win32" ? ";" : ":";
+    const separator = platform === "win32" ? ";" : ":";
     const filtered = env[pathKey]!
       .split(separator)
       .filter((entry) => !/[\\/]node_modules[\\/]\.bin\b/i.test(entry))

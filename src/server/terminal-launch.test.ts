@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { ChildProcess } from "node:child_process";
 import {
+  buildSpawnEnv,
   buildCopilotInteractiveCommand,
   isWindowsTerminalAvailable,
   clearWindowsTerminalCache,
@@ -470,6 +471,29 @@ describe("terminal-launch", () => {
           process.env.PATH = originalPath;
         }
       }
+    });
+
+    it("canonicalizes Windows PATH casing before merging launch env values", () => {
+      const env = buildSpawnEnv(
+        {
+          PATH: [
+            "C:\\Users\\me\\repo\\node_modules\\.bin",
+            "C:\\Tools",
+          ].join(";"),
+          STREAMLINER_LAUNCH_CLAIM_ID: "claim-1",
+        },
+        {
+          Path: "C:\\Windows\\System32",
+          PATH: "C:\\Unexpected",
+          SystemRoot: "C:\\Windows",
+        },
+        "win32",
+      );
+
+      expect(Object.keys(env).filter((key) => key.toUpperCase() === "PATH")).toEqual(["Path"]);
+      expect(env.Path).toBe("C:\\Tools");
+      expect(env.STREAMLINER_LAUNCH_CLAIM_ID).toBe("claim-1");
+      expect(env.SystemRoot).toBe("C:\\Windows");
     });
   });
 });
