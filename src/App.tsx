@@ -608,7 +608,7 @@ function WorkstreamHome({
   archivedWorkstreams: WorkstreamRegistryListEntry[];
   sources: WorkstreamSourceListEntry[];
   conflicts: WorkstreamConflict[];
-  onOpenWorkstream: (entry: WorkstreamRegistryListEntry) => void;
+  onOpenWorkstream: (entry: WorkstreamRegistryListEntry) => void | Promise<void>;
   onAddSource: (type: WorkstreamSourceType, path: string) => void | Promise<void>;
   onRefreshSources: () => void | Promise<void>;
   onDeleteSource: (sourceId: string) => void | Promise<void>;
@@ -841,7 +841,7 @@ function GraphDashboard({
   onRouteHome,
   selectedNodeIdFromRoute,
 }: ReturnType<typeof useGraphLoader> & {
-  onOpenWorkstream: (entry: WorkstreamRegistryListEntry) => void;
+  onOpenWorkstream: (entry: WorkstreamRegistryListEntry) => void | Promise<void>;
   onManageSources: () => void;
   onRouteHome: () => void;
   selectedNodeIdFromRoute?: string | null;
@@ -1289,15 +1289,15 @@ export default function App() {
   }, []);
 
   const openWorkstream = useCallback(
-    (entry: { projectKey: string; workstreamId: string; nodeId?: string | null }) => {
-      setRoute({
+    async (entry: { projectKey: string; workstreamId: string; nodeId?: string | null }) => {
+      await handleRouteChange({
         view: "workstream",
         projectKey: entry.projectKey,
         workstreamId: entry.workstreamId,
         nodeId: entry.nodeId ?? undefined,
       });
     },
-    [setRoute],
+    [handleRouteChange],
   );
 
   const manageSources = useCallback(

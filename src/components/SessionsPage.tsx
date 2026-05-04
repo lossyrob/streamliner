@@ -924,6 +924,27 @@ function workstreamLinkageTitle(
   }
 }
 
+function workstreamLinkageStatusLabel(
+  linkage: SessionWorkstreamLinkageResolution,
+): string {
+  switch (linkage.status) {
+    case "resolved":
+      return "Resolved";
+    case "graph-loading":
+      return "Resolving node";
+    case "graph-unavailable":
+      return "Graph unavailable";
+    case "node-unresolved":
+      return "Node not found";
+    case "missing-workstream":
+      return "Workstream not tracked";
+    case "ambiguous-workstream":
+      return "Ambiguous workstream";
+    case "unbound":
+      return "Unbound";
+  }
+}
+
 function SessionWorkstreamContextChips({
   linkage,
   onOpenWorkstream,
@@ -1125,9 +1146,11 @@ function groupSessions(
       code = display.code;
     } else if (mode === "workstream") {
       const group = workstreamGroups.get(key);
-      label = group?.label ?? "Unbound / manual sessions";
-      code = group?.code ?? null;
-      order = group?.order ?? 0;
+      if (group) {
+        label = group.label;
+        code = group.code;
+        order = group.order;
+      }
     } else {
       const display = displayFolderLabel(key);
       label = display.label;
@@ -1269,6 +1292,8 @@ export function SessionsPage({
   const saveStateRef = useLatestValue(saveState);
   const conflictPendingRef = useLatestValue(conflictPending);
   const workstreamGraphsRef = useLatestValue(workstreamGraphs);
+  const mountedRef = useRef(false);
+  const loadingWorkstreamGraphKeysRef = useRef(new Set<string>());
 
   const applySessionList = useCallback(
     (nextSessions: SessionRegistryListItem[], keepSelection = true) => {
@@ -1502,6 +1527,13 @@ export function SessionsPage({
     endedFilteredSessions.length - visibleSessions.length;
 
   useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
     const entriesToLoad = new Map<string, WorkstreamRegistryListEntry>();
     const graphStateSnapshot = workstreamGraphsRef.current;
     for (const session of visibleSessions) {
@@ -1517,7 +1549,7 @@ export function SessionsPage({
         continue;
       }
       const key = workstreamRegistryKey(matches[0]);
-      if (!graphStateSnapshot[key]) {
+      if (!graphStateSnapshot[key] && !loadingWorkstreamGraphKeysRef.current.has(key)) {
         entriesToLoad.set(key, matches[0]);
       }
     }
@@ -1526,11 +1558,11 @@ export function SessionsPage({
       return;
     }
 
-    let cancelled = false;
     setWorkstreamGraphs((current) => {
       const next = { ...current };
       for (const key of entriesToLoad.keys()) {
         next[key] = { status: "loading" };
+        loadingWorkstreamGraphKeysRef.current.add(key);
       }
       return next;
     });
@@ -1543,14 +1575,14 @@ export function SessionsPage({
             throw new Error(`Failed to load workstream graph (${response.status})`);
           }
           const document = parseWorkstreamDocument(await response.text());
-          if (!cancelled) {
+          if (mountedRef.current) {
             setWorkstreamGraphs((current) => ({
               ...current,
               [key]: { status: "loaded", document },
             }));
           }
         } catch (nextError) {
-          if (!cancelled) {
+          if (mountedRef.current) {
             setWorkstreamGraphs((current) => ({
               ...current,
               [key]: {
@@ -1560,13 +1592,11 @@ export function SessionsPage({
               },
             }));
           }
+        } finally {
+          loadingWorkstreamGraphKeysRef.current.delete(key);
         }
       })();
     }
-
-    return () => {
-      cancelled = true;
-    };
   }, [visibleSessions, workstreamGraphsRef, workstreams]);
 
   const workstreamGraphStateMap = useMemo(
@@ -2964,7 +2994,7 @@ function SessionOverview({
               </>
             )}
             <dt>Binding status</dt>
-            <dd>{workstreamLinkage.status}</dd>
+            <dd>{workstreamLinkageStatusLabel(workstreamLinkage)}</dd>
             {workstreamLinkage.matchCount > 1 && (
               <>
                 <dt>Matches</dt>
