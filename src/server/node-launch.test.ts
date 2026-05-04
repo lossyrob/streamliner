@@ -119,6 +119,29 @@ describe("appendLaunchBindingPromptLines", () => {
     expect(prompt.match(/Streamliner launch nonce: nonce-123/g)).toHaveLength(1);
   });
 
+  it("updates repeated descriptive metadata and rewrites canonical binding lines", () => {
+    const prompt = appendLaunchBindingPromptLines(
+      [
+        "- Launch nonce: old",
+        "- Launch claim: not-created",
+        "Streamliner launch nonce: old",
+        "Streamliner launch claim: not-created",
+        "- Launch nonce: older",
+        "- Launch claim: older-claim",
+        "",
+      ].join("\n"),
+      "nonce-123",
+      "claim-1",
+    );
+
+    expect(prompt.match(/- Launch nonce: nonce-123/g)).toHaveLength(2);
+    expect(prompt.match(/- Launch claim: claim-1/g)).toHaveLength(2);
+    expect(prompt.match(/Streamliner launch nonce: nonce-123/g)).toHaveLength(1);
+    expect(prompt.match(/Streamliner launch claim: claim-1/g)).toHaveLength(1);
+    expect(prompt).not.toContain("Streamliner launch nonce: old");
+    expect(prompt).not.toContain("Streamliner launch claim: not-created");
+  });
+
   it("normalizes CRLF prompt metadata before appending binding lines", () => {
     const prompt = appendLaunchBindingPromptLines(
       "- Launch nonce: old\r\n- Launch claim: not-created\r\n",
@@ -134,6 +157,15 @@ describe("appendLaunchBindingPromptLines", () => {
       "Streamliner launch claim: claim-1",
       "",
     ].join("\n"));
+  });
+
+  it("rejects invalid multiline binding tokens", () => {
+    expect(() =>
+      appendLaunchBindingPromptLines("Start\n", "bad\nnonce", "claim-1")
+    ).toThrow(/launch nonce/);
+    expect(() =>
+      appendLaunchBindingPromptLines("Start\n", "nonce-123", "bad claim")
+    ).toThrow(/launch claim id/);
   });
 });
 

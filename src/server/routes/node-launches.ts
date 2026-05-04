@@ -8,6 +8,7 @@ import {
   type PawLaunchTerminalPreferences,
 } from "../launch-preparation";
 import {
+  isLaunchPromptToken,
   launchPreparedNode,
   NodeLaunchError,
   summarizeLaunchClaim,
@@ -67,6 +68,18 @@ function optionalStringField(record: Record<string, unknown>, key: string): stri
 function nullableStringField(record: Record<string, unknown>, key: string): string | null {
   const value = record[key];
   return typeof value === "string" ? value : null;
+}
+
+function nullableLaunchPromptTokenField(
+  record: Record<string, unknown>,
+  key: string,
+  label: string,
+): string | null {
+  const value = nullableStringField(record, key);
+  if (value !== null && !isLaunchPromptToken(value)) {
+    throw badRequest(`${label} must be a non-empty single-line token.`, label);
+  }
+  return value;
 }
 
 function stringArrayField(record: Record<string, unknown>, key: string, label: string): string[] {
@@ -133,7 +146,7 @@ function parseLaunchMetadata(value: unknown): PawLaunchMetadata {
       throw badRequest("handoff.launchMetadata must be an object.", "handoff.launchMetadata");
     })();
   return {
-    launchNonce: nullableStringField(record, "launchNonce"),
+    launchNonce: nullableLaunchPromptTokenField(record, "launchNonce", "handoff.launchMetadata.launchNonce"),
     launchClaimRef: nullableStringField(record, "launchClaimRef"),
     projectKey: stringField(record, "projectKey", "handoff.launchMetadata.projectKey"),
     workstreamId: stringField(record, "workstreamId", "handoff.launchMetadata.workstreamId"),

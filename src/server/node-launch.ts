@@ -4,6 +4,7 @@ import { SessionRegistryFileStore } from "../session-registry/file-store";
 import {
   createLaunchClaim,
   kickoffNonceLine,
+  LAUNCH_NONCE_PROMPT_LINE_PREFIX,
   markClaimFailed,
 } from "../session-registry/launch-claims";
 import type { PawLaunchHandoff } from "./launch-preparation";
@@ -136,28 +137,43 @@ export function findBlockingLaunchClaim(
   return null;
 }
 
+const LAUNCH_CLAIM_PROMPT_LINE_PREFIX = "Streamliner launch claim: ";
+const LAUNCH_PROMPT_TOKEN_PATTERN = /^[A-Za-z0-9._:-]+$/;
+
+export function isLaunchPromptToken(value: string): boolean {
+  return value.length > 0 &&
+    value.length <= 256 &&
+    LAUNCH_PROMPT_TOKEN_PATTERN.test(value);
+}
+
+function assertLaunchPromptToken(value: string, label: string): void {
+  if (!isLaunchPromptToken(value)) {
+    throw new Error(`${label} must be a non-empty single-line token.`);
+  }
+}
+
 export function appendLaunchBindingPromptLines(
   preparedPrompt: string,
   launchNonce: string,
   launchClaimId: string,
 ): string {
+  assertLaunchPromptToken(launchNonce, "launch nonce");
+  assertLaunchPromptToken(launchClaimId, "launch claim id");
   const nonceLine = kickoffNonceLine(launchNonce);
-  const claimLine = `Streamliner launch claim: ${launchClaimId}`;
+  const claimLine = `${LAUNCH_CLAIM_PROMPT_LINE_PREFIX}${launchClaimId}`;
   const prompt = preparedPrompt
     .replace(/\r\n?/g, "\n")
-    .replace(/^(- Launch nonce: )[^\n]*$/m, `$1${launchNonce}`)
-    .replace(/^(- Launch claim: )[^\n]*$/m, `$1${launchClaimId}`);
-  const appendedLines: string[] = [];
-  if (!prompt.includes(nonceLine)) {
-    appendedLines.push(nonceLine);
-  }
-  if (!prompt.includes(claimLine)) {
-    appendedLines.push(claimLine);
-  }
-  if (appendedLines.length === 0) {
-    return prompt.endsWith("\n") ? prompt : `${prompt}\n`;
-  }
-  return `${prompt.trimEnd()}\n\n${appendedLines.join("\n")}\n`;
+    .replace(/^(- Launch nonce: )[^\n]*$/gm, `$1${launchNonce}`)
+    .replace(/^(- Launch claim: )[^\n]*$/gm, `$1${launchClaimId}`)
+    .split("\n")
+    .filter((line) =>
+      !line.startsWith(LAUNCH_NONCE_PROMPT_LINE_PREFIX) &&
+      !line.startsWith(LAUNCH_CLAIM_PROMPT_LINE_PREFIX)
+    )
+    .join("\n")
+    .trimEnd();
+  const prefix = prompt.length > 0 ? `${prompt}\n\n` : "";
+  return `${prefix}${nonceLine}\n${claimLine}\n`;
 }
 
 function lineageMetadataFor(handoff: PawLaunchHandoff): Record<string, unknown> {
@@ -190,6 +206,9 @@ export function launchPreparedNode(
   handoff: PawLaunchHandoff,
   deps: NodeLaunchDeps = {},
 ): NodeLaunchResult {
+  if (handoff.launchMetadata.launchNonce !== null) {
+    assertLaunchPromptToken(handoff.launchMetadata.launchNonce, "launch nonce");
+  }
   const now = deps.now?.() ?? new Date();
   const blockingClaim = findBlockingLaunchClaim(
     claimStore,
