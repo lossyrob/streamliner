@@ -103,6 +103,7 @@ export interface PrepareLaunchContextPackageOptions {
   outputDir?: string;
   launchNonce?: string | null;
   stateRoot?: string;
+  contextModel?: string;
   now?: () => Date;
   createContextId?: (now: Date) => string;
   trackerResolver?: LaunchContextTrackerResolver;
@@ -175,6 +176,14 @@ export interface LaunchContextGenerationInput {
 export type LaunchContextGenerator = (
   input: LaunchContextGenerationInput,
 ) => Promise<string>;
+
+export interface PreparedLaunchContextPackage {
+  generationInput: LaunchContextGenerationInput;
+  metadata: LaunchContextMetadata;
+  contextPackagePath: string;
+  contextFilePath: string;
+  overwriteContextFile: boolean;
+}
 
 function defaultStateRoot(): string {
   return resolve(process.env.STREAMLINER_STATE_ROOT ?? join(homedir(), ".streamliner", "state"));
@@ -471,7 +480,7 @@ function createPromptBoundaryToken(input: LaunchContextGenerationInput): string 
   throw new Error("Unable to create a collision-free launch context prompt boundary.");
 }
 
-function normalizeGeneratedContextContent(content: string, nodeTitle: string): string {
+export function normalizeGeneratedContextContent(content: string, nodeTitle: string): string {
   const stripped = stripMarkdownFence(content);
   if (!stripped) {
     throw new Error("Context generator returned empty content.");
@@ -938,6 +947,35 @@ async function writePackageFiles(options: {
 export async function prepareLaunchContextPackage(
   options: PrepareLaunchContextPackageOptions,
 ): Promise<LaunchContextPackage> {
+  const preparedContext = await prepareLaunchContextPackageInput(options);
+  const generator = options.contextGenerator ?? defaultLaunchContextGenerator;
+  let contextContent: string;
+  try {
+    contextContent = await generator(preparedContext.generationInput);
+  } catch (error: unknown) {
+    throw new LaunchContextPreparationError(
+      "context_generation_failed",
+      500,
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  try {
+    return await writePreparedLaunchContextPackage(preparedContext, contextContent);
+  } catch (error: unknown) {
+    if (error instanceof LaunchContextPreparationError) {
+      throw error;
+    }
+    throw new LaunchContextPreparationError(
+      "context_generation_failed",
+      500,
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+}
+
+export async function prepareLaunchContextPackageInput(
+  options: PrepareLaunchContextPackageOptions,
+): Promise<PreparedLaunchContextPackage> {
   if (!options.nodeId.trim()) {
     throw new LaunchContextPreparationError(
       "invalid_node_id",
@@ -966,7 +1004,7 @@ export async function prepareLaunchContextPackage(
   const workstreamDir = dirname(graphPath);
   const projectKey = workstream.projectKey ?? workstream.id;
   const stateRoot = resolve(options.stateRoot ?? defaultStateRoot());
-  const contextModel = contextGenerationModel();
+  const contextModel = options.contextModel ?? contextGenerationModel();
   const packagePath = finalPackagePath({
     outputDir: options.outputDir,
     stateRoot,
@@ -1090,32 +1128,6 @@ export async function prepareLaunchContextPackage(
     trackerResolver: options.trackerResolver ?? defaultGithubIssueTrackerResolver,
   });
 
-  const generator = options.contextGenerator ?? defaultLaunchContextGenerator;
-  let contextContent: string;
-  try {
-    const generatedContext = await generator({
-      contextId,
-      generatedAt,
-      repoRoot,
-      workstream,
-      node,
-      graphSource,
-      briefSource,
-      designSources,
-      trackerSource: trackerResolution.source,
-      designSelection: layer0Selection,
-      trackerReference: trackerResolution.referenceText,
-      sourceReferences,
-      unavailableInputs,
-    });
-    contextContent = normalizeGeneratedContextContent(generatedContext, node.title);
-  } catch (error: unknown) {
-    throw new LaunchContextPreparationError(
-      "context_generation_failed",
-      500,
-      error instanceof Error ? error.message : String(error),
-    );
-  }
   const metadata: LaunchContextMetadata = {
     contextId,
     launchNonce: options.launchNonce ?? null,
@@ -1135,17 +1147,53 @@ export async function prepareLaunchContextPackage(
     unavailableInputs,
   };
 
-  await writePackageFiles({
-    packagePath,
-    contextContent,
+  return {
+    generationInput: {
+      contextId,
+      generatedAt,
+      repoRoot,
+      workstream,
+      node,
+      graphSource,
+      briefSource,
+      designSources,
+      trackerSource: trackerResolution.source,
+      designSelection: layer0Selection,
+      trackerReference: trackerResolution.referenceText,
+      sourceReferences,
+      unavailableInputs,
+    },
+    metadata,
+    contextPackagePath: packagePath,
+    contextFilePath,
     overwriteContextFile: options.outputDir !== undefined,
+  };
+}
+
+export async function writePreparedLaunchContextPackage(
+  preparedContext: PreparedLaunchContextPackage,
+  contextContent: string,
+  options: { contextModel?: string } = {},
+): Promise<LaunchContextPackage> {
+  const normalizedContent = normalizeGeneratedContextContent(
+    contextContent,
+    preparedContext.generationInput.node.title,
+  );
+  const metadata = {
+    ...preparedContext.metadata,
+    contextModel: options.contextModel ?? preparedContext.metadata.contextModel,
+  };
+  await writePackageFiles({
+    packagePath: preparedContext.contextPackagePath,
+    contextContent: normalizedContent,
+    overwriteContextFile: preparedContext.overwriteContextFile,
   });
 
   return {
-    contextId,
-    contextPackagePath: normalizeManifestPath(packagePath),
-    contextFilePath: normalizeManifestPath(contextFilePath),
+    contextId: metadata.contextId,
+    contextPackagePath: normalizeManifestPath(preparedContext.contextPackagePath),
+    contextFilePath: normalizeManifestPath(preparedContext.contextFilePath),
     metadata,
-    unavailableInputs,
+    unavailableInputs: metadata.unavailableInputs,
   };
 }

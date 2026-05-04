@@ -15,12 +15,20 @@ export interface PawLaunchDialogHandoff {
   kickoffPrompt: string;
 }
 
+export interface PawLaunchProgressEvent {
+  type: string;
+  message: string;
+  timestamp: string;
+  data?: Record<string, unknown>;
+}
+
 interface PawLaunchDialogProps {
   nodeTitle: string;
   defaults: PawLaunchDialogDefaults;
   preparing: boolean;
   error: string | null;
   handoff: PawLaunchDialogHandoff | null;
+  progressEvents: PawLaunchProgressEvent[];
   onCancel: () => void;
   onSubmit: (configuration: PawLaunchDialogConfiguration) => void;
 }
@@ -58,6 +66,44 @@ function parseCliArgs(value: string): string[] {
 
 function responseErrorMessage(response: Response, fallback: string): string {
   return `${fallback} (${response.status})`;
+}
+
+function progressLabel(type: string): string {
+  return type
+    .split(/[._-]+/)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function stringField(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function profileUpdatedAtMs(profile: PawPromptProfile): number {
+  const parsed = Date.parse(profile.updatedAt);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function sortProfiles(profiles: PawPromptProfile[]): PawPromptProfile[] {
+  return [...profiles].sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function profileNameKey(value: string): string {
+  return value.toLocaleLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function mergePromptProfiles(
+  current: PawPromptProfile[],
+  incoming: PawPromptProfile[],
+): PawPromptProfile[] {
+  const byId = new Map(current.map((profile) => [profile.id, profile]));
+  for (const profile of incoming) {
+    const existing = byId.get(profile.id);
+    if (!existing || profileUpdatedAtMs(profile) >= profileUpdatedAtMs(existing)) {
+      byId.set(profile.id, profile);
+    }
+  }
+  return sortProfiles([...byId.values()]);
 }
 
 async function loadPromptProfiles(): Promise<PawPromptProfile[]> {
@@ -210,6 +256,7 @@ export function PawLaunchDialog({
   preparing,
   error,
   handoff,
+  progressEvents,
   onCancel,
   onSubmit,
 }: PawLaunchDialogProps) {
@@ -232,6 +279,11 @@ export function PawLaunchDialog({
   const instructionError = trimmedInstructions.length === 0
     ? "PAW workflow instructions are required so paw-init can derive the workflow."
     : null;
+  const latestProgress = progressEvents.at(-1) ?? null;
+  const recentProgress = progressEvents.slice(-8);
+  const debugPath = progressEvents
+    .map((event) => stringField(event.data?.workspacePath) ?? stringField(event.data?.sdkStateRoot))
+    .find(Boolean) ?? null;
 
   useEffect(() => {
     let cancelled = false;
@@ -239,12 +291,11 @@ export function PawLaunchDialog({
     loadPromptProfiles()
       .then((loadedProfiles) => {
         if (!cancelled) {
-          setProfiles(loadedProfiles);
+          setProfiles((current) => mergePromptProfiles(current, loadedProfiles));
         }
       })
       .catch((loadError: unknown) => {
         if (!cancelled) {
-          setProfiles([]);
           setProfileError(loadError instanceof Error ? loadError.message : String(loadError));
         }
       });
@@ -290,6 +341,27 @@ export function PawLaunchDialog({
   }, [handoff]);
 
   const selectedProfile = profiles.find((profile) => profile.id === selectedProfileId) ?? null;
+  const trimmedProfileName = profileName.trim();
+  const selectedProfileNameChanged = Boolean(
+    selectedProfile &&
+      trimmedProfileName &&
+      profileNameKey(trimmedProfileName) !== profileNameKey(selectedProfile.name),
+  );
+  const duplicateProfile = trimmedProfileName
+    ? profiles.find((profile) =>
+        profileNameKey(profile.name) === profileNameKey(trimmedProfileName) &&
+        profile.id !== selectedProfile?.id
+      ) ?? null
+    : null;
+  const canSaveProfile = !profileBusy && !instructionError && Boolean(trimmedProfileName);
+  const profileSaveLabel = selectedProfile && !selectedProfileNameChanged
+    ? "Update profile"
+    : "Save as new profile";
+  const profileSaveHelp = selectedProfile
+    ? selectedProfileNameChanged
+      ? `Saving creates a new profile and leaves "${selectedProfile.name}" unchanged.`
+      : `Saving updates "${selectedProfile.name}". Change the save name to create a new profile.`
+    : "Choose a saved profile to update it, or enter a save name for a new profile.";
 
   const applyProfile = (profileId: string) => {
     setSelectedProfileId(profileId);
@@ -302,46 +374,32 @@ export function PawLaunchDialog({
     }
   };
 
-  const handleSaveNewProfile = async () => {
+  const handleSaveProfile = async () => {
     setProfileBusy(true);
     setProfileStatus(null);
     setProfileError(null);
     try {
-      const saved = await savePromptProfile({
-        name: profileName || selectedProfile?.name || "PAW workflow profile",
-        instructions: trimmedInstructions,
-      });
-      setProfiles((current) => [...current.filter((profile) => profile.id !== saved.id), saved]
-        .sort((left, right) => left.name.localeCompare(right.name)));
-      setSelectedProfileId(saved.id);
-      setProfileName(saved.name);
-      setProfileStatus(`Saved "${saved.name}".`);
-    } catch (saveError: unknown) {
-      setProfileError(saveError instanceof Error ? saveError.message : String(saveError));
-    } finally {
-      setProfileBusy(false);
-    }
-  };
+      if (!trimmedProfileName) {
+        throw new Error("Profile name is required.");
+      }
+      if (selectedProfileNameChanged && duplicateProfile) {
+        throw new Error(`A profile named "${duplicateProfile.name}" already exists. Select it to update it, or choose a different name.`);
+      }
 
-  const handleUpdateSelectedProfile = async () => {
-    if (!selectedProfile) {
-      return;
-    }
-    setProfileBusy(true);
-    setProfileStatus(null);
-    setProfileError(null);
-    try {
+      const targetProfile = selectedProfile && !selectedProfileNameChanged
+        ? selectedProfile
+        : !selectedProfile
+          ? duplicateProfile
+          : null;
       const saved = await savePromptProfile({
-        id: selectedProfile.id,
-        name: profileName || selectedProfile.name,
+        id: targetProfile?.id,
+        name: trimmedProfileName,
         instructions: trimmedInstructions,
       });
-      setProfiles((current) => current.map((profile) =>
-        profile.id === saved.id ? saved : profile
-      ).sort((left, right) => left.name.localeCompare(right.name)));
+      setProfiles((current) => mergePromptProfiles(current, [saved]));
       setSelectedProfileId(saved.id);
       setProfileName(saved.name);
-      setProfileStatus(`Updated "${saved.name}".`);
+      setProfileStatus(`${targetProfile ? "Updated" : "Saved"} "${saved.name}".`);
     } catch (saveError: unknown) {
       setProfileError(saveError instanceof Error ? saveError.message : String(saveError));
     } finally {
@@ -392,10 +450,9 @@ export function PawLaunchDialog({
             </div>
             <h2 className="sl-sheet-title">Run PAW init</h2>
             <p className="sl-paw-launch-subtitle">
-              Selected node: <strong>{nodeTitle}</strong>. Streamliner stages the
-              launch context first, then runs the PAW init skill in a fully capable
-              SDK session to derive the workflow and install that context into the
-              PAW work directory.
+              Selected node: <strong>{nodeTitle}</strong>. Streamliner runs one
+              fully capable SDK session to assemble launch context, run the PAW
+              init skill, and install that context into the PAW work directory.
             </p>
           </div>
           <button
@@ -409,6 +466,41 @@ export function PawLaunchDialog({
         </div>
 
         <div className="sl-sheet-body sl-paw-launch-body">
+          {(preparing || progressEvents.length > 0) && !handoff && (
+            <section className="sl-paw-launch-progress" aria-live="polite">
+              <div className="sl-paw-config-section-head">
+                <div>
+                  <span className="sl-section-label">PAW init progress</span>
+                  <p>
+                    Streamliner is running one internal Copilot SDK session for
+                    context assembly and PAW init.
+                  </p>
+                </div>
+                <span className="sl-pill accent">
+                  {latestProgress ? progressLabel(latestProgress.type) : "Starting"}
+                </span>
+              </div>
+              <div className="sl-paw-progress-current">
+                {latestProgress?.message ?? "Starting Streamliner PAW launch preparation..."}
+              </div>
+              {recentProgress.length > 0 && (
+                <ol className="sl-paw-progress-list">
+                  {recentProgress.map((event, index) => (
+                    <li key={`${event.timestamp}-${event.type}-${index}`}>
+                      <span>{progressLabel(event.type)}</span>
+                      <p>{event.message}</p>
+                    </li>
+                  ))}
+                </ol>
+              )}
+              {debugPath && (
+                <p className="sl-field-note">
+                  Debug session state: {debugPath}
+                </p>
+              )}
+            </section>
+          )}
+
           <section className="sl-paw-config-section sl-paw-instructions-section">
             <div className="sl-paw-config-section-head">
               <div>
@@ -423,10 +515,10 @@ export function PawLaunchDialog({
             </div>
             <div className="sl-paw-profile-tools">
               <label className="sl-field">
-                <span>Prompt profile</span>
+                <span>Load profile</span>
                 <select
                   value={selectedProfileId}
-                  aria-label="Prompt profile"
+                  aria-label="Load profile"
                   onChange={(event) => applyProfile(event.target.value)}
                 >
                   <option value="">Custom instructions</option>
@@ -438,8 +530,8 @@ export function PawLaunchDialog({
                 </select>
               </label>
               <TextField
-                label="Profile name"
-                ariaLabel="Profile name"
+                label="Save name"
+                ariaLabel="Save name"
                 value={profileName}
                 onChange={setProfileName}
                 placeholder="Name this reusable workflow text"
@@ -448,21 +540,14 @@ export function PawLaunchDialog({
                 <button
                   type="button"
                   className="sl-action-btn"
-                  disabled={profileBusy || Boolean(instructionError)}
-                  onClick={handleSaveNewProfile}
+                  disabled={!canSaveProfile}
+                  onClick={handleSaveProfile}
                 >
-                  Save as profile
-                </button>
-                <button
-                  type="button"
-                  className="sl-action-btn"
-                  disabled={profileBusy || !selectedProfile || Boolean(instructionError)}
-                  onClick={handleUpdateSelectedProfile}
-                >
-                  Update selected
+                  {profileSaveLabel}
                 </button>
               </div>
             </div>
+            <p className="sl-field-note">{profileSaveHelp}</p>
             {(profileStatus || profileError) && (
               <p className={profileError ? "sl-action-error" : "sl-inline-status"}>
                 {profileError ?? profileStatus}

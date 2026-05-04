@@ -211,6 +211,13 @@ body,
   color: var(--sl-text-mid);
 }
 
+.sl-inspector-summary {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+}
+
 .sl-meta-row {
   display: flex;
   flex-wrap: wrap;
@@ -661,7 +668,7 @@ a.sl-action-btn {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 336px;
+  grid-template-columns: minmax(0, 1fr) clamp(420px, 34vw, 680px);
 }
 
 /* Checkpoint stepper */
@@ -962,6 +969,57 @@ a.sl-action-btn {
   gap: 8px 12px;
   font-size: 11px;
   color: var(--sl-text-dim);
+}
+
+.sl-node-launch-card {
+  gap: 12px;
+}
+
+.sl-node-launch-fields,
+.sl-node-launch-paths {
+  display: grid;
+  gap: 9px;
+  margin: 0;
+}
+
+.sl-node-launch-fields > div {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 8px;
+  font-size: 12px;
+}
+
+.sl-node-launch-fields dt,
+.sl-node-launch-path dt {
+  color: var(--sl-text-dim);
+  font-weight: 800;
+}
+
+.sl-node-launch-fields dd,
+.sl-node-launch-path dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--sl-text-mid);
+}
+
+.sl-node-launch-path {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.sl-node-launch-path dd {
+  display: grid;
+  gap: 5px;
+}
+
+.sl-node-launch-path code {
+  color: var(--sl-text);
+  font-family: var(--sl-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .sl-inspector-actions {
@@ -2301,7 +2359,8 @@ a.sl-session-context-ref {
 }
 
 .sl-paw-launch-summary,
-.sl-paw-launch-result {
+.sl-paw-launch-result,
+.sl-paw-launch-progress {
   border: 1px solid rgba(20, 60, 130, 0.08);
   background: rgba(246, 249, 255, 0.76);
   border-radius: 14px;
@@ -2309,6 +2368,52 @@ a.sl-session-context-ref {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.sl-paw-launch-progress {
+  background: rgba(244, 249, 255, 0.9);
+}
+
+.sl-paw-progress-current {
+  border: 1px solid rgba(73, 119, 209, 0.16);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.86);
+  color: var(--sl-text);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.45;
+  padding: 10px 12px;
+}
+
+.sl-paw-progress-list {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  padding: 0;
+}
+
+.sl-paw-progress-list li {
+  border-left: 3px solid rgba(73, 119, 209, 0.32);
+  display: grid;
+  gap: 2px;
+  padding-left: 10px;
+}
+
+.sl-paw-progress-list span {
+  color: var(--sl-text-muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.sl-paw-progress-list p {
+  color: var(--sl-text-mid);
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 0;
 }
 
 .sl-paw-launch-summary p {

@@ -143,6 +143,10 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+function emptyNodeLaunchRecordResponse(): Response {
+  return jsonResponse({ record: null });
+}
+
 function toRegistryRecord(session: SessionRegistryListItem): Record<string, unknown> {
   const { originKind, ...record } = session;
   return {
@@ -400,8 +404,8 @@ class MockEventSource extends EventTarget {
     this.readyState = 2;
   }
 
-  emit(type: string): void {
-    this.dispatchEvent(new MessageEvent(type, { data: "{}" }));
+  emit(type: string, data: unknown = {}): void {
+    this.dispatchEvent(new MessageEvent(type, { data: JSON.stringify(data) }));
   }
 }
 
@@ -589,9 +593,14 @@ describe("App sessions route", () => {
         if (path === "/api/workstreams/streamliner/api-test/graph") {
           return jsonResponse(graph);
         }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return emptyNodeLaunchRecordResponse();
+        }
         throw new Error(`Unexpected fetch: ${path}`);
       });
       vi.stubGlobal("fetch", fetchMock);
+      MockEventSource.instances = [];
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
       window.history.pushState({}, "", "/workstreams/streamliner/api-test");
 
       act(() => {
@@ -630,10 +639,97 @@ describe("App sessions route", () => {
   );
 
   it(
-    "runs PAW init with workflow instructions and explicit empty CLI args",
+    "keeps a newly saved PAW prompt profile visible when the initial profile load resolves later",
     async () => {
       const graph = buildLaunchGraph();
-      let savedWorkflowContext = "# WorkflowContext\nAdditional Inputs: streamliner-context=streamliner/context.md\n";
+      let resolveProfileList!: (response: Response) => void;
+      const profileListPromise = new Promise<Response>((resolve) => {
+        resolveProfileList = resolve;
+      });
+      const savedProfile = {
+        id: "final-pr-only",
+        name: "Final PR only",
+        instructions: "Use saved profile immediately.",
+        updatedAt: "2026-05-03T18:01:00.000Z",
+      };
+      const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return Promise.resolve(jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          }));
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return Promise.resolve(jsonResponse(graph));
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return Promise.resolve(emptyNodeLaunchRecordResponse());
+        }
+        if (path === "/api/paw-launch-prompt-profiles" && (!init || init.method === "GET")) {
+          return profileListPromise;
+        }
+        if (path === "/api/paw-launch-prompt-profiles" && init?.method === "POST") {
+          return Promise.resolve(jsonResponse({ profile: savedProfile }, 201));
+        }
+        return Promise.reject(new Error(`Unexpected fetch: ${path}`));
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      MockEventSource.instances = [];
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      act(() => {
+        findCanvasNode(container, "Launch prompt profiles").click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Initialize PAW launch").click();
+      });
+      await settle();
+
+      setInputValue(findInputByLabel(container, "Save name"), "Final PR only");
+      setTextareaValue(
+        findTextareaByLabel(container, "PAW workflow instructions"),
+        savedProfile.instructions,
+      );
+      act(() => {
+        findButton(container, "Save as new profile").click();
+      });
+      await settle(100);
+
+      let profileSelect = findSelectByLabel(container, "Load profile");
+      expect(profileSelect.value).toBe("final-pr-only");
+      expect([...profileSelect.options].map((option) => option.textContent)).toContain("Final PR only");
+      expect(container.textContent).toContain('Saved "Final PR only".');
+
+      act(() => {
+        resolveProfileList(jsonResponse({ profiles: [] }));
+      });
+      await settle(100);
+
+      profileSelect = findSelectByLabel(container, "Load profile");
+      expect(profileSelect.value).toBe("final-pr-only");
+      expect([...profileSelect.options].map((option) => option.textContent)).toContain("Final PR only");
+      expect(
+        fetchMock.mock.calls.some(([input]) =>
+          requestPath(input as RequestInfo | URL) === "/api/launch-preparations/runs",
+        ),
+      ).toBe(false);
+    },
+    15_000,
+  );
+
+  it(
+    "creates a new PAW prompt profile when the selected profile is saved under a new name",
+    async () => {
+      const graph = buildLaunchGraph();
       const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = requestPath(input);
         if (path === "/api/workstreams") {
@@ -645,6 +741,103 @@ describe("App sessions route", () => {
         }
         if (path === "/api/workstreams/streamliner/api-test/graph") {
           return jsonResponse(graph);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return emptyNodeLaunchRecordResponse();
+        }
+        if (path === "/api/paw-launch-prompt-profiles" && (!init || init.method === "GET")) {
+          return jsonResponse({
+            profiles: [{
+              id: "final-pr-only",
+              name: "Final PR only",
+              instructions: "Use saved final PR only workflow text.",
+              updatedAt: "2026-05-03T18:00:00.000Z",
+            }],
+          });
+        }
+        if (path === "/api/paw-launch-prompt-profiles" && init?.method === "POST") {
+          const body = JSON.parse(String(init.body)) as { name: string; instructions: string };
+          return jsonResponse({
+            profile: {
+              id: "final-pr-copy",
+              name: body.name,
+              instructions: body.instructions,
+              updatedAt: "2026-05-03T18:01:00.000Z",
+            },
+          }, 201);
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      MockEventSource.instances = [];
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      act(() => {
+        findCanvasNode(container, "Launch prompt profiles").click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Initialize PAW launch").click();
+      });
+      await settle();
+
+      setSelectValue(findSelectByLabel(container, "Load profile"), "final-pr-only");
+      await settle();
+      setInputValue(findInputByLabel(container, "Save name"), "Final PR copy");
+      setTextareaValue(
+        findTextareaByLabel(container, "PAW workflow instructions"),
+        "Use copied final PR workflow text.",
+      );
+      expect(container.textContent).toContain(
+        'Saving creates a new profile and leaves "Final PR only" unchanged.',
+      );
+      act(() => {
+        findButton(container, "Save as new profile").click();
+      });
+      await settle(100);
+
+      const saveCall = fetchMock.mock.calls.find(
+        ([input, init]) =>
+          requestPath(input as RequestInfo | URL) === "/api/paw-launch-prompt-profiles" &&
+          init?.method === "POST",
+      );
+      expect(saveCall).toBeDefined();
+      expect(JSON.parse(String(saveCall?.[1]?.body))).toEqual({
+        name: "Final PR copy",
+        instructions: "Use copied final PR workflow text.",
+      });
+      expect(findSelectByLabel(container, "Load profile").value).toBe("final-pr-copy");
+      expect(container.textContent).toContain('Saved "Final PR copy".');
+    },
+    15_000,
+  );
+
+  it(
+    "runs PAW init with workflow instructions and explicit empty CLI args",
+    async () => {
+      const graph = buildLaunchGraph();
+      let savedWorkflowContext = "# WorkflowContext\nAdditional Inputs: streamliner-context=streamliner/context.md\n";
+      let nodeLaunchRecord: Record<string, unknown> | null = null;
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return jsonResponse({ record: nodeLaunchRecord });
         }
         if (path === "/api/paw-launch-prompt-profiles") {
           return jsonResponse({
@@ -666,24 +859,8 @@ describe("App sessions route", () => {
             },
           });
         }
-        if (path === "/api/launch-preparations" && init?.method === "POST") {
-          return jsonResponse({
-            cwd: "C:\\graphs\\api-test",
-            branch: "feature/launch-prompt-profiles",
-            pawWorkDir: "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles",
-            workflowContextPath:
-              "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles\\WorkflowContext.md",
-            streamlinerContextPath:
-              "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles\\streamliner\\context.md",
-            cliArgs: [],
-            kickoffPrompt: "Start PAW launch prompt profiles.",
-            launchMetadata: {
-              launchNonce: "nonce",
-              projectKey: "streamliner",
-              workstreamId: "api-test",
-              nodeId: "launch-prompt-profiles",
-            },
-          });
+        if (path === "/api/launch-preparations/runs" && init?.method === "POST") {
+          return jsonResponse({ runId: "run-1", status: "queued" }, 202);
         }
         if (path.startsWith("/api/paw-workflow-context?") && (!init || init.method === "GET")) {
           return jsonResponse({
@@ -703,6 +880,8 @@ describe("App sessions route", () => {
         throw new Error(`Unexpected fetch: ${path}`);
       });
       vi.stubGlobal("fetch", fetchMock);
+      MockEventSource.instances = [];
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
       window.history.pushState({}, "", "/workstreams/streamliner/api-test");
 
       act(() => {
@@ -719,7 +898,7 @@ describe("App sessions route", () => {
       });
       await settle();
 
-      setSelectValue(findSelectByLabel(container, "Prompt profile"), "final-pr-only");
+      setSelectValue(findSelectByLabel(container, "Load profile"), "final-pr-only");
       await settle();
       expect(findTextareaByLabel(container, "PAW workflow instructions").value).toBe(
         "Use saved final PR only workflow text.",
@@ -730,7 +909,7 @@ describe("App sessions route", () => {
         "Prefer the final PR review path.",
       );
       act(() => {
-        findButton(container, "Update selected").click();
+        findButton(container, "Update profile").click();
       });
       await settle(100);
       act(() => {
@@ -740,7 +919,7 @@ describe("App sessions route", () => {
 
       const launchCall = fetchMock.mock.calls.find(
         ([input, init]) =>
-          requestPath(input as RequestInfo | URL) === "/api/launch-preparations" &&
+          requestPath(input as RequestInfo | URL) === "/api/launch-preparations/runs" &&
           init?.method === "POST",
       );
       expect(launchCall).toBeDefined();
@@ -757,11 +936,80 @@ describe("App sessions route", () => {
           }),
         }),
       );
+      expect(MockEventSource.instances.at(-1)?.url).toBe("/api/launch-preparations/runs/run-1/events");
+      act(() => {
+        MockEventSource.instances.at(-1)?.emit("progress", {
+          type: "agent.message",
+          message: "Creating WorkflowContext.md",
+          timestamp: "2026-05-03T18:02:00.000Z",
+          data: {
+            workspacePath: "C:\\streamliner-state\\copilot-sdk\\run-1\\session-state\\sdk",
+          },
+        });
+      });
+      await settle();
+      expect(container.textContent).toContain("Creating WorkflowContext.md");
+      act(() => {
+        nodeLaunchRecord = {
+          id: "launch-prompt-profiles-record",
+          graphPath: "C:\\graphs\\api-test\\graph.json",
+          nodeId: "launch-prompt-profiles",
+          projectKey: "streamliner",
+          workstreamId: "api-test",
+          branch: "feature/launch-prompt-profiles",
+          workId: "launch-prompt-profiles",
+          workTitle: "Launch prompt profiles",
+          cwd: "C:\\graphs\\api-test",
+          pawWorkDir: "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles",
+          workflowContextPath: "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles\\WorkflowContext.md",
+          streamlinerContextPath: "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles\\streamliner\\context.md",
+          contextPackagePath: "C:\\streamliner-state\\launch-contexts\\ctx",
+          contextFilePath: "C:\\streamliner-state\\launch-contexts\\ctx\\context.md",
+          launchNonce: "nonce",
+          launchClaimRef: null,
+          trackerUrl: "https://github.com/lossyrob/streamliner/issues/33",
+          createdAt: "2026-05-03T18:02:10.000Z",
+          updatedAt: "2026-05-03T18:02:10.000Z",
+          pathStatus: {
+            cwdExists: true,
+            pawWorkDirExists: true,
+            workflowContextExists: true,
+            streamlinerContextExists: true,
+            contextPackageExists: true,
+            contextFileExists: true,
+          },
+        };
+        MockEventSource.instances.at(-1)?.emit("completed", {
+          status: "succeeded",
+          result: {
+            cwd: "C:\\graphs\\api-test",
+            branch: "feature/launch-prompt-profiles",
+            pawWorkDir: "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles",
+            workflowContextPath:
+              "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles\\WorkflowContext.md",
+            streamlinerContextPath:
+              "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles\\streamliner\\context.md",
+            cliArgs: [],
+            kickoffPrompt: "Start PAW launch prompt profiles.",
+            launchMetadata: {
+              launchNonce: "nonce",
+              projectKey: "streamliner",
+              workstreamId: "api-test",
+              nodeId: "launch-prompt-profiles",
+            },
+          },
+          timestamp: "2026-05-03T18:02:10.000Z",
+        });
+      });
+      await settle(100);
       expect(container.textContent).toContain("Prepared handoff");
       expect(container.textContent).toContain("C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles");
       expect(container.textContent).toContain("CLI args");
       expect(container.textContent).toContain("none");
       expect(container.textContent).toContain("Review WorkflowContext.md");
+      expect(container.textContent).toContain("LATEST PAW LAUNCH");
+      expect(container.textContent).toContain("feature/launch-prompt-profiles");
+      expect(container.textContent).toContain("WorkflowContext.md");
       setTextareaValue(
         findTextareaByLabel(container, "WorkflowContext content"),
         `${savedWorkflowContext}\n## Manual edits\nReview before terminal launch.\n`,
@@ -790,6 +1038,9 @@ describe("App sessions route", () => {
         }
         if (path === "/api/workstreams/streamliner/api-test/graph") {
           return jsonResponse(graph);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return emptyNodeLaunchRecordResponse();
         }
         throw new Error(`Unexpected fetch: ${path}`);
       });
@@ -842,12 +1093,20 @@ describe("App sessions route", () => {
         if (path === "/api/workstreams/streamliner/api-test/graph") {
           return jsonResponse(graph);
         }
-        if (path === "/api/launch-preparations" && init?.method === "POST") {
-          return jsonResponse({ code: "paw_init_failed", error: "PAW init failed." }, 500);
+        if (path.startsWith("/api/node-launch-records?")) {
+          return emptyNodeLaunchRecordResponse();
+        }
+        if (path === "/api/paw-launch-prompt-profiles") {
+          return jsonResponse({ profiles: [] });
+        }
+        if (path === "/api/launch-preparations/runs" && init?.method === "POST") {
+          return jsonResponse({ runId: "run-failed", status: "queued" }, 202);
         }
         throw new Error(`Unexpected fetch: ${path}`);
       });
       vi.stubGlobal("fetch", fetchMock);
+      MockEventSource.instances = [];
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
       window.history.pushState({}, "", "/workstreams/streamliner/api-test");
 
       act(() => {
@@ -865,6 +1124,14 @@ describe("App sessions route", () => {
       await settle();
       act(() => {
         findButton(container, "Run PAW init").click();
+      });
+      await settle();
+      act(() => {
+        MockEventSource.instances.at(-1)?.emit("failed", {
+          status: "failed",
+          error: { code: "paw_init_failed", error: "PAW init failed." },
+          timestamp: "2026-05-03T18:03:00.000Z",
+        });
       });
       await settle(100);
 
@@ -889,6 +1156,9 @@ describe("App sessions route", () => {
         }
         if (path === "/api/workstreams/streamliner/api-test/graph") {
           return jsonResponse(nonReadyGraph);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return emptyNodeLaunchRecordResponse();
         }
         throw new Error(`Unexpected fetch: ${path}`);
       });
