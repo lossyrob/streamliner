@@ -4,6 +4,7 @@ import type { WorkstreamGraphLayoutResult } from "../workstream-graph";
 import type { WorkstreamDocument } from "../workstream-schema";
 import type { NodeLaunchRecord } from "../node-launch-record-contract";
 import { trackerLabel, trackerUrl } from "../workstream-links";
+import { humanizeLaunchClaim } from "./launch-claim-display";
 
 interface NodeInspectorProps {
   entry: WorkstreamDerivedNode | null;
@@ -118,6 +119,7 @@ export function NodeInspector({
   const trackerHref = trackerUrl(node.tracker);
   const trackerLabelText = node.tracker?.type === "github" ? "Issue" : "Tracker";
   const latestClaim = launchRecord?.latestClaim ?? null;
+  const latestClaimDisplay = latestClaim ? humanizeLaunchClaim(latestClaim) : null;
   const launchButtonLabel = latestClaim?.blocksLaunch
     ? "PAW launch started"
     : "Initialize PAW launch";
@@ -199,9 +201,9 @@ export function NodeInspector({
                   <span className={`sl-pill ${pathStatusClass(launchRecord.pathStatus.cwdExists)}`}>
                     {launchRecord.pathStatus.cwdExists ? "worktree present" : "worktree missing"}
                   </span>
-                  {latestClaim && (
-                    <span className={`sl-pill ${latestClaim.blocksLaunch ? "status-accent" : latestClaim.retryable ? "status-amber" : "muted"}`}>
-                      {latestClaim.status}
+                  {latestClaimDisplay && (
+                    <span className={`sl-pill ${latestClaimDisplay.pillClass}`}>
+                      {latestClaimDisplay.label}
                     </span>
                   )}
                 </div>
@@ -218,10 +220,10 @@ export function NodeInspector({
                     <dt>Prepared</dt>
                     <dd>{formatTimestamp(launchRecord.updatedAt)}</dd>
                   </div>
-                  {latestClaim && (
+                  {latestClaimDisplay && (
                     <div>
                       <dt>Terminal launch</dt>
-                      <dd>{latestClaim.blocksLaunch ? "started" : latestClaim.retryable ? "retryable" : latestClaim.status}</dd>
+                      <dd>{latestClaimDisplay.detail}</dd>
                     </div>
                   )}
                   {latestClaim?.failureCode && (

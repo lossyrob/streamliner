@@ -9,6 +9,7 @@ import type {
   NodeLaunchHandoff,
   NodeTerminalLaunchResponse,
 } from "../node-launch-record-contract";
+import { humanizeLaunchClaim } from "./launch-claim-display";
 
 export type PawLaunchDialogHandoff = NodeLaunchHandoff;
 
@@ -280,6 +281,9 @@ export function PawLaunchDialog({
   const [workflowContextSaving, setWorkflowContextSaving] = useState(false);
   const [workflowContextStatus, setWorkflowContextStatus] = useState<string | null>(null);
   const [workflowContextError, setWorkflowContextError] = useState<string | null>(null);
+  const terminalLaunchClaimDisplay = terminalLaunchResult
+    ? humanizeLaunchClaim(terminalLaunchResult.launchClaim)
+    : null;
   const trimmedInstructions = workflowInstructions.trim();
   const instructionError = trimmedInstructions.length === 0
     ? "Launch instructions are required so paw-init can derive the workflow setup and worker prompt."
@@ -698,7 +702,10 @@ export function PawLaunchDialog({
                   </div>
                   <div>
                     <span className="sl-section-label">Launch claim</span>
-                    <p>{terminalLaunchResult.launchClaim.status} · {terminalLaunchResult.launchClaim.launchClaimId}</p>
+                    <p>{terminalLaunchClaimDisplay?.label}</p>
+                    {terminalLaunchClaimDisplay?.detail && (
+                      <p className="sl-field-note">{terminalLaunchClaimDisplay.detail}</p>
+                    )}
                   </div>
                 </div>
               )}

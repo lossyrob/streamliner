@@ -1089,7 +1089,8 @@ describe("App sessions route", () => {
         }),
       );
       expect(container.textContent).toContain("Started with powershell");
-      expect(container.textContent).toContain("claim-1");
+      expect(container.textContent).toContain("Pending - terminal launching");
+      expect(container.textContent).not.toContain("claim-1");
     },
     15_000,
   );
