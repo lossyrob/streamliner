@@ -856,7 +856,7 @@ Streamliner API process owns this action per Decision 006.
 | `sessionId` | string | Registry entry ID |
 | `cwd` | string | Resolved working directory used |
 | `method` | `"windows-terminal"` \| `"powershell"` | Terminal method used |
-| `copilotResumed` | boolean | Whether `copilot --resume` was attempted |
+| `copilotResumed` | boolean | Whether `copilot --resume=<id>` was attempted |
 | `colorApplied` | boolean | Whether tab color was applied |
 | `pid` | number \| undefined | PID of spawned terminal process |
 
@@ -875,6 +875,10 @@ Streamliner API process owns this action per Decision 006.
 
 **Path resolution**: `derivedWorktreePath ?? cwd` — worktree path is preferred
 when available, matching the existing restart-command behavior.
+
+**Resume command**: command launches set the working directory before invoking
+Copilot and pass the session identity as a single `--resume=<id>` option value.
+No positional path argument is passed to Copilot.
 
 **Terminal selection**:
 1. If Windows Terminal (`wt.exe`) is in PATH → `wt new-tab` with `--title`,

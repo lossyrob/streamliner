@@ -456,7 +456,8 @@ describe("terminal-launch", () => {
 
       expect(command).toContain("ConvertFrom-Json");
       expect(command).toContain("'--yolo' '--model' 'Rob''s model'");
-      expect(command).toContain("-i $streamlinerKickoffPrompt .");
+      expect(command).toContain("-i $streamlinerKickoffPrompt");
+      expect(command).not.toContain("$streamlinerKickoffPrompt .");
       expect(command).toContain("\\n");
       expect(command).not.toContain("Line 1\nLine 2");
     });

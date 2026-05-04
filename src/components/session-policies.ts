@@ -8,6 +8,10 @@ function quotePowerShellLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
+function buildCopilotResumeCommand(copilotSessionId: string): string {
+  return `copilot ${quotePowerShellLiteral(`--resume=${copilotSessionId}`)}`;
+}
+
 function normalizePathForPowerShell(value: string): string {
   const trimmed = value.trim();
   if (/^[a-zA-Z]:[\\/]/.test(trimmed) || trimmed.startsWith("//") || trimmed.startsWith("\\\\")) {
@@ -21,7 +25,7 @@ export function buildRestartCommand(session: SessionRegistryListItem): string | 
     return null;
   }
   const worktree = normalizePathForPowerShell(session.derivedWorktreePath ?? session.cwd);
-  const resumeCommand = `copilot --resume ${quotePowerShellLiteral(session.copilotSessionId)}`;
+  const resumeCommand = buildCopilotResumeCommand(session.copilotSessionId);
   if (worktree.length === 0) {
     return resumeCommand;
   }

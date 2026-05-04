@@ -93,7 +93,7 @@ function escapeForWindowsTerminal(value: string): string {
  *
  * `npm run dev:api` (and any `npm run` script) prepends the project's
  * `node_modules/.bin` to PATH. Children of the API server inherit that PATH,
- * so a relaunched `copilot --resume <id>` resolves to the local copy in
+ * so a relaunched `copilot --resume=<id>` resolves to the local copy in
  * `node_modules/@github/copilot-win32-x64/copilot.exe` instead of the user's
  * globally-installed Copilot CLI. The local copy does not have the
  * Streamliner plugin configured, so no hooks fire.
@@ -196,7 +196,6 @@ export function buildCopilotInteractiveCommand(options: CopilotInteractiveComman
     cliArgs,
     "-i",
     "$streamlinerKickoffPrompt",
-    ".",
   ].filter((part) => part.length > 0);
   return `${decodedPrompt}; ${commandParts.join(" ")}`;
 }
