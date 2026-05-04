@@ -189,7 +189,7 @@ function launchWindowsTerminal(options: TerminalLaunchOptions): TerminalLaunchRe
   args.push("-d", escapeForWindowsTerminal(options.cwd));
 
   if (options.command) {
-    args.push("--appendCommandLine", "-NoExit", "-EncodedCommand", encodePowerShellCommand(options.command));
+    args.push("pwsh.exe", "-NoExit", "-EncodedCommand", encodePowerShellCommand(options.command));
   }
 
   const child = spawn("wt.exe", args, {
