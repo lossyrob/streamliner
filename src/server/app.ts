@@ -4,6 +4,7 @@ import express, { type ErrorRequestHandler, type Express } from "express";
 
 import type { LaunchClaimStore } from "../launch-claim-contract";
 import { getSessionRegistryStore } from "../session-registry/runtime";
+import { SessionRegistryFileStore } from "../session-registry/file-store";
 import { SESSION_REGISTRY_API_BASE_PATH } from "../session-registry/http-api";
 import { LAUNCH_CLAIMS_API_BASE_PATH } from "../session-registry/launch-claims-http-api";
 import type { RelaunchDeps } from "../session-registry/relaunch";
@@ -21,6 +22,7 @@ import {
   type LaunchPreparationRouteDeps,
 } from "./routes/launch-preparations";
 import { createLaunchClaimsRouter } from "./routes/launch-claims";
+import { createNodeLaunchesRouter } from "./routes/node-launches";
 import { createNodeLaunchRecordsRouter } from "./routes/node-launch-records";
 import { createPawLaunchPromptProfilesRouter } from "./routes/paw-launch-prompt-profiles";
 import { createPawWorkflowContextRouter } from "./routes/paw-workflow-context";
@@ -28,6 +30,7 @@ import { createRecentsRouter } from "./routes/recents";
 import { createSessionsRouter } from "./routes/sessions";
 import { createWorkstreamsRouter } from "./routes/workstreams";
 import { SessionRegistryEventStream } from "./session-events";
+import type { NodeLaunchDeps } from "./node-launch";
 
 export interface StreamlinerApiApp {
   app: Express;
@@ -51,6 +54,7 @@ export interface StreamlinerApiAppOptions {
   /** Optional launch-claim store. When provided, mounts
    * `GET /api/launch-claims[/:id]` for diagnostic UI consumption. */
   launchClaimStore?: LaunchClaimStore;
+  nodeLaunchDeps?: NodeLaunchDeps;
 }
 
 const malformedJsonHandler: ErrorRequestHandler = (error, _req, res, next) => {
@@ -150,6 +154,23 @@ export function createStreamlinerApiApp(
       createLaunchClaimsRouter({ claimStore: options.launchClaimStore }),
     );
   }
+  if (options.launchClaimStore) {
+    if (store instanceof SessionRegistryFileStore) {
+      app.use(
+        "/api",
+        createNodeLaunchesRouter({
+          registryStore: store,
+          claimStore: options.launchClaimStore,
+          deps: options.nodeLaunchDeps,
+        }),
+      );
+    } else {
+      getApiLogger().withScope("node-launch.api").warn(
+        "disabled: session registry store does not support launch-claim reserved rows",
+        { storeType: store.constructor.name },
+      );
+    }
+  }
   app.use(
     "/api",
     createLaunchPreparationsRouter({
@@ -164,6 +185,7 @@ export function createStreamlinerApiApp(
     "/api",
     createNodeLaunchRecordsRouter({
       store: nodeLaunchRecordStore,
+      claimStore: options.launchClaimStore,
     }),
   );
   app.use(

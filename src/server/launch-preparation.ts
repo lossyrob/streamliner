@@ -214,6 +214,7 @@ export interface PawLaunchHandoff {
   kickoffPrompt: string;
   kickoffAdditionalInstructions?: string;
   cliArgs: string[];
+  terminal: PawLaunchTerminalPreferences;
   environment: Record<string, string>;
   sessionStateRoot: string;
   launchMetadata: PawLaunchMetadata;
@@ -1429,6 +1430,7 @@ export async function preparePawLaunch(
     kickoffPrompt,
     kickoffAdditionalInstructions: pawInit.kickoffAdditionalInstructions,
     cliArgs: [...configuration.cliArgs],
+    terminal: { ...configuration.terminal },
     environment: {
       ...configuration.environment,
       ...(pawInit.environment ?? {}),

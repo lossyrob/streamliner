@@ -877,6 +877,34 @@ describe("App sessions route", () => {
             updatedAt: "2026-05-03T18:03:00.000Z",
           });
         }
+        if (path === "/api/node-launches" && init?.method === "POST") {
+          return jsonResponse({
+            launchClaim: {
+              launchClaimId: "claim-1",
+              status: "pending",
+              launchedAt: "2026-05-03T18:04:00.000Z",
+              updatedAt: "2026-05-03T18:04:00.000Z",
+              bindingWindowExpiresAt: "2026-05-03T18:09:00.000Z",
+              reservedRegistryId: "reserved-1",
+              boundRegistryId: null,
+              boundCopilotSessionId: null,
+              failureCode: null,
+              failureReason: null,
+              blocksLaunch: true,
+              retryable: false,
+            },
+            terminal: {
+              method: "powershell",
+              pid: 777,
+            },
+            cwd: "C:\\graphs\\api-test",
+            branch: "feature/launch-prompt-profiles",
+            command: {
+              cliArgs: [],
+              promptNonceLine: "Streamliner launch nonce: nonce",
+            },
+          }, 201);
+        }
         throw new Error(`Unexpected fetch: ${path}`);
       });
       vi.stubGlobal("fetch", fetchMock);
@@ -990,12 +1018,34 @@ describe("App sessions route", () => {
             streamlinerContextPath:
               "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles\\streamliner\\context.md",
             cliArgs: [],
+            terminal: {
+              launchMode: "manual",
+              preferredTerminal: "powershell",
+            },
+            environment: {
+              STREAMLINER_LOG_LEVEL: "debug",
+            },
+            sessionStateRoot: "C:\\streamliner-state",
             kickoffPrompt: "Start PAW launch prompt profiles.",
             launchMetadata: {
               launchNonce: "nonce",
+              launchClaimRef: null,
               projectKey: "streamliner",
               workstreamId: "api-test",
               nodeId: "launch-prompt-profiles",
+              targetRepoIds: ["streamliner"],
+              graphPath: "C:\\graphs\\api-test\\graph.json",
+              branch: "feature/launch-prompt-profiles",
+              workId: "launch-prompt-profiles",
+              workTitle: "Launch prompt profiles",
+              trackerUrl: "https://github.com/lossyrob/streamliner/issues/33",
+            },
+            contextPackage: {
+              contextId: "ctx",
+              contextPackagePath: "C:\\streamliner-state\\launch-contexts\\ctx",
+              contextFilePath: "C:\\streamliner-state\\launch-contexts\\ctx\\context.md",
+              metadata: {},
+              unavailableInputs: [],
             },
           },
           timestamp: "2026-05-03T18:02:10.000Z",
@@ -1019,6 +1069,28 @@ describe("App sessions route", () => {
       });
       await settle(100);
       expect(savedWorkflowContext).toContain("Review before terminal launch.");
+      act(() => {
+        findButton(container, "Launch terminal").click();
+      });
+      await settle(100);
+      const terminalLaunchCall = fetchMock.mock.calls.find(
+        ([input, init]) =>
+          requestPath(input as RequestInfo | URL) === "/api/node-launches" &&
+          init?.method === "POST",
+      );
+      expect(terminalLaunchCall).toBeDefined();
+      expect(JSON.parse(String(terminalLaunchCall?.[1]?.body))).toEqual(
+        expect.objectContaining({
+          handoff: expect.objectContaining({
+            cwd: "C:\\graphs\\api-test",
+            kickoffPrompt: "Start PAW launch prompt profiles.",
+            environment: { STREAMLINER_LOG_LEVEL: "debug" },
+          }),
+        }),
+      );
+      expect(container.textContent).toContain("Started with powershell");
+      expect(container.textContent).toContain("Pending - terminal launching");
+      expect(container.textContent).not.toContain("claim-1");
     },
     15_000,
   );

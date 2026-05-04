@@ -4,6 +4,7 @@ import type { WorkstreamGraphLayoutResult } from "../workstream-graph";
 import type { WorkstreamDocument } from "../workstream-schema";
 import type { NodeLaunchRecord } from "../node-launch-record-contract";
 import { trackerLabel, trackerUrl } from "../workstream-links";
+import { humanizeLaunchClaim } from "./launch-claim-display";
 
 interface NodeInspectorProps {
   entry: WorkstreamDerivedNode | null;
@@ -117,6 +118,11 @@ export function NodeInspector({
   const tracker = trackerLabel(node.tracker);
   const trackerHref = trackerUrl(node.tracker);
   const trackerLabelText = node.tracker?.type === "github" ? "Issue" : "Tracker";
+  const latestClaim = launchRecord?.latestClaim ?? null;
+  const latestClaimDisplay = latestClaim ? humanizeLaunchClaim(latestClaim) : null;
+  const launchButtonLabel = latestClaim?.blocksLaunch
+    ? "PAW launch started"
+    : "Initialize PAW launch";
 
   const repoById = new Map(workstream.repos.map((r) => [r.id, r]));
   const repoLabels = node.repoIds.map((id) => {
@@ -170,7 +176,7 @@ export function NodeInspector({
             onClick={onLaunch}
             type="button"
           >
-            Initialize PAW launch
+            {launchButtonLabel}
           </button>
           {!canLaunch && launchDisabledReason ? (
             <span className="sl-sidebar-note">{launchDisabledReason}</span>
@@ -195,6 +201,11 @@ export function NodeInspector({
                   <span className={`sl-pill ${pathStatusClass(launchRecord.pathStatus.cwdExists)}`}>
                     {launchRecord.pathStatus.cwdExists ? "worktree present" : "worktree missing"}
                   </span>
+                  {latestClaimDisplay && (
+                    <span className={`sl-pill ${latestClaimDisplay.pillClass}`}>
+                      {latestClaimDisplay.label}
+                    </span>
+                  )}
                 </div>
                 <dl className="sl-node-launch-fields">
                   <div>
@@ -209,6 +220,18 @@ export function NodeInspector({
                     <dt>Prepared</dt>
                     <dd>{formatTimestamp(launchRecord.updatedAt)}</dd>
                   </div>
+                  {latestClaimDisplay && (
+                    <div>
+                      <dt>Terminal launch</dt>
+                      <dd>{latestClaimDisplay.detail}</dd>
+                    </div>
+                  )}
+                  {latestClaim?.failureCode && (
+                    <div>
+                      <dt>Failure</dt>
+                      <dd>{latestClaim.failureCode}</dd>
+                    </div>
+                  )}
                 </dl>
                 <dl className="sl-node-launch-paths">
                   <LaunchPathRow

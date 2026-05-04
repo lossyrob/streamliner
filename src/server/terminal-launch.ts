@@ -14,6 +14,10 @@ export interface TerminalLaunchOptions {
   cwd: string;
   /** Command to execute in the terminal (optional) */
   command?: string;
+  /** Additional environment values for the spawned shell */
+  env?: Record<string, string>;
+  /** Preferred terminal host. Defaults to Windows Terminal with PowerShell fallback. */
+  preferredTerminal?: "default" | "windows-terminal" | "powershell";
   /** Tab title (optional, Windows Terminal only) */
   title?: string;
   /** Tab color as hex string e.g. "#FF0000" (optional, Windows Terminal only) */
@@ -61,11 +65,19 @@ function isPowerShellCoreAvailable(): boolean {
 export function launchTerminal(
   options: TerminalLaunchOptions
 ): TerminalLaunchResult {
-  if (isWindowsTerminalAvailable()) {
-    return launchWindowsTerminal(options);
-  } else {
+  if (options.preferredTerminal === "powershell") {
     return launchPowerShellTerminal(options);
   }
+  if (options.preferredTerminal === "windows-terminal") {
+    if (isWindowsTerminalAvailable()) {
+      return launchWindowsTerminal(options);
+    }
+    return launchPowerShellTerminal(options);
+  }
+  if (isWindowsTerminalAvailable()) {
+    return launchWindowsTerminal(options);
+  }
+  return launchPowerShellTerminal(options);
 }
 
 function escapeForWindowsTerminal(value: string): string {
@@ -85,11 +97,36 @@ function escapeForWindowsTerminal(value: string): string {
  * Strip any `node_modules/.bin` entry from PATH so the spawned shell falls
  * through to the user's normal command resolution.
  */
-function buildSpawnEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  const pathKey = Object.keys(env).find((key) => key.toUpperCase() === "PATH");
+export function buildSpawnEnv(
+  extraEnv: Record<string, string> | undefined,
+  baseEnv: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...baseEnv };
+  const pathKey = platform === "win32" ? "Path" : "PATH";
+  if (platform === "win32") {
+    const pathValue = env[pathKey]
+      ?? Object.entries(env).find(([key]) => key.toUpperCase() === "PATH")?.[1];
+    for (const key of Object.keys(env)) {
+      if (key.toUpperCase() === "PATH") {
+        delete env[key];
+      }
+    }
+    if (pathValue !== undefined) {
+      env[pathKey] = pathValue;
+    }
+  }
+  if (extraEnv) {
+    for (const [key, value] of Object.entries(extraEnv)) {
+      if (platform === "win32" && key.toUpperCase() === "PATH") {
+        env[pathKey] = value;
+      } else {
+        env[key] = value;
+      }
+    }
+  }
   if (pathKey && typeof env[pathKey] === "string") {
-    const separator = process.platform === "win32" ? ";" : ":";
+    const separator = platform === "win32" ? ";" : ":";
     const filtered = env[pathKey]!
       .split(separator)
       .filter((entry) => !/[\\/]node_modules[\\/]\.bin\b/i.test(entry))
@@ -97,6 +134,40 @@ function buildSpawnEnv(): NodeJS.ProcessEnv {
     env[pathKey] = filtered;
   }
   return env;
+}
+
+export function quotePowerShellLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+export interface CopilotInteractiveCommandOptions {
+  /** Copilot CLI flags kept as distinct argv-style values and PowerShell-literal quoted. */
+  cliArgs: string[];
+  /** Arbitrary prompt text; encoded before embedding so multiline/user text is never shell-interpolated. */
+  kickoffPrompt: string;
+}
+
+/**
+ * Builds the PowerShell command used for visible Copilot CLI worker launches.
+ *
+ * The kickoff prompt and CLI args intentionally use different encoding paths:
+ * prompt text is base64-encoded and decoded inside PowerShell because it may
+ * contain arbitrary multiline prose, while `cliArgs` remain individual Copilot
+ * CLI flags that are PowerShell-literal quoted and parsed normally by Copilot.
+ */
+export function buildCopilotInteractiveCommand(options: CopilotInteractiveCommandOptions): string {
+  const encodedPrompt = Buffer.from(options.kickoffPrompt, "utf8").toString("base64");
+  const decodedPrompt =
+    `$streamlinerKickoffPrompt = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${encodedPrompt}'))`;
+  const cliArgs = options.cliArgs.map(quotePowerShellLiteral).join(" ");
+  const commandParts = [
+    "copilot",
+    cliArgs,
+    "-i",
+    "$streamlinerKickoffPrompt",
+    ".",
+  ].filter((part) => part.length > 0);
+  return `${decodedPrompt}; ${commandParts.join(" ")}`;
 }
 
 function launchWindowsTerminal(options: TerminalLaunchOptions): TerminalLaunchResult {
@@ -120,7 +191,7 @@ function launchWindowsTerminal(options: TerminalLaunchOptions): TerminalLaunchRe
   const child = spawn("wt.exe", args, {
     detached: true,
     stdio: "ignore",
-    env: buildSpawnEnv(),
+    env: buildSpawnEnv(options.env),
   });
 
   child.unref();
@@ -156,7 +227,7 @@ function launchPowerShellTerminal(
   const child = spawn(executable, args, {
     detached: true,
     stdio: "ignore",
-    env: buildSpawnEnv(),
+    env: buildSpawnEnv(options.env),
   });
 
   child.unref();

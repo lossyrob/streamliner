@@ -37,7 +37,7 @@ The session system is how Streamliner launches, monitors, and surfaces AI coding
 
 ## Launch Contract
 
-The Wave 3 launch MVP is **PAW-only launch initialization**. The contract is the interface between the graph UI, which lets the builder configure and run PAW init for a ready node, and the backend, which prepares the PAW work area, worker context, kickoff prompt, and structured handoff. Launch preparation and worker launch are distinct: Streamliner uses Copilot SDK to prepare context, run PAW initialization, and compile prompts, but the visible worker session is still a Copilot CLI interactive session. Starting that terminal and binding the discovered session to a launch claim remain separate downstream steps.
+The Wave 3 launch MVP is **PAW-only graph launch**. The contract is the interface between the graph UI, which lets the builder configure and run PAW init for a ready node, and the backend, which prepares the PAW work area, worker context, kickoff prompt, structured handoff, launch claim, and visible Copilot CLI worker terminal. Launch preparation and worker launch are distinct stages: Streamliner uses Copilot SDK to prepare context, run PAW initialization, and compile prompts, but the visible worker session is a Copilot CLI interactive session launched through the shared local terminal path. The launched session binds back to the graph node through the existing launch-claim and session-registry path rather than a separate graph-launch telemetry store.
 
 ### Launch Inputs
 
@@ -50,16 +50,22 @@ The Wave 3 launch MVP is **PAW-only launch initialization**. The contract is the
 | Launch instructions | Builder edit + default text | Natural-language guidance for the graph-launched PAW session. PAW init may use it to derive work title, work ID, target branch, review policy, and model settings, but general operating guidance belongs in the kickoff prompt rather than verbatim `Custom Workflow Instructions`. |
 | PAW prompt profile | Local Streamliner state | Optional reusable text snippet that can populate or update the launch instructions field |
 | CLI arguments | Default + builder override | Copilot CLI flags for the later worker launch; an explicit empty list is valid |
-| Terminal preference | Default + builder edit | Manual terminal launch handoff in this MVP |
-| Launch nonce | Caller/downstream launch owner | Token preserved for later claim binding |
+| Terminal preference | Default + builder edit | Preferred visible terminal host for the worker launch |
+| Launch nonce | Graph launch caller | Token preserved across preparation, claim creation, and final Copilot prompt binding |
 
-The builder selects a node in the graph and initiates launch from the inspector. Streamliner only enables the action when the selected `WorkstreamDerivedNode` is operationally ready and the active workstream registry entry is backend-readable. Browser-directory workstreams remain visible in the graph UI, but they are not launchable in this MVP because the backend cannot read their graph file.
+The builder selects a node in the graph and initiates launch from the inspector. Streamliner only enables the action when the selected `WorkstreamDerivedNode` is operationally ready, the active workstream registry entry is backend-readable, and there is no active or already-bound launch claim for the same workstream node. Browser-directory workstreams remain visible in the graph UI, but they are not launchable in this MVP because the backend cannot read their graph file. Failed launch claims remain visible and retryable.
 
 This design specifies **local launches only**. The launch contract keeps an environment dimension so future remote execution can fit the same shape, but `devbox` launch is not defined here. Devbox observation is defined later as an extension of the session-tracking model, not as a launch mode.
 
+### Local API Trust Boundary
+
+Streamliner's launch APIs are designed for a single-user local deployment. The API binds to loopback by default, and graph launch routes treat loopback as the intended trust boundary: browser UI code, Copilot hook scripts, and same-user local helper processes can call the local service, while non-loopback callers are rejected by launch-claim and node-launch endpoints. Same-user local processes are not a separate preventative security boundary in this model; they already share the builder's filesystem, process environment, and Copilot session state.
+
+This means the prepared launch handoff is trusted as local process input for the current MVP. Before the same seam is reused for remote, multi-user, or untrusted non-React callers, Streamliner should move from client-carried full handoffs to a server-side prepared-handoff cache or persisted security envelope keyed by an opaque handoff id, then validate that persisted envelope when launching.
+
 ### Launch Sequence
 
-Launch is a two-phase process: a **PAW init phase** that prepares all worker artifacts, followed later by a **Copilot CLI interactive launch** that starts the visible worker session. The preparation phase is not the worker session itself; it exists to assemble context, initialize PAW, compile the prompt, resolve CLI arguments, select the working directory, and preserve launch-claim metadata for terminal integration. The implemented MVP covers the PAW init phase and returns the terminal handoff; it does not start the worker terminal.
+Launch is a two-phase process: a **PAW init phase** that prepares all worker artifacts, followed by a **Copilot CLI interactive launch** that starts the visible worker session. The preparation phase is not the worker session itself; it exists to assemble context, initialize PAW, compile the prompt, resolve CLI arguments, select the working directory, and preserve launch metadata. The terminal phase consumes the prepared handoff, creates the launch claim, augments the prompt with binding evidence, starts Copilot CLI, and leaves binding to the registry/claim observation path.
 
 #### Phase 1 — PAW Launch Initialization
 
@@ -85,7 +91,8 @@ Launch preparation output:
 | `workflowContextPath` | string | Path to `WorkflowContext.md` |
 | `streamlinerContextPath` | string | File path to the worker-facing `streamliner/context.md` |
 | `cliArgs` | string[] | Copilot CLI arguments after layered defaults and builder overrides |
-| `environment` | object | Non-secret environment values for the later terminal launch |
+| `terminal` | object | Prepared terminal launch mode and preferred terminal host |
+| `environment` | object | Non-secret environment values for the terminal launch |
 | `sessionStateRoot` | string | Path to Copilot session state directory in the local environment |
 | `launchMetadata` | object | Workstream, node, repo, branch, work ID/title, tracker, nonce, and claim metadata |
 | `contextPackage` | object | Context package metadata from context assembly |
@@ -94,12 +101,14 @@ Launch preparation output:
 
 #### Phase 2 — Copilot CLI Interactive Launch
 
-After PAW launch initialization completes, future terminal integration will:
+After PAW launch initialization completes, terminal integration:
 
-1. **Record launch claim** — write a launch claim to Streamliner's runtime state binding the node to the expected session location before the worker session starts
-2. **Launch Copilot CLI** — reuse the lower-level terminal spawning path used by session relaunch, opening a visible terminal in the returned `cwd` and starting Copilot CLI interactive mode with the selected/default CLI arguments
-3. **Pass the kickoff prompt** — launch the worker session with the initial prompt already populated, conceptually equivalent to `copilot <cli-args> -i "<kickoff prompt>" .`
-4. **Bind on discovery** — when the session watcher detects the new Copilot session, bind it to the launch claim
+1. **Reject duplicate active launches** — before creating a new claim, check launch-claim diagnostics for the same workstream/node and reject non-terminal active-window or bound claims with a typed conflict. This is enforced in the backend service so future CLI, skill, or MCP callers get the same protection as the graph UI.
+2. **Record launch claim** — write a launch claim to Streamliner's runtime state binding the node to the expected session location before the worker session starts. The claim uses the nonce from the prepared handoff when one exists; otherwise the claim-minted nonce becomes the final launch nonce.
+3. **Finalize binding prompt** — preserve the prepared kickoff prompt, replace descriptive launch metadata with the concrete claim id where present, and append exactly one canonical `kickoffNonceLine(claim.launchNonce)` line (`Streamliner launch nonce: ...`) plus the concrete claim id line. The descriptive `- Launch nonce: ...` metadata in the preparation prompt is not the Tier 1 scanner contract; the terminal launch service owns the canonical scanner line.
+4. **Launch Copilot CLI** — reuse the lower-level terminal spawning path used by session relaunch, opening a visible terminal in the returned `cwd` and starting Copilot CLI interactive mode with the selected/default CLI arguments. The service passes `STREAMLINER_LAUNCH_CLAIM_ID` into the spawned process environment so the Copilot plugin hook can emit Tier 2 trusted claim evidence on `session.started`.
+5. **Bind on trusted signal or discovery** — when the hook signal or session watcher detects the new Copilot session, bind it to the launch claim and reserved registry row.
+6. **Fail honestly** — if terminal spawn fails after claim creation, transition the claim with failure code `terminal-spawn-failed`, clean up the reserved row through the claim-failure contract, log the failure, and return a typed error instead of a success-shaped pending state.
 
 ### PAW Launch Configuration and Init Instructions
 
@@ -110,11 +119,11 @@ The implemented launch surface is a text-guided PAW init dialog, not the full PA
 - PAW should use `gpt-5.5`, `claude-opus-4.7`, and `claude-opus-4.6-1m` where it asks for concrete multi-model planning or review choices.
 - PAW should proceed through implementation and documentation, then create the final PR.
 - CLI args default to `--yolo`; an explicit empty override remains empty.
-- Terminal launch mode is `manual` with a default terminal preference because this phase returns a handoff rather than opening a terminal.
+- Terminal launch mode is `manual` with a default terminal preference; `default` means "use Windows Terminal when available, otherwise PowerShell," not an alias for PowerShell. After PAW init completes, Streamliner uses those values to open the visible worker terminal.
 
 The dialog supports lightweight PAW prompt profiles: named reusable text snippets stored at the local Streamliner server state level. Profiles are not PAW-owned metadata and do not encode structured constraints; selecting one only replaces the free-text launch instructions, and the builder can edit the text before running PAW init. The dialog can save the current text as a new profile or update the selected profile.
 
-After PAW init succeeds, the dialog loads the generated `WorkflowContext.md` so the builder can review or make last-minute manual edits before future terminal launch. The edit surface is intentionally bounded to the prepared PAW work directory. It is a debugging and correction affordance for the launch MVP, not a replacement for PAW init's normal workflow generation.
+After PAW init succeeds, the dialog loads the generated `WorkflowContext.md` so the builder can review or make last-minute manual edits before terminal launch. The edit surface is intentionally bounded to the prepared PAW work directory. It is a debugging and correction affordance for the launch MVP, not a replacement for PAW init's normal workflow generation. The dialog then calls the same backend node-launch route as non-UI callers to create the claim and open the worker terminal.
 
 Reusable non-PAW launch profiles, persisted host-specific defaults, broader instance/project/workstream/node layering, and the rich PAW configuration form are deferred. The rich PAW form is tracked in issue #43 and should use PAW-owned metadata rather than reimplementing PAW init rules in Streamliner.
 
@@ -131,7 +140,7 @@ The kickoff prompt is a first-class launch artifact, not ad hoc terminal text. I
 
 Opening a terminal in the correct directory is not a launch. A launch is only complete once Streamliner has prepared the kickoff prompt and started Copilot CLI interactive mode with that prompt.
 
-For the PAW MVP, the kickoff prompt starts from the same template a builder would paste manually: identify the Streamliner node session, include the GitHub issue when one exists, list the PAW `WorkflowContext.md` path and installed Streamliner launch context path, then instruct the worker to load `paw-lite`, read `WorkflowContext.md`, read the issue and Streamliner context, and proceed through PAW. Streamliner also includes launch metadata required for binding, including the launch nonce and future claim reference. The raw builder launch text is not appended directly. Instead, the init SDK session filters out workflow configuration already encoded in `WorkflowContext.md` and returns only the remaining worker-startup guidance as `additionalKickoffInstructions`, which is appended at the end of the prompt.
+For the PAW MVP, the kickoff prompt starts from the same template a builder would paste manually: identify the Streamliner node session, include the GitHub issue when one exists, list the PAW `WorkflowContext.md` path and installed Streamliner launch context path, then instruct the worker to load `paw-lite`, read `WorkflowContext.md`, read the issue and Streamliner context, and proceed through PAW. Streamliner also includes descriptive launch metadata required for diagnosis, including the launch nonce and claim placeholder. The raw builder launch text is not appended directly. Instead, the init SDK session filters out workflow configuration already encoded in `WorkflowContext.md` and returns only the remaining worker-startup guidance as `additionalKickoffInstructions`, which is appended at the end of the prompt. The terminal launch service then appends the canonical Tier 1 scanner line, `Streamliner launch nonce: <nonce>`, exactly once after the claim exists.
 
 ### Failure Modes
 
@@ -144,7 +153,8 @@ For the PAW MVP, the kickoff prompt starts from the same template a builder woul
 | Launch preparation failure (PAW initialization, context assembly, prompt compilation) | Report typed error with step/input details; do not start terminal |
 | PAW init asks a clarification question during preparation | Treat as `paw_init_failed`; surface the question/error in the dialog rather than waiting indefinitely |
 | Internal SDK launch session stalls | No short default timeout is applied; operators can set `STREAMLINER_PAW_LAUNCH_TIMEOUT_MS` as a whole-run watchdog and inspect the internal session state path surfaced in progress/logs |
-| Copilot CLI launch failure | Report error, clean up launch claim |
+| Duplicate active launch | Backend returns a typed conflict for active-window or bound claims; UI disables/relabels the graph action |
+| Copilot CLI launch failure | Report a typed error, mark the claim failed with `terminal-spawn-failed`, and clean up the reserved registry row through the claim-failure path |
 
 ## Context Assembly
 
