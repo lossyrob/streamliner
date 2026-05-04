@@ -10,10 +10,17 @@ import type {
   NodeTerminalLaunchResponse,
 } from "../node-launch-record-contract";
 import { humanizeLaunchClaim } from "./launch-claim-display";
+import { TerminalColorQuickPicker } from "./SessionColorPicker";
 
 export type PawLaunchDialogHandoff = NodeLaunchHandoff;
 
 export type PawTerminalLaunchResult = NodeTerminalLaunchResponse;
+
+export interface PawTerminalLaunchInput {
+  kickoffPrompt: string;
+  terminalTitle: string;
+  terminalColor: string | null;
+}
 
 export interface PawLaunchProgressEvent {
   type: string;
@@ -33,7 +40,7 @@ interface PawLaunchDialogProps {
   progressEvents: PawLaunchProgressEvent[];
   onCancel: () => void;
   onSubmit: (configuration: PawLaunchDialogConfiguration) => void;
-  onLaunchTerminal: () => void;
+  onLaunchTerminal: (input: PawTerminalLaunchInput) => void;
 }
 
 interface PawPromptProfile {
@@ -47,6 +54,11 @@ interface WorkflowContextDocument {
   path: string;
   content: string;
   updatedAt: string;
+}
+
+interface DebugPath {
+  label: string;
+  path: string;
 }
 
 interface Option<T extends string> {
@@ -80,6 +92,54 @@ function progressLabel(type: string): string {
 
 function stringField(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null;
+}
+
+function collectDebugPaths(events: PawLaunchProgressEvent[]): DebugPath[] {
+  const fields: Array<{ key: string; label: string }> = [
+    { key: "workspacePath", label: "SDK workspace" },
+    { key: "sdkStateRoot", label: "SDK state root" },
+    { key: "stateRoot", label: "SDK state root" },
+    { key: "sessionStateRoot", label: "Session state root" },
+    { key: "contextFilePath", label: "Generated context" },
+    { key: "contextPackagePath", label: "Context package" },
+  ];
+  const paths: DebugPath[] = [];
+  const seen = new Set<string>();
+  for (const field of fields) {
+    for (const event of events) {
+      const path = stringField(event.data?.[field.key]);
+      if (!path) {
+        continue;
+      }
+      const dedupeKey = `${field.label}\0${path}`;
+      if (!seen.has(dedupeKey)) {
+        seen.add(dedupeKey);
+        paths.push({ label: field.label, path });
+      }
+    }
+  }
+  return paths;
+}
+
+function PawLaunchDebugPaths({ paths }: { paths: DebugPath[] }) {
+  if (paths.length === 0) {
+    return null;
+  }
+  return (
+    <div className="sl-paw-debug-paths">
+      <span className="sl-section-label">Debug session files</span>
+      <dl>
+        {paths.map((entry) => (
+          <div key={`${entry.label}:${entry.path}`}>
+            <dt>{entry.label}</dt>
+            <dd>
+              <code>{entry.path}</code>
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
 }
 
 function profileUpdatedAtMs(profile: PawPromptProfile): number {
@@ -269,6 +329,10 @@ export function PawLaunchDialog({
   const [workflowInstructions, setWorkflowInstructions] = useState(defaults.workflowInstructions);
   const [cliArgsText, setCliArgsText] = useState(defaults.cliArgsText);
   const [terminal, setTerminal] = useState(defaults.terminal);
+  const [terminalTitle, setTerminalTitle] = useState(defaults.terminal.title || nodeTitle);
+  const [terminalColor, setTerminalColor] = useState(defaults.terminal.tabColor ?? "");
+  const [terminalTitleEdited, setTerminalTitleEdited] = useState(false);
+  const [terminalColorEdited, setTerminalColorEdited] = useState(false);
   const [profiles, setProfiles] = useState<PawPromptProfile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState("");
   const [profileName, setProfileName] = useState("");
@@ -281,6 +345,7 @@ export function PawLaunchDialog({
   const [workflowContextSaving, setWorkflowContextSaving] = useState(false);
   const [workflowContextStatus, setWorkflowContextStatus] = useState<string | null>(null);
   const [workflowContextError, setWorkflowContextError] = useState<string | null>(null);
+  const [kickoffPromptText, setKickoffPromptText] = useState("");
   const terminalLaunchClaimDisplay = terminalLaunchResult
     ? humanizeLaunchClaim(terminalLaunchResult.launchClaim)
     : null;
@@ -288,11 +353,19 @@ export function PawLaunchDialog({
   const instructionError = trimmedInstructions.length === 0
     ? "Launch instructions are required so paw-init can derive the workflow setup and worker prompt."
     : null;
+  const trimmedKickoffPrompt = kickoffPromptText.trim();
+  const kickoffPromptError = handoff && trimmedKickoffPrompt.length === 0
+    ? "Kickoff prompt is required before launching the terminal."
+    : null;
+  const trimmedTerminalTitle = terminalTitle.trim();
+  const terminalTitleError = handoff && trimmedTerminalTitle.length === 0
+    ? "Terminal tab title is required before launching the terminal."
+    : null;
+  const terminalColorValue = terminalColor.trim();
+  const terminalTabColor = terminalColorValue.length > 0 ? terminalColorValue : null;
   const latestProgress = progressEvents.at(-1) ?? null;
   const recentProgress = progressEvents.slice(-8);
-  const debugPath = progressEvents
-    .map((event) => stringField(event.data?.workspacePath) ?? stringField(event.data?.sdkStateRoot))
-    .find(Boolean) ?? null;
+  const debugPaths = collectDebugPaths(progressEvents);
 
   useEffect(() => {
     let cancelled = false;
@@ -315,12 +388,14 @@ export function PawLaunchDialog({
 
   useEffect(() => {
     if (!handoff) {
+      setKickoffPromptText("");
       setWorkflowContext(null);
       setWorkflowContextText("");
       setWorkflowContextError(null);
       setWorkflowContextStatus(null);
       return;
     }
+    setKickoffPromptText(handoff.kickoffPrompt);
     let cancelled = false;
     setWorkflowContextLoading(true);
     setWorkflowContextError(null);
@@ -348,6 +423,18 @@ export function PawLaunchDialog({
       cancelled = true;
     };
   }, [handoff]);
+
+  useEffect(() => {
+    if (!handoff) {
+      return;
+    }
+    if (!terminalTitleEdited) {
+      setTerminalTitle(handoff.terminal.title ?? handoff.launchMetadata.workTitle);
+    }
+    if (!terminalColorEdited) {
+      setTerminalColor(handoff.terminal.tabColor ?? "");
+    }
+  }, [handoff, terminalColorEdited, terminalTitleEdited]);
 
   const selectedProfile = profiles.find((profile) => profile.id === selectedProfileId) ?? null;
   const trimmedProfileName = profileName.trim();
@@ -443,8 +530,22 @@ export function PawLaunchDialog({
     onSubmit({
       workflowInstructions: trimmedInstructions,
       cliArgs: parseCliArgs(cliArgsText),
-      terminal,
+      terminal: {
+        ...terminal,
+        title: trimmedTerminalTitle,
+        tabColor: terminalTabColor,
+      },
     });
+  };
+
+  const handleTerminalTitleChange = (value: string) => {
+    setTerminalTitle(value);
+    setTerminalTitleEdited(true);
+  };
+
+  const handleTerminalColorChange = (value: string) => {
+    setTerminalColor(value);
+    setTerminalColorEdited(true);
   };
 
   return (
@@ -503,11 +604,14 @@ export function PawLaunchDialog({
                   ))}
                 </ol>
               )}
-              {debugPath && (
-                <p className="sl-field-note">
-                  Debug session state: {debugPath}
-                </p>
-              )}
+              {!error && <PawLaunchDebugPaths paths={debugPaths} />}
+            </section>
+          )}
+
+          {error && (
+            <section className="sl-paw-launch-failure" aria-live="polite">
+              <div className="sl-action-error">{error}</div>
+              <PawLaunchDebugPaths paths={debugPaths} />
             </section>
           )}
 
@@ -581,16 +685,16 @@ export function PawLaunchDialog({
             <div className="sl-paw-config-section-head">
               <div>
                 <span className="sl-section-label">Launch shell</span>
-                  <p>These values are used when Streamliner starts the visible Copilot CLI worker terminal.</p>
+                <p>These values are used when Streamliner starts the visible Copilot CLI worker terminal.</p>
               </div>
             </div>
             <div className="sl-paw-launch-grid">
               <TextField
-                label="Copilot CLI args"
-                ariaLabel="Copilot CLI args"
-                value={cliArgsText}
-                onChange={setCliArgsText}
-                placeholder="Leave empty for no CLI args"
+                label="Terminal tab title"
+                ariaLabel="Terminal tab title"
+                value={terminalTitle}
+                onChange={handleTerminalTitleChange}
+                placeholder="Name the launched session"
               />
               <SelectField
                 label="Preferred terminal"
@@ -599,7 +703,27 @@ export function PawLaunchDialog({
                 options={TERMINAL_OPTIONS}
                 onChange={(value) => setTerminal((current) => ({ ...current, preferredTerminal: value }))}
               />
+              <TextField
+                label="Copilot CLI args"
+                ariaLabel="Copilot CLI args"
+                value={cliArgsText}
+                onChange={setCliArgsText}
+                placeholder="Leave empty for no CLI args"
+              />
+              <div className="sl-field sl-paw-launch-color-field">
+                <span>Terminal tab color</span>
+                <TerminalColorQuickPicker
+                  value={terminalColor}
+                  onChange={handleTerminalColorChange}
+                />
+                <p className="sl-field-note">
+                  {terminalTabColor ? `Selected ${terminalTabColor}` : "Default terminal color"}
+                </p>
+              </div>
             </div>
+            {terminalTitleError && (
+              <div className="sl-action-error">{terminalTitleError}</div>
+            )}
           </section>
 
           <section className="sl-paw-launch-summary">
@@ -611,13 +735,15 @@ export function PawLaunchDialog({
               <span className="sl-section-label">Terminal</span>
               <p>{defaults.terminalPreference} ({terminal.preferredTerminal})</p>
             </div>
+            <div>
+              <span className="sl-section-label">Session display</span>
+              <p>{trimmedTerminalTitle || "Untitled"}{terminalTabColor ? ` · ${terminalTabColor}` : ""}</p>
+            </div>
           </section>
 
           {instructionError && (
             <div className="sl-action-error">{instructionError}</div>
           )}
-
-          {error && <div className="sl-action-error">{error}</div>}
 
           {handoff && (
             <section className="sl-paw-launch-result">
@@ -643,11 +769,38 @@ export function PawLaunchDialog({
                   <dt>CLI args</dt>
                   <dd>{handoff.cliArgs.length > 0 ? handoff.cliArgs.join(" ") : "(none)"}</dd>
                 </div>
+                <div>
+                  <dt>Terminal title</dt>
+                  <dd>{trimmedTerminalTitle}</dd>
+                </div>
+                <div>
+                  <dt>Terminal color</dt>
+                  <dd>{terminalTabColor ?? "(default)"}</dd>
+                </div>
               </dl>
-              <details>
-                <summary>Kickoff prompt</summary>
-                <pre>{handoff.kickoffPrompt}</pre>
-              </details>
+              <div className="sl-paw-workflow-context-editor">
+                <div className="sl-paw-config-section-head">
+                  <div>
+                    <span className="sl-section-label">Review kickoff prompt</span>
+                    <p>
+                      This is the prompt Streamliner will send to the visible
+                      Copilot CLI worker. Edit it here before launching the
+                      terminal.
+                    </p>
+                  </div>
+                </div>
+                <textarea
+                  value={kickoffPromptText}
+                  aria-label="Kickoff prompt"
+                  rows={14}
+                  spellCheck={false}
+                  disabled={Boolean(terminalLaunchResult)}
+                  onChange={(event) => setKickoffPromptText(event.target.value)}
+                />
+                {kickoffPromptError && (
+                  <p className="sl-action-error">{kickoffPromptError}</p>
+                )}
+              </div>
               <div className="sl-paw-workflow-context-editor">
                 <div className="sl-paw-config-section-head">
                   <div>
@@ -721,8 +874,20 @@ export function PawLaunchDialog({
             <button
               type="button"
               className="sl-action-btn primary"
-              disabled={launching || workflowContextSaving || Boolean(terminalLaunchResult?.launchClaim.blocksLaunch)}
-              onClick={onLaunchTerminal}
+              disabled={
+                launching ||
+                workflowContextSaving ||
+                Boolean(kickoffPromptError) ||
+                Boolean(terminalTitleError) ||
+                Boolean(terminalLaunchResult?.launchClaim.blocksLaunch)
+              }
+              onClick={() =>
+                onLaunchTerminal({
+                  kickoffPrompt: trimmedKickoffPrompt,
+                  terminalTitle: trimmedTerminalTitle,
+                  terminalColor: terminalTabColor,
+                })
+              }
             >
               {launching ? "Launching terminal..." : terminalLaunchResult ? "Terminal launched" : "Launch terminal"}
             </button>

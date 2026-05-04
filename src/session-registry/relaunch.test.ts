@@ -170,7 +170,7 @@ describe("buildRelaunchParams", () => {
   it("includes resume command when copilotSessionId is present", () => {
     const session = buildRecord({ copilotSessionId: "abc-123" });
     const params = buildRelaunchParams(session);
-    expect(params.command).toBe("copilot --resume 'abc-123'");
+    expect(params.command).toBe("copilot '--resume=abc-123'");
   });
 
   it("includes tabColor when session has color", () => {
@@ -191,7 +191,7 @@ describe("buildRelaunchParams", () => {
   it("escapes single quotes in copilotSessionId", () => {
     const session = buildRecord({ copilotSessionId: "it's-a-session" });
     const params = buildRelaunchParams(session);
-    expect(params.command).toBe("copilot --resume 'it''s-a-session'");
+    expect(params.command).toBe("copilot '--resume=it''s-a-session'");
   });
 });
 

@@ -11,12 +11,14 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { SessionRegistryFileStore } from "../session-registry/file-store";
 import { createStreamlinerApiApp, type StreamlinerApiApp } from "./app";
+import { NodeLaunchRecordStore } from "./node-launch-record-store";
 import {
   LaunchContextPreparationError,
   type LaunchContextPackage,
   type PrepareLaunchContextPackageOptions,
 } from "./launch-context";
 import {
+  completePawInitToolParameters,
   preparePawLaunch,
   type LaunchContextPreparer,
   type PawInitRunner,
@@ -148,6 +150,14 @@ afterEach(() => {
 });
 
 describe("preparePawLaunch", () => {
+  it("allows PAW init to return kickoff-only guidance through the completion tool", () => {
+    expect(completePawInitToolParameters().properties).toEqual(
+      expect.objectContaining({
+        additionalKickoffInstructions: { type: "string" },
+      }),
+    );
+  });
+
   it("prepares a structured PAW handoff with defaults", async () => {
     const root = createRootDir();
     const pawCalls: PawInitRunnerInput[] = [];
@@ -192,6 +202,12 @@ describe("preparePawLaunch", () => {
         workflowContextPath: normalizePath(join(expectedWorkDir, "WorkflowContext.md")),
         streamlinerContextPath: normalizePath(join(expectedWorkDir, "streamliner", "context.md")),
         cliArgs: ["--yolo"],
+        terminal: {
+          launchMode: "manual",
+          preferredTerminal: "default",
+          title: "Launch Prompt Profiles",
+          tabColor: null,
+        },
         environment: { STREAMLINER_LOG_LEVEL: "debug" },
         sessionStateRoot: normalizePath(join(root, "state")),
       }),
@@ -400,6 +416,60 @@ describe("launch preparation API route", () => {
       }),
     );
     expect(response.body.kickoffPrompt).toContain("Start by loading the paw-lite workflow");
+  });
+
+  it("passes an existing prepared launch record into repeat PAW initialization", async () => {
+    const root = createRootDir();
+    const graphPath = normalizePath(join(root, ".streamliner", "workstreams", "session-launching-and-tracking", "graph.json"));
+    const store = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const nodeLaunchRecordStore = new NodeLaunchRecordStore({
+      recordsPath: join(root, "state", "node-launch-records.json"),
+    });
+    const pawCalls: PawInitRunnerInput[] = [];
+    const api = createStreamlinerApiApp({
+      store,
+      launchPreparationDeps: {
+        cwd: root,
+        stateRoot: join(root, "state"),
+        nodeLaunchRecordStore,
+        pawInitRunner: createPawInitRunner(pawCalls),
+        contextPreparer: createContextPreparer(root),
+      },
+    });
+    activeApps.push(api);
+
+    await request(api.app)
+      .post("/api/launch-preparations")
+      .send({
+        nodeId: "launch-prompt-profiles",
+        graphPath,
+      })
+      .expect(200);
+    await request(api.app)
+      .post("/api/launch-preparations")
+      .send({
+        nodeId: "launch-prompt-profiles",
+        graphPath,
+      })
+      .expect(200);
+
+    expect(pawCalls).toHaveLength(2);
+    expect(pawCalls[0].existingLaunch).toBeNull();
+    expect(pawCalls[1].existingLaunch).toEqual(
+      expect.objectContaining({
+        graphPath,
+        nodeId: "launch-prompt-profiles",
+        branch: "feature/launch-prompt-profiles",
+        workId: "launch-prompt-profiles",
+        pawWorkDir: normalizePath(join(root, ".paw", "work", "launch-prompt-profiles")),
+        pathStatus: expect.objectContaining({
+          cwdExists: true,
+          pawWorkDirExists: true,
+          workflowContextExists: true,
+          streamlinerContextExists: true,
+        }),
+      }),
+    );
   });
 
   it("starts a PAW launch preparation run and exposes the completed result", async () => {

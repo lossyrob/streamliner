@@ -1,4 +1,8 @@
+import { randomUUID } from "node:crypto";
 import { spawn, execSync } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 
 /** Result of a terminal launch attempt */
 export interface TerminalLaunchResult {
@@ -89,7 +93,7 @@ function escapeForWindowsTerminal(value: string): string {
  *
  * `npm run dev:api` (and any `npm run` script) prepends the project's
  * `node_modules/.bin` to PATH. Children of the API server inherit that PATH,
- * so a relaunched `copilot --resume <id>` resolves to the local copy in
+ * so a relaunched `copilot --resume=<id>` resolves to the local copy in
  * `node_modules/@github/copilot-win32-x64/copilot.exe` instead of the user's
  * globally-installed Copilot CLI. The local copy does not have the
  * Streamliner plugin configured, so no hooks fire.
@@ -140,10 +144,37 @@ export function quotePowerShellLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
+function terminalLaunchScriptRoot(): string {
+  return resolve(process.env.STREAMLINER_TERMINAL_LAUNCH_SCRIPT_ROOT ?? join(
+    homedir(),
+    ".streamliner",
+    "state",
+    "terminal-launches",
+  ));
+}
+
+function createPowerShellLaunchScript(options: TerminalLaunchOptions): string {
+  const root = terminalLaunchScriptRoot();
+  mkdirSync(root, { recursive: true });
+  const scriptPath = join(root, `launch-${Date.now()}-${randomUUID()}.ps1`);
+  const escapedCwd = options.cwd.replace(/'/g, "''");
+  const lines = [
+    "$streamlinerLaunchScriptPath = $PSCommandPath",
+    "if ($streamlinerLaunchScriptPath) { Remove-Item -LiteralPath $streamlinerLaunchScriptPath -Force -ErrorAction Continue }",
+    "$ErrorActionPreference = 'Stop'",
+    `Set-Location -LiteralPath '${escapedCwd}'`,
+  ];
+  if (options.command) {
+    lines.push(options.command);
+  }
+  writeFileSync(scriptPath, `${lines.join("\n")}\n`, { encoding: "utf8", mode: 0o600 });
+  return scriptPath;
+}
+
 export interface CopilotInteractiveCommandOptions {
   /** Copilot CLI flags kept as distinct argv-style values and PowerShell-literal quoted. */
   cliArgs: string[];
-  /** Arbitrary prompt text; encoded before embedding so multiline/user text is never shell-interpolated. */
+  /** Arbitrary prompt text; JSON-escaped before embedding so multiline/user text is never shell-interpolated. */
   kickoffPrompt: string;
 }
 
@@ -151,21 +182,20 @@ export interface CopilotInteractiveCommandOptions {
  * Builds the PowerShell command used for visible Copilot CLI worker launches.
  *
  * The kickoff prompt and CLI args intentionally use different encoding paths:
- * prompt text is base64-encoded and decoded inside PowerShell because it may
+ * prompt text is serialized as JSON and parsed inside PowerShell because it may
  * contain arbitrary multiline prose, while `cliArgs` remain individual Copilot
  * CLI flags that are PowerShell-literal quoted and parsed normally by Copilot.
  */
 export function buildCopilotInteractiveCommand(options: CopilotInteractiveCommandOptions): string {
-  const encodedPrompt = Buffer.from(options.kickoffPrompt, "utf8").toString("base64");
+  const promptJson = JSON.stringify(options.kickoffPrompt);
   const decodedPrompt =
-    `$streamlinerKickoffPrompt = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${encodedPrompt}'))`;
+    `$streamlinerKickoffPrompt = ConvertFrom-Json ${quotePowerShellLiteral(promptJson)}`;
   const cliArgs = options.cliArgs.map(quotePowerShellLiteral).join(" ");
   const commandParts = [
     "copilot",
     cliArgs,
     "-i",
     "$streamlinerKickoffPrompt",
-    ".",
   ].filter((part) => part.length > 0);
   return `${decodedPrompt}; ${commandParts.join(" ")}`;
 }
@@ -185,7 +215,7 @@ function launchWindowsTerminal(options: TerminalLaunchOptions): TerminalLaunchRe
   args.push("-d", escapeForWindowsTerminal(options.cwd));
 
   if (options.command) {
-    args.push("--appendCommandLine", "-NoExit", "-Command", options.command);
+    args.push("pwsh.exe", "-NoExit", "-File", createPowerShellLaunchScript(options));
   }
 
   const child = spawn("wt.exe", args, {
@@ -210,19 +240,10 @@ function launchPowerShellTerminal(
   options: TerminalLaunchOptions
 ): TerminalLaunchResult {
   const executable = isPowerShellCoreAvailable() ? "pwsh.exe" : "powershell.exe";
-  let psCommand: string;
-
-  if (options.command) {
-    // Escape single quotes by doubling them
-    const escapedCwd = options.cwd.replace(/'/g, "''");
-    psCommand = `Set-Location -LiteralPath '${escapedCwd}'; ${options.command}`;
-  } else {
-    // Escape single quotes by doubling them
-    const escapedCwd = options.cwd.replace(/'/g, "''");
-    psCommand = `Set-Location -LiteralPath '${escapedCwd}'`;
-  }
-
-  const args = ["-ExecutionPolicy", "Bypass", "-NoExit", "-Command", psCommand];
+  const escapedCwd = options.cwd.replace(/'/g, "''");
+  const args = options.command
+    ? ["-NoExit", "-File", createPowerShellLaunchScript(options)]
+    : ["-NoExit", "-Command", `Set-Location -LiteralPath '${escapedCwd}'`];
 
   const child = spawn(executable, args, {
     detached: true,

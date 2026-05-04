@@ -29,6 +29,7 @@ import { CheckpointStepper } from "./components/CheckpointStepper";
 import { WorkstreamHeader } from "./components/WorkstreamHeader";
 import {
   PawLaunchDialog,
+  type PawTerminalLaunchInput,
   type PawLaunchProgressEvent,
 } from "./components/PawLaunchDialog";
 import {
@@ -910,7 +911,11 @@ function GraphDashboard({
       cliArgsText: "--yolo",
       graphPath: activeWorkstreamEntry.path,
       terminalPreference: "Manual terminal launch after preparation",
-      terminal: { ...DEFAULT_PAW_TERMINAL_CONFIGURATION },
+      terminal: {
+        ...DEFAULT_PAW_TERMINAL_CONFIGURATION,
+        title: selectedEntry.node.title,
+        tabColor: null,
+      },
     };
   }, [activeWorkstreamEntry, selectedEntry]);
 
@@ -1062,7 +1067,7 @@ function GraphDashboard({
     }
   };
 
-  const handleLaunchTerminal = async () => {
+  const handleLaunchTerminal = async (input: PawTerminalLaunchInput) => {
     if (!launchHandoff) {
       return;
     }
@@ -1072,7 +1077,17 @@ function GraphDashboard({
       const response = await fetch("/api/node-launches", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ handoff: launchHandoff }),
+        body: JSON.stringify({
+          handoff: {
+            ...launchHandoff,
+            kickoffPrompt: input.kickoffPrompt,
+            terminal: {
+              ...launchHandoff.terminal,
+              title: input.terminalTitle,
+              tabColor: input.terminalColor,
+            },
+          },
+        }),
       });
       if (!response.ok) {
         const parsed = await parseErrorResponse(response);

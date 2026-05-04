@@ -70,6 +70,44 @@ function nullableStringField(record: Record<string, unknown>, key: string): stri
   return typeof value === "string" ? value : null;
 }
 
+function optionalTrimmedStringField(
+  record: Record<string, unknown>,
+  key: string,
+  label: string,
+): string | null {
+  const value = record[key];
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    throw badRequest(`${label} must be a string.`, label);
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function optionalHexColorField(
+  record: Record<string, unknown>,
+  key: string,
+  label: string,
+): string | null {
+  const value = record[key];
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    throw badRequest(`${label} must be a #RRGGBB color.`, label);
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+  if (!/^#[0-9a-f]{6}$/i.test(trimmed)) {
+    throw badRequest(`${label} must be a #RRGGBB color.`, label);
+  }
+  return trimmed.toLowerCase();
+}
+
 function nullableLaunchPromptTokenField(
   record: Record<string, unknown>,
   key: string,
@@ -136,7 +174,12 @@ function parseTerminal(value: unknown): PawLaunchTerminalPreferences {
       "handoff.terminal.preferredTerminal",
     );
   }
-  return { launchMode: "manual", preferredTerminal };
+  return {
+    launchMode: "manual",
+    preferredTerminal,
+    title: optionalTrimmedStringField(value, "title", "handoff.terminal.title"),
+    tabColor: optionalHexColorField(value, "tabColor", "handoff.terminal.tabColor"),
+  };
 }
 
 function parseLaunchMetadata(value: unknown): PawLaunchMetadata {

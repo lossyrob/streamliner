@@ -1043,6 +1043,11 @@ describe("App sessions route", () => {
         "Use saved final PR only workflow text.",
       );
       setInputValue(findInputByLabel(container, "Copilot CLI args"), "");
+      setInputValue(findInputByLabel(container, "Terminal tab title"), "Launch profile worker");
+      act(() => {
+        findButtonByLabel(container, "Use terminal color #ff8c0a").click();
+      });
+      await settle();
       setTextareaValue(
         findTextareaByLabel(container, "Launch instructions"),
         "Prefer the final PR review path.",
@@ -1071,6 +1076,8 @@ describe("App sessions route", () => {
             cliArgs: [],
             terminal: expect.objectContaining({
               launchMode: "manual",
+              title: "Launch profile worker",
+              tabColor: "#ff8c0a",
             }),
           }),
         }),
@@ -1168,9 +1175,17 @@ describe("App sessions route", () => {
       expect(container.textContent).toContain("CLI args");
       expect(container.textContent).toContain("none");
       expect(container.textContent).toContain("Review WorkflowContext.md");
+      expect(container.textContent).toContain("Review kickoff prompt");
       expect(container.textContent).toContain("LATEST PAW LAUNCH");
       expect(container.textContent).toContain("feature/launch-prompt-profiles");
       expect(container.textContent).toContain("WorkflowContext.md");
+      expect(findTextareaByLabel(container, "Kickoff prompt").value).toBe(
+        "Start PAW launch prompt profiles.",
+      );
+      setTextareaValue(
+        findTextareaByLabel(container, "Kickoff prompt"),
+        "Edited PAW launch kickoff prompt.",
+      );
       setTextareaValue(
         findTextareaByLabel(container, "WorkflowContext content"),
         `${savedWorkflowContext}\n## Manual edits\nReview before terminal launch.\n`,
@@ -1194,8 +1209,12 @@ describe("App sessions route", () => {
         expect.objectContaining({
           handoff: expect.objectContaining({
             cwd: "C:\\graphs\\api-test",
-            kickoffPrompt: "Start PAW launch prompt profiles.",
+            kickoffPrompt: "Edited PAW launch kickoff prompt.",
             environment: { STREAMLINER_LOG_LEVEL: "debug" },
+            terminal: expect.objectContaining({
+              title: "Launch profile worker",
+              tabColor: "#ff8c0a",
+            }),
           }),
         }),
       );
@@ -1310,6 +1329,18 @@ describe("App sessions route", () => {
       });
       await settle();
       act(() => {
+        MockEventSource.instances.at(-1)?.emit("progress", {
+          type: "session.started",
+          message: "Copilot SDK launch session ready.",
+          timestamp: "2026-05-03T18:02:59.000Z",
+          data: {
+            workspacePath: "C:\\streamliner-state\\copilot-sdk\\run-failed\\session-state\\sdk",
+            sdkStateRoot: "C:\\streamliner-state\\copilot-sdk\\run-failed",
+          },
+        });
+      });
+      await settle();
+      act(() => {
         MockEventSource.instances.at(-1)?.emit("failed", {
           status: "failed",
           error: { code: "paw_init_failed", error: "PAW init failed." },
@@ -1319,6 +1350,11 @@ describe("App sessions route", () => {
       await settle(100);
 
       expect(container.textContent).toContain("PAW init failed.");
+      expect(container.textContent).toContain("Debug session files");
+      expect(container.textContent).toContain("SDK workspace");
+      expect(container.textContent).toContain("C:\\streamliner-state\\copilot-sdk\\run-failed\\session-state\\sdk");
+      expect(container.textContent).toContain("SDK state root");
+      expect(container.textContent).toContain("C:\\streamliner-state\\copilot-sdk\\run-failed");
       expect(container.textContent).not.toContain("Prepared handoff");
     },
     15_000,

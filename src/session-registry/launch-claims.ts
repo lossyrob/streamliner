@@ -60,6 +60,8 @@ export interface CreateLaunchClaimInput {
   reserveRegistryRow?: boolean;
   /** Display title for the reserved row. Defaults to "Launch: {nodeId}". */
   reservedRowTitle?: string | null;
+  /** Display color for the reserved row, matching the terminal tab color when provided. */
+  reservedRowColor?: string | null;
   reservedRowDescription?: string | null;
   /** Wave-5 lineage extensibility slot (≤4 KB JSON object). */
   lineageMetadata?: Record<string, unknown> | null;
@@ -190,6 +192,7 @@ export function createLaunchClaim(
         id: reservedRegistryId,
         title: buildReservedRowTitle(input),
         description: buildReservedRowDescription(input),
+        color: input.reservedRowColor ?? null,
         cwd: input.expectedCwd,
         repo: input.expectedRepo ?? null,
         branch: input.expectedBranch ?? null,

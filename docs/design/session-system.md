@@ -1,7 +1,7 @@
 ---
 kind: design-doc
 status: draft
-last_updated: 2026-05-03
+last_updated: 2026-05-04
 update_semantics: rewrite-in-place
 authoritative_for: "Session launching, lifecycle, registry contract, tracking, and runtime overlay"
 scope_tags:
@@ -75,7 +75,7 @@ Streamliner's backend prepares a PAW handoff with one fully capable internal Cop
 2. **Prepares context inputs** — deterministically collects graph, brief, design-doc, and tracker/spec references plus freshness/unavailable-input metadata. This creates the target `launch-contexts/<context-id>/context.md` location but does not start a separate context SDK session.
 3. **Saves worker context** — the internal SDK session reads repository, design-doc, GitHub, and configured MCP context as needed, synthesizes the selected node's Layer 0-3 `context.md`, and persists it through `save_streamliner_context`.
 4. **Runs PAW init** — the same SDK session uses the `paw-init` skill with Copilot CLI-style repository, shell, GitHub, configured MCP, and custom-tool access. The prompt supplies the builder launch instructions, selected node, tracker URL, and saved context path, and tells PAW init to use documented defaults/best judgment rather than asking follow-up questions. Streamliner asks PAW init to treat the builder text as launch guidance and configuration input, not as verbatim custom workflow-stage instructions unless the text explicitly defines a custom PAW sequence.
-5. **Installs the context file** — after `paw-init` writes `WorkflowContext.md` through the normal PAW workflow path, the Streamliner-owned completion tool, `complete_paw_init`, copies the saved context package to `.paw/work/<work-id>/streamliner/context.md` and verifies that `WorkflowContext.md` records the installed Streamliner context as an Additional Input. For Streamliner PAW Lite node launches, `WorkflowContext.md` should use `Custom Workflow Instructions: none` and `Initial Prompt: none`; kickoff-prompt text, generated context content, and node-orientation prose belong in Streamliner's kickoff prompt or generated launch `context.md`. The Additional Inputs line should only carry the worker-facing Streamliner context file, not internal launch metadata such as staged context package paths, graph path, context ID, node ID, or nonce.
+5. **Installs the context file** — after `paw-init` writes or validates `WorkflowContext.md` through the normal PAW workflow path, the Streamliner-owned completion tool, `complete_paw_init`, copies the saved context package to `.paw/work/<work-id>/streamliner/context.md` and verifies that `WorkflowContext.md` records the installed Streamliner context as an Additional Input. For Streamliner PAW Lite node launches, `WorkflowContext.md` should use `Custom Workflow Instructions: none` and `Initial Prompt: none`; kickoff-prompt text, generated context content, and node-orientation prose belong in Streamliner's kickoff prompt or generated launch `context.md`. The Additional Inputs line should only carry the worker-facing Streamliner context file, not internal launch metadata such as staged context package paths, graph path, context ID, node ID, or nonce.
 6. **Filters kickoff-only guidance** — the SDK session returns `additionalKickoffInstructions` through `complete_paw_init`. This text contains only builder guidance that should appear in the launched worker's initial prompt and excludes workflow configuration already encoded in `WorkflowContext.md`.
 7. **Preserves launch metadata** — carries the launch nonce and future claim reference fields through metadata without owning claim persistence.
 8. **Compiles kickoff prompt** — renders the Streamliner PAW-lite launch template with the issue URL, `WorkflowContext.md`, installed Streamliner context path, launch metadata needed for binding, and filtered additional kickoff instructions.
@@ -140,7 +140,7 @@ The kickoff prompt is a first-class launch artifact, not ad hoc terminal text. I
 
 Opening a terminal in the correct directory is not a launch. A launch is only complete once Streamliner has prepared the kickoff prompt and started Copilot CLI interactive mode with that prompt.
 
-For the PAW MVP, the kickoff prompt starts from the same template a builder would paste manually: identify the Streamliner node session, include the GitHub issue when one exists, list the PAW `WorkflowContext.md` path and installed Streamliner launch context path, then instruct the worker to load `paw-lite`, read `WorkflowContext.md`, read the issue and Streamliner context, and proceed through PAW. Streamliner also includes descriptive launch metadata required for diagnosis, including the launch nonce and claim placeholder. The raw builder launch text is not appended directly. Instead, the init SDK session filters out workflow configuration already encoded in `WorkflowContext.md` and returns only the remaining worker-startup guidance as `additionalKickoffInstructions`, which is appended at the end of the prompt. The terminal launch service then appends the canonical Tier 1 scanner line, `Streamliner launch nonce: <nonce>`, exactly once after the claim exists.
+For the PAW MVP, the kickoff prompt starts from the same template a builder would paste manually: identify the Streamliner node session, include the GitHub issue when one exists, list the PAW `WorkflowContext.md` path and installed Streamliner launch context path, then instruct the worker to load `paw-lite`, read `WorkflowContext.md`, read the issue and Streamliner context, and proceed through PAW. Streamliner also includes descriptive launch metadata required for diagnosis, including the launch nonce and claim placeholder. The raw builder launch text is not appended directly. Instead, the init SDK session filters out workflow configuration already encoded in `WorkflowContext.md` and returns only the remaining worker-startup guidance as `additionalKickoffInstructions`, which is appended at the end of the prompt. If the selected node already has a prepared launch record, Streamliner passes those existing worktree and artifact paths into the SDK session so the agent can validate and reuse a prior PAW init when the terminal launch did not happen. The terminal launch service then appends the canonical Tier 1 scanner line, `Streamliner launch nonce: <nonce>`, exactly once after the claim exists.
 
 ### Failure Modes
 
@@ -278,7 +278,7 @@ The dialog uses the run route. `POST /api/launch-preparations/runs` returns a `r
 
 Internal SDK launch sessions persist under Streamliner's local state rather than the normal Copilot session-state root. The default root is `~/.streamliner/state/copilot-sdk/paw-launch/<context-id>/`, with `STREAMLINER_COPILOT_SDK_STATE_ROOT` available for override. Run progress and API logs surface the SDK `sessionId` and workspace path for debugging, but these internal sessions are not intended to appear in Streamliner's observed Sessions view.
 
-The PAW launch dialog is intentionally text-guided for this MVP. It exposes launch instructions, lightweight reusable text profiles, CLI args, terminal preference, graph source, and the prepared handoff after backend PAW init. The primary action is labeled as running PAW init because the SDK session may read repository files, inspect git/GitHub context, execute shell tools, and write the PAW work artifacts before returning the structured handoff. PAW-owned metadata, structured presets, specialists, and dependent WorkflowContext constraints are deferred to issue #43 so Streamliner does not duplicate PAW's configuration rules.
+The PAW launch dialog is intentionally text-guided for this MVP. It exposes launch instructions, lightweight reusable text profiles, CLI args, terminal preference, graph source, and the prepared handoff after backend PAW init. Once preparation completes, the prepared kickoff prompt is editable before terminal launch so the builder can inspect or refine the exact initial prompt sent to the visible worker. The primary action is labeled as running PAW init because the SDK session may read repository files, inspect git/GitHub context, execute shell tools, and write the PAW work artifacts before returning the structured handoff. PAW-owned metadata, structured presets, specialists, and dependent WorkflowContext constraints are deferred to issue #43 so Streamliner does not duplicate PAW's configuration rules.
 
 Reusable text prompt profiles are exposed as:
 
@@ -856,7 +856,7 @@ Streamliner API process owns this action per Decision 006.
 | `sessionId` | string | Registry entry ID |
 | `cwd` | string | Resolved working directory used |
 | `method` | `"windows-terminal"` \| `"powershell"` | Terminal method used |
-| `copilotResumed` | boolean | Whether `copilot --resume` was attempted |
+| `copilotResumed` | boolean | Whether `copilot --resume=<id>` was attempted |
 | `colorApplied` | boolean | Whether tab color was applied |
 | `pid` | number \| undefined | PID of spawned terminal process |
 
@@ -876,13 +876,26 @@ Streamliner API process owns this action per Decision 006.
 **Path resolution**: `derivedWorktreePath ?? cwd` — worktree path is preferred
 when available, matching the existing restart-command behavior.
 
+**Resume command**: command launches set the working directory before invoking
+Copilot and pass the session identity as a single `--resume=<id>` option value.
+No positional path argument is passed to Copilot.
+
+**Node launch display metadata**: the PAW launch dialog lets the user choose
+the terminal tab title and a color from the same quick-pick palette used by the
+Sessions view. Streamliner uses those values for the Windows Terminal tab and
+for the launch claim's reserved session row, so later claim binding can preserve
+the same display identity in Sessions.
+
 **Terminal selection**:
 1. If Windows Terminal (`wt.exe`) is in PATH → `wt new-tab` with `--title`,
    `--tabColor` (valid `#RRGGBB` only), `-d <cwd>`, and optionally
-   `--appendCommandLine -NoExit -Command "copilot --resume <id>"` so the
-   builder's Windows Terminal default profile remains the shell.
+   positional `pwsh.exe -NoExit -File <streamliner-launch.ps1>` against a
+   transient, self-deleting Streamliner launch script so the new tab
+   keeps the builder's Windows Terminal profile appearance while command
+   execution is explicit and not parsed as additional `wt` subcommands.
 2. Otherwise → `pwsh.exe` when available, falling back to `powershell.exe`,
-   with `-NoExit -Command "Set-Location ...; copilot --resume <id>"`.
+   with `-NoExit -Command "Set-Location ..."` for cwd-only launches or
+   `-NoExit -File <streamliner-launch.ps1>` for command launches.
 
 **Process lifecycle**: Terminals are spawned `detached` with `stdio: 'ignore'`
 and `unref()`'d so they outlive the Streamliner API process. The relaunch

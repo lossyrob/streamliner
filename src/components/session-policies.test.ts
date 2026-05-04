@@ -72,7 +72,7 @@ describe("session policies", () => {
     expect(getDisplaySessionId(manual)).toBe("manual-registry-id");
     expect(buildRestartCommand(manual)).toBeNull();
     expect(buildRestartCommand(trusted)).toBe(
-      "Set-Location -LiteralPath 'C:\\repo\\worktree'; copilot --resume 'copilot-session-id'",
+      "Set-Location -LiteralPath 'C:\\repo\\worktree'; copilot '--resume=copilot-session-id'",
     );
   });
 

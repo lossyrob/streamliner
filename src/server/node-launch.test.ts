@@ -50,7 +50,12 @@ function fakeHandoff(root: string, overrides: Partial<PawLaunchHandoff> = {}): P
       "",
     ].join("\n"),
     cliArgs: ["--yolo"],
-    terminal: { launchMode: "manual", preferredTerminal: "powershell" },
+    terminal: {
+      launchMode: "manual",
+      preferredTerminal: "powershell",
+      title: "Terminal Launch",
+      tabColor: "#4891c8",
+    },
     environment: { STREAMLINER_LOG_LEVEL: "debug" },
     sessionStateRoot: normalizePath(join(root, "state")),
     launchMetadata: {
@@ -196,6 +201,8 @@ describe("launchPreparedNode", () => {
     expect(terminalCalls).toHaveLength(1);
     expect(terminalCalls[0]).toEqual(expect.objectContaining({
       preferredTerminal: "powershell",
+      title: "Terminal Launch",
+      tabColor: "#4891c8",
       env: expect.objectContaining({
         STREAMLINER_LOG_LEVEL: "debug",
         STREAMLINER_LAUNCH_CLAIM_ID: result.launchClaim.launchClaimId,
@@ -210,6 +217,8 @@ describe("launchPreparedNode", () => {
     }));
     expect(registryStore.listSessions()).toEqual([
       expect.objectContaining({
+        title: "Terminal Launch",
+        color: "#4891c8",
         originKind: "launched",
         graphBinding: expect.objectContaining({
           launchClaimId: result.launchClaim.launchClaimId,
@@ -360,6 +369,12 @@ describe("node launch API route", () => {
         pid: 777,
       },
     }));
+    expect(registryStore.listSessions()).toEqual([
+      expect.objectContaining({
+        title: "Terminal Launch",
+        color: "#4891c8",
+      }),
+    ]);
   });
 
   it("returns the blocking claim summary on duplicate launches", async () => {

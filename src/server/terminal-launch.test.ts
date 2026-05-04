@@ -1,5 +1,8 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { ChildProcess } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import {
   buildSpawnEnv,
   buildCopilotInteractiveCommand,
@@ -21,11 +24,43 @@ vi.mock("node:child_process", () => {
 });
 
 const { spawn, execSync } = await import("node:child_process");
+const scriptRoots: string[] = [];
+let originalScriptRoot: string | undefined;
+
+function readLaunchScriptFromSpawnCall(callIndex = 0): { path: string; content: string } {
+  const args = vi.mocked(spawn).mock.calls[callIndex]?.[1] as string[] | undefined;
+  if (!args) {
+    throw new Error(`Missing spawn call ${callIndex}.`);
+  }
+  const scriptPath = args.at(-1);
+  if (!scriptPath) {
+    throw new Error(`Missing script path in spawn call ${callIndex}.`);
+  }
+  return {
+    path: scriptPath,
+    content: readFileSync(scriptPath, "utf8"),
+  };
+}
 
 describe("terminal-launch", () => {
   beforeEach(() => {
+    originalScriptRoot = process.env.STREAMLINER_TERMINAL_LAUNCH_SCRIPT_ROOT;
+    const scriptRoot = mkdtempSync(join(tmpdir(), "streamliner-terminal-launch-test-"));
+    scriptRoots.push(scriptRoot);
+    process.env.STREAMLINER_TERMINAL_LAUNCH_SCRIPT_ROOT = scriptRoot;
     clearWindowsTerminalCache();
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    if (originalScriptRoot === undefined) {
+      delete process.env.STREAMLINER_TERMINAL_LAUNCH_SCRIPT_ROOT;
+    } else {
+      process.env.STREAMLINER_TERMINAL_LAUNCH_SCRIPT_ROOT = originalScriptRoot;
+    }
+    for (const scriptRoot of scriptRoots.splice(0)) {
+      rmSync(scriptRoot, { recursive: true, force: true });
+    }
   });
 
   describe("isWindowsTerminalAvailable", () => {
@@ -169,13 +204,16 @@ describe("terminal-launch", () => {
           "new-tab",
           "-d",
           "C:\\Users\\test\\workspace",
-          "--appendCommandLine",
+          "pwsh.exe",
           "-NoExit",
-          "-Command",
-          "npm run dev",
+          "-File",
+          expect.stringMatching(/launch-.*\.ps1$/),
         ],
         expect.objectContaining({ detached: true, stdio: "ignore" })
       );
+      const script = readLaunchScriptFromSpawnCall();
+      expect(script.content).toContain("Set-Location -LiteralPath 'C:\\Users\\test\\workspace'");
+      expect(script.content).toContain("npm run dev");
     });
 
     it("passes additional environment values to the spawned terminal", () => {
@@ -209,13 +247,16 @@ describe("terminal-launch", () => {
           "#00FF00",
           "-d",
           "C:\\Users\\test\\workspace",
-          "--appendCommandLine",
+          "pwsh.exe",
           "-NoExit",
-          "-Command",
-          "npm run dev",
+          "-File",
+          expect.stringMatching(/launch-.*\.ps1$/),
         ],
         expect.objectContaining({ detached: true, stdio: "ignore" })
       );
+      const script = readLaunchScriptFromSpawnCall();
+      expect(script.content).toContain("Set-Location -LiteralPath 'C:\\Users\\test\\workspace'");
+      expect(script.content).toContain("npm run dev");
     });
 
     it("escapes semicolons in title and cwd to prevent WT subcommand injection", () => {
@@ -277,7 +318,7 @@ describe("terminal-launch", () => {
 
       expect(spawn).toHaveBeenCalledWith(
         "powershell.exe",
-        ["-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "Set-Location -LiteralPath 'C:\\Users\\test\\workspace'"],
+        ["-NoExit", "-Command", "Set-Location -LiteralPath 'C:\\Users\\test\\workspace'"],
         expect.objectContaining({ detached: true, stdio: "ignore" })
       );
     });
@@ -294,7 +335,7 @@ describe("terminal-launch", () => {
 
       expect(spawn).toHaveBeenCalledWith(
         "pwsh.exe",
-        ["-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "Set-Location -LiteralPath 'C:\\Users\\test\\workspace'"],
+        ["-NoExit", "-Command", "Set-Location -LiteralPath 'C:\\Users\\test\\workspace'"],
         expect.objectContaining({ detached: true, stdio: "ignore" })
       );
     });
@@ -308,14 +349,15 @@ describe("terminal-launch", () => {
       expect(spawn).toHaveBeenCalledWith(
         "powershell.exe",
         [
-          "-ExecutionPolicy",
-          "Bypass",
           "-NoExit",
-          "-Command",
-          "Set-Location -LiteralPath 'C:\\Users\\test\\workspace'; npm run dev",
+          "-File",
+          expect.stringMatching(/launch-.*\.ps1$/),
         ],
         expect.objectContaining({ detached: true, stdio: "ignore" })
       );
+      const script = readLaunchScriptFromSpawnCall();
+      expect(script.content).toContain("Set-Location -LiteralPath 'C:\\Users\\test\\workspace'");
+      expect(script.content).toContain("npm run dev");
     });
 
     it("escapes single quotes in PowerShell path", () => {
@@ -326,8 +368,6 @@ describe("terminal-launch", () => {
       expect(spawn).toHaveBeenCalledWith(
         "powershell.exe",
         [
-          "-ExecutionPolicy",
-          "Bypass",
           "-NoExit",
           "-Command",
           "Set-Location -LiteralPath 'C:\\Users\\O''Brien\\workspace'",
@@ -345,14 +385,15 @@ describe("terminal-launch", () => {
       expect(spawn).toHaveBeenCalledWith(
         "powershell.exe",
         [
-          "-ExecutionPolicy",
-          "Bypass",
           "-NoExit",
-          "-Command",
-          "Set-Location -LiteralPath 'C:\\Users\\O''Brien\\workspace'; npm run dev",
+          "-File",
+          expect.stringMatching(/launch-.*\.ps1$/),
         ],
         expect.objectContaining({ detached: true, stdio: "ignore" })
       );
+      const script = readLaunchScriptFromSpawnCall();
+      expect(script.content).toContain("Set-Location -LiteralPath 'C:\\Users\\O''Brien\\workspace'");
+      expect(script.content).toContain("npm run dev");
     });
 
     it("calls unref() on spawned process", () => {
@@ -399,7 +440,7 @@ describe("terminal-launch", () => {
 
       expect(spawn).toHaveBeenCalledWith(
         "powershell.exe",
-        ["-ExecutionPolicy", "Bypass", "-NoExit", "-Command", "Set-Location -LiteralPath 'C:\\Users\\test\\workspace'"],
+        ["-NoExit", "-Command", "Set-Location -LiteralPath 'C:\\Users\\test\\workspace'"],
         expect.objectContaining({ detached: true, stdio: "ignore" }),
       );
       expect(execSync).not.toHaveBeenCalledWith("where wt", { stdio: "ignore" });
@@ -407,16 +448,18 @@ describe("terminal-launch", () => {
   });
 
   describe("buildCopilotInteractiveCommand", () => {
-    it("builds a PowerShell command that decodes the prompt and quotes args", () => {
+    it("builds a PowerShell command that parses the prompt and quotes args", () => {
       const command = buildCopilotInteractiveCommand({
         cliArgs: ["--yolo", "--model", "Rob's model"],
         kickoffPrompt: "Line 1\nLine 2",
       });
 
-      expect(command).toContain("[System.Convert]::FromBase64String");
+      expect(command).toContain("ConvertFrom-Json");
       expect(command).toContain("'--yolo' '--model' 'Rob''s model'");
-      expect(command).toContain("-i $streamlinerKickoffPrompt .");
-      expect(command).not.toContain("Line 1");
+      expect(command).toContain("-i $streamlinerKickoffPrompt");
+      expect(command).not.toContain("$streamlinerKickoffPrompt .");
+      expect(command).toContain("\\n");
+      expect(command).not.toContain("Line 1\nLine 2");
     });
   });
 
@@ -497,5 +540,4 @@ describe("terminal-launch", () => {
     });
   });
 });
-
 

@@ -40,6 +40,10 @@ function quotePowerShellLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
+function buildCopilotResumeCommand(copilotSessionId: string): string {
+  return `copilot ${quotePowerShellLiteral(`--resume=${copilotSessionId}`)}`;
+}
+
 export interface RelaunchDeps {
   getSession: (id: string) => SessionRegistryRecord | null;
   existsSync: (path: string) => boolean;
@@ -102,7 +106,7 @@ export function buildRelaunchParams(session: SessionRegistryRecord): TerminalLau
   const options: TerminalLaunchOptions = { cwd };
 
   if (session.copilotSessionId) {
-    options.command = `copilot --resume ${quotePowerShellLiteral(session.copilotSessionId)}`;
+    options.command = buildCopilotResumeCommand(session.copilotSessionId);
   }
 
   if (session.title) {
