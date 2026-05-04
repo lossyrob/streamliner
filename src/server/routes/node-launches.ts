@@ -213,6 +213,8 @@ export function createNodeLaunchesRouter(options: {
   const logger = getApiLogger().withScope("node-launch.api");
 
   router.post("/node-launches", (req, res, next) => {
+    // Streamliner's local API treats loopback as the launch trust boundary;
+    // same-user local processes are intentionally outside the preventative boundary.
     if (isNonLoopbackRequest(req)) {
       logger.warn("rejected: non-loopback", {
         path: req.originalUrl ?? req.url,

@@ -57,6 +57,12 @@ The builder selects a node in the graph and initiates launch from the inspector.
 
 This design specifies **local launches only**. The launch contract keeps an environment dimension so future remote execution can fit the same shape, but `devbox` launch is not defined here. Devbox observation is defined later as an extension of the session-tracking model, not as a launch mode.
 
+### Local API Trust Boundary
+
+Streamliner's launch APIs are designed for a single-user local deployment. The API binds to loopback by default, and graph launch routes treat loopback as the intended trust boundary: browser UI code, Copilot hook scripts, and same-user local helper processes can call the local service, while non-loopback callers are rejected by launch-claim and node-launch endpoints. Same-user local processes are not a separate preventative security boundary in this model; they already share the builder's filesystem, process environment, and Copilot session state.
+
+This means the prepared launch handoff is trusted as local process input for the current MVP. Before the same seam is reused for remote, multi-user, or untrusted non-React callers, Streamliner should move from client-carried full handoffs to a server-side prepared-handoff cache or persisted security envelope keyed by an opaque handoff id, then validate that persisted envelope when launching.
+
 ### Launch Sequence
 
 Launch is a two-phase process: a **PAW init phase** that prepares all worker artifacts, followed by a **Copilot CLI interactive launch** that starts the visible worker session. The preparation phase is not the worker session itself; it exists to assemble context, initialize PAW, compile the prompt, resolve CLI arguments, select the working directory, and preserve launch metadata. The terminal phase consumes the prepared handoff, creates the launch claim, augments the prompt with binding evidence, starts Copilot CLI, and leaves binding to the registry/claim observation path.
@@ -113,7 +119,7 @@ The implemented launch surface is a text-guided PAW init dialog, not the full PA
 - PAW should use `gpt-5.5`, `claude-opus-4.7`, and `claude-opus-4.6-1m` where it asks for concrete multi-model planning or review choices.
 - PAW should proceed through implementation and documentation, then create the final PR.
 - CLI args default to `--yolo`; an explicit empty override remains empty.
-- Terminal launch mode is `manual` with a default terminal preference; after PAW init completes, Streamliner uses those values to open the visible worker terminal.
+- Terminal launch mode is `manual` with a default terminal preference; `default` means "use Windows Terminal when available, otherwise PowerShell," not an alias for PowerShell. After PAW init completes, Streamliner uses those values to open the visible worker terminal.
 
 The dialog supports lightweight PAW prompt profiles: named reusable text snippets stored at the local Streamliner server state level. Profiles are not PAW-owned metadata and do not encode structured constraints; selecting one only replaces the free-text launch instructions, and the builder can edit the text before running PAW init. The dialog can save the current text as a new profile or update the selected profile.
 
