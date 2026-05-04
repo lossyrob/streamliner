@@ -891,7 +891,9 @@ No positional path argument is passed to Copilot.
 the terminal tab title and a color from the same quick-pick palette used by the
 Sessions view. Streamliner uses those values for the Windows Terminal tab and
 for the launch claim's reserved session row, so later claim binding can preserve
-the same display identity in Sessions.
+the same display identity in Sessions. Users may also opt into launching the
+terminal immediately after PAW init completes, bypassing the prepared-context
+review step for routine launches.
 
 **Terminal selection**:
 1. If Windows Terminal (`wt.exe`) is in PATH → `wt new-tab` with `--title`,

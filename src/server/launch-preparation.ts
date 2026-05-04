@@ -96,6 +96,14 @@ export interface ResolvedPawLaunchConfiguration {
   terminal: PawLaunchTerminalPreferences;
 }
 
+interface ParsedPawLaunchConfiguration {
+  cwd?: string;
+  cliArgs: string[];
+  environment: Record<string, string>;
+  workflowInstructions: string;
+  terminal: PawLaunchTerminalPreferences;
+}
+
 export interface PawInitRunnerInput {
   nodeId: string;
   graphPath?: string;
@@ -460,10 +468,9 @@ function normalizeTerminalPreferences(
   return normalized;
 }
 
-function normalizeConfiguration(
+function parseConfigurationInput(
   input: PawLaunchConfigurationInput | undefined,
-  options: { cwd?: string },
-): ResolvedPawLaunchConfiguration {
+): ParsedPawLaunchConfiguration {
   const rawCwd = assertOptionalString(input?.cwd, "configuration.cwd");
   const workflowInstructions = assertOptionalString(
     input?.workflowInstructions,
@@ -474,10 +481,11 @@ function normalizeConfiguration(
   const environment = assertOptionalStringRecord(input?.environment, "configuration.environment")
     ?? {};
   const terminalOverrides = normalizeTerminalPreferences(input?.terminal);
-  const cwd = normalizeAbsolutePath(rawCwd ?? options.cwd ?? process.cwd(), "configuration.cwd");
 
   return {
-    cwd,
+    cwd: rawCwd === undefined
+      ? undefined
+      : normalizeAbsolutePath(rawCwd, "configuration.cwd"),
     cliArgs,
     environment,
     workflowInstructions,
@@ -486,6 +494,24 @@ function normalizeConfiguration(
       ...terminalOverrides,
     },
   };
+}
+
+function resolveConfiguration(
+  parsed: ParsedPawLaunchConfiguration,
+  options: { cwd?: string },
+): ResolvedPawLaunchConfiguration {
+  return {
+    ...parsed,
+    cwd: parsed.cwd ?? normalizeAbsolutePath(options.cwd ?? process.cwd(), "configuration.cwd"),
+  };
+}
+
+function launchCwdDefaultFromContext(
+  contextPackage: Pick<LaunchContextPackage, "metadata"> | Pick<PreparedLaunchContextPackage, "metadata">,
+  fallbackCwd?: string,
+): string | undefined {
+  const repoRoot = contextPackage.metadata.repoRoot.trim();
+  return repoRoot || fallbackCwd;
 }
 
 function parseSdkJsonResponse(content: string): Record<string, unknown> {
@@ -1378,9 +1404,7 @@ export async function preparePawLaunch(
   }
 
   const sessionStateRoot = resolve(options.stateRoot ?? defaultStateRoot());
-  const configuration = normalizeConfiguration(options.configuration, {
-    cwd: options.cwd,
-  });
+  const parsedConfiguration = parseConfigurationInput(options.configuration);
 
   const contextPreparer = options.contextPreparer ?? prepareLaunchContextPackage;
   let stagedContextPackage: LaunchContextPackage;
@@ -1420,6 +1444,9 @@ export async function preparePawLaunch(
       );
     }
 
+    const configuration = resolveConfiguration(parsedConfiguration, {
+      cwd: launchCwdDefaultFromContext(stagedContextPackage, options.cwd),
+    });
     const runner = options.pawInitRunner ?? defaultPawInitRunner;
     try {
       pawInit = await runner({
@@ -1469,6 +1496,9 @@ export async function preparePawLaunch(
       );
     }
 
+    const configuration = resolveConfiguration(parsedConfiguration, {
+      cwd: launchCwdDefaultFromContext(preparedContext, options.cwd),
+    });
     const runner = options.pawLaunchRunner ?? defaultPawLaunchSessionRunner;
     try {
       const launchResult = await runner({
@@ -1497,6 +1527,9 @@ export async function preparePawLaunch(
     }
   }
 
+  const configuration = resolveConfiguration(parsedConfiguration, {
+    cwd: launchCwdDefaultFromContext(stagedContextPackage, options.cwd),
+  });
   const terminal: PawLaunchTerminalPreferences = {
     ...configuration.terminal,
     title: configuration.terminal.title ?? pawInit.workTitle,

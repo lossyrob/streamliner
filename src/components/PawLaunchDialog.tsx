@@ -328,11 +328,13 @@ export function PawLaunchDialog({
 }: PawLaunchDialogProps) {
   const [workflowInstructions, setWorkflowInstructions] = useState(defaults.workflowInstructions);
   const [cliArgsText, setCliArgsText] = useState(defaults.cliArgsText);
+  const [cwd, setCwd] = useState(defaults.cwd);
   const [terminal, setTerminal] = useState(defaults.terminal);
   const [terminalTitle, setTerminalTitle] = useState(defaults.terminal.title || nodeTitle);
   const [terminalColor, setTerminalColor] = useState(defaults.terminal.tabColor ?? "");
   const [terminalTitleEdited, setTerminalTitleEdited] = useState(false);
   const [terminalColorEdited, setTerminalColorEdited] = useState(false);
+  const [launchAfterInit, setLaunchAfterInit] = useState(false);
   const [profiles, setProfiles] = useState<PawPromptProfile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState("");
   const [profileName, setProfileName] = useState("");
@@ -528,6 +530,7 @@ export function PawLaunchDialog({
       return;
     }
     onSubmit({
+      cwd,
       workflowInstructions: trimmedInstructions,
       cliArgs: parseCliArgs(cliArgsText),
       terminal: {
@@ -535,6 +538,7 @@ export function PawLaunchDialog({
         title: trimmedTerminalTitle,
         tabColor: terminalTabColor,
       },
+      launchAfterInit,
     });
   };
 
@@ -689,6 +693,20 @@ export function PawLaunchDialog({
               </div>
             </div>
             <div className="sl-paw-launch-grid">
+              <label className="sl-field sl-paw-cwd-field">
+                <span>Working directory</span>
+                <input
+                  type="text"
+                  value={cwd}
+                  aria-label="Working directory"
+                  placeholder={defaults.inferredCwd || "Use backend-inferred graph repo root"}
+                  onChange={(event) => setCwd(event.target.value)}
+                />
+                <p className="sl-field-note">
+                  Defaults to the selected graph repo root. Changes are saved for{" "}
+                  {defaults.cwdPreferenceKey ?? "this repo"}.
+                </p>
+              </label>
               <TextField
                 label="Terminal tab title"
                 ariaLabel="Terminal tab title"
@@ -721,6 +739,21 @@ export function PawLaunchDialog({
                 </p>
               </div>
             </div>
+            <label className="sl-checkbox-row sl-paw-launch-after-init">
+              <input
+                type="checkbox"
+                checked={launchAfterInit}
+                disabled={preparing || Boolean(handoff)}
+                aria-label="Launch after init"
+                onChange={(event) => setLaunchAfterInit(event.target.checked)}
+              />
+              <span>
+                <strong>Launch after init</strong>
+                <small>
+                  Start the terminal immediately when PAW init finishes instead of stopping for prompt and WorkflowContext review.
+                </small>
+              </span>
+            </label>
             {terminalTitleError && (
               <div className="sl-action-error">{terminalTitleError}</div>
             )}
@@ -732,12 +765,20 @@ export function PawLaunchDialog({
               <p>{defaults.graphPath}</p>
             </div>
             <div>
+              <span className="sl-section-label">Working directory</span>
+              <p>{cwd.trim() || defaults.inferredCwd || "Backend inferred"}</p>
+            </div>
+            <div>
               <span className="sl-section-label">Terminal</span>
               <p>{defaults.terminalPreference} ({terminal.preferredTerminal})</p>
             </div>
             <div>
               <span className="sl-section-label">Session display</span>
               <p>{trimmedTerminalTitle || "Untitled"}{terminalTabColor ? ` · ${terminalTabColor}` : ""}</p>
+            </div>
+            <div>
+              <span className="sl-section-label">Launch mode</span>
+              <p>{launchAfterInit ? "Launch terminal after PAW init" : "Review before terminal launch"}</p>
             </div>
           </section>
 
@@ -749,6 +790,10 @@ export function PawLaunchDialog({
             <section className="sl-paw-launch-result">
               <span className="sl-section-label">Prepared handoff</span>
               <dl>
+                <div>
+                  <dt>CWD</dt>
+                  <dd>{handoff.cwd}</dd>
+                </div>
                 <div>
                   <dt>Branch</dt>
                   <dd>{handoff.branch}</dd>
@@ -893,7 +938,11 @@ export function PawLaunchDialog({
             </button>
           ) : (
             <button type="submit" className="sl-action-btn primary" disabled={preparing || Boolean(instructionError)}>
-              {preparing ? "Running PAW init..." : "Run PAW init"}
+              {preparing
+                ? "Running PAW init..."
+                : launchAfterInit
+                  ? "Run PAW init and launch"
+                  : "Run PAW init"}
             </button>
           )}
         </div>

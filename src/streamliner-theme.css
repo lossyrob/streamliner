@@ -2218,12 +2218,51 @@ a.sl-session-context-ref {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.sl-paw-cwd-field {
+  grid-column: 1 / -1;
+}
+
+.sl-paw-cwd-field input {
+  font-family: var(--sl-mono);
+  font-size: 12px;
+}
+
 .sl-paw-launch-color-field {
   align-self: start;
 }
 
 .sl-paw-launch-color-field .sl-terminal-color-picker {
   box-shadow: 0 8px 20px rgba(13, 20, 32, 0.14);
+}
+
+.sl-checkbox-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  color: var(--sl-text-mid);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.sl-checkbox-row input {
+  margin-top: 3px;
+  accent-color: var(--sl-accent);
+}
+
+.sl-checkbox-row span {
+  display: grid;
+  gap: 2px;
+}
+
+.sl-checkbox-row strong {
+  color: var(--sl-text);
+  font-size: 13px;
+}
+
+.sl-checkbox-row small {
+  color: var(--sl-text-muted);
+  font-size: 12px;
 }
 
 .sl-field {
