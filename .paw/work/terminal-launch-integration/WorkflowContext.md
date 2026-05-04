@@ -34,7 +34,7 @@ Planning Review Specialist Models: none
 Planning Review Perspectives: pre-mortem, post-mortem
 Planning Review Perspective Cap: 2
 Custom Workflow Instructions: none
-Initial Prompt: Execute Streamliner graph node terminal-launch-integration for issue #44: integrate context assembly, PAW launch preparation handoff, launch-claim binding, and terminal spawning into one API-callable graph launch action.
+Initial Prompt: none
 Issue URL: https://github.com/lossyrob/streamliner/issues/44
 Remote: origin
 Artifact Lifecycle: commit-and-persist
