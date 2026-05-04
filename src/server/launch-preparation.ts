@@ -231,6 +231,22 @@ interface CompletePawInitArgs {
   additionalKickoffInstructions?: string;
 }
 
+export function completePawInitToolParameters() {
+  return {
+    type: "object",
+    properties: {
+      workTitle: { type: "string" },
+      workId: { type: "string" },
+      targetBranch: { type: "string" },
+      pawWorkDir: { type: "string" },
+      artifactLifecycle: { type: "string" },
+      additionalKickoffInstructions: { type: "string" },
+    },
+    required: ["workTitle", "workId", "targetBranch"],
+    additionalProperties: false,
+  };
+}
+
 const DEFAULT_TERMINAL_PREFERENCES: PawLaunchTerminalPreferences = {
   launchMode: "manual",
   preferredTerminal: "default",
@@ -704,6 +720,7 @@ function buildPawInitPrompt(input: PawInitRunnerInput): string {
     "Do not add Streamliner internal metadata such as `streamliner-staged-context`, `streamliner-context-id`, `node`, `graph`, or `launch-nonce` to WorkflowContext Additional Inputs; those remain launch metadata, not PAW input files.",
     "",
     "Also derive the optional `additionalKickoffInstructions` value for `complete_paw_init`:",
+    "- This derivation is your responsibility as the PAW init agent; do not rely on Streamliner to parse or recover omitted instructions later.",
     "- Include only concise worker-startup guidance that should appear in the final launched session prompt.",
     "- Exclude workflow configuration already encoded in WorkflowContext.md, such as workflow identity, review policy, model choices, stage sequence, artifact lifecycle, branch/work ID, and other durable PAW config fields.",
     "- Preserve guidance that is not otherwise durable PAW configuration, such as blocker handling, issue/PR communication preferences, documentation expectations, or other session operating notes.",
@@ -716,6 +733,7 @@ function buildPawInitPrompt(input: PawInitRunnerInput): string {
     "- `pawWorkDir`: optional absolute PAW work directory. If omitted, Streamliner uses `<cwd>/.paw/work/<workId>`.",
     "- `artifactLifecycle`: optional artifact lifecycle if resolved.",
     "- `additionalKickoffInstructions`: optional filtered worker-startup guidance that should be appended to the final kickoff prompt.",
+    "  If the builder included an explicit 'Additional instructions' section or equivalent session-operating guidance, preserve that guidance here unless it is fully represented by durable WorkflowContext fields.",
     "",
     "The tool copies the staged Streamliner context into `<pawWorkDir>/streamliner/context.md` and verifies that paw-init already created WorkflowContext.md with a `streamliner-context` Additional Input. It does not write WorkflowContext.md.",
     "",
@@ -750,19 +768,7 @@ export async function defaultPawInitRunner(
       "complete_paw_init",
       {
         description: "Complete PAW initialization for a Streamliner launch after paw-init has written WorkflowContext.md by installing the staged context bundle.",
-        parameters: {
-          type: "object",
-          properties: {
-            workTitle: { type: "string" },
-            workId: { type: "string" },
-            targetBranch: { type: "string" },
-            pawWorkDir: { type: "string" },
-            artifactLifecycle: { type: "string" },
-            additionalKickoffInstructions: { type: "string" },
-          },
-          required: ["workTitle", "workId", "targetBranch"],
-          additionalProperties: false,
-        },
+        parameters: completePawInitToolParameters(),
         skipPermission: true,
         handler: async (args) => {
           if (!isRecord(args)) {
@@ -995,18 +1001,7 @@ export async function defaultPawLaunchSessionRunner(
       "complete_paw_init",
       {
         description: "Complete PAW initialization for a Streamliner launch after paw-init has written WorkflowContext.md by installing the saved Streamliner context bundle.",
-        parameters: {
-          type: "object",
-          properties: {
-            workTitle: { type: "string" },
-            workId: { type: "string" },
-            targetBranch: { type: "string" },
-            pawWorkDir: { type: "string" },
-            artifactLifecycle: { type: "string" },
-          },
-          required: ["workTitle", "workId", "targetBranch"],
-          additionalProperties: false,
-        },
+        parameters: completePawInitToolParameters(),
         skipPermission: true,
         handler: async (args) => {
           if (!contextPackage) {

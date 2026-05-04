@@ -1057,9 +1057,17 @@ describe("App sessions route", () => {
       expect(container.textContent).toContain("CLI args");
       expect(container.textContent).toContain("none");
       expect(container.textContent).toContain("Review WorkflowContext.md");
+      expect(container.textContent).toContain("Review kickoff prompt");
       expect(container.textContent).toContain("LATEST PAW LAUNCH");
       expect(container.textContent).toContain("feature/launch-prompt-profiles");
       expect(container.textContent).toContain("WorkflowContext.md");
+      expect(findTextareaByLabel(container, "Kickoff prompt").value).toBe(
+        "Start PAW launch prompt profiles.",
+      );
+      setTextareaValue(
+        findTextareaByLabel(container, "Kickoff prompt"),
+        "Edited PAW launch kickoff prompt.",
+      );
       setTextareaValue(
         findTextareaByLabel(container, "WorkflowContext content"),
         `${savedWorkflowContext}\n## Manual edits\nReview before terminal launch.\n`,
@@ -1083,7 +1091,7 @@ describe("App sessions route", () => {
         expect.objectContaining({
           handoff: expect.objectContaining({
             cwd: "C:\\graphs\\api-test",
-            kickoffPrompt: "Start PAW launch prompt profiles.",
+            kickoffPrompt: "Edited PAW launch kickoff prompt.",
             environment: { STREAMLINER_LOG_LEVEL: "debug" },
           }),
         }),

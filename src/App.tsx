@@ -1042,7 +1042,7 @@ function GraphDashboard({
     }
   };
 
-  const handleLaunchTerminal = async () => {
+  const handleLaunchTerminal = async (kickoffPrompt: string) => {
     if (!launchHandoff) {
       return;
     }
@@ -1052,7 +1052,12 @@ function GraphDashboard({
       const response = await fetch("/api/node-launches", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ handoff: launchHandoff }),
+        body: JSON.stringify({
+          handoff: {
+            ...launchHandoff,
+            kickoffPrompt,
+          },
+        }),
       });
       if (!response.ok) {
         const parsed = await parseErrorResponse(response);

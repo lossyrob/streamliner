@@ -33,7 +33,7 @@ interface PawLaunchDialogProps {
   progressEvents: PawLaunchProgressEvent[];
   onCancel: () => void;
   onSubmit: (configuration: PawLaunchDialogConfiguration) => void;
-  onLaunchTerminal: () => void;
+  onLaunchTerminal: (kickoffPrompt: string) => void;
 }
 
 interface PawPromptProfile {
@@ -281,12 +281,17 @@ export function PawLaunchDialog({
   const [workflowContextSaving, setWorkflowContextSaving] = useState(false);
   const [workflowContextStatus, setWorkflowContextStatus] = useState<string | null>(null);
   const [workflowContextError, setWorkflowContextError] = useState<string | null>(null);
+  const [kickoffPromptText, setKickoffPromptText] = useState("");
   const terminalLaunchClaimDisplay = terminalLaunchResult
     ? humanizeLaunchClaim(terminalLaunchResult.launchClaim)
     : null;
   const trimmedInstructions = workflowInstructions.trim();
   const instructionError = trimmedInstructions.length === 0
     ? "Launch instructions are required so paw-init can derive the workflow setup and worker prompt."
+    : null;
+  const trimmedKickoffPrompt = kickoffPromptText.trim();
+  const kickoffPromptError = handoff && trimmedKickoffPrompt.length === 0
+    ? "Kickoff prompt is required before launching the terminal."
     : null;
   const latestProgress = progressEvents.at(-1) ?? null;
   const recentProgress = progressEvents.slice(-8);
@@ -315,12 +320,14 @@ export function PawLaunchDialog({
 
   useEffect(() => {
     if (!handoff) {
+      setKickoffPromptText("");
       setWorkflowContext(null);
       setWorkflowContextText("");
       setWorkflowContextError(null);
       setWorkflowContextStatus(null);
       return;
     }
+    setKickoffPromptText(handoff.kickoffPrompt);
     let cancelled = false;
     setWorkflowContextLoading(true);
     setWorkflowContextError(null);
@@ -644,10 +651,29 @@ export function PawLaunchDialog({
                   <dd>{handoff.cliArgs.length > 0 ? handoff.cliArgs.join(" ") : "(none)"}</dd>
                 </div>
               </dl>
-              <details>
-                <summary>Kickoff prompt</summary>
-                <pre>{handoff.kickoffPrompt}</pre>
-              </details>
+              <div className="sl-paw-workflow-context-editor">
+                <div className="sl-paw-config-section-head">
+                  <div>
+                    <span className="sl-section-label">Review kickoff prompt</span>
+                    <p>
+                      This is the prompt Streamliner will send to the visible
+                      Copilot CLI worker. Edit it here before launching the
+                      terminal.
+                    </p>
+                  </div>
+                </div>
+                <textarea
+                  value={kickoffPromptText}
+                  aria-label="Kickoff prompt"
+                  rows={14}
+                  spellCheck={false}
+                  disabled={Boolean(terminalLaunchResult)}
+                  onChange={(event) => setKickoffPromptText(event.target.value)}
+                />
+                {kickoffPromptError && (
+                  <p className="sl-action-error">{kickoffPromptError}</p>
+                )}
+              </div>
               <div className="sl-paw-workflow-context-editor">
                 <div className="sl-paw-config-section-head">
                   <div>
@@ -721,8 +747,13 @@ export function PawLaunchDialog({
             <button
               type="button"
               className="sl-action-btn primary"
-              disabled={launching || workflowContextSaving || Boolean(terminalLaunchResult?.launchClaim.blocksLaunch)}
-              onClick={onLaunchTerminal}
+              disabled={
+                launching ||
+                workflowContextSaving ||
+                Boolean(kickoffPromptError) ||
+                Boolean(terminalLaunchResult?.launchClaim.blocksLaunch)
+              }
+              onClick={() => onLaunchTerminal(trimmedKickoffPrompt)}
             >
               {launching ? "Launching terminal..." : terminalLaunchResult ? "Terminal launched" : "Launch terminal"}
             </button>

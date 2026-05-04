@@ -17,6 +17,7 @@ import {
   type PrepareLaunchContextPackageOptions,
 } from "./launch-context";
 import {
+  completePawInitToolParameters,
   preparePawLaunch,
   type LaunchContextPreparer,
   type PawInitRunner,
@@ -148,6 +149,14 @@ afterEach(() => {
 });
 
 describe("preparePawLaunch", () => {
+  it("allows PAW init to return kickoff-only guidance through the completion tool", () => {
+    expect(completePawInitToolParameters().properties).toEqual(
+      expect.objectContaining({
+        additionalKickoffInstructions: { type: "string" },
+      }),
+    );
+  });
+
   it("prepares a structured PAW handoff with defaults", async () => {
     const root = createRootDir();
     const pawCalls: PawInitRunnerInput[] = [];
