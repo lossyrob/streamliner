@@ -41,10 +41,11 @@ function readCopilotConfig() {
 }
 
 function findStreamlinerCachePath(config) {
-  if (!config?.installedPlugins) {
+  const installedPlugins = config?.installedPlugins ?? config?.installed_plugins;
+  if (!Array.isArray(installedPlugins)) {
     return null;
   }
-  const entry = config.installedPlugins.find(
+  const entry = installedPlugins.find(
     (plugin) => plugin.name === "streamliner" && typeof plugin.cache_path === "string",
   );
   return entry?.cache_path ?? null;
