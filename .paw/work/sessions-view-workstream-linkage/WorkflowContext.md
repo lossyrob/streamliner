@@ -15,19 +15,19 @@ Session Policy: continuous
 Final Agent Review: enabled
 Final Review Mode: multi-model
 Final Review Interactive: false
-Final Review Models: claude-opus-4.7
+Final Review Models: gpt-5.5, claude-opus-4.7, claude-opus-4.6-1m
 Final Review Specialists: all
 Final Review Interaction Mode: parallel
 Final Review Specialist Models: none
 Final Review Perspectives: pre-mortem, post-mortem
 Final Review Perspective Cap: 2
 Implementation Model: none
-Plan Generation Mode: single-model
-Plan Generation Models: gpt-5.2, gemini-3-pro-preview, claude-opus-4.6
-Planning Docs Review: enabled
+Plan Generation Mode: multi-model
+Plan Generation Models: gpt-5.5, claude-opus-4.7, claude-opus-4.6-1m
+Planning Docs Review: disabled
 Planning Review Mode: multi-model
 Planning Review Interactive: false
-Planning Review Models: claude-opus-4.7
+Planning Review Models: gpt-5.5, claude-opus-4.7, claude-opus-4.6-1m
 Planning Review Specialists: all
 Planning Review Interaction Mode: parallel
 Planning Review Specialist Models: none
@@ -49,11 +49,11 @@ Reconciliation: not_run
 ### Required Workflow Items
 - `init` | `resolved` | `activity`
 - `planning` | `pending` | `activity`
-- `planning-docs-review` | `pending` | `activity`
+- `planning-docs-review` | `not_applicable` | `activity`
 - `implementation` | `pending` | `activity`
 - `final-review` | `pending` | `activity`
 - `final-pr` | `pending` | `activity`
 
 ### Configured Procedure Items
-- `procedure:planning-review` | `pending` | `procedure`
+- `procedure:planning-review` | `not_applicable` | `procedure`
 - `procedure:final-review` | `pending` | `procedure`
