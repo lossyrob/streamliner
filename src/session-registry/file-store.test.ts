@@ -464,6 +464,12 @@ describe("SessionRegistryFileStore", () => {
         trustedLastPromptLength: null,
         activityStatus: "working",
         activityStatusUpdatedAt: "2026-04-24T20:00:00.000Z",
+        activityEvidence: expect.objectContaining({
+          statusReason: "trusted_start",
+          confidence: "high",
+          diagnostics: [],
+          lastActivityEventAt: "2026-04-24T20:00:00.000Z",
+        }),
       }),
     );
 
@@ -492,6 +498,11 @@ describe("SessionRegistryFileStore", () => {
         trustedLastPromptLength: 1234,
         activityStatus: "working",
         activityStatusUpdatedAt: "2026-04-24T20:01:00.000Z",
+        activityEvidence: expect.objectContaining({
+          statusReason: "trusted_prompt",
+          confidence: "high",
+          lastActivityEventAt: "2026-04-24T20:01:00.000Z",
+        }),
       }),
     );
     expect(ended).toEqual(
@@ -502,6 +513,11 @@ describe("SessionRegistryFileStore", () => {
         trustedEndReason: "user_exit",
         activityStatus: "exited",
         activityStatusUpdatedAt: "2026-04-24T20:02:00.000Z",
+        activityEvidence: expect.objectContaining({
+          statusReason: "trusted_end",
+          confidence: "high",
+          lastActivityEventAt: "2026-04-24T20:02:00.000Z",
+        }),
       }),
     );
     expect(readJsonFile<Record<string, unknown>>(join(rootDir, "entries", "trusted-session-1.json"))).not.toHaveProperty(

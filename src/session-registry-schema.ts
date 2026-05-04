@@ -58,6 +58,48 @@ export const SESSION_REGISTRY_ACTIVITY_STATUSES = [
 export type SessionRegistryActivityStatus =
   (typeof SESSION_REGISTRY_ACTIVITY_STATUSES)[number];
 
+export const SESSION_REGISTRY_ACTIVITY_CONFIDENCES = [
+  "none",
+  "low",
+  "medium",
+  "high",
+] as const;
+export type SessionRegistryActivityConfidence =
+  (typeof SESSION_REGISTRY_ACTIVITY_CONFIDENCES)[number];
+
+export const SESSION_REGISTRY_ACTIVITY_STATUS_REASONS = [
+  "neutral_default",
+  "trusted_start",
+  "trusted_prompt",
+  "trusted_end",
+  "user_message",
+  "assistant_message",
+  "assistant_turn_start",
+  "assistant_turn_end",
+  "tool_user_requested",
+  "tool_execution_start",
+  "tool_execution_complete",
+  "user_requested_tool_complete",
+  "pending_input",
+  "session_ended",
+  "process_interrupted",
+  "events_missing",
+  "events_empty",
+  "events_unrecognized",
+] as const;
+export type SessionRegistryActivityStatusReason =
+  (typeof SESSION_REGISTRY_ACTIVITY_STATUS_REASONS)[number];
+
+export const SESSION_REGISTRY_ACTIVITY_DIAGNOSTIC_CODES = [
+  "events_missing",
+  "events_empty",
+  "events_tail_truncated",
+  "events_parse_error",
+  "events_unrecognized",
+] as const;
+export type SessionRegistryActivityDiagnosticCode =
+  (typeof SESSION_REGISTRY_ACTIVITY_DIAGNOSTIC_CODES)[number];
+
 export const SESSION_REGISTRY_TRUSTED_SIGNAL_SOURCES = [
   "copilot-cli-hook",
 ] as const;
@@ -113,6 +155,42 @@ export interface SessionRegistryGithubRef {
   source: string;
 }
 
+export interface SessionRegistryActivityEvidence {
+  statusReason: SessionRegistryActivityStatusReason;
+  confidence: SessionRegistryActivityConfidence;
+  diagnostics: SessionRegistryActivityDiagnosticCode[];
+  pendingInputRequest: boolean;
+  pendingInputRequestCount: number;
+  lastUserMessageAt: string | null;
+  lastAssistantTurnStartedAt: string | null;
+  lastAssistantTurnEndedAt: string | null;
+  lastActivityEventAt: string | null;
+  userMessageCount: number;
+  assistantTurnCount: number;
+  eventsScannedAt: string | null;
+  eventsOffset: number;
+  eventsSize: number;
+  eventsMtimeMs: number | null;
+}
+
+export const DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE: SessionRegistryActivityEvidence = {
+  statusReason: "neutral_default",
+  confidence: "none",
+  diagnostics: [],
+  pendingInputRequest: false,
+  pendingInputRequestCount: 0,
+  lastUserMessageAt: null,
+  lastAssistantTurnStartedAt: null,
+  lastAssistantTurnEndedAt: null,
+  lastActivityEventAt: null,
+  userMessageCount: 0,
+  assistantTurnCount: 0,
+  eventsScannedAt: null,
+  eventsOffset: 0,
+  eventsSize: 0,
+  eventsMtimeMs: null,
+};
+
 export interface ManualSessionRegistryOrigin {
   kind: "manual";
 }
@@ -162,6 +240,7 @@ export interface SessionRegistryRecord {
   copilotProcessId: number | null;
   activityStatus: SessionRegistryActivityStatus;
   activityStatusUpdatedAt: string | null;
+  activityEvidence: SessionRegistryActivityEvidence;
   trustedSignalSource: SessionRegistryTrustedSignalSource | null;
   trustedStartedAt: string | null;
   trustedEndedAt: string | null;
@@ -208,6 +287,7 @@ export interface SessionRegistryIndexEntry {
   copilotProcessId: number | null;
   activityStatus: SessionRegistryActivityStatus;
   activityStatusUpdatedAt: string | null;
+  activityEvidence: SessionRegistryActivityEvidence;
   trustedSignalSource: SessionRegistryTrustedSignalSource | null;
   trustedStartedAt: string | null;
   trustedEndedAt: string | null;

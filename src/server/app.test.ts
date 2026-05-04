@@ -14,7 +14,10 @@ import type {
   SessionRegistryStore,
 } from "../session-registry-contract";
 import { SessionRegistryFileStore } from "../session-registry/file-store";
-import type { SessionRegistryRecord } from "../session-registry-schema";
+import {
+  DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
+  type SessionRegistryRecord,
+} from "../session-registry-schema";
 import {
   createStreamlinerApiApp,
   type StreamlinerApiApp,
@@ -184,6 +187,7 @@ function buildStreamRecord(id: string, title: string): SessionRegistryRecord {
     copilotProcessId: null,
     activityStatus: "unknown",
     activityStatusUpdatedAt: null,
+    activityEvidence: DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
     trustedSignalSource: null,
     trustedStartedAt: null,
     trustedEndedAt: null,

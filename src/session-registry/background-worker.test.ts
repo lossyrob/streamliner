@@ -270,6 +270,11 @@ describe("SessionRegistryBackgroundWorker", () => {
       expect.objectContaining({
         activityStatus: "waiting_for_input",
         activityStatusUpdatedAt: "2026-04-26T15:04:00.000Z",
+        activityEvidence: expect.objectContaining({
+          statusReason: "assistant_turn_end",
+          confidence: "high",
+          lastAssistantTurnEndedAt: "2026-04-26T15:04:00.000Z",
+        }),
       }),
     );
   });

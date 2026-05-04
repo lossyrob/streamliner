@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
+  SESSION_REGISTRY_ACTIVITY_CONFIDENCES,
+  SESSION_REGISTRY_ACTIVITY_DIAGNOSTIC_CODES,
+  SESSION_REGISTRY_ACTIVITY_STATUS_REASONS,
   SESSION_REGISTRY_AI_SUMMARY_STATUSES,
   SESSION_REGISTRY_ACTIVITY_STATUSES,
   SESSION_REGISTRY_COPILOT_PROCESS_STATES,
@@ -64,6 +68,7 @@ function buildRecord(): SessionRegistryRecord {
     copilotProcessId: null,
     activityStatus: "unknown",
     activityStatusUpdatedAt: null,
+    activityEvidence: DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
     trustedSignalSource: null,
     trustedStartedAt: null,
     trustedEndedAt: null,
@@ -119,6 +124,39 @@ describe("session registry schema", () => {
       "waiting_for_input",
       "interrupted",
       "exited",
+    ]);
+    expect(SESSION_REGISTRY_ACTIVITY_CONFIDENCES).toEqual([
+      "none",
+      "low",
+      "medium",
+      "high",
+    ]);
+    expect(SESSION_REGISTRY_ACTIVITY_STATUS_REASONS).toEqual([
+      "neutral_default",
+      "trusted_start",
+      "trusted_prompt",
+      "trusted_end",
+      "user_message",
+      "assistant_message",
+      "assistant_turn_start",
+      "assistant_turn_end",
+      "tool_user_requested",
+      "tool_execution_start",
+      "tool_execution_complete",
+      "user_requested_tool_complete",
+      "pending_input",
+      "session_ended",
+      "process_interrupted",
+      "events_missing",
+      "events_empty",
+      "events_unrecognized",
+    ]);
+    expect(SESSION_REGISTRY_ACTIVITY_DIAGNOSTIC_CODES).toEqual([
+      "events_missing",
+      "events_empty",
+      "events_tail_truncated",
+      "events_parse_error",
+      "events_unrecognized",
     ]);
     expect(SESSION_REGISTRY_GITHUB_REF_TYPES).toEqual(["issue", "pr", "unknown"]);
     expect(SESSION_REGISTRY_TRUSTED_SIGNAL_SOURCES).toEqual([
@@ -200,6 +238,7 @@ describe("session registry schema", () => {
       copilotProcessId: record.copilotProcessId,
       activityStatus: record.activityStatus,
       activityStatusUpdatedAt: record.activityStatusUpdatedAt,
+      activityEvidence: record.activityEvidence,
       trustedSignalSource: record.trustedSignalSource,
       trustedStartedAt: record.trustedStartedAt,
       trustedEndedAt: record.trustedEndedAt,

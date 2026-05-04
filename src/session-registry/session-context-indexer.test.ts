@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { SessionRegistryListItem } from "../session-registry-contract";
+import { DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE } from "../session-registry-schema";
 import { indexSessionContext } from "./session-context-indexer";
 
 const createdDirs: string[] = [];
@@ -70,6 +71,7 @@ function buildSession(overrides: Partial<SessionRegistryListItem> = {}): Session
     copilotProcessId: null,
     activityStatus: "unknown",
     activityStatusUpdatedAt: null,
+    activityEvidence: DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
     trustedSignalSource: "copilot-cli-hook",
     trustedStartedAt: "2026-04-25T20:00:00.000Z",
     trustedEndedAt: null,
