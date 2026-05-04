@@ -2218,6 +2218,15 @@ a.sl-session-context-ref {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.sl-paw-cwd-field {
+  grid-column: 1 / -1;
+}
+
+.sl-paw-cwd-field input {
+  font-family: var(--sl-mono);
+  font-size: 12px;
+}
+
 .sl-paw-launch-color-field {
   align-self: start;
 }

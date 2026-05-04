@@ -23,6 +23,7 @@ import {
   type LaunchContextPreparer,
   type PawInitRunner,
   type PawInitRunnerInput,
+  type PawLaunchSessionRunnerInput,
 } from "./launch-preparation";
 
 const createdRoots: string[] = [];
@@ -222,6 +223,101 @@ describe("preparePawLaunch", () => {
         targetRepoIds: ["streamliner"],
         trackerUrl: "https://github.com/lossyrob/streamliner/issues/33",
       }),
+    );
+  });
+
+  it("defaults launch cwd to the graph repo root when the server cwd differs", async () => {
+    const root = createRootDir();
+    const serverRoot = join(root, "streamliner-server");
+    const graphRepoRoot = join(root, "dbagent-worktree");
+    const graphPath = join(
+      graphRepoRoot,
+      ".streamliner",
+      "workstreams",
+      "local-scenario-iteration-loop",
+      "graph.json",
+    );
+    mkdirSync(dirname(graphPath), { recursive: true });
+    writeFileSync(
+      graphPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        id: "local-scenario-iteration-loop",
+        projectKey: "dbagent",
+        title: "Local Scenario Iteration Loop",
+        summary: "Exercise PAW launch cwd selection.",
+        status: "active",
+        attention: "focus",
+        createdAt: "2026-05-04T19:00:00.000Z",
+        updatedAt: "2026-05-04T19:00:00.000Z",
+        repos: [
+          {
+            id: "dbagent",
+            owner: "lossyrob",
+            name: "dbagent",
+            role: "primary",
+          },
+        ],
+        designRefs: [],
+        nodes: [
+          {
+            id: "runner-diagnostics-resume",
+            type: "task",
+            title: "Runner diagnostics resume",
+            summary: "Initialize PAW from a graph outside the Streamliner server checkout.",
+            status: "ready",
+            attention: "focus",
+            repoIds: ["dbagent"],
+            dependsOn: [],
+          },
+        ],
+        checkpoints: [],
+      }),
+      "utf8",
+    );
+
+    const runnerCalls: PawLaunchSessionRunnerInput[] = [];
+    const result = await preparePawLaunch({
+      nodeId: "runner-diagnostics-resume",
+      graphPath,
+      cwd: serverRoot,
+      stateRoot: join(root, "state"),
+      pawLaunchRunner: async (input) => {
+        runnerCalls.push(input);
+        const workId = "runner-diagnostics-resume";
+        const pawWorkDir = join(input.cwd, ".paw", "work", workId);
+        return {
+          cwd: normalizePath(input.cwd),
+          branch: "feature/runner-diagnostics-resume-2",
+          workId,
+          workTitle: "Runner Diagnostics Resume",
+          pawWorkDir: normalizePath(pawWorkDir),
+          workflowContextPath: normalizePath(join(pawWorkDir, "WorkflowContext.md")),
+          streamlinerContextPath: normalizePath(join(pawWorkDir, "streamliner", "context.md")),
+          sessionStateRoot: normalizePath(input.sessionStateRoot),
+          contextPackage: {
+            contextId: input.preparedContext.metadata.contextId,
+            contextPackagePath: normalizePath(input.preparedContext.contextPackagePath),
+            contextFilePath: normalizePath(input.preparedContext.contextFilePath),
+            metadata: input.preparedContext.metadata,
+            unavailableInputs: input.preparedContext.metadata.unavailableInputs,
+          },
+        };
+      },
+    });
+
+    expect(runnerCalls).toHaveLength(1);
+    expect(runnerCalls[0]).toEqual(
+      expect.objectContaining({
+        cwd: graphRepoRoot,
+        configuration: expect.objectContaining({
+          cwd: graphRepoRoot,
+        }),
+      }),
+    );
+    expect(result.cwd).toBe(normalizePath(graphRepoRoot));
+    expect(result.pawWorkDir).toBe(
+      normalizePath(join(graphRepoRoot, ".paw", "work", "runner-diagnostics-resume")),
     );
   });
 

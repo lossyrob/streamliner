@@ -25,12 +25,16 @@ export const DEFAULT_PAW_TERMINAL_CONFIGURATION: PawLaunchTerminalConfiguration 
 export interface PawLaunchDialogDefaults {
   workflowInstructions: string;
   cliArgsText: string;
+  cwd: string;
+  inferredCwd: string;
+  cwdPreferenceKey: string | null;
   graphPath: string;
   terminalPreference: string;
   terminal: PawLaunchTerminalConfiguration;
 }
 
 export interface PawLaunchDialogConfiguration {
+  cwd: string;
   workflowInstructions: string;
   cliArgs: string[];
   terminal: PawLaunchTerminalConfiguration;

@@ -1454,6 +1454,110 @@ describe("App sessions route", () => {
   );
 
   it(
+    "sends and repopulates sticky PAW launch cwd overrides per repo",
+    async () => {
+      const graph = buildLaunchGraph();
+      const customCwd = "C:\\Users\\robemanuele\\proj\\dbagent\\dbagent-local-scenario-iteration-loop";
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return emptyNodeLaunchRecordResponse();
+        }
+        if (path === "/api/paw-launch-prompt-profiles") {
+          return jsonResponse({ profiles: [] });
+        }
+        if (path === "/api/launch-preparations/runs" && init?.method === "POST") {
+          return jsonResponse({ runId: "run-sticky-cwd", status: "queued" }, 202);
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      MockEventSource.instances = [];
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      act(() => {
+        findCanvasNode(container, "Launch prompt profiles").click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Initialize PAW launch").click();
+      });
+      await settle();
+
+      expect(findInputByLabel(container, "Working directory").value).toBe("C:\\graphs\\api-test");
+      setInputValue(findInputByLabel(container, "Working directory"), customCwd);
+      await settle();
+      act(() => {
+        findButton(container, "Run PAW init").click();
+      });
+      await settle(100);
+
+      const launchCall = fetchMock.mock.calls.find(
+        ([input, init]) =>
+          requestPath(input as RequestInfo | URL) === "/api/launch-preparations/runs" &&
+          init?.method === "POST",
+      );
+      expect(JSON.parse(String(launchCall?.[1]?.body))).toEqual(
+        expect.objectContaining({
+          configuration: expect.objectContaining({
+            cwd: customCwd,
+          }),
+        }),
+      );
+      expect(JSON.parse(window.localStorage.getItem("streamliner:pawLaunchCwdByRepo") ?? "{}")).toEqual({
+        "lossyrob/streamliner": customCwd,
+      });
+
+      act(() => {
+        MockEventSource.instances.at(-1)?.emit("failed", {
+          status: "failed",
+          error: { code: "paw_init_failed", error: "Stopped after cwd persistence check." },
+          timestamp: "2026-05-04T19:47:00.000Z",
+        });
+      });
+      await settle(100);
+
+      await act(async () => {
+        root.unmount();
+        await Promise.resolve();
+      });
+      container.innerHTML = "";
+      root = createRoot(container);
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+      act(() => {
+        findCanvasNode(container, "Launch prompt profiles").click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Initialize PAW launch").click();
+      });
+      await settle();
+
+      expect(findInputByLabel(container, "Working directory").value).toBe(customCwd);
+    },
+    15_000,
+  );
+
+  it(
     "surfaces PAW init errors",
     async () => {
       const graph = buildLaunchGraph();

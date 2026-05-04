@@ -60,6 +60,7 @@ import {
 
 const POLL_INTERVAL_MS = 2000;
 const LAST_GRAPH_KEY = "streamliner:lastGraphPath";
+const PAW_LAUNCH_CWD_OVERRIDES_KEY = "streamliner:pawLaunchCwdByRepo";
 const STREAMLINER_LOGO_URL = "/streamliner-logo.png";
 
 interface GraphLoadError {
@@ -182,6 +183,82 @@ function useDashboardRoute() {
 
 function registryKey(entry: { projectKey: string; workstreamId: string }): string {
   return `${entry.projectKey}/${entry.workstreamId}`;
+}
+
+function dirnamePath(path: string): string {
+  const trimmed = path.trim();
+  const index = Math.max(trimmed.lastIndexOf("\\"), trimmed.lastIndexOf("/"));
+  return index > 0 ? trimmed.slice(0, index) : "";
+}
+
+function inferRepoRootFromGraphPath(graphPath: string): string {
+  const match = /[\\/]\.streamliner[\\/]/i.exec(graphPath);
+  if (match?.index !== undefined) {
+    return graphPath.slice(0, match.index);
+  }
+  return dirnamePath(graphPath);
+}
+
+function launchCwdRepoKey(
+  workstream: WorkstreamDocument,
+  repoIds: string[],
+): string | null {
+  const repoId = repoIds[0] ?? workstream.repos[0]?.id;
+  if (!repoId) {
+    return null;
+  }
+  const repo = workstream.repos.find((candidate) => candidate.id === repoId);
+  if (repo) {
+    return `${repo.owner}/${repo.name}`;
+  }
+  return `${workstream.projectKey ?? workstream.id}/${repoId}`;
+}
+
+function readLaunchCwdOverrides(): Record<string, string> {
+  try {
+    const raw = window.localStorage.getItem(PAW_LAUNCH_CWD_OVERRIDES_KEY);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return {};
+    }
+    const entries = Object.entries(parsed)
+      .filter((entry): entry is [string, string] =>
+        typeof entry[0] === "string" &&
+        typeof entry[1] === "string" &&
+        entry[0].trim().length > 0 &&
+        entry[1].trim().length > 0
+      );
+    return Object.fromEntries(entries);
+  } catch {
+    return {};
+  }
+}
+
+function readLaunchCwdOverride(repoKey: string | null): string | null {
+  if (!repoKey) {
+    return null;
+  }
+  return readLaunchCwdOverrides()[repoKey] ?? null;
+}
+
+function writeLaunchCwdOverride(repoKey: string | null, cwd: string | null): void {
+  if (!repoKey) {
+    return;
+  }
+  try {
+    const overrides = readLaunchCwdOverrides();
+    if (cwd?.trim()) {
+      overrides[repoKey] = cwd.trim();
+    } else {
+      delete overrides[repoKey];
+    }
+    window.localStorage.setItem(PAW_LAUNCH_CWD_OVERRIDES_KEY, JSON.stringify(overrides));
+  } catch {
+    // Local storage is a convenience; launch should continue if it is unavailable.
+  }
 }
 
 function registryGraphUrl(entry: { projectKey: string; workstreamId: string }): string {
@@ -906,9 +983,17 @@ function GraphDashboard({
 
   const launchDefaults = useMemo<PawLaunchDialogDefaults | null>(() => {
     if (!selectedEntry || !activeWorkstreamEntry) return null;
+    const inferredCwd = inferRepoRootFromGraphPath(activeWorkstreamEntry.path);
+    const cwdPreferenceKey = workstream
+      ? launchCwdRepoKey(workstream, selectedEntry.node.repoIds)
+      : null;
+    const savedCwd = readLaunchCwdOverride(cwdPreferenceKey);
     return {
       workflowInstructions: DEFAULT_PAW_WORKFLOW_INSTRUCTIONS,
       cliArgsText: "--yolo",
+      cwd: savedCwd ?? inferredCwd,
+      inferredCwd,
+      cwdPreferenceKey,
       graphPath: activeWorkstreamEntry.path,
       terminalPreference: "Manual terminal launch after preparation",
       terminal: {
@@ -917,7 +1002,7 @@ function GraphDashboard({
         tabColor: null,
       },
     };
-  }, [activeWorkstreamEntry, selectedEntry]);
+  }, [activeWorkstreamEntry, selectedEntry, workstream]);
 
   useEffect(() => {
     if (!selectedEntry || !activeWorkstreamEntry || !isBackendReadableWorkstreamEntry(activeWorkstreamEntry)) {
@@ -1021,9 +1106,15 @@ function GraphDashboard({
   };
 
   const handleSubmitLaunch = async (configuration: PawLaunchDialogConfiguration) => {
-    if (!selectedEntry || !activeWorkstreamEntry) {
+    if (!selectedEntry || !activeWorkstreamEntry || !launchDefaults) {
       return;
     }
+    const trimmedCwd = configuration.cwd.trim();
+    const trimmedInferredCwd = launchDefaults.inferredCwd.trim();
+    const cwdOverride = trimmedCwd && trimmedCwd !== trimmedInferredCwd
+      ? trimmedCwd
+      : undefined;
+    writeLaunchCwdOverride(launchDefaults.cwdPreferenceKey, cwdOverride ?? null);
     setLaunchPreparing(true);
     setLaunchError(null);
     setLaunchHandoff(null);
@@ -1038,6 +1129,7 @@ function GraphDashboard({
           graphPath: activeWorkstreamEntry.path,
           launchNonce: createLaunchNonce(),
           configuration: {
+            ...(cwdOverride ? { cwd: cwdOverride } : {}),
             workflowInstructions: configuration.workflowInstructions,
             cliArgs: configuration.cliArgs,
             terminal: configuration.terminal,
