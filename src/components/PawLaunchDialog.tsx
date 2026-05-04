@@ -56,6 +56,11 @@ interface WorkflowContextDocument {
   updatedAt: string;
 }
 
+interface DebugPath {
+  label: string;
+  path: string;
+}
+
 interface Option<T extends string> {
   value: T;
   label: string;
@@ -87,6 +92,54 @@ function progressLabel(type: string): string {
 
 function stringField(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null;
+}
+
+function collectDebugPaths(events: PawLaunchProgressEvent[]): DebugPath[] {
+  const fields: Array<{ key: string; label: string }> = [
+    { key: "workspacePath", label: "SDK workspace" },
+    { key: "sdkStateRoot", label: "SDK state root" },
+    { key: "stateRoot", label: "SDK state root" },
+    { key: "sessionStateRoot", label: "Session state root" },
+    { key: "contextFilePath", label: "Generated context" },
+    { key: "contextPackagePath", label: "Context package" },
+  ];
+  const paths: DebugPath[] = [];
+  const seen = new Set<string>();
+  for (const field of fields) {
+    for (const event of events) {
+      const path = stringField(event.data?.[field.key]);
+      if (!path) {
+        continue;
+      }
+      const dedupeKey = `${field.label}\0${path}`;
+      if (!seen.has(dedupeKey)) {
+        seen.add(dedupeKey);
+        paths.push({ label: field.label, path });
+      }
+    }
+  }
+  return paths;
+}
+
+function PawLaunchDebugPaths({ paths }: { paths: DebugPath[] }) {
+  if (paths.length === 0) {
+    return null;
+  }
+  return (
+    <div className="sl-paw-debug-paths">
+      <span className="sl-section-label">Debug session files</span>
+      <dl>
+        {paths.map((entry) => (
+          <div key={`${entry.label}:${entry.path}`}>
+            <dt>{entry.label}</dt>
+            <dd>
+              <code>{entry.path}</code>
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
 }
 
 function profileUpdatedAtMs(profile: PawPromptProfile): number {
@@ -312,9 +365,7 @@ export function PawLaunchDialog({
   const terminalTabColor = terminalColorValue.length > 0 ? terminalColorValue : null;
   const latestProgress = progressEvents.at(-1) ?? null;
   const recentProgress = progressEvents.slice(-8);
-  const debugPath = progressEvents
-    .map((event) => stringField(event.data?.workspacePath) ?? stringField(event.data?.sdkStateRoot))
-    .find(Boolean) ?? null;
+  const debugPaths = collectDebugPaths(progressEvents);
 
   useEffect(() => {
     let cancelled = false;
@@ -553,11 +604,14 @@ export function PawLaunchDialog({
                   ))}
                 </ol>
               )}
-              {debugPath && (
-                <p className="sl-field-note">
-                  Debug session state: {debugPath}
-                </p>
-              )}
+              {!error && <PawLaunchDebugPaths paths={debugPaths} />}
+            </section>
+          )}
+
+          {error && (
+            <section className="sl-paw-launch-failure" aria-live="polite">
+              <div className="sl-action-error">{error}</div>
+              <PawLaunchDebugPaths paths={debugPaths} />
             </section>
           )}
 
@@ -690,8 +744,6 @@ export function PawLaunchDialog({
           {instructionError && (
             <div className="sl-action-error">{instructionError}</div>
           )}
-
-          {error && <div className="sl-action-error">{error}</div>}
 
           {handoff && (
             <section className="sl-paw-launch-result">

@@ -1234,10 +1234,24 @@ export async function defaultPawLaunchSessionRunner(
       contextPackage,
     };
   } catch (error: unknown) {
+    const failureData: Record<string, unknown> = {
+      sdkStateRoot: normalizeManifestPath(sdkStateRoot),
+    };
+    if (session) {
+      failureData.sessionId = session.sessionId;
+      if (session.workspacePath) {
+        failureData.workspacePath = normalizeManifestPath(session.workspacePath);
+      }
+    }
+    if (contextPackage) {
+      failureData.contextFilePath = contextPackage.contextFilePath;
+      failureData.contextPackagePath = contextPackage.contextPackagePath;
+    }
     emitProgress(
       input.onProgress,
       "failed",
       error instanceof Error ? error.message : String(error),
+      failureData,
     );
     throw error;
   } finally {

@@ -1,0 +1,9 @@
+# EditorConfig (https://editorconfig.org) covers editors that do not read
+# repository-specific VS Code settings.
+
+root = true
+
+[*]
+end_of_line = lf
+insert_final_newline = true
+charset = utf-8

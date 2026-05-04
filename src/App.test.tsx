@@ -1218,6 +1218,18 @@ describe("App sessions route", () => {
       });
       await settle();
       act(() => {
+        MockEventSource.instances.at(-1)?.emit("progress", {
+          type: "session.started",
+          message: "Copilot SDK launch session ready.",
+          timestamp: "2026-05-03T18:02:59.000Z",
+          data: {
+            workspacePath: "C:\\streamliner-state\\copilot-sdk\\run-failed\\session-state\\sdk",
+            sdkStateRoot: "C:\\streamliner-state\\copilot-sdk\\run-failed",
+          },
+        });
+      });
+      await settle();
+      act(() => {
         MockEventSource.instances.at(-1)?.emit("failed", {
           status: "failed",
           error: { code: "paw_init_failed", error: "PAW init failed." },
@@ -1227,6 +1239,11 @@ describe("App sessions route", () => {
       await settle(100);
 
       expect(container.textContent).toContain("PAW init failed.");
+      expect(container.textContent).toContain("Debug session files");
+      expect(container.textContent).toContain("SDK workspace");
+      expect(container.textContent).toContain("C:\\streamliner-state\\copilot-sdk\\run-failed\\session-state\\sdk");
+      expect(container.textContent).toContain("SDK state root");
+      expect(container.textContent).toContain("C:\\streamliner-state\\copilot-sdk\\run-failed");
       expect(container.textContent).not.toContain("Prepared handoff");
     },
     15_000,

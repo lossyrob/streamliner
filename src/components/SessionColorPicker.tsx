@@ -1,4 +1,4 @@
-export const TERMINAL_COLOR_QUICK_PICKS = [
+const TERMINAL_COLOR_QUICK_PICKS = [
   "#e8114b",
   "#4891c8",
   "#41b878",
@@ -17,11 +17,11 @@ export const TERMINAL_COLOR_QUICK_PICKS = [
   "#b8b8b8",
 ] as const;
 
-export function colorInputValue(value: string): string {
+function colorInputValue(value: string): string {
   return /^#[0-9a-f]{6}$/i.test(value.trim()) ? value.trim() : "#5b7fff";
 }
 
-export function normalizeColor(value: string): string {
+function normalizeColor(value: string): string {
   return value.trim().toLowerCase();
 }
 
