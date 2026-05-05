@@ -47,6 +47,7 @@ import {
   SESSION_REGISTRY_TRUSTED_EXECUTION_KINDS,
   SESSION_REGISTRY_TRUSTED_SIGNAL_SOURCES,
   SESSION_REGISTRY_TRUSTED_START_SOURCES,
+  buildSessionRegistryActivityEvidence,
   type SessionRegistryActivityConfidence,
   type SessionRegistryActivityDiagnosticCode,
   type SessionRegistryActivityEvidence,
@@ -1751,15 +1752,19 @@ function mergeStoredRecord(
 }
 
 function activityEvidenceForTrustedSignal(
+  base: SessionRegistryActivityEvidence | undefined,
   statusReason: SessionRegistryActivityEvidence["statusReason"],
   timestamp: string,
 ): SessionRegistryActivityEvidence {
-  return {
-    ...cloneValue(DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE),
-    statusReason,
-    confidence: "high",
-    lastActivityEventAt: timestamp,
-  };
+  return buildSessionRegistryActivityEvidence(
+    {
+      statusReason,
+      confidence: "high",
+      diagnostics: [],
+      lastActivityEventAt: timestamp,
+    },
+    base ? cloneValue(base) : DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
+  );
 }
 
 function getBuilderConflictFields(patch: SessionRegistryPatch): string[] {
@@ -2422,11 +2427,23 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
               : existingRecord?.activityStatus ?? "waiting_for_input";
       const activityEvidence =
         appliesEnd
-          ? activityEvidenceForTrustedSignal("trusted_end", timestamp)
+          ? activityEvidenceForTrustedSignal(
+              existingRecord?.activityEvidence,
+              "trusted_end",
+              timestamp,
+            )
           : appliesPrompt
-            ? activityEvidenceForTrustedSignal("trusted_prompt", timestamp)
+            ? activityEvidenceForTrustedSignal(
+                existingRecord?.activityEvidence,
+                "trusted_prompt",
+                timestamp,
+              )
             : appliesStart
-              ? activityEvidenceForTrustedSignal("trusted_start", timestamp)
+              ? activityEvidenceForTrustedSignal(
+                  existingRecord?.activityEvidence,
+                  "trusted_start",
+                  timestamp,
+                )
               : existingRecord?.activityEvidence
                 ? cloneValue(existingRecord.activityEvidence)
                 : cloneValue(DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE);

@@ -18,6 +18,8 @@ import {
   SESSION_REGISTRY_TRUSTED_EXECUTION_KINDS,
   SESSION_REGISTRY_TRUSTED_SIGNAL_SOURCES,
   SESSION_REGISTRY_TRUSTED_START_SOURCES,
+  buildSessionRegistryActivityEvidence,
+  isPendingInputRequestIndeterminate,
   type SessionRegistryRecord,
 } from "./session-registry-schema";
 import {
@@ -157,6 +159,7 @@ describe("session registry schema", () => {
       "events_tail_truncated",
       "events_parse_error",
       "events_unrecognized",
+      "events_unrecognized_tool_shape",
     ]);
     expect(SESSION_REGISTRY_GITHUB_REF_TYPES).toEqual(["issue", "pr", "unknown"]);
     expect(SESSION_REGISTRY_TRUSTED_SIGNAL_SOURCES).toEqual([
@@ -206,6 +209,27 @@ describe("session registry schema", () => {
     };
     expect(observedUpsertInput.origin.kind).toBe("observed");
     expect(observedLinkInput.lifecycleStatus).toBe("ended");
+  });
+
+  it("builds activity evidence and detects indeterminate pending input", () => {
+    const evidence = buildSessionRegistryActivityEvidence({
+      statusReason: "events_unrecognized",
+      confidence: "medium",
+      diagnostics: ["events_tail_truncated", "events_tail_truncated"],
+    });
+
+    expect(evidence.diagnostics).toEqual(["events_tail_truncated"]);
+    expect(isPendingInputRequestIndeterminate(evidence)).toBe(true);
+    expect(
+      isPendingInputRequestIndeterminate(
+        buildSessionRegistryActivityEvidence({
+          statusReason: "pending_input",
+          confidence: "high",
+          pendingInputRequest: true,
+          diagnostics: ["events_tail_truncated"],
+        }),
+      ),
+    ).toBe(false);
   });
 
   it("provides stable record and contract shapes for downstream modules", () => {

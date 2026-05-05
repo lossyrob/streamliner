@@ -2,9 +2,10 @@ import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 
 import type { SessionRegistryListItem } from "../session-registry-contract";
 import {
-  DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
+  buildSessionRegistryActivityEvidence,
   type SessionRegistryActivityDiagnosticCode,
   type SessionRegistryActivityEvidence,
+  type SessionRegistryActivityStatusReason,
   type SessionRegistryActivityStatus,
 } from "../session-registry-schema";
 import type { SessionRegistryDerivedStatePatch } from "./file-store";
@@ -43,6 +44,10 @@ interface RawActivityEvent {
   data?: unknown;
 }
 
+interface AnonymousAskUserRequest {
+  openedAtMs: number | null;
+}
+
 function isJsonObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -79,12 +84,13 @@ function readTail(path: string, maxBytes: number): TailRead {
   const start = stat.size - bytesToRead;
   const buffer = Buffer.alloc(bytesToRead);
   const fd = openSync(path, "r");
+  let bytesRead = 0;
   try {
-    readSync(fd, buffer, 0, bytesToRead, start);
+    bytesRead = readSync(fd, buffer, 0, bytesToRead, start);
   } finally {
     closeSync(fd);
   }
-  let text = buffer.toString("utf8");
+  let text = buffer.subarray(0, bytesRead).toString("utf8");
   let offset = start;
   if (start > 0) {
     const firstNewline = text.indexOf("\n");
@@ -150,11 +156,15 @@ function isAskUserToolName(name: string | null): boolean {
   );
 }
 
+/**
+ * Copilot CLI currently serializes ask_user requests as plain `ask_user`,
+ * or as provider-qualified names ending in `.ask_user` or `/ask_user`.
+ */
 function isAskUserTool(value: unknown): boolean {
   return isAskUserToolName(getToolName(value));
 }
 
-function extractToolRequests(event: RawActivityEvent): unknown[] {
+function extractToolRequestArrays(event: RawActivityEvent): unknown[][] {
   if (!isJsonObject(event.data)) {
     return [];
   }
@@ -162,9 +172,70 @@ function extractToolRequests(event: RawActivityEvent): unknown[] {
   if (isJsonObject(event.data.message)) {
     candidates.push(event.data.message.toolRequests);
   }
-  return candidates.flatMap((candidate) =>
-    Array.isArray(candidate) ? candidate : [],
+  return candidates.filter((candidate): candidate is unknown[] =>
+    Array.isArray(candidate),
   );
+}
+
+/**
+ * Supports the Copilot CLI event shapes observed so far:
+ * `event.data.toolRequests` and nested `event.data.message.toolRequests`.
+ */
+function extractToolRequests(event: RawActivityEvent): unknown[] {
+  return extractToolRequestArrays(event).flatMap((candidate) => candidate);
+}
+
+function toolRequestsHaveUnrecognizedShape(event: RawActivityEvent): boolean {
+  const requests = extractToolRequests(event);
+  return requests.length > 0 && requests.every((request) => getToolName(request) === null);
+}
+
+function uniqueAskUserRequests(requests: unknown[]): unknown[] {
+  const seenObjectRequests = new WeakSet<object>();
+  const seenAnonymousToolNames = new Set<string>();
+  const unique: unknown[] = [];
+  for (const request of requests) {
+    if (typeof request === "object" && request !== null) {
+      if (seenObjectRequests.has(request)) {
+        continue;
+      }
+      seenObjectRequests.add(request);
+    }
+    const toolCallId = getToolCallId(request);
+    const toolName = getToolName(request);
+    if (!toolCallId && isAskUserToolName(toolName)) {
+      const normalized = toolName?.toLowerCase() ?? "ask_user";
+      if (seenAnonymousToolNames.has(normalized)) {
+        continue;
+      }
+      seenAnonymousToolNames.add(normalized);
+    }
+    unique.push(request);
+  }
+  return unique;
+}
+
+function parseOptionalTimestampMs(timestamp: string | null): number | null {
+  if (!timestamp) {
+    return null;
+  }
+  const value = Date.parse(timestamp);
+  return Number.isFinite(value) ? value : null;
+}
+
+function statusReasonFromDiagnostic(
+  code: SessionRegistryActivityDiagnosticCode,
+): SessionRegistryActivityStatusReason | null {
+  switch (code) {
+    case "events_missing":
+      return "events_missing";
+    case "events_empty":
+      return "events_empty";
+    case "events_unrecognized":
+      return "events_unrecognized";
+    default:
+      return null;
+  }
 }
 
 function eventToActivityObservation(
@@ -230,12 +301,6 @@ function eventToActivityObservation(
   }
 }
 
-function uniqueDiagnostics(
-  diagnostics: SessionRegistryActivityDiagnosticCode[],
-): SessionRegistryActivityDiagnosticCode[] {
-  return [...new Set(diagnostics)];
-}
-
 function buildActivityEvidence(args: {
   statusReason: SessionRegistryActivityEvidence["statusReason"];
   confidence: SessionRegistryActivityEvidence["confidence"];
@@ -253,11 +318,7 @@ function buildActivityEvidence(args: {
   eventsSize?: number;
   eventsMtimeMs?: number | null;
 }): SessionRegistryActivityEvidence {
-  return {
-    ...DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
-    ...args,
-    diagnostics: uniqueDiagnostics(args.diagnostics ?? []),
-  };
+  return buildSessionRegistryActivityEvidence(args);
 }
 
 function parseActivityFromEvents(
@@ -266,13 +327,14 @@ function parseActivityFromEvents(
   nowIso: string,
 ): ActivityObservation | null {
   if (!existsSync(eventsPath)) {
+    const diagnostic = "events_missing";
     return {
       status: null,
       observedAt: null,
       evidence: buildActivityEvidence({
-        statusReason: "events_missing",
+        statusReason: statusReasonFromDiagnostic(diagnostic) ?? "events_unrecognized",
         confidence: "low",
-        diagnostics: ["events_missing"],
+        diagnostics: [diagnostic],
         eventsScannedAt: nowIso,
       }),
     };
@@ -282,13 +344,17 @@ function parseActivityFromEvents(
     ? ["events_tail_truncated"]
     : [];
   if (tail.text.trim().length === 0) {
+    const diagnostic =
+      tail.truncated && tail.size > 0 && tail.offset === tail.size
+        ? "events_unrecognized"
+        : "events_empty";
     return {
       status: null,
       observedAt: null,
       evidence: buildActivityEvidence({
-        statusReason: "events_empty",
+        statusReason: statusReasonFromDiagnostic(diagnostic) ?? "events_unrecognized",
         confidence: "low",
-        diagnostics: [...diagnostics, "events_empty"],
+        diagnostics: [...diagnostics, diagnostic],
         eventsScannedAt: nowIso,
         eventsOffset: tail.offset,
         eventsSize: tail.size,
@@ -305,7 +371,7 @@ function parseActivityFromEvents(
   let lastAssistantTurnEndedAt: string | null = null;
   let latestAskUserAt: string | null = null;
   const openAskUserToolCalls = new Set<string>();
-  let anonymousAskUserRequests = 0;
+  let anonymousAskUserRequests: AnonymousAskUserRequest[] = [];
 
   for (const line of tail.text.split(/\r?\n/)) {
     if (line.trim().length === 0) {
@@ -324,15 +390,30 @@ function parseActivityFromEvents(
       }
       if (event.type === "assistant.turn_end") {
         lastAssistantTurnEndedAt = timestamp;
+        const turnEndMs = parseOptionalTimestampMs(timestamp);
+        if (turnEndMs !== null) {
+          anonymousAskUserRequests = anonymousAskUserRequests.filter(
+            (request) =>
+              request.openedAtMs === null || request.openedAtMs >= turnEndMs,
+          );
+        }
       }
 
-      const askUserRequests = extractToolRequests(event).filter(isAskUserTool);
+      if (toolRequestsHaveUnrecognizedShape(event)) {
+        diagnostics.push("events_unrecognized_tool_shape");
+      }
+
+      const askUserRequests = uniqueAskUserRequests(
+        extractToolRequests(event).filter(isAskUserTool),
+      );
       for (const request of askUserRequests) {
         const toolCallId = getToolCallId(request);
         if (toolCallId) {
           openAskUserToolCalls.add(toolCallId);
         } else {
-          anonymousAskUserRequests += 1;
+          anonymousAskUserRequests.push({
+            openedAtMs: parseOptionalTimestampMs(timestamp),
+          });
         }
         latestAskUserAt = timestamp;
       }
@@ -342,7 +423,9 @@ function parseActivityFromEvents(
         if (toolCallId) {
           openAskUserToolCalls.add(toolCallId);
         } else {
-          anonymousAskUserRequests += 1;
+          anonymousAskUserRequests.push({
+            openedAtMs: parseOptionalTimestampMs(timestamp),
+          });
         }
         latestAskUserAt = timestamp;
       }
@@ -351,10 +434,10 @@ function parseActivityFromEvents(
         const toolCallId = getToolCallId(event.data);
         if (toolCallId) {
           openAskUserToolCalls.delete(toolCallId);
-        } else if (anonymousAskUserRequests > 0) {
+        } else if (anonymousAskUserRequests.length > 0) {
           const completedToolName = getToolName(event.data);
           if (isAskUserToolName(completedToolName)) {
-            anonymousAskUserRequests -= 1;
+            anonymousAskUserRequests = anonymousAskUserRequests.slice(1);
           }
         }
       }
@@ -370,7 +453,7 @@ function parseActivityFromEvents(
   }
 
   const pendingInputRequestCount =
-    openAskUserToolCalls.size + anonymousAskUserRequests;
+    openAskUserToolCalls.size + anonymousAskUserRequests.length;
   if (pendingInputRequestCount > 0) {
     const confidence = diagnostics.length > 0 ? "medium" : "high";
     return {
@@ -385,7 +468,7 @@ function parseActivityFromEvents(
         lastUserMessageAt,
         lastAssistantTurnStartedAt,
         lastAssistantTurnEndedAt,
-        lastActivityEventAt: latestAskUserAt ?? latest?.observedAt ?? null,
+        lastActivityEventAt: latest?.observedAt ?? latestAskUserAt ?? null,
         userMessageCount,
         assistantTurnCount,
         eventsScannedAt: nowIso,
@@ -397,13 +480,14 @@ function parseActivityFromEvents(
   }
 
   if (!latest) {
+    const diagnostic = "events_unrecognized";
     return {
       status: null,
       observedAt: null,
       evidence: buildActivityEvidence({
-        statusReason: "events_unrecognized",
+        statusReason: statusReasonFromDiagnostic(diagnostic) ?? "events_unrecognized",
         confidence: "low",
-        diagnostics: [...diagnostics, "events_unrecognized"],
+        diagnostics: [...diagnostics, diagnostic],
         lastUserMessageAt,
         lastAssistantTurnStartedAt,
         lastAssistantTurnEndedAt,
@@ -442,25 +526,18 @@ function patchChanged(
   session: SessionRegistryListItem,
   patch: SessionRegistryDerivedStatePatch,
 ): boolean {
-  const comparableActivityEvidence = (
+  const comparableActivityEvidenceKey = (
     evidence: SessionRegistryActivityEvidence,
-  ): Omit<
-    SessionRegistryActivityEvidence,
-    "eventsScannedAt" | "eventsOffset" | "eventsSize" | "eventsMtimeMs"
-  > => {
-    return {
-      statusReason: evidence.statusReason,
-      confidence: evidence.confidence,
-      diagnostics: evidence.diagnostics,
-      pendingInputRequest: evidence.pendingInputRequest,
-      pendingInputRequestCount: evidence.pendingInputRequestCount,
-      lastUserMessageAt: evidence.lastUserMessageAt,
-      lastAssistantTurnStartedAt: evidence.lastAssistantTurnStartedAt,
-      lastAssistantTurnEndedAt: evidence.lastAssistantTurnEndedAt,
-      lastActivityEventAt: evidence.lastActivityEventAt,
-      userMessageCount: evidence.userMessageCount,
-      assistantTurnCount: evidence.assistantTurnCount,
-    };
+  ): string => {
+    const comparable: Partial<SessionRegistryActivityEvidence> = { ...evidence };
+    delete comparable.eventsScannedAt;
+    delete comparable.eventsOffset;
+    delete comparable.eventsSize;
+    delete comparable.eventsMtimeMs;
+    if (comparable.diagnostics) {
+      comparable.diagnostics = [...comparable.diagnostics].sort();
+    }
+    return JSON.stringify(comparable);
   };
 
   return (
@@ -468,8 +545,8 @@ function patchChanged(
     (patch.activityStatusUpdatedAt !== undefined &&
       patch.activityStatusUpdatedAt !== session.activityStatusUpdatedAt) ||
     (patch.activityEvidence !== undefined &&
-      JSON.stringify(comparableActivityEvidence(patch.activityEvidence)) !==
-        JSON.stringify(comparableActivityEvidence(session.activityEvidence))) ||
+      comparableActivityEvidenceKey(patch.activityEvidence) !==
+        comparableActivityEvidenceKey(session.activityEvidence)) ||
     (patch.copilotProcessState !== undefined &&
       patch.copilotProcessState !== session.copilotProcessState) ||
     (patch.copilotProcessId !== undefined && patch.copilotProcessId !== session.copilotProcessId)

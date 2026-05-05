@@ -308,6 +308,11 @@ describe("createStreamlinerApiApp", () => {
       expect.objectContaining({
         title: "API session",
         version: 0,
+        activityEvidence: expect.objectContaining({
+          statusReason: expect.any(String),
+          confidence: expect.any(String),
+          diagnostics: expect.any(Array),
+        }),
       }),
     );
   });
@@ -924,6 +929,7 @@ describe("createStreamlinerApiApp", () => {
     expect(received).toContain("event: snapshot");
     expect(received).toContain("event: session.upserted");
     expect(received).toContain("Streamed session");
+    expect(received).toContain("activityEvidence");
   });
 
   it("returns client errors for malformed and oversized JSON bodies", async () => {
@@ -1174,6 +1180,12 @@ describe("createStreamlinerApiApp", () => {
     expect(updated?.lifecycleStatus).toBe("ended");
     expect(updated?.trustedEndReason).toBe("user_exit");
     expect(updated?.activityStatus).toBe("exited");
+    expect(updated?.activityEvidence).toEqual(
+      expect.objectContaining({
+        statusReason: "trusted_end",
+        confidence: "high",
+      }),
+    );
   });
 
   it("stop endpoint returns 404 for nonexistent session", async () => {

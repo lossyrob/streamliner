@@ -302,7 +302,43 @@ describe("indexSessionActivity", () => {
           statusReason: "pending_input",
           pendingInputRequest: true,
           pendingInputRequestCount: 1,
-          lastActivityEventAt: "2026-04-26T15:03:00.000Z",
+          lastActivityEventAt: "2026-04-26T15:04:00.000Z",
+        }),
+      }),
+    );
+  });
+
+  it("expires anonymous ask_user requests at a later assistant turn end", () => {
+    const eventsPath = writeEvents([
+      {
+        type: "assistant.message",
+        timestamp: "2026-04-26T15:03:00.000Z",
+        data: {
+          toolRequests: [
+            {
+              name: "ask_user",
+            },
+          ],
+          message: {
+            toolRequests: [
+              {
+                name: "ask_user",
+              },
+            ],
+          },
+        },
+      },
+      { type: "assistant.turn_end", timestamp: "2026-04-26T15:04:00.000Z" },
+    ]);
+
+    expect(indexSessionActivity(buildSession(), eventsPath)).toEqual(
+      expect.objectContaining({
+        activityStatus: "waiting_for_input",
+        activityStatusUpdatedAt: "2026-04-26T15:04:00.000Z",
+        activityEvidence: expect.objectContaining({
+          statusReason: "assistant_turn_end",
+          pendingInputRequest: false,
+          pendingInputRequestCount: 0,
         }),
       }),
     );
@@ -431,5 +467,86 @@ describe("indexSessionActivity", () => {
         eventsScannedAt: "2026-04-26T15:07:00.000Z",
       }),
     });
+  });
+
+  it("surfaces tail-truncated diagnostics when reading a partial event log", () => {
+    const validLine = JSON.stringify({
+      type: "assistant.turn_end",
+      timestamp: "2026-04-26T15:04:00.000Z",
+    });
+    const eventsPath = writeEvents([
+      { type: "assistant.message", timestamp: "2026-04-26T15:03:00.000Z", filler: "x".repeat(200) },
+      { type: "assistant.turn_end", timestamp: "2026-04-26T15:04:00.000Z" },
+    ]);
+
+    expect(
+      indexSessionActivity(buildSession(), eventsPath, {
+        maxBytes: Buffer.byteLength(validLine, "utf8") + 2,
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        activityStatus: "waiting_for_input",
+        activityEvidence: expect.objectContaining({
+          confidence: "medium",
+          diagnostics: ["events_tail_truncated"],
+        }),
+      }),
+    );
+  });
+
+  it("surfaces parse diagnostics when the event log contains malformed JSON", () => {
+    const root = createRootDir();
+    const eventsPath = join(root, "events.jsonl");
+    writeFileSync(
+      eventsPath,
+      `not-json\n${JSON.stringify({ type: "assistant.turn_end", timestamp: "2026-04-26T15:04:00.000Z" })}`,
+      "utf8",
+    );
+
+    expect(indexSessionActivity(buildSession(), eventsPath)).toEqual(
+      expect.objectContaining({
+        activityStatus: "waiting_for_input",
+        activityEvidence: expect.objectContaining({
+          confidence: "medium",
+          diagnostics: ["events_parse_error"],
+        }),
+      }),
+    );
+  });
+
+  it("surfaces unrecognized diagnostics when no supported event is present", () => {
+    const eventsPath = writeEvents([
+      { type: "unhandled.event", timestamp: "2026-04-26T15:04:00.000Z" },
+    ]);
+
+    expect(indexSessionActivity(buildSession(), eventsPath)).toEqual({
+      activityEvidence: expect.objectContaining({
+        statusReason: "events_unrecognized",
+        confidence: "low",
+        diagnostics: ["events_unrecognized"],
+      }),
+    });
+  });
+
+  it("surfaces unrecognized tool-shape diagnostics for nameless tool requests", () => {
+    const eventsPath = writeEvents([
+      {
+        type: "assistant.message",
+        timestamp: "2026-04-26T15:04:00.000Z",
+        data: {
+          toolRequests: [{}],
+        },
+      },
+    ]);
+
+    expect(indexSessionActivity(buildSession(), eventsPath)).toEqual(
+      expect.objectContaining({
+        activityStatus: "working",
+        activityEvidence: expect.objectContaining({
+          confidence: "medium",
+          diagnostics: ["events_unrecognized_tool_shape"],
+        }),
+      }),
+    );
   });
 });

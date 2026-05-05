@@ -96,6 +96,7 @@ export const SESSION_REGISTRY_ACTIVITY_DIAGNOSTIC_CODES = [
   "events_tail_truncated",
   "events_parse_error",
   "events_unrecognized",
+  "events_unrecognized_tool_shape",
 ] as const;
 export type SessionRegistryActivityDiagnosticCode =
   (typeof SESSION_REGISTRY_ACTIVITY_DIAGNOSTIC_CODES)[number];
@@ -159,14 +160,30 @@ export interface SessionRegistryActivityEvidence {
   statusReason: SessionRegistryActivityStatusReason;
   confidence: SessionRegistryActivityConfidence;
   diagnostics: SessionRegistryActivityDiagnosticCode[];
+  /**
+   * True when an unresolved ask_user request is visible in the bounded
+   * local event-log tail. When this is false and diagnostics includes
+   * events_tail_truncated, pending-input state is indeterminate rather
+   * than authoritatively absent.
+   */
   pendingInputRequest: boolean;
   pendingInputRequestCount: number;
   lastUserMessageAt: string | null;
   lastAssistantTurnStartedAt: string | null;
   lastAssistantTurnEndedAt: string | null;
+  /**
+   * Most recent recognized activity event in the scanned tail, independent
+   * of the current statusReason. For pending_input, activityStatusUpdatedAt
+   * remains the ask_user request time.
+   */
   lastActivityEventAt: string | null;
   userMessageCount: number;
   assistantTurnCount: number;
+  /**
+   * Snapshot of scan metadata captured with the most recent material
+   * interpreted-state change. These fields are diagnostics, not an
+   * incremental cursor, and do not refresh on bookkeeping-only scans.
+   */
   eventsScannedAt: string | null;
   eventsOffset: number;
   eventsSize: number;
@@ -190,6 +207,27 @@ export const DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE: SessionRegistryActivity
   eventsSize: 0,
   eventsMtimeMs: null,
 };
+
+export function buildSessionRegistryActivityEvidence(
+  overrides: Partial<SessionRegistryActivityEvidence> = {},
+  base: SessionRegistryActivityEvidence = DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
+): SessionRegistryActivityEvidence {
+  const diagnostics = overrides.diagnostics ?? base.diagnostics;
+  return {
+    ...base,
+    ...overrides,
+    diagnostics: [...new Set(diagnostics)],
+  };
+}
+
+export function isPendingInputRequestIndeterminate(
+  evidence: SessionRegistryActivityEvidence,
+): boolean {
+  return (
+    !evidence.pendingInputRequest &&
+    evidence.diagnostics.includes("events_tail_truncated")
+  );
+}
 
 export interface ManualSessionRegistryOrigin {
   kind: "manual";
