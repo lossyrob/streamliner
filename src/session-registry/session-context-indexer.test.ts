@@ -72,6 +72,7 @@ function buildSession(overrides: Partial<SessionRegistryListItem> = {}): Session
     activityStatus: "unknown",
     activityStatusUpdatedAt: null,
     activityEvidence: DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
+    pawWorkflow: null,
     trustedSignalSource: "copilot-cli-hook",
     trustedStartedAt: "2026-04-25T20:00:00.000Z",
     trustedEndedAt: null,

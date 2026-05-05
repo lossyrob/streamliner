@@ -11,6 +11,7 @@ import type {
   SessionRegistryLifecycleStatus,
   SessionRegistryObservedSessionKind,
   SessionRegistryOriginKind,
+  SessionRegistryPawWorkflow,
   SessionRegistryRecord,
   SessionRegistryTitleSource,
   SessionRegistryTrustedEndReason,
@@ -66,6 +67,7 @@ export interface SessionRegistryListItem {
   activityStatus: SessionRegistryActivityStatus;
   activityStatusUpdatedAt: string | null;
   activityEvidence: SessionRegistryActivityEvidence;
+  pawWorkflow: SessionRegistryPawWorkflow | null;
   trustedSignalSource: SessionRegistryTrustedSignalSource | null;
   trustedStartedAt: string | null;
   trustedEndedAt: string | null;

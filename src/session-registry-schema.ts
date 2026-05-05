@@ -101,6 +101,56 @@ export const SESSION_REGISTRY_ACTIVITY_DIAGNOSTIC_CODES = [
 export type SessionRegistryActivityDiagnosticCode =
   (typeof SESSION_REGISTRY_ACTIVITY_DIAGNOSTIC_CODES)[number];
 
+export const SESSION_REGISTRY_PAW_WORKFLOW_STATUSES = [
+  "recognized",
+  "ambiguous",
+  "unavailable",
+  "unknown",
+] as const;
+export type SessionRegistryPawWorkflowStatus =
+  (typeof SESSION_REGISTRY_PAW_WORKFLOW_STATUSES)[number];
+
+export const SESSION_REGISTRY_PAW_WORKFLOW_STAGES = [
+  "init",
+  "planning",
+  "implementation",
+  "review",
+  "finalization",
+] as const;
+export type SessionRegistryPawWorkflowStage =
+  (typeof SESSION_REGISTRY_PAW_WORKFLOW_STAGES)[number];
+
+export const SESSION_REGISTRY_PAW_WORKFLOW_KINDS = [
+  "paw",
+  "paw-lite",
+  "paw-review",
+  "unknown",
+] as const;
+export type SessionRegistryPawWorkflowKind =
+  (typeof SESSION_REGISTRY_PAW_WORKFLOW_KINDS)[number];
+
+export const SESSION_REGISTRY_PAW_ARTIFACT_KINDS = [
+  "context",
+  "specification",
+  "research",
+  "planning",
+  "implementation",
+  "review",
+  "finalization",
+  "unknown",
+] as const;
+export type SessionRegistryPawArtifactKind =
+  (typeof SESSION_REGISTRY_PAW_ARTIFACT_KINDS)[number];
+
+export const SESSION_REGISTRY_PAW_WORKFLOW_DIAGNOSTIC_CODES = [
+  "paw_workdir_unavailable",
+  "paw_artifact_ambiguous",
+  "paw_artifact_layout_unknown",
+  "paw_artifact_scan_error",
+] as const;
+export type SessionRegistryPawWorkflowDiagnosticCode =
+  (typeof SESSION_REGISTRY_PAW_WORKFLOW_DIAGNOSTIC_CODES)[number];
+
 export const SESSION_REGISTRY_TRUSTED_SIGNAL_SOURCES = [
   "copilot-cli-hook",
 ] as const;
@@ -229,6 +279,29 @@ export function isPendingInputRequestIndeterminate(
   );
 }
 
+export interface SessionRegistryPawArtifactEvidence {
+  path: string;
+  kind: SessionRegistryPawArtifactKind;
+  stage: SessionRegistryPawWorkflowStage | null;
+  mtimeMs: number | null;
+}
+
+export interface SessionRegistryPawWorkflow {
+  status: SessionRegistryPawWorkflowStatus;
+  stage: SessionRegistryPawWorkflowStage | null;
+  workflowKind: SessionRegistryPawWorkflowKind;
+  workId: string | null;
+  workTitle: string | null;
+  workDir: string | null;
+  candidateWorkDirs: string[];
+  artifacts: SessionRegistryPawArtifactEvidence[];
+  artifactCount: number;
+  latestArtifactPath: string | null;
+  latestArtifactMtimeMs: number | null;
+  scannedAt: string | null;
+  diagnostics: SessionRegistryPawWorkflowDiagnosticCode[];
+}
+
 export interface ManualSessionRegistryOrigin {
   kind: "manual";
 }
@@ -279,6 +352,7 @@ export interface SessionRegistryRecord {
   activityStatus: SessionRegistryActivityStatus;
   activityStatusUpdatedAt: string | null;
   activityEvidence: SessionRegistryActivityEvidence;
+  pawWorkflow: SessionRegistryPawWorkflow | null;
   trustedSignalSource: SessionRegistryTrustedSignalSource | null;
   trustedStartedAt: string | null;
   trustedEndedAt: string | null;
@@ -326,6 +400,7 @@ export interface SessionRegistryIndexEntry {
   activityStatus: SessionRegistryActivityStatus;
   activityStatusUpdatedAt: string | null;
   activityEvidence: SessionRegistryActivityEvidence;
+  pawWorkflow: SessionRegistryPawWorkflow | null;
   trustedSignalSource: SessionRegistryTrustedSignalSource | null;
   trustedStartedAt: string | null;
   trustedEndedAt: string | null;

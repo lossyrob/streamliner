@@ -1,7 +1,7 @@
 ---
 kind: design-doc
 status: draft
-last_updated: 2026-05-04
+last_updated: 2026-05-05
 update_semantics: rewrite-in-place
 authoritative_for: "Session launching, lifecycle, registry contract, tracking, and runtime overlay"
 scope_tags:
@@ -33,7 +33,7 @@ references_decisions:
 
 # Session System
 
-The session system is how Streamliner launches, monitors, and surfaces AI coding agent sessions. A **session** is a Copilot CLI agent instance executing a specific node's work in a workstream — or, equivalently, any Copilot CLI instance the builder has chosen to track. Streamliner maintains a local, graph-independent **session registry** as the authoritative record for tracked sessions ([Decision 004](decisions/004-session-registry-primary-surface.md)), observes each session's Copilot CLI state files to populate liveness and workflow-status fields, and projects that combined state onto the committed graph as a runtime overlay without writing ephemeral telemetry back into `graph.json`. Sessions launched from the graph and sessions the builder tracks manually are the same kind of record; the launch pipeline writes onto an existing or newly created registry row rather than maintaining a parallel store.
+The session system is how Streamliner launches, monitors, and surfaces AI coding agent sessions. A **session** is a Copilot CLI agent instance executing a specific node's work in a workstream — or, equivalently, any Copilot CLI instance the builder has chosen to track. Streamliner maintains a local, graph-independent **session registry** as the authoritative record for tracked sessions ([Decision 004](decisions/004-session-registry-primary-surface.md)), observes each session's Copilot CLI state files to populate liveness and attention fields, derives PAW workflow enrichment from durable PAW artifacts when available, and projects that combined state onto the committed graph as a runtime overlay without writing ephemeral telemetry back into `graph.json`. Sessions launched from the graph and sessions the builder tracks manually are the same kind of record; the launch pipeline writes onto an existing or newly created registry row rather than maintaining a parallel store.
 
 ## Launch Contract
 
@@ -358,6 +358,43 @@ Beyond the core lifecycle state, the session watcher derives additional fields f
 | `turnCount` | Count of `user.message` events | How many user turns have occurred |
 | `pawWorkflow` | PAW work directory on disk, when present | Artifact-derived workflow summary: work id/title when discoverable, likely workflow kind, latest/coarsest stage indicated by PAW artifacts, artifact freshness, and any ambiguity diagnostics. See [Decision 008](decisions/008-paw-artifacts-for-workflow-status.md). |
 
+### PAW Artifact Workflow Enrichment
+
+`pawWorkflow` is a workflow-enrichment projection, not a liveness signal. It is updated by the session-registry background worker through the derived-state patch path, so builder-owned fields and trusted activity evidence are not rewritten by artifact scans. Launch-claim lineage metadata is the preferred source for a PAW work directory (`pawWorkDir`). When no launch claim supplies a work directory, Streamliner walks upward from `derivedWorktreePath ?? cwd`, looks for `.paw/work/*`, and only links automatically when exactly one candidate exists.
+
+The scanner is intentionally coarse and evidence-oriented. It inspects bounded directory entries under the PAW work directory and classifies durable files by path:
+
+| Artifact category | Examples | Implied stage |
+|-------------------|----------|---------------|
+| `context` | `WorkflowContext.md`, `streamliner/context.md`, `ReviewContext.md` | `init` for launch context, `review` for review context |
+| `specification`, `research`, `planning` | `Spec.md`, `CodeResearch.md`, `ImplementationPlan.md`, `Plan.md`, `reviews/planning/*.md` | `planning` |
+| `implementation` | `Docs.md`, `implementation/**`, `phases/**`, phase-named markdown files | `implementation` |
+| `review` | `reviews/final-review.md`, `FINAL-REVIEW.md`, other non-planning review markdown | `review` |
+| `finalization` | `PR.md`, `final-pr.md`, `pull-request.md`, `final-pr/**` | `finalization` |
+| `unknown` | Any file in a single candidate work directory that does not match known patterns | no inferred stage |
+
+When multiple known artifacts exist, the displayed stage is the highest coarse stage present (`finalization` > `review` > `implementation` > `planning` > `init`). `WorkflowContext.md` and `ReviewContext.md` may provide identity hints such as work id, work title, and workflow kind, but their `## Control State` sections are not authoritative and must not drive stage selection.
+
+`pawWorkflow.status` has four values:
+
+| Status | Meaning |
+|--------|---------|
+| `recognized` | A PAW work directory was found and at least one known artifact pattern was recognized. |
+| `ambiguous` | More than one fallback `.paw/work/*` candidate matched; Streamliner reports candidates instead of choosing. |
+| `unavailable` | An expected work directory is missing/unreadable, or a `.paw/work` root has no candidate work directories. |
+| `unknown` | Exactly one candidate exists, but only unknown artifact layouts were found. |
+
+Diagnostics are explicit and degraded states stay visible:
+
+| Diagnostic | Meaning |
+|------------|---------|
+| `paw_workdir_unavailable` | The expected or discovered PAW work directory could not be used. |
+| `paw_artifact_ambiguous` | Multiple candidate work directories were found. |
+| `paw_artifact_layout_unknown` | Files exist, but none match known PAW artifact patterns. |
+| `paw_artifact_scan_error` | A bounded filesystem scan failed while reading part of the work directory. |
+
+Consumers must continue to treat `activityStatus` and `activityEvidence` as the source for "working", "waiting for input", "interrupted", and "exited". `pawWorkflow` only explains what durable workflow artifacts currently exist.
+
 ### Key Distinction: Idle vs. Ended
 
 - **Idle** means the agent completed its turn and is waiting. The builder may need to go interact with the session (answer a question, provide input, review output). This is the most important status for the builder's attention allocation.
@@ -418,6 +455,7 @@ Each registry entry is a persisted `SessionRegistryRecord`. The stored lifecycle
 | `lastSeenAt` | ISO 8601 string or `null` | yes | Observation | Last observed activity timestamp; `null` for never-observed manual entries. |
 | `activityStatus`, `activityStatusUpdatedAt` | status + ISO 8601 string or `null` | yes | Observation | Coarse liveness/attention status retained for compatibility with existing My Sessions and future graph-node consumers. |
 | `activityEvidence` | object | yes | Observation | Privacy-preserving evidence behind `activityStatus`: `statusReason`, `confidence`, `diagnostics`, `pendingInputRequest`, `pendingInputRequestCount`, last user/assistant turn timestamps, scanned user/assistant-turn counts, and event scan offset/size/mtime metadata. Scan metadata is a snapshot from the most recent material interpreted-state change, not an incremental cursor and not refreshed for bookkeeping-only scans. Manual or never-observed rows use neutral defaults (`confidence: none`, no diagnostics) rather than degraded diagnostics. |
+| `pawWorkflow` | object or `null` | yes | Artifact indexer | Derived PAW workflow enrichment. `null` means no PAW work directory has been linked. Non-null records include `status`, `stage`, `workflowKind`, work identity/path hints, candidate directories for ambiguous cases, recognized/unknown artifact evidence, latest artifact path/mtime, scan timestamp, and diagnostics. This field does not drive or replace `activityStatus`. |
 | `createdAt`, `updatedAt` | ISO 8601 string | yes | Streamliner | Record creation and last persisted update timestamps. |
 | `tags` | string[] | yes | Builder | Freeform labels; default `[]`. |
 | `origin.kind` | `manual \| observed \| launched` | yes | Streamliner | How the row first entered the registry. The `origin` object is discriminated by this field. |

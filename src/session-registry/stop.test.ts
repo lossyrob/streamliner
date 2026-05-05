@@ -44,6 +44,7 @@ function buildRecord(
     activityStatus: "interrupted",
     activityStatusUpdatedAt: "2026-04-29T20:07:16.000Z",
     activityEvidence: DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
+    pawWorkflow: null,
     trustedSignalSource: "copilot-cli-hook",
     trustedStartedAt: "2026-04-29T20:02:39.000Z",
     trustedEndedAt: null,

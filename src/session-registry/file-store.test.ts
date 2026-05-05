@@ -405,6 +405,83 @@ describe("SessionRegistryFileStore", () => {
     );
   });
 
+  it("patches derived PAW workflow state without changing builder fields", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+
+    const manual = store.upsertSession({
+      title: "Manual row",
+      description: "Builder-owned description",
+      cwd: "C:\\repo",
+      origin: { kind: "manual" },
+    });
+
+    const patched = store.patchDerivedSessionState(manual.id, {
+      pawWorkflow: {
+        status: "recognized",
+        stage: "implementation",
+        workflowKind: "paw-lite",
+        workId: "paw-artifact-status-observation",
+        workTitle: "PAW Artifact Status Observation",
+        workDir: "C:\\repo\\.paw\\work\\paw-artifact-status-observation",
+        candidateWorkDirs: [],
+        artifacts: [
+          {
+            path: "Plan.md",
+            kind: "planning",
+            stage: "planning",
+            mtimeMs: 1_778_002_000_000,
+          },
+          {
+            path: "implementation/phase-1.md",
+            kind: "implementation",
+            stage: "implementation",
+            mtimeMs: 1_778_003_000_000,
+          },
+        ],
+        artifactCount: 2,
+        latestArtifactPath: "implementation/phase-1.md",
+        latestArtifactMtimeMs: 1_778_003_000_000,
+        scannedAt: "2026-05-05T13:05:00.000Z",
+        diagnostics: [],
+      },
+    });
+
+    expect(patched).toEqual(
+      expect.objectContaining({
+        description: "Builder-owned description",
+        updatedAt: manual.updatedAt,
+        version: manual.version,
+        pawWorkflow: expect.objectContaining({
+          status: "recognized",
+          stage: "implementation",
+          workflowKind: "paw-lite",
+          workId: "paw-artifact-status-observation",
+        }),
+      }),
+    );
+    expect(store.listSessions({ text: "paw-artifact-status-observation" })).toEqual([
+      expect.objectContaining({
+        id: manual.id,
+        pawWorkflow: expect.objectContaining({
+          latestArtifactPath: "implementation/phase-1.md",
+        }),
+      }),
+    ]);
+
+    const attached = store.attachObservedSession(manual.id, {
+      copilotSessionId: "copilot-session",
+      cwd: "C:\\repo",
+    });
+    expect(attached.pawWorkflow).toEqual(patched.pawWorkflow);
+
+    const cleared = store.patchDerivedSessionState(manual.id, {
+      pawWorkflow: null,
+    });
+    expect(cleared.pawWorkflow).toBeNull();
+  });
+
   it("rejects stale builder patches while allowing derived patches to bypass builder version", () => {
     const rootDir = createRootDir();
     createdRoots.push(rootDir);

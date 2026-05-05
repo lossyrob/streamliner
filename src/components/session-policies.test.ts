@@ -42,6 +42,7 @@ function buildSession(
     activityStatus: "unknown",
     activityStatusUpdatedAt: null,
     activityEvidence: DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
+    pawWorkflow: null,
     trustedSignalSource: null,
     trustedStartedAt: null,
     trustedEndedAt: null,

@@ -12,6 +12,11 @@ import {
   SESSION_REGISTRY_LIFECYCLE_STATUSES,
   SESSION_REGISTRY_OBSERVED_SESSION_KINDS,
   SESSION_REGISTRY_ORIGIN_KINDS,
+  SESSION_REGISTRY_PAW_ARTIFACT_KINDS,
+  SESSION_REGISTRY_PAW_WORKFLOW_DIAGNOSTIC_CODES,
+  SESSION_REGISTRY_PAW_WORKFLOW_KINDS,
+  SESSION_REGISTRY_PAW_WORKFLOW_STAGES,
+  SESSION_REGISTRY_PAW_WORKFLOW_STATUSES,
   SESSION_REGISTRY_SCHEMA_VERSION,
   SESSION_REGISTRY_TITLE_SOURCES,
   SESSION_REGISTRY_TRUSTED_END_REASONS,
@@ -71,6 +76,7 @@ function buildRecord(): SessionRegistryRecord {
     activityStatus: "unknown",
     activityStatusUpdatedAt: null,
     activityEvidence: DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
+    pawWorkflow: null,
     trustedSignalSource: null,
     trustedStartedAt: null,
     trustedEndedAt: null,
@@ -160,6 +166,41 @@ describe("session registry schema", () => {
       "events_parse_error",
       "events_unrecognized",
       "events_unrecognized_tool_shape",
+    ]);
+    expect(SESSION_REGISTRY_PAW_WORKFLOW_STATUSES).toEqual([
+      "recognized",
+      "ambiguous",
+      "unavailable",
+      "unknown",
+    ]);
+    expect(SESSION_REGISTRY_PAW_WORKFLOW_STAGES).toEqual([
+      "init",
+      "planning",
+      "implementation",
+      "review",
+      "finalization",
+    ]);
+    expect(SESSION_REGISTRY_PAW_WORKFLOW_KINDS).toEqual([
+      "paw",
+      "paw-lite",
+      "paw-review",
+      "unknown",
+    ]);
+    expect(SESSION_REGISTRY_PAW_ARTIFACT_KINDS).toEqual([
+      "context",
+      "specification",
+      "research",
+      "planning",
+      "implementation",
+      "review",
+      "finalization",
+      "unknown",
+    ]);
+    expect(SESSION_REGISTRY_PAW_WORKFLOW_DIAGNOSTIC_CODES).toEqual([
+      "paw_workdir_unavailable",
+      "paw_artifact_ambiguous",
+      "paw_artifact_layout_unknown",
+      "paw_artifact_scan_error",
     ]);
     expect(SESSION_REGISTRY_GITHUB_REF_TYPES).toEqual(["issue", "pr", "unknown"]);
     expect(SESSION_REGISTRY_TRUSTED_SIGNAL_SOURCES).toEqual([
@@ -263,6 +304,7 @@ describe("session registry schema", () => {
       activityStatus: record.activityStatus,
       activityStatusUpdatedAt: record.activityStatusUpdatedAt,
       activityEvidence: record.activityEvidence,
+      pawWorkflow: record.pawWorkflow,
       trustedSignalSource: record.trustedSignalSource,
       trustedStartedAt: record.trustedStartedAt,
       trustedEndedAt: record.trustedEndedAt,
