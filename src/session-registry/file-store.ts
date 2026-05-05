@@ -30,6 +30,10 @@ import {
   type SessionRegistryUpsertInput,
 } from "../session-registry-contract";
 import {
+  DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
+  SESSION_REGISTRY_ACTIVITY_CONFIDENCES,
+  SESSION_REGISTRY_ACTIVITY_DIAGNOSTIC_CODES,
+  SESSION_REGISTRY_ACTIVITY_STATUS_REASONS,
   SESSION_REGISTRY_ACTIVITY_STATUSES,
   SESSION_REGISTRY_AI_SUMMARY_STATUSES,
   SESSION_REGISTRY_COPILOT_PROCESS_STATES,
@@ -43,6 +47,10 @@ import {
   SESSION_REGISTRY_TRUSTED_EXECUTION_KINDS,
   SESSION_REGISTRY_TRUSTED_SIGNAL_SOURCES,
   SESSION_REGISTRY_TRUSTED_START_SOURCES,
+  buildSessionRegistryActivityEvidence,
+  type SessionRegistryActivityConfidence,
+  type SessionRegistryActivityDiagnosticCode,
+  type SessionRegistryActivityEvidence,
   type SessionRegistryActivityStatus,
   type SessionRegistryAiSummaryStatus,
   type SessionRegistryCopilotProcessState,
@@ -199,6 +207,7 @@ export interface SessionRegistryDerivedStatePatch {
   copilotProcessId?: number | null;
   activityStatus?: SessionRegistryActivityStatus;
   activityStatusUpdatedAt?: string | null;
+  activityEvidence?: SessionRegistryActivityEvidence;
   derivedWorktreePath?: string | null;
   derivedBranch?: string | null;
   derivedGithubRefs?: SessionRegistryGithubRef[];
@@ -369,6 +378,13 @@ function ensureOptionalNumber(value: unknown, fieldName: string): number | null 
 function ensureStringField(value: unknown, fieldName: string): string {
   if (typeof value !== "string") {
     throw new Error(`Expected ${fieldName} to be a string.`);
+  }
+  return value;
+}
+
+function ensureBoolean(value: unknown, fieldName: string): boolean {
+  if (typeof value !== "boolean") {
+    throw new Error(`Expected ${fieldName} to be a boolean.`);
   }
   return value;
 }
@@ -552,6 +568,28 @@ function isActivityStatus(value: string): value is SessionRegistryActivityStatus
   return SESSION_REGISTRY_ACTIVITY_STATUSES.includes(value as SessionRegistryActivityStatus);
 }
 
+function isActivityConfidence(value: string): value is SessionRegistryActivityConfidence {
+  return SESSION_REGISTRY_ACTIVITY_CONFIDENCES.includes(
+    value as SessionRegistryActivityConfidence,
+  );
+}
+
+function isActivityStatusReason(
+  value: string,
+): value is SessionRegistryActivityEvidence["statusReason"] {
+  return SESSION_REGISTRY_ACTIVITY_STATUS_REASONS.includes(
+    value as SessionRegistryActivityEvidence["statusReason"],
+  );
+}
+
+function isActivityDiagnosticCode(
+  value: string,
+): value is SessionRegistryActivityDiagnosticCode {
+  return SESSION_REGISTRY_ACTIVITY_DIAGNOSTIC_CODES.includes(
+    value as SessionRegistryActivityDiagnosticCode,
+  );
+}
+
 function isObservedSessionKind(value: string): value is SessionRegistryObservedSessionKind {
   return SESSION_REGISTRY_OBSERVED_SESSION_KINDS.includes(
     value as SessionRegistryObservedSessionKind,
@@ -678,6 +716,122 @@ function normalizeActivityStatus(
     throw new Error(`Unsupported ${fieldName} "${status}".`);
   }
   return status;
+}
+
+function normalizeActivityDiagnostics(
+  value: unknown,
+  fieldName: string,
+): SessionRegistryActivityDiagnosticCode[] {
+  if (value === undefined || value === null) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`Expected ${fieldName} to be an array.`);
+  }
+  const seen = new Set<SessionRegistryActivityDiagnosticCode>();
+  const diagnostics: SessionRegistryActivityDiagnosticCode[] = [];
+  for (const [index, entry] of value.entries()) {
+    if (typeof entry !== "string" || !isActivityDiagnosticCode(entry)) {
+      throw new Error(`Unsupported ${fieldName}[${index}] "${String(entry)}".`);
+    }
+    if (!seen.has(entry)) {
+      seen.add(entry);
+      diagnostics.push(entry);
+    }
+  }
+  return diagnostics;
+}
+
+function normalizeActivityConfidence(
+  value: unknown,
+  fieldName: string,
+): SessionRegistryActivityConfidence {
+  const confidence = ensureString(value, fieldName);
+  if (!isActivityConfidence(confidence)) {
+    throw new Error(`Unsupported ${fieldName} "${confidence}".`);
+  }
+  return confidence;
+}
+
+function normalizeActivityStatusReason(
+  value: unknown,
+  fieldName: string,
+): SessionRegistryActivityEvidence["statusReason"] {
+  const reason = ensureString(value, fieldName);
+  if (!isActivityStatusReason(reason)) {
+    throw new Error(`Unsupported ${fieldName} "${reason}".`);
+  }
+  return reason;
+}
+
+function normalizeActivityEvidence(
+  value: unknown,
+  fieldName: string,
+): SessionRegistryActivityEvidence {
+  const defaults = cloneValue(DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE);
+  if (value === undefined || value === null) {
+    return defaults;
+  }
+  if (!isJsonObject(value)) {
+    throw new Error(`Expected ${fieldName} to be an object or null.`);
+  }
+
+  return {
+    statusReason: hasOwn(value, "statusReason")
+      ? normalizeActivityStatusReason(value.statusReason, `${fieldName}.statusReason`)
+      : defaults.statusReason,
+    confidence: hasOwn(value, "confidence")
+      ? normalizeActivityConfidence(value.confidence, `${fieldName}.confidence`)
+      : defaults.confidence,
+    diagnostics: hasOwn(value, "diagnostics")
+      ? normalizeActivityDiagnostics(value.diagnostics, `${fieldName}.diagnostics`)
+      : defaults.diagnostics,
+    pendingInputRequest: hasOwn(value, "pendingInputRequest")
+      ? ensureBoolean(value.pendingInputRequest, `${fieldName}.pendingInputRequest`)
+      : defaults.pendingInputRequest,
+    pendingInputRequestCount: hasOwn(value, "pendingInputRequestCount")
+      ? ensureNonNegativeInteger(
+          value.pendingInputRequestCount,
+          `${fieldName}.pendingInputRequestCount`,
+        )
+      : defaults.pendingInputRequestCount,
+    lastUserMessageAt: hasOwn(value, "lastUserMessageAt")
+      ? ensureOptionalString(value.lastUserMessageAt, `${fieldName}.lastUserMessageAt`)
+      : defaults.lastUserMessageAt,
+    lastAssistantTurnStartedAt: hasOwn(value, "lastAssistantTurnStartedAt")
+      ? ensureOptionalString(
+          value.lastAssistantTurnStartedAt,
+          `${fieldName}.lastAssistantTurnStartedAt`,
+        )
+      : defaults.lastAssistantTurnStartedAt,
+    lastAssistantTurnEndedAt: hasOwn(value, "lastAssistantTurnEndedAt")
+      ? ensureOptionalString(
+          value.lastAssistantTurnEndedAt,
+          `${fieldName}.lastAssistantTurnEndedAt`,
+        )
+      : defaults.lastAssistantTurnEndedAt,
+    lastActivityEventAt: hasOwn(value, "lastActivityEventAt")
+      ? ensureOptionalString(value.lastActivityEventAt, `${fieldName}.lastActivityEventAt`)
+      : defaults.lastActivityEventAt,
+    userMessageCount: hasOwn(value, "userMessageCount")
+      ? ensureNonNegativeInteger(value.userMessageCount, `${fieldName}.userMessageCount`)
+      : defaults.userMessageCount,
+    assistantTurnCount: hasOwn(value, "assistantTurnCount")
+      ? ensureNonNegativeInteger(value.assistantTurnCount, `${fieldName}.assistantTurnCount`)
+      : defaults.assistantTurnCount,
+    eventsScannedAt: hasOwn(value, "eventsScannedAt")
+      ? ensureOptionalString(value.eventsScannedAt, `${fieldName}.eventsScannedAt`)
+      : defaults.eventsScannedAt,
+    eventsOffset: hasOwn(value, "eventsOffset")
+      ? ensureNonNegativeInteger(value.eventsOffset, `${fieldName}.eventsOffset`)
+      : defaults.eventsOffset,
+    eventsSize: hasOwn(value, "eventsSize")
+      ? ensureNonNegativeInteger(value.eventsSize, `${fieldName}.eventsSize`)
+      : defaults.eventsSize,
+    eventsMtimeMs: hasOwn(value, "eventsMtimeMs")
+      ? ensureOptionalNumber(value.eventsMtimeMs, `${fieldName}.eventsMtimeMs`)
+      : defaults.eventsMtimeMs,
+  };
 }
 
 function normalizeObservedSessionKind(
@@ -1193,6 +1347,10 @@ function validateStoredRecord(
       rawRecord.activityStatusUpdatedAt,
       `${filePath}.activityStatusUpdatedAt`,
     ),
+    activityEvidence: normalizeActivityEvidence(
+      rawRecord.activityEvidence,
+      `${filePath}.activityEvidence`,
+    ),
     trustedSignalSource: normalizeTrustedSignalSource(
       rawRecord.trustedSignalSource,
       `${filePath}.trustedSignalSource`,
@@ -1358,6 +1516,10 @@ function validateIndexEntry(
       rawEntry.activityStatusUpdatedAt,
       `${fieldName}.activityStatusUpdatedAt`,
     ),
+    activityEvidence: normalizeActivityEvidence(
+      rawEntry.activityEvidence,
+      `${fieldName}.activityEvidence`,
+    ),
     trustedSignalSource: normalizeTrustedSignalSource(
       rawEntry.trustedSignalSource,
       `${fieldName}.trustedSignalSource`,
@@ -1477,6 +1639,7 @@ function buildIndex(records: Iterable<StoredSessionRegistryRecord>): SessionRegi
     copilotProcessId: record.copilotProcessId,
     activityStatus: record.activityStatus,
     activityStatusUpdatedAt: record.activityStatusUpdatedAt,
+    activityEvidence: cloneValue(record.activityEvidence),
     trustedSignalSource: record.trustedSignalSource,
     trustedStartedAt: record.trustedStartedAt,
     trustedEndedAt: record.trustedEndedAt,
@@ -1586,6 +1749,24 @@ function mergeStoredRecord(
     origin: nextOrigin,
     graphBinding: nextGraphBinding,
   };
+}
+
+function activityEvidenceForTrustedSignal(
+  base: SessionRegistryActivityEvidence | undefined,
+  statusReason: SessionRegistryActivityEvidence["statusReason"],
+  timestamp: string,
+): SessionRegistryActivityEvidence {
+  return buildSessionRegistryActivityEvidence(
+    {
+      statusReason,
+      confidence: "high",
+      diagnostics: [],
+      pendingInputRequest: false,
+      pendingInputRequestCount: 0,
+      lastActivityEventAt: timestamp,
+    },
+    base ? cloneValue(base) : DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
+  );
 }
 
 function getBuilderConflictFields(patch: SessionRegistryPatch): string[] {
@@ -1702,6 +1883,9 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       let nextCopilotProcessId = latestRecord?.copilotProcessId ?? null;
       let nextActivityStatus = latestRecord?.activityStatus ?? "unknown";
       let nextActivityStatusUpdatedAt = latestRecord?.activityStatusUpdatedAt ?? null;
+      let nextActivityEvidence = latestRecord?.activityEvidence
+        ? cloneValue(latestRecord.activityEvidence)
+        : cloneValue(DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE);
       let nextTrustedSignalSource = latestRecord?.trustedSignalSource ?? null;
       let nextTrustedStartedAt = latestRecord?.trustedStartedAt ?? null;
       let nextTrustedEndedAt = latestRecord?.trustedEndedAt ?? null;
@@ -1750,6 +1934,9 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
             : latestRecord?.copilotProcessId ?? null;
         nextActivityStatus = latestRecord?.activityStatus ?? "unknown";
         nextActivityStatusUpdatedAt = latestRecord?.activityStatusUpdatedAt ?? null;
+        nextActivityEvidence = latestRecord?.activityEvidence
+          ? cloneValue(latestRecord.activityEvidence)
+          : cloneValue(DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE);
         nextTrustedSignalSource =
           Object.prototype.hasOwnProperty.call(validatedInput, "trustedSignalSource")
             ? validatedInput.trustedSignalSource ?? null
@@ -1799,6 +1986,9 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         nextCopilotProcessId = null;
         nextActivityStatus = latestRecord?.activityStatus ?? "unknown";
         nextActivityStatusUpdatedAt = latestRecord?.activityStatusUpdatedAt ?? null;
+        nextActivityEvidence = latestRecord?.activityEvidence
+          ? cloneValue(latestRecord.activityEvidence)
+          : cloneValue(DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE);
         nextTrustedSignalSource = null;
         nextTrustedStartedAt = null;
         nextTrustedEndedAt = null;
@@ -1841,6 +2031,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         copilotProcessId: nextCopilotProcessId,
         activityStatus: nextActivityStatus,
         activityStatusUpdatedAt: nextActivityStatusUpdatedAt,
+        activityEvidence: nextActivityEvidence,
         trustedSignalSource: nextTrustedSignalSource,
         trustedStartedAt: nextTrustedStartedAt,
         trustedEndedAt: nextTrustedEndedAt,
@@ -2236,6 +2427,28 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
             : appliesStart && initialPromptLength !== null && initialPromptLength > 0
               ? "working"
               : existingRecord?.activityStatus ?? "waiting_for_input";
+      const activityEvidence =
+        appliesEnd
+          ? activityEvidenceForTrustedSignal(
+              existingRecord?.activityEvidence,
+              "trusted_end",
+              timestamp,
+            )
+          : appliesPrompt
+            ? activityEvidenceForTrustedSignal(
+                existingRecord?.activityEvidence,
+                "trusted_prompt",
+                timestamp,
+              )
+            : appliesStart
+              ? activityEvidenceForTrustedSignal(
+                  existingRecord?.activityEvidence,
+                  "trusted_start",
+                  timestamp,
+                )
+              : existingRecord?.activityEvidence
+                ? cloneValue(existingRecord.activityEvidence)
+                : cloneValue(DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE);
       const nextRecord: SessionRegistryRecord = {
         schemaVersion: SESSION_REGISTRY_SCHEMA_VERSION,
         id: targetId,
@@ -2291,6 +2504,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
           appliesStart || appliesEnd || appliesPrompt
             ? timestamp
             : existingRecord?.activityStatusUpdatedAt ?? timestamp,
+        activityEvidence,
         trustedSignalSource: signalSource,
         trustedStartedAt:
           appliesStart
@@ -2381,6 +2595,10 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
           patch.activityStatusUpdatedAt !== undefined
             ? patch.activityStatusUpdatedAt
             : existingRecord.activityStatusUpdatedAt,
+        activityEvidence:
+          patch.activityEvidence !== undefined
+            ? cloneValue(patch.activityEvidence)
+            : existingRecord.activityEvidence,
         aiSummary:
           patch.aiSummary !== undefined ? patch.aiSummary : existingRecord.aiSummary,
         aiSummaryModel:
@@ -2725,6 +2943,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         copilotProcessId: observed.copilotProcessId,
         activityStatus: observed.activityStatus,
         activityStatusUpdatedAt: observed.activityStatusUpdatedAt,
+        activityEvidence: cloneValue(observed.activityEvidence),
         trustedSignalSource: observed.trustedSignalSource,
         trustedStartedAt: observed.trustedStartedAt,
         trustedEndedAt: observed.trustedEndedAt,

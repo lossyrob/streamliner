@@ -350,7 +350,9 @@ Beyond the core lifecycle state, the session watcher derives additional fields f
 
 | Field | Source | Description |
 |-------|--------|-------------|
-| `pendingInputRequest` | Unresolved `ask_user` tool request in `events.jsonl` | The session is blocked waiting for the builder to answer a question |
+| `activityStatus` | Trusted hooks, process locks, and recent `events.jsonl` activity | Coarse compatibility status: `unknown`, `working`, `waiting_for_input`, `interrupted`, or `exited`. |
+| `activityEvidence` | Bounded local observation of `events.jsonl` plus trusted hook/process evidence | Consumer-facing explanation for `activityStatus`: status reason, confidence (`none`, `low`, `medium`, `high`), diagnostic codes, pending-input state, recent turn-boundary timestamps/counts, and event-scan metadata. |
+| `activityEvidence.pendingInputRequest` | Unresolved `ask_user` tool request observed in the local `events.jsonl` tail | The session is blocked waiting for the builder to answer a question. If this is `false` while `diagnostics` contains `events_tail_truncated`, pending-input state is indeterminate rather than authoritatively absent. |
 | `phase` | Latest event types in `events.jsonl` | Human-readable: "reasoning", "tool-calling", "idle" |
 | `endReason` | Hook signal or inactivity | Why the session ended: "hook-signal", "idle-timeout", "user_exit" |
 | `turnCount` | Count of `user.message` events | How many user turns have occurred |
@@ -414,6 +416,8 @@ Each registry entry is a persisted `SessionRegistryRecord`. The stored lifecycle
 | `aiSummary`, `aiSummaryModel`, `aiSummaryUpdatedAt`, `aiSummaryEventsFingerprint`, `aiSummaryStatus`, `aiSummaryError` | string/status fields or `null` | yes | Worker | Optional persisted conversation description and refresh metadata. The worker may transiently read bounded recent `events.jsonl` user turns to produce `aiSummary`, but it does not persist the raw prompt/event bodies in these fields. |
 | `lifecycleStatus` | `active \| paused \| ended \| archived` | yes | Builder + observation | Durable coarse lifecycle. Observation only owns the transition into `ended`; archiving is builder-driven. |
 | `lastSeenAt` | ISO 8601 string or `null` | yes | Observation | Last observed activity timestamp; `null` for never-observed manual entries. |
+| `activityStatus`, `activityStatusUpdatedAt` | status + ISO 8601 string or `null` | yes | Observation | Coarse liveness/attention status retained for compatibility with existing My Sessions and future graph-node consumers. |
+| `activityEvidence` | object | yes | Observation | Privacy-preserving evidence behind `activityStatus`: `statusReason`, `confidence`, `diagnostics`, `pendingInputRequest`, `pendingInputRequestCount`, last user/assistant turn timestamps, scanned user/assistant-turn counts, and event scan offset/size/mtime metadata. Scan metadata is a snapshot from the most recent material interpreted-state change, not an incremental cursor and not refreshed for bookkeeping-only scans. Manual or never-observed rows use neutral defaults (`confidence: none`, no diagnostics) rather than degraded diagnostics. |
 | `createdAt`, `updatedAt` | ISO 8601 string | yes | Streamliner | Record creation and last persisted update timestamps. |
 | `tags` | string[] | yes | Builder | Freeform labels; default `[]`. |
 | `origin.kind` | `manual \| observed \| launched` | yes | Streamliner | How the row first entered the registry. The `origin` object is discriminated by this field. |
@@ -597,13 +601,15 @@ Streamliner watches the session state root directory (`~/.copilot/session-state/
 
 ### Activity Detection
 
-The watcher polls `events.jsonl` modification times at a configurable interval (default: 30 seconds). When the file's mtime changes:
+The watcher polls `events.jsonl` modification times at a configurable interval (default: 30 seconds). The current local implementation derives registry-level activity evidence as follows:
 
-1. Read only the new bytes since the last read (incremental tail, anchored on the byte offset of the last parsed event) rather than a point-in-time tail window. This guarantees every event is seen exactly once regardless of log size.
-2. Extract metadata: repository, branch, turn count
-3. Detect turn boundaries: look for `assistant.turn_end` events or `agentStop` hook events without a subsequent `assistant.turn_start`
-4. Detect pending input: maintain a **per-session incremental index of open tool requests**. As each `assistant.message.toolRequests` entry is observed, record its tool-call ID in the session's open-requests set; as each `tool.execution_complete` is observed, remove the matching ID. `pendingInputRequest` is true iff the open-requests set contains an `ask_user` call. The index persists across watcher restarts (rehydrated from runtime state) so long-running sessions do not lose pending-input detection when an unresolved request falls outside any bounded tail window.
+1. Read a bounded tail of `events.jsonl` and record the scan offset, file size, and mtime in `activityEvidence` when the scan changes material interpreted state. These fields describe the scan snapshot behind the current evidence, not an incremental checkpoint and not the latest scan heartbeat. If the scan is tail-truncated, partially unparsable, empty, missing, contains no supported activity event, or exposes a tool-request array whose entries have no recognizable tool names, record diagnostic codes instead of guessing.
+2. Extract recent turn evidence: scanned `user.message` count, scanned `assistant.turn_start` count, latest user-message timestamp, latest assistant-turn-start timestamp, and latest assistant-turn-end timestamp.
+3. Derive coarse `activityStatus` from trusted end/start/prompt signals, process-lock disappearance after a trusted start, `session.ended`, assistant turn boundaries, user messages, assistant messages, tool starts/completions, and user-requested tool completions.
+4. Detect pending input within the scanned tail by tracking unresolved `ask_user` tool requests from `assistant.message.toolRequests` or `tool.execution_start` until matching `tool.execution_complete` events. A visible open request sets `activityStatus: waiting_for_input` and `activityEvidence.pendingInputRequest: true`. Anonymous requests are deduplicated per event and expire at a later assistant turn end; if the request scrolled out of a truncated tail, consumers should treat `pendingInputRequest: false` plus `events_tail_truncated` as unknown.
 5. Detect PAW artifact status when applicable: for sessions launched through Streamliner's PAW flow, sessions with PAW launch metadata, or sessions with a reachable `.paw/work/*/` directory, inspect the durable PAW artifact set and derive a coarse workflow-status summary. `WorkflowContext.md` and `ReviewContext.md` may contribute artifact identity or headings, but `## Control State` is not authoritative. See [Decision 008](decisions/008-paw-artifacts-for-workflow-status.md).
+
+Full persistent incremental open-request indexing and watcher-restart rehydration remain deferred. Until that lands, `activityEvidence.confidence` and diagnostics make bounded-tail limitations explicit for consumers.
 
 ### Two Orthogonal State Sources
 
@@ -745,13 +751,14 @@ Both endpoints are loopback-only.
 
 Because session tracking combines several independent observation sources, the watcher exposes a per-session diagnostic record so operational disagreements between the UI and reality are debuggable without ad-hoc log archaeology.
 
-Each session carries:
+Each observed session carries:
 
-- **Last successful Copilot parse** — timestamp and byte offset of the last `events.jsonl` read that succeeded, plus the number of open tool requests in the incremental index.
+- **Activity evidence** — `activityEvidence.confidence`, `activityEvidence.statusReason`, and `activityEvidence.diagnostics`, plus scan offset/size/mtime from the most recent material interpreted-state change and recent turn-boundary metadata.
+- **Pending-input evidence** — `activityEvidence.pendingInputRequest` and `activityEvidence.pendingInputRequestCount` from unresolved `ask_user` requests visible in the bounded local event tail.
 - **Last successful PAW artifact scan** — when applicable, timestamp of the last PAW work directory scan, the artifact patterns recognized, and any ambiguity or unavailable-path diagnostics. See [Decision 008](decisions/008-paw-artifacts-for-workflow-status.md).
 - **Hook signal counters** — count of `sessionStart`, `agentStop`, `sessionEnd` signals received vs. equivalent transitions inferred from polling, so "hooks silently stopped firing" is visible.
 
-In addition, the watcher emits structured diagnostic events (not free-form logs) for every degradation mode it recognizes: `hook-miss`, `tail-truncation`, `nonce-absent-after-window`, `launch-claim-ambiguous`, `launch-claim-rebind-attempt`, `launch-claim-orphan-session` (case `"a"` for candidate-with-no-nonce, case `"b"` for preserved-reserved-row whose claim went non-bound), `copilot-compatibility-probe-failed`, `paw-workdir-unavailable`, `paw-artifact-ambiguous`, `paw-artifact-layout-unknown`. PAW-specific diagnostics are emitted only for sessions with PAW artifacts or Streamliner PAW launch metadata. Launch-claim diagnostics are emitted as JSONL log lines under `withScope("launch-claim.binding")` and `withScope("launch-claim.sweep")` in the API logger; the durable per-claim inspection record is the claim's own `evidence` ledger, exposed via `GET /api/launch-claims/:id`. The UI shows a compact degradation badge on any session whose diagnostics are non-empty so the builder never has to guess whether the overlay can be trusted.
+The registry-level activity diagnostic codes currently include `events_missing`, `events_empty`, `events_tail_truncated`, `events_parse_error`, `events_unrecognized`, and `events_unrecognized_tool_shape`. In addition, the watcher emits or logs structured diagnostics (not free-form logs) for other degradation modes it recognizes: `hook-miss`, `nonce-absent-after-window`, `launch-claim-ambiguous`, `launch-claim-rebind-attempt`, `launch-claim-orphan-session` (case `"a"` for candidate-with-no-nonce, case `"b"` for preserved-reserved-row whose claim went non-bound), `copilot-compatibility-probe-failed`, `paw-workdir-unavailable`, `paw-artifact-ambiguous`, `paw-artifact-layout-unknown`. PAW-specific diagnostics are emitted only for sessions with PAW artifacts or Streamliner PAW launch metadata. Launch-claim diagnostics are emitted as JSONL log lines under `withScope("launch-claim.binding")` and `withScope("launch-claim.sweep")` in the API logger; the durable per-claim inspection record is the claim's own `evidence` ledger, exposed via `GET /api/launch-claims/:id`. The UI can show a compact degradation badge on any session whose diagnostics are non-empty so the builder never has to guess whether the overlay can be trusted.
 
 ## Runtime Overlay
 

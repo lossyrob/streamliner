@@ -4,7 +4,10 @@ import type {
   SessionRegistryStore,
   SessionRegistryTrustedSignalInput,
 } from "../session-registry-contract";
-import type { SessionRegistryRecord } from "../session-registry-schema";
+import {
+  DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
+  type SessionRegistryRecord,
+} from "../session-registry-schema";
 import { stopSession } from "./stop";
 
 function buildRecord(
@@ -40,6 +43,7 @@ function buildRecord(
     copilotProcessId: null,
     activityStatus: "interrupted",
     activityStatusUpdatedAt: "2026-04-29T20:07:16.000Z",
+    activityEvidence: DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
     trustedSignalSource: "copilot-cli-hook",
     trustedStartedAt: "2026-04-29T20:02:39.000Z",
     trustedEndedAt: null,

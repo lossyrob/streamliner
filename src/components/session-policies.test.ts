@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { SessionRegistryListItem } from "../session-registry-contract";
+import { DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE } from "../session-registry-schema";
 import {
   buildRestartCommand,
   canManuallyStop,
@@ -40,6 +41,7 @@ function buildSession(
     copilotProcessId: null,
     activityStatus: "unknown",
     activityStatusUpdatedAt: null,
+    activityEvidence: DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
     trustedSignalSource: null,
     trustedStartedAt: null,
     trustedEndedAt: null,

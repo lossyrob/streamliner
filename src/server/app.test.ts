@@ -16,7 +16,10 @@ import type {
 import { SessionRegistryFileStore } from "../session-registry/file-store";
 import { LaunchClaimFileStore } from "../session-registry/launch-claim-store";
 import { createLaunchClaim } from "../session-registry/launch-claims";
-import type { SessionRegistryRecord } from "../session-registry-schema";
+import {
+  DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
+  type SessionRegistryRecord,
+} from "../session-registry-schema";
 import {
   createStreamlinerApiApp,
   type StreamlinerApiApp,
@@ -186,6 +189,7 @@ function buildStreamRecord(id: string, title: string): SessionRegistryRecord {
     copilotProcessId: null,
     activityStatus: "unknown",
     activityStatusUpdatedAt: null,
+    activityEvidence: DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
     trustedSignalSource: null,
     trustedStartedAt: null,
     trustedEndedAt: null,
@@ -304,6 +308,11 @@ describe("createStreamlinerApiApp", () => {
       expect.objectContaining({
         title: "API session",
         version: 0,
+        activityEvidence: expect.objectContaining({
+          statusReason: expect.any(String),
+          confidence: expect.any(String),
+          diagnostics: expect.any(Array),
+        }),
       }),
     );
   });
@@ -920,6 +929,7 @@ describe("createStreamlinerApiApp", () => {
     expect(received).toContain("event: snapshot");
     expect(received).toContain("event: session.upserted");
     expect(received).toContain("Streamed session");
+    expect(received).toContain("activityEvidence");
   });
 
   it("returns client errors for malformed and oversized JSON bodies", async () => {
@@ -1170,6 +1180,12 @@ describe("createStreamlinerApiApp", () => {
     expect(updated?.lifecycleStatus).toBe("ended");
     expect(updated?.trustedEndReason).toBe("user_exit");
     expect(updated?.activityStatus).toBe("exited");
+    expect(updated?.activityEvidence).toEqual(
+      expect.objectContaining({
+        statusReason: "trusted_end",
+        confidence: "high",
+      }),
+    );
   });
 
   it("stop endpoint returns 404 for nonexistent session", async () => {

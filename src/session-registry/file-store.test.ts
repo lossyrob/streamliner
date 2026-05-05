@@ -15,7 +15,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { SessionRegistryPatch, SessionRegistryUpsertInput } from "../session-registry-contract";
 import {
+  DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
   SESSION_REGISTRY_SCHEMA_VERSION,
+  buildSessionRegistryActivityEvidence,
   type SessionRegistryRecord,
 } from "../session-registry-schema";
 import { SessionRegistryFileStore } from "./file-store";
@@ -226,6 +228,9 @@ describe("SessionRegistryFileStore", () => {
       description: "Updated description",
     });
     expect(updated.description).toBe("Updated description");
+    expect(updated.activityEvidence).toEqual(
+      DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
+    );
 
     const persisted = readJsonFile<Record<string, unknown>>(entryPath);
     expect(persisted.extraTopLevelField).toBe("persist-me");
@@ -464,6 +469,12 @@ describe("SessionRegistryFileStore", () => {
         trustedLastPromptLength: null,
         activityStatus: "working",
         activityStatusUpdatedAt: "2026-04-24T20:00:00.000Z",
+        activityEvidence: expect.objectContaining({
+          statusReason: "trusted_start",
+          confidence: "high",
+          diagnostics: [],
+          lastActivityEventAt: "2026-04-24T20:00:00.000Z",
+        }),
       }),
     );
 
@@ -492,6 +503,11 @@ describe("SessionRegistryFileStore", () => {
         trustedLastPromptLength: 1234,
         activityStatus: "working",
         activityStatusUpdatedAt: "2026-04-24T20:01:00.000Z",
+        activityEvidence: expect.objectContaining({
+          statusReason: "trusted_prompt",
+          confidence: "high",
+          lastActivityEventAt: "2026-04-24T20:01:00.000Z",
+        }),
       }),
     );
     expect(ended).toEqual(
@@ -502,10 +518,138 @@ describe("SessionRegistryFileStore", () => {
         trustedEndReason: "user_exit",
         activityStatus: "exited",
         activityStatusUpdatedAt: "2026-04-24T20:02:00.000Z",
+        activityEvidence: expect.objectContaining({
+          statusReason: "trusted_end",
+          confidence: "high",
+          lastActivityEventAt: "2026-04-24T20:02:00.000Z",
+        }),
       }),
     );
     expect(readJsonFile<Record<string, unknown>>(join(rootDir, "entries", "trusted-session-1.json"))).not.toHaveProperty(
       "prompt",
+    );
+  });
+
+  it("preserves prior turn evidence when trusted prompt signals update status", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+
+    const observed = store.upsertSession({
+      title: "Observed activity",
+      cwd: "C:\\repo",
+      origin: { kind: "observed" },
+      copilotSessionId: "trusted-preserve-session",
+    });
+    store.patchDerivedSessionState(observed.id, {
+      activityEvidence: buildSessionRegistryActivityEvidence({
+        statusReason: "assistant_message",
+        confidence: "high",
+        lastUserMessageAt: "2026-04-24T19:59:00.000Z",
+        lastAssistantTurnStartedAt: "2026-04-24T20:00:00.000Z",
+        userMessageCount: 4,
+        assistantTurnCount: 3,
+      }),
+    });
+
+    const prompted = store.recordTrustedSessionSignal({
+      event: "prompt.submitted",
+      source: "copilot-cli-hook",
+      sessionId: "trusted-preserve-session",
+      timestamp: "2026-04-24T20:01:00.000Z",
+      cwd: "C:\\repo",
+      promptLength: 12,
+    });
+
+    expect(prompted.activityEvidence).toEqual(
+      expect.objectContaining({
+        statusReason: "trusted_prompt",
+        confidence: "high",
+        diagnostics: [],
+        lastActivityEventAt: "2026-04-24T20:01:00.000Z",
+        lastUserMessageAt: "2026-04-24T19:59:00.000Z",
+        lastAssistantTurnStartedAt: "2026-04-24T20:00:00.000Z",
+        userMessageCount: 4,
+        assistantTurnCount: 3,
+      }),
+    );
+  });
+
+  it("clears pending input evidence when trusted signals update status", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+
+    const promptedSession = store.upsertSession({
+      title: "Pending prompt",
+      cwd: "C:\\repo",
+      origin: { kind: "observed" },
+      copilotSessionId: "trusted-clear-prompt-session",
+    });
+    store.patchDerivedSessionState(promptedSession.id, {
+      activityEvidence: buildSessionRegistryActivityEvidence({
+        statusReason: "pending_input",
+        confidence: "high",
+        pendingInputRequest: true,
+        pendingInputRequestCount: 1,
+        lastUserMessageAt: "2026-04-24T19:59:00.000Z",
+        userMessageCount: 2,
+      }),
+    });
+
+    const prompted = store.recordTrustedSessionSignal({
+      event: "prompt.submitted",
+      source: "copilot-cli-hook",
+      sessionId: "trusted-clear-prompt-session",
+      timestamp: "2026-04-24T20:01:00.000Z",
+      cwd: "C:\\repo",
+      promptLength: 12,
+    });
+
+    expect(prompted.activityEvidence).toEqual(
+      expect.objectContaining({
+        statusReason: "trusted_prompt",
+        pendingInputRequest: false,
+        pendingInputRequestCount: 0,
+        lastUserMessageAt: "2026-04-24T19:59:00.000Z",
+        userMessageCount: 2,
+      }),
+    );
+
+    const endedSession = store.upsertSession({
+      title: "Pending end",
+      cwd: "C:\\repo",
+      origin: { kind: "observed" },
+      copilotSessionId: "trusted-clear-end-session",
+    });
+    store.patchDerivedSessionState(endedSession.id, {
+      activityEvidence: buildSessionRegistryActivityEvidence({
+        statusReason: "pending_input",
+        confidence: "high",
+        pendingInputRequest: true,
+        pendingInputRequestCount: 2,
+        lastAssistantTurnStartedAt: "2026-04-24T20:00:00.000Z",
+        assistantTurnCount: 3,
+      }),
+    });
+
+    const ended = store.recordTrustedSessionSignal({
+      event: "session.ended",
+      source: "copilot-cli-hook",
+      sessionId: "trusted-clear-end-session",
+      timestamp: "2026-04-24T20:02:00.000Z",
+      cwd: "C:\\repo",
+      endReason: "complete",
+    });
+
+    expect(ended.activityEvidence).toEqual(
+      expect.objectContaining({
+        statusReason: "trusted_end",
+        pendingInputRequest: false,
+        pendingInputRequestCount: 0,
+        lastAssistantTurnStartedAt: "2026-04-24T20:00:00.000Z",
+        assistantTurnCount: 3,
+      }),
     );
   });
 
