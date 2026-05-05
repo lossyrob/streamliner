@@ -46,6 +46,7 @@ import {
 } from "./browser-workstream-files";
 import type {
   NodeLaunchHandoff,
+  NodeLaunchClaimState,
   NodeLaunchRecord,
   NodeLaunchRecordResponse,
   NodeTerminalLaunchResponse,
@@ -57,6 +58,10 @@ import {
   workstreamRoutePath,
   type DashboardRoute,
 } from "./dashboard-routing";
+import {
+  trackerLabel as workstreamTrackerLabel,
+  trackerUrl as workstreamTrackerUrl,
+} from "./workstream-links";
 
 const POLL_INTERVAL_MS = 2000;
 const LAST_GRAPH_KEY = "streamliner:lastGraphPath";
@@ -342,6 +347,27 @@ async function loadNodeLaunchRecord(
   }
   const body = await response.json() as NodeLaunchRecordResponse;
   return body.record ?? null;
+}
+
+interface NodeLaunchReleaseResponse {
+  launchClaim: NodeLaunchClaimState;
+  detachedRegistryIds: string[];
+}
+
+async function releaseNodeLaunchClaim(launchClaimId: string): Promise<NodeLaunchReleaseResponse> {
+  const response = await fetch(
+    `/api/node-launch-records/launch-claims/${encodeURIComponent(launchClaimId)}/release`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    },
+  );
+  if (!response.ok) {
+    const parsed = await parseErrorResponse(response);
+    throw new Error(parsed.message);
+  }
+  return await response.json() as NodeLaunchReleaseResponse;
 }
 
 function normalizeRegistryListResponse(
@@ -934,6 +960,9 @@ function GraphDashboard({
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [launchHandoff, setLaunchHandoff] = useState<PawLaunchPreparationResponse | null>(null);
   const [terminalLaunchResult, setTerminalLaunchResult] = useState<NodeTerminalLaunchResponse | null>(null);
+  const [launchReleasing, setLaunchReleasing] = useState(false);
+  const [launchReleaseError, setLaunchReleaseError] = useState<string | null>(null);
+  const [launchReleaseStatus, setLaunchReleaseStatus] = useState<string | null>(null);
   const [launchProgressEvents, setLaunchProgressEvents] = useState<PawLaunchProgressEvent[]>([]);
   const [nodeLaunchRecord, setNodeLaunchRecord] = useState<NodeLaunchRecord | null>(null);
   const [nodeLaunchRecordLoading, setNodeLaunchRecordLoading] = useState(false);
@@ -973,13 +1002,21 @@ function GraphDashboard({
     if (!activeWorkstreamEntry || !isBackendReadableWorkstreamEntry(activeWorkstreamEntry)) {
       return "Browser-only or missing graph sources cannot be prepared by the backend.";
     }
-    if (nodeLaunchRecord?.latestClaim?.blocksLaunch) {
-      return `Terminal launch already ${nodeLaunchRecord.latestClaim.status}.`;
-    }
     return undefined;
-  }, [activeWorkstreamEntry, nodeLaunchRecord, selectedEntry]);
+  }, [activeWorkstreamEntry, selectedEntry]);
 
   const canLaunchSelectedNode = Boolean(selectedEntry && !launchDisabledReason);
+
+  const launchActionDisabledReason = useMemo(() => {
+    const latestClaim = nodeLaunchRecord?.latestClaim;
+    if (!latestClaim?.blocksLaunch) {
+      return null;
+    }
+    if (latestClaim.status === "bound") {
+      return "A Copilot terminal session is already bound to this node. The dialog remains available for the issue and prepared launch details, but Streamliner will not start another PAW init or terminal launch while that session is active.";
+    }
+    return "A terminal launch is already active for this node. The dialog remains available for the issue and prepared launch details, but Streamliner will not start another PAW init or terminal launch until the active claim resolves.";
+  }, [nodeLaunchRecord]);
 
   const launchDefaults = useMemo<PawLaunchDialogDefaults | null>(() => {
     if (!selectedEntry || !activeWorkstreamEntry) return null;
@@ -996,6 +1033,10 @@ function GraphDashboard({
       cwdPreferenceKey,
       graphPath: activeWorkstreamEntry.path,
       terminalPreference: "Manual terminal launch after preparation",
+      githubIssueLabel: selectedEntry.node.tracker?.type === "github"
+        ? workstreamTrackerLabel(selectedEntry.node.tracker)
+        : null,
+      githubIssueUrl: workstreamTrackerUrl(selectedEntry.node.tracker),
       terminal: {
         ...DEFAULT_PAW_TERMINAL_CONFIGURATION,
         title: selectedEntry.node.title,
@@ -1053,19 +1094,49 @@ function GraphDashboard({
     setLaunchError(null);
     setLaunchHandoff(null);
     setTerminalLaunchResult(null);
+    setLaunchReleaseError(null);
+    setLaunchReleaseStatus(null);
     setLaunchProgressEvents([]);
     setLaunchDialogOpen(true);
   };
 
   const handleCloseLaunchDialog = () => {
-    if (launchPreparing || terminalLaunching) {
+    if (launchPreparing || terminalLaunching || launchReleasing) {
       return;
     }
     setLaunchDialogOpen(false);
     setLaunchError(null);
     setLaunchHandoff(null);
     setTerminalLaunchResult(null);
+    setLaunchReleaseError(null);
+    setLaunchReleaseStatus(null);
     setLaunchProgressEvents([]);
+  };
+
+  const handleReleaseLaunch = async () => {
+    const latestClaim = nodeLaunchRecord?.latestClaim;
+    if (!latestClaim) {
+      return;
+    }
+    setLaunchReleasing(true);
+    setLaunchReleaseError(null);
+    setLaunchReleaseStatus(null);
+    try {
+      const release = await releaseNodeLaunchClaim(latestClaim.launchClaimId);
+      setLaunchReleaseStatus(
+        release.detachedRegistryIds.length > 0
+          ? "Released the launch claim and detached the linked session."
+          : "Released the launch claim.",
+      );
+      if (activeWorkstreamEntry && selectedEntry) {
+        const refreshed = await loadNodeLaunchRecord(activeWorkstreamEntry.path, selectedEntry.node.id);
+        setNodeLaunchRecord(refreshed);
+      }
+    } catch (releaseError: unknown) {
+      setLaunchReleaseError(releaseError instanceof Error ? releaseError.message : String(releaseError));
+    } finally {
+      setLaunchReleasing(false);
+    }
   };
 
   const launchTerminalFromHandoff = async (
@@ -1306,9 +1377,14 @@ function GraphDashboard({
           handoff={launchHandoff}
           terminalLaunchResult={terminalLaunchResult}
           progressEvents={launchProgressEvents}
+          actionDisabledReason={launchActionDisabledReason}
+          releasingLaunch={launchReleasing}
+          releaseError={launchReleaseError}
+          releaseStatus={launchReleaseStatus}
           onCancel={handleCloseLaunchDialog}
           onSubmit={handleSubmitLaunch}
           onLaunchTerminal={handleLaunchTerminal}
+          onReleaseLaunch={nodeLaunchRecord?.latestClaim?.blocksLaunch ? handleReleaseLaunch : undefined}
         />
       ) : null}
     </div>

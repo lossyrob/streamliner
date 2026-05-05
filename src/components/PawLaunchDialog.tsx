@@ -38,9 +38,14 @@ interface PawLaunchDialogProps {
   handoff: PawLaunchDialogHandoff | null;
   terminalLaunchResult: PawTerminalLaunchResult | null;
   progressEvents: PawLaunchProgressEvent[];
+  actionDisabledReason?: string | null;
+  releasingLaunch?: boolean;
+  releaseError?: string | null;
+  releaseStatus?: string | null;
   onCancel: () => void;
   onSubmit: (configuration: PawLaunchDialogConfiguration) => void;
   onLaunchTerminal: (input: PawTerminalLaunchInput) => void;
+  onReleaseLaunch?: () => void;
 }
 
 interface PawPromptProfile {
@@ -322,9 +327,14 @@ export function PawLaunchDialog({
   handoff,
   terminalLaunchResult,
   progressEvents,
+  actionDisabledReason,
+  releasingLaunch = false,
+  releaseError,
+  releaseStatus,
   onCancel,
   onSubmit,
   onLaunchTerminal,
+  onReleaseLaunch,
 }: PawLaunchDialogProps) {
   const [workflowInstructions, setWorkflowInstructions] = useState(defaults.workflowInstructions);
   const [cliArgsText, setCliArgsText] = useState(defaults.cliArgsText);
@@ -526,7 +536,7 @@ export function PawLaunchDialog({
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (instructionError) {
+    if (instructionError || actionDisabledReason) {
       return;
     }
     onSubmit({
@@ -569,6 +579,23 @@ export function PawLaunchDialog({
               init skill, install that context into the PAW work directory, and
               then starts a visible Copilot CLI worker terminal.
             </p>
+            {defaults.githubIssueLabel && (
+              <p className="sl-paw-launch-tracker">
+                GitHub Issue:{" "}
+                {defaults.githubIssueUrl ? (
+                  <a
+                    href={defaults.githubIssueUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="sl-inline-link"
+                  >
+                    {defaults.githubIssueLabel}
+                  </a>
+                ) : (
+                  <span>{defaults.githubIssueLabel}</span>
+                )}
+              </p>
+            )}
           </div>
           <button
             type="button"
@@ -617,6 +644,24 @@ export function PawLaunchDialog({
               <div className="sl-action-error">{error}</div>
               <PawLaunchDebugPaths paths={debugPaths} />
             </section>
+          )}
+
+          {(actionDisabledReason || releaseError || releaseStatus) && !terminalLaunchResult && (
+            <div className="sl-action-warning" aria-live="polite">
+              {actionDisabledReason && <p>{actionDisabledReason}</p>}
+              {releaseError && <p className="sl-action-error">{releaseError}</p>}
+              {releaseStatus && <p className="sl-inline-status">{releaseStatus}</p>}
+              {actionDisabledReason && onReleaseLaunch && (
+                <button
+                  type="button"
+                  className="sl-action-btn"
+                  disabled={releasingLaunch || preparing || launching}
+                  onClick={onReleaseLaunch}
+                >
+                  {releasingLaunch ? "Releasing launch..." : "Release stuck launch"}
+                </button>
+              )}
+            </div>
           )}
 
           <section className="sl-paw-config-section sl-paw-instructions-section">
@@ -764,6 +809,25 @@ export function PawLaunchDialog({
               <span className="sl-section-label">Graph source</span>
               <p>{defaults.graphPath}</p>
             </div>
+            {defaults.githubIssueLabel && (
+              <div>
+                <span className="sl-section-label">GitHub Issue</span>
+                <p>
+                  {defaults.githubIssueUrl ? (
+                    <a
+                      href={defaults.githubIssueUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="sl-inline-link"
+                    >
+                      {defaults.githubIssueLabel}
+                    </a>
+                  ) : (
+                    defaults.githubIssueLabel
+                  )}
+                </p>
+              </div>
+            )}
             <div>
               <span className="sl-section-label">Working directory</span>
               <p>{cwd.trim() || defaults.inferredCwd || "Backend inferred"}</p>
@@ -912,7 +976,7 @@ export function PawLaunchDialog({
         </div>
 
         <div className="sl-sheet-foot sl-paw-launch-actions">
-          <button type="button" className="sl-action-btn" onClick={onCancel} disabled={preparing || launching}>
+          <button type="button" className="sl-action-btn" onClick={onCancel} disabled={preparing || launching || releasingLaunch}>
             {terminalLaunchResult ? "Close" : "Cancel"}
           </button>
           {handoff ? (
@@ -924,7 +988,9 @@ export function PawLaunchDialog({
                 workflowContextSaving ||
                 Boolean(kickoffPromptError) ||
                 Boolean(terminalTitleError) ||
-                Boolean(terminalLaunchResult?.launchClaim.blocksLaunch)
+                Boolean(terminalLaunchResult?.launchClaim.blocksLaunch) ||
+                Boolean(actionDisabledReason) ||
+                releasingLaunch
               }
               onClick={() =>
                 onLaunchTerminal({
@@ -937,7 +1003,11 @@ export function PawLaunchDialog({
               {launching ? "Launching terminal..." : terminalLaunchResult ? "Terminal launched" : "Launch terminal"}
             </button>
           ) : (
-            <button type="submit" className="sl-action-btn primary" disabled={preparing || Boolean(instructionError)}>
+            <button
+              type="submit"
+              className="sl-action-btn primary"
+              disabled={preparing || releasingLaunch || Boolean(instructionError) || Boolean(actionDisabledReason)}
+            >
               {preparing
                 ? "Running PAW init..."
                 : launchAfterInit

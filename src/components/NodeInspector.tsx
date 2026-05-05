@@ -121,7 +121,7 @@ export function NodeInspector({
   const latestClaim = launchRecord?.latestClaim ?? null;
   const latestClaimDisplay = latestClaim ? humanizeLaunchClaim(latestClaim) : null;
   const launchButtonLabel = latestClaim?.blocksLaunch
-    ? "PAW launch started"
+    ? "Open PAW launch"
     : "Initialize PAW launch";
 
   const repoById = new Map(workstream.repos.map((r) => [r.id, r]));

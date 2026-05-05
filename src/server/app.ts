@@ -186,6 +186,7 @@ export function createStreamlinerApiApp(
     createNodeLaunchRecordsRouter({
       store: nodeLaunchRecordStore,
       claimStore: options.launchClaimStore,
+      registryStore: store instanceof SessionRegistryFileStore ? store : undefined,
     }),
   );
   app.use(

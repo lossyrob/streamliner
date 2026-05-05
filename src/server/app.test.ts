@@ -14,6 +14,8 @@ import type {
   SessionRegistryStore,
 } from "../session-registry-contract";
 import { SessionRegistryFileStore } from "../session-registry/file-store";
+import { LaunchClaimFileStore } from "../session-registry/launch-claim-store";
+import { createLaunchClaim } from "../session-registry/launch-claims";
 import {
   DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
   type SessionRegistryRecord,
@@ -1234,5 +1236,60 @@ describe("createStreamlinerApiApp", () => {
       .set("X-Forwarded-For", "203.0.113.7")
       .send({})
       .expect(403, { error: "Session stop must originate from loopback." });
+  });
+
+  it("releases a stuck node launch claim and detaches its reserved session row", async () => {
+    const rootDir = createRootDir();
+    const store = new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(rootDir, "claims") });
+    const created = createLaunchClaim(
+      store,
+      claimStore,
+      {
+        workstreamId: "session-launching-and-tracking",
+        nodeId: "session-event-observation",
+        expectedCwd: rootDir,
+        expectedBranch: "feature/session-event-observation",
+        expectedRepo: "lossyrob/streamliner",
+        contextId: "ctx-release",
+        reservedRowTitle: "Session event observation",
+      },
+      {
+        now: () => new Date("2026-05-04T20:40:06.000Z"),
+        mintLaunchClaimId: () => "claim-release",
+        mintRegistryRowId: () => "registry-release",
+        mintNonce: () => "nonce-release",
+      },
+    );
+    expect(created.ok).toBe(true);
+    claimStore.updateClaim("claim-release", (claim) => ({
+      ...claim,
+      status: "bound",
+      boundRegistryId: "registry-release",
+      boundCopilotSessionId: "copilot-release",
+    }));
+    const api = createStreamlinerApiApp({ store, launchClaimStore: claimStore });
+    activeApps.push(api);
+
+    const response = await request(api.app)
+      .post("/api/node-launch-records/launch-claims/claim-release/release")
+      .set("Content-Type", "application/json")
+      .send({})
+      .expect(200);
+
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        launchClaim: expect.objectContaining({
+          launchClaimId: "claim-release",
+          status: "failed",
+          failureCode: "user-cancelled",
+          blocksLaunch: false,
+          retryable: true,
+        }),
+        detachedRegistryIds: ["registry-release"],
+      }),
+    );
+    expect(claimStore.getClaim("claim-release")?.status).toBe("failed");
+    expect(store.getSession("registry-release")?.graphBinding).toBeNull();
   });
 });
