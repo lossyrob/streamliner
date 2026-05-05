@@ -147,6 +147,7 @@ export const SESSION_REGISTRY_PAW_WORKFLOW_DIAGNOSTIC_CODES = [
   "paw_artifact_ambiguous",
   "paw_artifact_layout_unknown",
   "paw_artifact_scan_error",
+  "paw_artifact_scan_truncated",
 ] as const;
 export type SessionRegistryPawWorkflowDiagnosticCode =
   (typeof SESSION_REGISTRY_PAW_WORKFLOW_DIAGNOSTIC_CODES)[number];

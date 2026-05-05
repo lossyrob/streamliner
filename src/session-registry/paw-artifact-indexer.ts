@@ -43,6 +43,7 @@ interface ScanResult {
   artifacts: ScanArtifact[];
   unknownArtifacts: ScanArtifact[];
   diagnostics: SessionRegistryPawWorkflowDiagnosticCode[];
+  rootReadFailed: boolean;
 }
 
 function isDirectory(path: string): boolean {
@@ -187,10 +188,16 @@ function collectArtifacts(
   const artifacts: ScanArtifact[] = [];
   const unknownArtifacts: ScanArtifact[] = [];
   const diagnostics: SessionRegistryPawWorkflowDiagnosticCode[] = [];
+  let rootReadFailed = false;
+  let truncated = false;
   let entriesSeen = 0;
 
   const visit = (dir: string, depth: number): void => {
-    if (entriesSeen >= options.maxEntries || depth > options.maxDepth) {
+    if (entriesSeen >= options.maxEntries) {
+      truncated = true;
+      return;
+    }
+    if (depth > options.maxDepth) {
       return;
     }
 
@@ -198,6 +205,9 @@ function collectArtifacts(
     try {
       entries = readdirSync(dir, { withFileTypes: true });
     } catch {
+      if (depth === 0) {
+        rootReadFailed = true;
+      }
       diagnostics.push("paw_artifact_scan_error");
       return;
     }
@@ -206,6 +216,7 @@ function collectArtifacts(
       left.name.localeCompare(right.name),
     )) {
       if (entriesSeen >= options.maxEntries) {
+        truncated = true;
         return;
       }
       entriesSeen += 1;
@@ -238,21 +249,31 @@ function collectArtifacts(
   };
 
   visit(workDir, 0);
+  if (truncated) {
+    diagnostics.push("paw_artifact_scan_truncated");
+  }
   artifacts.sort((left, right) => left.path.localeCompare(right.path));
   unknownArtifacts.sort((left, right) => left.path.localeCompare(right.path));
-  return { artifacts, unknownArtifacts, diagnostics: [...new Set(diagnostics)] };
+  return {
+    artifacts,
+    unknownArtifacts,
+    diagnostics: [...new Set(diagnostics)],
+    rootReadFailed,
+  };
 }
 
 function latestArtifact(
   artifacts: readonly SessionRegistryPawArtifactEvidence[],
 ): SessionRegistryPawArtifactEvidence | null {
   let latest: SessionRegistryPawArtifactEvidence | null = null;
+  let latestMtimeMs: number | null = null;
   for (const artifact of artifacts) {
     if (artifact.mtimeMs === null) {
       continue;
     }
-    if (latest?.mtimeMs === null || latest === null || artifact.mtimeMs > latest.mtimeMs) {
+    if (latestMtimeMs === null || artifact.mtimeMs > latestMtimeMs) {
       latest = artifact;
+      latestMtimeMs = artifact.mtimeMs;
     }
   }
   return latest;
@@ -287,6 +308,12 @@ function buildWorkflow(
   scan: ScanResult,
   scannedAt: string,
 ): SessionRegistryPawWorkflow {
+  if (scan.rootReadFailed) {
+    return unavailableWorkflow(workDir, scannedAt, [
+      "paw_workdir_unavailable",
+      "paw_artifact_scan_error",
+    ]);
+  }
   const identity = readWorkflowContextIdentity(workDir);
   const artifacts =
     scan.artifacts.length > 0 ? scan.artifacts : scan.unknownArtifacts.slice(0, 20);
@@ -328,6 +355,7 @@ function buildWorkflow(
 function unavailableWorkflow(
   workDir: string | null,
   scannedAt: string,
+  diagnostics: SessionRegistryPawWorkflowDiagnosticCode[] = ["paw_workdir_unavailable"],
 ): SessionRegistryPawWorkflow {
   return {
     status: "unavailable",
@@ -342,7 +370,7 @@ function unavailableWorkflow(
     latestArtifactPath: null,
     latestArtifactMtimeMs: null,
     scannedAt,
-    diagnostics: ["paw_workdir_unavailable"],
+    diagnostics,
   };
 }
 
@@ -375,6 +403,9 @@ function discoverPawWorkRoot(startPath: string): string | null {
     const candidate = join(current, ".paw", "work");
     if (isDirectory(candidate)) {
       return candidate;
+    }
+    if (existsSync(join(current, ".git"))) {
+      return null;
     }
     if (current === root) {
       return null;
@@ -412,10 +443,7 @@ export function indexPawWorkflow(
   options: PawArtifactIndexOptions = {},
 ): SessionRegistryDerivedStatePatch | null {
   const scannedAt = (options.now ?? (() => new Date()))().toISOString();
-  const explicitWorkDir =
-    options.expectedWorkDir?.trim() ||
-    session.pawWorkflow?.workDir ||
-    null;
+  const explicitWorkDir = options.expectedWorkDir?.trim() || null;
 
   let nextWorkflow: SessionRegistryPawWorkflow | null = null;
   if (explicitWorkDir) {

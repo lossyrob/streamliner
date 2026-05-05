@@ -180,6 +180,67 @@ describe("indexPawWorkflow", () => {
     );
   });
 
+  it("rediscovers fallback candidates instead of reusing a stale persisted work directory", () => {
+    const root = createRoot();
+    const repo = join(root, "repo");
+    const staleWorkDir = join(root, "old", ".paw", "work", "stale-work");
+    const currentWorkDir = join(repo, ".paw", "work", "current-work");
+    writeFile(
+      join(staleWorkDir, "Plan.md"),
+      "# Stale plan\n",
+      new Date("2026-05-05T12:00:00.000Z"),
+    );
+    writeFile(
+      join(currentWorkDir, "WorkflowContext.md"),
+      [
+        "Work Title: Current Work",
+        "Work ID: current-work",
+        "Workflow Identity: paw-lite",
+      ].join("\n"),
+      new Date("2026-05-05T13:00:00.000Z"),
+    );
+
+    const patch = indexPawWorkflow(
+      buildSession({
+        derivedWorktreePath: repo,
+        pawWorkflow: {
+          status: "recognized",
+          stage: "planning",
+          workflowKind: "paw-lite",
+          workId: "stale-work",
+          workTitle: null,
+          workDir: staleWorkDir,
+          candidateWorkDirs: [],
+          artifacts: [],
+          artifactCount: 0,
+          latestArtifactPath: null,
+          latestArtifactMtimeMs: null,
+          scannedAt: "2026-05-05T12:05:00.000Z",
+          diagnostics: [],
+        },
+      }),
+      { now: () => new Date("2026-05-05T13:05:00.000Z") },
+    );
+
+    expect(patch?.pawWorkflow).toEqual(
+      expect.objectContaining({
+        status: "recognized",
+        workId: "current-work",
+        workTitle: "Current Work",
+        workDir: currentWorkDir,
+      }),
+    );
+  });
+
+  it("does not walk past the repository root when discovering PAW work directories", () => {
+    const root = createRoot();
+    const repo = join(root, "repo");
+    mkdirSync(join(root, ".paw", "work", "parent-work"), { recursive: true });
+    mkdirSync(join(repo, ".git"), { recursive: true });
+
+    expect(indexPawWorkflow(buildSession({ cwd: join(repo, "src") }))).toBeNull();
+  });
+
   it("reports unknown layout when a single candidate has no known artifacts", () => {
     const root = createRoot();
     const repo = join(root, "repo");
@@ -207,6 +268,33 @@ describe("indexPawWorkflow", () => {
     expect(patch?.pawWorkflow?.artifacts).toEqual([
       expect.objectContaining({ path: "notes.txt", kind: "unknown", stage: null }),
     ]);
+  });
+
+  it("adds a diagnostic when the artifact scan reaches its entry cap", () => {
+    const root = createRoot();
+    const workDir = join(root, ".paw", "work", "large-work");
+    writeFile(
+      join(workDir, "a-notes.txt"),
+      "unrecognized artifact\n",
+      new Date("2026-05-05T13:00:00.000Z"),
+    );
+    writeFile(
+      join(workDir, "WorkflowContext.md"),
+      [
+        "Work Title: Large Work",
+        "Work ID: large-work",
+        "Workflow Identity: paw-lite",
+      ].join("\n"),
+      new Date("2026-05-05T13:01:00.000Z"),
+    );
+
+    const patch = indexPawWorkflow(buildSession(), {
+      expectedWorkDir: workDir,
+      maxEntries: 1,
+      now: () => new Date("2026-05-05T13:05:00.000Z"),
+    });
+
+    expect(patch?.pawWorkflow?.diagnostics).toContain("paw_artifact_scan_truncated");
   });
 
   it("leaves non-PAW sessions without discovery noise", () => {

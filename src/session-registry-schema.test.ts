@@ -201,6 +201,7 @@ describe("session registry schema", () => {
       "paw_artifact_ambiguous",
       "paw_artifact_layout_unknown",
       "paw_artifact_scan_error",
+      "paw_artifact_scan_truncated",
     ]);
     expect(SESSION_REGISTRY_GITHUB_REF_TYPES).toEqual(["issue", "pr", "unknown"]);
     expect(SESSION_REGISTRY_TRUSTED_SIGNAL_SOURCES).toEqual([

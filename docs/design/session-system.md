@@ -392,6 +392,7 @@ Diagnostics are explicit and degraded states stay visible:
 | `paw_artifact_ambiguous` | Multiple candidate work directories were found. |
 | `paw_artifact_layout_unknown` | Files exist, but none match known PAW artifact patterns. |
 | `paw_artifact_scan_error` | A bounded filesystem scan failed while reading part of the work directory. |
+| `paw_artifact_scan_truncated` | The bounded artifact scan reached its entry cap before all files were inspected. |
 
 Consumers must continue to treat `activityStatus` and `activityEvidence` as the source for "working", "waiting for input", "interrupted", and "exited". `pawWorkflow` only explains what durable workflow artifacts currently exist.
 
