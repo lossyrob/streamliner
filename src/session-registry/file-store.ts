@@ -1761,6 +1761,8 @@ function activityEvidenceForTrustedSignal(
       statusReason,
       confidence: "high",
       diagnostics: [],
+      pendingInputRequest: false,
+      pendingInputRequestCount: 0,
       lastActivityEventAt: timestamp,
     },
     base ? cloneValue(base) : DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,

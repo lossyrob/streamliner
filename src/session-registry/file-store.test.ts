@@ -575,6 +575,84 @@ describe("SessionRegistryFileStore", () => {
     );
   });
 
+  it("clears pending input evidence when trusted signals update status", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+
+    const promptedSession = store.upsertSession({
+      title: "Pending prompt",
+      cwd: "C:\\repo",
+      origin: { kind: "observed" },
+      copilotSessionId: "trusted-clear-prompt-session",
+    });
+    store.patchDerivedSessionState(promptedSession.id, {
+      activityEvidence: buildSessionRegistryActivityEvidence({
+        statusReason: "pending_input",
+        confidence: "high",
+        pendingInputRequest: true,
+        pendingInputRequestCount: 1,
+        lastUserMessageAt: "2026-04-24T19:59:00.000Z",
+        userMessageCount: 2,
+      }),
+    });
+
+    const prompted = store.recordTrustedSessionSignal({
+      event: "prompt.submitted",
+      source: "copilot-cli-hook",
+      sessionId: "trusted-clear-prompt-session",
+      timestamp: "2026-04-24T20:01:00.000Z",
+      cwd: "C:\\repo",
+      promptLength: 12,
+    });
+
+    expect(prompted.activityEvidence).toEqual(
+      expect.objectContaining({
+        statusReason: "trusted_prompt",
+        pendingInputRequest: false,
+        pendingInputRequestCount: 0,
+        lastUserMessageAt: "2026-04-24T19:59:00.000Z",
+        userMessageCount: 2,
+      }),
+    );
+
+    const endedSession = store.upsertSession({
+      title: "Pending end",
+      cwd: "C:\\repo",
+      origin: { kind: "observed" },
+      copilotSessionId: "trusted-clear-end-session",
+    });
+    store.patchDerivedSessionState(endedSession.id, {
+      activityEvidence: buildSessionRegistryActivityEvidence({
+        statusReason: "pending_input",
+        confidence: "high",
+        pendingInputRequest: true,
+        pendingInputRequestCount: 2,
+        lastAssistantTurnStartedAt: "2026-04-24T20:00:00.000Z",
+        assistantTurnCount: 3,
+      }),
+    });
+
+    const ended = store.recordTrustedSessionSignal({
+      event: "session.ended",
+      source: "copilot-cli-hook",
+      sessionId: "trusted-clear-end-session",
+      timestamp: "2026-04-24T20:02:00.000Z",
+      cwd: "C:\\repo",
+      endReason: "complete",
+    });
+
+    expect(ended.activityEvidence).toEqual(
+      expect.objectContaining({
+        statusReason: "trusted_end",
+        pendingInputRequest: false,
+        pendingInputRequestCount: 0,
+        lastAssistantTurnStartedAt: "2026-04-24T20:00:00.000Z",
+        assistantTurnCount: 3,
+      }),
+    );
+  });
+
   it("clears stale copilotProcessId on session.started so activity indexer does not see a dead PID", () => {
     const rootDir = createRootDir();
     createdRoots.push(rootDir);
