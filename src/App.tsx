@@ -16,6 +16,7 @@ import { buildWorkstreamGraphLayout } from "./workstream-graph";
 import type { WorkstreamDocument } from "./workstream-schema";
 import {
   buildGraphNodeSessionStatusMap,
+  type GraphNodeSessionStatusSummary,
   type GraphNodeSessionStatusState,
 } from "./graph-node-session-status";
 import type {
@@ -990,7 +991,7 @@ function GraphDashboard({
     () =>
       activeWorkstream
         ? buildGraphNodeSessionStatusMap(sessionList.sessions, activeWorkstream.workstreamId)
-        : new Map(),
+        : new Map<string, GraphNodeSessionStatusSummary>(),
     [activeWorkstream, sessionList.sessions],
   );
   const nodeSessionStatusState: GraphNodeSessionStatusState = sessionList.loading
