@@ -1,4 +1,10 @@
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
+import {
+  activitySignalClass,
+  activityStatusHint,
+  getActivityStatusLabel,
+} from "./session-activity-status";
+import { handleInAppLinkClick } from "../dashboard-routing";
 import type { WorkstreamGraphNodeData } from "../workstream-graph";
 import { trackerLabel, trackerUrl } from "../workstream-links";
 
@@ -70,6 +76,85 @@ function NodeBadges({
   );
 }
 
+function NodeSessionIndicator({
+  data,
+  gate,
+}: {
+  data: WorkstreamGraphNodeData;
+  gate: boolean;
+}) {
+  if (gate) {
+    return null;
+  }
+
+  const status = data.sessionStatus;
+  if (data.sessionStatusState === "loading") {
+    return (
+      <div className="sl-node-session inactive">
+        <span className="sl-node-session-empty">Loading sessions…</span>
+      </div>
+    );
+  }
+
+  if (data.sessionStatusState === "error") {
+    return (
+      <div className="sl-node-session inactive">
+        <span className="sl-node-session-empty">Session status unavailable</span>
+      </div>
+    );
+  }
+
+  if (!status) {
+    return (
+      <div className="sl-node-session inactive">
+        <span className="sl-node-session-empty">No bound sessions</span>
+      </div>
+    );
+  }
+
+  const primarySession = status.primarySession;
+  const signalClass = activitySignalClass(primarySession.activityStatus);
+  const activityLabel = getActivityStatusLabel(primarySession);
+  const activityHint = activityStatusHint(primarySession.activityStatus);
+  const countLabel =
+    status.count === 1 ? "1 session" : `${status.count} sessions`;
+  const detail =
+    status.count === 1
+      ? primarySession.title
+      : `${primarySession.title} + ${status.count - 1} more`;
+  const href = data.sessionsHref ?? "/sessions";
+  const openSessions = data.onOpenSessions;
+
+  return (
+    <div
+      className={`sl-node-session ${signalClass}`}
+      title={`${activityHint} · ${detail}`}
+    >
+      <div className="sl-node-session-main">
+        <span className={`sl-session-row-status-pill ${signalClass}`}>
+          {activityLabel}
+        </span>
+        <span className="sl-session-row-signal-track" aria-hidden="true">
+          <span className="sl-session-row-signal-pulse" />
+        </span>
+        <span className="sl-node-session-count">{countLabel}</span>
+      </div>
+      <a
+        className="sl-node-session-link"
+        href={href}
+        onClick={(event) => {
+          event.stopPropagation();
+          if (openSessions) {
+            handleInAppLinkClick(event, openSessions);
+          }
+        }}
+      >
+        View in Sessions
+      </a>
+    </div>
+  );
+}
+
 function NodeShell({
   data,
   gate,
@@ -97,6 +182,7 @@ function NodeShell({
         <div className="sl-node-id">{data.entry.node.id}</div>
       ) : null}
       <NodeBadges data={data} gate={gate} />
+      <NodeSessionIndicator data={data} gate={gate} />
       <div className="sl-node-summary">{data.entry.node.summary}</div>
       <div className="sl-node-meta">
         <span>{data.repoLabel}</span>

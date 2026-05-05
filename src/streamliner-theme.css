@@ -3008,7 +3008,7 @@ a.sl-session-context-ref {
 }
 
 .sl-node.task {
-  min-height: 152px;
+  min-height: 208px;
 }
 
 .sl-node.gate {
@@ -3119,7 +3119,117 @@ a.sl-session-context-ref {
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 4;
+  -webkit-line-clamp: 3;
+}
+
+.sl-node-session {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--sl-card-border);
+  border-radius: 12px;
+  background: rgba(20, 60, 130, 0.035);
+}
+
+.sl-node-session.working {
+  background:
+    radial-gradient(circle at 8% 50%, rgba(18, 148, 95, 0.12), transparent 7rem),
+    rgba(18, 148, 95, 0.045);
+}
+
+.sl-node-session.waiting {
+  background:
+    linear-gradient(
+      100deg,
+      rgba(176, 120, 8, 0.035) 0%,
+      rgba(176, 120, 8, 0.13) 34%,
+      rgba(255, 188, 74, 0.16) 50%,
+      rgba(176, 120, 8, 0.08) 68%,
+      rgba(176, 120, 8, 0.035) 100%
+    ),
+    rgba(176, 120, 8, 0.045);
+  background-size: 260% 100%, auto;
+  animation: sl-session-waiting-drift 10s ease-in-out infinite alternate;
+}
+
+.sl-node-session-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sl-node-session .sl-session-row-status-pill {
+  min-height: 18px;
+  padding: 2px 7px;
+  font-size: 9px;
+}
+
+.sl-node-session .sl-session-row-signal-track {
+  min-width: 42px;
+  height: 8px;
+}
+
+.sl-node-session.working .sl-session-row-signal-track::before {
+  background: linear-gradient(
+    90deg,
+    rgba(18, 148, 95, 0.08),
+    rgba(18, 148, 95, 0.24),
+    rgba(29, 110, 220, 0.12)
+  );
+  box-shadow: 0 0 10px rgba(18, 148, 95, 0.18);
+}
+
+.sl-node-session.waiting .sl-session-row-signal-track::before {
+  background: linear-gradient(
+    90deg,
+    rgba(176, 120, 8, 0.12),
+    rgba(176, 120, 8, 0.24),
+    rgba(176, 120, 8, 0.12)
+  );
+  box-shadow: 0 0 5px rgba(176, 120, 8, 0.1);
+}
+
+.sl-node-session.inactive .sl-session-row-signal-track::before {
+  background: rgba(111, 128, 148, 0.22);
+}
+
+.sl-node-session.working .sl-session-row-signal-pulse {
+  animation: sl-session-beam-sweep 2.7s cubic-bezier(0.42, 0, 0.2, 1) infinite;
+}
+
+.sl-node-session.waiting .sl-session-row-signal-pulse,
+.sl-node-session.inactive .sl-session-row-signal-pulse {
+  display: none;
+}
+
+.sl-node-session-count,
+.sl-node-session-empty,
+.sl-node-session-link {
+  min-width: 0;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--sl-text-muted);
+}
+
+.sl-node-session-count {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.sl-node-session-empty {
+  color: var(--sl-text-dim);
+}
+
+.sl-node-session-link {
+  width: fit-content;
+  color: var(--sl-accent);
+  text-decoration: none;
+}
+
+.sl-node-session-link:hover {
+  text-decoration: underline;
 }
 
 .sl-node-meta {

@@ -3,7 +3,11 @@ import type { MouseEvent } from "react";
 export type DashboardRoute =
   | { view: "landing"; message?: string }
   | { view: "workstreams"; message?: string }
-  | { view: "sessions" }
+  | {
+      view: "sessions";
+      workstreamId?: string | null;
+      nodeId?: string | null;
+    }
   | {
       view: "workstream";
       projectKey: string;
@@ -26,10 +30,22 @@ export function workstreamRoutePath(entry: {
     : base;
 }
 
+function sessionsRoutePath(route: Extract<DashboardRoute, { view: "sessions" }>): string {
+  const search = new URLSearchParams();
+  if (route.workstreamId) {
+    search.set("workstreamId", route.workstreamId);
+  }
+  if (route.nodeId) {
+    search.set("nodeId", route.nodeId);
+  }
+  const suffix = search.toString();
+  return suffix.length > 0 ? `/sessions?${suffix}` : "/sessions";
+}
+
 export function routePath(route: DashboardRoute): string {
   switch (route.view) {
     case "sessions":
-      return "/sessions";
+      return sessionsRoutePath(route);
     case "workstream":
       return workstreamRoutePath(route);
     case "workstreams":

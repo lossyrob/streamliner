@@ -633,6 +633,141 @@ describe("App sessions route", () => {
     15_000,
   );
 
+  it(
+    "renders bound session status on graph nodes and links to scoped Sessions",
+    async () => {
+      const graph = buildWorkstreamGraph({
+        id: "session-launching-and-tracking",
+        title: "Session launching and tracking",
+        summary: "Connect launched sessions to graph nodes.",
+        nodes: [
+          {
+            id: "graph-node-session-status-ui",
+            type: "task",
+            title: "Graph node session status UI",
+            summary: "Render bound session status directly on graph nodes.",
+            status: "ready",
+            attention: "focus",
+            repoIds: ["streamliner"],
+            dependsOn: [],
+          },
+        ],
+        checkpoints: [
+          {
+            id: "tracking-visible",
+            title: "Tracking visible",
+            summary: "Make launch bindings visible.",
+            status: "planned",
+            nodeIds: ["graph-node-session-status-ui"],
+          },
+        ],
+      });
+      const boundSessions = [
+        buildSession({
+          id: "working-bound-session",
+          title: "Working graph worker",
+          originKind: "launched",
+          activityStatus: "working",
+          graphBinding: {
+            workstreamId: "session-launching-and-tracking",
+            nodeId: "graph-node-session-status-ui",
+          },
+        }),
+        buildSession({
+          id: "waiting-bound-session",
+          title: "Waiting graph worker",
+          originKind: "launched",
+          activityStatus: "waiting_for_input",
+          graphBinding: {
+            workstreamId: "session-launching-and-tracking",
+            nodeId: "graph-node-session-status-ui",
+          },
+        }),
+        buildSession({
+          id: "manual-bound-session",
+          title: "Manual bound session",
+          originKind: "manual",
+          activityStatus: "waiting_for_input",
+          graphBinding: {
+            workstreamId: "session-launching-and-tracking",
+            nodeId: "graph-node-session-status-ui",
+          },
+        }),
+        buildSession({
+          id: "unbound-session",
+          title: "Unbound session",
+          originKind: "launched",
+          activityStatus: "waiting_for_input",
+          graphBinding: null,
+        }),
+      ];
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [
+              buildTrackedWorkstream({
+                workstreamId: "session-launching-and-tracking",
+                title: "Session launching and tracking",
+                summary: "Connect launched sessions to graph nodes.",
+                path: "C:\\graphs\\session-launching-and-tracking\\graph.json",
+              }),
+            ],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/session-launching-and-tracking/graph") {
+          return jsonResponse(graph);
+        }
+        if (path === "/api/sessions?workstreamId=session-launching-and-tracking") {
+          return jsonResponse(boundSessions);
+        }
+        if (
+          path ===
+          "/api/sessions?workstreamId=session-launching-and-tracking&nodeId=graph-node-session-status-ui"
+        ) {
+          return jsonResponse(boundSessions);
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState({}, "", "/workstreams/streamliner/session-launching-and-tracking");
+
+      act(() => {
+        root.render(<App />);
+      });
+
+      await settle(200);
+
+      const graphNode = findCanvasNode(container, "Graph node session status UI");
+      expect(graphNode.textContent).toContain("waiting for you");
+      expect(graphNode.textContent).toContain("2 sessions");
+      expect(graphNode.textContent).not.toContain("Manual bound session");
+
+      const sessionsLink = [...graphNode.querySelectorAll<HTMLAnchorElement>("a")].find(
+        (candidate) => candidate.textContent?.trim() === "View in Sessions",
+      );
+      expect(sessionsLink).toBeInstanceOf(HTMLAnchorElement);
+
+      act(() => {
+        sessionsLink?.click();
+      });
+      await settle(200);
+
+      expect(window.location.pathname).toBe("/sessions");
+      expect(window.location.search).toBe(
+        "?workstreamId=session-launching-and-tracking&nodeId=graph-node-session-status-ui",
+      );
+      expect(container.textContent).toContain("Showing graph-bound sessions");
+      expect(container.textContent).toContain("graph-node-session-status-ui");
+      expect(container.textContent).toContain("Waiting graph worker");
+      expect(container.textContent).toContain("Hiding 1 manual session");
+      expect(container.textContent).not.toContain("Manual bound session");
+    },
+    15_000,
+  );
+
   it("keeps plain route clicks in-app and leaves modified clicks to the browser", () => {
     const plainClick = runInAppLinkClick();
     expect(plainClick.preventDefault).toHaveBeenCalledOnce();
