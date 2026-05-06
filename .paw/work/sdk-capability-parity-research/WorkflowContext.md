@@ -39,7 +39,7 @@ Issue URL: https://github.com/lossyrob/streamliner/issues/60
 Remote: origin
 Artifact Lifecycle: commit-and-clean
 Artifact Paths: auto-derived
-Additional Inputs: streamliner/context.md
+Additional Inputs: streamliner-context=streamliner/context.md
 
 ## Control State
 
