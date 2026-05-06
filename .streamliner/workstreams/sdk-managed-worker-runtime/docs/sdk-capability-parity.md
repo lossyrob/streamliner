@@ -13,10 +13,10 @@ The constraints are material but tractable:
 - The current Streamliner trusted session-binding path is Copilot CLI hook based and does not automatically carry over to SDK-managed sessions.
 - Browser progress must be an allowlisted SDK event projection, not a raw event or terminal stream.
 - Cancellation can be modeled with SDK abort/server stop APIs, but it is not yet proven equivalent to pressing cancel in interactive Copilot CLI.
-- True one-way terminal takeover from SDK-created session state is unproven and must be prototyped before the runtime contract promises it.
+- Visible terminal takeover from SDK-created session state is verified via `copilot --resume <sdk-session-id>`; the runtime contract still needs explicit ownership-transfer and registry-rebinding semantics.
 - Cleanup-after-merge should be a deterministic managed lifecycle action, not a best-effort model prompt.
 
-This is not a clean "go" because takeover, hook substitution, and cancellation semantics need an explicit contract/prototype. It is not a no-go because the SDK already provides the core worker execution substrate and Streamliner is successfully using it for the riskiest launch-preparation step.
+This is not a clean "go" because hook substitution, cancellation semantics, and SDK-to-terminal ownership transfer still need an explicit contract/prototype. It is not a no-go because the SDK already provides the core worker execution substrate and Streamliner is successfully using it for the riskiest launch-preparation step.
 
 ## Evidence Basis and Confidence
 
@@ -28,6 +28,7 @@ This is not a clean "go" because takeover, hook substitution, and cancellation s
 - Current Streamliner design intentionally uses SDK for PAW launch preparation but launches the actual worker as visible Copilot CLI (`docs/design/session-system.md:38-40`, `docs/design/session-system.md:66-82`).
 - Current observation and graph overlay behavior is registry-first and file/hook-observation based (`docs/design/decisions/001-observation-based-session-tracking.md:21-34`, `docs/design/decisions/004-session-registry-primary-surface.md:24-32`).
 - A related local PAL SDK implementation was inspected as a historical comparison. It uses older SDK versions (`@github/copilot-sdk` `0.2.0` in its production Donna package and `0.1.29` in its SDK POC), manually appends `AGENTS.md` to the session system message, and explicitly passes skill directories, MCP servers, custom tools, permission handlers, and user-input callbacks. Treat that as useful prior art for runtime design, not as proof that current SDK `0.3.0` still requires manual instruction loading.
+- User-provided verification confirms that a visible Copilot CLI can take over an SDK-created session with `copilot --resume <sdk-session-id>`. This upgrades takeover from an SDK unknown to a contract-integration task.
 - All `node_modules/@github/copilot-sdk/**` line citations refer to `@github/copilot-sdk` `0.3.0`; re-verify them after any SDK upgrade.
 
 ### Lightweight local verification
@@ -54,7 +55,7 @@ This verified local SDK startup and session metadata only. It did **not** valida
 | SDK can run full graph-node PAW implementation work | Medium | Same core capability as launch prep, but not dogfooded end-to-end as the worker runtime in this node. |
 | Browser-safe progress projection is feasible | High | SDK event schema plus existing Streamliner sanitized progress sink. |
 | CLI plugin hook behavior carries over | Low | Current hook transport is CLI-plugin-specific and explicitly ignores Streamliner SDK session-FS paths. |
-| One-way terminal takeover from SDK session state | Low | SDK exposes resume/session metadata, but no evidence yet that a visible Copilot CLI TUI can take ownership of an SDK-created session. |
+| One-way terminal takeover from SDK session state | High | User-provided verification confirms `copilot --resume <sdk-session-id>` can take over an SDK-created session; registry/ownership handoff remains design work. |
 | Cancellation equivalence with interactive CLI cancel | Medium-low | SDK has `abort()`, but equivalence to TUI cancel and tool subprocess interruption needs prototype evidence. |
 
 ## Capability Matrix
@@ -79,7 +80,7 @@ The PAL Donna runner provides useful comparative evidence because it is another 
 - **Instruction loading:** PAL's production SDK runner manually reads `AGENTS.md` from the worker cwd and appends it through `systemMessage`, with a size cap. That workaround was implemented against SDK `0.2.0`. Current Streamliner's SDK `0.3.0` type docs state that `.github/copilot-instructions.md`, `AGENTS.md`, and related custom instruction files are always loaded from `workingDirectory` regardless of `enableConfigDiscovery` (`node_modules/@github/copilot-sdk/dist/types.d.ts:958-968`). Therefore #61 should verify effective instruction loading in the current SDK and avoid double-injecting instructions if the runtime also appends Streamliner launch guidance.
 - **Explicit context wiring:** PAL still explicitly passes `skillDirectories`, custom tools, MCP servers, `onPermissionRequest`, and `onUserInputRequest` instead of relying only on ambient CLI behavior. This supports making Streamliner's managed-worker contract explicit about every context source it expects rather than assuming visible CLI parity.
 - **Progress and tools:** PAL projects SDK session events into bounded activity state and uses custom completion/blocker/update tools for managed work sessions. That reinforces Streamliner's recommendation to build an allowlisted progress projection and deterministic lifecycle actions rather than showing raw SDK events or relying on model prose.
-- **Terminal resume:** PAL treats `resumeSession` and `copilot --resume <session-id>` as useful session-continuation mechanisms, but it does not prove live ownership transfer from an SDK-managed worker to a visible terminal. That leaves the takeover finding unchanged: prototype true takeover or define first-cut takeover as a one-way handoff/fork.
+- **Terminal resume:** PAL treats `resumeSession` and `copilot --resume <session-id>` as useful session-continuation mechanisms. Combined with user-provided verification that `copilot --resume <sdk-session-id>` can take over an SDK-created session, this makes terminal takeover a supported path rather than an unknown. The remaining Streamliner work is lifecycle integration: opening the terminal, transferring runtime ownership, and rebinding registry observation.
 
 ## Plugin and Hook Parity
 
@@ -111,19 +112,19 @@ The SDK supports creating sessions, resuming sessions by id, listing session met
 
 Streamliner currently separates internal SDK helper sessions from observed builder sessions. The session-system design says internal launch SDK sessions persist under Streamliner's local state and are not intended to appear in the observed Sessions view (`docs/design/session-system.md:277-281`). The code has a custom SDK session filesystem rooted under `~/.streamliner/state/copilot-sdk-session-fs` with cleanup for residual default Copilot state (`src/session-registry/copilot-sdk-session-fs.ts:19-29`, `src/session-registry/copilot-sdk-session-fs.ts:97-184`).
 
-### Unknown
+### Terminal takeover confirmation
 
-The SDK exposes `getForegroundSessionId` and `setForegroundSessionId`, but only for a TUI+server mode connection (`node_modules/@github/copilot-sdk/README.md:162-168`, `node_modules/@github/copilot-sdk/dist/client.d.ts:345-378`). This does not prove that a standalone visible Copilot CLI terminal can open and take over an SDK-created session from Streamliner's managed server process.
+User-provided verification confirms that a standalone visible Copilot CLI terminal can take over an SDK-created session by running `copilot --resume <sdk-session-id>`. The SDK also exposes `getForegroundSessionId` and `setForegroundSessionId`, but those APIs are only for a TUI+server mode connection and are not required as proof of terminal takeover (`node_modules/@github/copilot-sdk/README.md:162-168`, `node_modules/@github/copilot-sdk/dist/client.d.ts:345-378`).
 
-### Takeover constraints for `managed-worker-runtime-contract`
+### Takeover contract requirements for `managed-worker-runtime-contract`
 
-The contract should not promise true CLI takeover until a prototype proves all of these:
+The contract can treat true CLI takeover by session id as available, but it still needs to define and verify these integration details:
 
 1. A managed SDK session can be created with the intended state root and worktree.
-2. A visible Copilot CLI terminal can resume or foreground that exact session id.
+2. A visible Copilot CLI terminal is launched with `copilot --resume <sdk-session-id>` for the exact managed session.
 3. After takeover, Streamliner can mark SDK ownership as transferred and stop issuing SDK prompts.
 4. Registry observation can bind the visible CLI session either through trusted hook signal or through nonce/session-state evidence.
-5. If true resume is impossible, the workstream must explicitly narrow "takeover" to a one-way handoff/fork: open a terminal with a summary/context prompt and mark the SDK session ended/interrupted.
+5. If terminal launch or resume fails in a specific environment, the runtime transitions to a blocked / needs-builder state rather than silently forking context into a new session.
 
 ## Browser-Facing Progress Stream
 
@@ -215,7 +216,7 @@ The downstream `managed-worker-runtime-contract` node should update project desi
 - Managed SDK registry identity and lifecycle states.
 - SDK progress stream/redaction contract.
 - SDK-managed interruption/cancellation.
-- One-way terminal takeover preconditions and fallback if true resume is unavailable.
+- One-way terminal takeover by session id, ownership transfer, and fallback behavior when terminal launch/resume fails.
 - Cleanup-after-merge as managed lifecycle action.
 
 A new decision record is optional but recommended if #61 makes one-way takeover or SDK-managed execution a durable cross-workstream constraint for Automated PAW Review Loop.
@@ -242,8 +243,8 @@ A new decision record is optional but recommended if #61 makes one-way takeover 
 
 ### Takeover
 
-- Prototype true visible CLI takeover before promising it.
-- If true resume is unavailable, explicitly reframe first-cut takeover as one-way handoff/fork and ask the builder to accept that narrower contract.
+- Treat visible CLI takeover via `copilot --resume <sdk-session-id>` as available and define the UI affordance that launches it.
+- Define failure handling for environment-specific terminal launch/resume failures; do not silently fork context into a new session.
 - After terminal takeover, SDK ownership should be terminally transferred; do not attempt SDK -> CLI -> SDK round-tripping.
 
 ### Launch selection
@@ -271,6 +272,6 @@ Before implementation hardens around SDK-managed workers, #61 or the first subst
 3. Verify installed Copilot CLI plugin discovery/loading, including plugin-provided commands, skills, hooks, or explicit absence thereof under SDK-managed sessions.
 4. Verify SDK progress events during real shell/file/Git/GitHub tool use and apply the redaction allowlist.
 5. Abort an active turn and a long-running shell command; record exact events and subprocess behavior.
-6. Attempt visible Copilot CLI takeover of the SDK-created session id/state root.
+6. Exercise visible Copilot CLI takeover of the SDK-created session id/state root and record the ownership and registry-observation transitions.
 7. Verify registry behavior for SDK-managed rows, then terminal-owned rows after takeover.
 8. Verify cleanup-after-merge with a disposable branch/worktree after PR merge.
