@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   SessionRegistryChangeEvent,
   SessionRegistryChangeListener,
+  SessionRegistryListOptions,
   SessionRegistryStore,
 } from "../session-registry-contract";
 import { SessionRegistryFileStore } from "../session-registry/file-store";
@@ -33,10 +34,14 @@ const activeServers: Server[] = [];
 
 class FakeSseRequest extends EventEmitter {
   private readonly lastEventId?: string;
+  readonly originalUrl: string;
+  readonly url: string;
 
-  constructor(lastEventId?: string) {
+  constructor(lastEventId?: string, url = "/api/sessions/events") {
     super();
     this.lastEventId = lastEventId;
+    this.originalUrl = url;
+    this.url = url;
   }
 
   header(name: string): string | undefined {
@@ -130,8 +135,9 @@ afterEach(async () => {
 function openEventStream(
   eventStream: SessionRegistryEventStream,
   lastEventId?: string,
+  url?: string,
 ): { req: FakeSseRequest; res: FakeSseResponse } {
-  const req = new FakeSseRequest(lastEventId);
+  const req = new FakeSseRequest(lastEventId, url);
   const res = new FakeSseResponse();
   eventStream.handle(
     req as unknown as Request,
@@ -237,7 +243,9 @@ function buildGraph(overrides: Record<string, unknown> = {}): Record<string, unk
   };
 }
 
-function createEventStreamStore(): {
+function createEventStreamStore(options: {
+  listSessions?: SessionRegistryStore["listSessions"];
+} = {}): {
   store: SessionRegistryStore;
   publishUpsert: (id: string, title: string) => void;
 } {
@@ -246,7 +254,7 @@ function createEventStreamStore(): {
     throw new Error("Unexpected SessionRegistryStore call in event stream test.");
   };
   const streamStore: SessionRegistryStore = {
-    listSessions: () => [],
+    listSessions: options.listSessions ?? (() => []),
     getSession: unsupportedStoreCall,
     upsertSession: unsupportedStoreCall,
     attachObservedSession: unsupportedStoreCall,
@@ -1005,6 +1013,35 @@ describe("createStreamlinerApiApp", () => {
       const fallback = openEventStream(eventStream, String(replayFromId));
       expect(fallback.res.body()).toContain("event: snapshot");
       fallback.req.emit("close");
+    } finally {
+      eventStream.close();
+    }
+  });
+
+  it("filters session event snapshots with the stream query", () => {
+    let receivedOptions: SessionRegistryListOptions | undefined;
+    const { store } = createEventStreamStore({
+      listSessions: (options) => {
+        receivedOptions = options;
+        return [];
+      },
+    });
+    const eventStream = new SessionRegistryEventStream(store);
+    try {
+      const stream = openEventStream(
+        eventStream,
+        undefined,
+        "/api/sessions/events?includeArchived=true&repo=null&workstreamId=session-launching-and-tracking&nodeId=graph-node-session-status-ui&text=waiting",
+      );
+      expect(stream.res.body()).toContain("event: snapshot");
+      expect(receivedOptions).toEqual({
+        includeArchived: true,
+        repo: null,
+        workstreamId: "session-launching-and-tracking",
+        nodeId: "graph-node-session-status-ui",
+        text: "waiting",
+      });
+      stream.req.emit("close");
     } finally {
       eventStream.close();
     }

@@ -638,6 +638,8 @@ describe("App sessions route", () => {
   it(
     "renders bound session status on graph nodes and links to scoped Sessions",
     async () => {
+      MockEventSource.instances = [];
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
       const graph = buildWorkstreamGraph({
         id: "session-launching-and-tracking",
         title: "Session launching and tracking",
@@ -756,6 +758,29 @@ describe("App sessions route", () => {
       expect(graphNode.textContent).toContain("waiting for you");
       expect(graphNode.textContent).toContain("2 sessions");
       expect(graphNode.textContent).not.toContain("Manual bound session");
+      const graphSessionSource = MockEventSource.instances.find(
+        (source) =>
+          source.url ===
+          "/api/sessions/events?workstreamId=session-launching-and-tracking",
+      );
+      expect(graphSessionSource).toBeDefined();
+      const initialSessionRequests = fetchMock.mock.calls.filter(
+        ([input]) =>
+          requestPath(input as RequestInfo | URL) ===
+          "/api/sessions?workstreamId=session-launching-and-tracking",
+      ).length;
+      act(() => {
+        graphSessionSource?.emit("snapshot", { sessions: [boundSessions[0]] });
+      });
+      await flushReact();
+      expect(graphNode.textContent).toContain("1 session");
+      expect(
+        fetchMock.mock.calls.filter(
+          ([input]) =>
+            requestPath(input as RequestInfo | URL) ===
+            "/api/sessions?workstreamId=session-launching-and-tracking",
+        ),
+      ).toHaveLength(initialSessionRequests);
       const quietNode = findCanvasNode(container, "Quiet graph task");
       expect(quietNode.textContent).not.toContain("No bound sessions");
       expect(quietNode.textContent).not.toContain("Loading sessions");
