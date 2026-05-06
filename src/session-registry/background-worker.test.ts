@@ -397,6 +397,63 @@ describe("SessionRegistryBackgroundWorker", () => {
     );
   });
 
+  it("indexes PAW artifacts from durable launch metadata without a claim record", async () => {
+    const registryRoot = createRootDir("streamliner-session-worker-registry-");
+    const sessionRoot = createRootDir("streamliner-session-worker-state-");
+    const workDir = join(
+      createRootDir("streamliner-paw-work-"),
+      ".paw",
+      "work",
+      "durable-paw-launch",
+    );
+    mkdirSync(workDir, { recursive: true });
+    writeFileSync(
+      join(workDir, "WorkflowContext.md"),
+      [
+        "Work Title: Durable PAW Launch",
+        "Work ID: durable-paw-launch",
+        "Workflow Identity: paw-lite",
+      ].join("\n"),
+      "utf8",
+    );
+    writeFileSync(join(workDir, "Plan.md"), "# Plan\n", "utf8");
+
+    const store = new SessionRegistryFileStore({ rootDir: registryRoot });
+    store.upsertSession({
+      id: "durable-launched-paw",
+      title: "Durable launched PAW",
+      cwd: "C:\\repo",
+      origin: { kind: "launched", launchClaimId: "claim-pruned" },
+      graphBinding: null,
+      pawLaunch: {
+        workId: "durable-paw-launch",
+        workTitle: "Durable PAW Launch",
+        workflowKind: "paw-lite",
+        pawWorkDir: workDir,
+        workflowContextPath: join(workDir, "WorkflowContext.md"),
+        streamlinerContextPath: join(workDir, "streamliner", "context.md"),
+      },
+    });
+    const worker = new SessionRegistryBackgroundWorker(store, {
+      sessionRoot,
+      now: () => new Date("2026-05-05T13:05:00.000Z"),
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    });
+
+    await worker.runCycle();
+
+    expect(store.getSession("durable-launched-paw")?.pawWorkflow).toEqual(
+      expect.objectContaining({
+        status: "recognized",
+        stage: "planning",
+        workflowKind: "paw-lite",
+        workId: "durable-paw-launch",
+        workTitle: "Durable PAW Launch",
+        workDir,
+      }),
+    );
+  });
+
   it("waits for five more user turns before refreshing a ready summary", async () => {
     const registryRoot = createRootDir("streamliner-session-worker-registry-");
     const sessionRoot = createRootDir("streamliner-session-worker-state-");

@@ -16,6 +16,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
 import {
+  type LaunchedSessionRegistryUpsertInput,
   type ObservedSessionRegistryUpsertInput,
   SESSION_REGISTRY_CHANGE_EVENT_KINDS,
   type SessionRegistryBuilderLifecycleStatus,
@@ -70,6 +71,7 @@ import {
   type SessionRegistryOriginKind,
   type SessionRegistryPawArtifactEvidence,
   type SessionRegistryPawArtifactKind,
+  type SessionRegistryPawLaunch,
   type SessionRegistryPawWorkflow,
   type SessionRegistryPawWorkflowDiagnosticCode,
   type SessionRegistryPawWorkflowKind,
@@ -141,6 +143,10 @@ const SESSION_REGISTRY_UPSERT_BASE_KEYS = [
   "origin",
   "lifecycleStatus",
   "graphBinding",
+] as const;
+const LAUNCHED_SESSION_UPSERT_KEYS = [
+  ...SESSION_REGISTRY_UPSERT_BASE_KEYS,
+  "pawLaunch",
 ] as const;
 const OBSERVED_SESSION_UPSERT_KEYS = [
   ...SESSION_REGISTRY_UPSERT_BASE_KEYS,
@@ -681,6 +687,12 @@ function isObservedUpsertInput(
   return input.origin.kind === "observed";
 }
 
+function isLaunchedUpsertInput(
+  input: SessionRegistryUpsertInput,
+): input is LaunchedSessionRegistryUpsertInput {
+  return input.origin.kind === "launched";
+}
+
 function parseBuilderLifecycleStatus(
   value: unknown,
   fieldName: string,
@@ -1124,6 +1136,38 @@ function normalizePawWorkflow(
   };
 }
 
+function normalizePawLaunch(
+  value: unknown,
+  fieldName: string,
+): SessionRegistryPawLaunch | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (!isJsonObject(value)) {
+    throw new Error(`Expected ${fieldName} to be an object or null.`);
+  }
+  const workflowKind = hasOwn(value, "workflowKind")
+    ? ensureString(value.workflowKind, `${fieldName}.workflowKind`)
+    : "unknown";
+  if (!isPawWorkflowKind(workflowKind)) {
+    throw new Error(`Unsupported ${fieldName}.workflowKind "${workflowKind}".`);
+  }
+  return {
+    workId: ensureString(value.workId, `${fieldName}.workId`),
+    workTitle: ensureString(value.workTitle, `${fieldName}.workTitle`),
+    workflowKind,
+    pawWorkDir: ensureString(value.pawWorkDir, `${fieldName}.pawWorkDir`),
+    workflowContextPath: ensureOptionalString(
+      value.workflowContextPath,
+      `${fieldName}.workflowContextPath`,
+    ),
+    streamlinerContextPath: ensureOptionalString(
+      value.streamlinerContextPath,
+      `${fieldName}.streamlinerContextPath`,
+    ),
+  };
+}
+
 function inferLegacyTitleSource(value: {
   title: string;
   cwd: string;
@@ -1349,8 +1393,8 @@ export function parseSessionRegistryUpsertInput(value: unknown): SessionRegistry
     };
   }
 
-  ensureAllowedKeys(value, "input", SESSION_REGISTRY_UPSERT_BASE_KEYS);
   if (origin.kind === "manual") {
+    ensureAllowedKeys(value, "input", SESSION_REGISTRY_UPSERT_BASE_KEYS);
     return {
       ...common,
       origin,
@@ -1365,9 +1409,15 @@ export function parseSessionRegistryUpsertInput(value: unknown): SessionRegistry
     };
   }
 
+  ensureAllowedKeys(value, "input", LAUNCHED_SESSION_UPSERT_KEYS);
   return {
     ...common,
     origin,
+    ...(hasOwn(value, "pawLaunch")
+      ? {
+          pawLaunch: normalizePawLaunch(value.pawLaunch, "input.pawLaunch"),
+        }
+      : {}),
     ...(hasOwn(value, "lifecycleStatus")
       ? {
           lifecycleStatus: parseCreateLifecycleStatus(
@@ -1480,8 +1530,9 @@ function validateStoredRecord(
       return {
         ...(rawRecord.graphBinding as JsonObject),
         ...typedGraphBinding,
-        } as SessionRegistryGraphBinding;
-      })(),
+      } as SessionRegistryGraphBinding;
+    })(),
+    pawLaunch: normalizePawLaunch(rawRecord.pawLaunch, `${filePath}.pawLaunch`),
     aiSummary: ensureOptionalString(rawRecord.aiSummary, `${filePath}.aiSummary`),
     aiSummaryModel: ensureOptionalString(rawRecord.aiSummaryModel, `${filePath}.aiSummaryModel`),
     aiSummaryUpdatedAt: ensureOptionalString(
@@ -1652,6 +1703,7 @@ function validateIndexEntry(
     tags: ensureStringArray(rawEntry.tags, `${fieldName}.tags`),
     originKind,
     graphBinding: ensureOptionalGraphBinding(rawEntry.graphBinding, `${fieldName}.graphBinding`),
+    pawLaunch: normalizePawLaunch(rawEntry.pawLaunch, `${fieldName}.pawLaunch`),
     aiSummary: ensureOptionalString(rawEntry.aiSummary, `${fieldName}.aiSummary`),
     aiSummaryModel: ensureOptionalString(rawEntry.aiSummaryModel, `${fieldName}.aiSummaryModel`),
     aiSummaryUpdatedAt: ensureOptionalString(
@@ -1803,6 +1855,7 @@ function buildIndex(records: Iterable<StoredSessionRegistryRecord>): SessionRegi
     tags: cloneValue(record.tags),
     originKind: record.origin.kind,
     graphBinding: record.graphBinding ? cloneValue(record.graphBinding) : null,
+    pawLaunch: record.pawLaunch ? cloneValue(record.pawLaunch) : null,
     aiSummary: record.aiSummary,
     aiSummaryModel: record.aiSummaryModel,
     aiSummaryUpdatedAt: record.aiSummaryUpdatedAt,
@@ -1880,6 +1933,7 @@ function matchesText(
     | "derivedBranch"
     | "derivedWorktreePath"
     | "derivedGithubRefs"
+    | "pawLaunch"
     | "pawWorkflow"
   >,
   text: string,
@@ -1900,6 +1954,14 @@ function matchesText(
         ...record.pawWorkflow.diagnostics,
       ]
     : [];
+  const pawLaunchHaystacks = record.pawLaunch
+    ? [
+        record.pawLaunch.workId,
+        record.pawLaunch.workTitle,
+        record.pawLaunch.workflowKind,
+        record.pawLaunch.pawWorkDir,
+      ]
+    : [];
   const haystacks = [
     record.title,
     record.description,
@@ -1911,6 +1973,7 @@ function matchesText(
     record.derivedWorktreePath ?? "",
     ...refs,
     ...pawWorkflowHaystacks,
+    ...pawLaunchHaystacks,
     ...record.tags,
   ];
   return haystacks.some((value) => value.toLowerCase().includes(text));
@@ -2078,6 +2141,9 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       let nextPawWorkflow = latestRecord?.pawWorkflow
         ? cloneValue(latestRecord.pawWorkflow)
         : null;
+      let nextPawLaunch = latestRecord?.pawLaunch
+        ? cloneValue(latestRecord.pawLaunch)
+        : null;
       let nextTrustedSignalSource = latestRecord?.trustedSignalSource ?? null;
       let nextTrustedStartedAt = latestRecord?.trustedStartedAt ?? null;
       let nextTrustedEndedAt = latestRecord?.trustedEndedAt ?? null;
@@ -2131,6 +2197,9 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
           : cloneValue(DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE);
         nextPawWorkflow = latestRecord?.pawWorkflow
           ? cloneValue(latestRecord.pawWorkflow)
+          : null;
+        nextPawLaunch = latestRecord?.pawLaunch
+          ? cloneValue(latestRecord.pawLaunch)
           : null;
         nextTrustedSignalSource =
           Object.prototype.hasOwnProperty.call(validatedInput, "trustedSignalSource")
@@ -2187,6 +2256,20 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         nextPawWorkflow = latestRecord?.pawWorkflow
           ? cloneValue(latestRecord.pawWorkflow)
           : null;
+        if (isLaunchedUpsertInput(validatedInput)) {
+          nextPawLaunch = Object.prototype.hasOwnProperty.call(
+            validatedInput,
+            "pawLaunch",
+          )
+            ? validatedInput.pawLaunch
+              ? cloneValue(validatedInput.pawLaunch)
+              : null
+            : latestRecord?.pawLaunch
+              ? cloneValue(latestRecord.pawLaunch)
+              : null;
+        } else {
+          nextPawLaunch = null;
+        }
         nextTrustedSignalSource = null;
         nextTrustedStartedAt = null;
         nextTrustedEndedAt = null;
@@ -2218,6 +2301,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         tags: nextTags,
         origin: cloneValue(validatedInput.origin),
         graphBinding: nextGraphBinding,
+        pawLaunch: nextPawLaunch,
         aiSummary: latestRecord?.aiSummary ?? null,
         aiSummaryModel: latestRecord?.aiSummaryModel ?? null,
         aiSummaryUpdatedAt: latestRecord?.aiSummaryUpdatedAt ?? null,
@@ -2707,6 +2791,9 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         pawWorkflow: existingRecord?.pawWorkflow
           ? cloneValue(existingRecord.pawWorkflow)
           : null,
+        pawLaunch: existingRecord?.pawLaunch
+          ? cloneValue(existingRecord.pawLaunch)
+          : null,
         trustedSignalSource: signalSource,
         trustedStartedAt:
           appliesStart
@@ -3156,6 +3243,11 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
           ? cloneValue(observed.pawWorkflow)
           : reserved.pawWorkflow
             ? cloneValue(reserved.pawWorkflow)
+            : null,
+        pawLaunch: reserved.pawLaunch
+          ? cloneValue(reserved.pawLaunch)
+          : observed.pawLaunch
+            ? cloneValue(observed.pawLaunch)
             : null,
         trustedSignalSource: observed.trustedSignalSource,
         trustedStartedAt: observed.trustedStartedAt,

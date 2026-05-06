@@ -29,6 +29,7 @@ function buildSession(
     tags: [],
     originKind: "manual",
     graphBinding: null,
+    pawLaunch: null,
     copilotSessionId: null,
     aiSummary: null,
     aiSummaryModel: null,

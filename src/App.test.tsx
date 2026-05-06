@@ -31,6 +31,7 @@ function buildSession(
     tags: ["wave-2", "registry"],
     originKind: "manual",
     graphBinding: null,
+    pawLaunch: null,
     copilotSessionId: null,
     aiSummary: null,
     aiSummaryModel: null,

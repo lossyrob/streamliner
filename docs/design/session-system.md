@@ -1,7 +1,7 @@
 ---
 kind: design-doc
 status: draft
-last_updated: 2026-05-05
+last_updated: 2026-05-06
 update_semantics: rewrite-in-place
 authoritative_for: "Session launching, lifecycle, registry contract, tracking, and runtime overlay"
 scope_tags:
@@ -360,7 +360,7 @@ Beyond the core lifecycle state, the session watcher derives additional fields f
 
 ### PAW Artifact Workflow Enrichment
 
-`pawWorkflow` is a workflow-enrichment projection, not a liveness signal. It is updated by the session-registry background worker through the derived-state patch path, so builder-owned fields and trusted activity evidence are not rewritten by artifact scans. Launch-claim lineage metadata is the preferred source for a PAW work directory (`pawWorkDir`). When no launch claim supplies a work directory, Streamliner walks upward from `derivedWorktreePath ?? cwd`, looks for `.paw/work/*`, and only links automatically when exactly one candidate exists.
+`pawWorkflow` is a workflow-enrichment projection, not a liveness signal. It is updated by the session-registry background worker through the derived-state patch path, so builder-owned fields and trusted activity evidence are not rewritten by artifact scans. Durable launch metadata on the registry row (`pawLaunch.pawWorkDir`) is the preferred source for Streamliner-launched PAW sessions, because launch-claim files are retained only temporarily and `graphBinding` may be cleared after a failed or cancelled claim. If durable metadata is absent, the worker falls back to launch-claim lineage metadata when the claim is still available. When neither launch source supplies a work directory, Streamliner walks upward from `derivedWorktreePath ?? cwd`, looks for `.paw/work/*`, and only links automatically when exactly one candidate exists.
 
 The scanner is intentionally coarse and evidence-oriented. It inspects bounded directory entries under the PAW work directory and classifies durable files by path:
 
@@ -456,6 +456,7 @@ Each registry entry is a persisted `SessionRegistryRecord`. The stored lifecycle
 | `lastSeenAt` | ISO 8601 string or `null` | yes | Observation | Last observed activity timestamp; `null` for never-observed manual entries. |
 | `activityStatus`, `activityStatusUpdatedAt` | status + ISO 8601 string or `null` | yes | Observation | Coarse liveness/attention status retained for compatibility with existing My Sessions and future graph-node consumers. |
 | `activityEvidence` | object | yes | Observation | Privacy-preserving evidence behind `activityStatus`: `statusReason`, `confidence`, `diagnostics`, `pendingInputRequest`, `pendingInputRequestCount`, last user/assistant turn timestamps, scanned user/assistant-turn counts, and event scan offset/size/mtime metadata. Scan metadata is a snapshot from the most recent material interpreted-state change, not an incremental cursor and not refreshed for bookkeeping-only scans. Manual or never-observed rows use neutral defaults (`confidence: none`, no diagnostics) rather than degraded diagnostics. |
+| `pawLaunch` | object or `null` | yes | Launch pipeline | Durable PAW launch metadata captured when Streamliner starts a PAW-backed node: work id/title, workflow kind, PAW work directory, and context artifact paths. This field remains on the session row after launch-claim retention cleanup and lets `pawWorkflow` resolve the exact work directory even if `graphBinding` is later cleared. |
 | `pawWorkflow` | object or `null` | yes | Artifact indexer | Derived PAW workflow enrichment. `null` means no PAW work directory has been linked. Non-null records include `status`, `stage`, `workflowKind`, work identity/path hints, candidate directories for ambiguous cases, recognized/unknown artifact evidence, latest artifact path/mtime, scan timestamp, and diagnostics. This field does not drive or replace `activityStatus`. |
 | `createdAt`, `updatedAt` | ISO 8601 string | yes | Streamliner | Record creation and last persisted update timestamps. |
 | `tags` | string[] | yes | Builder | Freeform labels; default `[]`. |

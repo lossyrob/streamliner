@@ -35,6 +35,7 @@ function buildRecord(
     tags: [],
     origin: { kind: "manual" },
     graphBinding: null,
+    pawLaunch: null,
     aiSummary: null,
     aiSummaryModel: null,
     aiSummaryUpdatedAt: null,

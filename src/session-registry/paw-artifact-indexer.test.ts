@@ -59,6 +59,7 @@ function buildSession(overrides: Partial<SessionRegistryListItem> = {}): Session
     activityStatusUpdatedAt: null,
     activityEvidence: DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
     pawWorkflow: null,
+    pawLaunch: null,
     trustedSignalSource: null,
     trustedStartedAt: null,
     trustedEndedAt: null,

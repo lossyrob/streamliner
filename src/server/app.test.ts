@@ -178,6 +178,7 @@ function buildStreamRecord(id: string, title: string): SessionRegistryRecord {
     tags: [],
     origin: { kind: "manual" },
     graphBinding: null,
+    pawLaunch: null,
     aiSummary: null,
     aiSummaryModel: null,
     aiSummaryUpdatedAt: null,

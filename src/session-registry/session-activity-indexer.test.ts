@@ -33,6 +33,7 @@ function buildSession(overrides: Partial<SessionRegistryListItem> = {}): Session
     tags: [],
     originKind: "observed",
     graphBinding: null,
+    pawLaunch: null,
     copilotSessionId: "activity-session",
     aiSummary: null,
     aiSummaryModel: null,

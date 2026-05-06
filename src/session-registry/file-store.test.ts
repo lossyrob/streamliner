@@ -1176,6 +1176,23 @@ setTimeout(() => process.exit(0), holdMs + 50);
       store.upsertSession(missingObservedCopilotSessionId),
     ).toThrow(/copilotSessionId/);
 
+    const manualWithPawLaunch = {
+      title: "Manual with PAW launch metadata",
+      cwd: "C:\\repo",
+      origin: { kind: "manual" },
+      pawLaunch: {
+        workId: "work-1",
+        workTitle: "Work 1",
+        workflowKind: "paw-lite",
+        pawWorkDir: "C:\\repo\\.paw\\work\\work-1",
+        workflowContextPath: null,
+        streamlinerContextPath: null,
+      },
+    } as unknown as SessionRegistryUpsertInput;
+    expect(() =>
+      store.upsertSession(manualWithPawLaunch),
+    ).toThrow(/Unexpected input field\(s\): pawLaunch/);
+
     const manual = store.upsertSession({
       title: "Manual row",
       cwd: "C:\\repo",

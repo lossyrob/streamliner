@@ -466,6 +466,11 @@ export class SessionRegistryBackgroundWorker {
   }
 
   private expectedPawWorkDirFor(session: SessionRegistryListItem): string | null {
+    const launchedPawWorkDir = session.pawLaunch?.pawWorkDir;
+    if (launchedPawWorkDir && launchedPawWorkDir.trim().length > 0) {
+      return launchedPawWorkDir;
+    }
+
     const launchClaimId = session.graphBinding?.launchClaimId;
     if (!launchClaimId || !this.claimStore) {
       return null;

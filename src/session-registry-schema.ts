@@ -303,6 +303,15 @@ export interface SessionRegistryPawWorkflow {
   diagnostics: SessionRegistryPawWorkflowDiagnosticCode[];
 }
 
+export interface SessionRegistryPawLaunch {
+  workId: string;
+  workTitle: string;
+  workflowKind: SessionRegistryPawWorkflowKind;
+  pawWorkDir: string;
+  workflowContextPath: string | null;
+  streamlinerContextPath: string | null;
+}
+
 export interface ManualSessionRegistryOrigin {
   kind: "manual";
 }
@@ -341,6 +350,7 @@ export interface SessionRegistryRecord {
   tags: string[];
   origin: SessionRegistryOrigin;
   graphBinding: SessionRegistryGraphBinding | null;
+  pawLaunch: SessionRegistryPawLaunch | null;
   aiSummary: string | null;
   aiSummaryModel: string | null;
   aiSummaryUpdatedAt: string | null;
@@ -389,6 +399,7 @@ export interface SessionRegistryIndexEntry {
   tags: string[];
   originKind: SessionRegistryOriginKind;
   graphBinding: SessionRegistryGraphBinding | null;
+  pawLaunch: SessionRegistryPawLaunch | null;
   aiSummary: string | null;
   aiSummaryModel: string | null;
   aiSummaryUpdatedAt: string | null;

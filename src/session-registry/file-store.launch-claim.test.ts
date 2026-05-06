@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { SessionRegistryPatch } from "../session-registry-contract";
+import type { SessionRegistryPawLaunch } from "../session-registry-schema";
 import { SessionRegistryConflictError, SessionRegistryFileStore } from "./file-store";
 
 const createdRoots: string[] = [];
@@ -47,7 +48,7 @@ describe("SessionRegistryFileStore — launch-claim atomic primitives", () => {
 
   function makeReservedRow(
     launchClaimId: string,
-    overrides: { id?: string; cwd?: string } = {},
+    overrides: { id?: string; cwd?: string; pawLaunch?: SessionRegistryPawLaunch | null } = {},
   ) {
     return store.upsertSession({
       id: overrides.id ?? `reserved-${launchClaimId}`,
@@ -63,6 +64,7 @@ describe("SessionRegistryFileStore — launch-claim atomic primitives", () => {
         nodeId: "node-1",
         launchClaimId,
       },
+      pawLaunch: overrides.pawLaunch ?? null,
     });
   }
 
@@ -273,7 +275,16 @@ describe("SessionRegistryFileStore — launch-claim atomic primitives", () => {
 
   describe("fuseObservedRowIntoReservedRow", () => {
     it("transfers observation fields onto reserved row and deletes observed row", () => {
-      const reserved = makeReservedRow("claim-D");
+      const reserved = makeReservedRow("claim-D", {
+        pawLaunch: {
+          workId: "work-D",
+          workTitle: "Work D",
+          workflowKind: "paw-lite",
+          pawWorkDir: "C:/repo/work/.paw/work/work-D",
+          workflowContextPath: "C:/repo/work/.paw/work/work-D/WorkflowContext.md",
+          streamlinerContextPath: "C:/repo/work/.paw/work/work-D/streamliner/context.md",
+        },
+      });
       const observed = store.upsertSession({
         id: "observed-D",
         title: "Observed",
@@ -309,12 +320,16 @@ describe("SessionRegistryFileStore — launch-claim atomic primitives", () => {
           nodeId: "node-1",
           launchClaimId: "claim-D",
         });
+        expect(result.reservedRecord.pawLaunch?.pawWorkDir).toBe(
+          "C:/repo/work/.paw/work/work-D",
+        );
         expect(result.deletedObservedId).toBe(observed.id);
       }
 
       expect(store.getSession(observed.id)).toBeNull();
       const fused = store.getSession(reserved.id);
       expect(fused?.copilotSessionId).toBe("copilot-XYZ");
+      expect(fused?.pawLaunch?.pawWorkDir).toBe("C:/repo/work/.paw/work/work-D");
     });
 
     it("rejects fusion when reserved row already attached to a different session", () => {
