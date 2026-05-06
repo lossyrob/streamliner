@@ -29,6 +29,7 @@ This is not a clean "go" because hook substitution, cancellation semantics, and 
 - Current observation and graph overlay behavior is registry-first and file/hook-observation based (`docs/design/decisions/001-observation-based-session-tracking.md:21-34`, `docs/design/decisions/004-session-registry-primary-surface.md:24-32`).
 - A related local PAL SDK implementation was inspected as a historical comparison. It uses older SDK versions (`@github/copilot-sdk` `0.2.0` in its production Donna package and `0.1.29` in its SDK POC), manually appends `AGENTS.md` to the session system message, and explicitly passes skill directories, MCP servers, custom tools, permission handlers, and user-input callbacks. Treat that as useful prior art for runtime design, not as proof that current SDK `0.3.0` still requires manual instruction loading.
 - User-provided verification confirms that a visible Copilot CLI can take over an SDK-created session with `copilot --resume <sdk-session-id>`. This upgrades takeover from an SDK unknown to a contract-integration task.
+- Follow-up spikes under `spikes/sdk-managed-worker-runtime/` created a reusable SDK harness and locally exercised context loading, progress events, cancellation, takeover metadata, plugin discovery, and disposable-repo PR production. Detailed findings are recorded in `spikes/sdk-managed-worker-runtime/FINDINGS.md`.
 - All `node_modules/@github/copilot-sdk/**` line citations refer to `@github/copilot-sdk` `0.3.0`; re-verify them after any SDK upgrade.
 
 ### Lightweight local verification
@@ -52,11 +53,11 @@ This verified local SDK startup and session metadata only. It did **not** valida
 | SDK can create/resume/control sessions | High | SDK README/types plus local no-prompt smoke probe. |
 | SDK can expose tools, skills, MCP/config discovery, custom agents, and permissions | High | SDK types and existing Streamliner PAW launch use. |
 | SDK can power PAW launch initialization | High | Existing production code path. |
-| SDK can run full graph-node PAW implementation work | Medium | Same core capability as launch prep, but not dogfooded end-to-end as the worker runtime in this node. |
-| Browser-safe progress projection is feasible | High | SDK event schema plus existing Streamliner sanitized progress sink. |
-| CLI plugin hook behavior carries over | Low | Current hook transport is CLI-plugin-specific and explicitly ignores Streamliner SDK session-FS paths. |
+| SDK can run full graph-node PAW implementation work | Medium-high | Local dogfood spike proved branch/commit/draft-PR production in a disposable repo; real Streamliner PAW PR dogfood remains. |
+| Browser-safe progress projection is feasible | High | SDK event schema, existing Streamliner sanitized progress sink, and local progress spike. |
+| Installed plugin/hook surfaces can load in SDK sessions | Medium | Local plugin-discovery spike observed plugin MCP servers, Donna/WorkIQ tools, skills, and hook events; Streamliner claim-binding semantics still need plugin-specific verification. |
 | One-way terminal takeover from SDK session state | High | User-provided verification confirms `copilot --resume <sdk-session-id>` can take over an SDK-created session; registry/ownership handoff remains design work. |
-| Cancellation equivalence with interactive CLI cancel | Medium-low | SDK has `abort()`, but equivalence to TUI cancel and tool subprocess interruption needs prototype evidence. |
+| Cancellation equivalence with interactive CLI cancel | Medium | Local cancellation spike observed `abort`, idle-with-aborted, and successful follow-up after an in-flight PowerShell tool start; OS-level child process termination still needs process-level verification. |
 
 ## Capability Matrix
 
@@ -67,11 +68,11 @@ This verified local SDK startup and session metadata only. It did **not** valida
 | GitHub operations/auth | SDK client/session config supports logged-in-user auth, client-level tokens, and per-session `gitHubToken` identity (`node_modules/@github/copilot-sdk/dist/types.d.ts:100-115`, `node_modules/@github/copilot-sdk/dist/types.d.ts:1072-1082`). Existing PAW init path can use GitHub context. | Practical parity likely; verify with end-to-end PR dogfood | Runtime must inherit the same GitHub auth context as CLI or explicitly set per-session identity. |
 | Custom Streamliner tools | SDK supports custom tools (`node_modules/@github/copilot-sdk/README.md:428-453`) and Streamliner already registers `save_streamliner_context` and `complete_paw_init` in the launch SDK session (`src/server/launch-preparation.ts:1370-1377`). | Parity plus improved control | Managed runtime should add Streamliner-owned lifecycle/progress tools sparingly; deterministic API actions should not depend on model calls. |
 | Skills | SDK supports `skillDirectories`, disabled skills, custom agents, and skill events (`node_modules/@github/copilot-sdk/dist/types.d.ts:1042-1065`, `node_modules/@github/copilot-sdk/dist/generated/session-events.d.ts:2444-2499`). Streamliner launch prep preloads `paw-init` in a custom agent (`src/server/launch-preparation.ts:1377-1387`). | Near parity | Runtime must pass the same skill dirs as CLI and record loaded/disabled skill assumptions. |
-| Configured MCP/plugin context | SDK supports config discovery and explicit MCP server config (`node_modules/@github/copilot-sdk/dist/types.d.ts:958-968`, `node_modules/@github/copilot-sdk/dist/types.d.ts:1036-1040`). Event schema reports MCP server statuses (`node_modules/@github/copilot-sdk/dist/generated/session-events.d.ts:4507-4548`). | Near parity for MCP; plugin hooks differ | Runtime should use SDK config discovery or explicit config and surface MCP status in progress/diagnostics. |
+| Configured MCP/plugin context | SDK supports config discovery and explicit MCP server config (`node_modules/@github/copilot-sdk/dist/types.d.ts:958-968`, `node_modules/@github/copilot-sdk/dist/types.d.ts:1036-1040`). Event schema reports MCP server statuses (`node_modules/@github/copilot-sdk/dist/generated/session-events.d.ts:4507-4548`). | Near parity for MCP; plugin claim binding remains Streamliner-specific | Runtime should use SDK config discovery or explicit config and surface MCP status in progress/diagnostics. |
 | Copilot instructions/system prompt | SDK supports append/customize/replace system message modes (`node_modules/@github/copilot-sdk/README.md:551-623`) and Streamliner launch context treats source docs as untrusted data (`src/server/launch-context.ts:560-589`). | Better control than CLI prompt-only launch | Runtime contract must preserve existing Copilot instructions and append Streamliner launch guidance without replacing guardrails. |
 | PAW workflow execution | Streamliner already drives PAW init through SDK with `paw-init`, custom tools, `approveAll`, progress events, and artifact verification (`src/server/launch-preparation.ts:1370-1451`). PAW workflow status is artifact-derived, not control-state-derived (`docs/design/decisions/008-paw-artifacts-for-workflow-status.md:21-43`). | Strong evidence for PAW init; likely for PAW implementation | First managed runtime should dogfood a real PAW node before defaulting broadly. |
 | Session persistence | SDK exposes persistent `workspacePath`, `resumeSession`, `listSessions`, and `deleteSession` (`node_modules/@github/copilot-sdk/README.md:126-160`, `node_modules/@github/copilot-sdk/README.md:625-652`). Streamliner also has custom SDK session FS plumbing (`src/session-registry/copilot-sdk-session-fs.ts:97-184`). | SDK-native persistence exists | Contract must decide whether managed workers use default `.copilot` session-state, Streamliner-owned SDK state, or a hybrid. |
-| PR production | No direct end-to-end managed worker PR test in this node. The SDK can expose tools/GitHub auth and current PAW init can prepare a CLI worker. | Plausible, not proven | Gate implementation behind first dogfood PR before defaulting SDK-managed runtime. |
+| PR production | Local dogfood spike produced a disposable-repo branch, commit, and PR draft through an SDK-managed worker. The SDK can expose tools/GitHub auth and current PAW init can prepare a CLI worker. | Local substrate proven; remote Streamliner PR still to dogfood | Gate implementation behind first real Streamliner PR before defaulting SDK-managed runtime. |
 
 ## Related PAL SDK Prior Art
 
@@ -100,7 +101,9 @@ The current Streamliner plugin hook script is explicitly oriented around Copilot
 
 **Constraint:** SDK-managed workers should not rely on the existing Copilot CLI plugin hook as their trust/admission layer. The managed runtime should write explicit SDK lifecycle/progress records itself and only use CLI hooks after terminal takeover transfers ownership to a visible CLI process.
 
-**Unknown:** This research did not prove whether installed Copilot CLI plugins under the normal Copilot plugin cache are discovered and loaded for SDK-created sessions in the same way they are for visible CLI worker sessions. The SDK confirms hook callbacks, skill directories, config discovery, and MCP configuration, but the downstream prototype must verify plugin discovery and plugin-provided commands/skills for SDK-managed workers.
+**What still needs Streamliner-specific verification:** The original research did not prove whether the installed Streamliner Copilot CLI plugin is discovered and loaded for SDK-created sessions in the same way it is for visible CLI worker sessions. The SDK confirms hook callbacks, skill directories, config discovery, and MCP configuration, but the downstream prototype must verify Streamliner plugin discovery and plugin-provided claim-binding behavior for SDK-managed workers.
+
+**Follow-up spike evidence:** A local `plugin-discovery` run created an SDK session and observed plugin MCP servers (`donna`, `workiq`), plugin-provided Donna/WorkIQ tool names, loaded skills, and hook start/end events for `sessionStart`, `userPromptSubmitted`, `postToolUse`, `agentStop`, and `sessionEnd`. This reduces plugin discovery risk, but it does not replace Streamliner-specific verification of launch claim binding, installed Streamliner plugin behavior, and any environment variables/hooks the existing Streamliner plugin expects.
 
 **Permission risk:** Do not inherit launch preparation's broad `approveAll` permission handler as the unattended worker-runtime default. The runtime contract should make permission policy an explicit node-launch choice and distinguish launch-prep trust from autonomous implementation trust.
 
@@ -131,6 +134,8 @@ The contract can treat true CLI takeover by session id as available, but it stil
 ### Safe event taxonomy
 
 Streamliner should project SDK events through an allowlist and redact before persistence or browser display. Current launch prep already emits sanitized progress rather than raw SDK events: session id/workspace path, compact assistant message text, tool name/call id, tool success, and typed failures (`src/server/launch-preparation.ts:855-897`, `src/server/launch-preparation.ts:1393-1451`).
+
+The local `event-progress` spike confirmed this projection is practical during real SDK work: it captured custom progress tools, file/shell/Git activity, plugin MCP status, loaded skills, hook start/end metadata, tool starts/completions, and final assistant messages while excluding raw reasoning, full prompts, tool arguments/results, and terminal output from the browser-facing projection.
 
 | SDK/source event | Browser-facing shape | Safe fields | Explicit exclusions |
 |---|---|---|---|
@@ -163,6 +168,8 @@ The SDK provides three relevant controls:
 The event schema also includes `abort` and `session.idle` with `aborted?: boolean` (`node_modules/@github/copilot-sdk/dist/generated/session-events.d.ts:363-392`, `node_modules/@github/copilot-sdk/dist/generated/session-events.d.ts:1991-2023`).
 
 Whether `abort()` propagates cancellation to spawned shell/tool subprocesses -- the practical behavior builders expect from pressing cancel in an interactive Copilot CLI session -- is unverified by this research. The runtime contract must treat in-flight tool subprocess interruption as an open question and design `cancel_failed` / `needs_manual_takeover` around that uncertainty.
+
+A local cancellation spike started an SDK turn that invoked a PowerShell `Start-Sleep` shell tool, called `session.abort()`, observed an `abort` event and `session.idle` with `aborted: true`, and then successfully sent a follow-up prompt. The redacted event stream did not show a `tool.execution_complete` for the in-flight PowerShell call after abort. That is enough to treat SDK abort as a usable session-level interruption, but not enough to prove OS-level subprocess termination without a process-level check.
 
 **Constraint:** Treat SDK cancellation as a managed-runtime state transition, not as equivalent to interactive CLI cancel until prototyped. The runtime contract should define:
 
@@ -269,9 +276,9 @@ Before implementation hardens around SDK-managed workers, #61 or the first subst
 
 1. Create an SDK-managed PAW-lite worker that performs a small real repository change and opens a PR.
 2. Verify configured skills, MCP servers, GitHub auth, and Copilot instructions inside that worker, including whether SDK auto-loaded `.github/copilot-instructions.md` / `AGENTS.md` and whether any runtime `systemMessage` append caused duplicate instructions.
-3. Verify installed Copilot CLI plugin discovery/loading, including plugin-provided commands, skills, hooks, or explicit absence thereof under SDK-managed sessions.
+3. Verify Streamliner plugin discovery/loading specifically, including plugin-provided commands, skills, hooks, launch-claim environment handling, or explicit absence thereof under SDK-managed sessions.
 4. Verify SDK progress events during real shell/file/Git/GitHub tool use and apply the redaction allowlist.
-5. Abort an active turn and a long-running shell command; record exact events and subprocess behavior.
+5. Extend the cancellation spike with process-level observation for an active long-running shell command; record exact SDK events and whether child subprocesses are terminated.
 6. Exercise visible Copilot CLI takeover of the SDK-created session id/state root and record the ownership and registry-observation transitions.
 7. Verify registry behavior for SDK-managed rows, then terminal-owned rows after takeover.
 8. Verify cleanup-after-merge with a disposable branch/worktree after PR merge.
