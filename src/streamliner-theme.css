@@ -3279,7 +3279,6 @@ a.sl-session-context-ref {
 }
 
 .sl-node-session-count,
-.sl-node-session-empty,
 .sl-node-session-link {
   min-width: 0;
   font-size: 10px;
@@ -3290,10 +3289,6 @@ a.sl-session-context-ref {
 .sl-node-session-count {
   margin-left: auto;
   white-space: nowrap;
-}
-
-.sl-node-session-empty {
-  color: var(--sl-text-dim);
 }
 
 .sl-node-session-link {

@@ -88,28 +88,8 @@ function NodeSessionIndicator({
   }
 
   const status = data.sessionStatus;
-  if (data.sessionStatusState === "loading") {
-    return (
-      <div className="sl-node-session inactive">
-        <span className="sl-node-session-empty">Loading sessions…</span>
-      </div>
-    );
-  }
-
-  if (data.sessionStatusState === "error") {
-    return (
-      <div className="sl-node-session inactive">
-        <span className="sl-node-session-empty">Session status unavailable</span>
-      </div>
-    );
-  }
-
   if (!status) {
-    return (
-      <div className="sl-node-session inactive">
-        <span className="sl-node-session-empty">No bound sessions</span>
-      </div>
-    );
+    return null;
   }
 
   const primarySession = status.primarySession;

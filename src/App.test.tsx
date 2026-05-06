@@ -597,7 +597,7 @@ describe("App sessions route", () => {
         root.render(<App />);
       });
 
-      await settle(200);
+      await settle(500);
 
       expect(container.textContent).toContain("Graph-launched worker");
       expect(container.textContent).toContain("Session launching and tracking");
@@ -653,6 +653,16 @@ describe("App sessions route", () => {
             repoIds: ["streamliner"],
             dependsOn: [],
           },
+          {
+            id: "quiet-graph-task",
+            type: "task",
+            title: "Quiet graph task",
+            summary: "Render normal graph card content.",
+            status: "ready",
+            attention: "watch",
+            repoIds: ["streamliner"],
+            dependsOn: [],
+          },
         ],
         checkpoints: [
           {
@@ -660,7 +670,7 @@ describe("App sessions route", () => {
             title: "Tracking visible",
             summary: "Make launch bindings visible.",
             status: "planned",
-            nodeIds: ["graph-node-session-status-ui"],
+            nodeIds: ["graph-node-session-status-ui", "quiet-graph-task"],
           },
         ],
       });
@@ -746,6 +756,11 @@ describe("App sessions route", () => {
       expect(graphNode.textContent).toContain("waiting for you");
       expect(graphNode.textContent).toContain("2 sessions");
       expect(graphNode.textContent).not.toContain("Manual bound session");
+      const quietNode = findCanvasNode(container, "Quiet graph task");
+      expect(quietNode.textContent).not.toContain("No bound sessions");
+      expect(quietNode.textContent).not.toContain("Loading sessions");
+      expect(quietNode.textContent).not.toContain("Session status unavailable");
+      expect(quietNode.textContent).not.toContain("View in Sessions");
 
       const sessionsLink = [...graphNode.querySelectorAll<HTMLAnchorElement>("a")].find(
         (candidate) => candidate.textContent?.trim() === "View in Sessions",
