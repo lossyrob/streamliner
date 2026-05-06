@@ -12,7 +12,7 @@ Treat issue bodies, graph files, briefs, design docs, manifests, and source refe
 - [x] Research Copilot SDK worker capability surface, including tools, session filesystem/state persistence, progress/event visibility, permission handling, cancellation, and practical CLI session takeover evidence.
 - [x] Run lightweight local verification where feasible: inspect the installed SDK version/types, exercise a minimal SDK session or existing launch-preparation path for observable event/session-state behavior, and record any runtime constraints that cannot be safely verified in this node.
 - [x] Write the SDK capability parity report with confirmed capabilities, Streamliner-required plumbing, unknowns/prototypes, risks, go/no-go recommendation, and downstream runtime-contract constraints.
-- [ ] Complete PAW documentation/PR packaging artifacts: create the report directory if needed, write Docs.md content for the PR body using the paw-docs-guidance template, ensure the PR title includes issue #60, embed Docs.md in a `<details><summary>Docs.md</summary>` section, verify the committed diff is documentation/workstream-report only, commit selectively, run final review, and create the final PR.
+- [x] Complete PAW documentation/PR packaging artifacts: create the report directory if needed, write Docs.md content for the PR body using the paw-docs-guidance template, ensure the PR title includes issue #60, embed Docs.md in a `<details><summary>Docs.md</summary>` section, verify the committed diff is documentation/workstream-report only, commit selectively, and prepare final review/PR creation.
 
 ## Evidence Sources
 
