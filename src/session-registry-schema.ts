@@ -294,7 +294,6 @@ export interface SessionRegistryPawWorkflow {
   workId: string | null;
   workTitle: string | null;
   workDir: string | null;
-  candidateWorkDirs: string[];
   artifacts: SessionRegistryPawArtifactEvidence[];
   artifactCount: number;
   latestArtifactPath: string | null;

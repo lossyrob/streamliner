@@ -47,3 +47,9 @@ Copilot session state remains the source for session liveness and attention stat
 - What exact PAW artifact patterns should define each coarse status label for full PAW, PAW lite, and PAW Review workflows?
 - How much artifact content, if any, should Streamliner inspect beyond filenames, frontmatter, and known section headings?
 - Should artifact-derived status distinguish "ready for next activity" from "latest artifact present", or leave next-action interpretation to the builder/orchestrator?
+
+## 2026-05-06 update: explicit PAW work directories only
+
+Artifact-derived status applies only when Streamliner launch metadata or retained launch-claim lineage names the exact PAW work directory for a launched session. The session watcher does not discover `.paw/work/*` candidates from arbitrary session cwd values, because that produced false-positive labels for ordinary observed sessions and ambiguous labels when multiple PAW work directories existed.
+
+Ambiguous candidate-set diagnostics are legacy registry data from earlier builds, not a current indexing mode. Current rendering shows a `🐾 PAW ...` label only for recognized Streamliner-launched PAW sessions and omits the label when no explicit work directory is available.

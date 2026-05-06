@@ -425,7 +425,6 @@ describe("SessionRegistryFileStore", () => {
         workId: "paw-artifact-status-observation",
         workTitle: "PAW Artifact Status Observation",
         workDir: "C:\\repo\\.paw\\work\\paw-artifact-status-observation",
-        candidateWorkDirs: [],
         artifacts: [
           {
             path: "Plan.md",

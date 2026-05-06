@@ -1908,22 +1908,6 @@ a.sl-action-btn {
   color: var(--sl-accent);
 }
 
-.sl-session-row-context-chip.paw-workflow.ambiguous,
-.sl-pill.paw-workflow.ambiguous {
-  background: var(--sl-amber-bg);
-  border-color: rgba(174, 111, 30, 0.2);
-  color: var(--sl-amber);
-}
-
-.sl-session-row-context-chip.paw-workflow.unavailable,
-.sl-session-row-context-chip.paw-workflow.unknown,
-.sl-pill.paw-workflow.unavailable,
-.sl-pill.paw-workflow.unknown {
-  background: rgba(20, 60, 130, 0.05);
-  border-color: rgba(16, 34, 60, 0.08);
-  color: var(--sl-text-muted);
-}
-
 a.sl-session-row-context-chip,
 a.sl-session-context-ref {
   text-decoration: none;
@@ -2733,18 +2717,7 @@ a.sl-session-context-ref {
   border-color: var(--sl-accent-border);
 }
 
-.sl-session-paw-summary.ambiguous {
-  background: rgba(255, 183, 77, 0.12);
-  border-color: rgba(174, 111, 30, 0.22);
-}
-
-.sl-session-paw-summary.unavailable,
-.sl-session-paw-summary.unknown {
-  background: rgba(16, 34, 60, 0.04);
-}
-
 .sl-session-paw-diagnostics,
-.sl-session-paw-candidates,
 .sl-session-paw-artifacts {
   display: flex;
   flex-wrap: wrap;
@@ -2752,7 +2725,6 @@ a.sl-session-context-ref {
 }
 
 .sl-session-paw-diagnostics code,
-.sl-session-paw-candidates code,
 .sl-session-paw-artifacts code {
   background: rgba(16, 34, 60, 0.06);
   border: 1px solid rgba(16, 34, 60, 0.08);

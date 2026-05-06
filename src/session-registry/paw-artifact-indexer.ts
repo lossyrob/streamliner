@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { basename, dirname, join, parse, relative, resolve } from "node:path";
+import { basename, join, relative, resolve } from "node:path";
 
 import type { SessionRegistryListItem } from "../session-registry-contract";
 import type {
@@ -14,7 +14,6 @@ import type { SessionRegistryDerivedStatePatch } from "./file-store";
 
 const DEFAULT_MAX_ENTRIES = 250;
 const DEFAULT_MAX_DEPTH = 5;
-const MAX_REPORTED_CANDIDATES = 5;
 
 const STAGE_RANK: Record<SessionRegistryPawWorkflowStage, number> = {
   init: 0,
@@ -25,7 +24,7 @@ const STAGE_RANK: Record<SessionRegistryPawWorkflowStage, number> = {
 };
 
 interface PawArtifactIndexOptions {
-  expectedWorkDir?: string | null;
+  expectedWorkDir: string;
   maxEntries?: number;
   now?: () => Date;
 }
@@ -341,7 +340,6 @@ function buildWorkflow(
     workId: identity.workId,
     workTitle: identity.workTitle,
     workDir,
-    candidateWorkDirs: [],
     artifacts: materialArtifacts,
     artifactCount:
       scan.artifacts.length > 0 ? scan.artifacts.length : scan.unknownArtifacts.length,
@@ -364,7 +362,6 @@ function unavailableWorkflow(
     workId: workDir ? basename(workDir) || null : null,
     workTitle: null,
     workDir,
-    candidateWorkDirs: [],
     artifacts: [],
     artifactCount: 0,
     latestArtifactPath: null,
@@ -372,63 +369,6 @@ function unavailableWorkflow(
     scannedAt,
     diagnostics,
   };
-}
-
-function ambiguousWorkflow(
-  candidateWorkDirs: string[],
-  scannedAt: string,
-): SessionRegistryPawWorkflow {
-  return {
-    status: "ambiguous",
-    stage: null,
-    workflowKind: "unknown",
-    workId: null,
-    workTitle: null,
-    workDir: null,
-    candidateWorkDirs: candidateWorkDirs.slice(0, MAX_REPORTED_CANDIDATES),
-    artifacts: [],
-    artifactCount: 0,
-    latestArtifactPath: null,
-    latestArtifactMtimeMs: null,
-    scannedAt,
-    diagnostics: ["paw_artifact_ambiguous"],
-  };
-}
-
-function discoverPawWorkRoot(startPath: string): string | null {
-  let current = resolve(startPath);
-  const root = parse(current).root;
-
-  while (true) {
-    const candidate = join(current, ".paw", "work");
-    if (isDirectory(candidate)) {
-      return candidate;
-    }
-    if (existsSync(join(current, ".git"))) {
-      return null;
-    }
-    if (current === root) {
-      return null;
-    }
-    current = dirname(current);
-  }
-}
-
-function discoverCandidateWorkDirs(session: SessionRegistryListItem): string[] | null {
-  const start = session.derivedWorktreePath ?? session.cwd;
-  const pawWorkRoot = discoverPawWorkRoot(start);
-  if (!pawWorkRoot) {
-    return null;
-  }
-
-  try {
-    return readdirSync(pawWorkRoot, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => join(pawWorkRoot, entry.name))
-      .sort((left, right) => left.localeCompare(right));
-  } catch {
-    return [];
-  }
 }
 
 function shouldPatch(
@@ -440,44 +380,26 @@ function shouldPatch(
 
 export function indexPawWorkflow(
   session: SessionRegistryListItem,
-  options: PawArtifactIndexOptions = {},
+  options: PawArtifactIndexOptions,
 ): SessionRegistryDerivedStatePatch | null {
   const scannedAt = (options.now ?? (() => new Date()))().toISOString();
-  const explicitWorkDir = options.expectedWorkDir?.trim() || null;
+  const explicitWorkDir = options.expectedWorkDir.trim();
 
-  let nextWorkflow: SessionRegistryPawWorkflow | null = null;
-  if (explicitWorkDir) {
-    const workDir = resolve(explicitWorkDir);
-    nextWorkflow = isDirectory(workDir)
-      ? buildWorkflow(
-          workDir,
-          collectArtifacts(workDir, {
-            maxEntries: options.maxEntries ?? DEFAULT_MAX_ENTRIES,
-            maxDepth: DEFAULT_MAX_DEPTH,
-          }),
-          scannedAt,
-        )
-      : unavailableWorkflow(workDir, scannedAt);
-  } else {
-    const candidateWorkDirs = discoverCandidateWorkDirs(session);
-    if (candidateWorkDirs === null) {
-      nextWorkflow = null;
-    } else if (candidateWorkDirs.length === 0) {
-      nextWorkflow = unavailableWorkflow(null, scannedAt);
-    } else if (candidateWorkDirs.length > 1) {
-      nextWorkflow = ambiguousWorkflow(candidateWorkDirs, scannedAt);
-    } else {
-      const [workDir] = candidateWorkDirs;
-      nextWorkflow = buildWorkflow(
-        workDir,
-        collectArtifacts(workDir, {
-          maxEntries: options.maxEntries ?? DEFAULT_MAX_ENTRIES,
-          maxDepth: DEFAULT_MAX_DEPTH,
-        }),
-        scannedAt,
-      );
-    }
-  }
+  const nextWorkflow: SessionRegistryPawWorkflow | null = explicitWorkDir
+    ? (() => {
+        const workDir = resolve(explicitWorkDir);
+        return isDirectory(workDir)
+          ? buildWorkflow(
+              workDir,
+              collectArtifacts(workDir, {
+                maxEntries: options.maxEntries ?? DEFAULT_MAX_ENTRIES,
+                maxDepth: DEFAULT_MAX_DEPTH,
+              }),
+              scannedAt,
+            )
+          : unavailableWorkflow(workDir, scannedAt);
+      })()
+    : null;
 
   return shouldPatch(session.pawWorkflow ?? null, nextWorkflow)
     ? { pawWorkflow: nextWorkflow }

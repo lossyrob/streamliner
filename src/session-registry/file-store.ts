@@ -1111,10 +1111,6 @@ function normalizePawWorkflow(
     workId: ensureOptionalString(value.workId, `${fieldName}.workId`),
     workTitle: ensureOptionalString(value.workTitle, `${fieldName}.workTitle`),
     workDir: ensureOptionalString(value.workDir, `${fieldName}.workDir`),
-    candidateWorkDirs: ensureStringArray(
-      value.candidateWorkDirs ?? [],
-      `${fieldName}.candidateWorkDirs`,
-    ),
     artifacts,
     artifactCount: ensureNonNegativeInteger(
       value.artifactCount ?? artifacts.length,

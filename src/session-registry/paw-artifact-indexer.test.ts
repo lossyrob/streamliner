@@ -157,92 +157,7 @@ describe("indexPawWorkflow", () => {
     );
   });
 
-  it("reports ambiguous fallback discovery instead of choosing a work directory", () => {
-    const root = createRoot();
-    const repo = join(root, "repo");
-    mkdirSync(join(repo, ".paw", "work", "one"), { recursive: true });
-    mkdirSync(join(repo, ".paw", "work", "two"), { recursive: true });
-
-    const patch = indexPawWorkflow(buildSession({ cwd: join(repo, "src") }), {
-      now: () => new Date("2026-05-05T13:05:00.000Z"),
-    });
-
-    expect(patch?.pawWorkflow).toEqual(
-      expect.objectContaining({
-        status: "ambiguous",
-        stage: null,
-        workDir: null,
-        candidateWorkDirs: [
-          join(repo, ".paw", "work", "one"),
-          join(repo, ".paw", "work", "two"),
-        ],
-        diagnostics: ["paw_artifact_ambiguous"],
-      }),
-    );
-  });
-
-  it("rediscovers fallback candidates instead of reusing a stale persisted work directory", () => {
-    const root = createRoot();
-    const repo = join(root, "repo");
-    const staleWorkDir = join(root, "old", ".paw", "work", "stale-work");
-    const currentWorkDir = join(repo, ".paw", "work", "current-work");
-    writeFile(
-      join(staleWorkDir, "Plan.md"),
-      "# Stale plan\n",
-      new Date("2026-05-05T12:00:00.000Z"),
-    );
-    writeFile(
-      join(currentWorkDir, "WorkflowContext.md"),
-      [
-        "Work Title: Current Work",
-        "Work ID: current-work",
-        "Workflow Identity: paw-lite",
-      ].join("\n"),
-      new Date("2026-05-05T13:00:00.000Z"),
-    );
-
-    const patch = indexPawWorkflow(
-      buildSession({
-        derivedWorktreePath: repo,
-        pawWorkflow: {
-          status: "recognized",
-          stage: "planning",
-          workflowKind: "paw-lite",
-          workId: "stale-work",
-          workTitle: null,
-          workDir: staleWorkDir,
-          candidateWorkDirs: [],
-          artifacts: [],
-          artifactCount: 0,
-          latestArtifactPath: null,
-          latestArtifactMtimeMs: null,
-          scannedAt: "2026-05-05T12:05:00.000Z",
-          diagnostics: [],
-        },
-      }),
-      { now: () => new Date("2026-05-05T13:05:00.000Z") },
-    );
-
-    expect(patch?.pawWorkflow).toEqual(
-      expect.objectContaining({
-        status: "recognized",
-        workId: "current-work",
-        workTitle: "Current Work",
-        workDir: currentWorkDir,
-      }),
-    );
-  });
-
-  it("does not walk past the repository root when discovering PAW work directories", () => {
-    const root = createRoot();
-    const repo = join(root, "repo");
-    mkdirSync(join(root, ".paw", "work", "parent-work"), { recursive: true });
-    mkdirSync(join(repo, ".git"), { recursive: true });
-
-    expect(indexPawWorkflow(buildSession({ cwd: join(repo, "src") }))).toBeNull();
-  });
-
-  it("reports unknown layout when a single candidate has no known artifacts", () => {
+  it("reports unknown layout when an explicit work directory has no known artifacts", () => {
     const root = createRoot();
     const repo = join(root, "repo");
     const workDir = join(repo, ".paw", "work", "unknown-layout");
@@ -252,7 +167,8 @@ describe("indexPawWorkflow", () => {
       new Date("2026-05-05T13:01:00.000Z"),
     );
 
-    const patch = indexPawWorkflow(buildSession({ derivedWorktreePath: repo }), {
+    const patch = indexPawWorkflow(buildSession(), {
+      expectedWorkDir: workDir,
       now: () => new Date("2026-05-05T13:05:00.000Z"),
     });
 
@@ -298,11 +214,7 @@ describe("indexPawWorkflow", () => {
     expect(patch?.pawWorkflow?.diagnostics).toContain("paw_artifact_scan_truncated");
   });
 
-  it("leaves non-PAW sessions without discovery noise", () => {
-    const root = createRoot();
-    const repo = join(root, "repo");
-    mkdirSync(repo, { recursive: true });
-
-    expect(indexPawWorkflow(buildSession({ cwd: repo }))).toBeNull();
+  it("returns null when no explicit work directory is provided", () => {
+    expect(indexPawWorkflow(buildSession(), { expectedWorkDir: "" })).toBeNull();
   });
 });

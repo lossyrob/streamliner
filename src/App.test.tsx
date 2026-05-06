@@ -656,7 +656,6 @@ describe("App sessions route", () => {
                 workTitle: "PAW Artifact Status Observation",
                 workDir:
                   "C:\\repo\\.paw\\work\\paw-artifact-status-observation",
-                candidateWorkDirs: [],
                 artifacts: [
                   {
                     path: "Plan.md",
@@ -692,7 +691,6 @@ describe("App sessions route", () => {
                 workId: "interview-packet",
                 workTitle: "Interview Packet",
                 workDir: "C:\\repo\\.paw\\work\\interview-packet",
-                candidateWorkDirs: [],
                 artifacts: [],
                 artifactCount: 0,
                 latestArtifactPath: null,
@@ -712,10 +710,6 @@ describe("App sessions route", () => {
                 workId: null,
                 workTitle: null,
                 workDir: null,
-                candidateWorkDirs: [
-                  "C:\\repo\\.paw\\work\\one",
-                  "C:\\repo\\.paw\\work\\two",
-                ],
                 artifacts: [],
                 artifactCount: 0,
                 latestArtifactPath: null,

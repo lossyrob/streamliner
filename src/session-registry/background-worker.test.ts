@@ -487,7 +487,6 @@ describe("SessionRegistryBackgroundWorker", () => {
         workId: "interview-packet",
         workTitle: "Interview Packet",
         workDir,
-        candidateWorkDirs: [],
         artifacts: [],
         artifactCount: 0,
         latestArtifactPath: null,
@@ -527,10 +526,6 @@ describe("SessionRegistryBackgroundWorker", () => {
         workId: null,
         workTitle: null,
         workDir: null,
-        candidateWorkDirs: [
-          "C:\\repo\\.paw\\work\\one",
-          "C:\\repo\\.paw\\work\\two",
-        ],
         artifacts: [],
         artifactCount: 0,
         latestArtifactPath: null,

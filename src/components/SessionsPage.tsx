@@ -668,21 +668,7 @@ function getActivityStatusDescription(session: SessionRegistryListItem): string 
 }
 
 type PawWorkflowSummary = NonNullable<SessionRegistryListItem["pawWorkflow"]>;
-
-function pawWorkflowStatusClass(status: PawWorkflowSummary["status"]): string {
-  switch (status) {
-    case "recognized":
-      return "recognized";
-    case "ambiguous":
-      return "ambiguous";
-    case "unavailable":
-      return "unavailable";
-    case "unknown":
-      return "unknown";
-    default:
-      return "unknown";
-  }
-}
+type VisiblePawWorkflowSummary = PawWorkflowSummary & { status: "recognized" };
 
 function pawWorkflowStageLabel(stage: PawWorkflowSummary["stage"]): string {
   switch (stage) {
@@ -712,36 +698,28 @@ function pawArtifactKindLabel(kind: PawWorkflowSummary["artifacts"][number]["kin
   }
 }
 
-function getPawWorkflowLabel(workflow: PawWorkflowSummary): string {
-  if (workflow.status === "recognized") {
-    return `🐾 PAW ${pawWorkflowStageLabel(workflow.stage)}`;
-  }
-  return "🐾 PAW";
+function getPawWorkflowLabel(workflow: VisiblePawWorkflowSummary): string {
+  return `🐾 PAW ${pawWorkflowStageLabel(workflow.stage)}`;
 }
 
-function visiblePawWorkflow(session: SessionRegistryListItem): PawWorkflowSummary | null {
+function isRecognizedPawWorkflow(
+  workflow: PawWorkflowSummary,
+): workflow is VisiblePawWorkflowSummary {
+  return workflow.status === "recognized";
+}
+
+function visiblePawWorkflow(session: SessionRegistryListItem): VisiblePawWorkflowSummary | null {
   const workflow = session.pawWorkflow;
-  if (!workflow || session.originKind !== "launched" || workflow.status !== "recognized") {
+  if (!workflow || session.originKind !== "launched" || !isRecognizedPawWorkflow(workflow)) {
     return null;
   }
   return workflow;
 }
 
-function getPawWorkflowDescription(workflow: PawWorkflowSummary): string {
-  switch (workflow.status) {
-    case "recognized":
-      return `Artifact scan recognized ${workflow.artifactCount} PAW artifact${
-        workflow.artifactCount === 1 ? "" : "s"
-      }.`;
-    case "ambiguous":
-      return "Multiple PAW work directories matched this session; Streamliner did not choose between them.";
-    case "unavailable":
-      return "The expected PAW work directory is unavailable or no candidate artifacts were found.";
-    case "unknown":
-      return "A PAW work directory was found, but its artifact layout did not match known patterns.";
-    default:
-      return "PAW artifact status is not available.";
-  }
+function getPawWorkflowDescription(workflow: VisiblePawWorkflowSummary): string {
+  return `Artifact scan recognized ${workflow.artifactCount} PAW artifact${
+    workflow.artifactCount === 1 ? "" : "s"
+  }.`;
 }
 
 function formatPawArtifactMtime(value: number | null): string {
@@ -2422,9 +2400,7 @@ export function SessionsPage({
                               />
                               {rowPawWorkflow && (
                                 <span
-                                  className={`sl-session-row-context-chip paw-workflow ${pawWorkflowStatusClass(
-                                    rowPawWorkflow.status,
-                                  )}`}
+                                  className="sl-session-row-context-chip paw-workflow recognized"
                                   title={getPawWorkflowDescription(rowPawWorkflow)}
                                 >
                                   {getPawWorkflowLabel(rowPawWorkflow)}
@@ -2526,9 +2502,7 @@ export function SessionsPage({
                       )}
                       {selectedPawWorkflow && (
                         <span
-                          className={`sl-pill paw-workflow ${pawWorkflowStatusClass(
-                            selectedPawWorkflow.status,
-                          )}`}
+                          className="sl-pill paw-workflow recognized"
                           title={getPawWorkflowDescription(selectedPawWorkflow)}
                         >
                           {getPawWorkflowLabel(selectedPawWorkflow)}
@@ -3101,11 +3075,7 @@ function SessionOverview({
       {pawWorkflow && (
         <section className="sl-session-overview-section">
           <h3 className="sl-session-overview-heading">PAW workflow</h3>
-          <div
-            className={`sl-session-paw-summary ${pawWorkflowStatusClass(
-              pawWorkflow.status,
-            )}`}
-          >
+          <div className="sl-session-paw-summary recognized">
             <strong>{getPawWorkflowLabel(pawWorkflow)}</strong>
             <span>{getPawWorkflowDescription(pawWorkflow)}</span>
           </div>
@@ -3139,13 +3109,6 @@ function SessionOverview({
             <div className="sl-session-paw-diagnostics">
               {pawWorkflow.diagnostics.map((diagnostic) => (
                 <code key={diagnostic}>{diagnostic}</code>
-              ))}
-            </div>
-          )}
-          {pawWorkflow.candidateWorkDirs.length > 0 && (
-            <div className="sl-session-paw-candidates">
-              {pawWorkflow.candidateWorkDirs.map((candidate) => (
-                <code key={candidate}>{candidate}</code>
               ))}
             </div>
           )}
