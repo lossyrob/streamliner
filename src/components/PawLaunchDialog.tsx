@@ -175,7 +175,7 @@ function mergePromptProfiles(
 }
 
 async function loadPromptProfiles(): Promise<PawPromptProfile[]> {
-  const response = await fetch("/api/paw-launch-prompt-profiles");
+  const response = await fetch("/api/paw-launch-prompt-profiles", { cache: "no-store" });
   if (!response.ok) {
     throw new Error(responseErrorMessage(response, "Could not load prompt profiles."));
   }

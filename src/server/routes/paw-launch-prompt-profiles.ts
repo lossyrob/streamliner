@@ -149,6 +149,7 @@ export function createPawLaunchPromptProfilesRouter(options: {
   router.get("/paw-launch-prompt-profiles", async (_req, res, next) => {
     try {
       const document = await readDocument(profilesPath);
+      res.set("Cache-Control", "no-store");
       res.json({
         profiles: [...document.profiles].sort((left, right) => left.name.localeCompare(right.name)),
       });

@@ -358,6 +358,7 @@ describe("createStreamlinerApiApp", () => {
 
     await request(api.app)
       .get("/api/paw-launch-prompt-profiles")
+      .expect("Cache-Control", "no-store")
       .expect(200, { profiles: [] });
 
     const createResponse = await request(api.app)

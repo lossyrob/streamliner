@@ -1086,7 +1086,8 @@ describe("App sessions route", () => {
         if (path.startsWith("/api/node-launch-records?")) {
           return Promise.resolve(emptyNodeLaunchRecordResponse());
         }
-        if (path === "/api/paw-launch-prompt-profiles" && (!init || init.method === "GET")) {
+        if (path === "/api/paw-launch-prompt-profiles" && (!init?.method || init.method === "GET")) {
+          expect(init?.cache).toBe("no-store");
           return profileListPromise;
         }
         if (path === "/api/paw-launch-prompt-profiles" && init?.method === "POST") {
@@ -1164,7 +1165,8 @@ describe("App sessions route", () => {
         if (path.startsWith("/api/node-launch-records?")) {
           return emptyNodeLaunchRecordResponse();
         }
-        if (path === "/api/paw-launch-prompt-profiles" && (!init || init.method === "GET")) {
+        if (path === "/api/paw-launch-prompt-profiles" && (!init?.method || init.method === "GET")) {
+          expect(init?.cache).toBe("no-store");
           return jsonResponse({
             profiles: [{
               id: "final-pr-only",
