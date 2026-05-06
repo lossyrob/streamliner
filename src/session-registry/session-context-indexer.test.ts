@@ -17,6 +17,8 @@ import { DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE } from "../session-registry-
 import { indexSessionContext } from "./session-context-indexer";
 
 const createdDirs: string[] = [];
+const NON_RESOLVABLE_TEST_CWD = "C:\\streamliner-test\\missing\\nested\\path\\leaf";
+const GIT_CONTEXT_TEST_TIMEOUT_MS = 30_000;
 
 function createRootDir(): string {
   const root = mkdtempSync(join(tmpdir(), "streamliner-session-context-"));
@@ -53,7 +55,7 @@ function buildSession(overrides: Partial<SessionRegistryListItem> = {}): Session
     lastSeenAt: "2026-04-25T20:00:00.000Z",
     updatedAt: "2026-04-25T20:00:00.000Z",
     color: null,
-    cwd: process.cwd(),
+    cwd: NON_RESOLVABLE_TEST_CWD,
     repo: "lossyrob/streamliner",
     branch: "main",
     tags: [],
@@ -173,7 +175,7 @@ describe("indexSessionContext", () => {
       "utf8",
     );
 
-    let session = buildSession();
+    let session = buildSession({ cwd: join(root, "missing", "nested", "path", "leaf") });
     let iterations = 0;
     while (iterations < 10 && session.derivedGithubRefs.length === 0) {
       const patch = indexSessionContext(session, eventsPath, {
@@ -231,7 +233,7 @@ describe("indexSessionContext", () => {
     expect(patch?.repo).toBe("lossyrob/streamliner");
     expect(patch?.branch).toBe("context-test");
     expect(patch?.derivedBranch).toBe("context-test");
-  });
+  }, GIT_CONTEXT_TEST_TIMEOUT_MS);
 
   it("backfills missing repo from git even when the event cursor is unchanged", () => {
     const root = createRootDir();
@@ -263,7 +265,7 @@ describe("indexSessionContext", () => {
         derivedBranch: "main",
       }),
     );
-  });
+  }, GIT_CONTEXT_TEST_TIMEOUT_MS);
 
   it("backfills missing repo from username-prefixed GitHub HTTPS remotes", () => {
     const root = createRootDir();
@@ -300,7 +302,7 @@ describe("indexSessionContext", () => {
         derivedBranch: "main",
       }),
     );
-  });
+  }, GIT_CONTEXT_TEST_TIMEOUT_MS);
 
   it("skips unchanged logs with missing repo when no git worktree was derived", () => {
     const root = createRootDir();

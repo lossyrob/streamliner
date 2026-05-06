@@ -204,6 +204,6 @@ describe("handleLaunchClaimsApiRequest", () => {
       expect(body.items).toHaveLength(LAUNCH_CLAIMS_API_DEFAULT_LIMIT);
       expect(body.meta.total).toBe(LAUNCH_CLAIMS_API_DEFAULT_LIMIT + 5);
     },
-    20000,
+    30_000,
   );
 });

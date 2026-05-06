@@ -13,6 +13,7 @@ import { computeEventsFingerprint, extractRecentUserTurns } from "./session-summ
 import { writeTrustedSessionSignalSpoolFile } from "./trusted-session-signals";
 
 const createdRoots: string[] = [];
+const NON_RESOLVABLE_TEST_CWD = "C:\\streamliner-test\\missing\\nested\\path\\leaf";
 
 function createRootDir(prefix: string): string {
   const root = mkdtempSync(join(tmpdir(), prefix));
@@ -39,7 +40,7 @@ function writeSessionStateFiles(
 function recordTrustedStart(
   store: SessionRegistryFileStore,
   sessionId: string,
-  cwd = "C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+  cwd = NON_RESOLVABLE_TEST_CWD,
 ): void {
   store.recordTrustedSessionSignal({
     event: "session.started",
@@ -198,7 +199,7 @@ describe("SessionRegistryBackgroundWorker", () => {
       "session-1",
       [
         "id: session-1",
-        "cwd: C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+        `cwd: ${NON_RESOLVABLE_TEST_CWD}`,
         "repository: lossyrob/streamliner",
         "branch: feature/manual-session-registry",
         "summary: Follow Paw-Lite Process",
@@ -259,7 +260,7 @@ describe("SessionRegistryBackgroundWorker", () => {
       "session-2",
       [
         "id: session-2",
-        "cwd: C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+        `cwd: ${NON_RESOLVABLE_TEST_CWD}`,
         "repository: lossyrob/streamliner",
         "branch: feature/manual-session-registry",
         "summary: Follow Paw-Lite Process",
@@ -299,7 +300,7 @@ describe("SessionRegistryBackgroundWorker", () => {
       "session-activity",
       [
         "id: session-activity",
-        "cwd: C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+        `cwd: ${NON_RESOLVABLE_TEST_CWD}`,
         "repository: lossyrob/streamliner",
         "branch: feature/manual-session-registry",
         "summary: Follow Paw-Lite Process",
@@ -555,7 +556,7 @@ describe("SessionRegistryBackgroundWorker", () => {
       "session-3",
       [
         "id: session-3",
-        "cwd: C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+        `cwd: ${NON_RESOLVABLE_TEST_CWD}`,
         "repository: lossyrob/streamliner",
         "branch: feature/manual-session-registry",
         "summary: Follow Paw-Lite Process",
@@ -652,7 +653,7 @@ describe("SessionRegistryBackgroundWorker", () => {
       "session-4",
       [
         "id: session-4",
-        "cwd: C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+        `cwd: ${NON_RESOLVABLE_TEST_CWD}`,
         "repository: lossyrob/streamliner",
         "branch: feature/manual-session-registry",
         "summary: Follow Paw-Lite Process",
@@ -671,7 +672,7 @@ describe("SessionRegistryBackgroundWorker", () => {
     store.upsertSession({
       id: "session-4",
       title: "Follow Paw-Lite Process",
-      cwd: "C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+      cwd: NON_RESOLVABLE_TEST_CWD,
       repo: "lossyrob/streamliner",
       branch: "feature/manual-session-registry",
       origin: { kind: "observed" },
