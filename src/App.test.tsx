@@ -31,6 +31,7 @@ function buildSession(
     tags: ["wave-2", "registry"],
     originKind: "manual",
     graphBinding: null,
+    pawLaunch: null,
     copilotSessionId: null,
     aiSummary: null,
     aiSummaryModel: null,
@@ -44,6 +45,7 @@ function buildSession(
     activityStatus: "unknown",
     activityStatusUpdatedAt: null,
     activityEvidence: DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
+    pawWorkflow: null,
     trustedSignalSource: null,
     trustedStartedAt: null,
     trustedEndedAt: null,
@@ -764,6 +766,105 @@ describe("App sessions route", () => {
       expect(container.textContent).toContain("Waiting graph worker");
       expect(container.textContent).toContain("Hiding 1 manual session");
       expect(container.textContent).not.toContain("Manual bound session");
+    },
+    15_000,
+  );
+
+  it(
+    "shows PAW workflow enrichment without changing the activity label",
+    async () => {
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path.startsWith("/api/sessions")) {
+          return jsonResponse([
+            buildSession({
+              id: "paw-session",
+              title: "PAW Artifact Status Observation",
+              originKind: "launched",
+              activityStatus: "waiting_for_input",
+              activityStatusUpdatedAt: "2026-05-05T13:06:00.000Z",
+              pawWorkflow: {
+                status: "recognized",
+                stage: "implementation",
+                workflowKind: "paw-lite",
+                workId: "paw-artifact-status-observation",
+                workTitle: "PAW Artifact Status Observation",
+                workDir: "C:\\repo\\.paw\\work\\paw-artifact-status-observation",
+                artifacts: [
+                  {
+                    path: "Plan.md",
+                    kind: "planning",
+                    stage: "planning",
+                    mtimeMs: 1_778_002_000_000,
+                  },
+                  {
+                    path: "implementation/phase-1.md",
+                    kind: "implementation",
+                    stage: "implementation",
+                    mtimeMs: 1_778_003_000_000,
+                  },
+                ],
+                artifactCount: 2,
+                latestArtifactPath: "implementation/phase-1.md",
+                latestArtifactMtimeMs: 1_778_003_000_000,
+                scannedAt: "2026-05-05T13:05:00.000Z",
+                diagnostics: [],
+              },
+            }),
+            buildSession({
+              id: "ordinary-session",
+              title: "Create Interview Packet For Silvia Vallet",
+              originKind: "observed",
+              trustedSignalSource: "copilot-cli-hook",
+              trustedStartedAt: "2026-05-05T13:00:00.000Z",
+              trustedLastSignalAt: "2026-05-05T13:00:00.000Z",
+              pawWorkflow: {
+                status: "recognized",
+                stage: "planning",
+                workflowKind: "paw-lite",
+                workId: "interview-packet",
+                workTitle: "Interview Packet",
+                workDir: "C:\\repo\\.paw\\work\\interview-packet",
+                artifacts: [],
+                artifactCount: 0,
+                latestArtifactPath: null,
+                latestArtifactMtimeMs: null,
+                scannedAt: "2026-05-05T13:05:00.000Z",
+                diagnostics: [],
+              },
+            }),
+          ]);
+        }
+        if (path === "/api/workstreams") {
+          return jsonResponse({ version: 1, migrationWarnings: [], workstreams: [] });
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState({}, "", "/sessions");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle();
+
+      const row = findSessionRow(container, "PAW Artifact Status Observation");
+      expect(row.textContent).toContain("waiting for you");
+      expect(row.textContent).toContain("🐾 PAW implementation");
+      const ordinaryRow = findSessionRow(container, "Create Interview Packet For Silvia Vallet");
+      expect(ordinaryRow.textContent).not.toContain("PAW planning");
+
+      act(() => {
+        row.click();
+      });
+      await settle();
+
+      expect(container.textContent).toContain("PAW workflow");
+      expect(container.textContent).toContain("paw-artifact-status-observation");
+      expect(container.textContent).toContain("implementation/phase-1.md");
+      expect(container.textContent).toContain(
+        "The latest Copilot event indicates the assistant turn ended",
+      );
     },
     15_000,
   );

@@ -19,6 +19,7 @@ import {
 } from "./session-summarizer";
 import { indexSessionContext } from "./session-context-indexer";
 import { indexSessionActivity } from "./session-activity-indexer";
+import { indexPawWorkflow } from "./paw-artifact-indexer";
 import {
   SessionRegistryFileStore,
   type SessionRegistryDerivedStatePatch,
@@ -65,6 +66,7 @@ interface SummarizerDependencies {
   }) => Promise<SummarizeSessionResult>;
   indexSessionContext: typeof indexSessionContext;
   indexSessionActivity: typeof indexSessionActivity;
+  indexPawWorkflow: typeof indexPawWorkflow;
 }
 
 export interface SessionRegistryBackgroundWorkerOptions {
@@ -185,6 +187,7 @@ export class SessionRegistryBackgroundWorker {
       summarizeSession: options.summarizer?.summarizeSession ?? summarizeSession,
       indexSessionContext: options.summarizer?.indexSessionContext ?? indexSessionContext,
       indexSessionActivity: options.summarizer?.indexSessionActivity ?? indexSessionActivity,
+      indexPawWorkflow: options.summarizer?.indexPawWorkflow ?? indexPawWorkflow,
     };
   }
 
@@ -296,6 +299,7 @@ export class SessionRegistryBackgroundWorker {
       }
       this.indexSessionActivities();
       this.indexSessionContexts();
+      this.indexSessionPawWorkflows();
       const candidates = this.collectSummaryCandidates().slice(0, this.maxConcurrentSummaries);
       await Promise.all(candidates.map((candidate) => this.summarizeCandidate(candidate)));
     } catch (error) {
@@ -436,6 +440,57 @@ export class SessionRegistryBackgroundWorker {
         );
       }
     }
+  }
+
+  private indexSessionPawWorkflows(): void {
+    const sessions = this.store.listSessions({ includeArchived: true });
+    for (const session of sessions) {
+      if (session.lifecycleStatus === "archived") {
+        continue;
+      }
+      try {
+        const expectedWorkDir = this.expectedPawWorkDirFor(session);
+        if (!expectedWorkDir) {
+          if (session.pawWorkflow) {
+            this.tryPatch(session.id, { pawWorkflow: null });
+          }
+          continue;
+        }
+        const patch = this.summarizer.indexPawWorkflow(session, {
+          expectedWorkDir,
+          now: this.now,
+        });
+        if (patch) {
+          this.tryPatch(session.id, patch);
+        }
+      } catch (error) {
+        this.logger.warn(
+          `[session-worker] PAW artifact indexing failed for ${session.id}`,
+          error,
+        );
+      }
+    }
+  }
+
+  private expectedPawWorkDirFor(session: SessionRegistryListItem): string | null {
+    if (session.originKind !== "launched") {
+      return null;
+    }
+
+    const launchedPawWorkDir = session.pawLaunch?.pawWorkDir;
+    if (launchedPawWorkDir && launchedPawWorkDir.trim().length > 0) {
+      return launchedPawWorkDir;
+    }
+
+    const launchClaimId = session.graphBinding?.launchClaimId;
+    if (!launchClaimId || !this.claimStore) {
+      return null;
+    }
+    const claim = this.claimStore.getClaim(launchClaimId);
+    const pawWorkDir = claim?.lineageMetadata?.pawWorkDir;
+    return typeof pawWorkDir === "string" && pawWorkDir.trim().length > 0
+      ? pawWorkDir
+      : null;
   }
 
   private async summarizeCandidate(candidate: SummaryCandidate): Promise<void> {

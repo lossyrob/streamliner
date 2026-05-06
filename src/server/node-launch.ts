@@ -1,5 +1,6 @@
 import type { LaunchClaim, LaunchClaimStatus } from "../launch-claim-schema";
 import type { LaunchClaimStore } from "../launch-claim-contract";
+import type { SessionRegistryPawLaunch } from "../session-registry-schema";
 import { SessionRegistryFileStore } from "../session-registry/file-store";
 import {
   createLaunchClaim,
@@ -193,6 +194,17 @@ function lineageMetadataFor(handoff: PawLaunchHandoff): Record<string, unknown> 
   };
 }
 
+function pawLaunchFor(handoff: PawLaunchHandoff): SessionRegistryPawLaunch {
+  return {
+    workId: handoff.launchMetadata.workId,
+    workTitle: handoff.launchMetadata.workTitle,
+    workflowKind: "paw-lite",
+    pawWorkDir: handoff.pawWorkDir,
+    workflowContextPath: handoff.workflowContextPath,
+    streamlinerContextPath: handoff.streamlinerContextPath,
+  };
+}
+
 function terminalTitleFor(handoff: PawLaunchHandoff): string {
   return handoff.terminal.title?.trim() || handoff.launchMetadata.workTitle;
 }
@@ -244,6 +256,7 @@ export function launchPreparedNode(
     reservedRowTitle: terminalTitle,
     reservedRowColor: handoff.terminal.tabColor ?? null,
     reservedRowDescription: `Graph launch for workstream ${handoff.launchMetadata.workstreamId}, node ${handoff.launchMetadata.nodeId}.`,
+    pawLaunch: pawLaunchFor(handoff),
     lineageMetadata: lineageMetadataFor(handoff),
   });
   if (!claimOutcome.ok) {

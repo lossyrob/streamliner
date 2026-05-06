@@ -1,7 +1,7 @@
 ---
 kind: design-doc
 status: draft
-last_updated: 2026-05-04
+last_updated: 2026-05-06
 update_semantics: rewrite-in-place
 authoritative_for: "Session launching, lifecycle, registry contract, tracking, and runtime overlay"
 scope_tags:
@@ -33,7 +33,7 @@ references_decisions:
 
 # Session System
 
-The session system is how Streamliner launches, monitors, and surfaces AI coding agent sessions. A **session** is a Copilot CLI agent instance executing a specific node's work in a workstream — or, equivalently, any Copilot CLI instance the builder has chosen to track. Streamliner maintains a local, graph-independent **session registry** as the authoritative record for tracked sessions ([Decision 004](decisions/004-session-registry-primary-surface.md)), observes each session's Copilot CLI state files to populate liveness and workflow-status fields, and projects that combined state onto the committed graph as a runtime overlay without writing ephemeral telemetry back into `graph.json`. Sessions launched from the graph and sessions the builder tracks manually are the same kind of record; the launch pipeline writes onto an existing or newly created registry row rather than maintaining a parallel store.
+The session system is how Streamliner launches, monitors, and surfaces AI coding agent sessions. A **session** is a Copilot CLI agent instance executing a specific node's work in a workstream — or, equivalently, any Copilot CLI instance the builder has chosen to track. Streamliner maintains a local, graph-independent **session registry** as the authoritative record for tracked sessions ([Decision 004](decisions/004-session-registry-primary-surface.md)), observes each session's Copilot CLI state files to populate liveness and attention fields, derives PAW workflow enrichment from durable PAW artifacts when available, and projects that combined state onto the committed graph as a runtime overlay without writing ephemeral telemetry back into `graph.json`. Sessions launched from the graph and sessions the builder tracks manually are the same kind of record; the launch pipeline writes onto an existing or newly created registry row rather than maintaining a parallel store.
 
 ## Launch Contract
 
@@ -72,9 +72,9 @@ Launch is a two-phase process: a **PAW init phase** that prepares all worker art
 Streamliner's backend prepares a PAW handoff with one fully capable internal Copilot SDK session. Backend code still validates the selected graph node, computes deterministic metadata, and chooses local package paths, but context synthesis and PAW initialization now share the same SDK session, model context, tool access, and progress stream. The session preloads the installed `paw-init` skill, enables config discovery, approves built-in tool use, and adds Streamliner-owned `save_streamliner_context` and `complete_paw_init` tools. Initialization:
 
 1. **Normalizes launch configuration** — applies defaults for workflow instruction text, CLI args, terminal mode, and environment values.
-2. **Prepares context inputs** — deterministically collects graph, brief, design-doc, and tracker/spec references plus freshness/unavailable-input metadata. This creates the target `launch-contexts/<context-id>/context.md` location but does not start a separate context SDK session.
-3. **Saves worker context** — the internal SDK session reads repository, design-doc, GitHub, and configured MCP context as needed, synthesizes the selected node's Layer 0-3 `context.md`, and persists it through `save_streamliner_context`.
-4. **Runs PAW init** — the same SDK session uses the `paw-init` skill with Copilot CLI-style repository, shell, GitHub, configured MCP, and custom-tool access. The prompt supplies the builder launch instructions, selected node, tracker URL, and saved context path, and tells PAW init to use documented defaults/best judgment rather than asking follow-up questions. Streamliner asks PAW init to treat the builder text as launch guidance and configuration input, not as verbatim custom workflow-stage instructions unless the text explicitly defines a custom PAW sequence.
+2. **Prepares context inputs** — deterministically collects graph, brief, design-doc, and tracker/spec references plus freshness/unavailable-input metadata. This creates the target `launch-contexts/<context-id>/context.md` location and an internal SDK launch manifest with paths, URLs, selected-node metadata, unavailable-input diagnostics, existing launch details, and worktree policy, but it does not inline source bodies into the SDK's initial prompt.
+3. **Saves worker context** — the internal SDK session receives a small first prompt containing launch invariants, the builder's trusted launch instructions, and the manifest path. It reads repository, design-doc, GitHub, and configured MCP context as needed, synthesizes the selected node's Layer 0-3 `context.md`, and persists it through `save_streamliner_context`.
+4. **Runs PAW init** — the same SDK session uses the `paw-init` skill with Copilot CLI-style repository, shell, GitHub, configured MCP, and custom-tool access. The prompts supply the builder launch instructions, selected node, tracker URL, saved context path, and manifest-derived worktree policy, and tell PAW init to use documented defaults/best judgment rather than asking follow-up questions. Streamliner asks PAW init to treat the builder text as launch guidance and configuration input, not as verbatim custom workflow-stage instructions unless the text explicitly defines a custom PAW sequence.
 5. **Installs the context file** — after `paw-init` writes or validates `WorkflowContext.md` through the normal PAW workflow path, the Streamliner-owned completion tool, `complete_paw_init`, copies the saved context package to `.paw/work/<work-id>/streamliner/context.md` and verifies that `WorkflowContext.md` records the installed Streamliner context as an Additional Input. For Streamliner PAW Lite node launches, `WorkflowContext.md` should use `Custom Workflow Instructions: none` and `Initial Prompt: none`; kickoff-prompt text, generated context content, and node-orientation prose belong in Streamliner's kickoff prompt or generated launch `context.md`. The Additional Inputs line should only carry the worker-facing Streamliner context file, not internal launch metadata such as staged context package paths, graph path, context ID, node ID, or nonce.
 6. **Filters kickoff-only guidance** — the SDK session returns `additionalKickoffInstructions` through `complete_paw_init`. This text contains only builder guidance that should appear in the launched worker's initial prompt and excludes workflow configuration already encoded in `WorkflowContext.md`.
 7. **Preserves launch metadata** — carries the launch nonce and future claim reference fields through metadata without owning claim persistence.
@@ -198,7 +198,7 @@ Synthesized from the graph neighborhood and tracker/spec references:
 
 ### Delivery Mechanism
 
-Context is delivered as one `context.md` file. For PAW launch initialization, the internal SDK session calls Streamliner's `save_streamliner_context` tool to write the generated worker handoff under local runtime state. The same session then runs PAW init, which writes `WorkflowContext.md` through the normal PAW workflow path and records only the installed context path in Additional Inputs, as `streamliner-context=<paw-work-dir>/streamliner/context.md`. When PAW init completes, `complete_paw_init` copies the saved file to `streamliner/context.md` under the PAW work directory and verifies that `WorkflowContext.md` already references it. Internal launch metadata remains in Streamliner's handoff/record store and kickoff prompt, not in PAW Additional Inputs. For prompt preview or direct context assembly, Streamliner can still write a per-context package under local runtime state. The kickoff prompt points the worker session at the installed PAW work-directory context file. See [Decision 002](decisions/002-file-based-context-delivery.md) for the rationale.
+Context is delivered as one `context.md` file. For PAW launch initialization, Streamliner writes an internal SDK launch manifest and sends the SDK session a small manifest-driven prompt rather than a source bundle. The manifest points at graph, brief, design, and tracker/spec sources; the first prompt includes only launch invariants and the builder's trusted launch instructions. The internal SDK session calls Streamliner's `save_streamliner_context` tool to write the generated worker handoff under local runtime state. The same session then runs PAW init, which writes `WorkflowContext.md` through the normal PAW workflow path and records only the installed context path in Additional Inputs, as `streamliner-context=<paw-work-dir>/streamliner/context.md`. When PAW init completes, `complete_paw_init` copies the saved file to `streamliner/context.md` under the PAW work directory and verifies that `WorkflowContext.md` already references it. Internal launch metadata remains in Streamliner's handoff/record store, manifest, and kickoff prompt, not in PAW Additional Inputs. For prompt preview or direct context assembly, Streamliner can still write a per-context package under local runtime state. The kickoff prompt points the worker session at the installed PAW work-directory context file. See [Decision 002](decisions/002-file-based-context-delivery.md) for the rationale.
 
 The assembled package is written to:
 
@@ -278,7 +278,7 @@ The dialog uses the run route. `POST /api/launch-preparations/runs` returns a `r
 
 Internal SDK launch sessions persist under Streamliner's local state rather than the normal Copilot session-state root. The default root is `~/.streamliner/state/copilot-sdk/paw-launch/<context-id>/`, with `STREAMLINER_COPILOT_SDK_STATE_ROOT` available for override. Run progress and API logs surface the SDK `sessionId` and workspace path for debugging, but these internal sessions are not intended to appear in Streamliner's observed Sessions view.
 
-The PAW launch dialog is intentionally text-guided for this MVP. It exposes launch instructions, lightweight reusable text profiles, CLI args, terminal preference, graph source, a GitHub issue link when the selected node has one, and the prepared handoff after backend PAW init. Once preparation completes, the prepared kickoff prompt is editable before terminal launch so the builder can inspect or refine the exact initial prompt sent to the visible worker. The primary action is labeled as running PAW init because the SDK session may read repository files, inspect git/GitHub context, execute shell tools, and write the PAW work artifacts before returning the structured handoff. PAW-owned metadata, structured presets, specialists, and dependent WorkflowContext constraints are deferred to issue #43 so Streamliner does not duplicate PAW's configuration rules.
+The PAW launch dialog is intentionally text-guided for this MVP. It exposes launch instructions, lightweight reusable text profiles, CLI args, terminal preference, graph source, a GitHub issue link when the selected node has one, and the prepared handoff after backend PAW init. The builder's launch instructions are trusted local intent and appear near the top of the SDK launch-preparation session's first prompt so context assembly and PAW init both weight them heavily. Once preparation completes, the prepared kickoff prompt is editable before terminal launch so the builder can inspect or refine the exact initial prompt sent to the visible worker. The primary action is labeled as running PAW init because the SDK session may read repository files, inspect git/GitHub context, execute shell tools, and write the PAW work artifacts before returning the structured handoff. PAW-owned metadata, structured presets, specialists, and dependent WorkflowContext constraints are deferred to issue #43 so Streamliner does not duplicate PAW's configuration rules.
 
 Reusable text prompt profiles are exposed as:
 
@@ -356,7 +356,43 @@ Beyond the core lifecycle state, the session watcher derives additional fields f
 | `phase` | Latest event types in `events.jsonl` | Human-readable: "reasoning", "tool-calling", "idle" |
 | `endReason` | Hook signal or inactivity | Why the session ended: "hook-signal", "idle-timeout", "user_exit" |
 | `turnCount` | Count of `user.message` events | How many user turns have occurred |
-| `pawWorkflow` | PAW work directory on disk, when present | Artifact-derived workflow summary: work id/title when discoverable, likely workflow kind, latest/coarsest stage indicated by PAW artifacts, artifact freshness, and any ambiguity diagnostics. See [Decision 008](decisions/008-paw-artifacts-for-workflow-status.md). |
+| `pawWorkflow` | Explicit PAW work directory from Streamliner launch metadata | Artifact-derived workflow summary: work id/title when discoverable, likely workflow kind, latest/coarsest stage indicated by PAW artifacts, artifact freshness, and any unavailable/unknown-layout diagnostics. See [Decision 008](decisions/008-paw-artifacts-for-workflow-status.md). |
+
+### PAW Artifact Workflow Enrichment
+
+`pawWorkflow` is a workflow-enrichment projection, not a liveness signal. It is updated by the session-registry background worker through the derived-state patch path, so builder-owned fields and trusted activity evidence are not rewritten by artifact scans. Durable launch metadata on the registry row (`pawLaunch.pawWorkDir`) is the preferred source for Streamliner-launched PAW sessions, because launch-claim files are retained only temporarily and `graphBinding` may be cleared after a failed or cancelled claim. If durable metadata is absent, the worker falls back to launch-claim lineage metadata when the claim is still available. When neither explicit launch source supplies a work directory, Streamliner leaves `pawWorkflow` unset instead of scanning unrelated `.paw/work/*` directories from the session cwd.
+
+The scanner is intentionally coarse and evidence-oriented. It inspects bounded directory entries under the PAW work directory and classifies durable files by path:
+
+| Artifact category | Examples | Implied stage |
+|-------------------|----------|---------------|
+| `context` | `WorkflowContext.md`, `streamliner/context.md`, `ReviewContext.md` | `init` for launch context, `review` for review context |
+| `specification`, `research`, `planning` | `Spec.md`, `CodeResearch.md`, `ImplementationPlan.md`, `Plan.md`, `reviews/planning/*.md` | `planning` |
+| `implementation` | `Docs.md`, `implementation/**`, `phases/**`, phase-named markdown files | `implementation` |
+| `review` | `reviews/final-review.md`, `FINAL-REVIEW.md`, other non-planning review markdown | `review` |
+| `finalization` | `PR.md`, `final-pr.md`, `pull-request.md`, `final-pr/**` | `finalization` |
+| `unknown` | Any file in the explicit PAW work directory that does not match known patterns | no inferred stage |
+
+When multiple known artifacts exist, the displayed stage is the highest coarse stage present (`finalization` > `review` > `implementation` > `planning` > `init`). `WorkflowContext.md` and `ReviewContext.md` may provide identity hints such as work id, work title, and workflow kind, but their `## Control State` sections are not authoritative and must not drive stage selection.
+
+`pawWorkflow.status` has three values:
+
+| Status | Meaning |
+|--------|---------|
+| `recognized` | A PAW work directory was found and at least one known artifact pattern was recognized. |
+| `unavailable` | An expected work directory is missing/unreadable. |
+| `unknown` | An explicit PAW work directory exists, but only unknown artifact layouts were found. |
+
+Diagnostics are explicit, but the Sessions UI only shows the `🐾 PAW ...` label for recognized Streamliner-launched PAW sessions:
+
+| Diagnostic | Meaning |
+|------------|---------|
+| `paw_workdir_unavailable` | The expected PAW work directory could not be used. |
+| `paw_artifact_layout_unknown` | Files exist, but none match known PAW artifact patterns. |
+| `paw_artifact_scan_error` | A bounded filesystem scan failed while reading part of the work directory. |
+| `paw_artifact_scan_truncated` | The bounded artifact scan reached its entry cap before all files were inspected. |
+
+Consumers must continue to treat `activityStatus` and `activityEvidence` as the source for "working", "waiting for input", "interrupted", and "exited". `pawWorkflow` only explains what durable workflow artifacts currently exist.
 
 ### Key Distinction: Idle vs. Ended
 
@@ -418,6 +454,8 @@ Each registry entry is a persisted `SessionRegistryRecord`. The stored lifecycle
 | `lastSeenAt` | ISO 8601 string or `null` | yes | Observation | Last observed activity timestamp; `null` for never-observed manual entries. |
 | `activityStatus`, `activityStatusUpdatedAt` | status + ISO 8601 string or `null` | yes | Observation | Coarse liveness/attention status retained for compatibility with existing My Sessions and future graph-node consumers. |
 | `activityEvidence` | object | yes | Observation | Privacy-preserving evidence behind `activityStatus`: `statusReason`, `confidence`, `diagnostics`, `pendingInputRequest`, `pendingInputRequestCount`, last user/assistant turn timestamps, scanned user/assistant-turn counts, and event scan offset/size/mtime metadata. Scan metadata is a snapshot from the most recent material interpreted-state change, not an incremental cursor and not refreshed for bookkeeping-only scans. Manual or never-observed rows use neutral defaults (`confidence: none`, no diagnostics) rather than degraded diagnostics. |
+| `pawLaunch` | object or `null` | yes | Launch pipeline | Durable PAW launch metadata captured when Streamliner starts a PAW-backed node: work id/title, workflow kind, PAW work directory, and context artifact paths. This field remains on the session row after launch-claim retention cleanup and lets `pawWorkflow` resolve the exact work directory even if `graphBinding` is later cleared. |
+| `pawWorkflow` | object or `null` | yes | Artifact indexer | Derived PAW workflow enrichment for Streamliner-launched PAW sessions. `null` means no explicit PAW work directory has been linked. Non-null records include `status`, `stage`, `workflowKind`, work identity/path hints, recognized/unknown artifact evidence, latest artifact path/mtime, scan timestamp, and diagnostics. This field does not drive or replace `activityStatus`. |
 | `createdAt`, `updatedAt` | ISO 8601 string | yes | Streamliner | Record creation and last persisted update timestamps. |
 | `tags` | string[] | yes | Builder | Freeform labels; default `[]`. |
 | `origin.kind` | `manual \| observed \| launched` | yes | Streamliner | How the row first entered the registry. The `origin` object is discriminated by this field. |
@@ -607,7 +645,7 @@ The watcher polls `events.jsonl` modification times at a configurable interval (
 2. Extract recent turn evidence: scanned `user.message` count, scanned `assistant.turn_start` count, latest user-message timestamp, latest assistant-turn-start timestamp, and latest assistant-turn-end timestamp.
 3. Derive coarse `activityStatus` from trusted end/start/prompt signals, process-lock disappearance after a trusted start, `session.ended`, assistant turn boundaries, user messages, assistant messages, tool starts/completions, and user-requested tool completions.
 4. Detect pending input within the scanned tail by tracking unresolved `ask_user` tool requests from `assistant.message.toolRequests` or `tool.execution_start` until matching `tool.execution_complete` events. A visible open request sets `activityStatus: waiting_for_input` and `activityEvidence.pendingInputRequest: true`. Anonymous requests are deduplicated per event and expire at a later assistant turn end; if the request scrolled out of a truncated tail, consumers should treat `pendingInputRequest: false` plus `events_tail_truncated` as unknown.
-5. Detect PAW artifact status when applicable: for sessions launched through Streamliner's PAW flow, sessions with PAW launch metadata, or sessions with a reachable `.paw/work/*/` directory, inspect the durable PAW artifact set and derive a coarse workflow-status summary. `WorkflowContext.md` and `ReviewContext.md` may contribute artifact identity or headings, but `## Control State` is not authoritative. See [Decision 008](decisions/008-paw-artifacts-for-workflow-status.md).
+5. Detect PAW artifact status when applicable: for sessions launched through Streamliner's PAW flow with durable PAW launch metadata or retained launch-claim lineage, inspect the explicit PAW work directory and derive a coarse workflow-status summary. Ordinary observed/manual sessions are not labeled by scanning for reachable `.paw/work/*/` directories from their cwd. `WorkflowContext.md` and `ReviewContext.md` may contribute artifact identity or headings, but `## Control State` is not authoritative. See [Decision 008](decisions/008-paw-artifacts-for-workflow-status.md).
 
 Full persistent incremental open-request indexing and watcher-restart rehydration remain deferred. Until that lands, `activityEvidence.confidence` and diagnostics make bounded-tail limitations explicit for consumers.
 
@@ -618,7 +656,7 @@ Session tracking combines a required liveness source with optional workflow-arti
 - **Copilot session state** (`~/.copilot/session-state/{id}/`) — liveness, turn boundaries, pending input requests, end reasons. Authoritative for *is the session alive and does it need attention?*
 - **PAW artifact state** (`.paw/work/<work-id>/...`) — for PAW-backed sessions only: durable workflow artifacts such as specs, plans, research, implementation phase artifacts, review artifacts, and PR/finalization artifacts. Authoritative for *what PAW artifacts exist and what coarse workflow status they imply?*
 
-Streamliner overlays Copilot session state onto every bound graph node and overlays PAW artifact status when a session has PAW artifacts or PAW launch metadata. Neither subsumes the other: a session can be idle while PAW artifacts indicate mid-workflow progress, and PAW artifacts can advance across sessions that this watcher never observed. Launch and tracking require PAW initialization for the MVP graph-launch path, but they do not require `## Control State` parsing to succeed.
+Streamliner overlays Copilot session state onto every bound graph node and overlays PAW artifact status when a Streamliner-launched session has explicit PAW launch metadata or retained launch-claim lineage. Neither subsumes the other: a session can be idle while PAW artifacts indicate mid-workflow progress, and PAW artifacts can advance across sessions that this watcher never observed. Launch and tracking require PAW initialization for the MVP graph-launch path, but they do not require `## Control State` parsing to succeed.
 
 ### Hook Signals
 
@@ -755,10 +793,10 @@ Each observed session carries:
 
 - **Activity evidence** — `activityEvidence.confidence`, `activityEvidence.statusReason`, and `activityEvidence.diagnostics`, plus scan offset/size/mtime from the most recent material interpreted-state change and recent turn-boundary metadata.
 - **Pending-input evidence** — `activityEvidence.pendingInputRequest` and `activityEvidence.pendingInputRequestCount` from unresolved `ask_user` requests visible in the bounded local event tail.
-- **Last successful PAW artifact scan** — when applicable, timestamp of the last PAW work directory scan, the artifact patterns recognized, and any ambiguity or unavailable-path diagnostics. See [Decision 008](decisions/008-paw-artifacts-for-workflow-status.md).
+- **Last successful PAW artifact scan** — when applicable, timestamp of the explicit PAW work directory scan, the artifact patterns recognized, and any unavailable-path or unknown-layout diagnostics. See [Decision 008](decisions/008-paw-artifacts-for-workflow-status.md).
 - **Hook signal counters** — count of `sessionStart`, `agentStop`, `sessionEnd` signals received vs. equivalent transitions inferred from polling, so "hooks silently stopped firing" is visible.
 
-The registry-level activity diagnostic codes currently include `events_missing`, `events_empty`, `events_tail_truncated`, `events_parse_error`, `events_unrecognized`, and `events_unrecognized_tool_shape`. In addition, the watcher emits or logs structured diagnostics (not free-form logs) for other degradation modes it recognizes: `hook-miss`, `nonce-absent-after-window`, `launch-claim-ambiguous`, `launch-claim-rebind-attempt`, `launch-claim-orphan-session` (case `"a"` for candidate-with-no-nonce, case `"b"` for preserved-reserved-row whose claim went non-bound), `copilot-compatibility-probe-failed`, `paw-workdir-unavailable`, `paw-artifact-ambiguous`, `paw-artifact-layout-unknown`. PAW-specific diagnostics are emitted only for sessions with PAW artifacts or Streamliner PAW launch metadata. Launch-claim diagnostics are emitted as JSONL log lines under `withScope("launch-claim.binding")` and `withScope("launch-claim.sweep")` in the API logger; the durable per-claim inspection record is the claim's own `evidence` ledger, exposed via `GET /api/launch-claims/:id`. The UI can show a compact degradation badge on any session whose diagnostics are non-empty so the builder never has to guess whether the overlay can be trusted.
+The registry-level activity diagnostic codes currently include `events_missing`, `events_empty`, `events_tail_truncated`, `events_parse_error`, `events_unrecognized`, and `events_unrecognized_tool_shape`. In addition, the watcher emits or logs structured diagnostics (not free-form logs) for other degradation modes it recognizes: `hook-miss`, `nonce-absent-after-window`, `launch-claim-ambiguous`, `launch-claim-rebind-attempt`, `launch-claim-orphan-session` (case `"a"` for candidate-with-no-nonce, case `"b"` for preserved-reserved-row whose claim went non-bound), `copilot-compatibility-probe-failed`, `paw-workdir-unavailable`, `paw-artifact-layout-unknown`. PAW-specific diagnostics are emitted only for sessions with Streamliner PAW launch metadata that names an explicit PAW work directory. Launch-claim diagnostics are emitted as JSONL log lines under `withScope("launch-claim.binding")` and `withScope("launch-claim.sweep")` in the API logger; the durable per-claim inspection record is the claim's own `evidence` ledger, exposed via `GET /api/launch-claims/:id`. The UI can show a compact degradation badge on any session whose diagnostics are non-empty so the builder never has to guess whether the overlay can be trusted.
 
 ## Runtime Overlay
 
@@ -793,9 +831,9 @@ Empty graph nodes render a muted "no bound sessions" fallback so the absence of 
 
 For PAW-backed sessions, the `pawWorkflow` field carries an artifact-derived status summary (see [Decision 008](decisions/008-paw-artifacts-for-workflow-status.md)). It is intentionally coarse: it reports the artifact evidence Streamliner can see, not a guaranteed workflow automaton state.
 
-- **Recognized artifact set** — overlay shows the coarse status implied by known PAW artifacts and can link to the relevant artifact paths.
-- **Ambiguous artifact set** — overlay shows a degraded/ambiguous badge and the artifact evidence rather than guessing a precise activity.
-- **Unavailable artifact path** — overlay shows liveness/session status from Copilot state and a PAW artifact diagnostic, but does not invent workflow progress.
+- **Recognized artifact set** — overlay shows a `🐾 PAW ...` label with the coarse status implied by known PAW artifacts and can link to the relevant artifact paths.
+- **No explicit PAW work directory** — overlay omits the PAW label rather than scanning cwd-adjacent `.paw/work` directories or guessing from unrelated PAW artifacts.
+- **Unavailable artifact path** — overlay shows liveness/session status from Copilot state and may retain PAW diagnostics in registry data, but does not invent workflow progress or show a PAW label.
 
 Mutation-affecting affordances must not depend solely on artifact-derived status until the workstream explicitly defines the artifact patterns and confidence thresholds for that affordance.
 

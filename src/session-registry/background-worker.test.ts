@@ -4,6 +4,8 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { LaunchClaimStore } from "../launch-claim-contract";
+import type { LaunchClaim, LaunchClaimIndexEntry } from "../launch-claim-schema";
 import { __resetCopilotDiscoveryCacheForTests } from "./copilot-session-discovery";
 import { SessionRegistryFileStore } from "./file-store";
 import { SessionRegistryBackgroundWorker } from "./background-worker";
@@ -48,6 +50,64 @@ function recordTrustedStart(
     hookSource: "resume",
     executionKind: "copilot_cli",
   });
+}
+
+function buildLaunchClaim(overrides: Partial<LaunchClaim> = {}): LaunchClaim {
+  return {
+    schemaVersion: 1,
+    launchClaimId: "claim-paw",
+    workstreamId: "session-launching-and-tracking",
+    nodeId: "paw-artifact-status-observation",
+    launchNonce: "nonce-paw",
+    expectedCwd: "C:\\repo",
+    expectedBranch: "feature/paw",
+    expectedRepo: "lossyrob/streamliner",
+    contextId: null,
+    launchedAt: "2026-05-05T13:00:00.000Z",
+    bindingWindowMs: 300_000,
+    retentionWindowMs: 3_600_000,
+    status: "pending",
+    boundCopilotSessionId: null,
+    boundRegistryId: null,
+    reservedRegistryId: null,
+    failureReason: null,
+    failureCode: null,
+    seenCandidateCopilotSessionIds: [],
+    evidence: { attempts: [] },
+    lineageMetadata: null,
+    createdAt: "2026-05-05T13:00:00.000Z",
+    updatedAt: "2026-05-05T13:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function createReadonlyClaimStore(claim: LaunchClaim): LaunchClaimStore {
+  const entry: LaunchClaimIndexEntry = {
+    launchClaimId: claim.launchClaimId,
+    workstreamId: claim.workstreamId,
+    nodeId: claim.nodeId,
+    status: claim.status,
+    launchedAt: claim.launchedAt,
+    updatedAt: claim.updatedAt,
+    reservedRegistryId: claim.reservedRegistryId,
+    boundRegistryId: claim.boundRegistryId,
+    boundCopilotSessionId: claim.boundCopilotSessionId,
+  };
+  return {
+    createClaim: () => {
+      throw new Error("read-only claim store");
+    },
+    getClaim: (launchClaimId) =>
+      launchClaimId === claim.launchClaimId ? structuredClone(claim) : null,
+    listClaims: () => [structuredClone(entry)],
+    updateClaim: () => {
+      throw new Error("read-only claim store");
+    },
+    deleteClaim: () => {
+      throw new Error("read-only claim store");
+    },
+    subscribe: () => () => undefined,
+  };
 }
 
 afterEach(() => {
@@ -277,6 +337,212 @@ describe("SessionRegistryBackgroundWorker", () => {
         }),
       }),
     );
+  });
+
+  it("indexes PAW artifacts from launch-claim lineage metadata", async () => {
+    const registryRoot = createRootDir("streamliner-session-worker-registry-");
+    const sessionRoot = createRootDir("streamliner-session-worker-state-");
+    const workDir = join(
+      createRootDir("streamliner-paw-work-"),
+      ".paw",
+      "work",
+      "paw-artifact-status-observation",
+    );
+    mkdirSync(workDir, { recursive: true });
+    writeFileSync(
+      join(workDir, "WorkflowContext.md"),
+      [
+        "Work Title: PAW Artifact Status Observation",
+        "Work ID: paw-artifact-status-observation",
+        "Workflow Identity: paw-lite",
+      ].join("\n"),
+      "utf8",
+    );
+    writeFileSync(join(workDir, "Plan.md"), "# Plan\n", "utf8");
+
+    const store = new SessionRegistryFileStore({ rootDir: registryRoot });
+    store.upsertSession({
+      id: "launched-paw",
+      title: "Launched PAW",
+      cwd: "C:\\repo",
+      origin: { kind: "launched", launchClaimId: "claim-paw" },
+      graphBinding: {
+        workstreamId: "session-launching-and-tracking",
+        nodeId: "paw-artifact-status-observation",
+        launchClaimId: "claim-paw",
+      },
+    });
+    const worker = new SessionRegistryBackgroundWorker(store, {
+      sessionRoot,
+      claimStore: createReadonlyClaimStore(
+        buildLaunchClaim({
+          lineageMetadata: { pawWorkDir: workDir },
+        }),
+      ),
+      now: () => new Date("2026-05-05T13:05:00.000Z"),
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    });
+
+    await worker.runCycle();
+
+    expect(store.getSession("launched-paw")?.pawWorkflow).toEqual(
+      expect.objectContaining({
+        status: "recognized",
+        stage: "planning",
+        workflowKind: "paw-lite",
+        workId: "paw-artifact-status-observation",
+        workTitle: "PAW Artifact Status Observation",
+        workDir,
+      }),
+    );
+  });
+
+  it("indexes PAW artifacts from durable launch metadata without a claim record", async () => {
+    const registryRoot = createRootDir("streamliner-session-worker-registry-");
+    const sessionRoot = createRootDir("streamliner-session-worker-state-");
+    const workDir = join(
+      createRootDir("streamliner-paw-work-"),
+      ".paw",
+      "work",
+      "durable-paw-launch",
+    );
+    mkdirSync(workDir, { recursive: true });
+    writeFileSync(
+      join(workDir, "WorkflowContext.md"),
+      [
+        "Work Title: Durable PAW Launch",
+        "Work ID: durable-paw-launch",
+        "Workflow Identity: paw-lite",
+      ].join("\n"),
+      "utf8",
+    );
+    writeFileSync(join(workDir, "Plan.md"), "# Plan\n", "utf8");
+
+    const store = new SessionRegistryFileStore({ rootDir: registryRoot });
+    store.upsertSession({
+      id: "durable-launched-paw",
+      title: "Durable launched PAW",
+      cwd: "C:\\repo",
+      origin: { kind: "launched", launchClaimId: "claim-pruned" },
+      graphBinding: null,
+      pawLaunch: {
+        workId: "durable-paw-launch",
+        workTitle: "Durable PAW Launch",
+        workflowKind: "paw-lite",
+        pawWorkDir: workDir,
+        workflowContextPath: join(workDir, "WorkflowContext.md"),
+        streamlinerContextPath: join(workDir, "streamliner", "context.md"),
+      },
+    });
+    const worker = new SessionRegistryBackgroundWorker(store, {
+      sessionRoot,
+      now: () => new Date("2026-05-05T13:05:00.000Z"),
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    });
+
+    await worker.runCycle();
+
+    expect(store.getSession("durable-launched-paw")?.pawWorkflow).toEqual(
+      expect.objectContaining({
+        status: "recognized",
+        stage: "planning",
+        workflowKind: "paw-lite",
+        workId: "durable-paw-launch",
+        workTitle: "Durable PAW Launch",
+        workDir,
+      }),
+    );
+  });
+
+  it("does not infer PAW workflow from fallback directories for ordinary sessions", async () => {
+    const registryRoot = createRootDir("streamliner-session-worker-registry-");
+    const sessionRoot = createRootDir("streamliner-session-worker-state-");
+    const repo = createRootDir("streamliner-ordinary-session-repo-");
+    const workDir = join(repo, ".paw", "work", "interview-packet");
+    mkdirSync(workDir, { recursive: true });
+    writeFileSync(
+      join(workDir, "WorkflowContext.md"),
+      [
+        "Work Title: Interview Packet",
+        "Work ID: interview-packet",
+        "Workflow Identity: paw-lite",
+      ].join("\n"),
+      "utf8",
+    );
+    writeFileSync(join(workDir, "Plan.md"), "# Plan\n", "utf8");
+
+    const store = new SessionRegistryFileStore({ rootDir: registryRoot });
+    const session = store.upsertSession({
+      id: "ordinary-session",
+      title: "Create Interview Packet For Silvia Vallet",
+      cwd: repo,
+      origin: { kind: "observed" },
+      copilotSessionId: "ordinary-copilot-session",
+    });
+    store.patchDerivedSessionState(session.id, {
+      pawWorkflow: {
+        status: "recognized",
+        stage: "planning",
+        workflowKind: "paw-lite",
+        workId: "interview-packet",
+        workTitle: "Interview Packet",
+        workDir,
+        artifacts: [],
+        artifactCount: 0,
+        latestArtifactPath: null,
+        latestArtifactMtimeMs: null,
+        scannedAt: "2026-05-05T13:00:00.000Z",
+        diagnostics: [],
+      },
+    });
+    const worker = new SessionRegistryBackgroundWorker(store, {
+      sessionRoot,
+      now: () => new Date("2026-05-05T13:05:00.000Z"),
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    });
+
+    await worker.runCycle();
+
+    expect(store.getSession("ordinary-session")?.pawWorkflow).toBeNull();
+  });
+
+  it("clears stale PAW workflow when launched session metadata cannot identify a work directory", async () => {
+    const registryRoot = createRootDir("streamliner-session-worker-registry-");
+    const sessionRoot = createRootDir("streamliner-session-worker-state-");
+
+    const store = new SessionRegistryFileStore({ rootDir: registryRoot });
+    const session = store.upsertSession({
+      id: "ambiguous-launched-session",
+      title: "SLR-S #51",
+      cwd: "C:\\repo",
+      origin: { kind: "launched", launchClaimId: "claim-pruned" },
+      graphBinding: null,
+    });
+    store.patchDerivedSessionState(session.id, {
+      pawWorkflow: {
+        status: "recognized",
+        stage: "planning",
+        workflowKind: "paw-lite",
+        workId: "stale-paw-work",
+        workTitle: "Stale PAW Work",
+        workDir: "C:\\repo\\.paw\\work\\stale-paw-work",
+        artifacts: [],
+        artifactCount: 0,
+        latestArtifactPath: null,
+        latestArtifactMtimeMs: null,
+        scannedAt: "2026-05-05T13:00:00.000Z",
+        diagnostics: [],
+      },
+    });
+    const worker = new SessionRegistryBackgroundWorker(store, {
+      sessionRoot,
+      now: () => new Date("2026-05-05T13:05:00.000Z"),
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    });
+
+    await worker.runCycle();
+
+    expect(store.getSession("ambiguous-launched-session")?.pawWorkflow).toBeNull();
   });
 
   it("waits for five more user turns before refreshing a ready summary", async () => {

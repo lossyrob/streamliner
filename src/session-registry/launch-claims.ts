@@ -16,6 +16,7 @@ import {
   type LaunchClaimStore,
   LaunchClaimNotFoundError,
 } from "../launch-claim-contract";
+import type { SessionRegistryPawLaunch } from "../session-registry-schema";
 import { SessionRegistryFileStore } from "./file-store";
 
 export const LAUNCH_NONCE_PROMPT_LINE_PREFIX = "Streamliner launch nonce: ";
@@ -63,6 +64,8 @@ export interface CreateLaunchClaimInput {
   /** Display color for the reserved row, matching the terminal tab color when provided. */
   reservedRowColor?: string | null;
   reservedRowDescription?: string | null;
+  /** Durable PAW launch metadata retained on the session row after launch-claim cleanup. */
+  pawLaunch?: SessionRegistryPawLaunch | null;
   /** Wave-5 lineage extensibility slot (≤4 KB JSON object). */
   lineageMetadata?: Record<string, unknown> | null;
 }
@@ -204,6 +207,7 @@ export function createLaunchClaim(
           nodeId: input.nodeId,
           launchClaimId,
         },
+        pawLaunch: input.pawLaunch ?? null,
       });
     } catch (error) {
       return errorOutcome(

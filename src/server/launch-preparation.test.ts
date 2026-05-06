@@ -16,10 +16,13 @@ import {
   LaunchContextPreparationError,
   type LaunchContextPackage,
   type PrepareLaunchContextPackageOptions,
+  type PreparedLaunchContextPackage,
 } from "./launch-context";
 import {
+  buildStreamlinerContextSavePrompt,
   completePawInitToolParameters,
   preparePawLaunch,
+  validatePawWorktreePolicy,
   type LaunchContextPreparer,
   type PawInitRunner,
   type PawInitRunnerInput,
@@ -104,6 +107,128 @@ function fakeContextPackage(
   };
 }
 
+function fakePreparedContext(root: string): PreparedLaunchContextPackage {
+  const node = {
+    id: "launch-prompt-profiles",
+    type: "task" as const,
+    title: "Launch prompt profiles",
+    summary: "Configure launch prompt profile behavior.",
+    status: "ready" as const,
+    attention: "focus" as const,
+    repoIds: ["streamliner"],
+    tracker: {
+      type: "github" as const,
+      owner: "lossyrob",
+      repo: "streamliner",
+      number: 33,
+    },
+    dependsOn: [],
+  };
+  const workstream = {
+    schemaVersion: 1 as const,
+    id: "session-launching-and-tracking",
+    projectKey: "streamliner",
+    title: "Session launching and tracking",
+    summary: "Launch and track worker sessions.",
+    status: "active" as const,
+    attention: "focus" as const,
+    createdAt: "2026-05-02T07:00:00.000Z",
+    updatedAt: "2026-05-02T08:00:00.000Z",
+    repos: [{
+      id: "streamliner",
+      owner: "lossyrob",
+      name: "streamliner",
+      role: "primary" as const,
+    }],
+    designRefs: [{ repoId: "streamliner", path: "docs/design/session-system.md" }],
+    nodes: [node],
+    checkpoints: [],
+  };
+  const contextPackagePath = join(root, "state", "streamliner", "session-launching-and-tracking", "launch-contexts", "ctx-sdk");
+  const contextFilePath = join(contextPackagePath, "context.md");
+  const graphPath = join(root, ".streamliner", "workstreams", "session-launching-and-tracking", "graph.json");
+  const workstreamDir = join(root, ".streamliner", "workstreams", "session-launching-and-tracking");
+  const sourceReferences = [
+    {
+      kind: "graph" as const,
+      role: "workstream-graph",
+      path: ".streamliner/workstreams/session-launching-and-tracking/graph.json",
+      freshness: { kind: "sha256" as const, value: "graph-hash" },
+    },
+    {
+      kind: "design" as const,
+      role: "layer-0-design",
+      path: "docs/design/session-system.md",
+      repoId: "streamliner",
+      freshness: { kind: "git-object" as const, value: "design-hash" },
+    },
+    {
+      kind: "tracker" as const,
+      role: "selected-node-spec",
+      url: "https://github.com/lossyrob/streamliner/issues/33",
+    },
+  ];
+  return {
+    generationInput: {
+      contextId: "ctx-sdk",
+      generatedAt: "2026-05-02T07:00:00.000Z",
+      repoRoot: root,
+      workstream,
+      node,
+      graphSource: {
+        reference: sourceReferences[0],
+        content: "GRAPH_BODY_SHOULD_NOT_BE_IN_INITIAL_PROMPT",
+      },
+      briefSource: {
+        reference: {
+          kind: "brief",
+          role: "workstream-brief",
+          path: ".streamliner/workstreams/session-launching-and-tracking/brief.md",
+        },
+        content: "BRIEF_BODY_SHOULD_NOT_BE_IN_INITIAL_PROMPT",
+      },
+      designSources: [{
+        reference: sourceReferences[1],
+        content: "DESIGN_BODY_SHOULD_NOT_BE_IN_INITIAL_PROMPT",
+      }],
+      trackerSource: {
+        reference: sourceReferences[2],
+        content: "TRACKER_BODY_SHOULD_NOT_BE_IN_INITIAL_PROMPT",
+      },
+      designSelection: [{
+        repoId: "streamliner",
+        path: "docs/design/session-system.md",
+        rationale: "workstream designRefs",
+        included: true,
+      }],
+      trackerReference: "- GitHub issue: https://github.com/lossyrob/streamliner/issues/33",
+      sourceReferences,
+      unavailableInputs: [],
+    },
+    metadata: {
+      contextId: "ctx-sdk",
+      launchNonce: "nonce-sdk",
+      launchClaimRef: null,
+      projectKey: "streamliner",
+      workstreamId: "session-launching-and-tracking",
+      nodeId: "launch-prompt-profiles",
+      targetRepoIds: ["streamliner"],
+      graphPath: normalizePath(graphPath),
+      workstreamDir: normalizePath(workstreamDir),
+      repoRoot: normalizePath(root),
+      generatedAt: "2026-05-02T07:00:00.000Z",
+      contextPackagePath: normalizePath(contextPackagePath),
+      contextFilePath: normalizePath(contextFilePath),
+      contextModel: "gpt-5.5",
+      sourceReferences,
+      unavailableInputs: [],
+    },
+    contextPackagePath,
+    contextFilePath,
+    overwriteContextFile: false,
+  };
+}
+
 function createPawInitRunner(
   calls: PawInitRunnerInput[] = [],
 ): PawInitRunner {
@@ -157,6 +282,86 @@ describe("preparePawLaunch", () => {
         additionalKickoffInstructions: { type: "string" },
       }),
     );
+  });
+
+  it("puts trusted builder instructions in the first SDK prompt without source bodies", () => {
+    const root = createRootDir();
+    const manifestPath = join(root, "state", "copilot-sdk", "launch-manifest.json");
+    const workflowInstructions = [
+      "Use paw-lite with final-pr-only review.",
+      "I will only review the final PR; serious blockers should stop and ask.",
+    ].join("\n");
+    const prompt = buildStreamlinerContextSavePrompt(
+      {
+        nodeId: "launch-prompt-profiles",
+        graphPath: join(root, ".streamliner", "workstreams", "session-launching-and-tracking", "graph.json"),
+        cwd: join(root, "streamliner"),
+        sessionStateRoot: join(root, "state"),
+        issueUrl: "https://github.com/lossyrob/streamliner/issues/33",
+        launchNonce: "nonce-sdk",
+        configuration: {
+          cwd: join(root, "streamliner"),
+          cliArgs: ["--yolo"],
+          environment: {},
+          workflowInstructions,
+          terminal: {
+            launchMode: "manual",
+            preferredTerminal: "default",
+            title: null,
+            tabColor: null,
+          },
+        },
+        preparedContext: fakePreparedContext(root),
+        existingLaunch: null,
+      },
+      {
+        manifestPath,
+        launchCwdInitialBranch: "feature/session-launching-and-tracking",
+      },
+    );
+
+    expect(prompt).toContain("Builder launch instructions (trusted, high priority)");
+    expect(prompt).toContain(workflowInstructions);
+    expect(prompt.indexOf("Builder launch instructions")).toBeLessThan(prompt.indexOf("Launch manifest:"));
+    expect(prompt).toContain(normalizePath(manifestPath));
+    expect(prompt).toContain("Do not check out the target node branch in the launch cwd.");
+    expect(prompt).toContain("create or reuse a sibling worktree");
+    expect(prompt).not.toContain("GRAPH_BODY_SHOULD_NOT_BE_IN_INITIAL_PROMPT");
+    expect(prompt).not.toContain("BRIEF_BODY_SHOULD_NOT_BE_IN_INITIAL_PROMPT");
+    expect(prompt).not.toContain("DESIGN_BODY_SHOULD_NOT_BE_IN_INITIAL_PROMPT");
+    expect(prompt).not.toContain("TRACKER_BODY_SHOULD_NOT_BE_IN_INITIAL_PROMPT");
+    expect(prompt).not.toContain("Source blocks are delimited");
+  });
+
+  it("rejects PAW work dirs inside the launch checkout when the target branch differs", () => {
+    const root = createRootDir();
+    const launchCwd = join(root, "streamliner-workstream");
+    expect(() =>
+      validatePawWorktreePolicy({
+        launchCwd,
+        launchCwdInitialBranch: "feature/session-launching-and-tracking",
+        targetBranch: "feature/session-event-observation",
+        pawWorkDir: join(launchCwd, ".paw", "work", "session-event-observation"),
+      })
+    ).toThrow("create or reuse a sibling worktree");
+
+    expect(() =>
+      validatePawWorktreePolicy({
+        launchCwd,
+        launchCwdInitialBranch: "feature/session-launching-and-tracking",
+        targetBranch: "feature/session-event-observation",
+        pawWorkDir: join(root, "streamliner-session-event-observation", ".paw", "work", "session-event-observation"),
+      })
+    ).not.toThrow();
+
+    expect(() =>
+      validatePawWorktreePolicy({
+        launchCwd,
+        launchCwdInitialBranch: "feature/session-event-observation",
+        targetBranch: "feature/session-event-observation",
+        pawWorkDir: join(launchCwd, ".paw", "work", "session-event-observation"),
+      })
+    ).not.toThrow();
   });
 
   it("prepares a structured PAW handoff with defaults", async () => {
