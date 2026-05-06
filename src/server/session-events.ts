@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 
 import type {
+  SessionRegistryListOptions,
   SessionRegistryChangeEvent,
   SessionRegistryStore,
 } from "../session-registry-contract";
@@ -72,6 +73,29 @@ function parseLastEventId(value: string | undefined): number | null {
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
 }
 
+function parseNullableSearchParam(
+  searchParams: URLSearchParams,
+  key: string,
+): string | null | undefined {
+  if (!searchParams.has(key)) {
+    return undefined;
+  }
+  const value = searchParams.get(key);
+  return value === "null" ? null : value;
+}
+
+function parseSnapshotOptions(req: Request): SessionRegistryListOptions {
+  const url = new URL(req.originalUrl ?? req.url, "http://streamliner.local");
+  const repoFilter = parseNullableSearchParam(url.searchParams, "repo");
+  return {
+    includeArchived: url.searchParams.get("includeArchived") === "true",
+    text: url.searchParams.get("text") ?? undefined,
+    ...(repoFilter !== undefined ? { repo: repoFilter } : {}),
+    workstreamId: url.searchParams.get("workstreamId") ?? undefined,
+    nodeId: url.searchParams.get("nodeId") ?? undefined,
+  };
+}
+
 export class SessionRegistryEventStream {
   private nextEventId = 1;
   private readonly clients = new Map<Response, StreamClient>();
@@ -112,7 +136,7 @@ export class SessionRegistryEventStream {
       ? this.replayAfter(lastEventId, res)
       : false;
     if (!replayed) {
-      this.writeSnapshot(res);
+      this.writeSnapshot(res, parseSnapshotOptions(req));
     }
 
     req.on("close", () => {
@@ -139,11 +163,11 @@ export class SessionRegistryEventStream {
     return true;
   }
 
-  private writeSnapshot(res: Response): void {
+  private writeSnapshot(res: Response, options: SessionRegistryListOptions): void {
     writeSse(
       res,
       this.buildEvent("snapshot", {
-        sessions: this.store.listSessions(),
+        sessions: this.store.listSessions(options),
       }),
     );
   }

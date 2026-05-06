@@ -4,9 +4,13 @@ import type {
   WorkstreamDerivedNode,
   WorkstreamViewModel,
 } from "./workstream-view-model";
+import type {
+  GraphNodeSessionStatusState,
+  GraphNodeSessionStatusSummary,
+} from "./graph-node-session-status";
 
-const TASK_NODE_WIDTH = 304;
-const TASK_NODE_HEIGHT = 168;
+const TASK_NODE_WIDTH = 328;
+const TASK_NODE_HEIGHT = 224;
 const GATE_NODE_WIDTH = 384;
 const GATE_NODE_HEIGHT = 96;
 
@@ -56,6 +60,10 @@ export interface WorkstreamGraphNodeData extends Record<string, unknown> {
   repoLabel: string;
   highlight: WorkstreamGraphNodeHighlight;
   showId: boolean;
+  sessionStatus: GraphNodeSessionStatusSummary | null;
+  sessionStatusState: GraphNodeSessionStatusState;
+  sessionsHref: string | null;
+  onOpenSessions: (() => void | Promise<void>) | null;
 }
 
 export interface WorkstreamGraphRenderableEdge {

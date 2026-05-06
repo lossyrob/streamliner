@@ -800,7 +800,7 @@ The registry-level activity diagnostic codes currently include `events_missing`,
 
 ## Runtime Overlay
 
-The runtime overlay is how Streamliner presents live session and tracker state in the UI without modifying the committed graph. The overlay is a **projection of the session registry** ([Decision 004](decisions/004-session-registry-primary-surface.md)) filtered to entries whose `graphBinding` resolves to a visible node, joined with that node's committed status, observed liveness, tracker state, and PAW artifact status when artifacts are available. Sessions without `graphBinding` remain visible in the registry UI but do not render on the graph.
+The runtime overlay is how Streamliner presents live session and tracker state in the UI without modifying the committed graph. The overlay is a **projection of the session registry** ([Decision 004](decisions/004-session-registry-primary-surface.md)) filtered to entries whose `graphBinding` resolves to a visible node, joined with that node's committed status, observed liveness, tracker state, and PAW artifact status when artifacts are available. Sessions without `graphBinding`, and manual registry rows even when a builder has associated them with a node for bookkeeping, remain visible in the registry UI but do not render as graph-node session activity.
 
 ### Overlay Model
 
@@ -823,7 +823,9 @@ Displayed state = committed graph status
 | `in-progress` | any | Session status takes precedence |
 | `completed` | any | Completed |
 
-Graph nodes use the same compact status pulse/pill language as My Sessions for bound runtime state. When multiple non-archived sessions bind to one node, the graph shows the highest-attention state first (`needs input` before `idle`, `active`, `launching`, then ended/history) and includes a count so the builder can open the linked session list for details.
+Graph nodes use the same compact status pulse/pill language as My Sessions for bound runtime state. A task node displays a session indicator for registry rows whose `graphBinding.workstreamId` matches the active workstream and whose `graphBinding.nodeId` matches the node. The indicator shows the My Sessions activity label for the highest-attention bound row plus a count of all non-manual bound rows for that node. Attention ordering is explicit and stable: `waiting_for_input` ("waiting for you") outranks `interrupted`, which outranks `working`, which outranks the lowest tier of `exited` and `unknown`. Reserved launched rows that are bound before trusted observation arrives stay visible in that lowest fallback tier rather than disappearing.
+
+Graph nodes without projected bound sessions remain visually silent; empty, loading, and session-registry error states do not add graph-card copy. This keeps node cards focused on graph lifecycle and tracker context unless there is actual node-bound runtime activity to surface. Indicator details link to the Sessions surface with workstream/node filters when row-level routing is unavailable, allowing the builder to correlate the graph badge with the underlying registry rows without writing any session telemetry back into `graph.json`.
 
 ### PAW Artifact Status Rendering
 

@@ -20,6 +20,10 @@ import type {
   WorkstreamGraphNodeData,
   WorkstreamGraphLayoutResult,
 } from "../workstream-graph";
+import type {
+  GraphNodeSessionStatusState,
+  GraphNodeSessionStatusSummary,
+} from "../graph-node-session-status";
 
 const nodeTypes = {
   workstreamTask: WorkstreamGraphNode,
@@ -65,12 +69,21 @@ interface WorkstreamCanvasProps {
   layout: WorkstreamGraphLayoutResult;
   selectedNodeId: string | null;
   onNodeSelect: (nodeId: string | null) => void;
+  nodeSessionStatuses?: ReadonlyMap<string, GraphNodeSessionStatusSummary>;
+  nodeSessionStatusState?: GraphNodeSessionStatusState;
+  sessionRouteForNode?: (nodeId: string) => {
+    href: string;
+    onOpen: () => void | Promise<void>;
+  };
 }
 
 export function WorkstreamCanvas({
   layout,
   selectedNodeId,
   onNodeSelect,
+  nodeSessionStatuses = new Map(),
+  nodeSessionStatusState = "ready",
+  sessionRouteForNode,
 }: WorkstreamCanvasProps) {
   const reactFlow = useReactFlow();
   const laneNodes = useMemo<Node<WorkstreamSwimlaneData>[]>(
@@ -97,22 +110,29 @@ export function WorkstreamCanvas({
   );
   const taskNodes = useMemo<Node<WorkstreamGraphNodeData>[]>(
     () =>
-      layout.nodes.map((ln) => ({
-        id: ln.id,
-        type:
-          ln.entry.node.type === "gate" ? "workstreamGate" : "workstreamTask",
-        position: { x: ln.x, y: ln.y },
-        data: {
-          entry: ln.entry,
-          repoLabel: ln.repoLabel,
-          highlight: ln.highlight,
-          showId: false,
-        },
-        width: ln.width,
-        height: ln.height,
-        style: { width: ln.width, height: ln.height },
-      })),
-    [layout],
+      layout.nodes.map((ln) => {
+        const sessionRoute = sessionRouteForNode?.(ln.id) ?? null;
+        return {
+          id: ln.id,
+          type:
+            ln.entry.node.type === "gate" ? "workstreamGate" : "workstreamTask",
+          position: { x: ln.x, y: ln.y },
+          data: {
+            entry: ln.entry,
+            repoLabel: ln.repoLabel,
+            highlight: ln.highlight,
+            showId: false,
+            sessionStatus: nodeSessionStatuses.get(ln.id) ?? null,
+            sessionStatusState: nodeSessionStatusState,
+            sessionsHref: sessionRoute?.href ?? null,
+            onOpenSessions: sessionRoute?.onOpen ?? null,
+          },
+          width: ln.width,
+          height: ln.height,
+          style: { width: ln.width, height: ln.height },
+        };
+      }),
+    [layout, nodeSessionStatusState, nodeSessionStatuses, sessionRouteForNode],
   );
   const nodes = useMemo<Node[]>(
     () => [...laneNodes, ...taskNodes],

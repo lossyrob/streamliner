@@ -597,7 +597,7 @@ describe("App sessions route", () => {
         root.render(<App />);
       });
 
-      await settle(200);
+      await settle(500);
 
       expect(container.textContent).toContain("Graph-launched worker");
       expect(container.textContent).toContain("Session launching and tracking");
@@ -636,6 +636,181 @@ describe("App sessions route", () => {
   );
 
   it(
+    "renders bound session status on graph nodes and links to scoped Sessions",
+    async () => {
+      MockEventSource.instances = [];
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+      const graph = buildWorkstreamGraph({
+        id: "session-launching-and-tracking",
+        title: "Session launching and tracking",
+        summary: "Connect launched sessions to graph nodes.",
+        nodes: [
+          {
+            id: "graph-node-session-status-ui",
+            type: "task",
+            title: "Graph node session status UI",
+            summary: "Render bound session status directly on graph nodes.",
+            status: "ready",
+            attention: "focus",
+            repoIds: ["streamliner"],
+            dependsOn: [],
+          },
+          {
+            id: "quiet-graph-task",
+            type: "task",
+            title: "Quiet graph task",
+            summary: "Render normal graph card content.",
+            status: "ready",
+            attention: "watch",
+            repoIds: ["streamliner"],
+            dependsOn: [],
+          },
+        ],
+        checkpoints: [
+          {
+            id: "tracking-visible",
+            title: "Tracking visible",
+            summary: "Make launch bindings visible.",
+            status: "planned",
+            nodeIds: ["graph-node-session-status-ui", "quiet-graph-task"],
+          },
+        ],
+      });
+      const boundSessions = [
+        buildSession({
+          id: "working-bound-session",
+          title: "Working graph worker",
+          originKind: "launched",
+          activityStatus: "working",
+          graphBinding: {
+            workstreamId: "session-launching-and-tracking",
+            nodeId: "graph-node-session-status-ui",
+          },
+        }),
+        buildSession({
+          id: "waiting-bound-session",
+          title: "Waiting graph worker",
+          originKind: "launched",
+          activityStatus: "waiting_for_input",
+          graphBinding: {
+            workstreamId: "session-launching-and-tracking",
+            nodeId: "graph-node-session-status-ui",
+          },
+        }),
+        buildSession({
+          id: "manual-bound-session",
+          title: "Manual bound session",
+          originKind: "manual",
+          activityStatus: "waiting_for_input",
+          graphBinding: {
+            workstreamId: "session-launching-and-tracking",
+            nodeId: "graph-node-session-status-ui",
+          },
+        }),
+        buildSession({
+          id: "unbound-session",
+          title: "Unbound session",
+          originKind: "launched",
+          activityStatus: "waiting_for_input",
+          graphBinding: null,
+        }),
+      ];
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [
+              buildTrackedWorkstream({
+                workstreamId: "session-launching-and-tracking",
+                title: "Session launching and tracking",
+                summary: "Connect launched sessions to graph nodes.",
+                path: "C:\\graphs\\session-launching-and-tracking\\graph.json",
+              }),
+            ],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/session-launching-and-tracking/graph") {
+          return jsonResponse(graph);
+        }
+        if (path === "/api/sessions?workstreamId=session-launching-and-tracking") {
+          return jsonResponse(boundSessions);
+        }
+        if (
+          path ===
+          "/api/sessions?workstreamId=session-launching-and-tracking&nodeId=graph-node-session-status-ui"
+        ) {
+          return jsonResponse(boundSessions);
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState({}, "", "/workstreams/streamliner/session-launching-and-tracking");
+
+      act(() => {
+        root.render(<App />);
+      });
+
+      await settle(200);
+
+      const graphNode = findCanvasNode(container, "Graph node session status UI");
+      expect(graphNode.textContent).toContain("waiting for you");
+      expect(graphNode.textContent).toContain("2 sessions");
+      expect(graphNode.textContent).not.toContain("Manual bound session");
+      const graphSessionSource = MockEventSource.instances.find(
+        (source) =>
+          source.url ===
+          "/api/sessions/events?workstreamId=session-launching-and-tracking",
+      );
+      expect(graphSessionSource).toBeDefined();
+      const initialSessionRequests = fetchMock.mock.calls.filter(
+        ([input]) =>
+          requestPath(input as RequestInfo | URL) ===
+          "/api/sessions?workstreamId=session-launching-and-tracking",
+      ).length;
+      act(() => {
+        graphSessionSource?.emit("snapshot", { sessions: [boundSessions[0]] });
+      });
+      await flushReact();
+      expect(graphNode.textContent).toContain("1 session");
+      expect(
+        fetchMock.mock.calls.filter(
+          ([input]) =>
+            requestPath(input as RequestInfo | URL) ===
+            "/api/sessions?workstreamId=session-launching-and-tracking",
+        ),
+      ).toHaveLength(initialSessionRequests);
+      const quietNode = findCanvasNode(container, "Quiet graph task");
+      expect(quietNode.textContent).not.toContain("No bound sessions");
+      expect(quietNode.textContent).not.toContain("Loading sessions");
+      expect(quietNode.textContent).not.toContain("Session status unavailable");
+      expect(quietNode.textContent).not.toContain("View in Sessions");
+
+      const sessionsLink = [...graphNode.querySelectorAll<HTMLAnchorElement>("a")].find(
+        (candidate) => candidate.textContent?.trim() === "View in Sessions",
+      );
+      expect(sessionsLink).toBeInstanceOf(HTMLAnchorElement);
+
+      act(() => {
+        sessionsLink?.click();
+      });
+      await settle(200);
+
+      expect(window.location.pathname).toBe("/sessions");
+      expect(window.location.search).toBe(
+        "?workstreamId=session-launching-and-tracking&nodeId=graph-node-session-status-ui",
+      );
+      expect(container.textContent).toContain("Showing graph-bound sessions");
+      expect(container.textContent).toContain("graph-node-session-status-ui");
+      expect(container.textContent).toContain("Waiting graph worker");
+      expect(container.textContent).toContain("Hiding 1 manual session");
+      expect(container.textContent).not.toContain("Manual bound session");
+    },
+    15_000,
+  );
+
+  it(
     "shows PAW workflow enrichment without changing the activity label",
     async () => {
       const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -654,8 +829,7 @@ describe("App sessions route", () => {
                 workflowKind: "paw-lite",
                 workId: "paw-artifact-status-observation",
                 workTitle: "PAW Artifact Status Observation",
-                workDir:
-                  "C:\\repo\\.paw\\work\\paw-artifact-status-observation",
+                workDir: "C:\\repo\\.paw\\work\\paw-artifact-status-observation",
                 artifacts: [
                   {
                     path: "Plan.md",
@@ -728,7 +902,9 @@ describe("App sessions route", () => {
       expect(container.textContent).toContain("PAW workflow");
       expect(container.textContent).toContain("paw-artifact-status-observation");
       expect(container.textContent).toContain("implementation/phase-1.md");
-      expect(container.textContent).toContain("The latest Copilot event indicates the assistant turn ended");
+      expect(container.textContent).toContain(
+        "The latest Copilot event indicates the assistant turn ended",
+      );
     },
     15_000,
   );

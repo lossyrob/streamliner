@@ -36,13 +36,26 @@ import {
   isTrustedInterruptedSession,
 } from "./session-policies";
 import {
+  activitySignalClass,
+  activityStatusClass,
+  activityStatusHint,
+  getActivityStatusDescription,
+  getActivityStatusLabel,
+  getActivityTimestamp,
+  getObservedStatusLabel,
+  getTrustedStatusLabel,
+  hasTrustedSignal,
+  isHelperLikeObservedSession,
+  isRecentlyEndedTrustedSession,
+} from "./session-activity-status";
+import {
   TerminalColorQuickPicker,
 } from "./SessionColorPicker";
+import { sessionRegistryListUrl } from "../session-registry-client";
 
 const SESSION_POLL_INTERVAL_MS = 15_000;
 const SESSION_EVENT_REFETCH_DEBOUNCE_MS = 150;
 const DEFAULT_STALE_SESSION_DAYS = 7;
-const DEFAULT_RECENTLY_CLOSED_HOURS = 6;
 const SESSION_STALE_DAYS_STORAGE_KEY = "streamliner:sessionsStaleDays";
 const SESSION_GROUP_MODE_STORAGE_KEY = "streamliner:sessionsGroupMode";
 
@@ -320,24 +333,6 @@ function formatTimestamp(value: string | null): string {
   return new Date(value).toLocaleString();
 }
 
-function looksLikeSummarizerPrompt(value: string): boolean {
-  const trimmed = value.trim();
-  return trimmed.startsWith("Repo:") && trimmed.includes("Existing title:");
-}
-
-function isHelperLikeObservedSession(session: SessionRegistryListItem): boolean {
-  return (
-    session.originKind === "observed" &&
-    (session.observedSessionKind === "helper" ||
-      looksLikeSummarizerPrompt(session.title) ||
-      session.description.startsWith("AI summary helper ·"))
-  );
-}
-
-function hasTrustedSignal(session: SessionRegistryListItem): boolean {
-  return session.trustedSignalSource !== null;
-}
-
 function sessionDisplayColor(session: Pick<SessionRegistryListItem, "color">): string {
   return session.color ?? "var(--sl-accent-border)";
 }
@@ -352,7 +347,7 @@ async function copyTextToClipboard(text: string): Promise<void> {
 function getRowFallbackTitle(session: SessionRegistryListItem): string {
   const title = session.title.trim();
   const looksLikePrompt =
-    looksLikeSummarizerPrompt(title) ||
+    (title.startsWith("Repo:") && title.includes("Existing title:")) ||
     title.includes("Cwd:") ||
     title.includes("Existing title:");
   if (!session.copilotSessionId || (!looksLikePrompt && title.length <= 80)) {
@@ -498,33 +493,12 @@ function getSessionLatestDescription(
   return "No conversation description has been generated yet.";
 }
 
-function getActivityTimestamp(session: SessionRegistryListItem): number | null {
-  if (!session.lastSeenAt) {
-    return null;
-  }
-  const parsed = Date.parse(session.lastSeenAt);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
 function isSessionStale(
   session: SessionRegistryListItem,
   staleSessionDays: number,
 ): boolean {
   const staleCutoff = Date.now() - staleSessionDays * 24 * 60 * 60 * 1000;
   return getFreshnessTimestamp(session) < staleCutoff;
-}
-
-function isRecentlyClosedObservedSession(session: SessionRegistryListItem): boolean {
-  if (session.originKind !== "observed" || session.copilotProcessState === "live") {
-    return false;
-  }
-  const activityTimestamp = getActivityTimestamp(session);
-  if (activityTimestamp === null) {
-    return false;
-  }
-  return (
-    Date.now() - activityTimestamp <= DEFAULT_RECENTLY_CLOSED_HOURS * 60 * 60 * 1000
-  );
 }
 
 function isRelevantSession(session: SessionRegistryListItem): boolean {
@@ -535,136 +509,6 @@ function isRelevantSession(session: SessionRegistryListItem): boolean {
     return false;
   }
   return hasTrustedSignal(session);
-}
-
-function isRecentlyEndedTrustedSession(session: SessionRegistryListItem): boolean {
-  if (!hasTrustedSignal(session) || !session.trustedEndedAt) {
-    return false;
-  }
-  const endedAt = Date.parse(session.trustedEndedAt);
-  if (!Number.isFinite(endedAt)) {
-    return false;
-  }
-  return Date.now() - endedAt <= DEFAULT_RECENTLY_CLOSED_HOURS * 60 * 60 * 1000;
-}
-
-function getObservedStatusLabel(session: SessionRegistryListItem): string | null {
-  if (session.originKind !== "observed") {
-    return null;
-  }
-  if (isHelperLikeObservedSession(session)) {
-    return "helper";
-  }
-  if (session.copilotProcessState === "live") {
-    return "open";
-  }
-  if (session.copilotProcessState === "stale_lock") {
-    return "stale lock";
-  }
-  if (isRecentlyClosedObservedSession(session)) {
-    return "closed";
-  }
-  return "historical";
-}
-
-function getTrustedStatusLabel(session: SessionRegistryListItem): string | null {
-  if (!hasTrustedSignal(session)) {
-    return null;
-  }
-  const runner = session.trustedExecutionKind === "agency" ? "agency" : "cli";
-  if (isTrustedActiveSession(session)) {
-    return `${runner} open`;
-  }
-  if (isTrustedInterruptedSession(session)) {
-    return `${runner} resumable`;
-  }
-  if (session.trustedEndedAt) {
-    return `${runner} ended`;
-  }
-  return `${runner} trusted`;
-}
-
-function getActivityStatusLabel(session: SessionRegistryListItem): string {
-  switch (session.activityStatus) {
-    case "working":
-      return "working";
-    case "waiting_for_input":
-      return "waiting for you";
-    case "interrupted":
-      return "interrupted";
-    case "exited":
-      return "exited";
-    case "unknown":
-      return getTrustedStatusLabel(session) ?? getObservedStatusLabel(session) ?? "unknown";
-    default:
-      return "unknown";
-  }
-}
-
-function activityStatusClass(status: SessionRegistryListItem["activityStatus"]): string {
-  switch (status) {
-    case "working":
-      return "accent";
-    case "waiting_for_input":
-      return "green";
-    case "interrupted":
-      return "amber";
-    case "exited":
-      return "muted";
-    case "unknown":
-      return "muted";
-    default:
-      return "muted";
-  }
-}
-
-function activitySignalClass(status: SessionRegistryListItem["activityStatus"]): string {
-  switch (status) {
-    case "working":
-      return "working";
-    case "waiting_for_input":
-      return "waiting";
-    case "interrupted":
-    case "exited":
-    case "unknown":
-      return "inactive";
-    default:
-      return "inactive";
-  }
-}
-
-function activityStatusHint(status: SessionRegistryListItem["activityStatus"]): string {
-  switch (status) {
-    case "working":
-      return "agent active";
-    case "waiting_for_input":
-      return "assistant done";
-    case "interrupted":
-      return "resumable";
-    case "exited":
-      return "ended";
-    case "unknown":
-      return "activity unknown";
-    default:
-      return "activity unknown";
-  }
-}
-
-function getActivityStatusDescription(session: SessionRegistryListItem): string {
-  switch (session.activityStatus) {
-    case "working":
-      return "The latest Copilot event indicates the assistant turn is still in progress.";
-    case "waiting_for_input":
-      return "The latest Copilot event indicates the assistant turn ended and the session is waiting for input.";
-    case "interrupted":
-      return "The session started without a matching end signal, and Streamliner no longer sees a live Copilot process.";
-    case "exited":
-      return "The session has an end signal or ended lifecycle state.";
-    case "unknown":
-      return "Streamliner has not indexed enough activity yet to classify this session.";
-    default:
-      return "Streamliner has not indexed enough activity yet to classify this session.";
-  }
 }
 
 type PawWorkflowSummary = NonNullable<SessionRegistryListItem["pawWorkflow"]>;
@@ -1292,12 +1136,16 @@ interface SessionsPageProps {
   registerBeforeLeave?: (handler: (() => Promise<boolean>) | null) => void;
   workstreams?: WorkstreamRegistryListEntry[];
   onOpenWorkstream?: (target: WorkstreamRouteTarget) => void | Promise<void>;
+  routeWorkstreamId?: string | null;
+  routeNodeId?: string | null;
 }
 
 export function SessionsPage({
   registerBeforeLeave,
   workstreams = EMPTY_WORKSTREAMS,
   onOpenWorkstream,
+  routeWorkstreamId = null,
+  routeNodeId = null,
 }: SessionsPageProps) {
   const [sessions, setSessions] = useState<SessionRegistryListItem[]>([]);
   const [workstreamGraphs, setWorkstreamGraphs] = useState<
@@ -1416,16 +1264,13 @@ export function SessionsPage({
   const fetchSessions = useCallback(
     async (keepSelection = true) => {
       try {
-        const search = new URLSearchParams();
-        if (showArchived) {
-          search.set("includeArchived", "true");
-        }
-        if (query.trim().length > 0) {
-          search.set("text", query.trim());
-        }
-        const suffix = search.toString();
         const response = await fetch(
-          suffix.length > 0 ? `/api/sessions?${suffix}` : "/api/sessions",
+          sessionRegistryListUrl({
+            includeArchived: showArchived,
+            text: query,
+            workstreamId: routeWorkstreamId,
+            nodeId: routeNodeId,
+          }),
         );
         if (!response.ok) {
           throw new Error(`Failed to load sessions (${response.status})`);
@@ -1438,7 +1283,7 @@ export function SessionsPage({
         setLoading(false);
       }
     },
-    [applySessionList, query, showArchived],
+    [applySessionList, query, routeNodeId, routeWorkstreamId, showArchived],
   );
 
   const scheduleEventRefetch = useCallback(
@@ -1500,7 +1345,7 @@ export function SessionsPage({
       scheduleEventRefetch();
     };
     const handleSnapshot = (event: MessageEvent) => {
-      if (query.trim().length > 0 || showArchived) {
+      if (query.trim().length > 0 || showArchived || routeWorkstreamId || routeNodeId) {
         scheduleEventRefetch(0);
         return;
       }
@@ -1542,7 +1387,14 @@ export function SessionsPage({
         eventRefetchTimerRef.current = null;
       }
     };
-  }, [applySessionList, query, scheduleEventRefetch, showArchived]);
+  }, [
+    applySessionList,
+    query,
+    routeNodeId,
+    routeWorkstreamId,
+    scheduleEventRefetch,
+    showArchived,
+  ]);
 
   const selectedSession = useMemo(
     () => sessions.find((session) => session.id === selectedId) ?? selectedSnapshot,
@@ -1550,10 +1402,19 @@ export function SessionsPage({
   );
   const selectedPawWorkflow = selectedSession ? visiblePawWorkflow(selectedSession) : null;
   const selectedSessionRef = useLatestValue(selectedSession);
+  const graphScopedSessions = useMemo(
+    () =>
+      routeWorkstreamId || routeNodeId
+        ? sessions.filter((session) => session.originKind !== "manual")
+        : sessions,
+    [routeNodeId, routeWorkstreamId, sessions],
+  );
   const relevanceFilteredSessions = useMemo(
     () =>
-      showAllObserved ? sessions : sessions.filter((session) => isRelevantSession(session)),
-    [sessions, showAllObserved],
+      showAllObserved
+        ? graphScopedSessions
+        : graphScopedSessions.filter((session) => isRelevantSession(session)),
+    [graphScopedSessions, showAllObserved],
   );
   const endedFilteredSessions = useMemo(
     () => filterEndedSessions(relevanceFilteredSessions, showEnded),
@@ -1566,7 +1427,9 @@ export function SessionsPage({
       ),
     [endedFilteredSessions, staleSessionDays],
   );
-  const hiddenObservedSessionCount = sessions.length - relevanceFilteredSessions.length;
+  const hiddenGraphScopedManualCount = sessions.length - graphScopedSessions.length;
+  const hiddenObservedSessionCount =
+    graphScopedSessions.length - relevanceFilteredSessions.length;
   const hiddenEndedSessionCount =
     relevanceFilteredSessions.length - endedFilteredSessions.length;
   const hiddenStaleSessionCount =
@@ -2240,6 +2103,31 @@ export function SessionsPage({
         </button>
         <span className="sl-seg-note">{freezeNote}</span>
       </div>
+
+      {(routeWorkstreamId || routeNodeId) && (
+        <div className="sl-sessions-filter-note">
+          Showing graph-bound sessions
+          {routeNodeId ? (
+            <>
+              {" "}for node <code>{routeNodeId}</code>
+            </>
+          ) : null}
+          {routeWorkstreamId ? (
+            <>
+              {" "}in workstream <code>{routeWorkstreamId}</code>
+            </>
+          ) : null}
+          . Use the Sessions nav item to clear this graph filter.
+        </div>
+      )}
+
+      {hiddenGraphScopedManualCount > 0 && (
+        <div className="sl-sessions-filter-note">
+          Hiding {hiddenGraphScopedManualCount} manual session
+          {hiddenGraphScopedManualCount === 1 ? "" : "s"} from this graph-node
+          projection. Manual sessions remain available in the unfiltered Sessions view.
+        </div>
+      )}
 
       {hiddenObservedSessionCount > 0 && (
         <div className="sl-sessions-filter-note">

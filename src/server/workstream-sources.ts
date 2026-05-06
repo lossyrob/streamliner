@@ -671,6 +671,18 @@ function conflictCandidate(entry: Candidate, selected: boolean): WorkstreamConfl
   };
 }
 
+function dedupeCandidatesByPath(candidates: Candidate[]): Candidate[] {
+  const byPath = new Map<string, Candidate>();
+  for (const candidate of candidates) {
+    const key = pathKey(candidate.path);
+    const existing = byPath.get(key);
+    if (!existing || candidateSort(candidate, existing) < 0) {
+      byPath.set(key, candidate);
+    }
+  }
+  return [...byPath.values()];
+}
+
 export async function loadWorkstreamSourceRegistry(
   options: WorkstreamSourceRegistryOptions = {},
 ): Promise<WorkstreamSourceRegistryDocument> {
@@ -810,7 +822,7 @@ export async function combineWorkstreamCandidates(
   const conflicts: WorkstreamConflict[] = [];
 
   for (const [key, candidates] of candidatesByKey) {
-    const sorted = [...candidates].sort(candidateSort);
+    const sorted = dedupeCandidatesByPath(candidates).sort(candidateSort);
     const selected = sorted[0];
     const selectedEntry = { ...selected, archived: isArchived(registry.archivedWorkstreams, selected) };
     const target = selectedEntry.archived ? archived : active;

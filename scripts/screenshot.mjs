@@ -154,6 +154,7 @@ async function main() {
   const apiPort = String(await getFreePort());
   const apiRuntimeRoot = await mkdtemp(resolve(tmpdir(), "streamliner-screenshot-registry-"));
   const workstreamRegistryPath = resolve(apiRuntimeRoot, "workstream-registry", "workstreams.json");
+  const workstreamSourceRegistryPath = resolve(apiRuntimeRoot, "workstream-registry", "sources.json");
   const recentsPath = resolve(apiRuntimeRoot, "recent-graphs.json");
   const childEnv = {
     ...process.env,
@@ -162,6 +163,7 @@ async function main() {
     STREAMLINER_API_HOST: "127.0.0.1",
     STREAMLINER_SESSION_REGISTRY_ROOT: apiRuntimeRoot,
     STREAMLINER_WORKSTREAM_REGISTRY: workstreamRegistryPath,
+    STREAMLINER_WORKSTREAM_SOURCE_REGISTRY: workstreamSourceRegistryPath,
     STREAMLINER_RECENTS_PATH: recentsPath,
     STREAMLINER_INTERNAL_DISABLE_SESSION_WORKER: "1",
     BROWSER: "none",

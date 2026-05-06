@@ -14,6 +14,11 @@ import {
 } from "./workstream-view-model";
 import { buildWorkstreamGraphLayout } from "./workstream-graph";
 import type { WorkstreamDocument } from "./workstream-schema";
+import {
+  buildGraphNodeSessionStatusMap,
+  type GraphNodeSessionStatusSummary,
+  type GraphNodeSessionStatusState,
+} from "./graph-node-session-status";
 import type {
   WorkstreamConflict,
   WorkstreamRegistryListEntry,
@@ -62,6 +67,7 @@ import {
   trackerLabel as workstreamTrackerLabel,
   trackerUrl as workstreamTrackerUrl,
 } from "./workstream-links";
+import { useSessionRegistryList } from "./session-registry-client";
 
 const POLL_INTERVAL_MS = 2000;
 const LAST_GRAPH_KEY = "streamliner:lastGraphPath";
@@ -111,7 +117,13 @@ function parseMessageEventData<T>(event: Event): T {
 function readDashboardRoute(): DashboardRoute {
   const searchParams = new URLSearchParams(window.location.search);
   if (searchParams.get("view") === "sessions" || window.location.pathname === "/sessions") {
-    return { view: "sessions" };
+    const workstreamId = searchParams.get("workstreamId");
+    const nodeId = searchParams.get("nodeId");
+    return {
+      view: "sessions",
+      workstreamId: workstreamId && isKebabCaseId(workstreamId) ? workstreamId : null,
+      nodeId: nodeId && isKebabCaseId(nodeId) ? nodeId : null,
+    };
   }
   if (window.location.pathname === "/" || window.location.pathname === "") {
     return { view: "landing" };
@@ -941,11 +953,13 @@ function GraphDashboard({
   archive,
   untrack,
   onOpenWorkstream,
+  onOpenSessions,
   onManageSources,
   onRouteHome,
   selectedNodeIdFromRoute,
 }: ReturnType<typeof useGraphLoader> & {
   onOpenWorkstream: (entry: WorkstreamRegistryListEntry) => void | Promise<void>;
+  onOpenSessions: (target?: { workstreamId?: string | null; nodeId?: string | null }) => void | Promise<void>;
   onManageSources: () => void;
   onRouteHome: () => void;
   selectedNodeIdFromRoute?: string | null;
@@ -969,6 +983,22 @@ function GraphDashboard({
   const [nodeLaunchRecordError, setNodeLaunchRecordError] = useState<string | null>(null);
   const [nodeLaunchRecordRefreshKey, setNodeLaunchRecordRefreshKey] = useState(0);
   const activeWorkstreamKey = activeWorkstream ? registryKey(activeWorkstream) : "";
+  const sessionList = useSessionRegistryList(
+    { workstreamId: activeWorkstream?.workstreamId ?? null },
+    { enabled: Boolean(activeWorkstream) },
+  );
+  const nodeSessionStatuses = useMemo(
+    () =>
+      activeWorkstream
+        ? buildGraphNodeSessionStatusMap(sessionList.sessions, activeWorkstream.workstreamId)
+        : new Map<string, GraphNodeSessionStatusSummary>(),
+    [activeWorkstream, sessionList.sessions],
+  );
+  const nodeSessionStatusState: GraphNodeSessionStatusState = sessionList.loading
+    ? "loading"
+    : sessionList.error
+      ? "error"
+      : "ready";
 
   useEffect(() => {
     setSelectedNodeId(selectedNodeIdFromRoute ?? null);
@@ -1006,6 +1036,25 @@ function GraphDashboard({
   }, [activeWorkstreamEntry, selectedEntry]);
 
   const canLaunchSelectedNode = Boolean(selectedEntry && !launchDisabledReason);
+
+  const sessionRouteForNode = useCallback(
+    (nodeId: string) => {
+      const route: DashboardRoute = {
+        view: "sessions",
+        workstreamId: activeWorkstream?.workstreamId ?? null,
+        nodeId,
+      };
+      return {
+        href: routePath(route),
+        onOpen: () =>
+          onOpenSessions({
+            workstreamId: activeWorkstream?.workstreamId ?? null,
+            nodeId,
+          }),
+      };
+    },
+    [activeWorkstream?.workstreamId, onOpenSessions],
+  );
 
   const launchActionDisabledReason = useMemo(() => {
     const latestClaim = nodeLaunchRecord?.latestClaim;
@@ -1350,6 +1399,9 @@ function GraphDashboard({
             layout={layout}
             selectedNodeId={selectedNodeId}
             onNodeSelect={setSelectedNodeId}
+            nodeSessionStatuses={nodeSessionStatuses}
+            nodeSessionStatusState={nodeSessionStatusState}
+            sessionRouteForNode={sessionRouteForNode}
           />
         </ReactFlowProvider>
         <div className="sl-sidebar">
@@ -1498,6 +1550,17 @@ export default function App() {
     [handleRouteChange],
   );
 
+  const openSessions = useCallback(
+    async (target?: { workstreamId?: string | null; nodeId?: string | null }) => {
+      await handleRouteChange({
+        view: "sessions",
+        workstreamId: target?.workstreamId ?? null,
+        nodeId: target?.nodeId ?? null,
+      });
+    },
+    [handleRouteChange],
+  );
+
   const manageSources = useCallback(
     () => setRoute({ view: "workstreams" }),
     [setRoute],
@@ -1519,11 +1582,14 @@ export default function App() {
           registerBeforeLeave={registerBeforeLeave}
           workstreams={graphLoader.workstreams}
           onOpenWorkstream={openWorkstream}
+          routeWorkstreamId={route.workstreamId ?? null}
+          routeNodeId={route.nodeId ?? null}
         />
       ) : route.view === "workstream" ? (
         <GraphDashboard
           {...graphLoader}
           onOpenWorkstream={openWorkstream}
+          onOpenSessions={openSessions}
           onManageSources={manageSources}
           onRouteHome={() => setRoute({ view: "workstreams" }, "replace")}
           selectedNodeIdFromRoute={route.nodeId ?? null}
@@ -1549,7 +1615,7 @@ export default function App() {
           message={route.message}
           registryError={graphLoader.registryError}
           workstreamCount={graphLoader.workstreams.length}
-          onOpenSessions={() => handleRouteChange({ view: "sessions" })}
+          onOpenSessions={() => openSessions()}
           onOpenWorkstreams={() => handleRouteChange({ view: "workstreams" })}
         />
       )}
