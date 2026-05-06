@@ -714,15 +714,17 @@ function pawArtifactKindLabel(kind: PawWorkflowSummary["artifacts"][number]["kin
 
 function getPawWorkflowLabel(workflow: PawWorkflowSummary): string {
   if (workflow.status === "recognized") {
-    return `PAW ${pawWorkflowStageLabel(workflow.stage)}`;
+    return `🐾 PAW ${pawWorkflowStageLabel(workflow.stage)}`;
   }
-  if (workflow.status === "ambiguous") {
-    return "PAW ambiguous";
+  return "🐾 PAW";
+}
+
+function visiblePawWorkflow(session: SessionRegistryListItem): PawWorkflowSummary | null {
+  const workflow = session.pawWorkflow;
+  if (!workflow || session.originKind !== "launched" || workflow.status !== "recognized") {
+    return null;
   }
-  if (workflow.status === "unavailable") {
-    return "PAW unavailable";
-  }
-  return "PAW unknown";
+  return workflow;
 }
 
 function getPawWorkflowDescription(workflow: PawWorkflowSummary): string {
@@ -1568,6 +1570,7 @@ export function SessionsPage({
     () => sessions.find((session) => session.id === selectedId) ?? selectedSnapshot,
     [selectedId, selectedSnapshot, sessions],
   );
+  const selectedPawWorkflow = selectedSession ? visiblePawWorkflow(selectedSession) : null;
   const selectedSessionRef = useLatestValue(selectedSession);
   const relevanceFilteredSessions = useMemo(
     () =>
@@ -2340,6 +2343,7 @@ export function SessionsPage({
                     const signalClass = activitySignalClass(session.activityStatus);
                     const signalDetail = trustedStatus ?? observedStatus ?? session.originKind;
                     const rowFolderLeaf = leafName(rowWorktree ?? session.cwd);
+                    const rowPawWorkflow = visiblePawWorkflow(session);
                     const rowLinkage =
                       sessionLinkages.get(session.id) ??
                       resolveSessionWorkstreamLinkage(
@@ -2416,14 +2420,14 @@ export function SessionsPage({
                                 linkage={rowLinkage}
                                 onOpenWorkstream={onOpenWorkstream}
                               />
-                              {session.pawWorkflow && (
+                              {rowPawWorkflow && (
                                 <span
                                   className={`sl-session-row-context-chip paw-workflow ${pawWorkflowStatusClass(
-                                    session.pawWorkflow.status,
+                                    rowPawWorkflow.status,
                                   )}`}
-                                  title={getPawWorkflowDescription(session.pawWorkflow)}
+                                  title={getPawWorkflowDescription(rowPawWorkflow)}
                                 >
-                                  {getPawWorkflowLabel(session.pawWorkflow)}
+                                  {getPawWorkflowLabel(rowPawWorkflow)}
                                 </span>
                               )}
                               {session.derivedGithubRefs.slice(0, 3).map((ref) => (
@@ -2520,14 +2524,14 @@ export function SessionsPage({
                           {getObservedStatusLabel(selectedSession)}
                         </span>
                       )}
-                      {selectedSession.pawWorkflow && (
+                      {selectedPawWorkflow && (
                         <span
                           className={`sl-pill paw-workflow ${pawWorkflowStatusClass(
-                            selectedSession.pawWorkflow.status,
+                            selectedPawWorkflow.status,
                           )}`}
-                          title={getPawWorkflowDescription(selectedSession.pawWorkflow)}
+                          title={getPawWorkflowDescription(selectedPawWorkflow)}
                         >
-                          {getPawWorkflowLabel(selectedSession.pawWorkflow)}
+                          {getPawWorkflowLabel(selectedPawWorkflow)}
                         </span>
                       )}
                     </>
@@ -3000,6 +3004,7 @@ function SessionOverview({
   const contextWorktree = displayWorktree(session);
   const displaySessionId = getDisplaySessionId(session);
   const restartCommand = buildRestartCommand(session);
+  const pawWorkflow = visiblePawWorkflow(session);
   return (
     <div className="sl-session-overview">
       <section className="sl-session-overview-section">
@@ -3093,60 +3098,60 @@ function SessionOverview({
         </section>
       )}
 
-      {session.pawWorkflow && (
+      {pawWorkflow && (
         <section className="sl-session-overview-section">
           <h3 className="sl-session-overview-heading">PAW workflow</h3>
           <div
             className={`sl-session-paw-summary ${pawWorkflowStatusClass(
-              session.pawWorkflow.status,
+              pawWorkflow.status,
             )}`}
           >
-            <strong>{getPawWorkflowLabel(session.pawWorkflow)}</strong>
-            <span>{getPawWorkflowDescription(session.pawWorkflow)}</span>
+            <strong>{getPawWorkflowLabel(pawWorkflow)}</strong>
+            <span>{getPawWorkflowDescription(pawWorkflow)}</span>
           </div>
           <dl className="sl-session-kv">
             <dt>Status</dt>
-            <dd>{session.pawWorkflow.status}</dd>
+            <dd>{pawWorkflow.status}</dd>
             <dt>Stage</dt>
-            <dd>{pawWorkflowStageLabel(session.pawWorkflow.stage)}</dd>
+            <dd>{pawWorkflowStageLabel(pawWorkflow.stage)}</dd>
             <dt>Workflow</dt>
-            <dd>{session.pawWorkflow.workflowKind}</dd>
+            <dd>{pawWorkflow.workflowKind}</dd>
             <dt>Work ID</dt>
-            <dd>{session.pawWorkflow.workId ?? "—"}</dd>
-            {session.pawWorkflow.workTitle && (
+            <dd>{pawWorkflow.workId ?? "—"}</dd>
+            {pawWorkflow.workTitle && (
               <>
                 <dt>Work title</dt>
-                <dd>{session.pawWorkflow.workTitle}</dd>
+                <dd>{pawWorkflow.workTitle}</dd>
               </>
             )}
             <dt>Work dir</dt>
-            <dd>{session.pawWorkflow.workDir ?? "—"}</dd>
+            <dd>{pawWorkflow.workDir ?? "—"}</dd>
             <dt>Artifacts</dt>
-            <dd>{session.pawWorkflow.artifactCount}</dd>
+            <dd>{pawWorkflow.artifactCount}</dd>
             <dt>Latest artifact</dt>
-            <dd>{session.pawWorkflow.latestArtifactPath ?? "—"}</dd>
+            <dd>{pawWorkflow.latestArtifactPath ?? "—"}</dd>
             <dt>Latest mtime</dt>
-            <dd>{formatPawArtifactMtime(session.pawWorkflow.latestArtifactMtimeMs)}</dd>
+            <dd>{formatPawArtifactMtime(pawWorkflow.latestArtifactMtimeMs)}</dd>
             <dt>Scanned</dt>
-            <dd>{formatTimestamp(session.pawWorkflow.scannedAt)}</dd>
+            <dd>{formatTimestamp(pawWorkflow.scannedAt)}</dd>
           </dl>
-          {session.pawWorkflow.diagnostics.length > 0 && (
+          {pawWorkflow.diagnostics.length > 0 && (
             <div className="sl-session-paw-diagnostics">
-              {session.pawWorkflow.diagnostics.map((diagnostic) => (
+              {pawWorkflow.diagnostics.map((diagnostic) => (
                 <code key={diagnostic}>{diagnostic}</code>
               ))}
             </div>
           )}
-          {session.pawWorkflow.candidateWorkDirs.length > 0 && (
+          {pawWorkflow.candidateWorkDirs.length > 0 && (
             <div className="sl-session-paw-candidates">
-              {session.pawWorkflow.candidateWorkDirs.map((candidate) => (
+              {pawWorkflow.candidateWorkDirs.map((candidate) => (
                 <code key={candidate}>{candidate}</code>
               ))}
             </div>
           )}
-          {session.pawWorkflow.artifacts.length > 0 && (
+          {pawWorkflow.artifacts.length > 0 && (
             <ul className="sl-session-paw-artifacts">
-              {session.pawWorkflow.artifacts.slice(0, 6).map((artifact) => (
+              {pawWorkflow.artifacts.slice(0, 6).map((artifact) => (
                 <li key={`${artifact.kind}-${artifact.path}`}>
                   <span>{pawArtifactKindLabel(artifact.kind)}</span>
                   <code>{artifact.path}</code>

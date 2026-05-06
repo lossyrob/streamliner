@@ -454,6 +454,102 @@ describe("SessionRegistryBackgroundWorker", () => {
     );
   });
 
+  it("does not infer PAW workflow from fallback directories for ordinary sessions", async () => {
+    const registryRoot = createRootDir("streamliner-session-worker-registry-");
+    const sessionRoot = createRootDir("streamliner-session-worker-state-");
+    const repo = createRootDir("streamliner-ordinary-session-repo-");
+    const workDir = join(repo, ".paw", "work", "interview-packet");
+    mkdirSync(workDir, { recursive: true });
+    writeFileSync(
+      join(workDir, "WorkflowContext.md"),
+      [
+        "Work Title: Interview Packet",
+        "Work ID: interview-packet",
+        "Workflow Identity: paw-lite",
+      ].join("\n"),
+      "utf8",
+    );
+    writeFileSync(join(workDir, "Plan.md"), "# Plan\n", "utf8");
+
+    const store = new SessionRegistryFileStore({ rootDir: registryRoot });
+    const session = store.upsertSession({
+      id: "ordinary-session",
+      title: "Create Interview Packet For Silvia Vallet",
+      cwd: repo,
+      origin: { kind: "observed" },
+      copilotSessionId: "ordinary-copilot-session",
+    });
+    store.patchDerivedSessionState(session.id, {
+      pawWorkflow: {
+        status: "recognized",
+        stage: "planning",
+        workflowKind: "paw-lite",
+        workId: "interview-packet",
+        workTitle: "Interview Packet",
+        workDir,
+        candidateWorkDirs: [],
+        artifacts: [],
+        artifactCount: 0,
+        latestArtifactPath: null,
+        latestArtifactMtimeMs: null,
+        scannedAt: "2026-05-05T13:00:00.000Z",
+        diagnostics: [],
+      },
+    });
+    const worker = new SessionRegistryBackgroundWorker(store, {
+      sessionRoot,
+      now: () => new Date("2026-05-05T13:05:00.000Z"),
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    });
+
+    await worker.runCycle();
+
+    expect(store.getSession("ordinary-session")?.pawWorkflow).toBeNull();
+  });
+
+  it("clears PAW workflow when launched session metadata cannot identify a work directory", async () => {
+    const registryRoot = createRootDir("streamliner-session-worker-registry-");
+    const sessionRoot = createRootDir("streamliner-session-worker-state-");
+
+    const store = new SessionRegistryFileStore({ rootDir: registryRoot });
+    const session = store.upsertSession({
+      id: "ambiguous-launched-session",
+      title: "SLR-S #51",
+      cwd: "C:\\repo",
+      origin: { kind: "launched", launchClaimId: "claim-pruned" },
+      graphBinding: null,
+    });
+    store.patchDerivedSessionState(session.id, {
+      pawWorkflow: {
+        status: "ambiguous",
+        stage: null,
+        workflowKind: "unknown",
+        workId: null,
+        workTitle: null,
+        workDir: null,
+        candidateWorkDirs: [
+          "C:\\repo\\.paw\\work\\one",
+          "C:\\repo\\.paw\\work\\two",
+        ],
+        artifacts: [],
+        artifactCount: 0,
+        latestArtifactPath: null,
+        latestArtifactMtimeMs: null,
+        scannedAt: "2026-05-05T13:00:00.000Z",
+        diagnostics: ["paw_artifact_ambiguous"],
+      },
+    });
+    const worker = new SessionRegistryBackgroundWorker(store, {
+      sessionRoot,
+      now: () => new Date("2026-05-05T13:05:00.000Z"),
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    });
+
+    await worker.runCycle();
+
+    expect(store.getSession("ambiguous-launched-session")?.pawWorkflow).toBeNull();
+  });
+
   it("waits for five more user turns before refreshing a ready summary", async () => {
     const registryRoot = createRootDir("streamliner-session-worker-registry-");
     const sessionRoot = createRootDir("streamliner-session-worker-state-");

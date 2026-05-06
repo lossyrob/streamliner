@@ -449,8 +449,15 @@ export class SessionRegistryBackgroundWorker {
         continue;
       }
       try {
+        const expectedWorkDir = this.expectedPawWorkDirFor(session);
+        if (!expectedWorkDir) {
+          if (session.pawWorkflow) {
+            this.tryPatch(session.id, { pawWorkflow: null });
+          }
+          continue;
+        }
         const patch = this.summarizer.indexPawWorkflow(session, {
-          expectedWorkDir: this.expectedPawWorkDirFor(session),
+          expectedWorkDir,
           now: this.now,
         });
         if (patch) {
@@ -466,6 +473,10 @@ export class SessionRegistryBackgroundWorker {
   }
 
   private expectedPawWorkDirFor(session: SessionRegistryListItem): string | null {
+    if (session.originKind !== "launched") {
+      return null;
+    }
+
     const launchedPawWorkDir = session.pawLaunch?.pawWorkDir;
     if (launchedPawWorkDir && launchedPawWorkDir.trim().length > 0) {
       return launchedPawWorkDir;

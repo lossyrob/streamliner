@@ -360,7 +360,7 @@ Beyond the core lifecycle state, the session watcher derives additional fields f
 
 ### PAW Artifact Workflow Enrichment
 
-`pawWorkflow` is a workflow-enrichment projection, not a liveness signal. It is updated by the session-registry background worker through the derived-state patch path, so builder-owned fields and trusted activity evidence are not rewritten by artifact scans. Durable launch metadata on the registry row (`pawLaunch.pawWorkDir`) is the preferred source for Streamliner-launched PAW sessions, because launch-claim files are retained only temporarily and `graphBinding` may be cleared after a failed or cancelled claim. If durable metadata is absent, the worker falls back to launch-claim lineage metadata when the claim is still available. When neither launch source supplies a work directory, Streamliner walks upward from `derivedWorktreePath ?? cwd`, looks for `.paw/work/*`, and only links automatically when exactly one candidate exists.
+`pawWorkflow` is a workflow-enrichment projection, not a liveness signal. It is updated by the session-registry background worker through the derived-state patch path, so builder-owned fields and trusted activity evidence are not rewritten by artifact scans. Durable launch metadata on the registry row (`pawLaunch.pawWorkDir`) is the preferred source for Streamliner-launched PAW sessions, because launch-claim files are retained only temporarily and `graphBinding` may be cleared after a failed or cancelled claim. If durable metadata is absent, the worker falls back to launch-claim lineage metadata when the claim is still available. When neither explicit launch source supplies a work directory, Streamliner leaves `pawWorkflow` unset instead of scanning unrelated `.paw/work/*` directories from the session cwd.
 
 The scanner is intentionally coarse and evidence-oriented. It inspects bounded directory entries under the PAW work directory and classifies durable files by path:
 
@@ -380,15 +380,15 @@ When multiple known artifacts exist, the displayed stage is the highest coarse s
 | Status | Meaning |
 |--------|---------|
 | `recognized` | A PAW work directory was found and at least one known artifact pattern was recognized. |
-| `ambiguous` | More than one fallback `.paw/work/*` candidate matched; Streamliner reports candidates instead of choosing. |
-| `unavailable` | An expected work directory is missing/unreadable, or a `.paw/work` root has no candidate work directories. |
-| `unknown` | Exactly one candidate exists, but only unknown artifact layouts were found. |
+| `ambiguous` | More than one candidate matched in a diagnostic scan; the Sessions UI suppresses this state rather than showing a PAW label. |
+| `unavailable` | An expected work directory is missing/unreadable. |
+| `unknown` | An explicit PAW work directory exists, but only unknown artifact layouts were found. |
 
-Diagnostics are explicit and degraded states stay visible:
+Diagnostics are explicit, but the Sessions UI only shows the `🐾 PAW ...` label for recognized Streamliner-launched PAW sessions:
 
 | Diagnostic | Meaning |
 |------------|---------|
-| `paw_workdir_unavailable` | The expected or discovered PAW work directory could not be used. |
+| `paw_workdir_unavailable` | The expected PAW work directory could not be used. |
 | `paw_artifact_ambiguous` | Multiple candidate work directories were found. |
 | `paw_artifact_layout_unknown` | Files exist, but none match known PAW artifact patterns. |
 | `paw_artifact_scan_error` | A bounded filesystem scan failed while reading part of the work directory. |
@@ -457,7 +457,7 @@ Each registry entry is a persisted `SessionRegistryRecord`. The stored lifecycle
 | `activityStatus`, `activityStatusUpdatedAt` | status + ISO 8601 string or `null` | yes | Observation | Coarse liveness/attention status retained for compatibility with existing My Sessions and future graph-node consumers. |
 | `activityEvidence` | object | yes | Observation | Privacy-preserving evidence behind `activityStatus`: `statusReason`, `confidence`, `diagnostics`, `pendingInputRequest`, `pendingInputRequestCount`, last user/assistant turn timestamps, scanned user/assistant-turn counts, and event scan offset/size/mtime metadata. Scan metadata is a snapshot from the most recent material interpreted-state change, not an incremental cursor and not refreshed for bookkeeping-only scans. Manual or never-observed rows use neutral defaults (`confidence: none`, no diagnostics) rather than degraded diagnostics. |
 | `pawLaunch` | object or `null` | yes | Launch pipeline | Durable PAW launch metadata captured when Streamliner starts a PAW-backed node: work id/title, workflow kind, PAW work directory, and context artifact paths. This field remains on the session row after launch-claim retention cleanup and lets `pawWorkflow` resolve the exact work directory even if `graphBinding` is later cleared. |
-| `pawWorkflow` | object or `null` | yes | Artifact indexer | Derived PAW workflow enrichment. `null` means no PAW work directory has been linked. Non-null records include `status`, `stage`, `workflowKind`, work identity/path hints, candidate directories for ambiguous cases, recognized/unknown artifact evidence, latest artifact path/mtime, scan timestamp, and diagnostics. This field does not drive or replace `activityStatus`. |
+| `pawWorkflow` | object or `null` | yes | Artifact indexer | Derived PAW workflow enrichment for Streamliner-launched PAW sessions. `null` means no explicit PAW work directory has been linked. Non-null records include `status`, `stage`, `workflowKind`, work identity/path hints, candidate directories for diagnostic ambiguity cases, recognized/unknown artifact evidence, latest artifact path/mtime, scan timestamp, and diagnostics. This field does not drive or replace `activityStatus`. |
 | `createdAt`, `updatedAt` | ISO 8601 string | yes | Streamliner | Record creation and last persisted update timestamps. |
 | `tags` | string[] | yes | Builder | Freeform labels; default `[]`. |
 | `origin.kind` | `manual \| observed \| launched` | yes | Streamliner | How the row first entered the registry. The `origin` object is discriminated by this field. |
@@ -647,7 +647,7 @@ The watcher polls `events.jsonl` modification times at a configurable interval (
 2. Extract recent turn evidence: scanned `user.message` count, scanned `assistant.turn_start` count, latest user-message timestamp, latest assistant-turn-start timestamp, and latest assistant-turn-end timestamp.
 3. Derive coarse `activityStatus` from trusted end/start/prompt signals, process-lock disappearance after a trusted start, `session.ended`, assistant turn boundaries, user messages, assistant messages, tool starts/completions, and user-requested tool completions.
 4. Detect pending input within the scanned tail by tracking unresolved `ask_user` tool requests from `assistant.message.toolRequests` or `tool.execution_start` until matching `tool.execution_complete` events. A visible open request sets `activityStatus: waiting_for_input` and `activityEvidence.pendingInputRequest: true`. Anonymous requests are deduplicated per event and expire at a later assistant turn end; if the request scrolled out of a truncated tail, consumers should treat `pendingInputRequest: false` plus `events_tail_truncated` as unknown.
-5. Detect PAW artifact status when applicable: for sessions launched through Streamliner's PAW flow, sessions with PAW launch metadata, or sessions with a reachable `.paw/work/*/` directory, inspect the durable PAW artifact set and derive a coarse workflow-status summary. `WorkflowContext.md` and `ReviewContext.md` may contribute artifact identity or headings, but `## Control State` is not authoritative. See [Decision 008](decisions/008-paw-artifacts-for-workflow-status.md).
+5. Detect PAW artifact status when applicable: for sessions launched through Streamliner's PAW flow with durable PAW launch metadata or retained launch-claim lineage, inspect the explicit PAW work directory and derive a coarse workflow-status summary. Ordinary observed/manual sessions are not labeled by scanning for reachable `.paw/work/*/` directories from their cwd. `WorkflowContext.md` and `ReviewContext.md` may contribute artifact identity or headings, but `## Control State` is not authoritative. See [Decision 008](decisions/008-paw-artifacts-for-workflow-status.md).
 
 Full persistent incremental open-request indexing and watcher-restart rehydration remain deferred. Until that lands, `activityEvidence.confidence` and diagnostics make bounded-tail limitations explicit for consumers.
 
@@ -658,7 +658,7 @@ Session tracking combines a required liveness source with optional workflow-arti
 - **Copilot session state** (`~/.copilot/session-state/{id}/`) — liveness, turn boundaries, pending input requests, end reasons. Authoritative for *is the session alive and does it need attention?*
 - **PAW artifact state** (`.paw/work/<work-id>/...`) — for PAW-backed sessions only: durable workflow artifacts such as specs, plans, research, implementation phase artifacts, review artifacts, and PR/finalization artifacts. Authoritative for *what PAW artifacts exist and what coarse workflow status they imply?*
 
-Streamliner overlays Copilot session state onto every bound graph node and overlays PAW artifact status when a session has PAW artifacts or PAW launch metadata. Neither subsumes the other: a session can be idle while PAW artifacts indicate mid-workflow progress, and PAW artifacts can advance across sessions that this watcher never observed. Launch and tracking require PAW initialization for the MVP graph-launch path, but they do not require `## Control State` parsing to succeed.
+Streamliner overlays Copilot session state onto every bound graph node and overlays PAW artifact status when a Streamliner-launched session has explicit PAW launch metadata or retained launch-claim lineage. Neither subsumes the other: a session can be idle while PAW artifacts indicate mid-workflow progress, and PAW artifacts can advance across sessions that this watcher never observed. Launch and tracking require PAW initialization for the MVP graph-launch path, but they do not require `## Control State` parsing to succeed.
 
 ### Hook Signals
 
@@ -831,9 +831,9 @@ Graph nodes use the same compact status pulse/pill language as My Sessions for b
 
 For PAW-backed sessions, the `pawWorkflow` field carries an artifact-derived status summary (see [Decision 008](decisions/008-paw-artifacts-for-workflow-status.md)). It is intentionally coarse: it reports the artifact evidence Streamliner can see, not a guaranteed workflow automaton state.
 
-- **Recognized artifact set** — overlay shows the coarse status implied by known PAW artifacts and can link to the relevant artifact paths.
-- **Ambiguous artifact set** — overlay shows a degraded/ambiguous badge and the artifact evidence rather than guessing a precise activity.
-- **Unavailable artifact path** — overlay shows liveness/session status from Copilot state and a PAW artifact diagnostic, but does not invent workflow progress.
+- **Recognized artifact set** — overlay shows a `🐾 PAW ...` label with the coarse status implied by known PAW artifacts and can link to the relevant artifact paths.
+- **Ambiguous artifact set** — overlay omits the PAW label rather than guessing or showing "PAW ambiguous".
+- **Unavailable artifact path** — overlay shows liveness/session status from Copilot state and may retain PAW diagnostics in registry data, but does not invent workflow progress or show a PAW label.
 
 Mutation-affecting affordances must not depend solely on artifact-derived status until the workstream explicitly defines the artifact patterns and confidence thresholds for that affordance.
 
