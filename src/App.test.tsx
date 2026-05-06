@@ -699,25 +699,6 @@ describe("App sessions route", () => {
                 diagnostics: [],
               },
             }),
-            buildSession({
-              id: "ambiguous-paw-session",
-              title: "Ambiguous PAW Launch",
-              originKind: "launched",
-              pawWorkflow: {
-                status: "ambiguous",
-                stage: null,
-                workflowKind: "unknown",
-                workId: null,
-                workTitle: null,
-                workDir: null,
-                artifacts: [],
-                artifactCount: 0,
-                latestArtifactPath: null,
-                latestArtifactMtimeMs: null,
-                scannedAt: "2026-05-05T13:05:00.000Z",
-                diagnostics: ["paw_artifact_ambiguous"],
-              },
-            }),
           ]);
         }
         if (path === "/api/workstreams") {
@@ -738,8 +719,6 @@ describe("App sessions route", () => {
       expect(row.textContent).toContain("🐾 PAW implementation");
       const ordinaryRow = findSessionRow(container, "Create Interview Packet For Silvia Vallet");
       expect(ordinaryRow.textContent).not.toContain("PAW planning");
-      const ambiguousRow = findSessionRow(container, "Ambiguous PAW Launch");
-      expect(ambiguousRow.textContent).not.toContain("PAW ambiguous");
 
       act(() => {
         row.click();

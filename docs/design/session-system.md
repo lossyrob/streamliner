@@ -375,7 +375,7 @@ The scanner is intentionally coarse and evidence-oriented. It inspects bounded d
 
 When multiple known artifacts exist, the displayed stage is the highest coarse stage present (`finalization` > `review` > `implementation` > `planning` > `init`). `WorkflowContext.md` and `ReviewContext.md` may provide identity hints such as work id, work title, and workflow kind, but their `## Control State` sections are not authoritative and must not drive stage selection.
 
-`pawWorkflow.status` has three current values. The registry schema still tolerates legacy `ambiguous` values from earlier candidate-discovery builds so old rows can load and be cleared, but the current worker never discovers PAW work-directory candidates from cwd.
+`pawWorkflow.status` has three values:
 
 | Status | Meaning |
 |--------|---------|
@@ -388,7 +388,6 @@ Diagnostics are explicit, but the Sessions UI only shows the `🐾 PAW ...` labe
 | Diagnostic | Meaning |
 |------------|---------|
 | `paw_workdir_unavailable` | The expected PAW work directory could not be used. |
-| `paw_artifact_ambiguous` | Legacy diagnostic from older candidate-discovery scans; current indexing does not discover candidates. |
 | `paw_artifact_layout_unknown` | Files exist, but none match known PAW artifact patterns. |
 | `paw_artifact_scan_error` | A bounded filesystem scan failed while reading part of the work directory. |
 | `paw_artifact_scan_truncated` | The bounded artifact scan reached its entry cap before all files were inspected. |

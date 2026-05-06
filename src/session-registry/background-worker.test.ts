@@ -506,7 +506,7 @@ describe("SessionRegistryBackgroundWorker", () => {
     expect(store.getSession("ordinary-session")?.pawWorkflow).toBeNull();
   });
 
-  it("clears PAW workflow when launched session metadata cannot identify a work directory", async () => {
+  it("clears stale PAW workflow when launched session metadata cannot identify a work directory", async () => {
     const registryRoot = createRootDir("streamliner-session-worker-registry-");
     const sessionRoot = createRootDir("streamliner-session-worker-state-");
 
@@ -520,18 +520,18 @@ describe("SessionRegistryBackgroundWorker", () => {
     });
     store.patchDerivedSessionState(session.id, {
       pawWorkflow: {
-        status: "ambiguous",
-        stage: null,
-        workflowKind: "unknown",
-        workId: null,
-        workTitle: null,
-        workDir: null,
+        status: "recognized",
+        stage: "planning",
+        workflowKind: "paw-lite",
+        workId: "stale-paw-work",
+        workTitle: "Stale PAW Work",
+        workDir: "C:\\repo\\.paw\\work\\stale-paw-work",
         artifacts: [],
         artifactCount: 0,
         latestArtifactPath: null,
         latestArtifactMtimeMs: null,
         scannedAt: "2026-05-05T13:00:00.000Z",
-        diagnostics: ["paw_artifact_ambiguous"],
+        diagnostics: [],
       },
     });
     const worker = new SessionRegistryBackgroundWorker(store, {

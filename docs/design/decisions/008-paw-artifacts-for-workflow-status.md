@@ -39,7 +39,7 @@ Copilot session state remains the source for session liveness and attention stat
 - Streamliner's `pawWorkflow` field becomes an artifact-derived workflow summary, not a control-state parser result.
 - The runtime overlay can show PAW status even when `WorkflowContext.md` has no `## Control State` section or contains stale/untrusted control-state text.
 - PAW status rendering should be coarse and transparent: it reports what artifacts exist and what stage they imply, not a guaranteed workflow automaton state.
-- Diagnostics shift from control-state parse errors to artifact-scan freshness, inaccessible work directories, ambiguous artifact sets, and unknown artifact layouts.
+- Diagnostics shift from control-state parse errors to artifact-scan freshness, inaccessible work directories, and unknown artifact layouts.
 - Decision 003 remains historical context for why control-state parsing was considered, but it is no longer the current design direction.
 
 ## Open questions
@@ -50,6 +50,6 @@ Copilot session state remains the source for session liveness and attention stat
 
 ## 2026-05-06 update: explicit PAW work directories only
 
-Artifact-derived status applies only when Streamliner launch metadata or retained launch-claim lineage names the exact PAW work directory for a launched session. The session watcher does not discover `.paw/work/*` candidates from arbitrary session cwd values, because that produced false-positive labels for ordinary observed sessions and ambiguous labels when multiple PAW work directories existed.
+Artifact-derived status applies only when Streamliner launch metadata or retained launch-claim lineage names the exact PAW work directory for a launched session. The session watcher does not discover `.paw/work/*` candidates from arbitrary session cwd values, because that produced false-positive labels for ordinary observed sessions and undecidable labels when multiple PAW work directories existed.
 
-Ambiguous candidate-set diagnostics are legacy registry data from earlier builds, not a current indexing mode. Current rendering shows a `🐾 PAW ...` label only for recognized Streamliner-launched PAW sessions and omits the label when no explicit work directory is available.
+Current rendering shows a `🐾 PAW ...` label only for recognized Streamliner-launched PAW sessions and omits the label when no explicit work directory is available.

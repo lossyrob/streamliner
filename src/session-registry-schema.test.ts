@@ -170,7 +170,6 @@ describe("session registry schema", () => {
     ]);
     expect(SESSION_REGISTRY_PAW_WORKFLOW_STATUSES).toEqual([
       "recognized",
-      "ambiguous",
       "unavailable",
       "unknown",
     ]);
@@ -199,7 +198,6 @@ describe("session registry schema", () => {
     ]);
     expect(SESSION_REGISTRY_PAW_WORKFLOW_DIAGNOSTIC_CODES).toEqual([
       "paw_workdir_unavailable",
-      "paw_artifact_ambiguous",
       "paw_artifact_layout_unknown",
       "paw_artifact_scan_error",
       "paw_artifact_scan_truncated",
