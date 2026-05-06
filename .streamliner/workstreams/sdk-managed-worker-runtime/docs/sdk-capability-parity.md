@@ -27,6 +27,7 @@ This is not a clean "go" because takeover, hook substitution, and cancellation s
 - The installed SDK package identifies itself as a public-preview TypeScript SDK for programmatic control of GitHub Copilot CLI over JSON-RPC (`node_modules/@github/copilot-sdk/README.md:1-5`) and exposes `CopilotClient`, `CopilotSession`, tools, permissions, session events, and session filesystem types (`node_modules/@github/copilot-sdk/dist/index.d.ts:1-9`).
 - Current Streamliner design intentionally uses SDK for PAW launch preparation but launches the actual worker as visible Copilot CLI (`docs/design/session-system.md:38-40`, `docs/design/session-system.md:66-82`).
 - Current observation and graph overlay behavior is registry-first and file/hook-observation based (`docs/design/decisions/001-observation-based-session-tracking.md:21-34`, `docs/design/decisions/004-session-registry-primary-surface.md:24-32`).
+- A related local PAL SDK implementation was inspected as a historical comparison. It uses older SDK versions (`@github/copilot-sdk` `0.2.0` in its production Donna package and `0.1.29` in its SDK POC), manually appends `AGENTS.md` to the session system message, and explicitly passes skill directories, MCP servers, custom tools, permission handlers, and user-input callbacks. Treat that as useful prior art for runtime design, not as proof that current SDK `0.3.0` still requires manual instruction loading.
 - All `node_modules/@github/copilot-sdk/**` line citations refer to `@github/copilot-sdk` `0.3.0`; re-verify them after any SDK upgrade.
 
 ### Lightweight local verification
@@ -70,6 +71,15 @@ This verified local SDK startup and session metadata only. It did **not** valida
 | PAW workflow execution | Streamliner already drives PAW init through SDK with `paw-init`, custom tools, `approveAll`, progress events, and artifact verification (`src/server/launch-preparation.ts:1370-1451`). PAW workflow status is artifact-derived, not control-state-derived (`docs/design/decisions/008-paw-artifacts-for-workflow-status.md:21-43`). | Strong evidence for PAW init; likely for PAW implementation | First managed runtime should dogfood a real PAW node before defaulting broadly. |
 | Session persistence | SDK exposes persistent `workspacePath`, `resumeSession`, `listSessions`, and `deleteSession` (`node_modules/@github/copilot-sdk/README.md:126-160`, `node_modules/@github/copilot-sdk/README.md:625-652`). Streamliner also has custom SDK session FS plumbing (`src/session-registry/copilot-sdk-session-fs.ts:97-184`). | SDK-native persistence exists | Contract must decide whether managed workers use default `.copilot` session-state, Streamliner-owned SDK state, or a hybrid. |
 | PR production | No direct end-to-end managed worker PR test in this node. The SDK can expose tools/GitHub auth and current PAW init can prepare a CLI worker. | Plausible, not proven | Gate implementation behind first dogfood PR before defaulting SDK-managed runtime. |
+
+## Related PAL SDK Prior Art
+
+The PAL Donna runner provides useful comparative evidence because it is another SDK-managed coding/work-session host. It does not change the recommendation, but it sharpens the risks to verify in Streamliner's first managed worker prototype.
+
+- **Instruction loading:** PAL's production SDK runner manually reads `AGENTS.md` from the worker cwd and appends it through `systemMessage`, with a size cap. That workaround was implemented against SDK `0.2.0`. Current Streamliner's SDK `0.3.0` type docs state that `.github/copilot-instructions.md`, `AGENTS.md`, and related custom instruction files are always loaded from `workingDirectory` regardless of `enableConfigDiscovery` (`node_modules/@github/copilot-sdk/dist/types.d.ts:958-968`). Therefore #61 should verify effective instruction loading in the current SDK and avoid double-injecting instructions if the runtime also appends Streamliner launch guidance.
+- **Explicit context wiring:** PAL still explicitly passes `skillDirectories`, custom tools, MCP servers, `onPermissionRequest`, and `onUserInputRequest` instead of relying only on ambient CLI behavior. This supports making Streamliner's managed-worker contract explicit about every context source it expects rather than assuming visible CLI parity.
+- **Progress and tools:** PAL projects SDK session events into bounded activity state and uses custom completion/blocker/update tools for managed work sessions. That reinforces Streamliner's recommendation to build an allowlisted progress projection and deterministic lifecycle actions rather than showing raw SDK events or relying on model prose.
+- **Terminal resume:** PAL treats `resumeSession` and `copilot --resume <session-id>` as useful session-continuation mechanisms, but it does not prove live ownership transfer from an SDK-managed worker to a visible terminal. That leaves the takeover finding unchanged: prototype true takeover or define first-cut takeover as a one-way handoff/fork.
 
 ## Plugin and Hook Parity
 
@@ -257,7 +267,7 @@ A new decision record is optional but recommended if #61 makes one-way takeover 
 Before implementation hardens around SDK-managed workers, #61 or the first substrate node should run these probes:
 
 1. Create an SDK-managed PAW-lite worker that performs a small real repository change and opens a PR.
-2. Verify configured skills, MCP servers, GitHub auth, and Copilot instructions inside that worker.
+2. Verify configured skills, MCP servers, GitHub auth, and Copilot instructions inside that worker, including whether SDK auto-loaded `.github/copilot-instructions.md` / `AGENTS.md` and whether any runtime `systemMessage` append caused duplicate instructions.
 3. Verify installed Copilot CLI plugin discovery/loading, including plugin-provided commands, skills, hooks, or explicit absence thereof under SDK-managed sessions.
 4. Verify SDK progress events during real shell/file/Git/GitHub tool use and apply the redaction allowlist.
 5. Abort an active turn and a long-running shell command; record exact events and subprocess behavior.
