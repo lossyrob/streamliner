@@ -1896,6 +1896,18 @@ a.sl-action-btn {
   font-weight: 600;
 }
 
+.sl-session-row-context-chip.paw-workflow,
+.sl-pill.paw-workflow {
+  font-weight: 700;
+}
+
+.sl-session-row-context-chip.paw-workflow.recognized,
+.sl-pill.paw-workflow.recognized {
+  background: rgba(91, 127, 255, 0.12);
+  border-color: var(--sl-accent-border);
+  color: var(--sl-accent);
+}
+
 a.sl-session-row-context-chip,
 a.sl-session-context-ref {
   text-decoration: none;
@@ -2679,6 +2691,68 @@ a.sl-session-context-ref {
 
 .sl-session-narrative strong {
   color: var(--sl-text);
+}
+
+.sl-session-paw-summary {
+  border: 1px solid rgba(16, 34, 60, 0.08);
+  border-radius: 12px;
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+}
+
+.sl-session-paw-summary strong {
+  color: var(--sl-text);
+  font-size: 13px;
+}
+
+.sl-session-paw-summary span {
+  color: var(--sl-text-mid);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.sl-session-paw-summary.recognized {
+  background: linear-gradient(135deg, rgba(91, 127, 255, 0.1), rgba(255, 255, 255, 0.8));
+  border-color: var(--sl-accent-border);
+}
+
+.sl-session-paw-diagnostics,
+.sl-session-paw-artifacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sl-session-paw-diagnostics code,
+.sl-session-paw-artifacts code {
+  background: rgba(16, 34, 60, 0.06);
+  border: 1px solid rgba(16, 34, 60, 0.08);
+  border-radius: 999px;
+  color: var(--sl-text-mid);
+  font-family: var(--sl-mono);
+  font-size: 11px;
+  padding: 2px 7px;
+  word-break: break-all;
+}
+
+.sl-session-paw-artifacts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sl-session-paw-artifacts li {
+  align-items: center;
+  display: inline-flex;
+  gap: 5px;
+}
+
+.sl-session-paw-artifacts span {
+  color: var(--sl-text-muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
 }
 
 .sl-session-quick-actions {

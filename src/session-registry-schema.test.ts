@@ -12,6 +12,11 @@ import {
   SESSION_REGISTRY_LIFECYCLE_STATUSES,
   SESSION_REGISTRY_OBSERVED_SESSION_KINDS,
   SESSION_REGISTRY_ORIGIN_KINDS,
+  SESSION_REGISTRY_PAW_ARTIFACT_KINDS,
+  SESSION_REGISTRY_PAW_WORKFLOW_DIAGNOSTIC_CODES,
+  SESSION_REGISTRY_PAW_WORKFLOW_KINDS,
+  SESSION_REGISTRY_PAW_WORKFLOW_STAGES,
+  SESSION_REGISTRY_PAW_WORKFLOW_STATUSES,
   SESSION_REGISTRY_SCHEMA_VERSION,
   SESSION_REGISTRY_TITLE_SOURCES,
   SESSION_REGISTRY_TRUSTED_END_REASONS,
@@ -59,6 +64,7 @@ function buildRecord(): SessionRegistryRecord {
       nodeId: "session-registry-model",
       launchClaimId: "launch-claim-123",
     },
+    pawLaunch: null,
     aiSummary: "Designing the session registry contract surface",
     aiSummaryModel: "gpt-5.4-mini",
     aiSummaryUpdatedAt: "2026-04-21T20:31:00.000Z",
@@ -71,6 +77,7 @@ function buildRecord(): SessionRegistryRecord {
     activityStatus: "unknown",
     activityStatusUpdatedAt: null,
     activityEvidence: DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
+    pawWorkflow: null,
     trustedSignalSource: null,
     trustedStartedAt: null,
     trustedEndedAt: null,
@@ -161,6 +168,40 @@ describe("session registry schema", () => {
       "events_unrecognized",
       "events_unrecognized_tool_shape",
     ]);
+    expect(SESSION_REGISTRY_PAW_WORKFLOW_STATUSES).toEqual([
+      "recognized",
+      "unavailable",
+      "unknown",
+    ]);
+    expect(SESSION_REGISTRY_PAW_WORKFLOW_STAGES).toEqual([
+      "init",
+      "planning",
+      "implementation",
+      "review",
+      "finalization",
+    ]);
+    expect(SESSION_REGISTRY_PAW_WORKFLOW_KINDS).toEqual([
+      "paw",
+      "paw-lite",
+      "paw-review",
+      "unknown",
+    ]);
+    expect(SESSION_REGISTRY_PAW_ARTIFACT_KINDS).toEqual([
+      "context",
+      "specification",
+      "research",
+      "planning",
+      "implementation",
+      "review",
+      "finalization",
+      "unknown",
+    ]);
+    expect(SESSION_REGISTRY_PAW_WORKFLOW_DIAGNOSTIC_CODES).toEqual([
+      "paw_workdir_unavailable",
+      "paw_artifact_layout_unknown",
+      "paw_artifact_scan_error",
+      "paw_artifact_scan_truncated",
+    ]);
     expect(SESSION_REGISTRY_GITHUB_REF_TYPES).toEqual(["issue", "pr", "unknown"]);
     expect(SESSION_REGISTRY_TRUSTED_SIGNAL_SOURCES).toEqual([
       "copilot-cli-hook",
@@ -250,6 +291,7 @@ describe("session registry schema", () => {
       tags: record.tags,
       originKind: record.origin.kind,
       graphBinding: record.graphBinding,
+      pawLaunch: record.pawLaunch,
       copilotSessionId: record.copilotSessionId,
       aiSummary: record.aiSummary,
       aiSummaryModel: record.aiSummaryModel,
@@ -263,6 +305,7 @@ describe("session registry schema", () => {
       activityStatus: record.activityStatus,
       activityStatusUpdatedAt: record.activityStatusUpdatedAt,
       activityEvidence: record.activityEvidence,
+      pawWorkflow: record.pawWorkflow,
       trustedSignalSource: record.trustedSignalSource,
       trustedStartedAt: record.trustedStartedAt,
       trustedEndedAt: record.trustedEndedAt,

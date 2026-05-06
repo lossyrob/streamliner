@@ -135,6 +135,44 @@ describe("createLaunchClaim", () => {
     expect(persistedClaim?.reservedRegistryId).toBe("reg-1");
   });
 
+  it("stores durable PAW launch metadata on the reserved row", () => {
+    const outcome = createLaunchClaim(
+      registryStore,
+      claimStore,
+      {
+        workstreamId: "ws-paw",
+        nodeId: "node-paw",
+        expectedCwd: "C:/repo/work",
+        pawLaunch: {
+          workId: "paw-artifact-status-observation",
+          workTitle: "PAW Artifact Status Observation",
+          workflowKind: "paw-lite",
+          pawWorkDir: "C:/repo/work/.paw/work/paw-artifact-status-observation",
+          workflowContextPath:
+            "C:/repo/work/.paw/work/paw-artifact-status-observation/WorkflowContext.md",
+          streamlinerContextPath:
+            "C:/repo/work/.paw/work/paw-artifact-status-observation/streamliner/context.md",
+        },
+      },
+      {
+        mintLaunchClaimId: () => "claim-PAW",
+        mintRegistryRowId: () => "reg-PAW",
+      },
+    );
+
+    expect(outcome.ok).toBe(true);
+    expect(registryStore.getSession("reg-PAW")?.pawLaunch).toEqual({
+      workId: "paw-artifact-status-observation",
+      workTitle: "PAW Artifact Status Observation",
+      workflowKind: "paw-lite",
+      pawWorkDir: "C:/repo/work/.paw/work/paw-artifact-status-observation",
+      workflowContextPath:
+        "C:/repo/work/.paw/work/paw-artifact-status-observation/WorkflowContext.md",
+      streamlinerContextPath:
+        "C:/repo/work/.paw/work/paw-artifact-status-observation/streamliner/context.md",
+    });
+  });
+
   it("Path B (opt-out): no row reserved, claim still written", () => {
     const outcome = createLaunchClaim(
       registryStore,
@@ -226,7 +264,11 @@ describe("markClaimFailed", () => {
     const outcome = createLaunchClaim(
       registryStore,
       claimStore,
-      { workstreamId: "ws", nodeId: "n", expectedCwd: "C:/x" },
+      {
+        workstreamId: "ws",
+        nodeId: "n",
+        expectedCwd: "C:/x",
+      },
       {
         mintLaunchClaimId: () => "claim-FAIL",
         mintRegistryRowId: () => "reg-FAIL",
@@ -253,7 +295,19 @@ describe("markClaimFailed", () => {
     const outcome = createLaunchClaim(
       registryStore,
       claimStore,
-      { workstreamId: "ws", nodeId: "n", expectedCwd: "C:/x" },
+      {
+        workstreamId: "ws",
+        nodeId: "n",
+        expectedCwd: "C:/x",
+        pawLaunch: {
+          workId: "work-1",
+          workTitle: "Work 1",
+          workflowKind: "paw-lite",
+          pawWorkDir: "C:/x/.paw/work/work-1",
+          workflowContextPath: "C:/x/.paw/work/work-1/WorkflowContext.md",
+          streamlinerContextPath: "C:/x/.paw/work/work-1/streamliner/context.md",
+        },
+      },
       {
         mintLaunchClaimId: () => "claim-PRESERVE",
         mintRegistryRowId: () => "reg-PRESERVE",
@@ -278,6 +332,7 @@ describe("markClaimFailed", () => {
     const row = registryStore.getSession("reg-PRESERVE");
     expect(row?.copilotSessionId).toBe("copilot-XYZ");
     expect(row?.graphBinding).toBeNull();
+    expect(row?.pawLaunch?.pawWorkDir).toBe("C:/x/.paw/work/work-1");
     expect(row?.origin).toEqual({ kind: "launched", launchClaimId: "claim-PRESERVE" });
   });
 

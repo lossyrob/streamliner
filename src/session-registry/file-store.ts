@@ -16,6 +16,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
 import {
+  type LaunchedSessionRegistryUpsertInput,
   type ObservedSessionRegistryUpsertInput,
   SESSION_REGISTRY_CHANGE_EVENT_KINDS,
   type SessionRegistryBuilderLifecycleStatus,
@@ -41,6 +42,11 @@ import {
   SESSION_REGISTRY_LIFECYCLE_STATUSES,
   SESSION_REGISTRY_OBSERVED_SESSION_KINDS,
   SESSION_REGISTRY_ORIGIN_KINDS,
+  SESSION_REGISTRY_PAW_ARTIFACT_KINDS,
+  SESSION_REGISTRY_PAW_WORKFLOW_DIAGNOSTIC_CODES,
+  SESSION_REGISTRY_PAW_WORKFLOW_KINDS,
+  SESSION_REGISTRY_PAW_WORKFLOW_STAGES,
+  SESSION_REGISTRY_PAW_WORKFLOW_STATUSES,
   SESSION_REGISTRY_SCHEMA_VERSION,
   SESSION_REGISTRY_TITLE_SOURCES,
   SESSION_REGISTRY_TRUSTED_END_REASONS,
@@ -63,6 +69,14 @@ import {
   type SessionRegistryObservedSessionKind,
   type SessionRegistryOrigin,
   type SessionRegistryOriginKind,
+  type SessionRegistryPawArtifactEvidence,
+  type SessionRegistryPawArtifactKind,
+  type SessionRegistryPawLaunch,
+  type SessionRegistryPawWorkflow,
+  type SessionRegistryPawWorkflowDiagnosticCode,
+  type SessionRegistryPawWorkflowKind,
+  type SessionRegistryPawWorkflowStage,
+  type SessionRegistryPawWorkflowStatus,
   type SessionRegistryRecord,
   type SessionRegistryTitleSource,
   type SessionRegistryTrustedEndReason,
@@ -129,6 +143,10 @@ const SESSION_REGISTRY_UPSERT_BASE_KEYS = [
   "origin",
   "lifecycleStatus",
   "graphBinding",
+] as const;
+const LAUNCHED_SESSION_UPSERT_KEYS = [
+  ...SESSION_REGISTRY_UPSERT_BASE_KEYS,
+  "pawLaunch",
 ] as const;
 const OBSERVED_SESSION_UPSERT_KEYS = [
   ...SESSION_REGISTRY_UPSERT_BASE_KEYS,
@@ -208,6 +226,7 @@ export interface SessionRegistryDerivedStatePatch {
   activityStatus?: SessionRegistryActivityStatus;
   activityStatusUpdatedAt?: string | null;
   activityEvidence?: SessionRegistryActivityEvidence;
+  pawWorkflow?: SessionRegistryPawWorkflow | null;
   derivedWorktreePath?: string | null;
   derivedBranch?: string | null;
   derivedGithubRefs?: SessionRegistryGithubRef[];
@@ -630,10 +649,48 @@ function isGithubRefType(value: string): value is SessionRegistryGithubRefType {
   return SESSION_REGISTRY_GITHUB_REF_TYPES.includes(value as SessionRegistryGithubRefType);
 }
 
+function isPawWorkflowStatus(value: string): value is SessionRegistryPawWorkflowStatus {
+  return SESSION_REGISTRY_PAW_WORKFLOW_STATUSES.includes(
+    value as SessionRegistryPawWorkflowStatus,
+  );
+}
+
+function isPawWorkflowStage(value: string): value is SessionRegistryPawWorkflowStage {
+  return SESSION_REGISTRY_PAW_WORKFLOW_STAGES.includes(
+    value as SessionRegistryPawWorkflowStage,
+  );
+}
+
+function isPawWorkflowKind(value: string): value is SessionRegistryPawWorkflowKind {
+  return SESSION_REGISTRY_PAW_WORKFLOW_KINDS.includes(
+    value as SessionRegistryPawWorkflowKind,
+  );
+}
+
+function isPawArtifactKind(value: string): value is SessionRegistryPawArtifactKind {
+  return SESSION_REGISTRY_PAW_ARTIFACT_KINDS.includes(
+    value as SessionRegistryPawArtifactKind,
+  );
+}
+
+function isPawWorkflowDiagnosticCode(
+  value: string,
+): value is SessionRegistryPawWorkflowDiagnosticCode {
+  return SESSION_REGISTRY_PAW_WORKFLOW_DIAGNOSTIC_CODES.includes(
+    value as SessionRegistryPawWorkflowDiagnosticCode,
+  );
+}
+
 function isObservedUpsertInput(
   input: SessionRegistryUpsertInput,
 ): input is ObservedSessionRegistryUpsertInput {
   return input.origin.kind === "observed";
+}
+
+function isLaunchedUpsertInput(
+  input: SessionRegistryUpsertInput,
+): input is LaunchedSessionRegistryUpsertInput {
+  return input.origin.kind === "launched";
 }
 
 function parseBuilderLifecycleStatus(
@@ -951,6 +1008,162 @@ function normalizeGithubRefs(value: unknown, fieldName: string): SessionRegistry
   return value.map((entry, index) => normalizeGithubRef(entry, `${fieldName}[${index}]`));
 }
 
+function normalizePawWorkflowStage(
+  value: unknown,
+  fieldName: string,
+): SessionRegistryPawWorkflowStage | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const stage = ensureString(value, fieldName);
+  if (!isPawWorkflowStage(stage)) {
+    throw new Error(`Unsupported ${fieldName} "${stage}".`);
+  }
+  return stage;
+}
+
+function normalizePawWorkflowDiagnosticCodes(
+  value: unknown,
+  fieldName: string,
+): SessionRegistryPawWorkflowDiagnosticCode[] {
+  if (value === undefined || value === null) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`Expected ${fieldName} to be an array.`);
+  }
+  const seen = new Set<SessionRegistryPawWorkflowDiagnosticCode>();
+  const diagnostics: SessionRegistryPawWorkflowDiagnosticCode[] = [];
+  for (const [index, entry] of value.entries()) {
+    if (typeof entry !== "string" || !isPawWorkflowDiagnosticCode(entry)) {
+      throw new Error(`Unsupported ${fieldName}[${index}] "${String(entry)}".`);
+    }
+    if (!seen.has(entry)) {
+      seen.add(entry);
+      diagnostics.push(entry);
+    }
+  }
+  return diagnostics;
+}
+
+function normalizePawArtifactEvidence(
+  value: unknown,
+  fieldName: string,
+): SessionRegistryPawArtifactEvidence {
+  if (!isJsonObject(value)) {
+    throw new Error(`Expected ${fieldName} to be an object.`);
+  }
+  const kind = ensureString(value.kind, `${fieldName}.kind`);
+  if (!isPawArtifactKind(kind)) {
+    throw new Error(`Unsupported ${fieldName}.kind "${kind}".`);
+  }
+  return {
+    path: ensureString(value.path, `${fieldName}.path`),
+    kind,
+    stage: normalizePawWorkflowStage(value.stage, `${fieldName}.stage`),
+    mtimeMs: ensureOptionalNumber(value.mtimeMs, `${fieldName}.mtimeMs`),
+  };
+}
+
+function normalizePawArtifactEvidenceList(
+  value: unknown,
+  fieldName: string,
+): SessionRegistryPawArtifactEvidence[] {
+  if (value === undefined || value === null) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`Expected ${fieldName} to be an array.`);
+  }
+  return value.map((entry, index) =>
+    normalizePawArtifactEvidence(entry, `${fieldName}[${index}]`),
+  );
+}
+
+function normalizePawWorkflow(
+  value: unknown,
+  fieldName: string,
+): SessionRegistryPawWorkflow | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (!isJsonObject(value)) {
+    throw new Error(`Expected ${fieldName} to be an object or null.`);
+  }
+  const status = ensureString(value.status, `${fieldName}.status`);
+  if (!isPawWorkflowStatus(status)) {
+    throw new Error(`Unsupported ${fieldName}.status "${status}".`);
+  }
+  const workflowKind = hasOwn(value, "workflowKind")
+    ? ensureString(value.workflowKind, `${fieldName}.workflowKind`)
+    : "unknown";
+  if (!isPawWorkflowKind(workflowKind)) {
+    throw new Error(`Unsupported ${fieldName}.workflowKind "${workflowKind}".`);
+  }
+  const artifacts = normalizePawArtifactEvidenceList(
+    value.artifacts,
+    `${fieldName}.artifacts`,
+  );
+  return {
+    status,
+    stage: normalizePawWorkflowStage(value.stage, `${fieldName}.stage`),
+    workflowKind,
+    workId: ensureOptionalString(value.workId, `${fieldName}.workId`),
+    workTitle: ensureOptionalString(value.workTitle, `${fieldName}.workTitle`),
+    workDir: ensureOptionalString(value.workDir, `${fieldName}.workDir`),
+    artifacts,
+    artifactCount: ensureNonNegativeInteger(
+      value.artifactCount ?? artifacts.length,
+      `${fieldName}.artifactCount`,
+    ),
+    latestArtifactPath: ensureOptionalString(
+      value.latestArtifactPath,
+      `${fieldName}.latestArtifactPath`,
+    ),
+    latestArtifactMtimeMs: ensureOptionalNumber(
+      value.latestArtifactMtimeMs,
+      `${fieldName}.latestArtifactMtimeMs`,
+    ),
+    scannedAt: ensureOptionalString(value.scannedAt, `${fieldName}.scannedAt`),
+    diagnostics: normalizePawWorkflowDiagnosticCodes(
+      value.diagnostics,
+      `${fieldName}.diagnostics`,
+    ),
+  };
+}
+
+function normalizePawLaunch(
+  value: unknown,
+  fieldName: string,
+): SessionRegistryPawLaunch | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (!isJsonObject(value)) {
+    throw new Error(`Expected ${fieldName} to be an object or null.`);
+  }
+  const workflowKind = hasOwn(value, "workflowKind")
+    ? ensureString(value.workflowKind, `${fieldName}.workflowKind`)
+    : "unknown";
+  if (!isPawWorkflowKind(workflowKind)) {
+    throw new Error(`Unsupported ${fieldName}.workflowKind "${workflowKind}".`);
+  }
+  return {
+    workId: ensureString(value.workId, `${fieldName}.workId`),
+    workTitle: ensureString(value.workTitle, `${fieldName}.workTitle`),
+    workflowKind,
+    pawWorkDir: ensureString(value.pawWorkDir, `${fieldName}.pawWorkDir`),
+    workflowContextPath: ensureOptionalString(
+      value.workflowContextPath,
+      `${fieldName}.workflowContextPath`,
+    ),
+    streamlinerContextPath: ensureOptionalString(
+      value.streamlinerContextPath,
+      `${fieldName}.streamlinerContextPath`,
+    ),
+  };
+}
+
 function inferLegacyTitleSource(value: {
   title: string;
   cwd: string;
@@ -1176,8 +1389,8 @@ export function parseSessionRegistryUpsertInput(value: unknown): SessionRegistry
     };
   }
 
-  ensureAllowedKeys(value, "input", SESSION_REGISTRY_UPSERT_BASE_KEYS);
   if (origin.kind === "manual") {
+    ensureAllowedKeys(value, "input", SESSION_REGISTRY_UPSERT_BASE_KEYS);
     return {
       ...common,
       origin,
@@ -1192,9 +1405,15 @@ export function parseSessionRegistryUpsertInput(value: unknown): SessionRegistry
     };
   }
 
+  ensureAllowedKeys(value, "input", LAUNCHED_SESSION_UPSERT_KEYS);
   return {
     ...common,
     origin,
+    ...(hasOwn(value, "pawLaunch")
+      ? {
+          pawLaunch: normalizePawLaunch(value.pawLaunch, "input.pawLaunch"),
+        }
+      : {}),
     ...(hasOwn(value, "lifecycleStatus")
       ? {
           lifecycleStatus: parseCreateLifecycleStatus(
@@ -1307,8 +1526,9 @@ function validateStoredRecord(
       return {
         ...(rawRecord.graphBinding as JsonObject),
         ...typedGraphBinding,
-        } as SessionRegistryGraphBinding;
-      })(),
+      } as SessionRegistryGraphBinding;
+    })(),
+    pawLaunch: normalizePawLaunch(rawRecord.pawLaunch, `${filePath}.pawLaunch`),
     aiSummary: ensureOptionalString(rawRecord.aiSummary, `${filePath}.aiSummary`),
     aiSummaryModel: ensureOptionalString(rawRecord.aiSummaryModel, `${filePath}.aiSummaryModel`),
     aiSummaryUpdatedAt: ensureOptionalString(
@@ -1351,6 +1571,7 @@ function validateStoredRecord(
       rawRecord.activityEvidence,
       `${filePath}.activityEvidence`,
     ),
+    pawWorkflow: normalizePawWorkflow(rawRecord.pawWorkflow, `${filePath}.pawWorkflow`),
     trustedSignalSource: normalizeTrustedSignalSource(
       rawRecord.trustedSignalSource,
       `${filePath}.trustedSignalSource`,
@@ -1478,6 +1699,7 @@ function validateIndexEntry(
     tags: ensureStringArray(rawEntry.tags, `${fieldName}.tags`),
     originKind,
     graphBinding: ensureOptionalGraphBinding(rawEntry.graphBinding, `${fieldName}.graphBinding`),
+    pawLaunch: normalizePawLaunch(rawEntry.pawLaunch, `${fieldName}.pawLaunch`),
     aiSummary: ensureOptionalString(rawEntry.aiSummary, `${fieldName}.aiSummary`),
     aiSummaryModel: ensureOptionalString(rawEntry.aiSummaryModel, `${fieldName}.aiSummaryModel`),
     aiSummaryUpdatedAt: ensureOptionalString(
@@ -1520,6 +1742,7 @@ function validateIndexEntry(
       rawEntry.activityEvidence,
       `${fieldName}.activityEvidence`,
     ),
+    pawWorkflow: normalizePawWorkflow(rawEntry.pawWorkflow, `${fieldName}.pawWorkflow`),
     trustedSignalSource: normalizeTrustedSignalSource(
       rawEntry.trustedSignalSource,
       `${fieldName}.trustedSignalSource`,
@@ -1628,6 +1851,7 @@ function buildIndex(records: Iterable<StoredSessionRegistryRecord>): SessionRegi
     tags: cloneValue(record.tags),
     originKind: record.origin.kind,
     graphBinding: record.graphBinding ? cloneValue(record.graphBinding) : null,
+    pawLaunch: record.pawLaunch ? cloneValue(record.pawLaunch) : null,
     aiSummary: record.aiSummary,
     aiSummaryModel: record.aiSummaryModel,
     aiSummaryUpdatedAt: record.aiSummaryUpdatedAt,
@@ -1640,6 +1864,7 @@ function buildIndex(records: Iterable<StoredSessionRegistryRecord>): SessionRegi
     activityStatus: record.activityStatus,
     activityStatusUpdatedAt: record.activityStatusUpdatedAt,
     activityEvidence: cloneValue(record.activityEvidence),
+    pawWorkflow: record.pawWorkflow ? cloneValue(record.pawWorkflow) : null,
     trustedSignalSource: record.trustedSignalSource,
     trustedStartedAt: record.trustedStartedAt,
     trustedEndedAt: record.trustedEndedAt,
@@ -1704,6 +1929,8 @@ function matchesText(
     | "derivedBranch"
     | "derivedWorktreePath"
     | "derivedGithubRefs"
+    | "pawLaunch"
+    | "pawWorkflow"
   >,
   text: string,
 ): boolean {
@@ -1712,6 +1939,25 @@ function matchesText(
       .filter(Boolean)
       .join(" "),
   );
+  const pawWorkflowHaystacks = record.pawWorkflow
+    ? [
+        record.pawWorkflow.status,
+        record.pawWorkflow.stage ?? "",
+        record.pawWorkflow.workflowKind,
+        record.pawWorkflow.workId ?? "",
+        record.pawWorkflow.workTitle ?? "",
+        record.pawWorkflow.workDir ?? "",
+        ...record.pawWorkflow.diagnostics,
+      ]
+    : [];
+  const pawLaunchHaystacks = record.pawLaunch
+    ? [
+        record.pawLaunch.workId,
+        record.pawLaunch.workTitle,
+        record.pawLaunch.workflowKind,
+        record.pawLaunch.pawWorkDir,
+      ]
+    : [];
   const haystacks = [
     record.title,
     record.description,
@@ -1722,6 +1968,8 @@ function matchesText(
     record.derivedBranch ?? "",
     record.derivedWorktreePath ?? "",
     ...refs,
+    ...pawWorkflowHaystacks,
+    ...pawLaunchHaystacks,
     ...record.tags,
   ];
   return haystacks.some((value) => value.toLowerCase().includes(text));
@@ -1886,6 +2134,12 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       let nextActivityEvidence = latestRecord?.activityEvidence
         ? cloneValue(latestRecord.activityEvidence)
         : cloneValue(DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE);
+      let nextPawWorkflow = latestRecord?.pawWorkflow
+        ? cloneValue(latestRecord.pawWorkflow)
+        : null;
+      let nextPawLaunch = latestRecord?.pawLaunch
+        ? cloneValue(latestRecord.pawLaunch)
+        : null;
       let nextTrustedSignalSource = latestRecord?.trustedSignalSource ?? null;
       let nextTrustedStartedAt = latestRecord?.trustedStartedAt ?? null;
       let nextTrustedEndedAt = latestRecord?.trustedEndedAt ?? null;
@@ -1937,6 +2191,12 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         nextActivityEvidence = latestRecord?.activityEvidence
           ? cloneValue(latestRecord.activityEvidence)
           : cloneValue(DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE);
+        nextPawWorkflow = latestRecord?.pawWorkflow
+          ? cloneValue(latestRecord.pawWorkflow)
+          : null;
+        nextPawLaunch = latestRecord?.pawLaunch
+          ? cloneValue(latestRecord.pawLaunch)
+          : null;
         nextTrustedSignalSource =
           Object.prototype.hasOwnProperty.call(validatedInput, "trustedSignalSource")
             ? validatedInput.trustedSignalSource ?? null
@@ -1989,6 +2249,23 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         nextActivityEvidence = latestRecord?.activityEvidence
           ? cloneValue(latestRecord.activityEvidence)
           : cloneValue(DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE);
+        nextPawWorkflow = latestRecord?.pawWorkflow
+          ? cloneValue(latestRecord.pawWorkflow)
+          : null;
+        if (isLaunchedUpsertInput(validatedInput)) {
+          nextPawLaunch = Object.prototype.hasOwnProperty.call(
+            validatedInput,
+            "pawLaunch",
+          )
+            ? validatedInput.pawLaunch
+              ? cloneValue(validatedInput.pawLaunch)
+              : null
+            : latestRecord?.pawLaunch
+              ? cloneValue(latestRecord.pawLaunch)
+              : null;
+        } else {
+          nextPawLaunch = null;
+        }
         nextTrustedSignalSource = null;
         nextTrustedStartedAt = null;
         nextTrustedEndedAt = null;
@@ -2020,6 +2297,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         tags: nextTags,
         origin: cloneValue(validatedInput.origin),
         graphBinding: nextGraphBinding,
+        pawLaunch: nextPawLaunch,
         aiSummary: latestRecord?.aiSummary ?? null,
         aiSummaryModel: latestRecord?.aiSummaryModel ?? null,
         aiSummaryUpdatedAt: latestRecord?.aiSummaryUpdatedAt ?? null,
@@ -2032,6 +2310,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         activityStatus: nextActivityStatus,
         activityStatusUpdatedAt: nextActivityStatusUpdatedAt,
         activityEvidence: nextActivityEvidence,
+        pawWorkflow: nextPawWorkflow,
         trustedSignalSource: nextTrustedSignalSource,
         trustedStartedAt: nextTrustedStartedAt,
         trustedEndedAt: nextTrustedEndedAt,
@@ -2505,6 +2784,12 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
             ? timestamp
             : existingRecord?.activityStatusUpdatedAt ?? timestamp,
         activityEvidence,
+        pawWorkflow: existingRecord?.pawWorkflow
+          ? cloneValue(existingRecord.pawWorkflow)
+          : null,
+        pawLaunch: existingRecord?.pawLaunch
+          ? cloneValue(existingRecord.pawLaunch)
+          : null,
         trustedSignalSource: signalSource,
         trustedStartedAt:
           appliesStart
@@ -2599,6 +2884,12 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
           patch.activityEvidence !== undefined
             ? cloneValue(patch.activityEvidence)
             : existingRecord.activityEvidence,
+        pawWorkflow:
+          patch.pawWorkflow !== undefined
+            ? patch.pawWorkflow
+              ? cloneValue(patch.pawWorkflow)
+              : null
+            : existingRecord.pawWorkflow,
         aiSummary:
           patch.aiSummary !== undefined ? patch.aiSummary : existingRecord.aiSummary,
         aiSummaryModel:
@@ -2944,6 +3235,16 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         activityStatus: observed.activityStatus,
         activityStatusUpdatedAt: observed.activityStatusUpdatedAt,
         activityEvidence: cloneValue(observed.activityEvidence),
+        pawWorkflow: observed.pawWorkflow
+          ? cloneValue(observed.pawWorkflow)
+          : reserved.pawWorkflow
+            ? cloneValue(reserved.pawWorkflow)
+            : null,
+        pawLaunch: reserved.pawLaunch
+          ? cloneValue(reserved.pawLaunch)
+          : observed.pawLaunch
+            ? cloneValue(observed.pawLaunch)
+            : null,
         trustedSignalSource: observed.trustedSignalSource,
         trustedStartedAt: observed.trustedStartedAt,
         trustedEndedAt: observed.trustedEndedAt,

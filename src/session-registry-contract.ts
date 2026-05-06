@@ -11,6 +11,8 @@ import type {
   SessionRegistryLifecycleStatus,
   SessionRegistryObservedSessionKind,
   SessionRegistryOriginKind,
+  SessionRegistryPawLaunch,
+  SessionRegistryPawWorkflow,
   SessionRegistryRecord,
   SessionRegistryTitleSource,
   SessionRegistryTrustedEndReason,
@@ -53,6 +55,7 @@ export interface SessionRegistryListItem {
   tags: string[];
   originKind: SessionRegistryOriginKind;
   graphBinding: SessionRegistryGraphBinding | null;
+  pawLaunch: SessionRegistryPawLaunch | null;
   copilotSessionId: string | null;
   aiSummary: string | null;
   aiSummaryModel: string | null;
@@ -66,6 +69,7 @@ export interface SessionRegistryListItem {
   activityStatus: SessionRegistryActivityStatus;
   activityStatusUpdatedAt: string | null;
   activityEvidence: SessionRegistryActivityEvidence;
+  pawWorkflow: SessionRegistryPawWorkflow | null;
   trustedSignalSource: SessionRegistryTrustedSignalSource | null;
   trustedStartedAt: string | null;
   trustedEndedAt: string | null;
@@ -134,6 +138,7 @@ export interface LaunchedSessionRegistryUpsertInput
     "ended" | "archived"
   >;
   graphBinding?: SessionRegistryGraphBinding | null;
+  pawLaunch?: SessionRegistryPawLaunch | null;
 }
 
 export interface SessionRegistryObservedLinkInput {
