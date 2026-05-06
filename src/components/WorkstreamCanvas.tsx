@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useEffect } from "react";
+import { useMemo, useCallback, useEffect, useRef } from "react";
 import {
   ReactFlow,
   Background,
@@ -67,6 +67,7 @@ function minimapNodeStrokeColor(node: Node): string {
 
 interface WorkstreamCanvasProps {
   layout: WorkstreamGraphLayoutResult;
+  initialFitKey: string;
   selectedNodeId: string | null;
   onNodeSelect: (nodeId: string | null) => void;
   nodeSessionStatuses?: ReadonlyMap<string, GraphNodeSessionStatusSummary>;
@@ -79,6 +80,7 @@ interface WorkstreamCanvasProps {
 
 export function WorkstreamCanvas({
   layout,
+  initialFitKey,
   selectedNodeId,
   onNodeSelect,
   nodeSessionStatuses = new Map(),
@@ -86,6 +88,7 @@ export function WorkstreamCanvas({
   sessionRouteForNode,
 }: WorkstreamCanvasProps) {
   const reactFlow = useReactFlow();
+  const fittedKeyRef = useRef<string | null>(null);
   const laneNodes = useMemo<Node<WorkstreamSwimlaneData>[]>(
     () =>
       layout.checkpointLanes.map((lane) => ({
@@ -142,21 +145,50 @@ export function WorkstreamCanvas({
     () => collectViewportFocusIds(layout, selectedNodeId),
     [layout, selectedNodeId],
   );
-  const framedNodes = useMemo(() => {
+  const framedBounds = useMemo(() => {
     const currentLane = layout.checkpointLanes.find(
       (lane) => lane.state === "current",
     );
-    if (currentLane) {
-      const laneNode = laneNodes.find(
-        (node) => node.id === `lane:${currentLane.id}`,
-      );
-      if (laneNode) {
-        return [laneNode];
-      }
+    const framedBoxes = currentLane
+      ? [currentLane]
+      : layout.nodes.filter((node) => viewportFocusIds.has(node.id));
+    if (framedBoxes.length === 0) {
+      return null;
     }
-    // Fallback: frame all focus tasks.
-    return taskNodes.filter((node) => viewportFocusIds.has(node.id));
-  }, [taskNodes, laneNodes, layout, viewportFocusIds]);
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const box of framedBoxes) {
+      minX = Math.min(minX, box.x);
+      minY = Math.min(minY, box.y);
+      maxX = Math.max(maxX, box.x + box.width);
+      maxY = Math.max(maxY, box.y + box.height);
+    }
+    return {
+      x: minX,
+      y: minY,
+      width: maxX - minX,
+      height: maxY - minY,
+    };
+  }, [layout, viewportFocusIds]);
+
+  const initialFitPadding = selectedNodeId ? 0.24 : 0.22;
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      if (!framedBounds || fittedKeyRef.current === initialFitKey) return;
+      fittedKeyRef.current = initialFitKey;
+      void reactFlow.fitBounds(framedBounds, {
+        padding: initialFitPadding,
+        duration: 0,
+      });
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [framedBounds, initialFitKey, initialFitPadding, reactFlow]);
 
   const edges = useMemo<Edge[]>(
     () =>
@@ -184,40 +216,6 @@ export function WorkstreamCanvas({
   const handlePaneClick = useCallback(() => {
     onNodeSelect(null);
   }, [onNodeSelect]);
-
-  useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      if (framedNodes.length === 0) return;
-      let minX = Infinity;
-      let minY = Infinity;
-      let maxX = -Infinity;
-      let maxY = -Infinity;
-      for (const node of framedNodes) {
-        const w = Number(node.style?.width ?? 0);
-        const h = Number(node.style?.height ?? 0);
-        minX = Math.min(minX, node.position.x);
-        minY = Math.min(minY, node.position.y);
-        maxX = Math.max(maxX, node.position.x + w);
-        maxY = Math.max(maxY, node.position.y + h);
-      }
-      void reactFlow.fitBounds(
-        {
-          x: minX,
-          y: minY,
-          width: maxX - minX,
-          height: maxY - minY,
-        },
-        {
-          padding: selectedNodeId ? 0.24 : 0.22,
-          duration: 0,
-        },
-      );
-    }, 0);
-
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
-  }, [framedNodes, reactFlow, selectedNodeId]);
 
   return (
     <div className="sl-canvas">

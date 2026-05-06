@@ -1013,6 +1013,7 @@ function GraphDashboard({
     : sessionList.error
       ? "error"
       : "ready";
+  const initialViewportFitKey = `${activeWorkstreamKey}:${selectedNodeIdFromRoute ?? ""}`;
 
   useEffect(() => {
     setSelectedNodeId(selectedNodeIdFromRoute ?? null);
@@ -1411,6 +1412,7 @@ function GraphDashboard({
         <ReactFlowProvider>
           <WorkstreamCanvas
             layout={layout}
+            initialFitKey={initialViewportFitKey}
             selectedNodeId={selectedNodeId}
             onNodeSelect={setSelectedNodeId}
             nodeSessionStatuses={nodeSessionStatuses}
