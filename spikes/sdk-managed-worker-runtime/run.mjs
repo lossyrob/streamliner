@@ -3,11 +3,12 @@ import { CopilotClient, approveAll, defineTool } from "@github/copilot-sdk";
 import { z } from "zod";
 import { execFileSync } from "node:child_process";
 import { createWriteStream, existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SPIKE_DIR = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = resolve(SPIKE_DIR, "..", "..");
 const WORK_DIR = join(SPIKE_DIR, ".work");
 const RUNS_DIR = join(WORK_DIR, "runs");
 const DEFAULT_MODEL = process.env.COPILOT_SPIKE_MODEL || "gpt-5.4-mini";
@@ -18,8 +19,11 @@ const COMMANDS = new Set([
   "config-instructions",
   "event-progress",
   "cancellation",
+  "process-cancellation",
   "takeover",
   "plugin-discovery",
+  "permission-policy",
+  "streamliner-claim-binding",
   "dogfood-pr",
 ]);
 
@@ -31,8 +35,11 @@ Commands:
   config-instructions [--case auto|explicit|both]
   event-progress
   cancellation [--abort-after-ms 5000]
+  process-cancellation [--abort-after-ms 30000]
   takeover
   plugin-discovery
+  permission-policy
+  streamliner-claim-binding [--skip-refresh-plugin]
   dogfood-pr
 
 Common flags:
@@ -423,12 +430,15 @@ async function createSession(client, config, recorder) {
     tools: config.tools,
     systemMessage: config.systemMessage,
     onEvent: (event) => recorder.record(event),
-    onPermissionRequest: (request) => {
+    onPermissionRequest: (request, invocation) => {
       recorder.synthetic("spike.permission_handler", {
         kind: request?.kind,
         toolName: request?.toolName,
       });
-      return approveAll(request);
+      if (config.permissionHandler) {
+        return config.permissionHandler(request, invocation);
+      }
+      return approveAll(request, invocation);
     },
     onUserInputRequest: async (request) => {
       recorder.synthetic("spike.user_input_request", {
@@ -687,6 +697,95 @@ function wait(ms) {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 }
 
+function quotePowerShellPath(path) {
+  return `'${path.replace(/'/g, "''")}'`;
+}
+
+async function readTextIfExists(path) {
+  if (!existsSync(path)) return undefined;
+  return readFile(path, "utf8");
+}
+
+function getRequestCommand(request) {
+  return request?.fullCommandText || request?.command || request?.commandText || "";
+}
+
+function permissionRequestSummary(request, decision) {
+  return {
+    kind: request?.kind,
+    toolCallId: request?.toolCallId,
+    toolName: request?.toolName,
+    fileName: request?.fileName,
+    command: truncate(getRequestCommand(request)),
+    decision: decision?.kind,
+  };
+}
+
+function processExists(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  if (process.platform === "win32") {
+    const output = execFileSync(
+      "powershell",
+      [
+        "-NoProfile",
+        "-Command",
+        `$p = Get-Process -Id ${pid} -ErrorAction SilentlyContinue; if ($p) { 'true' } else { 'false' }`,
+      ],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+    ).trim();
+    return output === "true";
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function stopProcessByPid(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  if (!processExists(pid)) return false;
+  if (process.platform === "win32") {
+    execFileSync("powershell", ["-NoProfile", "-Command", `Stop-Process -Id ${pid} -Force`], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return true;
+  }
+  process.kill(pid, "SIGKILL");
+  return true;
+}
+
+async function listJsonFiles(root) {
+  if (!existsSync(root)) return [];
+  const entries = await readdir(root, { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    const fullPath = join(root, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...(await listJsonFiles(fullPath)));
+    } else if (entry.isFile() && entry.name.endsWith(".json")) {
+      files.push(fullPath);
+    }
+  }
+  return files;
+}
+
+async function readJsonFiles(root) {
+  const files = await listJsonFiles(root);
+  const values = [];
+  for (const file of files) {
+    const raw = await readFile(file, "utf8").catch(() => "");
+    try {
+      values.push({ path: file, value: JSON.parse(raw) });
+    } catch (error) {
+      values.push({ path: file, parseError: String(error?.message || error), raw: truncate(raw) });
+    }
+  }
+  return values;
+}
+
 async function commandCancellation(flags) {
   const { runDir } = await createRun("cancellation");
   const recorder = new Recorder(runDir);
@@ -755,6 +854,217 @@ async function commandCancellation(flags) {
     await recorder.close();
   }
   console.log(`cancellation summary: ${join(runDir, "summary.json")}`);
+}
+
+async function commandProcessCancellation(flags) {
+  const { runDir } = await createRun("process-cancellation");
+  const recorder = new Recorder(runDir);
+  const repoDir = await createDisposableRepo(runDir, "repo");
+  const abortAfterMs = flagNumber(flags, "abort-after-ms", 30_000);
+  const pidPath = join(repoDir, "process-cancel-child-pid.txt");
+  const markerPath = join(repoDir, "process-cancel-marker.txt");
+  const childCommand = [
+    "$PID | Set-Content -Path",
+    quotePowerShellPath(pidPath),
+    "; Start-Sleep -Seconds 60;",
+    "'SDK_PROCESS_CANCEL_COMPLETED' | Set-Content -Path",
+    quotePowerShellPath(markerPath),
+  ].join(" ");
+  const shellCommand = `powershell -NoProfile -Command "${childCommand.replace(/"/g, '\\"')}"`;
+  let session;
+  let summary = {};
+  try {
+    await withClient(repoDir, recorder, async (client) => {
+      session = await createSession(
+        client,
+        {
+          model: flagString(flags, "model", DEFAULT_MODEL),
+          workingDirectory: repoDir,
+          enableConfigDiscovery: false,
+          tools: [],
+        },
+        recorder,
+      );
+      await session.send({
+        prompt: [
+          "Run this Streamliner SDK process-level cancellation spike exactly as requested.",
+          "Use the shell tool to run this command and wait for it:",
+          shellCommand,
+          "Do not replace it with a shorter sleep and do not finish before the command would finish.",
+        ].join(" "),
+      });
+      await wait(abortAfterMs);
+      const abortStartedAt = new Date().toISOString();
+      let abortError;
+      try {
+        await session.abort();
+      } catch (error) {
+        abortError = String(error?.message || error);
+      }
+      await wait(flagNumber(flags, "post-abort-wait-ms", 5_000));
+      const pidText = (await readTextIfExists(pidPath))?.trim();
+      const childPid = Number(pidText);
+      const validChildPid = Number.isInteger(childPid) && childPid > 0;
+      const processAliveAfterAbort = validChildPid ? processExists(childPid) : false;
+      const markerAfterAbort = existsSync(markerPath);
+      let cleanupKilledProcess = false;
+      let cleanupError;
+      if (processAliveAfterAbort && !flagBoolean(flags, "no-cleanup")) {
+        try {
+          cleanupKilledProcess = stopProcessByPid(childPid);
+        } catch (error) {
+          cleanupError = String(error?.message || error);
+        }
+      }
+      let followUp;
+      let followUpError;
+      try {
+        const response = await session.sendAndWait(
+          { prompt: "Reply exactly PROCESS_CANCEL_FOLLOWUP_OK if the session is usable after abort." },
+          flagNumber(flags, "timeout-ms", DEFAULT_TIMEOUT_MS),
+        );
+        followUp = response?.data?.content || "";
+      } catch (error) {
+        followUpError = String(error?.message || error);
+      }
+      summary = {
+        command: "process-cancellation",
+        repoDir,
+        sessionId: session.sessionId,
+        workspacePath: session.workspacePath,
+        abortAfterMs,
+        abortStartedAt,
+        abortError,
+        pidPath,
+        pidText,
+        childPid: validChildPid ? childPid : undefined,
+        markerPath,
+        markerAfterAbort,
+        processAliveAfterAbort,
+        cleanupKilledProcess,
+        cleanupError,
+        markerAfterCleanup: existsSync(markerPath),
+        followUp: truncate(followUp || ""),
+        followUpError,
+        sawAbortEvent: recorder.projected.some((event) => event.type === "session.aborted"),
+        sawIdleAfterAbort: recorder.projected.some((event) => event.type === "session.idle"),
+        ...recorder.summary(),
+      };
+      await disposeSession(client, session, flagBoolean(flags, "keep-session"), recorder);
+    });
+  } finally {
+    await writeJson(join(runDir, "summary.json"), summary);
+    await recorder.close();
+  }
+  console.log(`process-cancellation summary: ${join(runDir, "summary.json")}`);
+}
+
+async function commandPermissionPolicy(flags) {
+  const { runDir } = await createRun("permission-policy");
+  const recorder = new Recorder(runDir);
+  const repoDir = await createDisposableRepo(runDir, "repo");
+  const approvedPath = join(repoDir, "permission-approved.txt");
+  const deniedPath = join(repoDir, "permission-denied.txt");
+  const permissionDecisions = [];
+  const permissionReports = [];
+  const resultTool = defineTool("record_permission_policy_result", {
+    description: "Record observed permission-policy behavior from inside the SDK session.",
+    parameters: z.object({
+      approvedOperationObserved: z.boolean(),
+      deniedShellObserved: z.boolean(),
+      deniedGithubObserved: z.boolean(),
+      followupPossible: z.boolean().optional(),
+      notes: z.string().optional(),
+    }),
+    handler: async (params) => {
+      permissionReports.push(params);
+      return toolResult({ status: "recorded" });
+    },
+  });
+  const permissionHandler = (request, invocation) => {
+    const command = getRequestCommand(request);
+    const deniesByPolicy =
+      request?.kind === "shell" && (/SDK_PERMISSION_DENY/.test(command) || /\bgh(\.exe)?\s+/i.test(command));
+    const decision = deniesByPolicy
+      ? { kind: "reject", feedback: "Denied by Streamliner SDK permission-policy spike." }
+      : approveAll(request, invocation);
+    const summary = { ...permissionRequestSummary(request, decision), sessionId: invocation?.sessionId };
+    permissionDecisions.push(summary);
+    recorder.synthetic("spike.permission_policy_decision", summary);
+    return decision;
+  };
+  let session;
+  let summary = {};
+  try {
+    await withClient(repoDir, recorder, async (client) => {
+      session = await createSession(
+        client,
+        {
+          model: flagString(flags, "model", DEFAULT_MODEL),
+          workingDirectory: repoDir,
+          enableConfigDiscovery: false,
+          tools: [resultTool],
+          permissionHandler,
+        },
+        recorder,
+      );
+      const allowedCommand = `powershell -NoProfile -Command "'SDK_PERMISSION_APPROVED' | Set-Content -Path ${quotePowerShellPath(approvedPath)}"`;
+      const deniedShellCommand = `powershell -NoProfile -Command "'SDK_PERMISSION_DENY' | Set-Content -Path ${quotePowerShellPath(deniedPath)}"`;
+      const deniedGithubCommand = "gh api rate_limit";
+      const response = await session.sendAndWait(
+        {
+          prompt: [
+            "Run the Streamliner SDK permission-policy spike.",
+            "Use shell once for this approved operation:",
+            allowedCommand,
+            "Then attempt this denied shell operation and continue after the policy blocks it:",
+            deniedShellCommand,
+            "Then attempt this denied GitHub CLI operation and continue after the policy blocks it:",
+            deniedGithubCommand,
+            "Finally call record_permission_policy_result with what happened, then reply exactly PERMISSION_POLICY_DONE.",
+          ].join(" "),
+        },
+        flagNumber(flags, "timeout-ms", DEFAULT_TIMEOUT_MS),
+      );
+      let followUp;
+      let followUpError;
+      try {
+        const followUpResponse = await session.sendAndWait(
+          { prompt: "Reply exactly PERMISSION_FOLLOWUP_OK if the session still accepts turns after denied tools." },
+          flagNumber(flags, "timeout-ms", DEFAULT_TIMEOUT_MS),
+        );
+        followUp = followUpResponse?.data?.content || "";
+      } catch (error) {
+        followUpError = String(error?.message || error);
+      }
+      summary = {
+        command: "permission-policy",
+        repoDir,
+        sessionId: session.sessionId,
+        workspacePath: session.workspacePath,
+        permissionDecisions,
+        permissionReports,
+        approvedPath,
+        approvedFileExists: existsSync(approvedPath),
+        approvedFileContent: truncate((await readTextIfExists(approvedPath)) || ""),
+        deniedPath,
+        deniedFileExists: existsSync(deniedPath),
+        deniedShellRequests: permissionDecisions.filter((decision) =>
+          String(decision.command || "").includes("SDK_PERMISSION_DENY"),
+        ),
+        deniedGithubRequests: permissionDecisions.filter((decision) => /\bgh(\.exe)?\s+/i.test(decision.command || "")),
+        followUp: truncate(followUp || ""),
+        followUpError,
+        assistant: truncate(response?.data?.content || ""),
+        ...recorder.summary(),
+      };
+      await disposeSession(client, session, flagBoolean(flags, "keep-session"), recorder);
+    });
+  } finally {
+    await writeJson(join(runDir, "summary.json"), summary);
+    await recorder.close();
+  }
+  console.log(`permission-policy summary: ${join(runDir, "summary.json")}`);
 }
 
 async function commandTakeover(flags) {
@@ -864,6 +1174,116 @@ async function commandPluginDiscovery(flags) {
     await recorder.close();
   }
   console.log(`plugin-discovery summary: ${join(runDir, "summary.json")}`);
+}
+
+async function commandStreamlinerClaimBinding(flags) {
+  const { runDir } = await createRun("streamliner-claim-binding");
+  const recorder = new Recorder(runDir);
+  const repoDir = await createDisposableRepo(runDir, "repo");
+  const stateRoot = join(runDir, "streamliner-state");
+  const spoolRoot = join(stateRoot, "session-signals");
+  const pendingRoot = join(spoolRoot, "pending");
+  const debugRoot = join(spoolRoot, "debug");
+  const claimId = flagString(flags, "claim-id", `spike-claim-${Date.now()}`);
+  let session;
+  let summary = {};
+  const envKeys = [
+    "STREAMLINER_STATE_ROOT",
+    "STREAMLINER_SESSION_SIGNAL_SPOOL_ROOT",
+    "STREAMLINER_SESSION_SIGNAL_ENDPOINT",
+    "STREAMLINER_HOOK_DEBUG",
+    "STREAMLINER_LAUNCH_CLAIM_ID",
+  ];
+  const originalEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
+  try {
+    await mkdir(pendingRoot, { recursive: true });
+    let refreshPlugin = { skipped: flagBoolean(flags, "skip-refresh-plugin") };
+    if (!refreshPlugin.skipped) {
+      try {
+        const refreshCommand =
+          process.platform === "win32"
+            ? ["cmd.exe", ["/d", "/s", "/c", "npm run refresh-copilot-plugin"]]
+            : ["npm", ["run", "refresh-copilot-plugin"]];
+        refreshPlugin = {
+          skipped: false,
+          output: truncate(
+            execFileSync(refreshCommand[0], refreshCommand[1], { cwd: REPO_ROOT, encoding: "utf8" }),
+          ),
+        };
+      } catch (error) {
+        refreshPlugin = {
+          skipped: false,
+          error: truncate(String(error?.stderr || error?.message || error)),
+        };
+      }
+    }
+    process.env.STREAMLINER_STATE_ROOT = stateRoot;
+    process.env.STREAMLINER_SESSION_SIGNAL_SPOOL_ROOT = spoolRoot;
+    process.env.STREAMLINER_SESSION_SIGNAL_ENDPOINT = "http://127.0.0.1:9/api/sessions/signals";
+    process.env.STREAMLINER_HOOK_DEBUG = "1";
+    process.env.STREAMLINER_LAUNCH_CLAIM_ID = claimId;
+    await withClient(repoDir, recorder, async (client) => {
+      session = await createSession(
+        client,
+        {
+          model: flagString(flags, "model", DEFAULT_MODEL),
+          workingDirectory: repoDir,
+          enableConfigDiscovery: true,
+          tools: [],
+        },
+        recorder,
+      );
+      const response = await session.sendAndWait(
+        {
+          prompt: "Run a no-op Streamliner launch-claim binding spike and reply exactly STREAMLINER_CLAIM_BINDING_DONE.",
+        },
+        flagNumber(flags, "timeout-ms", DEFAULT_TIMEOUT_MS),
+      );
+      await disposeSession(client, session, flagBoolean(flags, "keep-session"), recorder);
+      await wait(flagNumber(flags, "post-session-wait-ms", 2_000));
+      const pendingSignals = await readJsonFiles(pendingRoot);
+      const debugSignals = await readJsonFiles(debugRoot);
+      const pendingValues = pendingSignals.map((entry) => entry.value).filter(Boolean);
+      const eventTypes = pendingValues.map((signal) => signal.event).filter(Boolean);
+      const sessionSignals = pendingValues.filter((signal) => signal.sessionId === session.sessionId);
+      const claimSignals = pendingValues.filter((signal) => signal.launchClaimId === claimId);
+      summary = {
+        command: "streamliner-claim-binding",
+        repoDir,
+        sessionId: session.sessionId,
+        workspacePath: session.workspacePath,
+        claimId,
+        refreshPlugin,
+        stateRoot,
+        spoolRoot,
+        pendingSignalCount: pendingSignals.length,
+        debugSignalCount: debugSignals.length,
+        pendingSignalPaths: pendingSignals.map((entry) => entry.path),
+        debugSignalPaths: debugSignals.map((entry) => entry.path),
+        eventTypes,
+        sessionSignalEventTypes: sessionSignals.map((signal) => signal.event).filter(Boolean),
+        claimSignalEventTypes: claimSignals.map((signal) => signal.event).filter(Boolean),
+        sessionStartedHasClaim: claimSignals.some((signal) => signal.event === "session.started"),
+        promptSubmittedSignals: sessionSignals.filter((signal) => signal.event === "prompt.submitted").length,
+        sessionEndedSignals: sessionSignals.filter((signal) => signal.event === "session.ended").length,
+        signalSamples: pendingValues.slice(0, 5).map((signal) => redact(signal)),
+        assistant: truncate(response?.data?.content || ""),
+        hookEventsSeen: recorder.projected.filter((event) => String(event.type).includes("hook")),
+        ...recorder.summary(),
+      };
+    });
+  } finally {
+    for (const [key, value] of Object.entries(originalEnv)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+    await writeJson(join(runDir, "summary.json"), summary);
+    await recorder.close();
+  }
+  console.log(`streamliner-claim-binding summary: ${join(runDir, "summary.json")}`);
 }
 
 async function commandDogfoodPr(flags) {
@@ -977,11 +1397,20 @@ async function main() {
     case "cancellation":
       await commandCancellation(flags);
       break;
+    case "process-cancellation":
+      await commandProcessCancellation(flags);
+      break;
     case "takeover":
       await commandTakeover(flags);
       break;
     case "plugin-discovery":
       await commandPluginDiscovery(flags);
+      break;
+    case "permission-policy":
+      await commandPermissionPolicy(flags);
+      break;
+    case "streamliner-claim-binding":
+      await commandStreamlinerClaimBinding(flags);
       break;
     case "dogfood-pr":
       await commandDogfoodPr(flags);
