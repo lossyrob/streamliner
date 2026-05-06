@@ -858,6 +858,32 @@ describe("createStreamlinerApiApp", () => {
     expect(afterDelete.body.workstreams[0].title).toBe("Path Graph");
   });
 
+  it("does not report a path/source conflict when both candidates point at the same graph file", async () => {
+    const rootDir = createRootDir();
+    const sourceRoot = join(rootDir, "workstreams");
+    const sourceWorkstreamDir = join(sourceRoot, "api-test");
+    const graphPath = join(sourceWorkstreamDir, "graph.json");
+    mkdirSync(sourceWorkstreamDir, { recursive: true });
+    writeFileSync(graphPath, JSON.stringify(buildGraph({ title: "Shared Graph" })), "utf8");
+    const api = createIsolatedApi(rootDir);
+    activeApps.push(api);
+
+    await request(api.app).post("/api/workstreams").send({ path: graphPath }).expect(201);
+    await request(api.app)
+      .post("/api/workstream-sources")
+      .send({ type: "workstreams-root", path: sourceRoot })
+      .expect(201);
+
+    const listResponse = await request(api.app).get("/api/workstreams").expect(200);
+    expect(listResponse.body.workstreams).toHaveLength(1);
+    expect(listResponse.body.workstreams[0]).toEqual(expect.objectContaining({
+      source: "path",
+      path: graphPath,
+      title: "Shared Graph",
+    }));
+    expect(listResponse.body.conflicts).toEqual([]);
+  });
+
   it("rejects invalid source paths and marks previously valid sources unhealthy when missing", async () => {
     const rootDir = createRootDir();
     const filePath = join(rootDir, "not-a-directory.json");
