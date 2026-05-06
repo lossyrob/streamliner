@@ -524,6 +524,36 @@ describe("App sessions route", () => {
     15_000,
   );
 
+  it("shows a loading state while the workstreams registry is still fetching", async () => {
+    let resolveRegistry!: (response: Response) => void;
+    const registryPromise = new Promise<Response>((resolve) => {
+      resolveRegistry = resolve;
+    });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = requestPath(input);
+      if (path === "/api/workstreams") {
+        return registryPromise;
+      }
+      throw new Error(`Unexpected fetch: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.pushState({}, "", "/workstreams");
+
+    act(() => {
+      root.render(<App />);
+    });
+    await flushReact();
+
+    expect(container.textContent).toContain("Loading workstreams…");
+    expect(container.textContent).not.toContain("No tracked workstreams yet");
+
+    resolveRegistry(jsonResponse({ version: 1, migrationWarnings: [], workstreams: [] }));
+    await settle();
+
+    expect(container.textContent).not.toContain("Loading workstreams…");
+    expect(container.textContent).toContain("No tracked workstreams yet");
+  });
+
   it(
     "shows bound session workstream context and opens the selected node route",
     async () => {

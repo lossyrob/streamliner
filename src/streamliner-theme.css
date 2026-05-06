@@ -1075,6 +1075,33 @@ a.sl-action-btn {
   line-height: 1.6;
 }
 
+.sl-loading-state {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.sl-loading-state h2,
+.sl-loading-state p {
+  margin: 0;
+}
+
+.sl-spinner {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  border: 3px solid rgba(29, 110, 220, 0.16);
+  border-top-color: var(--sl-accent);
+  border-radius: 999px;
+  animation: sl-spin 0.85s linear infinite;
+}
+
+@keyframes sl-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .sl-landing {
   flex: 1;
   min-height: 0;

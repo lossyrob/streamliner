@@ -414,6 +414,7 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
   const [sources, setSources] = useState<WorkstreamSourceListEntry[]>([]);
   const [conflicts, setConflicts] = useState<WorkstreamConflict[]>([]);
   const [migrationWarnings, setMigrationWarnings] = useState<WorkstreamRegistryWarning[]>([]);
+  const [registryLoaded, setRegistryLoaded] = useState(false);
   const workstreamsRef = useRef<WorkstreamRegistryListEntry[]>([]);
   const lastModifiedRef = useRef<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -427,6 +428,7 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
     setConflicts(body.conflicts ?? []);
     setMigrationWarnings(body.migrationWarnings ?? []);
     setRegistryError(null);
+    setRegistryLoaded(true);
     return mergedWorkstreams;
   }, []);
 
@@ -523,6 +525,7 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
         }
       } catch (nextError) {
         setRegistryError(nextError instanceof Error ? nextError.message : String(nextError));
+        setRegistryLoaded(true);
       }
     })();
   }, [activeWorkstream, enabled, fetchRegistry, loadRegistered]);
@@ -635,6 +638,7 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
     sources,
     conflicts,
     migrationWarnings,
+    registryLoading: !registryLoaded,
     activeWorkstream,
     addSource,
     refreshSources,
@@ -710,6 +714,7 @@ function WorkstreamHome({
   archivedWorkstreams,
   sources,
   conflicts,
+  registryLoading,
   onOpenWorkstream,
   onAddSource,
   onRefreshSources,
@@ -724,6 +729,7 @@ function WorkstreamHome({
   archivedWorkstreams: WorkstreamRegistryListEntry[];
   sources: WorkstreamSourceListEntry[];
   conflicts: WorkstreamConflict[];
+  registryLoading: boolean;
   onOpenWorkstream: (entry: WorkstreamRegistryListEntry) => void | Promise<void>;
   onAddSource: (type: WorkstreamSourceType, path: string) => void | Promise<void>;
   onRefreshSources: () => void | Promise<void>;
@@ -919,7 +925,15 @@ function WorkstreamHome({
             </div>
           </section>
         )}
-        {workstreams.length === 0 ? (
+        {registryLoading ? (
+          <div className="sl-empty-state sl-loading-state" role="status" aria-live="polite">
+            <span className="sl-spinner" aria-hidden="true" />
+            <div>
+              <h2>Loading workstreams…</h2>
+              <p>Scanning tracked sources and recent graph registrations.</p>
+            </div>
+          </div>
+        ) : workstreams.length === 0 ? (
           <div className="sl-empty-state">
             <h2>No tracked workstreams yet</h2>
             <p>Add a source directory to discover workstream graph files.</p>
@@ -1602,6 +1616,7 @@ export default function App() {
           archivedWorkstreams={graphLoader.archivedWorkstreams}
           sources={graphLoader.sources}
           conflicts={graphLoader.conflicts}
+          registryLoading={graphLoader.registryLoading}
           onOpenWorkstream={openWorkstream}
           onAddSource={graphLoader.addSource}
           onRefreshSources={graphLoader.refreshSources}
