@@ -24,11 +24,11 @@ describe("renderWorkstreamTerminalTitleTemplate", () => {
   it("renders supported terminal title template values", () => {
     expect(
       renderWorkstreamTerminalTitleTemplate(
-        "{githubIssue} · {nodeId} · {nodeTitle}",
+        "{githubIssue} - {nodeId} - {nodeTitle}",
         node,
       ),
     ).toBe(
-      "lossyrob/streamliner#47 · tracker-required-launch-policy · Tracker-required launch policy",
+      "lossyrob/streamliner#47 - tracker-required-launch-policy - Tracker-required launch policy",
     );
   });
 

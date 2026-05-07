@@ -71,7 +71,7 @@ describe("parseWorkstreamDocument launchDefaults", () => {
       launchDefaults: {
         terminal: {
           preferredTerminal: "windows-terminal",
-          titleTemplate: "{githubIssue} · {nodeTitle}",
+          titleTemplate: "{githubIssue} - {nodeTitle}",
           tabColor: "#4891C8",
         },
       },
@@ -80,7 +80,7 @@ describe("parseWorkstreamDocument launchDefaults", () => {
     expect(parsed.launchDefaults).toEqual({
       terminal: {
         preferredTerminal: "windows-terminal",
-        titleTemplate: "{githubIssue} · {nodeTitle}",
+        titleTemplate: "{githubIssue} - {nodeTitle}",
         tabColor: "#4891c8",
       },
     });

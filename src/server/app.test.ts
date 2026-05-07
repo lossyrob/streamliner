@@ -549,7 +549,7 @@ describe("createStreamlinerApiApp", () => {
         launchDefaults: {
           terminal: {
             preferredTerminal: "windows-terminal",
-            titleTemplate: "{githubIssue} · {nodeTitle}",
+            titleTemplate: "{githubIssue} - {nodeTitle}",
             tabColor: "#FF8C0A",
           },
         },
@@ -562,7 +562,7 @@ describe("createStreamlinerApiApp", () => {
     expect(updateResponse.body.workstream.launchDefaults).toEqual({
       terminal: {
         preferredTerminal: "windows-terminal",
-        titleTemplate: "{githubIssue} · {nodeTitle}",
+        titleTemplate: "{githubIssue} - {nodeTitle}",
         tabColor: "#ff8c0a",
       },
     });
@@ -572,7 +572,7 @@ describe("createStreamlinerApiApp", () => {
     expect(persisted.launchDefaults).toEqual({
       terminal: {
         preferredTerminal: "windows-terminal",
-        titleTemplate: "{githubIssue} · {nodeTitle}",
+        titleTemplate: "{githubIssue} - {nodeTitle}",
         tabColor: "#ff8c0a",
       },
     });

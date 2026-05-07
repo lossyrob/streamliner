@@ -192,7 +192,7 @@ export function WorkstreamConfigurationDialog({
                   aria-label="Terminal tab title template"
                   value={titleTemplate}
                   onChange={(event) => setTitleTemplate(event.target.value)}
-                  placeholder="{githubIssue} · {nodeTitle}"
+                  placeholder="{githubIssue} - {nodeTitle}"
                   disabled={saving}
                 />
                 <span className="sl-field-note">

@@ -85,7 +85,7 @@ describe("updateWorkstreamConfigurationFile", () => {
       launchDefaults: {
         terminal: {
           preferredTerminal: "windows-terminal",
-          titleTemplate: "{githubIssue} · {nodeTitle}",
+          titleTemplate: "{githubIssue} - {nodeTitle}",
           tabColor: "#FF8C0A",
         },
       },
@@ -95,7 +95,7 @@ describe("updateWorkstreamConfigurationFile", () => {
     expect(result.workstream.launchDefaults).toEqual({
       terminal: {
         preferredTerminal: "windows-terminal",
-        titleTemplate: "{githubIssue} · {nodeTitle}",
+        titleTemplate: "{githubIssue} - {nodeTitle}",
         tabColor: "#ff8c0a",
       },
     });
@@ -105,7 +105,7 @@ describe("updateWorkstreamConfigurationFile", () => {
       launchDefaults: {
       terminal: {
         preferredTerminal: "windows-terminal",
-        titleTemplate: "{githubIssue} · {nodeTitle}",
+        titleTemplate: "{githubIssue} - {nodeTitle}",
         tabColor: "#ff8c0a",
       },
       },
