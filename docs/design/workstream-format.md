@@ -181,6 +181,7 @@ The graph is the structured, machine-readable representation of the workstream's
 | `updatedAt` | string | ✓ | ISO 8601 timestamp of the last committed edit. Bump on intentional committed changes only. |
 | `trackingIssue` | object | | Tracker reference anchoring the workstream (see Tracker Reference) |
 | `launchPolicy` | object | | Optional launch preconditions for this workstream (see Launch Policy). If omitted, graph launches keep the default allow behavior for ready nodes regardless of tracker type. |
+| `launchDefaults` | object | | Optional launch defaults for this workstream (see Launch Defaults). These pre-fill launch UI/API configuration without changing per-launch override behavior. |
 | `repos` | array | ✓ | Repositories involved (see Repo) |
 | `designRefs` | array | | Optional. Project-level design docs relevant to this workstream (see Design Reference). Workers retain access to the full design set; this field is a hint about what to surface first during context assembly and UI navigation. |
 | `nodes` | array | ✓ | Work items and gates (see Node) |
@@ -208,6 +209,19 @@ The first supported field is:
 | `requiredTracker` | `"github-issue"` | | Requires selected nodes to be backed by a GitHub issue before launch. A node satisfies this requirement only when `tracker.type` is `"github"` and the tracker has a valid `owner`, `repo`, and positive issue `number`. Missing trackers and local trackers do not satisfy the requirement. |
 
 If `launchPolicy` or `requiredTracker` is absent, Streamliner preserves the historical behavior: ready nodes may launch whether they use GitHub, local, or no tracker. Unknown `requiredTracker` values are invalid for schema version 1 and are rejected when the graph is parsed rather than ignored.
+
+### Launch Defaults
+
+`launchDefaults` is an optional top-level graph configuration object for durable defaults that should apply to every launch prepared from the workstream. Defaults are intentionally limited to values a builder can still override per launch.
+
+The first supported nested object is `terminal`:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `preferredTerminal` | `"default"`, `"windows-terminal"`, or `"powershell"` | | Preferred local terminal host for worker launches. If omitted or `"default"`, Streamliner uses its normal terminal selection. |
+| `tabColor` | `"#RRGGBB"` | | Default terminal tab/session color for workstream launches. If omitted, launches use the existing uncolored default unless the builder chooses a color per launch. |
+
+Unknown terminal preference values and invalid tab colors are rejected when the graph is parsed. Omitting `launchDefaults` preserves existing launch dialog defaults.
 
 ### Node
 

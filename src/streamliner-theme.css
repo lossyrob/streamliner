@@ -2287,6 +2287,37 @@ a.sl-session-context-ref {
   box-shadow: 0 8px 20px rgba(13, 20, 32, 0.14);
 }
 
+.sl-workstream-config-dialog {
+  width: min(760px, 94vw);
+  height: min(660px, 88vh);
+}
+
+.sl-workstream-config-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.sl-workstream-config-section {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.72fr) minmax(0, 1fr);
+  gap: 18px;
+  padding: 18px;
+  border: 1px solid var(--sl-card-border);
+  border-radius: 16px;
+  background: rgba(29, 110, 220, 0.03);
+}
+
+.sl-workstream-config-title {
+  margin: 6px 0;
+  color: var(--sl-text);
+  font-size: 15px;
+}
+
+.sl-workstream-config-section .sl-terminal-color-picker {
+  margin-top: 4px;
+}
+
 .sl-checkbox-row {
   display: flex;
   gap: 10px;
@@ -2993,6 +3024,10 @@ a.sl-session-context-ref {
   }
 
   .sl-paw-profile-tools {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sl-workstream-config-section {
     grid-template-columns: minmax(0, 1fr);
   }
 

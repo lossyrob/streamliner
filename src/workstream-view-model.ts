@@ -8,8 +8,11 @@ import type {
   WorkstreamGithubPullRequestSnapshot,
   WorkstreamGithubSnapshot,
   WorkstreamIssue,
+  WorkstreamLaunchDefaults,
   WorkstreamLaunchPolicy,
   WorkstreamLaunchRequiredTracker,
+  WorkstreamLaunchTerminalDefaults,
+  WorkstreamLaunchTerminalPreference,
   WorkstreamNode,
   WorkstreamNodeStatus,
   WorkstreamTracker,
@@ -22,6 +25,7 @@ import {
   WORKSTREAM_ATTENTION_STATES,
   WORKSTREAM_CHECKPOINT_STATUSES,
   WORKSTREAM_LAUNCH_REQUIRED_TRACKERS,
+  WORKSTREAM_LAUNCH_TERMINAL_PREFERENCES,
   WORKSTREAM_NODE_STATUSES,
   WORKSTREAM_NODE_TYPES,
   WORKSTREAM_SCHEMA_VERSION,
@@ -210,6 +214,50 @@ function parseLaunchPolicy(value: unknown, label: string): WorkstreamLaunchPolic
   };
 }
 
+function parseOptionalHexColor(value: unknown, label: string): string | null | undefined {
+  if (typeof value === "undefined") {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  const color = asNonEmptyString(value, label).trim();
+  if (!/^#[0-9a-f]{6}$/i.test(color)) {
+    throw new Error(`Expected ${label} to be a #RRGGBB color.`);
+  }
+  return color.toLowerCase();
+}
+
+function parseLaunchTerminalDefaults(
+  value: unknown,
+  label: string,
+): WorkstreamLaunchTerminalDefaults {
+  const record = asObject(value, label);
+  const preferredTerminal = record.preferredTerminal;
+  return {
+    preferredTerminal:
+      typeof preferredTerminal === "undefined"
+        ? undefined
+        : asEnum<WorkstreamLaunchTerminalPreference>(
+            preferredTerminal,
+            `${label}.preferredTerminal`,
+            WORKSTREAM_LAUNCH_TERMINAL_PREFERENCES,
+          ),
+    tabColor: parseOptionalHexColor(record.tabColor, `${label}.tabColor`),
+  };
+}
+
+function parseLaunchDefaults(value: unknown, label: string): WorkstreamLaunchDefaults {
+  const record = asObject(value, label);
+  const terminal = record.terminal;
+  return {
+    terminal:
+      typeof terminal === "undefined"
+        ? undefined
+        : parseLaunchTerminalDefaults(terminal, `${label}.terminal`),
+  };
+}
+
 function parseNode(value: unknown, label: string): WorkstreamNode {
   const record = asObject(value, label);
   const tracker = record.tracker;
@@ -373,6 +421,7 @@ export function parseWorkstreamDocument(rawJson: string): WorkstreamDocument {
   const projectKey = record.projectKey;
   const trackingIssue = record.trackingIssue;
   const launchPolicy = record.launchPolicy;
+  const launchDefaults = record.launchDefaults;
   const designRefs = record.designRefs;
 
   return assertSemanticallyValid({
@@ -411,6 +460,10 @@ export function parseWorkstreamDocument(rawJson: string): WorkstreamDocument {
       typeof launchPolicy === "undefined"
         ? undefined
         : parseLaunchPolicy(launchPolicy, "workstream.launchPolicy"),
+    launchDefaults:
+      typeof launchDefaults === "undefined"
+        ? undefined
+        : parseLaunchDefaults(launchDefaults, "workstream.launchDefaults"),
     repos: parseArray(record.repos, "workstream.repos", parseRepo),
     designRefs:
       typeof designRefs === "undefined"

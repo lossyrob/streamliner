@@ -13,7 +13,7 @@ import {
 } from "@github/copilot-sdk";
 
 import type { NodeLaunchRecord } from "../node-launch-record-contract";
-import type { WorkstreamLaunchPolicy } from "../workstream-schema";
+import type { WorkstreamLaunchDefaults, WorkstreamLaunchPolicy } from "../workstream-schema";
 import {
   evaluateLaunchPolicyFromGraph,
   launchPolicyDetails,
@@ -487,6 +487,7 @@ function normalizeTerminalPreferences(
 
 function parseConfigurationInput(
   input: PawLaunchConfigurationInput | undefined,
+  defaults: { terminal?: Partial<PawLaunchTerminalPreferences> } = {},
 ): ParsedPawLaunchConfiguration {
   const rawCwd = assertOptionalString(input?.cwd, "configuration.cwd");
   const workflowInstructions = assertOptionalString(
@@ -508,6 +509,7 @@ function parseConfigurationInput(
     workflowInstructions,
     terminal: {
       ...DEFAULT_TERMINAL_PREFERENCES,
+      ...defaults.terminal,
       ...terminalOverrides,
     },
   };
@@ -1610,8 +1612,8 @@ export async function preparePawLaunch(
   }
 
   const sessionStateRoot = resolve(options.stateRoot ?? defaultStateRoot());
-  const parsedConfiguration = parseConfigurationInput(options.configuration);
   let launchPolicy: WorkstreamLaunchPolicy | null = null;
+  let launchDefaults: WorkstreamLaunchDefaults | null = null;
   const policyGraphPath = options.graphPath ?? options.defaultGraphPath;
   if (policyGraphPath) {
     const policyResult = evaluateLaunchPolicyFromGraph({
@@ -1644,7 +1646,11 @@ export async function preparePawLaunch(
       );
     }
     launchPolicy = policyResult.launchPolicy;
+    launchDefaults = policyResult.launchDefaults;
   }
+  const parsedConfiguration = parseConfigurationInput(options.configuration, {
+    terminal: launchDefaults?.terminal,
+  });
 
   const contextPreparer = options.contextPreparer ?? prepareLaunchContextPackage;
   let stagedContextPackage: LaunchContextPackage;

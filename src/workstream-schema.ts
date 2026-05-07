@@ -29,6 +29,14 @@ export const WORKSTREAM_LAUNCH_REQUIRED_TRACKERS = ["github-issue"] as const;
 export type WorkstreamLaunchRequiredTracker =
   (typeof WORKSTREAM_LAUNCH_REQUIRED_TRACKERS)[number];
 
+export const WORKSTREAM_LAUNCH_TERMINAL_PREFERENCES = [
+  "default",
+  "windows-terminal",
+  "powershell",
+] as const;
+export type WorkstreamLaunchTerminalPreference =
+  (typeof WORKSTREAM_LAUNCH_TERMINAL_PREFERENCES)[number];
+
 export const WORKSTREAM_CHECKPOINT_STATUSES = ["planned", "completed"] as const;
 export type WorkstreamCheckpointStatus =
   (typeof WORKSTREAM_CHECKPOINT_STATUSES)[number];
@@ -108,6 +116,15 @@ export interface WorkstreamLaunchPolicy {
   requiredTracker?: WorkstreamLaunchRequiredTracker;
 }
 
+export interface WorkstreamLaunchTerminalDefaults {
+  preferredTerminal?: WorkstreamLaunchTerminalPreference;
+  tabColor?: string | null;
+}
+
+export interface WorkstreamLaunchDefaults {
+  terminal?: WorkstreamLaunchTerminalDefaults;
+}
+
 export interface WorkstreamNode {
   id: string;
   type: WorkstreamNodeType;
@@ -140,6 +157,7 @@ export interface WorkstreamDocument {
   updatedAt: string;
   trackingIssue?: WorkstreamIssue;
   launchPolicy?: WorkstreamLaunchPolicy;
+  launchDefaults?: WorkstreamLaunchDefaults;
   repos: WorkstreamRepo[];
   designRefs: WorkstreamDesignReference[];
   nodes: WorkstreamNode[];

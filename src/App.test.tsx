@@ -2232,6 +2232,87 @@ describe("App sessions route", () => {
   );
 
   it(
+    "edits workstream configuration and applies terminal defaults to PAW launch",
+    async () => {
+      let graph = buildLaunchGraph();
+      let savedConfiguration: Record<string, unknown> | null = null;
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        if (path === "/api/workstreams/streamliner/api-test/configuration") {
+          savedConfiguration = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+          graph = {
+            ...graph,
+            launchPolicy: savedConfiguration.launchPolicy ?? undefined,
+            launchDefaults: savedConfiguration.launchDefaults ?? undefined,
+            updatedAt: "2026-05-07T18:10:33.000Z",
+          };
+          return jsonResponse({ workstream: graph });
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return emptyNodeLaunchRecordResponse();
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      act(() => {
+        findButton(container, "Configure…").click();
+      });
+      await settle();
+      setSelectValue(findSelectByLabel(container, "Required tracker"), "github-issue");
+      setSelectValue(findSelectByLabel(container, "Preferred terminal"), "windows-terminal");
+      act(() => {
+        findButtonByLabel(container, "Use terminal color #ff8c0a").click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Save configuration").click();
+      });
+      await settle(100);
+
+      expect(savedConfiguration).toEqual({
+        launchPolicy: { requiredTracker: "github-issue" },
+        launchDefaults: {
+          terminal: {
+            preferredTerminal: "windows-terminal",
+            tabColor: "#ff8c0a",
+          },
+        },
+      });
+      expect(container.textContent).not.toContain("Save durable launch policy");
+
+      act(() => {
+        findCanvasNode(container, "Launch prompt profiles").click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Initialize PAW launch").click();
+      });
+      await settle();
+
+      expect(findSelectByLabel(container, "Preferred terminal").value).toBe("windows-terminal");
+      expect(container.textContent).toContain("Selected #ff8c0a");
+    },
+    15_000,
+  );
+
+  it(
     "adds a workstream source and refreshes graph content from disk",
     async () => {
       let graph = buildWorkstreamGraph();

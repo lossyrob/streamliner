@@ -235,6 +235,7 @@ function writeLaunchPolicyGraph(
     nodeId?: string;
     tracker?: Record<string, unknown>;
     launchPolicy?: Record<string, unknown>;
+    launchDefaults?: Record<string, unknown>;
   } = {},
 ): string {
   const nodeId = options.nodeId ?? "launch-prompt-profiles";
@@ -281,6 +282,9 @@ function writeLaunchPolicyGraph(
   };
   if (options.launchPolicy !== undefined) {
     graph.launchPolicy = options.launchPolicy;
+  }
+  if (options.launchDefaults !== undefined) {
+    graph.launchDefaults = options.launchDefaults;
   }
   writeFileSync(graphPath, JSON.stringify(graph), "utf8");
   return graphPath;
@@ -651,6 +655,46 @@ describe("preparePawLaunch", () => {
     });
 
     expect(result.launchMetadata.nodeId).toBe("launch-prompt-profiles");
+  });
+
+  it("uses workstream terminal defaults when launch configuration omits them", async () => {
+    const root = createRootDir();
+    const pawInitCalls: PawInitRunnerInput[] = [];
+    const graphPath = writeLaunchPolicyGraph(root, {
+      tracker: {
+        type: "github",
+        owner: "lossyrob",
+        repo: "streamliner",
+        number: 33,
+      },
+      launchDefaults: {
+        terminal: {
+          preferredTerminal: "windows-terminal",
+          tabColor: "#4891c8",
+        },
+      },
+    });
+
+    const result = await preparePawLaunch({
+      nodeId: "launch-prompt-profiles",
+      graphPath,
+      cwd: root,
+      stateRoot: join(root, "state"),
+      configuration: {
+        terminal: { tabColor: "#ff8c0a" },
+      },
+      pawInitRunner: createPawInitRunner(pawInitCalls),
+      contextPreparer: createContextPreparer(root),
+    });
+
+    expect(result.terminal).toEqual(expect.objectContaining({
+      preferredTerminal: "windows-terminal",
+      tabColor: "#ff8c0a",
+    }));
+    expect(pawInitCalls[0].configuration.terminal).toEqual(expect.objectContaining({
+      preferredTerminal: "windows-terminal",
+      tabColor: "#ff8c0a",
+    }));
   });
 
   it("validates launch configuration field types", async () => {

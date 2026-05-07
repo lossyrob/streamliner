@@ -58,3 +58,44 @@ describe("parseWorkstreamDocument launchPolicy", () => {
     );
   });
 });
+
+describe("parseWorkstreamDocument launchDefaults", () => {
+  it("preserves absent launch defaults", () => {
+    const parsed = parseWorkstreamDocument(graph());
+
+    expect(parsed.launchDefaults).toBeUndefined();
+  });
+
+  it("parses terminal launch defaults", () => {
+    const parsed = parseWorkstreamDocument(graph({
+      launchDefaults: {
+        terminal: {
+          preferredTerminal: "windows-terminal",
+          tabColor: "#4891C8",
+        },
+      },
+    }));
+
+    expect(parsed.launchDefaults).toEqual({
+      terminal: {
+        preferredTerminal: "windows-terminal",
+        tabColor: "#4891c8",
+      },
+    });
+  });
+
+  it("rejects invalid terminal defaults", () => {
+    expect(() =>
+      parseWorkstreamDocument(graph({
+        launchDefaults: {
+          terminal: {
+            preferredTerminal: "zsh",
+            tabColor: "blue",
+          },
+        },
+      }))
+    ).toThrow(
+      "Expected workstream.launchDefaults.terminal.preferredTerminal to be one of: default, windows-terminal, powershell.",
+    );
+  });
+});

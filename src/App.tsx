@@ -38,6 +38,10 @@ import {
   type PawLaunchProgressEvent,
 } from "./components/PawLaunchDialog";
 import {
+  WorkstreamConfigurationDialog,
+  type WorkstreamConfigurationValues,
+} from "./components/WorkstreamConfigurationDialog";
+import {
   DEFAULT_PAW_TERMINAL_CONFIGURATION,
   DEFAULT_PAW_WORKFLOW_INSTRUCTIONS,
   type PawLaunchDialogConfiguration,
@@ -289,6 +293,10 @@ function registryEntryUrl(entry: { projectKey: string; workstreamId: string }): 
 
 function registryArchiveUrl(entry: { projectKey: string; workstreamId: string }): string {
   return `${registryEntryUrl(entry)}/archive`;
+}
+
+function registryConfigurationUrl(entry: { projectKey: string; workstreamId: string }): string {
+  return `${registryEntryUrl(entry)}/configuration`;
 }
 
 function sourceEntryUrl(sourceId: string): string {
@@ -630,6 +638,32 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
     [fetchRegistry],
   );
 
+  const saveWorkstreamConfiguration = useCallback(
+    async (
+      entry: { projectKey: string; workstreamId: string },
+      configuration: WorkstreamConfigurationValues,
+    ) => {
+      const res = await fetch(registryConfigurationUrl(entry), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(configuration),
+      });
+      if (!res.ok) {
+        throw new Error((await parseErrorResponse(res)).message);
+      }
+      const body = await res.json() as { workstream?: unknown };
+      if (typeof body.workstream !== "object" || body.workstream === null) {
+        throw new Error("Configuration update did not return a workstream graph.");
+      }
+      const parsed = parseWorkstreamDocument(JSON.stringify(body.workstream));
+      lastModifiedRef.current = res.headers.get("Last-Modified");
+      setWorkstream(parsed);
+      setError(null);
+      await fetchRegistry();
+    },
+    [fetchRegistry],
+  );
+
   return {
     workstream,
     error,
@@ -647,6 +681,7 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
     archive,
     restore,
     untrack,
+    saveWorkstreamConfiguration,
   };
 }
 
@@ -967,6 +1002,7 @@ function GraphDashboard({
   activeWorkstream,
   archive,
   untrack,
+  saveWorkstreamConfiguration,
   onOpenWorkstream,
   onOpenSessions,
   onManageSources,
@@ -997,6 +1033,9 @@ function GraphDashboard({
   const [nodeLaunchRecordLoading, setNodeLaunchRecordLoading] = useState(false);
   const [nodeLaunchRecordError, setNodeLaunchRecordError] = useState<string | null>(null);
   const [nodeLaunchRecordRefreshKey, setNodeLaunchRecordRefreshKey] = useState(0);
+  const [configurationDialogOpen, setConfigurationDialogOpen] = useState(false);
+  const [configurationSaving, setConfigurationSaving] = useState(false);
+  const [configurationError, setConfigurationError] = useState<string | null>(null);
   const activeWorkstreamKey = activeWorkstream ? registryKey(activeWorkstream) : "";
   const sessionList = useSessionRegistryList(
     { workstreamId: activeWorkstream?.workstreamId ?? null },
@@ -1039,6 +1078,13 @@ function GraphDashboard({
     if (!activeWorkstream) return null;
     return workstreams.find((entry) => registryKey(entry) === registryKey(activeWorkstream)) ?? null;
   }, [activeWorkstream, workstreams]);
+
+  const configureDisabledReason = useMemo(() => {
+    if (!activeWorkstreamEntry || !isBackendReadableWorkstreamEntry(activeWorkstreamEntry)) {
+      return "Only backend-readable workstream graph files can be configured.";
+    }
+    return null;
+  }, [activeWorkstreamEntry]);
 
   const launchDisabledReason = useMemo(() => {
     if (!selectedEntry) return undefined;
@@ -1110,8 +1156,11 @@ function GraphDashboard({
       githubIssueUrl: workstreamTrackerUrl(selectedEntry.node.tracker),
       terminal: {
         ...DEFAULT_PAW_TERMINAL_CONFIGURATION,
+        preferredTerminal:
+          workstream?.launchDefaults?.terminal?.preferredTerminal ??
+          DEFAULT_PAW_TERMINAL_CONFIGURATION.preferredTerminal,
         title: selectedEntry.node.title,
-        tabColor: null,
+        tabColor: workstream?.launchDefaults?.terminal?.tabColor ?? null,
       },
     };
   }, [activeWorkstreamEntry, selectedEntry, workstream]);
@@ -1169,6 +1218,35 @@ function GraphDashboard({
     setLaunchReleaseStatus(null);
     setLaunchProgressEvents([]);
     setLaunchDialogOpen(true);
+  };
+
+  const handleOpenConfigurationDialog = () => {
+    setConfigurationError(null);
+    setConfigurationDialogOpen(true);
+  };
+
+  const handleCloseConfigurationDialog = () => {
+    if (configurationSaving) {
+      return;
+    }
+    setConfigurationError(null);
+    setConfigurationDialogOpen(false);
+  };
+
+  const handleSaveConfiguration = async (configuration: WorkstreamConfigurationValues) => {
+    if (!activeWorkstream) {
+      return;
+    }
+    setConfigurationSaving(true);
+    setConfigurationError(null);
+    try {
+      await saveWorkstreamConfiguration(activeWorkstream, configuration);
+      setConfigurationDialogOpen(false);
+    } catch (nextError) {
+      setConfigurationError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setConfigurationSaving(false);
+    }
   };
 
   const handleCloseLaunchDialog = () => {
@@ -1396,20 +1474,22 @@ function GraphDashboard({
       <WorkstreamHeader
         workstream={workstream}
         viewModel={viewModel}
-          activeWorkstream={activeWorkstream}
-          trackedWorkstreams={workstreams}
-          onOpenWorkstream={onOpenWorkstream}
-          onAddWorkstream={onManageSources}
-          onUntrackWorkstream={(entry) => {
-            void (async () => {
-              if (isSourceWorkstreamEntry(entry)) {
-                await archive(entry);
-              } else {
-                await untrack(entry);
-              }
-              if (registryKey(entry) === registryKey(activeWorkstream)) {
-                onRouteHome();
-              }
+        activeWorkstream={activeWorkstream}
+        trackedWorkstreams={workstreams}
+        onOpenWorkstream={onOpenWorkstream}
+        onAddWorkstream={onManageSources}
+        onConfigureWorkstream={handleOpenConfigurationDialog}
+        configureDisabledReason={configureDisabledReason}
+        onUntrackWorkstream={(entry) => {
+          void (async () => {
+            if (isSourceWorkstreamEntry(entry)) {
+              await archive(entry);
+            } else {
+              await untrack(entry);
+            }
+            if (registryKey(entry) === registryKey(activeWorkstream)) {
+              onRouteHome();
+            }
           })();
         }}
       />
@@ -1460,6 +1540,16 @@ function GraphDashboard({
           onSubmit={handleSubmitLaunch}
           onLaunchTerminal={handleLaunchTerminal}
           onReleaseLaunch={nodeLaunchRecord?.latestClaim?.blocksLaunch ? handleReleaseLaunch : undefined}
+        />
+      ) : null}
+      {configurationDialogOpen && workstream ? (
+        <WorkstreamConfigurationDialog
+          key={`${workstream.projectKey ?? ""}:${workstream.id}:${workstream.updatedAt}`}
+          workstream={workstream}
+          saving={configurationSaving}
+          error={configurationError}
+          onCancel={handleCloseConfigurationDialog}
+          onSave={handleSaveConfiguration}
         />
       ) : null}
     </div>
