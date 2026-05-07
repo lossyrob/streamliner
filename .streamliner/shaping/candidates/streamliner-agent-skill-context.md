@@ -20,9 +20,10 @@ That repeated prompting is both tedious and risky. It creates session-to-session
 
 - Define the role-context model for Streamliner-aware sessions.
 - Decide when Streamliner should provide skills, custom agents, launch prompts, or generated context packages.
-- Add reusable context for at least three roles:
-  - Workstream Designer: shapes candidate workstreams and their geometry.
-  - Workstream Orchestrator: runs a shaped workstream through graph, waves, workers, gates, and reconciliation.
+- Add reusable context for at least four roles/modes:
+  - Project Workstream Designer: shapes multiple candidate workstreams and their geometry.
+  - Workstream Formation: bottoms out one shaped candidate into executable workstream artifacts.
+  - Workstream Orchestrator: runs a formed workstream through graph, waves, workers, gates, reconciliation, and closure.
   - Workstream Node Worker: executes one node from the context package and reports documentation/design/scope impacts.
 - Keep role guidance composable so the builder can still direct a session freely without being trapped in a rigid custom-agent persona.
 - Connect role context to documentation authority: role guidance should point to Design, Architecture, User Guide, and workstream artifacts rather than duplicating them wholesale.
@@ -39,7 +40,7 @@ That repeated prompting is both tedious and risky. It creates session-to-session
 
 - Automatically generating skills from docs.
 - UI for selecting roles or launching role-specific sessions.
-- Portfolio-level agents that manage multiple workstreams at once.
+- Portfolio-level agents that manage multiple projects at once.
 - Full custom-agent marketplace or versioning strategy.
 
 ## Decisions and Working Assumptions
@@ -51,6 +52,7 @@ That repeated prompting is both tedious and risky. It creates session-to-session
 - The context package remains the node-specific source of truth. Skills/agents provide role and operating model; `context.md` provides the selected node's mission, workstream state, and hints.
 - The plugin already exists for session lifecycle hooks, but this workstream may need to expand plugin packaging to include skills, agent definitions, or role documentation if Copilot CLI supports distributing them that way.
 - The role model should likely include one shared `streamliner-core` context plus role-specific layers for designer, orchestrator, worker, and eventually reconciler.
+- Dogfooding suggests three primary skills above node work: Project Workstream Design, Workstream Formation, and Workstream Orchestration. They may share one Streamliner Core context and can still have optional custom-agent entry points.
 
 ## Role Context Model
 
@@ -65,32 +67,53 @@ Shared vocabulary and operating model used by every role:
 
 This should be short and navigational. It should tell sessions where authoritative docs live rather than copying the docs.
 
-### Workstream Designer
+### Project Workstream Designer
 
-Used when the builder is shaping ambiguous work into candidate workstreams.
+Used when the builder is shaping ambiguous work into several candidate workstreams within one project and trying to understand their geometry.
 
 Expected behavior:
 
 - capture candidate workstreams in shaping notes;
 - reason at workstream scale, not first-issue scale;
 - identify boundaries, imports, exports, gates, and cross-workstream edges;
-- produce handoff briefs for dedicated orchestrator sessions;
+- produce handoff briefs for focused formation sessions;
 - avoid detailed implementation planning unless explicitly requested.
 
 Likely packaging:
 
 - Skill for loose interactive sessions.
-- Optional custom agent for dedicated workstream-design sessions.
+- Optional custom agent for dedicated project workstream-design sessions.
 
-### Workstream Orchestrator
+Naming decision: use **Project Workstream Designer**. A project is the grouping boundary for related workstreams that can depend on each other. A portfolio is the builder's broader collection of projects and should be a later, higher-level concept if needed.
 
-Used when a shaped workstream is ready to become executable.
+### Workstream Formation
+
+Used after a candidate has been shaped and the builder wants to create the actual workstream artifacts.
 
 Expected behavior:
 
-- read the shaping handoff, design docs, architecture docs when present, and existing workstream artifacts;
-- create or maintain `brief.md` and `graph.json`;
-- decompose work into waves, nodes, gates, and tracker-backed issues;
+- read the shaping handoff, related design docs, architecture docs when present, and known imports/exports;
+- continue scoped design thinking for this one workstream;
+- decide the workstream's initial brief, graph, waves, gates, checkpoints, and export/import declarations;
+- create or update `brief.md` and `graph.json`;
+- create the parent tracker issue and initial node issues/specs;
+- identify design-session nodes needed before execution;
+- leave later-wave details sketchy when they depend on earlier outcomes.
+
+Likely packaging:
+
+- Skill for sessions that turn a shaped candidate into artifacts.
+- Optional custom agent if the whole session is dedicated to formation.
+
+### Workstream Orchestrator
+
+Used when a formed workstream is ready to execute.
+
+Expected behavior:
+
+- read the workstream artifacts, design docs, architecture docs when present, and current operational state;
+- maintain `brief.md` and `graph.json` as reality unfolds;
+- promote waves and refine nodes/gates/tracker-backed issues;
 - launch or coordinate node workers;
 - reconcile worker output back into the workstream graph and downstream issues.
 - run workstream-level closure reviews that evaluate final PRs and completed node/issues against the whole workstream intent before the workstream is closed.
@@ -199,7 +222,7 @@ Likely work areas:
 
 - Inventory current Copilot CLI plugin, skill, and agent packaging options.
 - Define shared Streamliner Core context.
-- Define role-specific guidance for Workstream Designer, Workstream Orchestrator, and Workstream Node Worker.
+- Define role-specific guidance for Project Workstream Designer, Workstream Formation, Workstream Orchestrator, and Workstream Node Worker.
 - Decide how role guidance references docs without duplicating them.
 - Add plugin/project-distributed skills or equivalent role artifacts.
 - Add optional custom-agent entry points if the packaging supports them cleanly.
@@ -211,14 +234,14 @@ Likely work areas:
 
 ### Imports
 
-- Documentation System: documentation taxonomy and docs-discovery conventions.
+- Documentation System (`.streamliner/workstreams/documentation-system/`): documentation taxonomy, docs-discovery conventions, optional documentation-family context flow, and worker documentation-impact reporting expectations.
 - Workstream Design Mode: role semantics for designer sessions and work-geometry primitives.
 - Distribution/Integration Workstream ([GitHub issue #40](https://github.com/lossyrob/streamliner/issues/40)): CLI, daemon, Copilot plugin install/doctor/update, helper distribution, and agent-friendly launch entrypoints.
 - Session launching/tracking work: stable API-first launch pipeline and context-package seam for graph-launched node workers.
 
 ### Exports
 
-- Role-context model for Workstream Designer, Orchestrator, and Node Worker.
+- Role-context model for Project Workstream Designer, Workstream Formation, Orchestrator, and Node Worker.
 - Packaging decision for skills vs custom agents.
 - Worker launch-context expectations for downstream hot-work guidance.
 - Workstream closure-review expectations for orchestrator sessions.

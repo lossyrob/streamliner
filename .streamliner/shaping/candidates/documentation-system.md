@@ -2,7 +2,7 @@
 
 ## Stage
 
-Shaped; ready to move on.
+Promoted to `.streamliner/workstreams/documentation-system/`.
 
 ## Seed Idea
 
@@ -266,3 +266,10 @@ The workstream should establish a unified GitHub Pages-publishable documentation
 The workstream should treat Design as Streamliner-native required context and Architecture/User Guide as optional-but-recommended doc families. It should preserve `designRefs` as the normative design-context mechanism while evaluating how optional documentation hints should participate in repo config, workstream artifacts, context packages, worker documentation-impact reporting, and reconciliation.
 
 The orchestrator should decide internal waves and issue decomposition. The shaped boundary is documentation taxonomy plus the initial docs implementation plus product support for optional documentation families.
+
+## Promotion
+
+Promoted into `.streamliner/workstreams/documentation-system/` as a formed
+workstream. Wave 1 uses one coarse local task spec; GitHub issue creation is left
+to the orchestrator. Formation did not update design docs; the Wave 1 worker node
+owns design-doc and decision-record changes.

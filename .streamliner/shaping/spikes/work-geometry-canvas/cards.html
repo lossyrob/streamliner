@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Work Geometry Canvas - Cards</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main class="page">
+      <header class="topbar">
+        <div>
+          <h1>Option A: Collapsed workstream cards</h1>
+          <p>Project-level overview: workstream cards, health, import/export counts, and dotted dependency edges.</p>
+        </div>
+        <nav class="nav" aria-label="Spike views">
+          <a href="index.html">Index</a>
+          <a href="cards.html" aria-current="page">Cards</a>
+          <a href="graphs.html">Mini-graphs</a>
+          <a href="lanes.html">Lanes</a>
+        </nav>
+      </header>
+
+      <section class="content">
+        <div class="canvas-shell">
+          <div id="world" class="world">
+            <svg id="edges" class="edge-layer" aria-hidden="true"></svg>
+            <div id="cards"></div>
+          </div>
+        </div>
+        <aside id="inspector" class="inspector">
+          <h2>Project: Streamliner</h2>
+          <p>Select a workstream card or dependency edge. This option prioritizes overview legibility and drill-in.</p>
+          <h3>Legend</h3>
+          <div class="legend">
+            <div class="legend-row"><span class="swatch validated"></span> Mainline / validated export</div>
+            <div class="legend-row"><span class="swatch preview"></span> Preview export</div>
+            <div class="legend-row"><span class="swatch branch-local"></span> Branch-local export</div>
+            <div class="legend-row"><span class="swatch proposed"></span> Proposed export</div>
+          </div>
+        </aside>
+      </section>
+    </main>
+
+    <script src="mock-data.js"></script>
+    <script>
+      const { workstreams, edges, byId } = window.workGeometryMock;
+      const cardsLayer = document.getElementById("cards");
+      const edgeLayer = document.getElementById("edges");
+      const inspector = document.getElementById("inspector");
+
+      function cardCenter(workstream) {
+        return { x: workstream.x + 150, y: workstream.y + 88 };
+      }
+
+      function edgePath(from, to) {
+        const dx = Math.max(160, Math.abs(to.x - from.x) * 0.38);
+        return `M ${from.x} ${from.y} C ${from.x + dx} ${from.y}, ${to.x - dx} ${to.y}, ${to.x} ${to.y}`;
+      }
+
+      function stateChip(state) {
+        if (state === "validated" || state === "mainline") return "green";
+        if (state === "preview") return "yellow";
+        if (state === "branch-local") return "orange";
+        if (state === "active") return "blue";
+        return "purple";
+      }
+
+      function showWorkstream(workstream) {
+        document.querySelectorAll(".card").forEach((card) => card.classList.remove("selected"));
+        const card = document.querySelector(`[data-workstream="${workstream.id}"]`);
+        if (card) card.classList.add("selected");
+
+        const inbound = edges.filter((edge) => edge.to.workstream === workstream.id);
+        const outbound = edges.filter((edge) => edge.from.workstream === workstream.id);
+        inspector.innerHTML = `
+          <h2>${workstream.title}</h2>
+          <p>${workstream.summary}</p>
+          <div class="chips">
+            <span class="chip blue">${workstream.kind}</span>
+            <span class="chip ${stateChip(workstream.status)}">${workstream.health}</span>
+          </div>
+          <h3>Imports</h3>
+          ${inbound.length ? `<ul>${inbound.map((edge) => `<li><strong>${edge.label}</strong> from ${byId[edge.from.workstream].title}: ${edge.state}. ${edge.risk}</li>`).join("")}</ul>` : "<p>No external imports.</p>"}
+          <h3>Exports</h3>
+          ${outbound.length ? `<ul>${outbound.map((edge) => `<li><strong>${edge.label}</strong> to ${byId[edge.to.workstream].title}: ${edge.state}. ${edge.risk}</li>`).join("")}</ul>` : "<p>No downstream exports in this mock.</p>"}
+          <h3>Read</h3>
+          <p>This card version feels best when the user needs portfolio-like situational awareness inside one project and can drill into a single workstream for details.</p>
+        `;
+      }
+
+      function showEdge(edge) {
+        document.querySelectorAll(".card").forEach((card) => card.classList.remove("selected"));
+        inspector.innerHTML = `
+          <h2>${edge.label}</h2>
+          <p>Dependency edge from <strong>${byId[edge.from.workstream].title}</strong> to <strong>${byId[edge.to.workstream].title}</strong>.</p>
+          <div class="chips">
+            <span class="chip ${stateChip(edge.state)}">${edge.state}</span>
+            <span class="chip orange">Risk: ${edge.risk}</span>
+          </div>
+          <h3>Why it matters</h3>
+          <p>The canvas makes this dependency visible without opening either workstream graph. The single-workstream view could show the same edge as an external dependency badge.</p>
+        `;
+      }
+
+      function renderCards() {
+        cardsLayer.innerHTML = workstreams.map((workstream) => `
+          <article class="card" data-workstream="${workstream.id}" style="left:${workstream.x}px;top:${workstream.y}px">
+            <div class="kicker">
+              <span>${workstream.kind}</span>
+              <span>${workstream.status}</span>
+            </div>
+            <h2>${workstream.title}</h2>
+            <p class="summary">${workstream.summary}</p>
+            <div class="progress"><span style="width:${workstream.progress}%"></span></div>
+            <div class="metrics">
+              <div class="metric"><strong>${workstream.imports.length}</strong><span>imports</span></div>
+              <div class="metric"><strong>${workstream.exports.length}</strong><span>exports</span></div>
+              <div class="metric"><strong>${workstream.progress}%</strong><span>progress</span></div>
+            </div>
+            <div class="chips">
+              <span class="chip ${stateChip(workstream.status)}">${workstream.health}</span>
+            </div>
+          </article>
+        `).join("");
+
+        document.querySelectorAll(".card").forEach((card) => {
+          card.addEventListener("click", () => showWorkstream(byId[card.dataset.workstream]));
+        });
+      }
+
+      function renderEdges() {
+        edgeLayer.setAttribute("viewBox", "0 0 1780 1120");
+        edgeLayer.innerHTML = edges.map((edge, index) => {
+          const from = cardCenter(byId[edge.from.workstream]);
+          const to = cardCenter(byId[edge.to.workstream]);
+          const id = `edge-path-${edge.id}`;
+          const labelX = (from.x + to.x) / 2;
+          const labelY = (from.y + to.y) / 2 - 12 + (index % 2 ? 18 : 0);
+          return `
+            <path id="${id}" class="edge ${edge.state}" data-edge="${edge.id}" d="${edgePath(from, to)}"></path>
+            <text class="edge-label" x="${labelX}" y="${labelY}">${edge.label}</text>
+          `;
+        }).join("");
+
+        document.querySelectorAll(".edge").forEach((path) => {
+          path.addEventListener("click", () => showEdge(edges.find((edge) => edge.id === path.dataset.edge)));
+        });
+      }
+
+      renderCards();
+      renderEdges();
+      showWorkstream(byId["canvas"]);
+    </script>
+  </body>
+</html>

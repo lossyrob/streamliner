@@ -1,0 +1,467 @@
+.lod-root {
+  --lod-orange: #d36d21;
+  --lod-purple: #7c3aed;
+}
+
+.lod-shell-nav {
+  min-height: 58px;
+  padding-block: 8px;
+}
+
+.lod-logo-mark {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 35% 28%, rgba(255, 255, 255, 0.92), transparent 28%),
+    linear-gradient(135deg, var(--sl-accent), var(--sl-green));
+  color: #fff;
+  font-family:
+    "Bahnschrift", "Segoe UI Variable Display", system-ui, sans-serif;
+  font-size: 21px;
+  font-weight: 800;
+  box-shadow: 0 8px 20px rgba(20, 60, 130, 0.14);
+  transform: skewX(-7deg);
+}
+
+.lod-nav-copy {
+  display: grid;
+  justify-items: end;
+  gap: 3px;
+  color: var(--sl-text-muted);
+  font-size: 12px;
+}
+
+.lod-nav-copy strong {
+  color: var(--sl-text);
+  font-size: 13px;
+}
+
+.lod-header {
+  align-items: center;
+  padding-block: 8px;
+}
+
+.lod-header .sl-title {
+  font-size: 21px;
+}
+
+.lod-header .sl-summary {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.lod-header-summary {
+  max-width: 80rem;
+}
+
+.lod-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.lod-body {
+  grid-template-columns: minmax(0, 1fr) clamp(360px, 24vw, 460px);
+}
+
+.lod-canvas {
+  background:
+    radial-gradient(circle at 18% 16%, rgba(29, 110, 220, 0.08), transparent 30%),
+    radial-gradient(circle at 78% 72%, rgba(18, 148, 95, 0.07), transparent 28%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.04));
+}
+
+.lod-canvas .react-flow__edge-textbg {
+  fill: rgba(255, 255, 255, 0.95);
+  stroke: rgba(20, 60, 130, 0.12);
+  stroke-width: 1;
+}
+
+.lod-canvas .react-flow__edge-text {
+  fill: var(--sl-text);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.lod-canvas .react-flow__handle {
+  width: 12px;
+  height: 12px;
+  min-width: 12px;
+  min-height: 12px;
+  border: 2px solid #fff;
+  background: var(--sl-accent);
+  box-shadow: 0 1px 4px rgba(31, 58, 105, 0.3);
+}
+
+.lod-canvas .react-flow__handle.lod-port--import {
+  background: var(--sl-amber);
+}
+
+.lod-canvas .react-flow__handle.lod-port--export {
+  background: var(--sl-accent);
+}
+
+.lod-canvas .react-flow__handle.lod-port--spine {
+  background: rgba(20, 60, 130, 0.32);
+  width: 8px;
+  height: 8px;
+  min-width: 8px;
+  min-height: 8px;
+  border: 1px solid rgba(20, 60, 130, 0.4);
+}
+
+.lod-spine-edge .react-flow__edge-path {
+  stroke-dasharray: none;
+}
+
+.lod-route.back-edge {
+  filter: none !important;
+}
+
+.lod-route {
+  filter: drop-shadow(0 2px 8px rgba(31, 58, 105, 0.08));
+}
+
+.lod-route.selected {
+  filter: drop-shadow(0 4px 14px rgba(29, 110, 220, 0.4));
+}
+
+.lod-route-preview,
+.lod-route-branch-local,
+.lod-route-proposed {
+  filter: drop-shadow(0 3px 10px rgba(176, 120, 8, 0.18));
+}
+
+.lod-zoom-panel {
+  width: 320px;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--sl-card-border);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 8px 30px rgba(31, 58, 105, 0.09);
+  backdrop-filter: blur(10px);
+}
+
+.lod-zoom-heading {
+  display: grid;
+  gap: 3px;
+}
+
+.lod-zoom-heading strong {
+  color: var(--sl-text);
+  font-size: 14px;
+}
+
+.lod-zoom-panel input {
+  accent-color: var(--sl-accent);
+}
+
+.lod-zoom-panel p {
+  margin: 0;
+  color: var(--sl-text-mid);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+/* Workstream column header */
+.lod-workstream-header {
+  width: 100%;
+  height: 100%;
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--sl-card-border);
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(29, 110, 220, 0.08), rgba(255, 255, 255, 0.6)),
+    rgba(255, 255, 255, 0.94);
+  box-shadow: 0 6px 24px rgba(31, 58, 105, 0.07);
+  pointer-events: none;
+}
+
+.lod-workstream-header h2 {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.2;
+  color: var(--sl-text);
+}
+
+.lod-workstream-header p {
+  margin: 0;
+  color: var(--sl-text-mid);
+  font-size: 12px;
+  line-height: 1.4;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.lod-workstream-meta {
+  margin-top: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--sl-text-dim);
+}
+
+/* Wave swimlane (matches production .sl-swimlane styles) */
+.lod-wave {
+  width: 100%;
+  height: 100%;
+  padding: 14px 18px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-radius: 22px;
+  border: 1.5px dashed rgba(29, 110, 220, 0.3);
+  background: rgba(29, 110, 220, 0.05);
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    background 0.15s ease;
+}
+
+.lod-wave.selected {
+  border-color: var(--sl-accent);
+  border-style: solid;
+  box-shadow:
+    0 0 0 4px var(--sl-accent-bg),
+    0 10px 32px rgba(31, 58, 105, 0.1);
+}
+
+.lod-wave.sl-swimlane--completed {
+  background: rgba(18, 148, 95, 0.06);
+  border-color: rgba(18, 148, 95, 0.32);
+}
+
+.lod-wave.sl-swimlane--completed .sl-swimlane-title {
+  color: var(--sl-green);
+}
+
+.lod-wave.sl-swimlane--current {
+  background: rgba(29, 110, 220, 0.08);
+  border-color: rgba(29, 110, 220, 0.5);
+  border-style: solid;
+  box-shadow: 0 6px 24px rgba(29, 110, 220, 0.08);
+}
+
+.lod-wave.sl-swimlane--current .sl-swimlane-title {
+  color: var(--sl-accent);
+}
+
+.lod-wave.sl-swimlane--upcoming {
+  background: rgba(107, 127, 160, 0.05);
+  border-color: rgba(107, 127, 160, 0.28);
+}
+
+.lod-wave-header {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 12px;
+  padding-bottom: 4px;
+}
+
+.lod-wave-header .sl-pill {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.lod-wave-header .sl-swimlane-titles {
+  flex: 1;
+  min-width: 0;
+}
+
+.lod-wave-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--sl-text-mid);
+}
+
+.lod-wave-summary p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.lod-wave-summary-meta {
+  font-size: 11px;
+  color: var(--sl-text-dim);
+}
+
+/* Imports/exports chips on wave */
+.lod-wave-imports,
+.lod-wave-exports {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.lod-wave-exports {
+  align-items: flex-end;
+}
+
+.lod-import-chip,
+.lod-export-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lod-import-chip {
+  background: rgba(176, 120, 8, 0.1);
+  color: var(--sl-amber);
+  border: 1px solid rgba(176, 120, 8, 0.25);
+}
+
+.lod-export-chip {
+  background: rgba(29, 110, 220, 0.1);
+  color: var(--sl-accent);
+  border: 1px solid rgba(29, 110, 220, 0.25);
+}
+
+.lod-import-mainline,
+.lod-import-validated,
+.lod-export-mainline,
+.lod-export-validated {
+  background: rgba(18, 148, 95, 0.1);
+  color: var(--sl-green);
+  border-color: rgba(18, 148, 95, 0.3);
+}
+
+.lod-import-proposed,
+.lod-export-proposed {
+  background: rgba(107, 127, 160, 0.1);
+  color: var(--sl-text-muted);
+  border-color: rgba(107, 127, 160, 0.3);
+}
+
+.lod-import-chip-arrow {
+  font-weight: 800;
+}
+
+.lod-export-chip-arrow {
+  font-weight: 800;
+}
+
+/* Task stack inside expanded wave */
+.lod-wave-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1;
+}
+
+.lod-task-card {
+  width: 100%;
+  text-align: left;
+  border: 1.5px solid rgba(20, 60, 130, 0.1);
+  background: rgba(255, 255, 255, 0.95);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.lod-task-card:hover {
+  border-color: var(--sl-accent-border);
+}
+
+.lod-task-card.selected {
+  border-color: var(--sl-accent);
+  box-shadow:
+    0 0 0 3px var(--sl-accent-bg),
+    0 8px 30px rgba(31, 58, 105, 0.08);
+}
+
+/* Inspector */
+.lod-inspector {
+  gap: 16px;
+}
+
+.lod-inspector .sl-sidebar-section {
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+  border: 1px solid rgba(20, 60, 130, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.lod-inspector .sl-sidebar-section p {
+  margin: 0;
+  color: var(--sl-text-mid);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.lod-inspector-item {
+  padding: 10px 12px;
+  display: grid;
+  gap: 3px;
+  border-radius: 12px;
+  background: rgba(20, 60, 130, 0.045);
+}
+
+.lod-inspector-item strong {
+  color: var(--sl-text);
+  font-size: 12.5px;
+}
+
+.lod-inspector-item span {
+  color: var(--sl-text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* Pill tone helpers (extend production theme) */
+.sl-pill.amber {
+  background: var(--sl-amber-bg);
+  color: var(--sl-amber);
+}
+
+.sl-pill.red {
+  background: var(--sl-red-bg);
+  color: var(--sl-red);
+}
+
+.react-flow__node-wave,
+.react-flow__node-workstreamHeader {
+  cursor: pointer;
+}
+
+.react-flow__node-workstreamHeader {
+  cursor: default;
+}
+
+@media (max-width: 1180px) {
+  .lod-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .lod-inspector {
+    max-height: 38vh;
+  }
+}

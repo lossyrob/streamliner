@@ -19,11 +19,17 @@ Shaping notes are not project-level design authority. Durable product and archit
 | Candidate | Stage | Summary |
 |---|---|---|
 | [Workstream Design Mode](candidates/workstream-design-mode.md) | Shaped | Dogfood this session as a mode for turning ambiguous intent into candidate workstreams, dependency maps, and handoff briefs. |
-| [Documentation System](candidates/documentation-system.md) | Shaped | Unified docs site plus Streamliner product support for design, architecture, and user-guide doc families. |
+| [Documentation System](candidates/documentation-system.md) | Promoted | Formed as `.streamliner/workstreams/documentation-system/`: unified docs site plus Streamliner product support for design, architecture, and user-guide doc families. |
 | [Streamliner Agent and Skill Context](candidates/streamliner-agent-skill-context.md) | Shaped | Define Streamliner role context for designer, orchestrator, worker, closure review, and helper distribution edges. |
-| [Worker Hot Work and Reconciliation](candidates/worker-hot-work-reconciliation.md) | Seeded | Teach worker sessions how to handle hot work inside workstream boundaries and communicate downstream impact. |
-| [Multi-Workstream Dependencies](candidates/multi-workstream-dependencies.md) | Seeded | Represent dependencies across workstreams in metadata, orchestration, and UI. |
-| [Work Geometry Canvas](candidates/work-geometry-canvas.md) | Seeded | Visualize multiple connected workstreams and their dependency/export geometry on one canvas. |
+| [Worker Hot Work and Reconciliation](candidates/worker-hot-work-reconciliation.md) | Shaped | Support builder-directed hot work, PR/issue narration, and post-node reconciliation without worker guardrails. |
+| [Multi-Workstream Dependencies](candidates/multi-workstream-dependencies.md) | Shaped | Define project-scoped import/export dependency semantics, availability states, and artifact authority boundaries. |
+| [Work Geometry Canvas](candidates/work-geometry-canvas.md) | Shaping | Visualize multiple connected workstreams and their dependency/export geometry on one canvas; visual spikes are available for comparison. |
+| [External Dependency Tracking](candidates/external-dependency-tracking.md) | Seeded | Represent approvals, access grants, stakeholder decisions, and other non-workstream blockers as part of work geometry. |
+| [Automated PAW Review Loop](candidates/automated-paw-review-loop.md) | Shaping | Next-up after Session Launching: move former Wave 5 review automation into a dedicated review-orchestration workstream. |
+| [SDK-Managed Worker Runtime](candidates/sdk-managed-worker-runtime.md) | Promoted | Formed as `.streamliner/workstreams/sdk-managed-worker-runtime/`: foundational SDK-managed graph-node runtime with local Wave 1 specs and export gate for Automated PAW Review Loop. |
+| [Checkpoint and Closeout Experience](candidates/checkpoint-closeout-experience.md) | Seeded | Make checkpoints builder-facing validation surfaces with verification playbooks, punch-list visibility, and closeout triage. |
+| [Streamliner Performance and Robustness](candidates/streamliner-performance-robustness.md) | Seeded | Improve local API, multi-tab, backing-store, and background-worker responsiveness under real multi-workstream usage. |
+| [Session Attention Widget](candidates/session-attention-widget.md) | Seeded | Provide tray/notification and always-on-top overlay surfaces for actionable session attention states outside browser tabs. |
 
 ## Operating notes
 
@@ -31,4 +37,8 @@ Shaping notes are not project-level design authority. Durable product and archit
 - Keep early notes intentionally sparse; do not force clarity before discussion.
 - Record dependencies as they are discovered, even if the dependent candidate is still only seeded.
 - Rewrite notes in place as understanding changes.
-- Promote only the first useful slice, not the entire concept space.
+- Promote workstream-shaped candidates into a focused formation session that creates the actual brief, graph, and initial issues.
+- Keep promoted candidate notes as historical seed records and pointers to the
+  formed workstream until Streamliner has a first-class candidate archive or
+  lifecycle migration. Mark them `Promoted` and add a Promotion section rather
+  than deleting them.

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Work Geometry Canvas Spike</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main class="page">
+      <header class="topbar">
+        <div>
+          <h1>Work Geometry Canvas Spike</h1>
+          <p>Throwaway static mocks for comparing project-scoped multi-workstream visualization options.</p>
+        </div>
+      </header>
+
+      <section class="note">
+        <p>
+          These pages use the same mock Streamliner project: Documentation System, Session Launching,
+          CLI / Distribution #40, Agent and Skill Context, Worker Hot Work, Multi-Workstream Dependencies,
+          and Work Geometry Canvas. They intentionally optimize for ideation rather than production code.
+        </p>
+      </section>
+
+      <section class="index-grid">
+        <a class="option-card" href="cards.html">
+          <h2>Option A: Collapsed cards</h2>
+          <p>
+            A project overview where each workstream is a card and dotted lines connect imports to exports.
+            This is the cleanest dashboard-like option and likely the easiest first slice.
+          </p>
+          <span class="button">Open cards view</span>
+        </a>
+
+        <a class="option-card" href="graphs.html">
+          <h2>Option B: Full mini-graphs</h2>
+          <p>
+            Each workstream expands into a small internal node graph on the same canvas. This makes exact
+            connection points visible, but may get visually dense quickly.
+          </p>
+          <span class="button">Open mini-graphs view</span>
+        </a>
+
+        <a class="option-card" href="lanes.html">
+          <h2>Option C: Timeline lanes</h2>
+          <p>
+            A swimlane/timeline-style view focused on checkpoints, gates, imports, and exports over time.
+            This is less graph-native but makes sequencing and availability easier to scan.
+          </p>
+          <span class="button">Open lanes view</span>
+        </a>
+
+        <a class="option-card" href="semantic-zoom-flow/index.html">
+          <h2>Option D: Wave / checkpoint geometry</h2>
+          <p>
+            A heavier React Flow prototype where workstreams are wave tracks with checkpoint beads,
+            then zoom into Streamliner-style wave containers with task cards.
+          </p>
+          <span class="button">Open React Flow spike</span>
+        </a>
+      </section>
+    </main>
+  </body>
+</html>

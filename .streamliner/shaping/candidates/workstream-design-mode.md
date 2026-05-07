@@ -25,6 +25,11 @@ Workstream design mode should make the geometry of the work explicit before exec
 - Detect dependencies between candidates and record them in the relevant shaping notes.
 - Maintain an index of candidate workstreams and their shaping stage.
 - Produce issue-ready or orchestrator-ready handoff briefs for candidates that are ready to promote.
+- Define the candidate -> active workstream -> archived workstream lifecycle and
+  how it should appear in Streamliner UI.
+- Define promotion and archive flows: turning a candidate into a formed
+  workstream, and moving completed/stale workstreams out of the main active
+  list without losing history.
 - Preserve learning from dogfooding the process so Streamliner can later encode the mode as product behavior, documentation, a skill, or a custom agent.
 
 ### Out of Scope
@@ -39,39 +44,147 @@ Workstream design mode should make the geometry of the work explicit before exec
 ### Deferred
 
 - Automating candidate detection from conversation.
-- First-class UI for shaping-stage candidates.
 - Formal schema for shaping notes.
-- Promotion tooling that creates issues or `.streamliner/workstreams/{id}/` artifacts automatically.
+- Fully automated promotion tooling that creates issues or workstream artifacts
+  without a formation session.
+- Bulk archive/migration tooling for existing workstream collections.
 
-## Shaping Bundle Storage Decision
+## Workstream Lifecycle Direction
 
-Nascent shaping bundles live under `.streamliner/shaping/`:
+The current dogfood artifact set lives under `.streamliner/shaping/`, but that
+should not necessarily become the product model. The stronger product framing is
+**workstream lifecycle**:
+
+1. **Candidate workstream** — a shaped or partially shaped possible workstream.
+2. **Active workstream** — a formed workstream with `brief.md`, `graph.json`,
+   nodes, waves, gates, and execution/reconciliation state.
+3. **Archived workstream** — a historical workstream that should not appear in
+   the main active list by default but remains available for reference,
+   dependency history, and learning.
+
+In that framing, "shaping" is an activity, not the durable top-level category.
+The durable object is a **candidate**. Candidate workstreams should probably live
+in or alongside the workstream artifact area, rather than in a separate conceptual
+silo that makes them feel disconnected from formed workstreams.
+
+Possible future layout shape:
 
 ```text
 .streamliner/
-  shaping/
-    index.md
+  workstreams/
     candidates/
       {candidate-id}.md
-  workstreams/
     {workstream-id}/
       brief.md
       graph.json
+    archive/
+      {archived-workstream-id}/
+        brief.md
+        graph.json
 ```
 
-The shaping directory lives alongside workstream artifacts because candidates are pre-workstream planning artifacts. It does not live under `docs/design/` because the design layer is the project-level intended-state authority, while shaping notes are transient, exploratory, and candidate-specific.
+This is not a finalized path/schema decision. A formed workstream should decide
+whether candidates are single markdown files, directories with supporting
+artifacts, entries in an index plus detail files, or some hybrid. The important
+direction is that Streamliner should model candidates, active workstreams, and
+archived workstreams as related lifecycle states.
+
+The old `.streamliner/shaping/` dogfood directory remains useful as the current
+session's working scratchpad. Product work should be free to migrate or reinterpret
+it as `.streamliner/workstreams/candidates/` or another lifecycle-oriented layout.
+
+The lifecycle area still should not live under `docs/design/`: the design layer is
+project-level intended-state authority, while candidates and active workstreams are
+work planning/execution artifacts.
 
 If Streamliner later supports a separate planning repository, the same structure can move there without changing the conceptual model.
 
-## Shaping Bundle Lifecycle
+## Candidate Lifecycle
 
 | Stage | When it happens | Artifact state |
 |---|---|---|
-| Seeded | A new idea appears in conversation. | Candidate note has title and seed idea only. |
-| Shaped | The candidate is intentionally discussed. | Scope, why it matters, workstream-scale deliverables, boundaries, and open questions are filled in. |
-| Connected | Dependencies across candidates are detected. | Depends on, enables, and related candidates are recorded. |
-| Ready for issue | The candidate has a clear workstream boundary and enough exported expectations for another session to orchestrate it. | Handoff brief is written for a tracker issue or orchestrator session. |
-| Promoted | The builder chooses to execute it. | A real workstream and/or tracker issue is created. |
+| Seeded candidate | A new idea appears in conversation. | Candidate has title and seed idea only. |
+| Shaping candidate | The candidate is intentionally discussed. | Scope, why it matters, boundaries, dependencies, and open questions are filled in. |
+| Ready candidate | The candidate has a clear workstream boundary and enough expectations for another session to form it. | Handoff brief is written for a focused formation session. |
+| Active workstream | The builder promotes the candidate through formation. | A focused formation session creates the real workstream brief, graph, first-wave specs/issues, gates, and checkpoints. |
+| Archived workstream | The workstream is completed, superseded, paused indefinitely, or no longer part of the active planning surface. | The workstream moves to an archive location or archived state and no longer appears in the default active list. |
+
+The UI should make this lifecycle visible. A builder should be able to see
+candidate workstreams, inspect and edit their shaping state, choose a candidate
+to promote through a workstream creation/formation session, see active
+workstreams in the main workstream list/canvas, and archive workstreams so the
+active set stays fresh without losing history.
+
+Archive should be reversible or at least historically inspectable. Archived
+workstreams may still matter as dependency history or design lessons, but they
+should be excluded from the default active workstream list and normal
+multi-workstream canvas unless explicitly included.
+
+### Promoted candidate records
+
+Until Streamliner has first-class candidate archive/lifecycle tooling, promoted
+candidate notes should be retained as historical seed records rather than
+deleted. Mark the candidate `Promoted`, add a `Promotion` section that points to
+the formed workstream path, and summarize the formation decisions that changed or
+clarified the seed.
+
+This keeps the dependency map readable: other candidates can still link to the
+original candidate note, while the Promotion section tells a cold session where
+the active workstream now lives. A future lifecycle migration can decide whether
+promoted candidates move under `workstreams/candidates/archive/`, become
+workstream-local `docs/initial-shaping.md`, or remain as promoted candidate
+records.
+
+## Closeout Punch-List Lane
+
+Dogfooding Session Launching and Tracking revealed another lifecycle pattern:
+while a workstream is still executing, the builder notices polish, UX
+adjustments, small seams, or final cleanup that should happen before closure but
+does not need to interrupt the current node as hot work. These items should not
+automatically become separate graph nodes that each require a heavyweight PAW
+session.
+
+Streamliner should support a **closeout punch-list lane**:
+
+- The orchestrator records builder-noticed polish items as they appear.
+- The items remain attached to the active workstream and current closeout/gate
+  context.
+- The orchestrator does a quick triage when recording each item: batch, promote,
+  defer, or reject as out of scope.
+- Small, related, low-risk items can be batched into one closeout node/session.
+- If no punch-list items exist, no closeout node is needed; the closure gate can
+  simply validate that there is no remaining closeout work.
+- Larger or dependency-bearing items are promoted to their own node, issue,
+  follow-on candidate, or separate workstream.
+- The final closure gate validates that the punch list was completed, deferred,
+  or promoted intentionally.
+
+This lane is different from normal workstream decomposition. It is not a place to
+hide major scope. It is a pressure-release valve for the reality that final
+product fit often appears through usage.
+
+Good punch-list items:
+
+- small UI polish discovered while dogfooding;
+- wording, affordance, or status-display improvements;
+- cleanup tightly coupled to the current wave's implementation;
+- minor behavior adjustments that do not change the workstream contract;
+- small tests/docs updates needed to close confidence gaps.
+
+Promote out of the punch list when an item:
+
+- changes core design or product semantics;
+- needs its own design decision, dependency, or gate;
+- touches unrelated subsystems;
+- is risky enough to need isolated review;
+- would make the batch too large for one focused session;
+- produces an export another workstream will consume.
+
+The product/UI version should let the builder quickly add punch-list items to an
+active workstream, let the orchestrator triage them as **batch**, **promote**,
+**defer**, or **done**, and let the builder launch one closeout session for the
+batched set. This keeps active workstreams fresh without turning every polish
+observation into a separate orchestration burden.
 
 ## Candidate Note Template
 
@@ -131,10 +244,11 @@ Seeded
 
 - [Documentation System](documentation-system.md), because the shaping process may produce documentation conventions and may rely on clear separation between design, architecture, user, and shaping docs.
 - [Work Geometry Canvas](work-geometry-canvas.md), because both are concerned with making the shape of work visible.
+- [Checkpoint and Closeout Experience](checkpoint-closeout-experience.md), because candidate/active/archived lifecycle work now includes checkpoint validation and closeout punch-list behavior.
 
 ## Shaping Depth Guidance
 
-Workstream design mode should shape work at the level needed to start a dedicated orchestrator session, not at the level needed to implement the work itself.
+Workstream design mode should shape work at the level needed to start a focused formation/orchestrator session, not at the level needed to implement the work itself.
 
 The design session should answer:
 
@@ -144,7 +258,7 @@ The design session should answer:
 - What is out of bounds?
 - What other candidate workstreams does it depend on or enable?
 - What exportable interfaces, checkpoints, or artifacts need to connect this workstream to others?
-- What decisions are necessary before an orchestrator can begin?
+- What decisions are necessary before a focused formation session can create the real workstream artifacts?
 
 The design session should avoid:
 
@@ -154,6 +268,31 @@ The design session should avoid:
 - Treating "first useful slice" as the primary shaping goal for large workstreams.
 
 The right output is a big-enough shape: enough boundary, dependency, and interface clarity that a dedicated orchestrator can build the workstream, not a full design or implementation plan.
+
+## Project Workstream Design vs Workstream Formation
+
+Dogfooding this session revealed two distinct activities that had been blended together:
+
+1. **Project workstream design** — shallow-to-medium exploration across several candidate workstreams within one project. It names candidates, captures why they matter, identifies broad boundaries, detects imports/exports, and maps how the workstreams fit together.
+2. **Focused workstream formation** — deeper work on one promoted candidate. It turns the candidate artifact into actual workstream artifacts: `brief.md`, `graph.json`, parent issue, initial node issues, wave/checkpoint structure, and any design-session nodes needed before execution.
+
+The current session is mostly the first activity. It should not bottom out every candidate into full artifacts, because doing so would collapse project-level geometry work into a long sequence of individual workstream planning sessions.
+
+The gap is that the existing "Workstream Orchestrator" role sounds execution-heavy. Streamliner likely needs to make formation explicit, probably as its own skill/mode:
+
+- **Project Workstream Design** — shape many candidate workstreams and their geometry within one project.
+- **Workstream Formation** — take one shaped candidate and bottom out the design into artifacts.
+- **Workstream Orchestration / Execution** — run the formed workstream through waves, workers, reconciliation, and closure.
+
+Recommended framing: formation is adjacent to the orchestrator's realm of authority and may be performed by the same logical session, but it should be an explicit stage/mode and likely a separate skill. The same session may later continue as the execution orchestrator, but the behavior is different:
+
+| Activity | Main question | Output |
+|---|---|---|
+| Project workstream design | What workstreams should exist in this project and how do they fit together? | Candidate artifacts, dependencies, handoff briefs. |
+| Workstream formation | How should this one workstream become executable? | `brief.md`, `graph.json`, parent issue, initial nodes/issues, gates/checkpoints. |
+| Workstream execution | How does this workstream progress through workers, waves, reconciliation, and closure? | PRs, updated graph/brief, completed nodes, exports. |
+
+This suggests a new handoff standard: a shaped candidate is not necessarily ready for execution; it is ready for formation. The formation session can continue scoped design thinking, create the artifacts, and then move into execution or hand off to an execution-oriented orchestrator.
 
 ## Work Geometry Primitives
 
@@ -172,7 +311,7 @@ Existing design docs already imply these primitives:
 | Checkpoint | A named moment where progress becomes inspectable and potentially consumable downstream. In cross-workstream design, checkpoints are good candidates for export/import edges. |
 | Gate | A checkpoint requiring builder judgment before downstream work proceeds. Gates protect later work from building on unvalidated assumptions. |
 | Wave | A planning horizon. Near work is detailed; later work stays sketchy until earlier outputs make the next geometry clearer. |
-| Artifact | The durable file-backed representation of intent, plan, state, or output: design docs, shaping notes, briefs, graphs, node specs, decision records, and future doc catalogs. |
+| Artifact | The durable file-backed representation of intent, plan, state, or output: design docs, candidate notes, briefs, graphs, node specs, decision records, and future doc catalogs. |
 | Role | The authority boundary between builder, workstream designer, orchestrator, worker, and reconciler. Misplaced authority creates bad geometry. |
 | Feedback signal | Evidence that the geometry is wrong or incomplete: cross-workstream blockers, outputs that cannot be consumed, sessions that do not fit the boundary, hidden coupling, or unresolved design escalations. |
 
@@ -187,21 +326,32 @@ During shaping, the designer should look especially for **edges**:
 
 This elevates workstream design from "make a list of projects" to "design the geometry of parallel AI-assisted work."
 
-## First Dogfood Slice
+## Current Dogfood Slice
 
-Create and dogfood a lightweight `.streamliner/shaping/` artifact set:
+The current dogfood slice created a lightweight `.streamliner/shaping/` artifact
+set. That location is now best understood as an experimental scratchpad for the
+candidate lifecycle, not necessarily the final product layout:
 
-1. Add a shaping index.
+1. Add a candidate index.
 2. Add sparse candidate notes for current ideas.
-3. Fill the workstream-design-mode note with the storage, lifecycle, and role decisions discovered in this session.
+3. Fill the workstream-design-mode note with the lifecycle, storage, UI, and role decisions discovered in this session.
 4. Continue updating candidate notes as discussion reveals scope, dependencies, and handoff briefs.
 
 ## Open Questions
 
-- Should shaping notes eventually have frontmatter or a JSON companion so Streamliner can render them in the UI?
+- Should candidate notes eventually have frontmatter or a JSON companion so Streamliner can render them in the UI?
 - Should candidate dependencies be duplicated in both notes for readability, centralized in the index, or stored in a future structured graph?
-- What is the threshold for promoting a candidate from shaping note to tracker issue?
+- What is the threshold for promoting a candidate from candidate note to focused formation?
+- What exact layout should represent candidate, active, and archived workstreams?
+- Should archive be a folder move, a state field, or both?
+- What is the UI shape for promoting a candidate into a workstream creation session?
+- What is the UI shape for archiving and browsing historical workstreams?
+- Where should closeout punch-list items live: brief section, graph node metadata,
+  local runtime state, tracker issue checklist, or a dedicated workstream file?
+- What UI should let a builder add punch-list items quickly and let an
+  orchestrator triage them as batch/promote/defer/done?
 - Should workstream design mode become a custom agent, a skill, product UI, or all three at different maturity stages?
+- Should focused workstream formation be a named mode of the orchestrator, a separate role, or both?
 
 ## Handoff Brief
 

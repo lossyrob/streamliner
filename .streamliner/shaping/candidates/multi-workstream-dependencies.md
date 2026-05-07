@@ -2,7 +2,7 @@
 
 ## Stage
 
-Seeded
+Shaped; ready for formation.
 
 ## Seed Idea
 
@@ -153,13 +153,121 @@ When review attention is scarce and workstreams are large, a workstream branch i
 - If several workstreams need to converge before `main`, create an explicit integration branch/checkpoint rather than ad-hoc rebasing.
 - Final workstream review should validate that exported contracts, docs, and downstream imports still match what actually shipped.
 
+## Artifact Authority Boundary
+
+The dependency model should keep the durable source of truth close to the work it describes:
+
+- **Exports live with the producing workstream.** A workstream declares the outputs it intends to make consumable: contracts, docs conventions, implementation capabilities, schemas, decisions, checkpoint results, or branch-local previews.
+- **Imports live with the consuming workstream.** A workstream declares which external exports it needs and why.
+- **Project metadata frames the search space.** It says which workstreams are related enough to scan together, which repos participate, and which unrelated or archived workstreams should stay out of the view.
+- **Runtime state derives and enriches.** Streamliner can scrape exports/imports across active workstreams at runtime, resolve statuses, detect missing providers, show availability, and help shape new workstreams around existing or proposed exports.
+
+This lets shaping sessions discover useful hooks: when a new candidate workstream is being shaped, Streamliner can surface exports that existing workstreams have promised or produced, making it easier to connect new work to existing work geometry.
+
+The Project should not become the only place dependencies live. It should provide the frame and optional indexes; workstreams remain self-describing.
+
+## Project Grouping
+
+Multi-workstream dependencies need a boundary for "which workstreams can reasonably appear together." Rendering every workstream Streamliner has ever tracked would be noise, and cross-workstream edges only make sense inside some shared domain of work.
+
+Streamliner already has adjacent concepts:
+
+- `.streamliner/config.json` describes a Streamliner project: workstreams directory plus participating repos.
+- `graph.json.projectKey` provides a stable namespace for routing and runtime state.
+- The tracked workstream registry uses `/workstreams/{projectKey}/{workstreamId}`.
+- Decision 007 intentionally made the registry a portfolio-shell step without introducing project grouping or cross-workstream coordination.
+
+This workstream should promote a first-class **Project** grouping concept.
+
+Naming decision: use **Project** for the grouping boundary of related workstreams. Use **Portfolio** only for the builder's broader collection of projects.
+
+Rationale:
+
+- A project is the natural scope for related workstreams that can depend on each other.
+- A project can span multiple repositories, so it is not the same as a source repo.
+- A portfolio sounds like the builder-level collection of projects, including unrelated efforts that should not render on the same work-geometry canvas by default.
+- Existing `projectKey` language already points in this direction.
+
+### Proposed concept
+
+A Project is a committed or configured grouping boundary for related workstreams. It can span multiple repositories and is not the same as a Git repository.
+
+Project responsibilities could include:
+
+- name, id, and description for a body of related work;
+- participating repositories and their roles;
+- workstreams included in the project view;
+- default design/docs locations;
+- project-level dependency index or derived dependency cache;
+- active/archived workstream status;
+- cross-workstream import/export visibility rules;
+- branch/integration strategy conventions for the project.
+
+### Relationship to workstreams
+
+Workstreams should remain self-describing: exports live with producing workstreams, imports live with consuming workstreams. A Project should not become the only place where dependencies are defined.
+
+Instead, the Project can provide the **frame**:
+
+- which workstreams should be scanned together;
+- which repos participate;
+- which imported/exported edges should be rendered together;
+- which archived or unrelated workstreams should be excluded by default;
+- where project-level metadata or derived indexes live.
+
+### Possible storage models
+
+| Model | Description | Tradeoff |
+|---|---|---|
+| Existing config grows | Extend `.streamliner/config.json` to include project metadata and dependency/index settings. | Simple, but config may become too broad. |
+| Project file | Add a committed `.streamliner/project.json` or `streamliner.json` that owns grouping metadata. | Clear project boundary, but new schema. |
+| Runtime source grouping | Keep grouping in local tracked-workstream registry state. | Good for local navigation, weak for shared work geometry. |
+| Hybrid | Committed project config defines durable grouping; runtime registry tracks local discovery, health, and archive state. | Most flexible, but needs clear authority boundaries. |
+
+Recommended direction: hybrid. Durable project grouping and dependency intent should be committed/configured; local discovery, scan health, archive state, and source paths stay runtime-local.
+
+### UI implications
+
+The single-workstream view can use the Project frame to show external dependencies only from relevant related workstreams.
+
+The all-workstreams canvas should probably be a project-scoped view first:
+
+```text
+Project: Streamliner
+  Repos: streamliner, plugin/distribution repo if separate
+  Active workstreams:
+    Documentation System
+    Agent/Skill Context
+    Worker Hot Work and Reconciliation
+    Multi-Workstream Dependencies
+    CLI / Distribution / Integration
+```
+
+The user should be able to switch projects rather than seeing unrelated workstreams on the same canvas. A later portfolio-level view may summarize multiple projects, but it should not be the default dependency-resolution frame.
+
 ## Candidate Scope
 
 ### In Scope
 
+- Define a durable import/export model across workstreams.
+- Define the relationship between checkpoints, gates, exports, and imports.
+- Define export availability states, including proposed, branch-local, preview, mainline, validated, and superseded.
+- Define how project grouping frames which workstreams are scanned and rendered together.
+- Define the authority boundary between workstream artifacts, project metadata, and runtime-derived dependency views.
+- Define how a single-workstream view should surface external dependencies at a high level.
+
 ### Out of Scope
 
+- Building the full all-workstreams canvas UI; this belongs to [Work Geometry Canvas](work-geometry-canvas.md).
+- Fully specifying the final JSON schema; the formation/orchestrator session can decide implementation details.
+- Replacing each workstream's graph as the local source of truth for its own plan.
+
 ### Deferred
+
+- Automated dependency inference from diffs or PRs.
+- Rich dependency health scoring.
+- Cross-project dependency visualization.
+- Branch/integration automation beyond representing availability.
 
 ## Dependencies
 
@@ -174,17 +282,53 @@ When review attention is scarce and workstreams are large, a workstream branch i
 
 ### Related Candidates
 
-- [Streamliner Agent and Skill Context](streamliner-agent-skill-context.md), because a higher-level designer or portfolio agent may need to reason across workstreams.
+- [Streamliner Agent and Skill Context](streamliner-agent-skill-context.md), because a higher-level project workstream designer may need to reason across workstreams.
 
-## First Useful Slice
+## Workstream Shape
+
+This should be a workstream-sized effort to make cross-workstream dependencies first-class enough for orchestration and UI rendering.
+
+Likely work areas:
+
+- Add or design import/export fields for workstream artifacts.
+- Define project grouping and how it relates to existing `projectKey`, config, and registry state.
+- Derive a project-scoped dependency graph by scraping workstream imports/exports.
+- Surface external dependency status inside a single-workstream graph.
+- Track export availability across proposed, branch-local, preview, mainline, validated, and superseded states.
+- Provide enough derived data for the Work Geometry Canvas workstream to render project-scoped multi-workstream geometry.
 
 ## Open Questions
 
-- Is the workstream design session also the orchestrator for the workstream being designed, or is it a distinct higher-level role?
-- What metadata should represent a dependency between workstreams?
-- How should checkpoint exports/imports be represented?
-- Which dependency relationships belong in committed artifacts versus runtime state?
-- Should cross-workstream edges connect to workstreams, waves, checkpoints, explicit exports, or individual nodes?
-- How should a single-workstream graph display an external dependency and its status?
+- Should project/grouping metadata live in existing `.streamliner/config.json`, a new committed project file, runtime registry state, or a hybrid?
+- What is the minimum schema needed for exports/imports before the Work Geometry Canvas can build on it?
+- How much of export availability should be committed artifact state versus derived runtime state?
+
+These are formation-time design questions, not blockers for shaping. The core product direction is settled enough: dependencies should mature from vague workstream-level edges into explicit import/export edges, framed by Projects and enriched by runtime discovery.
 
 ## Handoff Brief
+
+Create a Multi-Workstream Dependencies workstream.
+
+The workstream should make cross-workstream dependencies first-class enough for Streamliner to reason about, reconcile, and eventually render. It should define a durable model for **imports**, **exports**, **checkpoints**, **gates**, and **export availability**. A checkpoint is a progress milestone; an export is a consumable output; an import is the consuming workstream's dependency on a specific export. Whole-workstream dependencies can remain an early-shaping fallback, but the model should prefer explicit `import -> export` edges once work is concrete.
+
+The workstream should introduce **Project** as the grouping boundary for related workstreams. A Project can span multiple repositories and should frame which workstreams are scanned, rendered, and considered relevant for dependency resolution. Use **Portfolio** only for the builder's broader collection of projects, not the default work-geometry or dependency-resolution scope.
+
+The workstream should preserve artifact authority boundaries:
+
+- exports live with the producing workstream;
+- imports live with the consuming workstream;
+- project metadata frames scan/render scope and participating repos;
+- runtime state derives and enriches status, availability, conflicts, missing providers, and archive/source health.
+
+The workstream should model export availability separately from export definition. Initial states should include proposed, branch-local, preview, mainline, validated, and superseded. Branch-local exports are especially important because large workstreams may accumulate changes on feature branches before merging to `main`, and downstream workstreams need to know when they are depending on unmerged or preview work.
+
+Expected implementation/design areas:
+
+- define the import/export schema shape for workstream artifacts;
+- define how checkpoints and gates produce, validate, or summarize exports;
+- decide whether Project metadata extends existing `.streamliner/config.json`, uses a new committed project file, relies on runtime source grouping, or adopts a hybrid model;
+- derive a project-scoped dependency graph by scanning related workstreams;
+- surface external dependencies and availability inside a single-workstream graph;
+- provide the minimum derived data needed for the Work Geometry Canvas workstream to render project-scoped multi-workstream geometry.
+
+This workstream imports shaping conventions from Workstream Design Mode and hot-work reconciliation expectations from Worker Hot Work and Reconciliation. It exports dependency semantics that the Work Geometry Canvas can render and that Agent/Skill Context can use when designer/orchestrator roles reason across workstreams.
