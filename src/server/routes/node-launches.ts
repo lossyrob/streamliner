@@ -283,6 +283,9 @@ export function createNodeLaunchesRouter(options: {
         if (error.claim) {
           body.launchClaim = summarizeLaunchClaim(error.claim);
         }
+        if (error.details) {
+          body.details = error.details;
+        }
         res.status(error.statusCode).json(body);
         return;
       }

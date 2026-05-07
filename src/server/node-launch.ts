@@ -15,9 +15,15 @@ import {
   type TerminalLaunchOptions,
   type TerminalLaunchResult,
 } from "./terminal-launch";
+import {
+  evaluateLaunchPolicyFromGraph,
+  launchPolicyDetails,
+} from "./launch-policy";
 import { getApiLogger } from "./logger";
 
 export type NodeLaunchErrorCode =
+  | "launch_policy_blocked"
+  | "launch_policy_unavailable"
   | "duplicate_active_launch"
   | "launch_claim_failed"
   | "terminal_spawn_failed";
@@ -26,18 +32,23 @@ export class NodeLaunchError extends Error {
   readonly code: NodeLaunchErrorCode;
   readonly statusCode: number;
   readonly claim: LaunchClaim | null;
+  readonly details?: Record<string, unknown>;
 
   constructor(
     code: NodeLaunchErrorCode,
     statusCode: number,
     message: string,
     claim: LaunchClaim | null = null,
+    details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "NodeLaunchError";
     this.code = code;
     this.statusCode = statusCode;
     this.claim = claim;
+    if (details !== undefined) {
+      this.details = details;
+    }
   }
 }
 
@@ -227,6 +238,37 @@ export function launchPreparedNode(
 ): NodeLaunchResult {
   if (handoff.launchMetadata.launchNonce !== null) {
     assertLaunchPromptToken(handoff.launchMetadata.launchNonce, "launch nonce");
+  }
+  const policyResult = evaluateLaunchPolicyFromGraph({
+    graphPath: handoff.launchMetadata.graphPath,
+    nodeId: handoff.launchMetadata.nodeId,
+  });
+  if (!policyResult.ok) {
+    if (policyResult.kind === "blocked") {
+      const details = launchPolicyDetails(policyResult.violation);
+      getApiLogger().withScope("launch-policy").info(
+        "rejected terminal launch",
+        details,
+      );
+      throw new NodeLaunchError(
+        "launch_policy_blocked",
+        412,
+        policyResult.violation.message,
+        null,
+        details,
+      );
+    }
+    throw new NodeLaunchError(
+      "launch_policy_unavailable",
+      policyResult.statusCode,
+      policyResult.message,
+      null,
+      {
+        reason: policyResult.code,
+        input: policyResult.input,
+        nodeId: handoff.launchMetadata.nodeId,
+      },
+    );
   }
   const now = deps.now?.() ?? new Date();
   const blockingClaim = findBlockingLaunchClaim(

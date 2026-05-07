@@ -1,7 +1,7 @@
 ---
 kind: design-doc
 status: current
-last_updated: 2026-05-02
+last_updated: 2026-05-07
 update_semantics: rewrite-in-place
 authoritative_for: "Workstream artifact format and runtime-state boundaries"
 scope_tags:
@@ -180,6 +180,7 @@ The graph is the structured, machine-readable representation of the workstream's
 | `createdAt` | string | ✓ | ISO 8601 timestamp |
 | `updatedAt` | string | ✓ | ISO 8601 timestamp of the last committed edit. Bump on intentional committed changes only. |
 | `trackingIssue` | object | | Tracker reference anchoring the workstream (see Tracker Reference) |
+| `launchPolicy` | object | | Optional launch preconditions for this workstream (see Launch Policy). If omitted, graph launches keep the default allow behavior for ready nodes regardless of tracker type. |
 | `repos` | array | ✓ | Repositories involved (see Repo) |
 | `designRefs` | array | | Optional. Project-level design docs relevant to this workstream (see Design Reference). Workers retain access to the full design set; this field is a hint about what to surface first during context assembly and UI navigation. |
 | `nodes` | array | ✓ | Work items and gates (see Node) |
@@ -195,6 +196,18 @@ Each design reference points to a project-level design artifact in a declared re
 | `path` | string | ✓ | Path to the design doc, relative to the repo root |
 
 Include the repo's design index when it has a design set, plus the specific docs that are likely to matter first. Do not list every document in the design corpus, and do not treat this field as an allowlist over what a worker may read.
+
+### Launch Policy
+
+`launchPolicy` is an optional top-level graph configuration object for durable project/workstream launch preconditions. It is committed with the graph because it governs every launch caller consistently; local runtime state is not authoritative for launch policy.
+
+The first supported field is:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `requiredTracker` | `"github-issue"` | | Requires selected nodes to be backed by a GitHub issue before launch. A node satisfies this requirement only when `tracker.type` is `"github"` and the tracker has a valid `owner`, `repo`, and positive issue `number`. Missing trackers and local trackers do not satisfy the requirement. |
+
+If `launchPolicy` or `requiredTracker` is absent, Streamliner preserves the historical behavior: ready nodes may launch whether they use GitHub, local, or no tracker. Unknown `requiredTracker` values are invalid for schema version 1 and are rejected when the graph is parsed rather than ignored.
 
 ### Node
 

@@ -13,6 +13,9 @@
     "repo": "streamliner",
     "number": 3
   },
+  "launchPolicy": {
+    "requiredTracker": "github-issue"
+  },
   "repos": [
     {
       "id": "streamliner",

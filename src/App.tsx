@@ -67,6 +67,7 @@ import {
   trackerLabel as workstreamTrackerLabel,
   trackerUrl as workstreamTrackerUrl,
 } from "./workstream-links";
+import { evaluateNodeLaunchPolicy } from "./workstream-launch-policy";
 import { useSessionRegistryList } from "./session-registry-client";
 
 const POLL_INTERVAL_MS = 2000;
@@ -1047,8 +1048,14 @@ function GraphDashboard({
     if (!activeWorkstreamEntry || !isBackendReadableWorkstreamEntry(activeWorkstreamEntry)) {
       return "Browser-only or missing graph sources cannot be prepared by the backend.";
     }
+    if (workstream) {
+      const policyDecision = evaluateNodeLaunchPolicy(workstream, selectedEntry.node);
+      if (!policyDecision.allowed) {
+        return policyDecision.violation.message;
+      }
+    }
     return undefined;
-  }, [activeWorkstreamEntry, selectedEntry]);
+  }, [activeWorkstreamEntry, selectedEntry, workstream]);
 
   const canLaunchSelectedNode = Boolean(selectedEntry && !launchDisabledReason);
 

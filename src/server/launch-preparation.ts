@@ -13,6 +13,10 @@ import {
 } from "@github/copilot-sdk";
 
 import type { NodeLaunchRecord } from "../node-launch-record-contract";
+import {
+  evaluateLaunchPolicyFromGraph,
+  launchPolicyDetails,
+} from "./launch-policy";
 import { getApiLogger } from "./logger";
 import {
   LaunchContextPreparationError,
@@ -45,6 +49,7 @@ const execFileAsync = promisify(execFile);
 export type LaunchPreparationErrorCode =
   | "invalid_node_id"
   | "invalid_launch_configuration"
+  | "launch_policy_blocked"
   | "paw_init_failed"
   | "context_preparation_failed"
   | "missing_context_package";
@@ -59,6 +64,7 @@ export class LaunchPreparationError extends Error {
   statusCode: number;
   step: LaunchPreparationStep;
   input?: string;
+  details?: Record<string, unknown>;
 
   constructor(
     code: LaunchPreparationErrorCode,
@@ -66,6 +72,7 @@ export class LaunchPreparationError extends Error {
     message: string,
     step: LaunchPreparationStep,
     input?: string,
+    details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "LaunchPreparationError";
@@ -74,6 +81,9 @@ export class LaunchPreparationError extends Error {
     this.step = step;
     if (input !== undefined) {
       this.input = input;
+    }
+    if (details !== undefined) {
+      this.details = details;
     }
   }
 }
@@ -1599,6 +1609,38 @@ export async function preparePawLaunch(
 
   const sessionStateRoot = resolve(options.stateRoot ?? defaultStateRoot());
   const parsedConfiguration = parseConfigurationInput(options.configuration);
+  const policyGraphPath = options.graphPath ?? options.defaultGraphPath;
+  if (policyGraphPath) {
+    const policyResult = evaluateLaunchPolicyFromGraph({
+      graphPath: options.graphPath,
+      defaultGraphPath: options.defaultGraphPath,
+      nodeId: options.nodeId,
+    });
+    if (!policyResult.ok) {
+      if (policyResult.kind === "blocked") {
+        const details = launchPolicyDetails(policyResult.violation);
+        getApiLogger().withScope("launch-policy").info(
+          "rejected launch preparation",
+          details,
+        );
+        throw new LaunchPreparationError(
+          "launch_policy_blocked",
+          412,
+          policyResult.violation.message,
+          "validation",
+          "launchPolicy",
+          details,
+        );
+      }
+      throw new LaunchPreparationError(
+        "context_preparation_failed",
+        policyResult.statusCode,
+        policyResult.message,
+        "context-preparation",
+        policyResult.code,
+      );
+    }
+  }
 
   const contextPreparer = options.contextPreparer ?? prepareLaunchContextPackage;
   let stagedContextPackage: LaunchContextPackage;

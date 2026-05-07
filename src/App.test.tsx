@@ -106,8 +106,15 @@ function buildTrackedWorkstream(overrides: Record<string, unknown> = {}): Record
   };
 }
 
-function buildLaunchGraph(status = "ready"): Record<string, unknown> {
+function buildLaunchGraph(
+  status = "ready",
+  overrides: {
+    graph?: Record<string, unknown>;
+    node?: Record<string, unknown>;
+  } = {},
+): Record<string, unknown> {
   return buildWorkstreamGraph({
+    ...overrides.graph,
     nodes: [
       {
         id: "launch-prompt-profiles",
@@ -124,6 +131,7 @@ function buildLaunchGraph(status = "ready"): Record<string, unknown> {
           number: 33,
         },
         dependsOn: [],
+        ...overrides.node,
       },
     ],
     checkpoints: [
@@ -2160,6 +2168,63 @@ describe("App sessions route", () => {
       expect(container.textContent).toContain(
         "Browser-only or missing graph sources cannot be prepared by the backend.",
       );
+    },
+    15_000,
+  );
+
+  it(
+    "disables launch preparation when workstream policy requires a GitHub issue",
+    async () => {
+      const graph = buildLaunchGraph("ready", {
+        graph: {
+          launchPolicy: { requiredTracker: "github-issue" },
+        },
+        node: {
+          tracker: undefined,
+        },
+      });
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return emptyNodeLaunchRecordResponse();
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      act(() => {
+        findCanvasNode(container, "Launch prompt profiles").click();
+      });
+      await settle();
+
+      expect(findButton(container, "Initialize PAW launch").disabled).toBe(true);
+      expect(container.textContent).toContain(
+        "requires a GitHub issue tracker before launch",
+      );
+      expect(container.textContent).toContain(
+        "edit graph.json launchPolicy if untracked launches are intentional",
+      );
+      expect(
+        fetchMock.mock.calls.some(([input]) =>
+          requestPath(input as RequestInfo | URL) === "/api/launch-preparations/runs"
+        ),
+      ).toBe(false);
     },
     15_000,
   );

@@ -8,6 +8,8 @@ import type {
   WorkstreamGithubPullRequestSnapshot,
   WorkstreamGithubSnapshot,
   WorkstreamIssue,
+  WorkstreamLaunchPolicy,
+  WorkstreamLaunchRequiredTracker,
   WorkstreamNode,
   WorkstreamNodeStatus,
   WorkstreamTracker,
@@ -19,6 +21,7 @@ import type {
 import {
   WORKSTREAM_ATTENTION_STATES,
   WORKSTREAM_CHECKPOINT_STATUSES,
+  WORKSTREAM_LAUNCH_REQUIRED_TRACKERS,
   WORKSTREAM_NODE_STATUSES,
   WORKSTREAM_NODE_TYPES,
   WORKSTREAM_SCHEMA_VERSION,
@@ -192,6 +195,21 @@ function parseRepo(value: unknown, label: string): WorkstreamRepo {
   };
 }
 
+function parseLaunchPolicy(value: unknown, label: string): WorkstreamLaunchPolicy {
+  const record = asObject(value, label);
+  const requiredTracker = record.requiredTracker;
+  return {
+    requiredTracker:
+      typeof requiredTracker === "undefined"
+        ? undefined
+        : asEnum<WorkstreamLaunchRequiredTracker>(
+            requiredTracker,
+            `${label}.requiredTracker`,
+            WORKSTREAM_LAUNCH_REQUIRED_TRACKERS,
+          ),
+  };
+}
+
 function parseNode(value: unknown, label: string): WorkstreamNode {
   const record = asObject(value, label);
   const tracker = record.tracker;
@@ -354,6 +372,7 @@ export function parseWorkstreamDocument(rawJson: string): WorkstreamDocument {
   const record = asObject(parsed, "workstream");
   const projectKey = record.projectKey;
   const trackingIssue = record.trackingIssue;
+  const launchPolicy = record.launchPolicy;
   const designRefs = record.designRefs;
 
   return assertSemanticallyValid({
@@ -388,6 +407,10 @@ export function parseWorkstreamDocument(rawJson: string): WorkstreamDocument {
       typeof trackingIssue === "undefined"
         ? undefined
         : parseIssue(trackingIssue, "workstream.trackingIssue"),
+    launchPolicy:
+      typeof launchPolicy === "undefined"
+        ? undefined
+        : parseLaunchPolicy(launchPolicy, "workstream.launchPolicy"),
     repos: parseArray(record.repos, "workstream.repos", parseRepo),
     designRefs:
       typeof designRefs === "undefined"
