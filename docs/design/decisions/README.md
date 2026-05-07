@@ -17,6 +17,7 @@ references_decisions:
   - 6
   - 7
   - 8
+  - 9
 ---
 
 # Decision Records
@@ -71,3 +72,4 @@ What follows from this choice.
 | 006 | [Local Streamliner API service](006-local-streamliner-api-service.md) | accepted | 2026-04-28 |
 | 007 | [Tracked workstream registry](007-tracked-workstream-registry.md) | accepted | 2026-05-01 |
 | 008 | [PAW artifacts for workflow status](008-paw-artifacts-for-workflow-status.md) | accepted | 2026-05-02 |
+| 009 | [SDK-managed graph-node worker runtime](009-sdk-managed-worker-runtime.md) | accepted | 2026-05-07 |
