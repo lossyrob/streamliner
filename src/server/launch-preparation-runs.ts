@@ -69,9 +69,12 @@ function toRunError(error: unknown): LaunchPreparationRunError {
 export class LaunchPreparationRunManager {
   private readonly runs = new Map<string, LaunchPreparationRunState>();
 
-  start(executor: LaunchPreparationRunExecutor): LaunchPreparationRunSnapshot {
+  start(
+    executor: LaunchPreparationRunExecutor,
+    options: { runId?: string } = {},
+  ): LaunchPreparationRunSnapshot {
     const run: LaunchPreparationRunState = {
-      runId: randomUUID(),
+      runId: options.runId ?? randomUUID(),
       status: "queued",
       nextEventId: 1,
       events: [],
