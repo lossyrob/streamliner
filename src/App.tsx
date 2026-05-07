@@ -57,6 +57,7 @@ import type {
   NodeLaunchRecordResponse,
   NodeTerminalLaunchResponse,
 } from "./node-launch-record-contract";
+import { loadGraphNodeLaunchRecords } from "./node-launch-record-client";
 import {
   encodeRouteSegment,
   handleInAppLinkClick,
@@ -69,6 +70,10 @@ import {
   trackerUrl as workstreamTrackerUrl,
 } from "./workstream-links";
 import { useSessionRegistryList } from "./session-registry-client";
+import {
+  buildWorkstreamRuntimeOverlay,
+  type WorkstreamRuntimeOverlay,
+} from "./workstream-runtime-overlay";
 
 const POLL_INTERVAL_MS = 2000;
 const LAST_GRAPH_KEY = "streamliner:lastGraphPath";
@@ -404,6 +409,18 @@ function sameLaunchTarget(
   right: LaunchOperationTarget | null,
 ): boolean {
   return Boolean(left && right && launchOperationKey(left) === launchOperationKey(right));
+}
+
+function mergeNodeLaunchRecord(
+  records: NodeLaunchRecord[],
+  target: LaunchOperationTarget,
+  record: NodeLaunchRecord | null,
+): NodeLaunchRecord[] {
+  const nextRecords = records.filter(
+    (candidate) =>
+      candidate.graphPath !== target.graphPath || candidate.nodeId !== target.nodeId,
+  );
+  return record ? [...nextRecords, record] : nextRecords;
 }
 
 function mergeWorkstreamEntries(
@@ -1080,9 +1097,11 @@ function GraphDashboard({
   const [launchReleasing, setLaunchReleasing] = useState(false);
   const [launchReleaseError, setLaunchReleaseError] = useState<string | null>(null);
   const [launchReleaseStatus, setLaunchReleaseStatus] = useState<string | null>(null);
-  const [nodeLaunchRecord, setNodeLaunchRecord] = useState<NodeLaunchRecord | null>(null);
+  const [nodeLaunchRecords, setNodeLaunchRecords] = useState<NodeLaunchRecord[]>([]);
   const [nodeLaunchRecordLoading, setNodeLaunchRecordLoading] = useState(false);
   const [nodeLaunchRecordError, setNodeLaunchRecordError] = useState<string | null>(null);
+  const [selectedNodeLaunchRecordLoading, setSelectedNodeLaunchRecordLoading] = useState(false);
+  const [selectedNodeLaunchRecordError, setSelectedNodeLaunchRecordError] = useState<string | null>(null);
   const [nodeLaunchRecordRefreshKey, setNodeLaunchRecordRefreshKey] = useState(0);
   const failedRunReattachRef = useRef<Set<string>>(new Set());
   const localRunStreamsRef = useRef<Set<string>>(new Set());
@@ -1103,6 +1122,13 @@ function GraphDashboard({
     : sessionList.error
       ? "error"
       : "ready";
+  const nodeLaunchRecordsByNodeId = useMemo(() => {
+    const recordsByNodeId = new Map<string, NodeLaunchRecord>();
+    for (const record of nodeLaunchRecords) {
+      recordsByNodeId.set(record.nodeId, record);
+    }
+    return recordsByNodeId;
+  }, [nodeLaunchRecords]);
   const initialViewportFitKey = `${activeWorkstreamKey}:${selectedNodeIdFromRoute ?? ""}`;
 
   useEffect(() => {
@@ -1123,11 +1149,43 @@ function GraphDashboard({
     if (!selectedNodeId || !viewModel) return null;
     return viewModel.derivedNodes.find((entry) => entry.node.id === selectedNodeId) ?? null;
   }, [selectedNodeId, viewModel]);
+  const nodeLaunchRecord = selectedEntry
+    ? nodeLaunchRecordsByNodeId.get(selectedEntry.node.id) ?? null
+    : null;
 
   const activeWorkstreamEntry = useMemo(() => {
     if (!activeWorkstream) return null;
     return workstreams.find((entry) => registryKey(entry) === registryKey(activeWorkstream)) ?? null;
   }, [activeWorkstream, workstreams]);
+  const runtimeOverlay = useMemo<WorkstreamRuntimeOverlay | null>(() => {
+    if (!viewModel) {
+      return null;
+    }
+    return buildWorkstreamRuntimeOverlay({
+      viewModel,
+      nodeSessionStatuses,
+      sessionStatusState: nodeSessionStatusState,
+      sessionStatusError: sessionList.error,
+      nodeLaunchRecords: nodeLaunchRecordsByNodeId,
+      launchRecordsState: nodeLaunchRecordLoading
+        ? "loading"
+        : nodeLaunchRecordError
+          ? "error"
+          : "ready",
+      launchRecordsError: nodeLaunchRecordError,
+    });
+  }, [
+    nodeLaunchRecordsByNodeId,
+    nodeLaunchRecordError,
+    nodeLaunchRecordLoading,
+    nodeSessionStatusState,
+    nodeSessionStatuses,
+    sessionList.error,
+    viewModel,
+  ]);
+  const selectedRuntimeOverlay = selectedEntry
+    ? runtimeOverlay?.nodesById.get(selectedEntry.node.id) ?? null
+    : null;
 
   const selectedLaunchTarget = useMemo<LaunchOperationTarget | null>(() => {
     if (!selectedEntry || !activeWorkstreamEntry) {
@@ -1237,55 +1295,96 @@ function GraphDashboard({
   }, [activeWorkstreamEntry?.path, launchDialogEntry, launchDialogTarget, selectedEntry, workstream]);
 
   useEffect(() => {
-    if (!selectedEntry || !activeWorkstreamEntry || !isBackendReadableWorkstreamEntry(activeWorkstreamEntry)) {
-      setNodeLaunchRecord(null);
+    if (!activeWorkstreamEntry || !isBackendReadableWorkstreamEntry(activeWorkstreamEntry)) {
+      setNodeLaunchRecords([]);
       setNodeLaunchRecordLoading(false);
       setNodeLaunchRecordError(null);
       return;
     }
     let cancelled = false;
+    setNodeLaunchRecords([]);
     setNodeLaunchRecordLoading(true);
     setNodeLaunchRecordError(null);
-    loadNodeLaunchRecord(activeWorkstreamEntry.path, selectedEntry.node.id)
-      .then((state) => {
+    loadGraphNodeLaunchRecords(activeWorkstreamEntry.path)
+      .then((records) => {
         if (!cancelled) {
-          setNodeLaunchRecord(state.record);
-          const key = launchOperationKey({
-            graphPath: activeWorkstreamEntry.path,
-            nodeId: selectedEntry.node.id,
-          });
-          setLaunchOperationByKey((current) => {
-            if (state.operation) {
-              const existing = current[key];
-              const progressEvents = existing &&
-                  existing.preparationRunId === state.operation.preparationRunId &&
-                  existing.progressEvents.length > state.operation.progressEvents.length
-                ? existing.progressEvents
-                : state.operation.progressEvents;
-              return {
-                ...current,
-                [key]: {
-                  ...state.operation,
-                  progressEvents,
-                  handoff: state.operation.handoff ?? existing?.handoff ?? null,
-                  terminalLaunch: state.operation.terminalLaunch ?? existing?.terminalLaunch ?? null,
-                  error: state.operation.error ?? existing?.error ?? null,
-                },
-              };
-            }
-            return current;
-          });
+          setNodeLaunchRecords(records);
         }
       })
       .catch((recordError: unknown) => {
         if (!cancelled) {
-          setNodeLaunchRecord(null);
+          setNodeLaunchRecords([]);
           setNodeLaunchRecordError(recordError instanceof Error ? recordError.message : String(recordError));
         }
       })
       .finally(() => {
         if (!cancelled) {
           setNodeLaunchRecordLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkstreamEntry, nodeLaunchRecordRefreshKey]);
+
+  useEffect(() => {
+    if (
+      !activeWorkstreamEntry ||
+      !isBackendReadableWorkstreamEntry(activeWorkstreamEntry) ||
+      !selectedEntry
+    ) {
+      setSelectedNodeLaunchRecordLoading(false);
+      setSelectedNodeLaunchRecordError(null);
+      return;
+    }
+    const target = {
+      graphPath: activeWorkstreamEntry.path,
+      nodeId: selectedEntry.node.id,
+    };
+    let cancelled = false;
+    setSelectedNodeLaunchRecordLoading(true);
+    setSelectedNodeLaunchRecordError(null);
+    loadNodeLaunchRecord(target.graphPath, target.nodeId)
+      .then((state) => {
+        if (cancelled) {
+          return;
+        }
+        setNodeLaunchRecords((current) =>
+          mergeNodeLaunchRecord(current, target, state.record)
+        );
+        const key = launchOperationKey(target);
+        setLaunchOperationByKey((current) => {
+          if (!state.operation) {
+            return current;
+          }
+          const existing = current[key];
+          const progressEvents = existing &&
+              existing.preparationRunId === state.operation.preparationRunId &&
+              existing.progressEvents.length > state.operation.progressEvents.length
+            ? existing.progressEvents
+            : state.operation.progressEvents;
+          return {
+            ...current,
+            [key]: {
+              ...state.operation,
+              progressEvents,
+              handoff: state.operation.handoff ?? existing?.handoff ?? null,
+              terminalLaunch: state.operation.terminalLaunch ?? existing?.terminalLaunch ?? null,
+              error: state.operation.error ?? existing?.error ?? null,
+            },
+          };
+        });
+      })
+      .catch((recordError: unknown) => {
+        if (!cancelled) {
+          setSelectedNodeLaunchRecordError(
+            recordError instanceof Error ? recordError.message : String(recordError),
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setSelectedNodeLaunchRecordLoading(false);
         }
       });
     return () => {
@@ -1415,7 +1514,9 @@ function GraphDashboard({
             return;
           }
           if (sameLaunchTarget(launchDialogTarget, selectedLaunchTarget)) {
-            setNodeLaunchRecord(state.record);
+            setNodeLaunchRecords((current) =>
+              mergeNodeLaunchRecord(current, launchDialogTarget, state.record)
+            );
           }
           if (state.operation) {
             setLaunchOperation(launchDialogTarget, state.operation);
@@ -1491,11 +1592,14 @@ function GraphDashboard({
       );
       const refreshed = await loadNodeLaunchRecord(target.graphPath, target.nodeId);
       if (sameLaunchTarget(target, selectedLaunchTarget)) {
-        setNodeLaunchRecord(refreshed.record);
+        setNodeLaunchRecords((current) =>
+          mergeNodeLaunchRecord(current, target, refreshed.record)
+        );
       }
       if (refreshed.operation) {
         setLaunchOperation(target, refreshed.operation);
       }
+      setNodeLaunchRecordRefreshKey((current) => current + 1);
     } catch (releaseError: unknown) {
       setLaunchReleaseError(releaseError instanceof Error ? releaseError.message : String(releaseError));
     } finally {
@@ -1783,6 +1887,7 @@ function GraphDashboard({
             onNodeSelect={setSelectedNodeId}
             nodeSessionStatuses={nodeSessionStatuses}
             nodeSessionStatusState={nodeSessionStatusState}
+            runtimeOverlay={runtimeOverlay}
             sessionRouteForNode={sessionRouteForNode}
           />
         </ReactFlowProvider>
@@ -1795,8 +1900,9 @@ function GraphDashboard({
             launchDisabledReason={launchDisabledReason}
             launchRecord={nodeLaunchRecord}
             launchOperation={selectedLaunchOperation}
-            launchRecordLoading={nodeLaunchRecordLoading}
-            launchRecordError={nodeLaunchRecordError}
+            launchRecordLoading={nodeLaunchRecordLoading || selectedNodeLaunchRecordLoading}
+            launchRecordError={nodeLaunchRecordError ?? selectedNodeLaunchRecordError}
+            runtimeOverlay={selectedRuntimeOverlay}
             onLaunch={handleOpenLaunchDialog}
           />
         </div>

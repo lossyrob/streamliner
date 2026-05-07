@@ -35,6 +35,11 @@ export interface NodeLaunchSdkSession {
   stateRoot: string;
 }
 
+import type {
+  LaunchClaimFailureCode,
+  LaunchClaimStatus,
+} from "./launch-claim-schema";
+
 export interface NodeLaunchHandoff {
   cwd: string;
   branch: string;
@@ -65,14 +70,14 @@ export interface NodeLaunchRecordPathStatus {
 
 export interface NodeLaunchClaimState {
   launchClaimId: string;
-  status: string;
+  status: LaunchClaimStatus;
   launchedAt: string;
   updatedAt: string;
   bindingWindowExpiresAt: string;
   reservedRegistryId: string | null;
   boundRegistryId: string | null;
   boundCopilotSessionId: string | null;
-  failureCode: string | null;
+  failureCode: LaunchClaimFailureCode | null;
   failureReason: string | null;
   blocksLaunch: boolean;
   retryable: boolean;
@@ -162,4 +167,8 @@ export interface NodeLaunchRecord {
 export interface NodeLaunchRecordResponse {
   record: NodeLaunchRecord | null;
   operation?: NodeLaunchOperation | null;
+}
+
+export interface NodeLaunchRecordListResponse {
+  records: NodeLaunchRecord[];
 }

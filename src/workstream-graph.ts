@@ -8,6 +8,7 @@ import type {
   GraphNodeSessionStatusState,
   GraphNodeSessionStatusSummary,
 } from "./graph-node-session-status";
+import type { WorkstreamRuntimeNodeOverlay } from "./workstream-runtime-overlay";
 
 const TASK_NODE_WIDTH = 328;
 const TASK_NODE_HEIGHT = 224;
@@ -62,6 +63,7 @@ export interface WorkstreamGraphNodeData extends Record<string, unknown> {
   showId: boolean;
   sessionStatus: GraphNodeSessionStatusSummary | null;
   sessionStatusState: GraphNodeSessionStatusState;
+  runtimeOverlay: WorkstreamRuntimeNodeOverlay | null;
   sessionsHref: string | null;
   onOpenSessions: (() => void | Promise<void>) | null;
 }

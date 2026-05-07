@@ -6,6 +6,7 @@ import type {
   NodeLaunchClaimState,
   NodeLaunchOperation,
   NodeLaunchOperationStatus,
+  NodeLaunchRecord,
 } from "../../node-launch-record-contract";
 import { SessionRegistryFileStore } from "../../session-registry/file-store";
 import { stopSession } from "../../session-registry/stop";
@@ -42,6 +43,41 @@ function nonEmptyQueryString(value: unknown, label: string): string {
   return value;
 }
 
+function optionalNonEmptyQueryString(value: unknown, label: string): string | null {
+  if (value === undefined) {
+    return null;
+  }
+  return nonEmptyQueryString(value, label);
+}
+
+function latestClaimForRecord(
+  claimStore: LaunchClaimStore | undefined,
+  record: NodeLaunchRecord,
+): LaunchClaim | null {
+  return claimStore
+    ? findBlockingLaunchClaim(
+      claimStore,
+      record.workstreamId,
+      record.nodeId,
+    ) ?? latestLaunchClaimForNode(
+      claimStore,
+      record.workstreamId,
+      record.nodeId,
+    )
+    : null;
+}
+
+function withLatestClaim(
+  claimStore: LaunchClaimStore | undefined,
+  record: NodeLaunchRecord,
+): NodeLaunchRecord {
+  const latestClaim = latestClaimForRecord(claimStore, record);
+  return {
+    ...record,
+    latestClaim: latestClaim ? summarizeLaunchClaim(latestClaim) : null,
+  };
+}
+
 export function createNodeLaunchRecordsRouter(options: {
   store?: NodeLaunchRecordStore;
   claimStore?: LaunchClaimStore;
@@ -53,7 +89,14 @@ export function createNodeLaunchRecordsRouter(options: {
   router.get("/node-launch-records", async (req, res, next) => {
     try {
       const graphPath = nonEmptyQueryString(req.query.graphPath, "graphPath");
-      const nodeId = nonEmptyQueryString(req.query.nodeId, "nodeId");
+      const nodeId = optionalNonEmptyQueryString(req.query.nodeId, "nodeId");
+      if (nodeId === null) {
+        const records = await store.listByGraphPath(graphPath);
+        res.json({
+          records: records.map((record) => withLatestClaim(options.claimStore, record)),
+        });
+        return;
+      }
       const record = await store.get(graphPath, nodeId);
       const operation = await store.getOperation(graphPath, nodeId);
       const claimWorkstreamId = record?.workstreamId

@@ -196,7 +196,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 function emptyNodeLaunchRecordResponse(): Response {
-  return jsonResponse({ record: null });
+  return jsonResponse({ record: null, records: [] });
 }
 
 function toRegistryRecord(session: SessionRegistryListItem): Record<string, unknown> {
@@ -815,6 +815,9 @@ describe("App sessions route", () => {
         if (path === "/api/sessions?workstreamId=session-launching-and-tracking") {
           return jsonResponse(boundSessions);
         }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return emptyNodeLaunchRecordResponse();
+        }
         if (
           path ===
           "/api/sessions?workstreamId=session-launching-and-tracking&nodeId=graph-node-session-status-ui"
@@ -987,6 +990,144 @@ describe("App sessions route", () => {
     15_000,
   );
 
+  it(
+    "renders runtime overlay from graph-wide launch records and PAW session evidence",
+    async () => {
+      MockEventSource.instances = [];
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+      const graph = buildLaunchGraph();
+      const launchRecord = {
+        id: "launch-prompt-profiles-record",
+        graphPath: "C:\\graphs\\api-test\\graph.json",
+        projectKey: "streamliner",
+        workstreamId: "api-test",
+        nodeId: "launch-prompt-profiles",
+        workId: "launch-prompt-profiles",
+        workTitle: "Launch prompt profiles",
+        branch: "feature/launch-prompt-profiles",
+        cwd: "C:\\graphs\\api-test",
+        pawWorkDir: "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles",
+        workflowContextPath:
+          "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles\\WorkflowContext.md",
+        streamlinerContextPath:
+          "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles\\streamliner\\context.md",
+        contextPackagePath: "C:\\state\\launch-contexts\\ctx",
+        contextFilePath: "C:\\state\\launch-contexts\\ctx\\context.md",
+        launchNonce: "nonce-1",
+        launchClaimRef: "claim-1",
+        trackerUrl: "https://github.com/lossyrob/streamliner/issues/33",
+        createdAt: "2026-05-03T18:00:00.000Z",
+        updatedAt: "2026-05-03T18:01:00.000Z",
+        pathStatus: {
+          cwdExists: true,
+          pawWorkDirExists: true,
+          workflowContextExists: true,
+          streamlinerContextExists: true,
+          contextPackageExists: true,
+          contextFileExists: true,
+        },
+        latestClaim: {
+          launchClaimId: "claim-1",
+          status: "pending",
+          launchedAt: "2026-05-03T18:00:00.000Z",
+          updatedAt: "2026-05-03T18:01:00.000Z",
+          bindingWindowExpiresAt: "2026-05-03T18:05:00.000Z",
+          reservedRegistryId: "registry-1",
+          boundRegistryId: "registry-1",
+          boundCopilotSessionId: "copilot-1",
+          failureCode: null,
+          failureReason: null,
+          blocksLaunch: true,
+          retryable: false,
+        },
+      };
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        if (path === "/api/sessions?workstreamId=api-test") {
+          return jsonResponse([
+            buildSession({
+              id: "paw-overlay-session",
+              title: "PAW overlay worker",
+              originKind: "launched",
+              activityStatus: "working",
+              graphBinding: {
+                workstreamId: "api-test",
+                nodeId: "launch-prompt-profiles",
+              },
+              pawLaunch: {
+                workId: "launch-prompt-profiles",
+                workTitle: "Launch prompt profiles",
+                workflowKind: "paw-lite",
+                pawWorkDir: "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles",
+                workflowContextPath:
+                  "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles\\WorkflowContext.md",
+                streamlinerContextPath:
+                  "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles\\streamliner\\context.md",
+              },
+              pawWorkflow: {
+                status: "recognized",
+                stage: "implementation",
+                workflowKind: "paw-lite",
+                workId: "launch-prompt-profiles",
+                workTitle: "Launch prompt profiles",
+                workDir: "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles",
+                artifacts: [],
+                artifactCount: 1,
+                latestArtifactPath: "Plan.md",
+                latestArtifactMtimeMs: 1_778_003_000_000,
+                scannedAt: "2026-05-05T13:05:00.000Z",
+                diagnostics: [],
+              },
+            }),
+          ]);
+        }
+        if (path.startsWith("/api/node-launch-records?") && path.includes("nodeId=")) {
+          return jsonResponse({ record: launchRecord, operation: null });
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return jsonResponse({ records: [launchRecord] });
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState(
+        {},
+        "",
+        "/workstreams/streamliner/api-test/nodes/launch-prompt-profiles",
+      );
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(300);
+
+      const graphNode = findCanvasNode(container, "Launch prompt profiles");
+      expect(graphNode.textContent).toContain("runtime active");
+      expect(graphNode.textContent).toContain("PAW implementation");
+      expect(container.textContent).toContain("RUNTIME DETAILS");
+      expect(container.textContent).not.toContain("Runtime overlay");
+      expect(container.textContent).toContain("PAW overlay worker (working)");
+      expect(container.textContent).toContain("pending blocking launch");
+      expect(
+        fetchMock.mock.calls.some(([input]) => {
+          const path = requestPath(input as RequestInfo | URL);
+          return path.startsWith("/api/node-launch-records?") && !path.includes("nodeId=");
+        }),
+      ).toBe(true);
+    },
+    15_000,
+  );
+
   it("keeps plain route clicks in-app and leaves modified clicks to the browser", () => {
     const plainClick = runInAppLinkClick();
     expect(plainClick.preventDefault).toHaveBeenCalledOnce();
@@ -1018,6 +1159,9 @@ describe("App sessions route", () => {
         }
         if (path === "/api/workstreams/streamliner/api-test/graph") {
           return jsonResponse(buildWorkstreamGraph());
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return emptyNodeLaunchRecordResponse();
         }
         throw new Error(`Unexpected fetch: ${path}`);
       });
@@ -1306,7 +1450,9 @@ describe("App sessions route", () => {
           return jsonResponse(graph);
         }
         if (path.startsWith("/api/node-launch-records?")) {
-          return jsonResponse({ record: nodeLaunchRecord });
+          return path.includes("nodeId=")
+            ? jsonResponse({ record: nodeLaunchRecord })
+            : jsonResponse({ records: nodeLaunchRecord ? [nodeLaunchRecord] : [] });
         }
         if (path === "/api/paw-launch-prompt-profiles") {
           return jsonResponse({
@@ -2315,42 +2461,43 @@ describe("App sessions route", () => {
           return jsonResponse(graph);
         }
         if (path.startsWith("/api/node-launch-records?")) {
-          return jsonResponse({
-            record: {
-              projectKey: "streamliner",
-              workstreamId: "api-test",
-              nodeId: "launch-prompt-profiles",
-              workId: "launch-prompt-profiles",
-              branch: "feature/launch-prompt-profiles",
-              cwd: "C:\\streamliner\\launch-prompt-profiles",
-              pawWorkDir: "C:\\streamliner\\launch-prompt-profiles\\.paw\\work\\launch-prompt-profiles",
-              workflowContextPath:
-                "C:\\streamliner\\launch-prompt-profiles\\.paw\\work\\launch-prompt-profiles\\WorkflowContext.md",
-              streamlinerContextPath:
-                "C:\\streamliner\\launch-prompt-profiles\\.paw\\work\\launch-prompt-profiles\\streamliner\\context.md",
-              updatedAt: "2026-05-03T18:00:00.000Z",
-              pathStatus: {
-                cwdExists: true,
-                pawWorkDirExists: true,
-                workflowContextExists: true,
-                streamlinerContextExists: true,
-              },
-              latestClaim: {
-                launchClaimId: "claim-1",
-                status: claimBlocksLaunch ? "pending" : "failed",
-                launchedAt: "2026-05-03T18:00:00.000Z",
-                updatedAt: "2026-05-03T18:00:00.000Z",
-                bindingWindowExpiresAt: "2026-05-03T18:05:00.000Z",
-                reservedRegistryId: "registry-1",
-                boundRegistryId: "registry-1",
-                boundCopilotSessionId: "copilot-1",
-                failureCode: claimBlocksLaunch ? null : "user-cancelled",
-                failureReason: claimBlocksLaunch ? null : "Released.",
-                blocksLaunch: claimBlocksLaunch,
-                retryable: !claimBlocksLaunch,
-              },
+          const record = {
+            projectKey: "streamliner",
+            workstreamId: "api-test",
+            nodeId: "launch-prompt-profiles",
+            workId: "launch-prompt-profiles",
+            branch: "feature/launch-prompt-profiles",
+            cwd: "C:\\streamliner\\launch-prompt-profiles",
+            pawWorkDir: "C:\\streamliner\\launch-prompt-profiles\\.paw\\work\\launch-prompt-profiles",
+            workflowContextPath:
+              "C:\\streamliner\\launch-prompt-profiles\\.paw\\work\\launch-prompt-profiles\\WorkflowContext.md",
+            streamlinerContextPath:
+              "C:\\streamliner\\launch-prompt-profiles\\.paw\\work\\launch-prompt-profiles\\streamliner\\context.md",
+            updatedAt: "2026-05-03T18:00:00.000Z",
+            pathStatus: {
+              cwdExists: true,
+              pawWorkDirExists: true,
+              workflowContextExists: true,
+              streamlinerContextExists: true,
             },
-          });
+            latestClaim: {
+              launchClaimId: "claim-1",
+              status: claimBlocksLaunch ? "pending" : "failed",
+              launchedAt: "2026-05-03T18:00:00.000Z",
+              updatedAt: "2026-05-03T18:00:00.000Z",
+              bindingWindowExpiresAt: "2026-05-03T18:05:00.000Z",
+              reservedRegistryId: "registry-1",
+              boundRegistryId: "registry-1",
+              boundCopilotSessionId: "copilot-1",
+              failureCode: claimBlocksLaunch ? null : "user-cancelled",
+              failureReason: claimBlocksLaunch ? null : "Released.",
+              blocksLaunch: claimBlocksLaunch,
+              retryable: !claimBlocksLaunch,
+            },
+          };
+          return path.includes("nodeId=")
+            ? jsonResponse({ record })
+            : jsonResponse({ records: [record] });
         }
         if (path === "/api/node-launch-records/launch-claims/claim-1/release" && init?.method === "POST") {
           claimBlocksLaunch = false;

@@ -243,6 +243,14 @@ export class NodeLaunchRecordStore {
     return record ? withPathStatus(record) : null;
   }
 
+  async listByGraphPath(graphPath: string): Promise<NodeLaunchRecord[]> {
+    const document = await this.readDocument();
+    const key = normalizeGraphPathForKey(graphPath);
+    return document.records
+      .filter((candidate) => normalizeGraphPathForKey(candidate.graphPath) === key)
+      .map(withPathStatus);
+  }
+
   async getOperation(graphPath: string, nodeId: string): Promise<NodeLaunchOperation | null> {
     const document = await this.readDocument();
     const key = normalizeGraphPathForKey(graphPath);
