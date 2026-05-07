@@ -49,6 +49,7 @@ export default defineConfig({
           { text: '006 — Local Streamliner API Service', link: '/decisions/006-local-streamliner-api-service' },
           { text: '007 — Tracked Workstream Registry', link: '/decisions/007-tracked-workstream-registry' },
           { text: '008 — PAW Artifacts for Workflow Status', link: '/decisions/008-paw-artifacts-for-workflow-status' },
+          { text: '009 — SDK-Managed Graph-Node Worker Runtime', link: '/decisions/009-sdk-managed-worker-runtime' },
         ]
       }
     ],
