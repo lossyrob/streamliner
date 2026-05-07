@@ -38,4 +38,4 @@ Issue URL: https://github.com/lossyrob/streamliner/issues/52
 Remote: origin
 Artifact Lifecycle: commit-and-clean
 Artifact Paths: auto-derived
-Additional Inputs: none
+Additional Inputs: streamliner-context=C:\Users\robemanuele\proj\streamliner\streamliner-runtime-overlay-ui\.paw\work\runtime-overlay-ui\streamliner\context.md
