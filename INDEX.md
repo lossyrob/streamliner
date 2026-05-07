@@ -31,6 +31,13 @@
 | [NODE-SPEC-FORMAT.md](NODE-SPEC-FORMAT.md) | How to write a Layer 3 node spec — the issue body or local spec file that a worker session executes from. Standard sections, rules for alignment with the doctrine, and anti-patterns. |
 | [DESIGN-DOCS.md](DESIGN-DOCS.md) | The project-level design layer: why it exists, core model (intended state not implementation snapshots), document families (design index, living design docs, decision records), frontmatter format, status semantics, derived catalog, workstream interaction, and context package integration. |
 
+## Temporary role prompts
+
+| Document | What it covers |
+|---|---|
+| [.streamliner/roles/project-workstream-designer.md](.streamliner/roles/project-workstream-designer.md) | Temporary prompt package for sessions that shape ambiguous intent into candidate workstreams, boundaries, dependencies, and handoff briefs. |
+| [.streamliner/roles/workstream-creator.md](.streamliner/roles/workstream-creator.md) | Temporary prompt package for sessions that turn one shaped candidate into executable workstream artifacts, gates, checkpoints, and first-wave specs or issues. |
+
 ## Planning and roadmap
 
 | Document | What it covers |
