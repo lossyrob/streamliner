@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import {
   mkdirSync,
   rmSync,
@@ -22,6 +23,7 @@ import {
   buildStreamlinerContextSavePrompt,
   completePawInitToolParameters,
   preparePawLaunch,
+  resolvePawWorkDirForLaunch,
   validatePawWorktreePolicy,
   type LaunchContextPreparer,
   type PawInitRunner,
@@ -45,6 +47,12 @@ function createRootDir(): string {
 
 function normalizePath(path: string): string {
   return path.replace(/\\/g, "/");
+}
+
+function createGitRepo(root: string, originUrl: string): void {
+  mkdirSync(root, { recursive: true });
+  execFileSync("git", ["init", "-b", "main"], { cwd: root, stdio: "ignore" });
+  execFileSync("git", ["remote", "add", "origin", originUrl], { cwd: root, stdio: "ignore" });
 }
 
 function fakeContextPackage(
@@ -362,6 +370,102 @@ describe("preparePawLaunch", () => {
         pawWorkDir: join(launchCwd, ".paw", "work", "session-event-observation"),
       })
     ).not.toThrow();
+  });
+
+  it("accepts PAW work dirs in selected target repository checkouts", async () => {
+    const root = createRootDir();
+    const targetRoot = createRootDir();
+    const launchCwd = join(root, "coordination-repo");
+    const targetCheckout = join(targetRoot, "target-repo-worktree");
+    createGitRepo(launchCwd, "https://github.com/acme/coordination.git");
+    createGitRepo(targetCheckout, "git@github.com:acme/worker-target.git");
+
+    const preparedContext = fakePreparedContext(launchCwd);
+    preparedContext.generationInput.workstream.repos = [{
+      id: "worker-target",
+      owner: "acme",
+      name: "worker-target",
+      role: "primary" as const,
+    }];
+    preparedContext.generationInput.node.repoIds = ["worker-target"];
+    preparedContext.metadata.targetRepoIds = ["worker-target"];
+    const input: PawLaunchSessionRunnerInput = {
+      nodeId: "launch-prompt-profiles",
+      graphPath: join(launchCwd, ".streamliner", "workstreams", "session-launching-and-tracking", "graph.json"),
+      cwd: launchCwd,
+      sessionStateRoot: join(root, "state"),
+      launchNonce: "nonce-target",
+      configuration: {
+        cwd: launchCwd,
+        cliArgs: ["--yolo"],
+        environment: {},
+        workflowInstructions: "Use PAW.",
+        terminal: {
+          launchMode: "manual",
+          preferredTerminal: "default",
+          title: null,
+          tabColor: null,
+        },
+      },
+      preparedContext,
+      existingLaunch: null,
+    };
+
+    await expect(
+      resolvePawWorkDirForLaunch(
+        input,
+        "launch-prompt-profiles",
+        join(targetCheckout, ".paw", "work", "launch-prompt-profiles"),
+      ),
+    ).resolves.toBe(join(targetCheckout, ".paw", "work", "launch-prompt-profiles"));
+  });
+
+  it("rejects PAW work dirs outside launch and selected target repositories", async () => {
+    const root = createRootDir();
+    const unrelatedRoot = createRootDir();
+    const launchCwd = join(root, "coordination-repo");
+    const unrelatedCheckout = join(unrelatedRoot, "unrelated-repo-worktree");
+    createGitRepo(launchCwd, "https://github.com/acme/coordination.git");
+    createGitRepo(unrelatedCheckout, "https://github.com/acme/unrelated.git");
+
+    const preparedContext = fakePreparedContext(launchCwd);
+    preparedContext.generationInput.workstream.repos = [{
+      id: "worker-target",
+      owner: "acme",
+      name: "worker-target",
+      role: "primary" as const,
+    }];
+    preparedContext.generationInput.node.repoIds = ["worker-target"];
+    preparedContext.metadata.targetRepoIds = ["worker-target"];
+    const input: PawLaunchSessionRunnerInput = {
+      nodeId: "launch-prompt-profiles",
+      graphPath: join(launchCwd, ".streamliner", "workstreams", "session-launching-and-tracking", "graph.json"),
+      cwd: launchCwd,
+      sessionStateRoot: join(root, "state"),
+      launchNonce: "nonce-unrelated",
+      configuration: {
+        cwd: launchCwd,
+        cliArgs: ["--yolo"],
+        environment: {},
+        workflowInstructions: "Use PAW.",
+        terminal: {
+          launchMode: "manual",
+          preferredTerminal: "default",
+          title: null,
+          tabColor: null,
+        },
+      },
+      preparedContext,
+      existingLaunch: null,
+    };
+
+    await expect(
+      resolvePawWorkDirForLaunch(
+        input,
+        "launch-prompt-profiles",
+        join(unrelatedCheckout, ".paw", "work", "launch-prompt-profiles"),
+      ),
+    ).rejects.toThrow("selected node target repo");
   });
 
   it("prepares a structured PAW handoff with defaults", async () => {
