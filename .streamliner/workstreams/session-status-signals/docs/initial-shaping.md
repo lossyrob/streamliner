@@ -29,13 +29,17 @@ Candidate values:
 | Status | Meaning | Builder action |
 |---|---|---|
 | **Working** | The agent is actively executing or recently active. | None. |
-| **Needs you** | The session is waiting for builder input, confirmation, or a decision. | Reply, decide, or unblock. |
+| **Needs you** | The session is freshly waiting for builder input, confirmation, or a decision in an active conversation. | Reply, decide, or unblock. |
+| **Quiet waiting** | The session is technically waiting on the builder, but the conversation has cooled off after hours or days without activity. | Keep findable; respond when intentionally returning to it. |
 | **Ready to review** | Work appears complete or PR/artifacts are ready. | Inspect output. |
 | **Blocked** | The agent cannot proceed because of an error, missing dependency, missing permission, or external condition. | Fix the blocker or redirect. |
 | **Stale** | The session stopped updating and the status is unclear. | Inspect or clean up. |
 | **Closed** | The session is done, archived, or intentionally removed from active operation. | None. |
 
 Operational status should drive sorting, attention, filters, and notification.
+Recency should modulate urgency: an assistant question from a just-active
+conversation should be much louder than an old open session the builder may
+return to later.
 
 ### Informational signals
 
@@ -130,6 +134,32 @@ A core operational-status distinction:
 - Session is idle after that assistant message
 - No tool is currently running
 
+### Active waiting vs. quiet waiting
+
+Not every waiting session should compete equally for attention. Some sessions are
+mid-conversation: the builder and agent were recently iterating, the agent asked
+a question, and the next useful action is probably a quick reply. Other sessions
+have been open for hours or days after an assistant question; they are still
+conversations the builder may intentionally return to, but they should not look
+as urgent as fresh interruptions.
+
+The status model should distinguish:
+
+- **Active waiting** - a recent assistant question or decision point in a
+  conversation with recent activity. This should appear as the normal high-
+  priority `Needs you` state.
+- **Quiet waiting** - an unanswered assistant question or pending conversation
+  that has cooled off. This should remain visible and searchable, but visually
+  de-emphasized and sorted below active waiting.
+- **Stale / unclear** - no reliable pending question or completion signal, and
+  the session stopped updating long enough that Streamliner is unsure what
+  action is needed.
+
+Quiet waiting is not the same as `Ready to review`: the next action is still
+conversation, not artifact inspection. It is also not the same as heat `Cooling`:
+a session can be quiet-waiting without having been hot, and a hot session can be
+cooling while ready for review.
+
 ### Ready to review signals
 
 - Last assistant message contains completion language
@@ -157,6 +187,7 @@ attachment. It should emit structured runtime overlay data:
     "kind": "needs-builder",
     "label": "Needs you",
     "priority": "high",
+    "recency": "active",
     "reason": "Assistant asked for a decision about whether to change the shared session attachment contract.",
     "suggestedAction": "Reply in the session with a decision."
   },
@@ -199,6 +230,16 @@ Last activity: 12m ago
 Assistant is asking for a decision about the attachment boundary.
 
 Signals: thermal-ring Hot | Boundary pressure | Attached to graph-overlay/session-attach
+```
+
+```text
+Session title / node
+Last activity: 8h ago
+
+[Quiet waiting]
+Assistant asked a follow-up, but the conversation has cooled off.
+
+Signals: thermal-dot Cool | Unbound | local Windows
 ```
 
 ```text
@@ -246,8 +287,8 @@ Candidate nodes from shaping:
 1. Capture initial shaping as a workstream support doc.
 2. Define the status-lane design contract.
 3. Define the status summarizer schema and runtime overlay contract.
-4. Classify operational status: working, needs-builder, ready-review, blocked,
-   stale, closed.
+4. Classify operational status: working, needs-builder, quiet-waiting,
+   ready-review, blocked, stale, closed.
 5. Detect heat index: current, peak, trend, reason, confidence.
 6. Surface informational signals: reconciliation need, boundary pressure, design
    impact, attachment, environment, confidence.

@@ -1,0 +1,199 @@
+{
+  "schemaVersion": 1,
+  "id": "streamliner-performance-robustness",
+  "projectKey": "streamliner",
+  "title": "Streamliner Performance and Robustness",
+  "summary": "Formed from the seeded candidate. Wave 1 measures realistic multi-tab usage and adds missing diagnostics before optimization nodes are promoted.",
+  "status": "active",
+  "attention": "focus",
+  "createdAt": "2026-05-06T14:05:56.121Z",
+  "updatedAt": "2026-05-06T14:05:56.121Z",
+  "repos": [
+    {
+      "id": "streamliner",
+      "owner": "lossyrob",
+      "name": "streamliner",
+      "role": "primary"
+    }
+  ],
+  "designRefs": [
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/index.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/product.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/operating-model.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/workstream-format.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/session-system.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/concepts/waves.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/001-observation-based-session-tracking.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/004-session-registry-primary-surface.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/005-session-registry-storage-and-identity.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/006-local-streamliner-api-service.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/007-tracked-workstream-registry.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/008-paw-artifacts-for-workflow-status.md"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "performance-baseline-and-bottleneck-map",
+      "type": "research",
+      "title": "Performance baseline and bottleneck map",
+      "summary": "Reproduce realistic multi-tab Streamliner usage, measure request volume, endpoint latency, EventSource behavior, background cadence, graph/source loading, and file-store IO, then export a baseline report and quick-win priority list.",
+      "status": "ready",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/performance-baseline-and-bottleneck-map.md"
+      },
+      "dependsOn": []
+    },
+    {
+      "id": "diagnostics-instrumentation-foundation",
+      "type": "task",
+      "title": "Diagnostics instrumentation foundation",
+      "summary": "Add the low-overhead durable diagnostics the baseline proves are missing so slow endpoints, request fanout, background scans, graph/source loads, and store work are visible during later optimization.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/diagnostics-instrumentation-foundation.md"
+      },
+      "dependsOn": ["performance-baseline-and-bottleneck-map"]
+    },
+    {
+      "id": "baseline-findings-gate",
+      "type": "gate",
+      "title": "Baseline findings gate",
+      "summary": "Builder validates that the load shape, bottleneck map, diagnostics gaps, and quick-win priority order match real Streamliner usage before optimization work proceeds.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": [
+        "performance-baseline-and-bottleneck-map",
+        "diagnostics-instrumentation-foundation"
+      ]
+    },
+    {
+      "id": "client-api-fanout-reduction",
+      "type": "task",
+      "title": "Client and API request fanout reduction",
+      "summary": "Reduce duplicate browser/API work according to the accepted bottleneck map: polling, focus refresh, EventSource-triggered refetches, graph/workstream reloads, stable-data caching, and safe cross-tab coordination where warranted.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["baseline-findings-gate"]
+    },
+    {
+      "id": "background-store-efficiency",
+      "type": "task",
+      "title": "Background and store efficiency",
+      "summary": "Tune the highest-impact server/background/store paths from the accepted baseline, including session registry refreshes, launch-claim scans, workstream-source scanning, graph loads, context/activity/PAW indexing, and file-store reads/writes.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["baseline-findings-gate"]
+    },
+    {
+      "id": "optimization-impact-gate",
+      "type": "gate",
+      "title": "Optimization impact gate",
+      "summary": "Builder validates that the targeted fanout and background/store changes materially improve responsiveness under the accepted multi-tab load shape without changing intended semantics.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": [
+        "client-api-fanout-reduction",
+        "background-store-efficiency"
+      ]
+    },
+    {
+      "id": "robustness-diagnostics-regression",
+      "type": "task",
+      "title": "Robustness diagnostics and regression coverage",
+      "summary": "Codify the accepted many-tab robustness expectations through durable diagnostics, regression tests or manual load-test recipes, operator documentation, and guardrails for future graph/session/workstream surfaces.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["optimization-impact-gate"]
+    },
+    {
+      "id": "performance-closure-gate",
+      "type": "gate",
+      "title": "Performance robustness closure gate",
+      "summary": "Builder validates the final performance baseline comparison, diagnostics/export package, and downstream guidance before the workstream closes or spins out follow-on storage/architecture work.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["robustness-diagnostics-regression"]
+    }
+  ],
+  "checkpoints": [
+    {
+      "id": "baseline-and-diagnostics-ready",
+      "title": "Baseline and diagnostics ready",
+      "summary": "Realistic multi-tab usage has been measured, diagnostics gaps have been closed enough for optimization, and the builder has accepted the bottleneck map.",
+      "status": "planned",
+      "nodeIds": [
+        "performance-baseline-and-bottleneck-map",
+        "diagnostics-instrumentation-foundation",
+        "baseline-findings-gate"
+      ]
+    },
+    {
+      "id": "top-bottlenecks-addressed",
+      "title": "Top bottlenecks addressed",
+      "summary": "The highest-impact client/API fanout and background/store bottlenecks from the accepted baseline have been addressed and validated under the same load shape.",
+      "status": "planned",
+      "nodeIds": [
+        "client-api-fanout-reduction",
+        "background-store-efficiency",
+        "optimization-impact-gate"
+      ]
+    },
+    {
+      "id": "robustness-export-ready",
+      "title": "Robustness export ready",
+      "summary": "Diagnostics, regression coverage, load-test guidance, and downstream performance expectations are ready for future workstreams to consume.",
+      "status": "planned",
+      "nodeIds": [
+        "robustness-diagnostics-regression",
+        "performance-closure-gate"
+      ]
+    }
+  ]
+}

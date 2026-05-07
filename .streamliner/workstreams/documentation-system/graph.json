@@ -1,0 +1,148 @@
+{
+  "schemaVersion": 1,
+  "id": "documentation-system",
+  "projectKey": "streamliner",
+  "title": "Documentation System",
+  "summary": "Formed from the shaped candidate. Wave 1 has one local PAW-sized design-foundation spec; later waves are coarse sketch nodes pending builder gates and orchestrator promotion.",
+  "status": "active",
+  "attention": "focus",
+  "createdAt": "2026-05-05T02:40:22.126Z",
+  "updatedAt": "2026-05-05T03:23:39.328Z",
+  "repos": [
+    {
+      "id": "streamliner",
+      "owner": "lossyrob",
+      "name": "streamliner",
+      "role": "primary"
+    }
+  ],
+  "designRefs": [
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/index.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/product.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/operating-model.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/design-layer.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/workstream-format.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/concepts/context-package.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/concepts/waves.md"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "documentation-foundation-design",
+      "type": "research",
+      "title": "Documentation foundation design",
+      "summary": "Define the documentation authority model, unified docs-site transition direction, and Streamliner product model for optional documentation families before implementation begins.",
+      "status": "ready",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/documentation-foundation-design.md"
+      },
+      "dependsOn": []
+    },
+    {
+      "id": "documentation-foundation-gate",
+      "type": "gate",
+      "title": "Documentation foundation gate",
+      "summary": "Builder validates the documentation authority model, unified-site direction, and product-support model before implementation nodes are promoted.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["documentation-foundation-design"]
+    },
+    {
+      "id": "unified-docs-site-and-starter-content",
+      "type": "task",
+      "title": "Unified docs site and starter content",
+      "summary": "Create the unified `docs/` site, preserve Design as the normative section, add initial User Guide and Architecture content, and update VitePress/scripts/publish behavior as needed.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["documentation-foundation-gate"]
+    },
+    {
+      "id": "published-docs-site-gate",
+      "type": "gate",
+      "title": "Published docs site validation",
+      "summary": "Builder validates that the unified docs site builds, navigates, preserves Design authority, and has useful starter User Guide and Architecture content.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["unified-docs-site-and-starter-content"]
+    },
+    {
+      "id": "documentation-family-product-support",
+      "type": "task",
+      "title": "Documentation family product support",
+      "summary": "Teach Streamliner to discover documentation families, represent optional documentation hints, flow them into worker context, and capture worker/reconciliation documentation impact.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["published-docs-site-gate"]
+    },
+    {
+      "id": "documentation-system-closure-review",
+      "type": "gate",
+      "title": "Documentation system closure review",
+      "summary": "Builder validates the published documentation system and product support end-to-end, accepts declared exports, and decides whether the workstream can close.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["documentation-family-product-support"]
+    }
+  ],
+  "checkpoints": [
+    {
+      "id": "documentation-foundation-aligned",
+      "title": "Documentation foundation aligned",
+      "summary": "The documentation taxonomy, unified-site direction, and product-support model are explicit enough to guide implementation.",
+      "status": "planned",
+      "nodeIds": ["documentation-foundation-design", "documentation-foundation-gate"]
+    },
+    {
+      "id": "unified-docs-site-usable",
+      "title": "Unified docs site usable",
+      "summary": "The `docs/` site builds and contains navigable Design, Architecture, and User Guide sections with useful starter content.",
+      "status": "planned",
+      "nodeIds": [
+        "unified-docs-site-and-starter-content",
+        "published-docs-site-gate"
+      ]
+    },
+    {
+      "id": "documentation-families-flowing",
+      "title": "Documentation families flowing",
+      "summary": "Streamliner can discover optional documentation families, represent them in workstream context, and capture worker documentation impact.",
+      "status": "planned",
+      "nodeIds": ["documentation-family-product-support"]
+    },
+    {
+      "id": "documentation-system-closure-ready",
+      "title": "Documentation system closure ready",
+      "summary": "All planned workstream outputs have been validated and the builder can close or extend the workstream.",
+      "status": "planned",
+      "nodeIds": ["documentation-system-closure-review"]
+    }
+  ]
+}

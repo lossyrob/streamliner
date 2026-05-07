@@ -1,0 +1,227 @@
+{
+  "schemaVersion": 1,
+  "id": "sdk-managed-worker-runtime",
+  "projectKey": "streamliner",
+  "title": "SDK-Managed Worker Runtime",
+  "summary": "Foundation research produced a constrained-go SDK capability report in PR #63. Wave 1 is now ready for the managed-worker runtime contract and foundation gate; Wave 2 remains provisional until that contract is accepted.",
+  "status": "active",
+  "attention": "focus",
+  "createdAt": "2026-05-06T03:50:15.082Z",
+  "updatedAt": "2026-05-06T21:47:38.969Z",
+  "trackingIssue": {
+    "owner": "lossyrob",
+    "repo": "streamliner",
+    "number": 59
+  },
+  "repos": [
+    {
+      "id": "streamliner",
+      "owner": "lossyrob",
+      "name": "streamliner",
+      "role": "primary"
+    }
+  ],
+  "designRefs": [
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/index.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/product.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/operating-model.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/workstream-format.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/session-system.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/concepts/context-package.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/concepts/waves.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/001-observation-based-session-tracking.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/002-file-based-context-delivery.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/004-session-registry-primary-surface.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/005-session-registry-storage-and-identity.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/006-local-streamliner-api-service.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/007-tracked-workstream-registry.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/008-paw-artifacts-for-workflow-status.md"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "sdk-capability-parity-research",
+      "type": "research",
+      "title": "SDK capability parity research",
+      "summary": "Completed via PR #63: reported constrained-go SDK/CLI parity findings, reusable smoke/spike harnesses, progress redaction guidance, cancellation and permission-policy evidence, terminal takeover verification, Streamliner plugin claim-binding evidence, and local PR-production dogfood.",
+      "status": "completed",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "tracker": {
+        "type": "github",
+        "owner": "lossyrob",
+        "repo": "streamliner",
+        "number": 60
+      },
+      "dependsOn": []
+    },
+    {
+      "id": "managed-worker-runtime-contract",
+      "type": "research",
+      "title": "Managed worker runtime contract",
+      "summary": "Turn the constrained-go SDK capability findings into the accepted product/runtime contract for managed node execution: lifecycle states, registry identity, progress stream, permission policy, node launch selection, one-way terminal takeover, cleanup, and review-loop exports.",
+      "status": "ready",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "tracker": {
+        "type": "github",
+        "owner": "lossyrob",
+        "repo": "streamliner",
+        "number": 61
+      },
+      "dependsOn": ["sdk-capability-parity-research"]
+    },
+    {
+      "id": "foundation-contract-gate",
+      "type": "gate",
+      "title": "Foundation contract gate",
+      "summary": "Builder validates SDK viability and the first-cut runtime contract before implementation nodes build against it.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "tracker": {
+        "type": "github",
+        "owner": "lossyrob",
+        "repo": "streamliner",
+        "number": 62
+      },
+      "dependsOn": ["managed-worker-runtime-contract"]
+    },
+    {
+      "id": "managed-execution-substrate",
+      "type": "task",
+      "title": "Managed execution substrate",
+      "summary": "Implement the SDK-managed node execution path behind the accepted contract, including launch context consumption, worker lifecycle state, progress emission, interruption semantics, PR/completion detection, and managed-session registry metadata.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["foundation-contract-gate"]
+    },
+    {
+      "id": "builder-managed-runtime-ui",
+      "type": "task",
+      "title": "Builder-facing managed runtime UI",
+      "summary": "Expose SDK-managed execution in the node launch and monitoring surfaces: per-node runtime selection, read-only terminal-like progress, managed-session identity, status/PR links, and lifecycle actions shaped by the runtime contract.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["foundation-contract-gate"]
+    },
+    {
+      "id": "terminal-takeover-cleanup-actions",
+      "type": "task",
+      "title": "Terminal takeover and cleanup actions",
+      "summary": "Ship the operational lifecycle actions that make managed SDK sessions usable: interrupt and open one-way Copilot CLI takeover, plus cleanup-after-merge for linked worktrees/local branches without requiring terminal interaction for simple autonomous runs.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["managed-execution-substrate", "builder-managed-runtime-ui"]
+    },
+    {
+      "id": "managed-runtime-usability-gate",
+      "type": "gate",
+      "title": "Managed runtime usability gate",
+      "summary": "Builder validates that the SDK-managed launch, monitoring, takeover, and cleanup experience is usable and safe enough to proceed into dogfood hardening and downstream export work.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["terminal-takeover-cleanup-actions"]
+    },
+    {
+      "id": "managed-runtime-dogfood-hardening",
+      "type": "task",
+      "title": "Managed runtime dogfood and hardening",
+      "summary": "Dogfood SDK-managed execution on real node work, harden failure/status/cleanup paths, reconcile docs and graph assumptions, and prepare the managed-worker runtime export for Automated PAW Review Loop.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["managed-runtime-usability-gate"]
+    },
+    {
+      "id": "managed-worker-runtime-export-gate",
+      "type": "gate",
+      "title": "Managed worker runtime export gate",
+      "summary": "Builder validates that SDK-managed node execution is usable, documented, and stable enough for Automated PAW Review Loop to consume.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "dependsOn": ["managed-runtime-dogfood-hardening"]
+    }
+  ],
+  "checkpoints": [
+    {
+      "id": "foundation-contract-aligned",
+      "title": "Foundation contract aligned",
+      "summary": "SDK capability parity is understood and the builder has accepted the managed-worker runtime contract.",
+      "status": "planned",
+      "nodeIds": [
+        "sdk-capability-parity-research",
+        "managed-worker-runtime-contract",
+        "foundation-contract-gate"
+      ]
+    },
+    {
+      "id": "managed-runtime-usable",
+      "title": "Managed runtime usable",
+      "summary": "The builder has validated the usable SDK-managed runtime: node launch selection, managed execution, read-only terminal-like monitoring, terminal takeover, and cleanup after merge.",
+      "status": "planned",
+      "nodeIds": [
+        "managed-execution-substrate",
+        "builder-managed-runtime-ui",
+        "terminal-takeover-cleanup-actions",
+        "managed-runtime-usability-gate"
+      ]
+    },
+    {
+      "id": "review-loop-export-ready",
+      "title": "Review loop export ready",
+      "summary": "The managed-worker runtime has been dogfooded, hardened, and accepted as an export for Automated PAW Review Loop.",
+      "status": "planned",
+      "nodeIds": [
+        "managed-runtime-dogfood-hardening",
+        "managed-worker-runtime-export-gate"
+      ]
+    }
+  ]
+}

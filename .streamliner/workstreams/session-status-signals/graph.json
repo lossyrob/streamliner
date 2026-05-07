@@ -7,7 +7,7 @@
   "status": "active",
   "attention": "focus",
   "createdAt": "2026-05-02T06:51:20.633Z",
-  "updatedAt": "2026-05-02T06:51:20.633Z",
+  "updatedAt": "2026-05-04T19:28:29.851Z",
   "repos": [
     {
       "id": "streamliner",
@@ -69,7 +69,7 @@
       "id": "status-lane-design-contract",
       "type": "research",
       "title": "Status lane design contract",
-      "summary": "Turn the shaping into a project design update that defines operational status versus informational signals, the neutral heat-index concept, UI hierarchy, runtime status ownership, and boundaries with existing session registry and PAW artifact status.",
+      "summary": "Turn the shaping into a project design update that defines operational status versus informational signals, active versus quiet waiting, the neutral heat-index concept, UI hierarchy, runtime status ownership, and boundaries with existing session registry and PAW artifact status.",
       "status": "ready",
       "attention": "focus",
       "repoIds": ["streamliner"],
@@ -79,7 +79,7 @@
       "id": "status-summarizer-contract",
       "type": "research",
       "title": "Status summarizer contract",
-      "summary": "Define the structured runtime summary emitted from session state, event history, process/heartbeat state, tracker/PR signals, and AI summary: operational status, reasons, suggested action, informational signals, confidence, and freshness.",
+      "summary": "Define the structured runtime summary emitted from session state, event history, process/heartbeat state, tracker/PR signals, and AI summary: operational status, waiting recency, reasons, suggested action, informational signals, confidence, and freshness.",
       "status": "planned",
       "attention": "focus",
       "repoIds": ["streamliner"],
@@ -89,7 +89,7 @@
       "id": "operational-status-classifier",
       "type": "task",
       "title": "Operational status classifier",
-      "summary": "Classify sessions into action statuses such as working, needs-builder, ready-review, blocked, stale, and closed, with reasons that distinguish conversation-needed from artifact-review-needed from external-blocker-needed.",
+      "summary": "Classify sessions into action statuses such as working, needs-builder, quiet-waiting, ready-review, blocked, stale, and closed, with reasons that distinguish fresh conversation-needed from cooled-off conversation-needed, artifact-review-needed, and external-blocker-needed.",
       "status": "planned",
       "attention": "focus",
       "repoIds": ["streamliner"],
@@ -119,7 +119,7 @@
       "id": "session-card-status-lanes",
       "type": "task",
       "title": "Session card status lanes",
-      "summary": "Update the session card/subcard UI so operational status is visually dominant and informational signals appear as secondary chips or thermal indicators, including an accessible neutral heat dot/ring instead of a fire emoji.",
+      "summary": "Update the session card/subcard UI so operational status is visually dominant, quiet-waiting sessions remain findable but lower priority than fresh needs-builder sessions, and informational signals appear as secondary chips or thermal indicators, including an accessible neutral heat dot/ring instead of a fire emoji.",
       "status": "planned",
       "attention": "focus",
       "repoIds": ["streamliner"],
@@ -143,7 +143,7 @@
       "id": "real-session-validation-gate",
       "type": "gate",
       "title": "Real session validation",
-      "summary": "Validate the status lanes, heat index, and waiting-vs-review classifier against real cool, warm, hot, blocked, needs-builder, and ready-review sessions before promoting the model as the default session status surface.",
+      "summary": "Validate the status lanes, heat index, active-vs-quiet waiting, and waiting-vs-review classifier against real cool, warm, hot, blocked, needs-builder, quiet-waiting, and ready-review sessions before promoting the model as the default session status surface.",
       "status": "planned",
       "attention": "focus",
       "repoIds": ["streamliner"],
@@ -161,7 +161,7 @@
     {
       "id": "status-detection-contract",
       "title": "Status detection contract",
-      "summary": "The summarizer contract, operational classifier, heat index, and informational signal model are defined and usable by the session UI.",
+      "summary": "The summarizer contract, operational classifier, waiting-recency model, heat index, and informational signal model are defined and usable by the session UI.",
       "status": "planned",
       "nodeIds": [
         "status-summarizer-contract",
@@ -180,7 +180,7 @@
     {
       "id": "session-status-signals-gate",
       "title": "Session status signals validated",
-      "summary": "Real sessions demonstrate that the status model distinguishes needs-builder, ready-review, working, blocked, stale, and heat states well enough for the builder to operate from.",
+      "summary": "Real sessions demonstrate that the status model distinguishes needs-builder, quiet-waiting, ready-review, working, blocked, stale, and heat states well enough for the builder to operate from.",
       "status": "planned",
       "nodeIds": ["real-session-validation-gate"]
     }

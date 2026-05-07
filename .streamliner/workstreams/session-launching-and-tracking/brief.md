@@ -26,12 +26,12 @@ Build the feature in waves:
   session context after a Windows restart — without needing the launch
   pipeline. Treats the registry as the primary session surface; the graph
   overlay is a later projection of it.
-- **Wave 3 — Launch from graph:** PAW-only MVP launch preparation: context
-  assembly, launch configuration dialog for PAW init options and CLI defaults,
-  Copilot SDK `paw-init` setup with Streamliner instructions, initial-prompt
-  templating with an optional custom-message block, launch-claim binding, and the
-  Copilot CLI interactive worker launch. Launches register into the Wave 2
-  registry rather than introducing a parallel tracking surface.
+- **Wave 3 — Launch from graph (done):** PAW-only MVP launch preparation:
+  context assembly, launch configuration dialog for PAW workflow instructions and
+  CLI defaults, Copilot SDK `paw-init` setup with Streamliner instructions,
+  kickoff-prompt templating, launch-claim binding, and the Copilot CLI
+  interactive worker launch. Launches register into the Wave 2 registry rather
+  than introducing a parallel tracking surface.
 - **Wave 4 — Sessions/graph linkage and runtime overlay:** use launch binding
   metadata to tie the Sessions view and workstream graph together. Sessions
   launched from a workstream declare their workstream/node binding in the
@@ -40,14 +40,11 @@ Build the feature in waves:
   visual language as My Sessions. PAW artifact status is workflow enrichment for
   PAW-backed launches, while general Copilot session state remains the source for
   liveness and attention state.
-- **Wave 5 — Follow-on PAW Review automation:** optionally launch separate
-  follow-on sessions after an implementation session produces a PR for the issue
-  associated with its graph node. Streamliner watches for the PR that resolves
-  the node's tracker issue, applies builder-configured PAW Review options, and
-  launches a separate PAW Review session rather than injecting prompts into the
-  implementation terminal. If review comments need action, Streamliner launches a
-  separate address-review worker session on the same PR/branch context instead of
-  trying to remotely drive an already-open interactive CLI session.
+- **Automated PAW Review Loop candidate (moved out):** follow-on review,
+  address-review, re-review, and review-session chain orchestration now belongs
+  to `.streamliner/shaping/candidates/automated-paw-review-loop.md`. This
+  workstream retains the launch/session/node/PR substrate that candidate will
+  import, not the review-loop product workflow itself.
 - **Future distribution workstream (deferred, non-blocking; tracked by issue
   #40):** package the proven launch/session pipeline behind a `streamliner` CLI,
   daemon-control commands, Copilot plugin hook installation/diagnostics, and thin
@@ -82,12 +79,14 @@ derived UI state rather than written back into `graph.json`.
   tracking, runtime overlay in the UI
 - **Out of scope:** Non-PAW launch modes for the MVP, non-Copilot worker
   runtimes, non-GitHub tracker integrations, remote multi-machine tracking,
-  devbox session observation, a general orchestration platform, the future
-  `streamliner` CLI/daemon/Copilot-plugin distribution workstream
+  devbox session observation, a general orchestration platform, the automated PAW
+  review loop candidate workstream, the future `streamliner`
+  CLI/daemon/Copilot-plugin distribution workstream
 - **Deferred:** Rich session control beyond launch/relaunch/status, full
   tracker abstraction across ADO/Linear, automatic promotion of runtime
-  facts into committed artifact state, unbounded autonomous review/address loops
-  beyond explicit Wave 5 safety gates, multi-machine sync of the registry
+  facts into committed artifact state, automated review/address/re-review loops
+  now shaped in the Automated PAW Review Loop candidate, multi-machine sync of
+  the registry
 
 ## Current State
 Wave 1 design foundation is complete. Issue #4 (`bootstrap-design-docs`)
@@ -130,24 +129,72 @@ metadata instead of hard-coded Streamliner fields. Issue #32 (PR #42) completed
 launch-claim binding: local runtime launch claims, reserved registry rows,
 Tier 1 prompt-nonce binding, Tier 2 trusted-hook binding via
 `STREAMLINER_LAUNCH_CLAIM_ID`, claim sweep/diagnostics, read-only launch-claim
-HTTP APIs, and `graphBinding` on registry rows. The remaining Wave 3 work is
-terminal launch integration: it must join the #33 preparation handoff with the
-#32 launch-claim contract and then start the visible Copilot CLI session through
-the same lower-level terminal spawning path used by session relaunch. The launch
-path should be API-first internally: the graph button is the first caller, but a
-future `streamliner` CLI, Copilot skill, MCP tool, or agent helper should be able
-to call the same local API rather than reconstructing launch instructions
-manually. PAW runtime status is still Wave 4 overlay enrichment rather than a
-Wave 3 launch blocker. The remaining observation work should consume what PR #14
-landed instead of duplicating it. Wave 4 now has explicit Sessions-to-graph
-linkage work: the Sessions view should group launched sessions by workstream and
-link each bound session back to its workstream/node, while graph nodes should
-show bound session status using the same pulse/pill language used in My
-Sessions. Wave 5 is now a planned follow-on automation wave: watch for the PR
-that solves the GitHub issue associated with a graph node, optionally launch a
-configured PAW Review session in a separate terminal/session, and optionally
-launch a separate address-review worker for comments rather than injecting
-prompts into an existing interactive implementation terminal.
+HTTP APIs, and `graphBinding` on registry rows. Issue #44 (PR #45) completed
+terminal launch integration and closed Wave 3: Streamliner now exposes an
+API-first `/api/node-launches` path that consumes the prepared PAW handoff,
+creates a launch claim before terminal spawn, injects the canonical nonce line
+and `STREAMLINER_LAUNCH_CLAIM_ID`, opens a visible Copilot CLI worker in the
+configured terminal, surfaces terminal-spawn failures through the claim-failure
+path, and joins launch-claim state into graph node launch records so duplicate
+active launches are gated. The graph button is the first caller, but the same
+local API remains the seam for a future `streamliner` CLI, Copilot skill, MCP
+tool, or agent helper rather than requiring those callers to reconstruct launch
+instructions manually. Wave 4 is now the active follow-on. The Sessions view
+workstream linkage node is complete via PR #46 / issue #48: My Sessions resolves
+`graphBinding` against tracked workstreams, shows workstream/node chips, supports
+Workstream grouping, deep-links to selected graph nodes when binding is
+resolvable, and keeps unbound/manual sessions first-class. Session event
+observation is complete via PR #54 / issue #49: registry rows now expose
+graph-independent `activityEvidence` alongside the compatibility
+`activityStatus`, covering status reason, confidence, diagnostics, pending input,
+turn-boundary timestamps/counts, process interruption, clean exits, and bounded
+event-scan metadata for downstream My Sessions and graph-overlay consumers. PAW
+artifact status observation is complete via PR #57 / issue #51: Streamliner now
+persists explicit `pawLaunch` metadata for launched PAW sessions, derives coarse
+workflow enrichment only from exact PAW work-directory metadata or retained
+launch-claim lineage, avoids cwd-based `.paw/work/*` fallback discovery, and
+shows PAW workflow chips only for recognized Streamliner-launched PAW sessions.
+Graph node session status indicators are complete via PR #58 / issue #50: graph
+nodes now project non-manual registry rows with matching `graphBinding` metadata,
+show the highest-attention My Sessions status plus bound-session count, include
+loading/error/no-bound-session fallbacks, and link to a workstream/node-scoped
+Sessions view. Issue #47 has been promoted into Wave 4 as the tracker-required
+launch policy node because it changes launch preconditions, configuration, and
+backend/API enforcement rather than being small closeout polish. The remaining
+Wave 4 graph issues are #47 tracker-required launch policy, #52 runtime overlay
+in UI, and #53 the launch-and-tracking gate. Runtime overlay in UI is now ready
+because both graph-node session status and PAW artifact status observation are
+complete. PAW runtime status remains Wave 4 overlay enrichment rather than a
+launch blocker. Small launch-polish observations are tracked in the Closeout
+Punch List rather than promoted into graph nodes unless they grow too large,
+risky, or dependency-bearing to batch.
+Automated PAW Review Loop now owns the former follow-on review automation scope
+as a separate candidate workstream. Session Launching and Tracking should leave
+that workstream importable substrate: launch claims, registry `graphBinding`,
+node launch records, workstream/node routes, PR/issue linkage seams, role/status
+metadata where needed by launch and overlay surfaces, and runtime overlay
+primitives.
+
+## Closeout Punch List
+- **batch — Resumable node launch dialog (#55):** The launch UI should support
+  parallel dogfooding: a builder can start PAW init/launch for one ready node,
+  close or navigate away from the dialog, start another node launch, and return
+  to each node's launch progress/handoff without losing runtime state.
+- **batch — Terminal launch portability seam (#56):** The current launch
+  implementation remains Windows-only, but Wave 4 closeout should review and
+  lightly refactor the terminal launch seam so Windows Terminal / PowerShell
+  assumptions are adapter-local and future macOS/Linux terminal support does not
+  need to untangle launch claims, registry binding, or node-launch handoff code.
+- **batch — Launch prompt profile loading responsiveness:** When opening the PAW
+  launch dialog, saved prompt profiles should be available promptly in the load
+  profile dropdown without the builder repeatedly reopening it while slower
+  launch-artifact or inspector-panel API calls finish. Profile loading should not
+  be blocked behind unrelated launch-state lookup work.
+
+These are parked polish items, not launchable graph nodes. Before the #53 gate
+passes, each item should be completed in a batched closeout session, deferred
+with rationale, promoted to its own node/candidate/workstream, or dropped if it
+no longer matters after reconciliation.
 
 ## Decisions
 - Use repo-local `.streamliner/workstreams/` for Streamliner's committed
@@ -203,13 +250,12 @@ prompts into an existing interactive implementation terminal.
 - Use the same session-status visual language in My Sessions and on graph nodes
   so active, idle, needs-input, launching, and ended sessions read as the same
   operational state across both surfaces.
-- For follow-on automation, launch new role-specific sessions instead of
-  injecting prompts into an existing interactive Copilot CLI terminal. The
-  implementation, PAW Review, and address-review sessions are separate registry
-  rows linked by workstream, node, PR, branch/worktree, and session role metadata.
-- Use the node's tracker issue as the PR detection anchor for follow-on review:
-  watch for a PR that resolves or is associated with the issue already attached
-  to the graph node before triggering configured PAW Review automation.
+- Export launch/session/node/PR substrate for the Automated PAW Review Loop
+  candidate rather than owning review orchestration here. That candidate imports
+  launch claims, registry linkage, graph/node binding, PR/issue seams, role/status
+  metadata, and session-chain overlay primitives from this workstream, then owns
+  PAW Review configuration, comment policy, address/re-review routing, loop
+  termination, and safety gates.
 - For PAW-backed sessions, derive workflow status from the PAW artifact set in
   the work directory rather than treating `## Control State` in
   `WorkflowContext.md` / `ReviewContext.md` as authoritative. General Copilot

@@ -7,9 +7,9 @@ with reconciliation and workstream-design learning.
 
 The desired end state is a session surface that clearly separates operational
 status from informational signals: whether a session needs the builder, is still
-working, is ready for review, is blocked, or is stale should be visually distinct
-from signals like heat, reconciliation need, boundary pressure, design impact,
-attachment, environment, and summarizer confidence.
+working, is ready for review, is quietly waiting, is blocked, or is stale should
+be visually distinct from signals like heat, reconciliation need, boundary
+pressure, design impact, attachment, environment, and summarizer confidence.
 
 ## Approach
 Treat this as a small design-and-implementation workstream centered on the
@@ -26,6 +26,10 @@ The workstream should preserve two principles:
    emoji or other good/bad cue. A neutral heat index, likely rendered as a
    thermal dot/ring with current, peak, and trend semantics, should indicate the
    degree of active builder-agent co-shaping.
+3. **Recency changes urgency.** A session can be technically waiting on a
+   builder reply while no longer being an active conversation. Recently asked
+   questions should compete for attention; cooled-off conversations should stay
+   findable without crowding the urgent session list.
 
 Implementation should consume the existing session registry and observed session
 state rather than creating a parallel tracking model. Status summaries should be
@@ -59,9 +63,10 @@ Support context:
 ## Boundaries
 - **In scope:** Session operational-status taxonomy, informational signal model,
   heat-index semantics and heuristics, AI/status summarizer structured output,
-  distinction between waiting-on-builder and ready-to-review, confidence/reason
-  strings, session-card/subcard UI organization, and reconciliation-related
-  runtime signals such as needs-reconciliation and boundary pressure.
+  distinction between active waiting, quiet waiting, and ready-to-review,
+  confidence/reason strings, session-card/subcard UI organization, and
+  reconciliation-related runtime signals such as needs-reconciliation and
+  boundary pressure.
 - **Out of scope:** Full workstream reconciliation automation, committing heat or
   transient status signals to `graph.json`, replacing the session registry,
   portfolio-shell redesign, devbox-specific observation behavior, graph launch
@@ -75,7 +80,9 @@ Support context:
 The workstream has been shaped from a brainstorming session about detecting hot
 work, distinguishing "needs my input" from "ready for review," and organizing the
 session UI around separate operational and informational status lanes. The
-initial shaping context is captured in `docs/initial-shaping.md`.
+initial shaping context is captured in `docs/initial-shaping.md`. A follow-up
+refinement adds the need to distinguish fresh, active "needs you" conversations
+from older quiet-waiting sessions that should remain visible but lower priority.
 
 No tracker issues have been created yet. The first executable node is to turn
 the shaping into an explicit status-lane design contract and update the relevant
@@ -99,6 +106,9 @@ storage, launch binding, or PAW artifact workflow status.
 - Status summaries should include reasons and confidence so the builder can see
   why Streamliner believes a session needs input, is ready for review, is blocked,
   or has meaningful interpretation signals.
+- Distinguish active waiting from quiet waiting. An unanswered assistant question
+  that has cooled off should remain discoverable but visually de-emphasized
+  instead of competing with a fresh mid-conversation request for the builder.
 - Keep fast-moving session status and heat data in runtime overlay state. The
   committed workstream artifacts should only change through reconciliation or
   explicit workstream planning updates.
@@ -112,6 +122,8 @@ storage, launch binding, or PAW artifact workflow status.
   how should its output be cached?
 - What confidence threshold should make the UI show low-confidence status rather
   than overstate "needs you" or "ready to review"?
+- What recency threshold, decay curve, or learned heuristic should demote
+  unanswered assistant prompts from active "needs you" to quiet waiting?
 - How should the thermal indicator meet accessibility requirements without
   relying on color alone?
 - Which reconciliation and boundary-pressure signals are available in V1, and
