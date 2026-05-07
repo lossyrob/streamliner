@@ -9,6 +9,7 @@ import type {
   WorkstreamDocument,
   WorkstreamLaunchDefaults,
   WorkstreamLaunchPolicy,
+  WorkstreamNode,
 } from "../workstream-schema";
 import { parseWorkstreamDocument } from "../workstream-view-model";
 
@@ -23,6 +24,7 @@ export type LaunchPolicyEvaluationResult =
       ok: true;
       launchPolicy: WorkstreamLaunchPolicy | null;
       launchDefaults: WorkstreamLaunchDefaults | null;
+      node: WorkstreamNode;
     }
   | { ok: false; kind: "blocked"; violation: WorkstreamLaunchPolicyViolation }
   | {
@@ -106,6 +108,7 @@ export function evaluateLaunchPolicyFromGraph(input: {
         ok: true,
         launchPolicy: workstream.launchPolicy ?? null,
         launchDefaults: workstream.launchDefaults ?? null,
+        node,
       }
     : { ok: false, kind: "blocked", violation: decision.violation };
 }

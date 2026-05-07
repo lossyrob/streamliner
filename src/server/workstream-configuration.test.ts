@@ -85,6 +85,7 @@ describe("updateWorkstreamConfigurationFile", () => {
       launchDefaults: {
         terminal: {
           preferredTerminal: "windows-terminal",
+          titleTemplate: "{githubIssue} · {nodeTitle}",
           tabColor: "#FF8C0A",
         },
       },
@@ -94,6 +95,7 @@ describe("updateWorkstreamConfigurationFile", () => {
     expect(result.workstream.launchDefaults).toEqual({
       terminal: {
         preferredTerminal: "windows-terminal",
+        titleTemplate: "{githubIssue} · {nodeTitle}",
         tabColor: "#ff8c0a",
       },
     });
@@ -101,10 +103,11 @@ describe("updateWorkstreamConfigurationFile", () => {
       updatedAt: "2026-05-07T18:22:44.000Z",
       launchPolicy: { requiredTracker: "github-issue" },
       launchDefaults: {
-        terminal: {
-          preferredTerminal: "windows-terminal",
-          tabColor: "#ff8c0a",
-        },
+      terminal: {
+        preferredTerminal: "windows-terminal",
+        titleTemplate: "{githubIssue} · {nodeTitle}",
+        tabColor: "#ff8c0a",
+      },
       },
     }));
 
@@ -113,6 +116,7 @@ describe("updateWorkstreamConfigurationFile", () => {
       launchDefaults: {
         terminal: {
           preferredTerminal: "default",
+          titleTemplate: "",
           tabColor: "",
         },
       },
@@ -139,6 +143,10 @@ describe("updateWorkstreamConfigurationFile", () => {
       {
         label: "tab color",
         configuration: { launchDefaults: { terminal: { tabColor: "orange" } } },
+      },
+      {
+        label: "title template",
+        configuration: { launchDefaults: { terminal: { titleTemplate: 42 } } },
       },
     ];
 

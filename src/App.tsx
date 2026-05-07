@@ -71,6 +71,7 @@ import {
   trackerLabel as workstreamTrackerLabel,
   trackerUrl as workstreamTrackerUrl,
 } from "./workstream-links";
+import { renderWorkstreamTerminalTitleTemplate } from "./workstream-launch-templates";
 import { evaluateNodeLaunchPolicy } from "./workstream-launch-policy";
 import { useSessionRegistryList } from "./session-registry-client";
 
@@ -1159,7 +1160,11 @@ function GraphDashboard({
         preferredTerminal:
           workstream?.launchDefaults?.terminal?.preferredTerminal ??
           DEFAULT_PAW_TERMINAL_CONFIGURATION.preferredTerminal,
-        title: selectedEntry.node.title,
+        title:
+          renderWorkstreamTerminalTitleTemplate(
+            workstream?.launchDefaults?.terminal?.titleTemplate,
+            selectedEntry.node,
+          ) ?? selectedEntry.node.title,
         tabColor: workstream?.launchDefaults?.terminal?.tabColor ?? null,
       },
     };

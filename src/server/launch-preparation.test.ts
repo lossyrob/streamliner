@@ -670,6 +670,7 @@ describe("preparePawLaunch", () => {
       launchDefaults: {
         terminal: {
           preferredTerminal: "windows-terminal",
+          titleTemplate: "{githubIssue} · {nodeTitle}",
           tabColor: "#4891c8",
         },
       },
@@ -689,10 +690,12 @@ describe("preparePawLaunch", () => {
 
     expect(result.terminal).toEqual(expect.objectContaining({
       preferredTerminal: "windows-terminal",
+      title: "lossyrob/streamliner#33 · Launch prompt profiles",
       tabColor: "#ff8c0a",
     }));
     expect(pawInitCalls[0].configuration.terminal).toEqual(expect.objectContaining({
       preferredTerminal: "windows-terminal",
+      title: "lossyrob/streamliner#33 · Launch prompt profiles",
       tabColor: "#ff8c0a",
     }));
   });

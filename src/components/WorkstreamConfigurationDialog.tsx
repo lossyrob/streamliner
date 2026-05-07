@@ -9,6 +9,7 @@ import {
   type WorkstreamLaunchRequiredTracker,
   type WorkstreamLaunchTerminalPreference,
 } from "../workstream-schema";
+import { WORKSTREAM_TERMINAL_TITLE_TEMPLATE_HELP } from "../workstream-launch-templates";
 import { TerminalColorQuickPicker } from "./SessionColorPicker";
 
 export interface WorkstreamConfigurationValues {
@@ -59,6 +60,9 @@ export function WorkstreamConfigurationDialog({
   const [preferredTerminal, setPreferredTerminal] = useState<WorkstreamLaunchTerminalPreference>(
     workstream.launchDefaults?.terminal?.preferredTerminal ?? "default",
   );
+  const [titleTemplate, setTitleTemplate] = useState(
+    workstream.launchDefaults?.terminal?.titleTemplate ?? "",
+  );
   const [terminalColor, setTerminalColor] = useState(
     workstream.launchDefaults?.terminal?.tabColor ?? "",
   );
@@ -75,6 +79,7 @@ export function WorkstreamConfigurationDialog({
 
     const terminal = {
       ...(preferredTerminal !== "default" ? { preferredTerminal } : {}),
+      ...(titleTemplate.trim() ? { titleTemplate: titleTemplate.trim() } : {}),
       ...(color ? { tabColor: color.toLowerCase() } : {}),
     };
     void onSave({
@@ -171,6 +176,28 @@ export function WorkstreamConfigurationDialog({
                 </select>
                 <span className="sl-field-note">
                   {terminalPreferenceHelp(preferredTerminal)}
+                </span>
+              </label>
+              <label className="sl-field">
+                <span className="sl-field-label-with-help">
+                  <span>Terminal tab title template</span>
+                  <abbr
+                    className="sl-inline-help"
+                    title={WORKSTREAM_TERMINAL_TITLE_TEMPLATE_HELP}
+                  >
+                    ?
+                  </abbr>
+                </span>
+                <input
+                  aria-label="Terminal tab title template"
+                  value={titleTemplate}
+                  onChange={(event) => setTitleTemplate(event.target.value)}
+                  placeholder="{githubIssue} · {nodeTitle}"
+                  disabled={saving}
+                />
+                <span className="sl-field-note">
+                  Use {"{githubIssue}"}, {"{nodeId}"}, or {"{nodeTitle}"}.
+                  Leave empty to use each node title.
                 </span>
               </label>
               <label className="sl-field sl-paw-launch-color-field">

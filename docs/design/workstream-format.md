@@ -219,9 +219,10 @@ The first supported nested object is `terminal`:
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `preferredTerminal` | `"default"`, `"windows-terminal"`, or `"powershell"` | | Preferred local terminal host for worker launches. If omitted or `"default"`, Streamliner uses its normal terminal selection. |
+| `titleTemplate` | string | | Default terminal tab title template. Supported variables are `{githubIssue}` (`owner/repo#number` for GitHub-tracked nodes), `{nodeId}`, and `{nodeTitle}`. If omitted, launches use the selected node title unless the builder overrides the title per launch. |
 | `tabColor` | `"#RRGGBB"` | | Default terminal tab/session color for workstream launches. If omitted, launches use the existing uncolored default unless the builder chooses a color per launch. |
 
-Unknown terminal preference values and invalid tab colors are rejected when the graph is parsed. Omitting `launchDefaults` preserves existing launch dialog defaults.
+Unknown terminal preference values, non-string title templates, and invalid tab colors are rejected when the graph is parsed. Omitting `launchDefaults` preserves existing launch dialog defaults.
 
 ### Node
 

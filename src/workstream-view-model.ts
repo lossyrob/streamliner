@@ -228,6 +228,16 @@ function parseOptionalHexColor(value: unknown, label: string): string | null | u
   return color.toLowerCase();
 }
 
+function parseOptionalString(value: unknown, label: string): string | null | undefined {
+  if (typeof value === "undefined") {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  return asNonEmptyString(value, label).trim();
+}
+
 function parseLaunchTerminalDefaults(
   value: unknown,
   label: string,
@@ -243,6 +253,7 @@ function parseLaunchTerminalDefaults(
             `${label}.preferredTerminal`,
             WORKSTREAM_LAUNCH_TERMINAL_PREFERENCES,
           ),
+    titleTemplate: parseOptionalString(record.titleTemplate, `${label}.titleTemplate`),
     tabColor: parseOptionalHexColor(record.tabColor, `${label}.tabColor`),
   };
 }

@@ -118,6 +118,7 @@ export interface WorkstreamLaunchPolicy {
 
 export interface WorkstreamLaunchTerminalDefaults {
   preferredTerminal?: WorkstreamLaunchTerminalPreference;
+  titleTemplate?: string | null;
   tabColor?: string | null;
 }
 

@@ -98,6 +98,17 @@ function normalizeTerminalPreference(value: unknown): WorkstreamLaunchTerminalPr
   return value as WorkstreamLaunchTerminalPreference;
 }
 
+function normalizeTitleTemplate(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw badConfiguration("launchDefaults.terminal.titleTemplate must be a string.");
+  }
+  const template = value.trim();
+  return template.length > 0 ? template : undefined;
+}
+
 function normalizeLaunchDefaults(value: unknown): WorkstreamLaunchDefaults | undefined {
   const record = optionalRecord(value, "launchDefaults");
   if (!record) {
@@ -108,9 +119,11 @@ function normalizeLaunchDefaults(value: unknown): WorkstreamLaunchDefaults | und
     return undefined;
   }
   const preferredTerminal = normalizeTerminalPreference(terminalRecord.preferredTerminal);
+  const titleTemplate = normalizeTitleTemplate(terminalRecord.titleTemplate);
   const tabColor = normalizeOptionalHexColor(terminalRecord.tabColor);
   const terminal = {
     ...(preferredTerminal ? { preferredTerminal } : {}),
+    ...(titleTemplate ? { titleTemplate } : {}),
     ...(tabColor ? { tabColor } : {}),
   };
   return Object.keys(terminal).length > 0 ? { terminal } : undefined;

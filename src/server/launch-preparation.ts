@@ -13,7 +13,8 @@ import {
 } from "@github/copilot-sdk";
 
 import type { NodeLaunchRecord } from "../node-launch-record-contract";
-import type { WorkstreamLaunchDefaults, WorkstreamLaunchPolicy } from "../workstream-schema";
+import type { WorkstreamLaunchDefaults, WorkstreamLaunchPolicy, WorkstreamNode } from "../workstream-schema";
+import { renderWorkstreamTerminalTitleTemplate } from "../workstream-launch-templates";
 import {
   evaluateLaunchPolicyFromGraph,
   launchPolicyDetails,
@@ -1614,6 +1615,7 @@ export async function preparePawLaunch(
   const sessionStateRoot = resolve(options.stateRoot ?? defaultStateRoot());
   let launchPolicy: WorkstreamLaunchPolicy | null = null;
   let launchDefaults: WorkstreamLaunchDefaults | null = null;
+  let launchDefaultsNode: WorkstreamNode | null = null;
   const policyGraphPath = options.graphPath ?? options.defaultGraphPath;
   if (policyGraphPath) {
     const policyResult = evaluateLaunchPolicyFromGraph({
@@ -1647,9 +1649,27 @@ export async function preparePawLaunch(
     }
     launchPolicy = policyResult.launchPolicy;
     launchDefaults = policyResult.launchDefaults;
+    launchDefaultsNode = policyResult.node;
   }
+  const terminalTitleDefault = launchDefaultsNode
+    ? renderWorkstreamTerminalTitleTemplate(
+        launchDefaults?.terminal?.titleTemplate,
+        launchDefaultsNode,
+      )
+    : null;
+  const terminalDefaults = launchDefaults?.terminal
+    ? {
+        ...(launchDefaults.terminal.preferredTerminal
+          ? { preferredTerminal: launchDefaults.terminal.preferredTerminal }
+          : {}),
+        ...(launchDefaults.terminal.tabColor
+          ? { tabColor: launchDefaults.terminal.tabColor }
+          : {}),
+        ...(terminalTitleDefault ? { title: terminalTitleDefault } : {}),
+      }
+    : undefined;
   const parsedConfiguration = parseConfigurationInput(options.configuration, {
-    terminal: launchDefaults?.terminal,
+    terminal: terminalDefaults,
   });
 
   const contextPreparer = options.contextPreparer ?? prepareLaunchContextPackage;

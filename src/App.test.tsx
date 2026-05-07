@@ -2277,6 +2277,10 @@ describe("App sessions route", () => {
       await settle();
       setSelectValue(findSelectByLabel(container, "Required tracker"), "github-issue");
       setSelectValue(findSelectByLabel(container, "Preferred terminal"), "windows-terminal");
+      setInputValue(
+        findInputByLabel(container, "Terminal tab title template"),
+        "{githubIssue} · {nodeTitle}",
+      );
       act(() => {
         findButtonByLabel(container, "Use terminal color #ff8c0a").click();
       });
@@ -2291,6 +2295,7 @@ describe("App sessions route", () => {
         launchDefaults: {
           terminal: {
             preferredTerminal: "windows-terminal",
+            titleTemplate: "{githubIssue} · {nodeTitle}",
             tabColor: "#ff8c0a",
           },
         },
@@ -2307,6 +2312,9 @@ describe("App sessions route", () => {
       await settle();
 
       expect(findSelectByLabel(container, "Preferred terminal").value).toBe("windows-terminal");
+      expect(findInputByLabel(container, "Terminal tab title").value).toBe(
+        "lossyrob/streamliner#33 · Launch prompt profiles",
+      );
       expect(container.textContent).toContain("Selected #ff8c0a");
     },
     15_000,
