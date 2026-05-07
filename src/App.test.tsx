@@ -1980,12 +1980,24 @@ describe("App sessions route", () => {
       act(() => {
         source?.emit("progress", {
           type: "agent.message",
+          message: "Initial SDK status replayed from start.",
+          timestamp: "2026-05-03T18:00:00.500Z",
+        });
+        source?.emit("progress", {
+          type: "agent.message",
+          message: "Snapshot progress before reopen.",
+          timestamp: "2026-05-03T18:00:01.000Z",
+        });
+        source?.emit("progress", {
+          type: "agent.message",
           message: "Live progress after reattach.",
           timestamp: "2026-05-03T18:00:02.000Z",
         });
       });
       await settle();
 
+      expect(container.textContent).toContain("Initial SDK status replayed from start.");
+      expect((container.textContent?.match(/Snapshot progress before reopen\./g) ?? [])).toHaveLength(1);
       expect(container.textContent).toContain("Live progress after reattach.");
     },
     15_000,
