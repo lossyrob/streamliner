@@ -110,6 +110,31 @@ After PAW launch initialization completes, terminal integration:
 5. **Bind on trusted signal or discovery** — when the hook signal or session watcher detects the new Copilot session, bind it to the launch claim and reserved registry row.
 6. **Fail honestly** — if terminal spawn fails after claim creation, transition the claim with failure code `terminal-spawn-failed`, clean up the reserved row through the claim-failure contract, log the failure, and return a typed error instead of a success-shaped pending state.
 
+### Launch Operation State and Reattachment
+
+Graph launch operations are per-node runtime state keyed by graph path and node id. This state belongs to the local API/runtime store, not `graph.json` or the workstream brief. The latest prepared launch record remains the durable path-oriented handoff summary, while the launch operation snapshot records fast-moving lifecycle state that lets the UI close, switch nodes, start other launches, and later reopen the same node without losing context.
+
+The API projects the following operation states:
+
+| State | Meaning | Retry behavior |
+|-------|---------|----------------|
+| `launchable` | No current operation blocks the selected ready node | Builder may start PAW init |
+| `preparing` | A launch-preparation run is active for this graph node | Same-node PAW init and terminal launch are blocked; other nodes may launch |
+| `prepared` | PAW init produced a handoff, kickoff prompt, and reviewable `WorkflowContext.md` | Builder may review/edit and launch the terminal |
+| `preparation_failed` | PAW init or context preparation failed | Retry is intentional; progress/error details remain visible |
+| `launching` | The terminal-launch request is creating a claim and spawning Copilot CLI | Same-node duplicate terminal launch is blocked |
+| `launched_pending_binding` | Terminal spawn returned and the launch claim is pending within its binding window | Duplicate launch remains blocked by claim state |
+| `bound` | Observation bound the launch claim to a registry row/session | Duplicate launch remains blocked while that bound session is active |
+| `terminal_failed` | Claim creation or terminal spawn failed | Retry is intentional after the failed claim is non-blocking |
+
+`launched_pending_binding` and `bound` are projections over launch-claim state. The operation snapshot may remember the terminal-launch result, but launch claims remain authoritative for pending, bound, failed, blocking, and retryable semantics. If a claim is pending within its binding window or already bound, the same node cannot start another launch even if the dialog is reopened. Failed preparation and terminal-spawn failures remain explicit retry states.
+
+Launch preparation run events are replayable through the existing run SSE endpoint while the API process still has the run buffer. The operation snapshot is the source of truth on dialog reopen: it carries the preparation run id, bounded progress history, last error, prepared handoff, terminal launch result, and claim projection. If the run id is unknown, the SSE buffer has rotated, or the API restarted, the UI falls back to the operation snapshot and presents the appropriate retry, review, or launch action instead of resetting to a blank dialog.
+
+The terminal-launch route remains a synchronous POST. To make that phase reattachable enough for the graph UI, the backend writes `launching` before claim creation/spawn and writes either `launched_pending_binding` with the terminal result or `terminal_failed` with diagnostic details before returning. The in-flight terminal-spawn window is bounded by the request, while the post-return binding state is represented by the operation snapshot plus launch-claim projection.
+
+The launch dialog is non-modal with respect to operation ownership. Closing the dialog or selecting another node only hides/unsubscribes the current view; it does not cancel the server-side preparation run or clear the node's operation. Reopening a prepared operation restores the handoff, kickoff prompt editor, and `WorkflowContext.md` review access. Starting a second node launch uses a separate operation key so progress, errors, terminal results, and claims cannot bleed between nodes.
+
 ### PAW Launch Configuration and Init Instructions
 
 The implemented launch surface is a text-guided PAW init dialog, not the full PAW `WorkflowContext.md` configuration UI. Defaults are intentionally visible to the builder in the instructions textarea:

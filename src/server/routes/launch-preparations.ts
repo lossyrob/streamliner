@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { Router, type Response } from "express";
 
 import {
@@ -7,6 +9,7 @@ import {
   type PawLaunchSessionRunner,
   type PawInitRunner,
   type PawLaunchConfigurationInput,
+  type PawLaunchProgressEvent,
 } from "../launch-preparation";
 import {
   LaunchPreparationRunManager,
@@ -17,6 +20,7 @@ import type {
   LaunchContextTrackerResolver,
 } from "../launch-context";
 import type { NodeLaunchRecordStore } from "../node-launch-record-store";
+import { getApiLogger } from "../logger";
 
 export interface LaunchPreparationRouteDeps {
   cwd?: string;
@@ -60,6 +64,7 @@ export function createLaunchPreparationsRouter(options: {
 } = {}): Router {
   const router = Router();
   const runManager = options.deps?.runManager ?? new LaunchPreparationRunManager();
+  const logger = getApiLogger().withScope("launch-preparations");
 
   const buildPrepareOptions = async (
     body: Record<string, unknown>,
@@ -99,12 +104,56 @@ export function createLaunchPreparationsRouter(options: {
 
   router.post("/launch-preparations", async (req, res, next) => {
     const body = requestBodyRecord(req.body);
+    const nodeId = typeof body.nodeId === "string" ? body.nodeId : "";
+    const graphPath = typeof body.graphPath === "string"
+      ? body.graphPath
+      : options.defaultGraphPath;
+    const operationStore = options.deps?.nodeLaunchRecordStore;
+    let operationStarted = false;
 
     try {
-      const result = await preparePawLaunch(await buildPrepareOptions(body));
-      await options.deps?.nodeLaunchRecordStore?.upsertFromHandoff(result);
+      const prepareOptions = await buildPrepareOptions(body);
+      const existingOperation = graphPath && nodeId.trim()
+        ? await operationStore?.getOperation(graphPath, nodeId)
+        : null;
+      if (existingOperation && isActiveOperation(existingOperation.status)) {
+        res.status(409).json({
+          code: "duplicate_active_launch_operation",
+          error: `Node ${nodeId} already has an active launch operation.`,
+          operation: existingOperation,
+        });
+        return;
+      }
+      const runId = randomUUID();
+      if (graphPath && nodeId.trim()) {
+        await operationStore?.startPreparationOperation({ graphPath, nodeId, runId });
+        operationStarted = true;
+      }
+      const progress = (event: PawLaunchProgressEvent) => {
+        if (graphPath && nodeId.trim() && operationStore) {
+          void operationStore.appendOperationProgress(graphPath, nodeId, event).catch((error: unknown) => {
+            logger.error("failed to store launch preparation progress", {
+              graphPath,
+              nodeId,
+              err: loggableError(error),
+            });
+          });
+        }
+      };
+      const result = await preparePawLaunch({
+        ...prepareOptions,
+        onProgress: progress,
+      });
+      await operationStore?.markPreparationSucceeded(result);
       res.status(200).json(result);
     } catch (error: unknown) {
+      if (operationStarted && graphPath && nodeId.trim()) {
+        await operationStore?.markPreparationFailed({
+          graphPath,
+          nodeId,
+          error: toOperationError(error),
+        });
+      }
       if (error instanceof LaunchPreparationError) {
         res.status(error.statusCode).json({
           code: error.code,
@@ -122,17 +171,61 @@ export function createLaunchPreparationsRouter(options: {
     const body = requestBodyRecord(req.body);
     try {
       const prepareOptions = await buildPrepareOptions(body);
-      const snapshot = runManager.start(async (onProgress) => {
-        const result = await preparePawLaunch({
-          ...prepareOptions,
-          onProgress,
+      const nodeId = typeof body.nodeId === "string" ? body.nodeId : "";
+      const graphPath = typeof body.graphPath === "string"
+        ? body.graphPath
+        : options.defaultGraphPath;
+      const operationStore = options.deps?.nodeLaunchRecordStore;
+      const existingOperation = graphPath && nodeId.trim()
+        ? await operationStore?.getOperation(graphPath, nodeId)
+        : null;
+      if (existingOperation && isActiveOperation(existingOperation.status)) {
+        res.status(409).json({
+          code: "duplicate_active_launch_operation",
+          error: `Node ${nodeId} already has an active launch operation.`,
+          operation: existingOperation,
         });
-        await options.deps?.nodeLaunchRecordStore?.upsertFromHandoff(result);
-        return result;
-      });
+        return;
+      }
+      const runId = randomUUID();
+      const startedOperation = graphPath && nodeId.trim()
+        ? await operationStore?.startPreparationOperation({ graphPath, nodeId, runId })
+        : null;
+      const snapshot = runManager.start(async (onProgress) => {
+        const progress = (event: PawLaunchProgressEvent) => {
+          onProgress(event);
+          if (graphPath && nodeId.trim() && operationStore) {
+            void operationStore.appendOperationProgress(graphPath, nodeId, event).catch((error: unknown) => {
+              logger.error("failed to store launch preparation progress", {
+                graphPath,
+                nodeId,
+                err: loggableError(error),
+              });
+            });
+          }
+        };
+        try {
+          const result = await preparePawLaunch({
+            ...prepareOptions,
+            onProgress: progress,
+          });
+          await operationStore?.markPreparationSucceeded(result);
+          return result;
+        } catch (error: unknown) {
+          if (graphPath && nodeId.trim()) {
+            await operationStore?.markPreparationFailed({
+              graphPath,
+              nodeId,
+              error: toOperationError(error),
+            });
+          }
+          throw error;
+        }
+      }, { runId });
       res.status(202).json({
         runId: snapshot.runId,
         status: snapshot.status,
+        operation: startedOperation,
       });
     } catch (error: unknown) {
       if (error instanceof LaunchPreparationError) {
@@ -176,7 +269,8 @@ export function createLaunchPreparationsRouter(options: {
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders?.();
 
-    const lastEventId = parseLastEventId(req.header("last-event-id"));
+    const queryLastEventId = typeof req.query.lastEventId === "string" ? req.query.lastEventId : undefined;
+    const lastEventId = parseLastEventId(req.header("last-event-id") ?? queryLastEventId);
     for (const event of runManager.eventsAfter(req.params.runId, lastEventId) ?? []) {
       writeRunSse(res, event);
     }
@@ -194,6 +288,36 @@ export function createLaunchPreparationsRouter(options: {
   });
 
   return router;
+}
+
+function isActiveOperation(status: string): boolean {
+  return status === "preparing" || status === "launching";
+}
+
+function toOperationError(error: unknown): {
+  code: string;
+  error: string;
+  step?: string;
+  input?: string;
+} {
+  if (error instanceof LaunchPreparationError) {
+    return {
+      code: error.code,
+      error: error.message,
+      step: error.step,
+      input: error.input,
+    };
+  }
+  return {
+    code: "launch_preparation_failed",
+    error: error instanceof Error ? error.message : String(error),
+  };
+}
+
+function loggableError(error: unknown): Record<string, string> | string {
+  return error instanceof Error
+    ? { name: error.name, message: error.message }
+    : String(error);
 }
 
 function parseLastEventId(value: string | undefined): number | null {

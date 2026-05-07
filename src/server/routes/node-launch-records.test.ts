@@ -154,13 +154,13 @@ describe("GET /api/node-launch-records", () => {
       .query({ graphPath, nodeId: "node-a" })
       .expect(200);
 
-    expect(response.body).toEqual({
+    expect(response.body).toEqual(expect.objectContaining({
       record: expect.objectContaining({
         graphPath,
         nodeId: "node-a",
         latestClaim: null,
       }),
-    });
+    }));
     expect(response.body).not.toHaveProperty("records");
   });
 
