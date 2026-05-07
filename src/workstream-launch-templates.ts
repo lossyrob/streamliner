@@ -1,8 +1,7 @@
 import type { WorkstreamNode } from "./workstream-schema";
-import { issueLabel } from "./workstream-links";
 
 export const WORKSTREAM_TERMINAL_TITLE_TEMPLATE_HELP =
-  "{githubIssue} = GitHub issue as owner/repo#number; {nodeId} = graph node id; {nodeTitle} = graph node title.";
+  "{githubIssue} = GitHub issue as #number; {nodeId} = graph node id; {nodeTitle} = graph node title.";
 
 export function renderWorkstreamTerminalTitleTemplate(
   template: string | null | undefined,
@@ -14,7 +13,7 @@ export function renderWorkstreamTerminalTitleTemplate(
   }
 
   const values: Record<string, string> = {
-    githubIssue: node.tracker?.type === "github" ? issueLabel(node.tracker) ?? "" : "",
+    githubIssue: node.tracker?.type === "github" ? `#${node.tracker.number}` : "",
     nodeId: node.id,
     nodeTitle: node.title,
   };

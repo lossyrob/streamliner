@@ -2313,7 +2313,7 @@ describe("App sessions route", () => {
 
       expect(findSelectByLabel(container, "Preferred terminal").value).toBe("windows-terminal");
       expect(findInputByLabel(container, "Terminal tab title").value).toBe(
-        "lossyrob/streamliner#33 - Launch prompt profiles",
+        "#33 - Launch prompt profiles",
       );
       expect(container.textContent).toContain("Selected #ff8c0a");
     },

@@ -27,9 +27,7 @@ describe("renderWorkstreamTerminalTitleTemplate", () => {
         "{githubIssue} - {nodeId} - {nodeTitle}",
         node,
       ),
-    ).toBe(
-      "lossyrob/streamliner#47 - tracker-required-launch-policy - Tracker-required launch policy",
-    );
+    ).toBe("#47 - tracker-required-launch-policy - Tracker-required launch policy");
   });
 
   it("leaves unknown template values literal and returns null for empty output", () => {

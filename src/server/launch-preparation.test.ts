@@ -690,12 +690,12 @@ describe("preparePawLaunch", () => {
 
     expect(result.terminal).toEqual(expect.objectContaining({
       preferredTerminal: "windows-terminal",
-      title: "lossyrob/streamliner#33 - Launch prompt profiles",
+      title: "#33 - Launch prompt profiles",
       tabColor: "#ff8c0a",
     }));
     expect(pawInitCalls[0].configuration.terminal).toEqual(expect.objectContaining({
       preferredTerminal: "windows-terminal",
-      title: "lossyrob/streamliner#33 - Launch prompt profiles",
+      title: "#33 - Launch prompt profiles",
       tabColor: "#ff8c0a",
     }));
   });
