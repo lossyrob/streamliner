@@ -1126,6 +1126,10 @@ describe("App sessions route", () => {
       expect(container.textContent).not.toContain("Runtime overlay");
       expect(container.textContent).toContain("PAW overlay worker (working)");
       expect(container.textContent).toContain("pending blocking launch");
+      expect(container.textContent).toContain(
+        "GitHub tracker linked; live issue/PR snapshot not loaded.",
+      );
+      expect(container.textContent).not.toContain("tracker snapshot missing");
       expect(
         fetchMock.mock.calls.some(([input]) => {
           const path = requestPath(input as RequestInfo | URL);
