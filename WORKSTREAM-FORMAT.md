@@ -304,6 +304,13 @@ design layer, starting from the references but not limited to them.}
 {Removed when resolved. If the answer becomes a stable execution choice, move
 it to Decisions. If it changes project design, promote it into the design
 layer.}
+
+## Closeout Punch List
+{Optional. Polish, cleanup, and confidence-gap items discovered while using or
+executing the workstream that should be resolved before closure but do not merit
+immediate hot work or standalone nodes. Keep this bounded; promote anything
+large, risky, or dependency-bearing into its own node, issue, candidate, or
+follow-on workstream.}
 ```
 
 ### Guidelines
@@ -314,6 +321,9 @@ layer.}
 - **The `Design References` section is human-readable.** The graph's `designRefs` array is the machine-readable starting-point list. Keep them in sync.
 - **The brief's `Decisions` section is not a copy of the design docs.** Use it for workstream-local sequencing, decomposition, and execution choices.
 - **Current State is a durable summary, not a heartbeat log.** Rewrite it when the workstream meaningfully changes direction, ownership, or progress. Do not churn it for every session pulse, CI update, or tracker refresh.
+- **Use `Closeout Punch List` as a parking lot throughout execution.** It is for
+  bounded polish and cleanup discovered while dogfooding that should be handled
+  before closure but does not need immediate hot work or a standalone node.
 - **Runtime telemetry lives outside the brief.** Session IDs, heartbeats, node claims, and tracker caches belong in Streamliner's local runtime store.
 
 ---
@@ -377,6 +387,77 @@ Each node is a unit of work in the dependency graph.
 - **task** - concrete work: implement a feature, write tests, set up infrastructure. Typically backed by a GitHub issue.
 - **research** - investigation or spike: explore an approach, evaluate a library, prototype something. May or may not produce code.
 - **gate** - validation checkpoint where the operator evaluates whether the workstream is on track. Gates block downstream work until passed. Use gates at wave boundaries or major milestones.
+
+### Node granularity
+
+A node is a **session and accountability unit**, not a checklist item. Start from
+the largest coherent unit of work that one worker session can execute with good
+context, clear boundaries, and reviewable output, then split where separate
+sessions create enough value to justify their coordination and review cost. When
+PAW or a similar workflow is used, its internal plan and phases should usually
+handle sequential substeps inside one node rather than forcing each phase into
+the graph.
+
+Parallelism is a first-class reason to split nodes. If a wave contains
+independently executable work that can proceed under a stable contract with low
+merge, review, and reconciliation risk, prefer parallel nodes to reduce
+wall-clock time. Do not split merely because work can be listed separately; split
+when parallel execution is likely to remain faster after coordination cost.
+
+Other useful split reasons include:
+
+- **Different expertise or role:** design/research, backend, UI, docs, review,
+  or operational work need different focused contexts.
+- **Independent validation:** each output can be accepted, rejected, or reviewed
+  without needing the whole wave to land.
+- **External dependency boundary:** access, approval, upstream work, or another
+  workstream export blocks only part of the work.
+- **Failure isolation:** a risky spike should not be bundled with straightforward
+  implementation.
+- **Context limit:** one worker would need to hold too many unrelated subsystems
+  or decisions in context.
+- **Separate durable outputs:** downstream work can consume one output without
+  waiting for the rest.
+
+Otherwise, bias toward fewer, heavier nodes. Extra nodes are not free: each one
+may mean another worker launch, context load, PR, review session, reconciliation
+step, and opportunity for adjacent sessions to make incompatible decisions.
+Later-wave nodes are especially provisional. At wave promotion time, the
+orchestrator can split a coarse sketch node to unlock safe parallelism or manage
+real complexity, or merge nodes if one worker should own the interrelated
+changes.
+
+### Closeout punch-list lane
+
+As a workstream executes, the operator may notice polish, UX adjustments, small
+seams, or final cleanup while using the evolving feature. These observations can
+arrive before the whole workstream is ready to close. Do not automatically turn
+each observation into immediate hot work or its own graph node. PAW-backed worker
+sessions are intentionally heavyweight, and a pile of tiny closeout nodes can cost
+more to launch, review, and reconcile than the work itself.
+
+Use a closeout punch-list lane when the items are small, related to the current
+workstream, and low-risk:
+
+- record the items in the brief's optional `Closeout Punch List` section or a
+  workstream-local support file referenced from `Current State`;
+- keep accumulating and triaging items as the workstream progresses;
+- batch related items into one closeout node/session when there is actual work
+  worth launching, usually near a gate or closure point;
+- resolve every item before closure by marking it completed, deferred, or
+  promoted.
+
+Do not create an empty closeout node just to represent the possibility of polish.
+The closure gate owns the validation question: "is there any remaining closeout
+work?" If the answer is no, the gate can pass without a closeout task node. If the
+answer is yes and the items are small enough to batch, create or promote a
+closeout task node before the gate. If the items are larger than polish, promote
+them out of the punch list.
+
+Promote an item out of the punch list when it changes product/design semantics,
+needs its own gate or design decision, touches unrelated subsystems, carries
+meaningful review risk, makes the batch too large for one focused session, or
+produces an export another workstream will consume.
 
 **Attention levels (engagement control):**
 
@@ -734,6 +815,10 @@ The design docs describe the intended system from the operator's perspective. Th
 - **Include the design index plus the specific docs that matter.** Do not dump the whole design corpus into `designRefs`.
 - **Keep brief decisions workstream-local.** Project-wide architectural choices belong in design docs or decision records, not in the brief's `Decisions` section.
 - **Nodes should be outcome-oriented.** The title and summary describe what the node accomplishes, not the implementation steps. Implementation details go in the spec (issue or local file).
+- **Do not create one node per closeout polish item.** Collect bounded late-stage
+  polish in a closeout punch list and batch it into a single closeout
+  node/session when safe. Promote large or dependency-bearing items out of the
+  punch list.
 - **Use gates at wave boundaries.** A gate marks where the operator evaluates the workstream before the next wave proceeds.
 - **Later-wave nodes are sketches.** They need a title, summary, and rough dependencies, but no tracker or detailed spec.
 - **Keep dependencies minimal.** Only add an edge if the upstream node's output is genuinely required by the downstream node.

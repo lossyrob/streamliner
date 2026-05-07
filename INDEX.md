@@ -20,6 +20,7 @@
 |---|---|
 | [DOCTRINE.md](DOCTRINE.md) | How the operating model makes workstream-level thinking work in practice. Roles (developer, orchestrator, worker), the Layer 0–3 context package, information flow through artifacts, presence and engagement spectrum, the operating rhythm (shape → execute → wave transition → gate review), feedback loops, context authority, and design influences from military command doctrine. |
 | [ORCHESTRATION.md](ORCHESTRATION.md) | How workstream-level orchestration happens when interactive sessions, SDK-backed tasks, UI actions, runtime state, and artifact reconciliation coexist. Orchestration as a workstream function rather than a single session's authority, with reconciliation as work-geometry feedback. |
+| [WORKSTREAM-DESIGN.md](WORKSTREAM-DESIGN.md) | Working philosophy for shaping Streamliner work geometry: confidence transitions, sequential waves, parallel nodes, PAW-sized worker missions, and split/merge heuristics. |
 | [HOT-WORK.md](HOT-WORK.md) | The phase-change moment when steady autonomous execution gives way to rapid, high-context developer–agent iteration. What hot work is, why it's a named concept, and how the operating model accounts for it. |
 
 ## Artifact formats and references

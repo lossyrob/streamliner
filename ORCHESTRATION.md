@@ -79,6 +79,70 @@ Top-down orchestration updates:
 This is the mode the operator uses when talking with an orchestrator session to
 plan, reshape, or reason about the work.
 
+#### Node creation and session cost
+
+When top-down orchestration creates or reshapes nodes, it should account for the
+cost of launching, reviewing, and reconciling worker sessions. A node is the
+largest coherent unit of work that one worker can execute with good context,
+clear boundaries, and reviewable output. It is not a checklist item and should
+not mirror every phase of the worker's internal plan.
+
+Balance coherence against parallelism. Bias toward fewer, heavier nodes when the
+work fits in one context and the interrelated changes are safer for one worker to
+reason through sequentially. Split a wave into multiple nodes when the work can
+run safely in parallel under a stable contract and the wall-clock speedup is
+likely to survive launch, review, merge, and reconciliation cost. Parallelism is
+a first-class reason to split, but "can be listed separately" is not enough.
+
+Other split reasons include different expertise or roles, independent validation
+surfaces, external dependency boundaries, failure isolation, context limits, or
+separately consumable outputs.
+
+Later-wave node breakdowns are hypotheses. At promotion time, the orchestrator
+reviews what actually shipped, then may split a coarse sketch node to unlock safe
+parallelism or manage real complexity, merge adjacent nodes, or replace the
+sketch with a different node shape before creating tracker issues or local specs.
+
+#### Closeout punch-list lane
+
+During execution, the operator may discover small polish and cleanup items while
+using the feature. The orchestrator should capture those items without
+reflexively turning each one into hot work or a separate node. The items can
+accumulate before the final closure phase.
+
+Use a closeout punch-list lane when the items are bounded, low-risk, and tightly
+coupled to the current workstream. The orchestrator records them, triages them,
+and batches related entries into a single closeout node/session when that is more
+efficient than many small worker launches, usually near a gate or closure point.
+
+The punch-list lane is gate-owned and conditional. Do not create an empty
+closeout node just because the workstream is nearing closure. The closure gate
+asks whether any closeout work remains. If none exists, the gate can pass. If
+bounded polish exists, create or promote one closeout task node/session to handle
+the batch before the gate. If the items are too large, risky, or
+dependency-bearing, promote them out of the punch list.
+
+The normal process is:
+
+1. The operator tells the orchestrator to add a punch-list item.
+2. The orchestrator records the item on the workstream and does a quick triage:
+   batch, promote, defer, or reject as out of scope.
+3. The item stays parked until the orchestrator decides a closeout batch is worth
+   launching or the closure gate needs to resolve it.
+4. Reconciliation keeps the punch list honest as items are completed, deferred,
+   promoted, or dropped.
+
+Each punch-list item should eventually be one of:
+
+- **completed** in the closeout batch;
+- **deferred** explicitly with rationale;
+- **promoted** to its own node, tracker issue, candidate, or follow-on workstream;
+- **dropped** because it no longer matters after reconciliation.
+
+Promote out of the punch list when the item changes core semantics, needs a
+design decision or gate, touches unrelated systems, carries meaningful review
+risk, or produces an export another workstream depends on.
+
 ### Bottom-up reconciliation
 
 Bottom-up reconciliation absorbs reality.
@@ -144,6 +208,7 @@ Inbox entries can include:
 - tracker status changed
 - session attached, detached, or disappeared
 - developer marked a burst of hot work
+- operator added or changed a closeout punch-list item
 - design docs changed
 - graph and runtime state disagree
 - downstream checkpoint became ready
@@ -217,6 +282,7 @@ Useful triggers include:
 - worker completes a node
 - PR opens or merges
 - checkpoint or gate is reached
+- closeout punch-list item is added, resolved, deferred, or promoted
 - wave transition begins
 - developer finishes direct presence or hot work
 - runtime state and graph state diverge
