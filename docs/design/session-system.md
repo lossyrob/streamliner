@@ -1097,6 +1097,22 @@ Sessions run in visible terminals. The builder sees:
 
 Conceptually, the launch integration is doing the equivalent of `copilot -i "<kickoff prompt>" .` in the prepared `cwd`, even if the exact terminal adapter wraps that command differently for the local platform.
 
+### Terminal Adapter Seam
+
+The node launch and relaunch pipelines treat the terminal as an adapter boundary.
+Launch claims, registry binding, graph-node handoff parsing, node launch records,
+and relaunch validation are Streamliner API/session concepts; terminal host
+selection and shell command encoding are adapter concerns.
+
+The current adapter is Windows-only. It owns Windows Terminal discovery, `wt.exe`
+argument construction, PowerShell Core detection, PowerShell fallback,
+PowerShell launch-script creation, and the PowerShell command strings used for
+`copilot -i` and `copilot --resume=<id>`. The public compatibility values remain
+`default`, `windows-terminal`, and `powershell`; `default` currently means
+"prefer Windows Terminal when available, otherwise PowerShell." Future macOS or
+Linux adapters should implement the same launch request shape rather than
+changing launch claims, graph binding, node launch records, or relaunch state.
+
 ### Operator Presence
 
 The builder can engage with a session at any time:

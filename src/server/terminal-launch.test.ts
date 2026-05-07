@@ -4,11 +4,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import {
+  TERMINAL_HOST_PREFERENCES,
   buildSpawnEnv,
   buildCopilotInteractiveCommand,
+  buildCopilotResumeCommand,
+  getDefaultTerminalLaunchAdapter,
+  normalizeTerminalLaunchRequest,
   isWindowsTerminalAvailable,
   clearWindowsTerminalCache,
   launchTerminal,
+  type TerminalLaunchAdapter,
 } from "./terminal-launch";
 
 vi.mock("node:child_process", () => {
@@ -447,6 +452,62 @@ describe("terminal-launch", () => {
     });
   });
 
+  describe("terminal adapter seam", () => {
+    it("keeps the compatibility host preference values stable", () => {
+      expect([...TERMINAL_HOST_PREFERENCES]).toEqual([
+        "default",
+        "windows-terminal",
+        "powershell",
+      ]);
+    });
+
+    it("normalizes compatibility options into an adapter launch request", () => {
+      expect(normalizeTerminalLaunchRequest({
+        cwd: "C:\\Users\\test\\workspace",
+        command: "npm run dev",
+        env: { STREAMLINER_LAUNCH_CLAIM_ID: "claim-1" },
+        preferredTerminal: "powershell",
+        title: "Dev",
+        tabColor: "#00FF00",
+      })).toEqual({
+        cwd: "C:\\Users\\test\\workspace",
+        command: "npm run dev",
+        env: { STREAMLINER_LAUNCH_CLAIM_ID: "claim-1" },
+        hostPreference: "powershell",
+        title: "Dev",
+        tabColor: "#00FF00",
+      });
+    });
+
+    it("delegates normalized requests to the selected terminal adapter", () => {
+      const launch = vi.fn<TerminalLaunchAdapter["launch"]>(
+        () => ({ method: "powershell", pid: 42 }),
+      );
+      const adapter: TerminalLaunchAdapter = {
+        id: "test-adapter",
+        launch,
+      };
+
+      const result = launchTerminal({
+        cwd: "C:\\Users\\test\\workspace",
+        preferredTerminal: "windows-terminal",
+        title: "Portable seam",
+      }, adapter);
+
+      expect(result).toEqual({ method: "powershell", pid: 42 });
+      expect(adapter.launch).toHaveBeenCalledWith(expect.objectContaining({
+        cwd: "C:\\Users\\test\\workspace",
+        hostPreference: "windows-terminal",
+        title: "Portable seam",
+      }));
+      expect(spawn).not.toHaveBeenCalled();
+    });
+
+    it("uses the Windows adapter as the current default adapter", () => {
+      expect(getDefaultTerminalLaunchAdapter().id).toBe("windows");
+    });
+  });
+
   describe("buildCopilotInteractiveCommand", () => {
     it("builds a PowerShell command that parses the prompt and quotes args", () => {
       const command = buildCopilotInteractiveCommand({
@@ -460,6 +521,10 @@ describe("terminal-launch", () => {
       expect(command).not.toContain("$streamlinerKickoffPrompt .");
       expect(command).toContain("\\n");
       expect(command).not.toContain("Line 1\nLine 2");
+    });
+
+    it("builds the PowerShell resume command in the same adapter-owned helper", () => {
+      expect(buildCopilotResumeCommand("it's-a-session")).toBe("copilot '--resume=it''s-a-session'");
     });
   });
 
@@ -540,4 +605,3 @@ describe("terminal-launch", () => {
     });
   });
 });
-
