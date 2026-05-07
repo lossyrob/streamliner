@@ -2,7 +2,7 @@ import type { WorkstreamNode } from "../workstream-schema";
 import type { WorkstreamDerivedNode } from "../workstream-view-model";
 import type { WorkstreamGraphLayoutResult } from "../workstream-graph";
 import type { WorkstreamDocument } from "../workstream-schema";
-import type { NodeLaunchRecord } from "../node-launch-record-contract";
+import type { NodeLaunchOperation, NodeLaunchRecord } from "../node-launch-record-contract";
 import { trackerLabel, trackerUrl } from "../workstream-links";
 import { humanizeLaunchClaim } from "./launch-claim-display";
 
@@ -13,6 +13,7 @@ interface NodeInspectorProps {
   canLaunch?: boolean;
   launchDisabledReason?: string;
   launchRecord?: NodeLaunchRecord | null;
+  launchOperation?: NodeLaunchOperation | null;
   launchRecordLoading?: boolean;
   launchRecordError?: string | null;
   onLaunch?: () => void;
@@ -89,6 +90,7 @@ export function NodeInspector({
   canLaunch = false,
   launchDisabledReason,
   launchRecord,
+  launchOperation,
   launchRecordLoading = false,
   launchRecordError,
   onLaunch,
@@ -118,9 +120,9 @@ export function NodeInspector({
   const tracker = trackerLabel(node.tracker);
   const trackerHref = trackerUrl(node.tracker);
   const trackerLabelText = node.tracker?.type === "github" ? "Issue" : "Tracker";
-  const latestClaim = launchRecord?.latestClaim ?? null;
+  const latestClaim = launchRecord?.latestClaim ?? launchOperation?.latestClaim ?? null;
   const latestClaimDisplay = latestClaim ? humanizeLaunchClaim(latestClaim) : null;
-  const launchButtonLabel = latestClaim?.blocksLaunch
+  const launchButtonLabel = latestClaim?.blocksLaunch || launchOperation?.status === "preparing" || launchOperation?.status === "launching"
     ? "Open PAW launch"
     : "Initialize PAW launch";
 
@@ -184,7 +186,7 @@ export function NodeInspector({
         </div>
       </div>
 
-      {(launchRecordLoading || launchRecordError || launchRecord) && (
+      {(launchRecordLoading || launchRecordError || launchRecord || launchOperation) && (
         <div className="sl-sidebar-section">
           <span className="sl-section-label">LATEST PAW LAUNCH</span>
           <div className="sl-inspector-card sl-node-launch-card">
@@ -192,15 +194,24 @@ export function NodeInspector({
               <p className="sl-sidebar-note">Loading launch details…</p>
             ) : launchRecordError ? (
               <p className="sl-action-error">{launchRecordError}</p>
-            ) : launchRecord ? (
+            ) : launchRecord || launchOperation ? (
               <>
                 <div className="sl-inspector-meta">
-                  <span className={`sl-pill ${pathStatusClass(launchRecord.pathStatus.workflowContextExists)}`}>
-                    {launchRecord.pathStatus.workflowContextExists ? "context ready" : "context missing"}
-                  </span>
-                  <span className={`sl-pill ${pathStatusClass(launchRecord.pathStatus.cwdExists)}`}>
-                    {launchRecord.pathStatus.cwdExists ? "worktree present" : "worktree missing"}
-                  </span>
+                  {launchOperation && (
+                    <span className={`sl-pill ${launchOperation.status.endsWith("failed") ? "status-red" : "status-accent"}`}>
+                      {formatStatus(launchOperation.status)}
+                    </span>
+                  )}
+                  {launchRecord && (
+                    <>
+                      <span className={`sl-pill ${pathStatusClass(launchRecord.pathStatus.workflowContextExists)}`}>
+                        {launchRecord.pathStatus.workflowContextExists ? "context ready" : "context missing"}
+                      </span>
+                      <span className={`sl-pill ${pathStatusClass(launchRecord.pathStatus.cwdExists)}`}>
+                        {launchRecord.pathStatus.cwdExists ? "worktree present" : "worktree missing"}
+                      </span>
+                    </>
+                  )}
                   {latestClaimDisplay && (
                     <span className={`sl-pill ${latestClaimDisplay.pillClass}`}>
                       {latestClaimDisplay.label}
@@ -208,18 +219,46 @@ export function NodeInspector({
                   )}
                 </div>
                 <dl className="sl-node-launch-fields">
-                  <div>
-                    <dt>Branch</dt>
-                    <dd>{launchRecord.branch}</dd>
-                  </div>
-                  <div>
-                    <dt>Work ID</dt>
-                    <dd>{launchRecord.workId}</dd>
-                  </div>
-                  <div>
-                    <dt>Prepared</dt>
-                    <dd>{formatTimestamp(launchRecord.updatedAt)}</dd>
-                  </div>
+                  {launchRecord && (
+                    <>
+                      <div>
+                        <dt>Branch</dt>
+                        <dd>{launchRecord.branch}</dd>
+                      </div>
+                      <div>
+                        <dt>Work ID</dt>
+                        <dd>{launchRecord.workId}</dd>
+                      </div>
+                      <div>
+                        <dt>Prepared</dt>
+                        <dd>{formatTimestamp(launchRecord.updatedAt)}</dd>
+                      </div>
+                    </>
+                  )}
+                  {launchOperation && (
+                    <>
+                      <div>
+                        <dt>Operation</dt>
+                        <dd>{formatStatus(launchOperation.status)}</dd>
+                      </div>
+                      <div>
+                        <dt>Updated</dt>
+                        <dd>{formatTimestamp(launchOperation.updatedAt)}</dd>
+                      </div>
+                      {launchOperation.preparationRunId && (
+                        <div>
+                          <dt>Run</dt>
+                          <dd>{launchOperation.preparationRunId}</dd>
+                        </div>
+                      )}
+                      {launchOperation.error && (
+                        <div>
+                          <dt>Operation error</dt>
+                          <dd>{launchOperation.error.error}</dd>
+                        </div>
+                      )}
+                    </>
+                  )}
                   {latestClaimDisplay && (
                     <div>
                       <dt>Terminal launch</dt>
@@ -233,42 +272,44 @@ export function NodeInspector({
                     </div>
                   )}
                 </dl>
-                <dl className="sl-node-launch-paths">
-                  <LaunchPathRow
-                    label="Worktree"
-                    path={launchRecord.cwd}
-                    exists={launchRecord.pathStatus.cwdExists}
-                  />
-                  <LaunchPathRow
-                    label="PAW work dir"
-                    path={launchRecord.pawWorkDir}
-                    exists={launchRecord.pathStatus.pawWorkDirExists}
-                  />
-                  <LaunchPathRow
-                    label="WorkflowContext.md"
-                    path={launchRecord.workflowContextPath}
-                    exists={launchRecord.pathStatus.workflowContextExists}
-                  />
-                  <LaunchPathRow
-                    label="Streamliner context"
-                    path={launchRecord.streamlinerContextPath}
-                    exists={launchRecord.pathStatus.streamlinerContextExists}
-                  />
-                  {launchRecord.sdkSessionStateRoot && (
+                {launchRecord && (
+                  <dl className="sl-node-launch-paths">
                     <LaunchPathRow
-                      label="SDK state"
-                      path={launchRecord.sdkSessionStateRoot}
-                      exists={launchRecord.pathStatus.sdkSessionStateRootExists ?? false}
+                      label="Worktree"
+                      path={launchRecord.cwd}
+                      exists={launchRecord.pathStatus.cwdExists}
                     />
-                  )}
-                  {launchRecord.sdkSessionWorkspacePath && (
                     <LaunchPathRow
-                      label="SDK workspace"
-                      path={launchRecord.sdkSessionWorkspacePath}
-                      exists={launchRecord.pathStatus.sdkSessionWorkspaceExists ?? false}
+                      label="PAW work dir"
+                      path={launchRecord.pawWorkDir}
+                      exists={launchRecord.pathStatus.pawWorkDirExists}
                     />
-                  )}
-                </dl>
+                    <LaunchPathRow
+                      label="WorkflowContext.md"
+                      path={launchRecord.workflowContextPath}
+                      exists={launchRecord.pathStatus.workflowContextExists}
+                    />
+                    <LaunchPathRow
+                      label="Streamliner context"
+                      path={launchRecord.streamlinerContextPath}
+                      exists={launchRecord.pathStatus.streamlinerContextExists}
+                    />
+                    {launchRecord.sdkSessionStateRoot && (
+                      <LaunchPathRow
+                        label="SDK state"
+                        path={launchRecord.sdkSessionStateRoot}
+                        exists={launchRecord.pathStatus.sdkSessionStateRootExists ?? false}
+                      />
+                    )}
+                    {launchRecord.sdkSessionWorkspacePath && (
+                      <LaunchPathRow
+                        label="SDK workspace"
+                        path={launchRecord.sdkSessionWorkspacePath}
+                        exists={launchRecord.pathStatus.sdkSessionWorkspaceExists ?? false}
+                      />
+                    )}
+                  </dl>
+                )}
               </>
             ) : null}
           </div>

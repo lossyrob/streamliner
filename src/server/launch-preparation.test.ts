@@ -895,6 +895,7 @@ describe("launch preparation API route", () => {
       .post("/api/launch-preparations/runs")
       .send({
         nodeId: "launch-prompt-profiles",
+        graphPath: normalizePath(join(root, ".streamliner", "workstreams", "session-launching-and-tracking", "graph.json")),
         configuration: {
           cliArgs: [],
           workflowInstructions: "Use PAW with local final-pr-only review.",
@@ -946,6 +947,265 @@ describe("launch preparation API route", () => {
         streamlinerContextExists: true,
       }),
     }));
+    expect(launchRecord.body.operation).toEqual(expect.objectContaining({
+      status: "prepared",
+      preparationRunId: started.body.runId,
+      handoff: expect.objectContaining({
+        branch: "feature/launch-prompt-profiles",
+        workflowContextPath: expect.stringContaining("WorkflowContext.md"),
+      }),
+    }));
+  });
+
+  it("blocks duplicate preparation runs for the same graph node while allowing the first to continue", async () => {
+    const root = createRootDir();
+    const graphPath = normalizePath(join(root, ".streamliner", "workstreams", "session-launching-and-tracking", "graph.json"));
+    const store = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    let releaseContext!: () => void;
+    const blockedContext = new Promise<void>((resolve) => {
+      releaseContext = resolve;
+    });
+    const api = createStreamlinerApiApp({
+      store,
+      launchPreparationDeps: {
+        cwd: root,
+        stateRoot: join(root, "state"),
+        pawInitRunner: createPawInitRunner(),
+        contextPreparer: async (options) => {
+          await blockedContext;
+          return fakeContextPackage(root, options);
+        },
+      },
+    });
+    activeApps.push(api);
+
+    const first = await request(api.app)
+      .post("/api/launch-preparations/runs")
+      .send({
+        nodeId: "launch-prompt-profiles",
+        graphPath,
+      })
+      .expect(202);
+
+    const duplicate = await request(api.app)
+      .post("/api/launch-preparations/runs")
+      .send({
+        nodeId: "launch-prompt-profiles",
+        graphPath,
+      })
+      .expect(409);
+
+    expect(duplicate.body).toEqual(expect.objectContaining({
+      code: "duplicate_active_launch_operation",
+      operation: expect.objectContaining({
+        status: "preparing",
+        preparationRunId: first.body.runId,
+      }),
+    }));
+
+    releaseContext();
+    let snapshot = await request(api.app)
+      .get(`/api/launch-preparations/runs/${first.body.runId}`)
+      .expect(200);
+    for (let attempt = 0; attempt < 20 && snapshot.body.status !== "succeeded"; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      snapshot = await request(api.app)
+        .get(`/api/launch-preparations/runs/${first.body.runId}`)
+        .expect(200);
+    }
+    expect(snapshot.body.status).toBe("succeeded");
+  });
+
+  it("uses the same duplicate operation gate for synchronous launch preparation", async () => {
+    const root = createRootDir();
+    const graphPath = normalizePath(join(root, ".streamliner", "workstreams", "session-launching-and-tracking", "graph.json"));
+    const store = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    let releaseContext!: () => void;
+    const blockedContext = new Promise<void>((resolve) => {
+      releaseContext = resolve;
+    });
+    const api = createStreamlinerApiApp({
+      store,
+      launchPreparationDeps: {
+        cwd: root,
+        stateRoot: join(root, "state"),
+        pawInitRunner: createPawInitRunner(),
+        contextPreparer: async (options) => {
+          await blockedContext;
+          return fakeContextPackage(root, options);
+        },
+      },
+    });
+    activeApps.push(api);
+
+    const first = await request(api.app)
+      .post("/api/launch-preparations/runs")
+      .send({
+        nodeId: "launch-prompt-profiles",
+        graphPath,
+      })
+      .expect(202);
+
+    const duplicate = await request(api.app)
+      .post("/api/launch-preparations")
+      .send({
+        nodeId: "launch-prompt-profiles",
+        graphPath,
+      })
+      .expect(409);
+
+    expect(duplicate.body).toEqual(expect.objectContaining({
+      code: "duplicate_active_launch_operation",
+      operation: expect.objectContaining({
+        status: "preparing",
+        preparationRunId: first.body.runId,
+      }),
+    }));
+
+    releaseContext();
+    let snapshot = await request(api.app)
+      .get(`/api/launch-preparations/runs/${first.body.runId}`)
+      .expect(200);
+    for (let attempt = 0; attempt < 20 && snapshot.body.status !== "succeeded"; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      snapshot = await request(api.app)
+        .get(`/api/launch-preparations/runs/${first.body.runId}`)
+        .expect(200);
+    }
+    expect(snapshot.body.status).toBe("succeeded");
+  });
+
+  it("persists failed preparation operations and allows retry", async () => {
+    const root = createRootDir();
+    const graphPath = normalizePath(join(root, ".streamliner", "workstreams", "session-launching-and-tracking", "graph.json"));
+    const store = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    let failContext = true;
+    const api = createStreamlinerApiApp({
+      store,
+      launchPreparationDeps: {
+        cwd: root,
+        stateRoot: join(root, "state"),
+        pawInitRunner: createPawInitRunner(),
+        contextPreparer: async (options) => {
+          if (failContext) {
+            throw new LaunchContextPreparationError(
+              "context_generation_failed",
+              500,
+              "Context exploded.",
+            );
+          }
+          return fakeContextPackage(root, options);
+        },
+      },
+    });
+    activeApps.push(api);
+
+    const failedStart = await request(api.app)
+      .post("/api/launch-preparations/runs")
+      .send({
+        nodeId: "launch-prompt-profiles",
+        graphPath,
+      })
+      .expect(202);
+
+    let failedSnapshot = await request(api.app)
+      .get(`/api/launch-preparations/runs/${failedStart.body.runId}`)
+      .expect(200);
+    for (let attempt = 0; attempt < 20 && failedSnapshot.body.status !== "failed"; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      failedSnapshot = await request(api.app)
+        .get(`/api/launch-preparations/runs/${failedStart.body.runId}`)
+        .expect(200);
+    }
+    expect(failedSnapshot.body.status).toBe("failed");
+
+    const launchRecord = await request(api.app)
+      .get("/api/node-launch-records")
+      .query({
+        graphPath,
+        nodeId: "launch-prompt-profiles",
+      })
+      .expect(200);
+    expect(launchRecord.body.operation).toEqual(expect.objectContaining({
+      status: "preparation_failed",
+      preparationRunId: failedStart.body.runId,
+      handoff: null,
+      error: expect.objectContaining({
+        code: "context_preparation_failed",
+        error: "Context exploded.",
+      }),
+    }));
+
+    failContext = false;
+    const retry = await request(api.app)
+      .post("/api/launch-preparations/runs")
+      .send({
+        nodeId: "launch-prompt-profiles",
+        graphPath,
+      })
+      .expect(202);
+    expect(retry.body.operation).toEqual(expect.objectContaining({
+      status: "preparing",
+      preparationRunId: retry.body.runId,
+      error: null,
+    }));
+    let retrySnapshot = await request(api.app)
+      .get(`/api/launch-preparations/runs/${retry.body.runId}`)
+      .expect(200);
+    for (let attempt = 0; attempt < 20 && retrySnapshot.body.status !== "succeeded"; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      retrySnapshot = await request(api.app)
+        .get(`/api/launch-preparations/runs/${retry.body.runId}`)
+        .expect(200);
+    }
+    expect(retrySnapshot.body.status).toBe("succeeded");
+  });
+
+  it("serializes concurrent operation writes for distinct graph nodes", async () => {
+    const root = createRootDir();
+    const graphPath = normalizePath(join(root, ".streamliner", "workstreams", "session-launching-and-tracking", "graph.json"));
+    const nodeLaunchRecordStore = new NodeLaunchRecordStore({
+      recordsPath: join(root, "state", "node-launch-records.json"),
+    });
+
+    await nodeLaunchRecordStore.startPreparationOperation({
+      graphPath,
+      nodeId: "launch-prompt-profiles",
+      runId: "run-a",
+      now: new Date("2026-05-03T18:00:00.000Z"),
+    });
+    await nodeLaunchRecordStore.startPreparationOperation({
+      graphPath,
+      nodeId: "runtime-overlay-ui",
+      runId: "run-b",
+      now: new Date("2026-05-03T18:00:00.000Z"),
+    });
+
+    await Promise.all(
+      Array.from({ length: 20 }, (_, index) => {
+        const nodeId = index % 2 === 0 ? "launch-prompt-profiles" : "runtime-overlay-ui";
+        return nodeLaunchRecordStore.appendOperationProgress(graphPath, nodeId, {
+          type: "agent.message",
+          message: `${nodeId} progress ${index}`,
+          timestamp: `2026-05-03T18:00:${String(index + 1).padStart(2, "0")}.000Z`,
+        });
+      }),
+    );
+
+    const operationA = await nodeLaunchRecordStore.getOperation(graphPath, "launch-prompt-profiles");
+    const operationB = await nodeLaunchRecordStore.getOperation(graphPath, "runtime-overlay-ui");
+    expect(operationA).toEqual(expect.objectContaining({
+      status: "preparing",
+      preparationRunId: "run-a",
+    }));
+    expect(operationB).toEqual(expect.objectContaining({
+      status: "preparing",
+      preparationRunId: "run-b",
+    }));
+    expect(operationA?.progressEvents).toHaveLength(10);
+    expect(operationB?.progressEvents).toHaveLength(10);
+    expect(operationA?.progressEvents.at(-1)?.message).toBe("launch-prompt-profiles progress 18");
+    expect(operationB?.progressEvents.at(-1)?.message).toBe("runtime-overlay-ui progress 19");
   });
 
   it("returns client errors for invalid launch preparation requests", async () => {

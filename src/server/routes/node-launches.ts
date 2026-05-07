@@ -14,6 +14,7 @@ import {
   summarizeLaunchClaim,
   type NodeLaunchDeps,
 } from "../node-launch";
+import type { NodeLaunchRecordStore } from "../node-launch-record-store";
 import { SessionRegistryFileStore } from "../../session-registry/file-store";
 import { isLoopbackAddress } from "../config";
 import { getApiLogger } from "../logger";
@@ -250,12 +251,13 @@ function parseBody(body: unknown): ParsedBody {
 export function createNodeLaunchesRouter(options: {
   registryStore: SessionRegistryFileStore;
   claimStore: LaunchClaimStore;
+  nodeLaunchRecordStore?: NodeLaunchRecordStore;
   deps?: NodeLaunchDeps;
 }): Router {
   const router = Router();
   const logger = getApiLogger().withScope("node-launch.api");
 
-  router.post("/node-launches", (req, res, next) => {
+  router.post("/node-launches", async (req, res, next) => {
     // Streamliner's local API treats loopback as the launch trust boundary;
     // same-user local processes are intentionally outside the preventative boundary.
     if (isNonLoopbackRequest(req)) {
@@ -265,17 +267,41 @@ export function createNodeLaunchesRouter(options: {
       res.status(403).json({ error: "Node launch must originate from loopback." });
       return;
     }
+    let handoff: PawLaunchHandoff | null = null;
     try {
-      const { handoff } = parseBody(req.body);
+      ({ handoff } = parseBody(req.body));
+      const existingOperation = await options.nodeLaunchRecordStore?.getOperation(
+        handoff.launchMetadata.graphPath,
+        handoff.launchMetadata.nodeId,
+      );
+      if (existingOperation && isActiveOperation(existingOperation.status)) {
+        res.status(409).json({
+          code: "duplicate_active_launch_operation",
+          error: `Node ${handoff.launchMetadata.nodeId} already has an active launch operation.`,
+          operation: existingOperation,
+        });
+        return;
+      }
+      await options.nodeLaunchRecordStore?.markTerminalLaunching(handoff);
       const result = launchPreparedNode(
         options.registryStore,
         options.claimStore,
         handoff,
         options.deps,
       );
+      await options.nodeLaunchRecordStore?.markTerminalLaunched(handoff, result);
       res.status(201).json(result);
     } catch (error: unknown) {
       if (error instanceof NodeLaunchError) {
+        if (handoff && error.code !== "duplicate_active_launch") {
+          await options.nodeLaunchRecordStore?.markTerminalFailed({
+            handoff,
+            error: {
+              code: error.code,
+              error: error.message,
+            },
+          });
+        }
         const body: Record<string, unknown> = {
           code: error.code,
           error: error.message,
@@ -300,4 +326,8 @@ export function createNodeLaunchesRouter(options: {
   });
 
   return router;
+}
+
+function isActiveOperation(status: string): boolean {
+  return status === "preparing" || status === "launching";
 }

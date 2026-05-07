@@ -2,6 +2,11 @@ import { Router } from "express";
 
 import type { LaunchClaimStore } from "../../launch-claim-contract";
 import type { LaunchClaim } from "../../launch-claim-schema";
+import type {
+  NodeLaunchClaimState,
+  NodeLaunchOperation,
+  NodeLaunchOperationStatus,
+} from "../../node-launch-record-contract";
 import { SessionRegistryFileStore } from "../../session-registry/file-store";
 import { stopSession } from "../../session-registry/stop";
 import {
@@ -50,24 +55,29 @@ export function createNodeLaunchRecordsRouter(options: {
       const graphPath = nonEmptyQueryString(req.query.graphPath, "graphPath");
       const nodeId = nonEmptyQueryString(req.query.nodeId, "nodeId");
       const record = await store.get(graphPath, nodeId);
-      const latestClaim = record && options.claimStore
+      const operation = await store.getOperation(graphPath, nodeId);
+      const claimWorkstreamId = record?.workstreamId
+        ?? operation?.handoff?.launchMetadata.workstreamId;
+      const latestClaim = claimWorkstreamId && options.claimStore
         ? findBlockingLaunchClaim(
           options.claimStore,
-          record.workstreamId,
-          record.nodeId,
+          claimWorkstreamId,
+          nodeId,
         ) ?? latestLaunchClaimForNode(
           options.claimStore,
-          record.workstreamId,
-          record.nodeId,
+          claimWorkstreamId,
+          nodeId,
         )
         : null;
+      const latestClaimSummary = latestClaim ? summarizeLaunchClaim(latestClaim) : null;
       res.json({
         record: record
           ? {
             ...record,
-            latestClaim: latestClaim ? summarizeLaunchClaim(latestClaim) : null,
+            latestClaim: latestClaimSummary,
           }
           : null,
+        operation: operation ? projectOperation(operation, latestClaimSummary) : null,
       });
     } catch (error: unknown) {
       next(error);
@@ -118,6 +128,30 @@ export function createNodeLaunchRecordsRouter(options: {
   });
 
   return router;
+}
+
+function projectOperation(
+  operation: NodeLaunchOperation,
+  latestClaim: NodeLaunchClaimState | null,
+): NodeLaunchOperation {
+  return {
+    ...operation,
+    status: projectOperationStatus(operation.status, latestClaim),
+    latestClaim,
+  };
+}
+
+function projectOperationStatus(
+  status: NodeLaunchOperationStatus,
+  latestClaim: NodeLaunchClaimState | null,
+): NodeLaunchOperationStatus {
+  if (latestClaim?.status === "bound") {
+    return "bound";
+  }
+  if (latestClaim?.status === "pending" && latestClaim.blocksLaunch) {
+    return "launched_pending_binding";
+  }
+  return status;
 }
 
 function releaseClaimRegistryRows(

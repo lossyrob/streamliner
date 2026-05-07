@@ -138,6 +138,54 @@ function buildLaunchGraph(status = "ready"): Record<string, unknown> {
   });
 }
 
+function buildConcurrentLaunchGraph(): Record<string, unknown> {
+  return buildWorkstreamGraph({
+    nodes: [
+      {
+        id: "launch-prompt-profiles",
+        type: "task",
+        title: "Launch prompt profiles",
+        summary: "Configure the PAW launch prompt defaults.",
+        status: "ready",
+        attention: "focus",
+        repoIds: ["streamliner"],
+        tracker: {
+          type: "github",
+          owner: "lossyrob",
+          repo: "streamliner",
+          number: 33,
+        },
+        dependsOn: [],
+      },
+      {
+        id: "runtime-overlay-ui",
+        type: "task",
+        title: "Runtime overlay UI",
+        summary: "Show runtime launch overlays.",
+        status: "ready",
+        attention: "watch",
+        repoIds: ["streamliner"],
+        tracker: {
+          type: "github",
+          owner: "lossyrob",
+          repo: "streamliner",
+          number: 52,
+        },
+        dependsOn: [],
+      },
+    ],
+    checkpoints: [
+      {
+        id: "launch",
+        title: "Launch",
+        summary: "Launch preparation.",
+        status: "planned",
+        nodeIds: ["launch-prompt-profiles", "runtime-overlay-ui"],
+      },
+    ],
+  });
+}
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -1705,6 +1753,388 @@ describe("App sessions route", () => {
         }),
       );
       expect(container.textContent).toContain("Started with powershell");
+    },
+    15_000,
+  );
+
+  it(
+    "keeps preparation progress keyed per node when the dialog closes and another node starts",
+    async () => {
+      const graph = buildConcurrentLaunchGraph();
+      const graphPath = "C:\\graphs\\api-test\\graph.json";
+      const operationByNode = new Map<string, Record<string, unknown>>();
+      const preparingOperation = (nodeId: string, runId: string, message?: string) => ({
+        id: `${nodeId}-operation`,
+        graphPath,
+        nodeId,
+        status: "preparing",
+        preparationRunId: runId,
+        startedAt: "2026-05-03T18:00:00.000Z",
+        updatedAt: "2026-05-03T18:00:00.000Z",
+        completedAt: null,
+        handoff: null,
+        terminalLaunch: null,
+        error: null,
+        progressEvents: message
+          ? [{
+            type: "agent.message",
+            message,
+            timestamp: "2026-05-03T18:00:01.000Z",
+          }]
+          : [],
+      });
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          const params = new URL(path, "http://localhost").searchParams;
+          return jsonResponse({
+            record: null,
+            operation: operationByNode.get(params.get("nodeId") ?? "") ?? null,
+          });
+        }
+        if (path === "/api/paw-launch-prompt-profiles") {
+          return jsonResponse({ profiles: [] });
+        }
+        if (path === "/api/launch-preparations/runs" && init?.method === "POST") {
+          const body = JSON.parse(String(init.body)) as { nodeId: string };
+          const runId = body.nodeId === "runtime-overlay-ui" ? "run-b" : "run-a";
+          const operation = preparingOperation(body.nodeId, runId);
+          operationByNode.set(body.nodeId, operation);
+          return jsonResponse({ runId, status: "queued", operation }, 202);
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      MockEventSource.instances = [];
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      act(() => {
+        findCanvasNode(container, "Launch prompt profiles").click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Initialize PAW launch").click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Run PAW init").click();
+      });
+      await settle(100);
+      const sourceA = MockEventSource.instances.find((source) => source.url.includes("run-a"));
+      act(() => {
+        sourceA?.emit("progress", {
+          type: "agent.message",
+          message: "Preparing node A.",
+          timestamp: "2026-05-03T18:00:01.000Z",
+        });
+      });
+      await settle();
+      expect(container.textContent).toContain("Preparing node A.");
+
+      act(() => {
+        findButton(container, "Close").click();
+      });
+      await settle();
+      expect(container.querySelector('textarea[aria-label="Launch instructions"]')).toBeNull();
+
+      act(() => {
+        findCanvasNode(container, "Runtime overlay UI").click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Initialize PAW launch").click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Run PAW init").click();
+      });
+      await settle(100);
+      const sourceB = MockEventSource.instances.find((source) => source.url.includes("run-b"));
+      act(() => {
+        sourceA?.emit("progress", {
+          type: "agent.message",
+          message: "Node A continues in background.",
+          timestamp: "2026-05-03T18:00:02.000Z",
+        });
+        sourceB?.emit("progress", {
+          type: "agent.message",
+          message: "Preparing node B.",
+          timestamp: "2026-05-03T18:00:03.000Z",
+        });
+      });
+      operationByNode.set(
+        "launch-prompt-profiles",
+        preparingOperation("launch-prompt-profiles", "run-a", "Node A continues in background."),
+      );
+      await settle();
+
+      expect(container.textContent).not.toContain("Node A continues in background.");
+      expect(
+        fetchMock.mock.calls.filter(([input, init]) =>
+          requestPath(input as RequestInfo | URL) === "/api/launch-preparations/runs" &&
+          init?.method === "POST"
+        ).map(([, init]) => JSON.parse(String(init?.body)).nodeId),
+      ).toEqual(["launch-prompt-profiles", "runtime-overlay-ui"]);
+
+      act(() => {
+        findButton(container, "Close").click();
+      });
+      await settle();
+      act(() => {
+        findCanvasNode(container, "Launch prompt profiles").click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Open PAW launch").click();
+      });
+      await settle();
+
+      expect(container.textContent).toContain("Node A continues in background.");
+      expect(container.textContent).not.toContain("Preparing node B.");
+    },
+    15_000,
+  );
+
+  it(
+    "reattaches an open preparing launch dialog to its run event stream",
+    async () => {
+      const graph = buildLaunchGraph();
+      const graphPath = "C:\\graphs\\api-test\\graph.json";
+      const preparingOperation = {
+        id: "launch-prompt-profiles-operation",
+        graphPath,
+        nodeId: "launch-prompt-profiles",
+        status: "preparing",
+        preparationRunId: "run-reattach",
+        startedAt: "2026-05-03T18:00:00.000Z",
+        updatedAt: "2026-05-03T18:00:00.000Z",
+        completedAt: null,
+        handoff: null,
+        terminalLaunch: null,
+        error: null,
+        progressEvents: [{
+          type: "agent.message",
+          message: "Snapshot progress before reopen.",
+          timestamp: "2026-05-03T18:00:01.000Z",
+        }],
+      };
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return jsonResponse({ record: null, operation: preparingOperation });
+        }
+        if (path === "/api/paw-launch-prompt-profiles") {
+          return jsonResponse({ profiles: [] });
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      MockEventSource.instances = [];
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      act(() => {
+        findCanvasNode(container, "Launch prompt profiles").click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Open PAW launch").click();
+      });
+      await settle();
+
+      expect(container.textContent).toContain("Snapshot progress before reopen.");
+      const source = MockEventSource.instances.find((candidate) => candidate.url.includes("run-reattach"));
+      expect(source?.url).toBe("/api/launch-preparations/runs/run-reattach/events");
+
+      act(() => {
+        source?.emit("progress", {
+          type: "agent.message",
+          message: "Initial SDK status replayed from start.",
+          timestamp: "2026-05-03T18:00:00.500Z",
+        });
+        source?.emit("progress", {
+          type: "agent.message",
+          message: "Snapshot progress before reopen.",
+          timestamp: "2026-05-03T18:00:01.000Z",
+        });
+        source?.emit("progress", {
+          type: "agent.message",
+          message: "Live progress after reattach.",
+          timestamp: "2026-05-03T18:00:02.000Z",
+        });
+      });
+      await settle();
+
+      expect(container.textContent).toContain("Initial SDK status replayed from start.");
+      expect((container.textContent?.match(/Snapshot progress before reopen\./g) ?? [])).toHaveLength(1);
+      expect(container.textContent).toContain("Live progress after reattach.");
+    },
+    15_000,
+  );
+
+  it(
+    "keeps launch defaults tied to the open dialog target when selection changes",
+    async () => {
+      const graph = buildWorkstreamGraph({
+        repos: [
+          {
+            id: "streamliner",
+            owner: "lossyrob",
+            name: "streamliner",
+            role: "primary",
+          },
+          {
+            id: "dbagent",
+            owner: "lossyrob",
+            name: "dbagent",
+            role: "secondary",
+          },
+        ],
+        nodes: [
+          {
+            id: "launch-prompt-profiles",
+            type: "task",
+            title: "Launch prompt profiles",
+            summary: "Configure the PAW launch prompt defaults.",
+            status: "ready",
+            attention: "focus",
+            repoIds: ["streamliner"],
+            tracker: {
+              type: "github",
+              owner: "lossyrob",
+              repo: "streamliner",
+              number: 33,
+            },
+            dependsOn: [],
+          },
+          {
+            id: "runtime-overlay-ui",
+            type: "task",
+            title: "Runtime overlay UI",
+            summary: "Show runtime launch overlays.",
+            status: "ready",
+            attention: "watch",
+            repoIds: ["dbagent"],
+            tracker: {
+              type: "github",
+              owner: "lossyrob",
+              repo: "streamliner",
+              number: 52,
+            },
+            dependsOn: [],
+          },
+        ],
+        checkpoints: [
+          {
+            id: "launch",
+            title: "Launch",
+            summary: "Launch preparation.",
+            status: "planned",
+            nodeIds: ["launch-prompt-profiles", "runtime-overlay-ui"],
+          },
+        ],
+      });
+      const customCwd = "C:\\Users\\robemanuele\\proj\\streamliner\\custom-launch-cwd";
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return emptyNodeLaunchRecordResponse();
+        }
+        if (path === "/api/paw-launch-prompt-profiles") {
+          return jsonResponse({ profiles: [] });
+        }
+        if (path === "/api/launch-preparations/runs" && init?.method === "POST") {
+          return jsonResponse({ runId: "run-dialog-target", status: "queued" }, 202);
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      MockEventSource.instances = [];
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      act(() => {
+        findCanvasNode(container, "Launch prompt profiles").click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Initialize PAW launch").click();
+      });
+      await settle();
+      setInputValue(findInputByLabel(container, "Working directory"), customCwd);
+      await settle();
+
+      act(() => {
+        findCanvasNode(container, "Runtime overlay UI").click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Run PAW init").click();
+      });
+      await settle(100);
+
+      const launchCall = fetchMock.mock.calls.find(
+        ([input, init]) =>
+          requestPath(input as RequestInfo | URL) === "/api/launch-preparations/runs" &&
+          init?.method === "POST",
+      );
+      expect(JSON.parse(String(launchCall?.[1]?.body))).toEqual(
+        expect.objectContaining({
+          nodeId: "launch-prompt-profiles",
+          configuration: expect.objectContaining({
+            cwd: customCwd,
+          }),
+        }),
+      );
+      expect(JSON.parse(window.localStorage.getItem("streamliner:pawLaunchCwdByRepo") ?? "{}")).toEqual({
+        "lossyrob/streamliner": customCwd,
+      });
     },
     15_000,
   );

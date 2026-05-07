@@ -78,6 +78,31 @@ export interface NodeLaunchClaimState {
   retryable: boolean;
 }
 
+export type NodeLaunchOperationStatus =
+  | "launchable"
+  | "preparing"
+  | "prepared"
+  | "preparation_failed"
+  | "launching"
+  | "launched_pending_binding"
+  | "bound"
+  | "terminal_failed";
+
+export interface NodeLaunchOperationProgressEvent {
+  type: string;
+  message: string;
+  timestamp: string;
+  data?: Record<string, unknown>;
+}
+
+export interface NodeLaunchOperationError {
+  code: string;
+  error: string;
+  step?: string;
+  input?: string;
+  timestamp: string;
+}
+
 export interface NodeTerminalLaunchResponse {
   launchClaim: NodeLaunchClaimState;
   terminal: {
@@ -90,6 +115,22 @@ export interface NodeTerminalLaunchResponse {
     cliArgs: string[];
     promptNonceLine: string;
   };
+}
+
+export interface NodeLaunchOperation {
+  id: string;
+  graphPath: string;
+  nodeId: string;
+  status: NodeLaunchOperationStatus;
+  preparationRunId: string | null;
+  startedAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  handoff: NodeLaunchHandoff | null;
+  terminalLaunch: NodeTerminalLaunchResponse | null;
+  error: NodeLaunchOperationError | null;
+  progressEvents: NodeLaunchOperationProgressEvent[];
+  latestClaim?: NodeLaunchClaimState | null;
 }
 
 export interface NodeLaunchRecord {
@@ -120,4 +161,5 @@ export interface NodeLaunchRecord {
 
 export interface NodeLaunchRecordResponse {
   record: NodeLaunchRecord | null;
+  operation?: NodeLaunchOperation | null;
 }
