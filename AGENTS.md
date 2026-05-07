@@ -47,6 +47,11 @@ verbose traces. Full reference: [`docs/operations/logging.md`](docs/operations/l
   `~/.copilot/installed-plugins/<marketplace>/streamliner/`. Required
   whenever you edit hook scripts in the worktree — Copilot CLI runs the
   cached copy, not the worktree, and does NOT auto-refresh.
+- `npm run cleanup:worktree -- <path-or-name>` — dry-run completed worktree
+  cleanup. To actually remove the worktree and delete its local branch, use
+  `npm run cleanup:worktree:remove -- <path-or-name>`. Use
+  `npm run cleanup:worktree:force -- <path-or-name>` only after confirming
+  forced removal is intended.
 
 The API binds to `127.0.0.1:4319` by default. See
 [`DEVELOPING.md`](DEVELOPING.md) for the full env-var matrix and the
