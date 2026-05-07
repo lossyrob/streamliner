@@ -13,6 +13,7 @@ import {
 } from "@github/copilot-sdk";
 
 import type { NodeLaunchRecord } from "../node-launch-record-contract";
+import type { WorkstreamLaunchPolicy } from "../workstream-schema";
 import {
   evaluateLaunchPolicyFromGraph,
   launchPolicyDetails,
@@ -232,6 +233,7 @@ export interface PawLaunchMetadata {
   workId: string;
   workTitle: string;
   trackerUrl: string | null;
+  launchPolicy: WorkstreamLaunchPolicy | null;
 }
 
 export interface PawLaunchHandoff {
@@ -1609,6 +1611,7 @@ export async function preparePawLaunch(
 
   const sessionStateRoot = resolve(options.stateRoot ?? defaultStateRoot());
   const parsedConfiguration = parseConfigurationInput(options.configuration);
+  let launchPolicy: WorkstreamLaunchPolicy | null = null;
   const policyGraphPath = options.graphPath ?? options.defaultGraphPath;
   if (policyGraphPath) {
     const policyResult = evaluateLaunchPolicyFromGraph({
@@ -1640,6 +1643,7 @@ export async function preparePawLaunch(
         policyResult.code,
       );
     }
+    launchPolicy = policyResult.launchPolicy;
   }
 
   const contextPreparer = options.contextPreparer ?? prepareLaunchContextPackage;
@@ -1782,6 +1786,7 @@ export async function preparePawLaunch(
     workId: pawInit.workId,
     workTitle: pawInit.workTitle,
     trackerUrl: trackerUrlOf(stagedContextPackage),
+    launchPolicy,
   };
   const kickoffPrompt = buildKickoffPrompt({
     workflowContextPath: pawInit.workflowContextPath,

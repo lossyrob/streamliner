@@ -258,17 +258,25 @@ export function launchPreparedNode(
         details,
       );
     }
-    throw new NodeLaunchError(
-      "launch_policy_unavailable",
-      policyResult.statusCode,
-      policyResult.message,
-      null,
-      {
-        reason: policyResult.code,
-        input: policyResult.input,
-        nodeId: handoff.launchMetadata.nodeId,
-      },
-    );
+    const details = {
+      reason: policyResult.code,
+      input: policyResult.input,
+      nodeId: handoff.launchMetadata.nodeId,
+    };
+    if (!handoff.launchMetadata.launchPolicy?.requiredTracker) {
+      getApiLogger().withScope("launch-policy").warn(
+        "terminal launch policy graph unavailable; allowing unconfigured prepared handoff",
+        details,
+      );
+    } else {
+      throw new NodeLaunchError(
+        "launch_policy_unavailable",
+        policyResult.statusCode,
+        policyResult.message,
+        null,
+        details,
+      );
+    }
   }
   const now = deps.now?.() ?? new Date();
   const blockingClaim = findBlockingLaunchClaim(

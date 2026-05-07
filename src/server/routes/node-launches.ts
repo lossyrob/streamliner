@@ -15,6 +15,11 @@ import {
   type NodeLaunchDeps,
 } from "../node-launch";
 import { SessionRegistryFileStore } from "../../session-registry/file-store";
+import {
+  WORKSTREAM_LAUNCH_REQUIRED_TRACKERS,
+  type WorkstreamLaunchPolicy,
+  type WorkstreamLaunchRequiredTracker,
+} from "../../workstream-schema";
 import { isLoopbackAddress } from "../config";
 import { getApiLogger } from "../logger";
 
@@ -146,6 +151,36 @@ function stringRecordField(record: Record<string, unknown>, key: string, label: 
   return result;
 }
 
+function nullableLaunchPolicyField(
+  record: Record<string, unknown>,
+  key: string,
+  label: string,
+): WorkstreamLaunchPolicy | null {
+  const value = record[key];
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (!isRecord(value)) {
+    throw badRequest(`${label} must be an object.`, label);
+  }
+  const requiredTracker = value.requiredTracker;
+  if (requiredTracker === undefined) {
+    return {};
+  }
+  if (
+    typeof requiredTracker !== "string" ||
+    !WORKSTREAM_LAUNCH_REQUIRED_TRACKERS.includes(
+      requiredTracker as WorkstreamLaunchRequiredTracker,
+    )
+  ) {
+    throw badRequest(
+      `${label}.requiredTracker must be one of: ${WORKSTREAM_LAUNCH_REQUIRED_TRACKERS.join(", ")}.`,
+      `${label}.requiredTracker`,
+    );
+  }
+  return { requiredTracker: requiredTracker as WorkstreamLaunchRequiredTracker };
+}
+
 function recordField(record: Record<string, unknown>, key: string, label: string): Record<string, unknown> {
   const value = record[key];
   if (!isRecord(value)) {
@@ -200,6 +235,7 @@ function parseLaunchMetadata(value: unknown): PawLaunchMetadata {
     workId: stringField(record, "workId", "handoff.launchMetadata.workId"),
     workTitle: stringField(record, "workTitle", "handoff.launchMetadata.workTitle"),
     trackerUrl: nullableStringField(record, "trackerUrl"),
+    launchPolicy: nullableLaunchPolicyField(record, "launchPolicy", "handoff.launchMetadata.launchPolicy"),
   };
 }
 

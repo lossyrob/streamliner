@@ -1475,6 +1475,7 @@ describe("App sessions route", () => {
               workId: "launch-prompt-profiles",
               workTitle: "Launch prompt profiles",
               trackerUrl: "https://github.com/lossyrob/streamliner/issues/33",
+              launchPolicy: null,
             },
             contextPackage: {
               contextId: "ctx",
@@ -1681,6 +1682,7 @@ describe("App sessions route", () => {
               workId: "launch-prompt-profiles",
               workTitle: "Launch prompt profiles",
               trackerUrl: "https://github.com/lossyrob/streamliner/issues/33",
+              launchPolicy: null,
             },
             contextPackage: {
               contextId: "ctx",

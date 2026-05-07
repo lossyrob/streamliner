@@ -128,6 +128,7 @@ function fakeHandoff(root: string, overrides: Partial<PawLaunchHandoff> = {}): P
       workId: "terminal-launch",
       workTitle: "Terminal Launch",
       trackerUrl: "https://github.com/lossyrob/streamliner/issues/44",
+      launchPolicy: null,
     },
     contextPackage: {
       contextId: "ctx",
@@ -370,6 +371,63 @@ describe("launchPreparedNode", () => {
       )
     ).toThrow(NodeLaunchError);
     expect(claimStore.listClaims()).toHaveLength(1);
+  });
+
+  it("allows unconfigured prepared handoffs when the graph is no longer readable", () => {
+    const root = createRootDir();
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const handoff = fakeHandoff(root);
+    rmSync(handoff.launchMetadata.graphPath, { force: true });
+    const terminalCalls: unknown[] = [];
+
+    const result = launchPreparedNode(
+      registryStore,
+      claimStore,
+      handoff,
+      {
+        launchTerminal: (options) => {
+          terminalCalls.push(options);
+          return { method: "powershell", pid: 2 };
+        },
+      },
+    );
+
+    expect(result.launchClaim.status).toBe("pending");
+    expect(terminalCalls).toHaveLength(1);
+    expect(claimStore.listClaims()).toHaveLength(1);
+  });
+
+  it("fails closed when a prepared handoff had a launch policy but the graph is unreadable", () => {
+    const root = createRootDir();
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const handoff = fakeHandoff(root);
+    handoff.launchMetadata.launchPolicy = { requiredTracker: "github-issue" };
+    rmSync(handoff.launchMetadata.graphPath, { force: true });
+
+    let blockedError: unknown;
+    try {
+      launchPreparedNode(
+        registryStore,
+        claimStore,
+        handoff,
+        { launchTerminal: () => ({ method: "powershell", pid: 2 }) },
+      );
+    } catch (error: unknown) {
+      blockedError = error;
+    }
+
+    expect(blockedError).toBeInstanceOf(NodeLaunchError);
+    expect(blockedError).toMatchObject({
+      code: "launch_policy_unavailable",
+      details: expect.objectContaining({
+        reason: "graph_not_found",
+        nodeId: "terminal-launch",
+      }),
+    });
+    expect(claimStore.listClaims()).toHaveLength(0);
+    expect(registryStore.listSessions()).toEqual([]);
   });
 
   it("blocks stale prepared handoffs before creating a launch claim", () => {

@@ -5,7 +5,7 @@ import {
   launchPolicyViolationDetails,
   type WorkstreamLaunchPolicyViolation,
 } from "../workstream-launch-policy";
-import type { WorkstreamDocument } from "../workstream-schema";
+import type { WorkstreamDocument, WorkstreamLaunchPolicy } from "../workstream-schema";
 import { parseWorkstreamDocument } from "../workstream-view-model";
 
 export type LaunchPolicyGraphErrorCode =
@@ -15,7 +15,7 @@ export type LaunchPolicyGraphErrorCode =
   | "unknown_node";
 
 export type LaunchPolicyEvaluationResult =
-  | { ok: true }
+  | { ok: true; launchPolicy: WorkstreamLaunchPolicy | null }
   | { ok: false; kind: "blocked"; violation: WorkstreamLaunchPolicyViolation }
   | {
       ok: false;
@@ -94,7 +94,7 @@ export function evaluateLaunchPolicyFromGraph(input: {
 
   const decision = evaluateNodeLaunchPolicy(workstream, node);
   return decision.allowed
-    ? { ok: true }
+    ? { ok: true, launchPolicy: workstream.launchPolicy ?? null }
     : { ok: false, kind: "blocked", violation: decision.violation };
 }
 

@@ -1,3 +1,5 @@
+import type { WorkstreamLaunchPolicy } from "./workstream-schema";
+
 export type NodeLaunchPreferredTerminal = "default" | "windows-terminal" | "powershell";
 
 export interface NodeLaunchTerminalPreferences {
@@ -19,6 +21,7 @@ export interface NodeLaunchMetadata {
   workId: string;
   workTitle: string;
   trackerUrl: string | null;
+  launchPolicy?: WorkstreamLaunchPolicy | null;
 }
 
 export interface NodeLaunchContextPackage {

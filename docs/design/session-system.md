@@ -78,7 +78,7 @@ Streamliner's backend prepares a PAW handoff with one fully capable internal Cop
 4. **Runs PAW init** — the same SDK session uses the `paw-init` skill with Copilot CLI-style repository, shell, GitHub, configured MCP, and custom-tool access. The prompts supply the builder launch instructions, selected node, tracker URL, saved context path, and manifest-derived worktree policy, and tell PAW init to use documented defaults/best judgment rather than asking follow-up questions. Streamliner asks PAW init to treat the builder text as launch guidance and configuration input, not as verbatim custom workflow-stage instructions unless the text explicitly defines a custom PAW sequence.
 5. **Installs the context file** — after `paw-init` writes or validates `WorkflowContext.md` through the normal PAW workflow path, the Streamliner-owned completion tool, `complete_paw_init`, copies the saved context package to `.paw/work/<work-id>/streamliner/context.md` and verifies that `WorkflowContext.md` records the installed Streamliner context as an Additional Input. For Streamliner PAW Lite node launches, `WorkflowContext.md` should use `Custom Workflow Instructions: none` and `Initial Prompt: none`; kickoff-prompt text, generated context content, and node-orientation prose belong in Streamliner's kickoff prompt or generated launch `context.md`. The Additional Inputs line should only carry the worker-facing Streamliner context file, not internal launch metadata such as staged context package paths, graph path, context ID, node ID, or nonce.
 6. **Filters kickoff-only guidance** — the SDK session returns `additionalKickoffInstructions` through `complete_paw_init`. This text contains only builder guidance that should appear in the launched worker's initial prompt and excludes workflow configuration already encoded in `WorkflowContext.md`.
-7. **Preserves launch metadata** — carries the launch nonce and future claim reference fields through metadata without owning claim persistence.
+7. **Preserves launch metadata** — carries the launch nonce, future claim reference fields, and the evaluated launch-policy snapshot through metadata without owning claim persistence.
 8. **Compiles kickoff prompt** — renders the Streamliner PAW-lite launch template with the issue URL, `WorkflowContext.md`, installed Streamliner context path, launch metadata needed for binding, and filtered additional kickoff instructions.
 9. **Returns structured output** — returns the handoff the terminal launcher needs.
 
@@ -95,14 +95,14 @@ Launch preparation output:
 | `terminal` | object | Prepared terminal launch mode and preferred terminal host |
 | `environment` | object | Non-secret environment values for the terminal launch |
 | `sessionStateRoot` | string | Path to Copilot session state directory in the local environment |
-| `launchMetadata` | object | Workstream, node, repo, branch, work ID/title, tracker, nonce, and claim metadata |
+| `launchMetadata` | object | Workstream, node, repo, branch, work ID/title, tracker, launch-policy snapshot, nonce, and claim metadata |
 | `contextPackage` | object | Context package metadata from context assembly |
 | `kickoffPrompt` | string | Initial prompt passed to Copilot CLI interactive mode |
 | `kickoffAdditionalInstructions` | string | Optional filtered builder guidance appended to the kickoff template after PAW workflow configuration has been removed |
 
 #### Phase 2 — Copilot CLI Interactive Launch
 
-After PAW launch initialization completes, terminal integration re-reads the current graph path from the prepared handoff and re-evaluates launch policy before any stateful side effect. This prevents stale prepared handoffs or non-UI callers from bypassing a policy that now requires a GitHub issue tracker. Terminal integration then:
+After PAW launch initialization completes, terminal integration re-reads the current graph path from the prepared handoff and re-evaluates launch policy before any stateful side effect. This prevents stale prepared handoffs or non-UI callers from bypassing a policy that now requires a GitHub issue tracker. If the current graph is unavailable, terminal launch may continue only when the prepared handoff did not carry a `requiredTracker` snapshot; a handoff prepared under a known launch policy fails closed because the current policy cannot be verified. Terminal integration then:
 
 1. **Reject duplicate active launches** — before creating a new claim, check launch-claim diagnostics for the same workstream/node and reject non-terminal active-window or bound claims with a typed conflict. This is enforced in the backend service so future CLI, skill, or MCP callers get the same protection as the graph UI.
 2. **Record launch claim** — write a launch claim to Streamliner's runtime state binding the node to the expected session location before the worker session starts. The claim uses the nonce from the prepared handoff when one exists; otherwise the claim-minted nonce becomes the final launch nonce.
