@@ -976,8 +976,8 @@ export function PawLaunchDialog({
         </div>
 
         <div className="sl-sheet-foot sl-paw-launch-actions">
-          <button type="button" className="sl-action-btn" onClick={onCancel} disabled={preparing || launching || releasingLaunch}>
-            {terminalLaunchResult ? "Close" : "Cancel"}
+          <button type="button" className="sl-action-btn" onClick={onCancel} disabled={releasingLaunch}>
+            {preparing || launching || handoff || terminalLaunchResult ? "Close" : "Cancel"}
           </button>
           {handoff ? (
             <button

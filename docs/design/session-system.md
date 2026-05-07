@@ -112,6 +112,31 @@ After PAW launch initialization completes, terminal integration re-reads the cur
 5. **Bind on trusted signal or discovery** — when the hook signal or session watcher detects the new Copilot session, bind it to the launch claim and reserved registry row.
 6. **Fail honestly** — if terminal spawn fails after claim creation, transition the claim with failure code `terminal-spawn-failed`, clean up the reserved row through the claim-failure contract, log the failure, and return a typed error instead of a success-shaped pending state.
 
+### Launch Operation State and Reattachment
+
+Graph launch operations are per-node runtime state keyed by graph path and node id. This state belongs to the local API/runtime store, not `graph.json` or the workstream brief. The latest prepared launch record remains the durable path-oriented handoff summary, while the launch operation snapshot records fast-moving lifecycle state that lets the UI close, switch nodes, start other launches, and later reopen the same node without losing context.
+
+The API projects the following operation states:
+
+| State | Meaning | Retry behavior |
+|-------|---------|----------------|
+| `launchable` | No current operation blocks the selected ready node | Builder may start PAW init |
+| `preparing` | A launch-preparation run is active for this graph node | Same-node PAW init and terminal launch are blocked; other nodes may launch |
+| `prepared` | PAW init produced a handoff, kickoff prompt, and reviewable `WorkflowContext.md` | Builder may review/edit and launch the terminal |
+| `preparation_failed` | PAW init or context preparation failed | Retry is intentional; progress/error details remain visible |
+| `launching` | The terminal-launch request is creating a claim and spawning Copilot CLI | Same-node duplicate terminal launch is blocked |
+| `launched_pending_binding` | Terminal spawn returned and the launch claim is pending within its binding window | Duplicate launch remains blocked by claim state |
+| `bound` | Observation bound the launch claim to a registry row/session | Duplicate launch remains blocked while that bound session is active |
+| `terminal_failed` | Claim creation or terminal spawn failed | Retry is intentional after the failed claim is non-blocking |
+
+`launched_pending_binding` and `bound` are projections over launch-claim state. The operation snapshot may remember the terminal-launch result, but launch claims remain authoritative for pending, bound, failed, blocking, and retryable semantics. If a claim is pending within its binding window or already bound, the same node cannot start another launch even if the dialog is reopened. Failed preparation and terminal-spawn failures remain explicit retry states.
+
+Launch preparation run events are replayable through the existing run SSE endpoint while the API process still has the run buffer. The operation snapshot is the source of truth on dialog reopen: it carries the preparation run id, bounded progress history, last error, prepared handoff, terminal launch result, and claim projection. If the run id is unknown, the SSE buffer has rotated, or the API restarted, the UI falls back to the operation snapshot and presents the appropriate retry, review, or launch action instead of resetting to a blank dialog.
+
+The terminal-launch route remains a synchronous POST. To make that phase reattachable enough for the graph UI, the backend writes `launching` before claim creation/spawn and writes either `launched_pending_binding` with the terminal result or `terminal_failed` with diagnostic details before returning. The in-flight terminal-spawn window is bounded by the request, while the post-return binding state is represented by the operation snapshot plus launch-claim projection.
+
+The launch dialog is non-modal with respect to operation ownership. Closing the dialog or selecting another node only hides/unsubscribes the current view; it does not cancel the server-side preparation run or clear the node's operation. Reopening a prepared operation restores the handoff, kickoff prompt editor, and `WorkflowContext.md` review access. Starting a second node launch uses a separate operation key so progress, errors, terminal results, and claims cannot bleed between nodes.
+
 ### PAW Launch Configuration and Init Instructions
 
 The implemented launch surface is a text-guided PAW init dialog, not the full PAW `WorkflowContext.md` configuration UI. Defaults are intentionally visible to the builder in the instructions textarea:
@@ -811,42 +836,54 @@ The registry-level activity diagnostic codes currently include `events_missing`,
 
 ## Runtime Overlay
 
-The runtime overlay is how Streamliner presents live session and tracker state in the UI without modifying the committed graph. The overlay is a **projection of the session registry** ([Decision 004](decisions/004-session-registry-primary-surface.md)) filtered to entries whose `graphBinding` resolves to a visible node, joined with that node's committed status, observed liveness, tracker state, and PAW artifact status when artifacts are available. Sessions without `graphBinding`, and manual registry rows even when a builder has associated them with a node for bookkeeping, remain visible in the registry UI but do not render as graph-node session activity.
+The runtime overlay is how Streamliner presents live session, launch, PAW, and tracker state in the UI without modifying the committed graph. The overlay is a **projection** of the parsed workstream graph, graph-bound session registry rows ([Decision 004](decisions/004-session-registry-primary-surface.md)), graph-wide node launch records, and already-loaded tracker snapshots. It never writes runtime fields, launch claim summaries, session liveness, PAW artifact state, or tracker snapshots back into `graph.json` or changes `updatedAt`.
 
 ### Overlay Model
 
-The UI renders each node's state by combining three sources:
+The exported `workstream-runtime-overlay` contract is the UI/gate-readable composition boundary. `buildWorkstreamRuntimeOverlay(...)` returns:
 
-```
-Displayed state = committed graph status
-                + runtime session status (from observation)
-                + tracker status (from cached issue/PR state)
-```
+- `nodes`: one `WorkstreamRuntimeNodeOverlay` per graph node, preserving the committed graph status and adding runtime session, launch, PAW, tracker, issue, and degradation slices.
+- `summary`: graph-wide counts and issues for internal diagnostics and future gate consumers.
+- `gateReadiness`: `{ status, reasons }`, where `status` is `usable`, `degraded`, or `not-usable`.
 
-| Committed status | Runtime session | Displayed as |
-|-----------------|-----------------|--------------|
-| `ready` | `launching` | Launching |
-| `ready` | `active` | In Progress |
-| `ready` | `idle` | Needs Attention |
-| `ready` | `idle` + `pendingInputRequest` | Needs Input |
-| `ready` | `ended` | Completed (pending artifact promotion) |
-| `ready` | none | Ready |
-| `in-progress` | any | Session status takes precedence |
-| `completed` | any | Completed |
+`usable` means composition succeeded and the overlay can distinguish committed graph state from runtime evidence. `degraded` means one or more runtime sources are missing, stale, ambiguous, or unresolved but the projection is still usable. `not-usable` means a required composition source, such as the session registry snapshot, failed in a way that prevents reliable runtime interpretation.
 
-Graph nodes use the same compact status pulse/pill language as My Sessions for bound runtime state. A task node displays a session indicator for registry rows whose `graphBinding.workstreamId` matches the active workstream and whose `graphBinding.nodeId` matches the node. The indicator shows the My Sessions activity label for the highest-attention bound row plus a count of all non-manual bound rows for that node. Attention ordering is explicit and stable: `waiting_for_input` ("waiting for you") outranks `interrupted`, which outranks `working`, which outranks the lowest tier of `exited` and `unknown`. Reserved launched rows that are bound before trusted observation arrives stay visible in that lowest fallback tier rather than disappearing.
+The dashboard consumes graph-wide launch records through `GET /api/node-launch-records?graphPath=...`, which returns `{ records }` with latest launch-claim summaries. The selected-node compatibility shape, `GET /api/node-launch-records?graphPath=...&nodeId=...` returning `{ record }`, remains available for narrower consumers. Both paths are read-only and are scoped by normalized graph path.
 
-Graph nodes without projected bound sessions remain visually silent; empty, loading, and session-registry error states do not add graph-card copy. This keeps node cards focused on graph lifecycle and tracker context unless there is actual node-bound runtime activity to surface. Indicator details link to the Sessions surface with workstream/node filters when row-level routing is unavailable, allowing the builder to correlate the graph badge with the underlying registry rows without writing any session telemetry back into `graph.json`.
+### Precedence and Degradation
+
+Runtime overlay precedence is explicit:
+
+| Evidence | Overlay behavior |
+|---|---|
+| Committed graph status | Always remains visible as the base state; runtime evidence adds detail and never promotes graph status. |
+| Pending blocking launch claim with no bound session | Renders the node as `launching` and records a degraded unresolved-launch reason. |
+| Non-pending blocking launch claim with no bound session | Renders the node as `unresolved` and records a degraded unresolved-launch reason. |
+| Bound session `activityStatus: working` | Renders active work while retaining committed node status. |
+| Bound session `activityStatus: waiting_for_input` or `activityEvidence.pendingInputRequest` | Renders needs-input attention using the same language as My Sessions. |
+| Bound session `activityStatus: interrupted` or stale process evidence | Renders interrupted/stale runtime degradation. |
+| Bound session `activityStatus: exited` before committed completion | Renders ended runtime evidence pending explicit artifact promotion. |
+| Multiple non-ended bound sessions | Uses the highest-attention session as primary and marks the node ambiguous instead of hiding the conflict. |
+| Session registry loading | Keeps the overlay usable but degraded until a snapshot arrives. |
+| Session registry error | Marks the overlay not usable and surfaces the registry error as a graph-level reason. |
+| Launch records loading or unavailable | Keeps session/tracker projection usable but marks gate readiness degraded because launch-claim runtime evidence may be incomplete. |
+
+Graph nodes are the visible graph-wide runtime surface: they show committed lifecycle badges, the existing bound-session pulse/pill, and small runtime chips only when there is runtime evidence or actionable degradation. Selecting a node opens inspector-only runtime details for that node's session, launch, PAW, tracker, and degradation slices. The typed `summary` and `gateReadiness` contract remains available to downstream gates and automation, but the dashboard does not render a graph-wide runtime summary panel in the inspector sidebar. Indicator links to the Sessions surface continue to use workstream/node filters, so builders can correlate graph badges with registry rows without persisting runtime telemetry into the graph artifact.
 
 ### PAW Artifact Status Rendering
 
-For PAW-backed sessions, the `pawWorkflow` field carries an artifact-derived status summary (see [Decision 008](decisions/008-paw-artifacts-for-workflow-status.md)). It is intentionally coarse: it reports the artifact evidence Streamliner can see, not a guaranteed workflow automaton state.
+For PAW-backed sessions, `pawWorkflow` carries an artifact-derived status summary (see [Decision 008](decisions/008-paw-artifacts-for-workflow-status.md)). It is intentionally coarse: it reports the artifact evidence Streamliner can see, not a guaranteed workflow automaton state.
 
-- **Recognized artifact set** — overlay shows a `🐾 PAW ...` label with the coarse status implied by known PAW artifacts and can link to the relevant artifact paths.
-- **No explicit PAW work directory** — overlay omits the PAW label rather than scanning cwd-adjacent `.paw/work` directories or guessing from unrelated PAW artifacts.
-- **Unavailable artifact path** — overlay shows liveness/session status from Copilot state and may retain PAW diagnostics in registry data, but does not invent workflow progress or show a PAW label.
+- **Recognized Streamliner-launched PAW session** — overlay shows the PAW workflow kind/stage as enrichment alongside, never instead of, the activity status.
+- **Expected but unavailable/unknown PAW evidence** — overlay keeps the session liveness visible and adds PAW degradation (`paw-evidence-unavailable` or `paw-evidence-unknown`) rather than inventing workflow progress.
+- **Detected PAW artifacts without Streamliner PAW launch metadata** — overlay marks PAW as degraded (`paw-not-streamliner-launched`) and does not infer graph work from cwd or adjacent `.paw/work` directories.
+- **No PAW evidence** — overlay omits PAW enrichment.
 
 Mutation-affecting affordances must not depend solely on artifact-derived status until the workstream explicitly defines the artifact patterns and confidence thresholds for that affordance.
+
+### Tracker Narrowing
+
+Tracker overlay only uses tracker state already present on the `WorkstreamDerivedNode`. A GitHub issue snapshot contributes issue/PR state; an active pull request contributes the selected PR state. A node with a GitHub tracker reference but no loaded snapshot is marked as tracker-degraded so the missing cache is visible. The runtime overlay does not fetch GitHub data, infer issue state from URLs, or persist tracker snapshots as part of Wave 4.
 
 ### Artifact Promotion
 

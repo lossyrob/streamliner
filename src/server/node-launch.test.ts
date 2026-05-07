@@ -15,6 +15,7 @@ import {
   NodeLaunchError,
 } from "./node-launch";
 import { createStreamlinerApiApp, type StreamlinerApiApp } from "./app";
+import { NodeLaunchRecordStore } from "./node-launch-record-store";
 
 const createdRoots: string[] = [];
 const activeApps: StreamlinerApiApp[] = [];
@@ -488,6 +489,7 @@ describe("node launch API route", () => {
     const api = createStreamlinerApiApp({
       store: registryStore,
       launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
       nodeLaunchDeps: {
         launchTerminal: () => ({ method: "powershell", pid: 777 }),
       },
@@ -513,6 +515,7 @@ describe("node launch API route", () => {
     const api = createStreamlinerApiApp({
       store: registryStore,
       launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
       nodeLaunchDeps: {
         launchTerminal: () => ({ method: "powershell", pid: 777 }),
       },
@@ -540,6 +543,69 @@ describe("node launch API route", () => {
         color: "#4891c8",
       }),
     ]);
+    const operation = await request(api.app)
+      .get("/api/node-launch-records")
+      .query({
+        graphPath: fakeHandoff(root).launchMetadata.graphPath,
+        nodeId: "terminal-launch",
+      })
+      .expect(200);
+    expect(operation.body.operation).toEqual(expect.objectContaining({
+      status: "launched_pending_binding",
+      terminalLaunch: expect.objectContaining({
+        terminal: {
+          method: "powershell",
+          pid: 777,
+        },
+      }),
+      latestClaim: expect.objectContaining({
+        status: "pending",
+        blocksLaunch: true,
+      }),
+    }));
+  });
+
+  it("does not let a later terminal failure clobber a successful launch operation", async () => {
+    const root = createRootDir();
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const nodeLaunchRecordStore = new NodeLaunchRecordStore({
+      recordsPath: join(root, "state", "node-launch-records.json"),
+    });
+    const handoff = fakeHandoff(root);
+
+    await nodeLaunchRecordStore.markTerminalLaunching(handoff);
+    const terminalLaunch = launchPreparedNode(
+      registryStore,
+      claimStore,
+      handoff,
+      {
+        launchTerminal: () => ({ method: "powershell", pid: 777 }),
+      },
+    );
+    await nodeLaunchRecordStore.markTerminalLaunched(handoff, terminalLaunch);
+    await nodeLaunchRecordStore.markTerminalFailed({
+      handoff,
+      error: {
+        code: "terminal_spawn_failed",
+        error: "late losing request failed",
+      },
+    });
+
+    const operation = await nodeLaunchRecordStore.getOperation(
+      handoff.launchMetadata.graphPath,
+      handoff.launchMetadata.nodeId,
+    );
+    expect(operation).toEqual(expect.objectContaining({
+      status: "launched_pending_binding",
+      terminalLaunch: expect.objectContaining({
+        terminal: {
+          method: "powershell",
+          pid: 777,
+        },
+      }),
+      error: null,
+    }));
   });
 
   it("returns the blocking claim summary on duplicate launches", async () => {
@@ -549,6 +615,7 @@ describe("node launch API route", () => {
     const api = createStreamlinerApiApp({
       store: registryStore,
       launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
       nodeLaunchDeps: {
         launchTerminal: () => ({ method: "powershell", pid: 777 }),
       },
@@ -587,6 +654,7 @@ describe("node launch API route", () => {
     const api = createStreamlinerApiApp({
       store: registryStore,
       launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
       nodeLaunchDeps: {
         launchTerminal: () => ({ method: "powershell", pid: 777 }),
       },

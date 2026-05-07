@@ -38,6 +38,11 @@ export interface NodeLaunchSdkSession {
   stateRoot: string;
 }
 
+import type {
+  LaunchClaimFailureCode,
+  LaunchClaimStatus,
+} from "./launch-claim-schema";
+
 export interface NodeLaunchHandoff {
   cwd: string;
   branch: string;
@@ -68,17 +73,42 @@ export interface NodeLaunchRecordPathStatus {
 
 export interface NodeLaunchClaimState {
   launchClaimId: string;
-  status: string;
+  status: LaunchClaimStatus;
   launchedAt: string;
   updatedAt: string;
   bindingWindowExpiresAt: string;
   reservedRegistryId: string | null;
   boundRegistryId: string | null;
   boundCopilotSessionId: string | null;
-  failureCode: string | null;
+  failureCode: LaunchClaimFailureCode | null;
   failureReason: string | null;
   blocksLaunch: boolean;
   retryable: boolean;
+}
+
+export type NodeLaunchOperationStatus =
+  | "launchable"
+  | "preparing"
+  | "prepared"
+  | "preparation_failed"
+  | "launching"
+  | "launched_pending_binding"
+  | "bound"
+  | "terminal_failed";
+
+export interface NodeLaunchOperationProgressEvent {
+  type: string;
+  message: string;
+  timestamp: string;
+  data?: Record<string, unknown>;
+}
+
+export interface NodeLaunchOperationError {
+  code: string;
+  error: string;
+  step?: string;
+  input?: string;
+  timestamp: string;
 }
 
 export interface NodeTerminalLaunchResponse {
@@ -93,6 +123,22 @@ export interface NodeTerminalLaunchResponse {
     cliArgs: string[];
     promptNonceLine: string;
   };
+}
+
+export interface NodeLaunchOperation {
+  id: string;
+  graphPath: string;
+  nodeId: string;
+  status: NodeLaunchOperationStatus;
+  preparationRunId: string | null;
+  startedAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  handoff: NodeLaunchHandoff | null;
+  terminalLaunch: NodeTerminalLaunchResponse | null;
+  error: NodeLaunchOperationError | null;
+  progressEvents: NodeLaunchOperationProgressEvent[];
+  latestClaim?: NodeLaunchClaimState | null;
 }
 
 export interface NodeLaunchRecord {
@@ -123,4 +169,9 @@ export interface NodeLaunchRecord {
 
 export interface NodeLaunchRecordResponse {
   record: NodeLaunchRecord | null;
+  operation?: NodeLaunchOperation | null;
+}
+
+export interface NodeLaunchRecordListResponse {
+  records: NodeLaunchRecord[];
 }

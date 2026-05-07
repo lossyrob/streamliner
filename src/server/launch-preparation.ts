@@ -636,7 +636,7 @@ function isPathInside(parent: string, child: string): boolean {
   return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
 }
 
-function isValidPawWorkDir(cwd: string, workId: string, pawWorkDir: string): boolean {
+function isPawWorkDirShape(workId: string, pawWorkDir: string): boolean {
   const resolved = resolve(pawWorkDir);
   if (basename(resolved) !== workId) {
     return false;
@@ -649,15 +649,36 @@ function isValidPawWorkDir(cwd: string, workId: string, pawWorkDir: string): boo
   if (basename(pawRoot) !== ".paw") {
     return false;
   }
+  return true;
+}
+
+function isLaunchCheckoutPawWorkDir(cwd: string, pawWorkDir: string): boolean {
+  const resolved = resolve(pawWorkDir);
+  const workRoot = dirname(resolved);
+  const pawRoot = dirname(workRoot);
   const checkoutRoot = dirname(pawRoot);
   return isPathInside(cwd, checkoutRoot) || isPathInside(dirname(cwd), checkoutRoot);
 }
 
-function resolvePawWorkDir(cwd: string, workId: string, provided: unknown): string {
+function isValidPawWorkDir(cwd: string, workId: string, pawWorkDir: string): boolean {
+  return isPawWorkDirShape(workId, pawWorkDir) && isLaunchCheckoutPawWorkDir(cwd, pawWorkDir);
+}
+
+function resolveProvidedPawWorkDir(cwd: string, workId: string, provided: unknown): string {
   const defaultWorkDir = join(cwd, ".paw", "work", workId);
   const pawWorkDir = typeof provided === "string" && provided.trim()
-    ? resolve(provided)
+    ? isAbsolute(provided)
+      ? resolve(provided)
+      : resolve(cwd, provided)
     : defaultWorkDir;
+  if (!isPawWorkDirShape(workId, pawWorkDir)) {
+    throw new Error("pawWorkDir must be a .paw/work/<workId> directory.");
+  }
+  return pawWorkDir;
+}
+
+function resolvePawWorkDir(cwd: string, workId: string, provided: unknown): string {
+  const pawWorkDir = resolveProvidedPawWorkDir(cwd, workId, provided);
   if (!isValidPawWorkDir(cwd, workId, pawWorkDir)) {
     throw new Error("pawWorkDir must be a .paw/work/<workId> directory in the launch checkout or a sibling worktree.");
   }
@@ -666,6 +687,69 @@ function resolvePawWorkDir(cwd: string, workId: string, provided: unknown): stri
 
 function checkoutRootForPawWorkDir(pawWorkDir: string): string {
   return dirname(dirname(dirname(resolve(pawWorkDir))));
+}
+
+function normalizeRepoSlug(value: string): string {
+  return value.toLowerCase().replace(/\.git$/i, "");
+}
+
+function gitRemoteRepoSlug(remoteUrl: string): string | null {
+  const trimmed = remoteUrl.trim();
+  const patterns = [
+    /^git@[^:]+:(?<owner>[^/]+)\/(?<name>[^/]+?)(?:\.git)?$/i,
+    /^(?:https?|ssh):\/\/[^/]+\/(?<owner>[^/]+)\/(?<name>[^/]+?)(?:\.git)?\/?$/i,
+    /^(?<owner>[^/\s]+)\/(?<name>[^/\s]+?)(?:\.git)?$/i,
+  ];
+  for (const pattern of patterns) {
+    const match = trimmed.match(pattern);
+    const owner = match?.groups?.owner;
+    const name = match?.groups?.name;
+    if (owner && name) {
+      return normalizeRepoSlug(`${owner}/${name}`);
+    }
+  }
+  return null;
+}
+
+function selectedTargetRepoSlugs(input: PawLaunchSessionRunnerInput): string[] {
+  const { node, workstream } = input.preparedContext.generationInput;
+  const selectedRepoIds = new Set(node.repoIds);
+  return workstream.repos
+    .filter((repo) => selectedRepoIds.has(repo.id))
+    .map((repo) => normalizeRepoSlug(`${repo.owner}/${repo.name}`));
+}
+
+async function checkoutRemoteRepoSlug(checkoutRoot: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync("git", ["-C", checkoutRoot, "remote", "get-url", "origin"]);
+    return gitRemoteRepoSlug(stdout);
+  } catch (error: unknown) {
+    getApiLogger().withScope("launch-preparation").debug(
+      "could not determine PAW worktree remote",
+      { checkoutRoot: normalizeManifestPath(checkoutRoot), err: error },
+    );
+    return null;
+  }
+}
+
+export async function resolvePawWorkDirForLaunch(
+  input: PawLaunchSessionRunnerInput,
+  workId: string,
+  provided: unknown,
+): Promise<string> {
+  const pawWorkDir = resolveProvidedPawWorkDir(input.cwd, workId, provided);
+  if (isLaunchCheckoutPawWorkDir(input.cwd, pawWorkDir)) {
+    return pawWorkDir;
+  }
+
+  const targetRepoSlugs = selectedTargetRepoSlugs(input);
+  const checkoutRoot = checkoutRootForPawWorkDir(pawWorkDir);
+  const checkoutRepoSlug = await checkoutRemoteRepoSlug(checkoutRoot);
+  if (checkoutRepoSlug && targetRepoSlugs.includes(checkoutRepoSlug)) {
+    return pawWorkDir;
+  }
+
+  throw new Error("pawWorkDir must be a .paw/work/<workId> directory in the launch checkout, a sibling worktree, or a checkout for the selected node target repo.");
 }
 
 function emitProgress(
@@ -820,7 +904,7 @@ function buildStreamlinerLaunchManifest(
       existingLaunch: input.existingLaunch ?? null,
     },
     worktreePolicy: {
-      rule: "Treat launchCwd as the base/coordination checkout. Do not check out the target node branch in launchCwd. If targetBranch differs from launchCwdInitialBranch, create or reuse a sibling worktree for targetBranch and place .paw/work/<workId> there.",
+      rule: "Treat launchCwd as the base/coordination checkout. Do not check out the target node branch in launchCwd. If targetBranch differs from launchCwdInitialBranch, create or reuse a sibling worktree for targetBranch. If the selected node targets a different repository than launchCwd, use a checkout or worktree for that selected target repository. Place .paw/work/<workId> in the execution checkout and pass that path to complete_paw_init.",
       launchCwd: normalizeManifestPath(input.cwd),
       launchCwdInitialBranch,
     },
@@ -1005,7 +1089,7 @@ function buildPawInitPrompt(input: PawInitRunnerInput): string {
     "- `workTitle`: the PAW work title derived by paw-init.",
     "- `workId`: the PAW work ID derived by paw-init.",
     "- `targetBranch`: the target branch derived by paw-init.",
-    "- `pawWorkDir`: optional absolute PAW work directory. If omitted, Streamliner uses `<cwd>/.paw/work/<workId>`.",
+    "- `pawWorkDir`: optional absolute PAW work directory. If omitted, Streamliner uses `<cwd>/.paw/work/<workId>`. Use a selected target repository checkout/worktree path when the launch cwd is only a coordination checkout.",
     "- `artifactLifecycle`: optional artifact lifecycle if resolved.",
     "- `additionalKickoffInstructions`: optional filtered worker-startup guidance that should be appended to the final kickoff prompt.",
     "  If the builder included an explicit 'Additional instructions' section or equivalent session-operating guidance, preserve that guidance here unless it is fully represented by durable WorkflowContext fields.",
@@ -1209,6 +1293,7 @@ export function buildStreamlinerContextSavePrompt(
     "- Do not create PAW files, branches, worktrees, or WorkflowContext.md in this step.",
     "- The launch cwd is the base/coordination checkout. Do not check out the target node branch in the launch cwd.",
     "- If PAW init later needs a different target branch than the launch cwd started on, create or reuse a sibling worktree for that target branch.",
+    "- If the selected node targets a different repository than the launch cwd, create or reuse a checkout/worktree for the selected target repository and put `.paw/work/<workId>` there.",
     "- If an existing Streamliner launch record is provided, inspect the existing Streamliner context file when helpful, but still save one current context through `save_streamliner_context` so Streamliner can install or refresh it.",
     "",
     "Selected Streamliner node:",
@@ -1328,7 +1413,7 @@ export async function defaultPawLaunchSessionRunner(
             args.additionalKickoffInstructions,
             "additionalKickoffInstructions",
           );
-          const pawWorkDir = resolvePawWorkDir(input.cwd, workId, args.pawWorkDir);
+          const pawWorkDir = await resolvePawWorkDirForLaunch(input, workId, args.pawWorkDir);
           validatePawWorktreePolicy({
             launchCwd: input.cwd,
             launchCwdInitialBranch,

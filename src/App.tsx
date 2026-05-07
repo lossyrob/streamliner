@@ -56,10 +56,12 @@ import {
 import type {
   NodeLaunchHandoff,
   NodeLaunchClaimState,
+  NodeLaunchOperation,
   NodeLaunchRecord,
   NodeLaunchRecordResponse,
   NodeTerminalLaunchResponse,
 } from "./node-launch-record-contract";
+import { loadGraphNodeLaunchRecords } from "./node-launch-record-client";
 import {
   encodeRouteSegment,
   handleInAppLinkClick,
@@ -74,6 +76,10 @@ import {
 import { renderWorkstreamTerminalTitleTemplate } from "./workstream-launch-templates";
 import { evaluateNodeLaunchPolicy } from "./workstream-launch-policy";
 import { useSessionRegistryList } from "./session-registry-client";
+import {
+  buildWorkstreamRuntimeOverlay,
+  type WorkstreamRuntimeOverlay,
+} from "./workstream-runtime-overlay";
 
 const POLL_INTERVAL_MS = 2000;
 const LAST_GRAPH_KEY = "streamliner:lastGraphPath";
@@ -90,6 +96,7 @@ type PawLaunchPreparationResponse = NodeLaunchHandoff;
 interface PawLaunchRunStartResponse {
   runId?: string;
   status?: string;
+  operation?: NodeLaunchOperation | null;
 }
 
 interface PawLaunchRunError {
@@ -102,6 +109,16 @@ interface PawLaunchRunError {
 interface PawLaunchRunFinishedPayload {
   result?: PawLaunchPreparationResponse;
   error?: PawLaunchRunError;
+}
+
+interface LoadedNodeLaunchState {
+  record: NodeLaunchRecord | null;
+  operation: NodeLaunchOperation | null;
+}
+
+interface LaunchOperationTarget {
+  graphPath: string;
+  nodeId: string;
 }
 
 function decodeSegment(segment: string): string | null {
@@ -327,6 +344,95 @@ function createLaunchNonce(): string {
   return `launch-${Date.now().toString(36)}`;
 }
 
+function launchOperationKey(target: LaunchOperationTarget): string {
+  return `${target.graphPath.toLowerCase()}\0${target.nodeId}`;
+}
+
+function createClientLaunchOperation(
+  target: LaunchOperationTarget,
+  status: NodeLaunchOperation["status"],
+  overrides: Partial<NodeLaunchOperation> = {},
+): NodeLaunchOperation {
+  const timestamp = new Date().toISOString();
+  return {
+    id: `${target.nodeId}-client`,
+    graphPath: target.graphPath,
+    nodeId: target.nodeId,
+    status,
+    preparationRunId: null,
+    startedAt: timestamp,
+    updatedAt: timestamp,
+    completedAt: null,
+    handoff: null,
+    terminalLaunch: null,
+    error: null,
+    progressEvents: [],
+    ...overrides,
+  };
+}
+
+function operationError(
+  code: string,
+  error: string,
+): NodeLaunchOperation["error"] {
+  return {
+    code,
+    error,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+function appendProgressEvent(
+  events: PawLaunchProgressEvent[],
+  event: PawLaunchProgressEvent,
+): PawLaunchProgressEvent[] {
+  const eventKey = `${event.timestamp}\0${event.type}\0${event.message}`;
+  if (events.some((candidate) => `${candidate.timestamp}\0${candidate.type}\0${candidate.message}` === eventKey)) {
+    return events;
+  }
+  return [...events, event].slice(-50);
+}
+
+function clientHandoffFromPreparation(
+  handoff: PawLaunchPreparationResponse,
+): PawLaunchPreparationResponse {
+  return {
+    cwd: handoff.cwd,
+    branch: handoff.branch,
+    pawWorkDir: handoff.pawWorkDir,
+    workflowContextPath: handoff.workflowContextPath,
+    streamlinerContextPath: handoff.streamlinerContextPath,
+    cliArgs: handoff.cliArgs,
+    terminal: handoff.terminal,
+    environment: handoff.environment,
+    sessionStateRoot: handoff.sessionStateRoot,
+    kickoffPrompt: handoff.kickoffPrompt,
+    kickoffAdditionalInstructions: handoff.kickoffAdditionalInstructions,
+    launchMetadata: handoff.launchMetadata,
+    contextPackage: handoff.contextPackage,
+    sdkSession: handoff.sdkSession,
+  };
+}
+
+function sameLaunchTarget(
+  left: LaunchOperationTarget | null,
+  right: LaunchOperationTarget | null,
+): boolean {
+  return Boolean(left && right && launchOperationKey(left) === launchOperationKey(right));
+}
+
+function mergeNodeLaunchRecord(
+  records: NodeLaunchRecord[],
+  target: LaunchOperationTarget,
+  record: NodeLaunchRecord | null,
+): NodeLaunchRecord[] {
+  const nextRecords = records.filter(
+    (candidate) =>
+      candidate.graphPath !== target.graphPath || candidate.nodeId !== target.nodeId,
+  );
+  return record ? [...nextRecords, record] : nextRecords;
+}
+
 function mergeWorkstreamEntries(
   serverEntries: WorkstreamRegistryListEntry[],
   browserEntries: WorkstreamRegistryListEntry[],
@@ -360,7 +466,7 @@ async function parseErrorResponse(res: Response): Promise<GraphLoadError> {
 async function loadNodeLaunchRecord(
   graphPath: string,
   nodeId: string,
-): Promise<NodeLaunchRecord | null> {
+): Promise<LoadedNodeLaunchState> {
   const params = new URLSearchParams({ graphPath, nodeId });
   const response = await fetch(`/api/node-launch-records?${params.toString()}`);
   if (!response.ok) {
@@ -368,7 +474,10 @@ async function loadNodeLaunchRecord(
     throw new Error(parsed.message);
   }
   const body = await response.json() as NodeLaunchRecordResponse;
-  return body.record ?? null;
+  return {
+    record: body.record ?? null,
+    operation: body.operation ?? null,
+  };
 }
 
 interface NodeLaunchReleaseResponse {
@@ -1021,22 +1130,22 @@ function GraphDashboard({
   );
   const [actionError, setActionError] = useState<string | null>(null);
   const [launchDialogOpen, setLaunchDialogOpen] = useState(false);
-  const [launchPreparing, setLaunchPreparing] = useState(false);
-  const [terminalLaunching, setTerminalLaunching] = useState(false);
-  const [launchError, setLaunchError] = useState<string | null>(null);
-  const [launchHandoff, setLaunchHandoff] = useState<PawLaunchPreparationResponse | null>(null);
-  const [terminalLaunchResult, setTerminalLaunchResult] = useState<NodeTerminalLaunchResponse | null>(null);
+  const [launchDialogTarget, setLaunchDialogTarget] = useState<LaunchOperationTarget | null>(null);
+  const [launchOperationByKey, setLaunchOperationByKey] = useState<Record<string, NodeLaunchOperation>>({});
   const [launchReleasing, setLaunchReleasing] = useState(false);
   const [launchReleaseError, setLaunchReleaseError] = useState<string | null>(null);
   const [launchReleaseStatus, setLaunchReleaseStatus] = useState<string | null>(null);
-  const [launchProgressEvents, setLaunchProgressEvents] = useState<PawLaunchProgressEvent[]>([]);
-  const [nodeLaunchRecord, setNodeLaunchRecord] = useState<NodeLaunchRecord | null>(null);
+  const [nodeLaunchRecords, setNodeLaunchRecords] = useState<NodeLaunchRecord[]>([]);
   const [nodeLaunchRecordLoading, setNodeLaunchRecordLoading] = useState(false);
   const [nodeLaunchRecordError, setNodeLaunchRecordError] = useState<string | null>(null);
+  const [selectedNodeLaunchRecordLoading, setSelectedNodeLaunchRecordLoading] = useState(false);
+  const [selectedNodeLaunchRecordError, setSelectedNodeLaunchRecordError] = useState<string | null>(null);
   const [nodeLaunchRecordRefreshKey, setNodeLaunchRecordRefreshKey] = useState(0);
   const [configurationDialogOpen, setConfigurationDialogOpen] = useState(false);
   const [configurationSaving, setConfigurationSaving] = useState(false);
   const [configurationError, setConfigurationError] = useState<string | null>(null);
+  const failedRunReattachRef = useRef<Set<string>>(new Set());
+  const localRunStreamsRef = useRef<Set<string>>(new Set());
   const activeWorkstreamKey = activeWorkstream ? registryKey(activeWorkstream) : "";
   const sessionList = useSessionRegistryList(
     { workstreamId: activeWorkstream?.workstreamId ?? null },
@@ -1054,6 +1163,13 @@ function GraphDashboard({
     : sessionList.error
       ? "error"
       : "ready";
+  const nodeLaunchRecordsByNodeId = useMemo(() => {
+    const recordsByNodeId = new Map<string, NodeLaunchRecord>();
+    for (const record of nodeLaunchRecords) {
+      recordsByNodeId.set(record.nodeId, record);
+    }
+    return recordsByNodeId;
+  }, [nodeLaunchRecords]);
   const initialViewportFitKey = `${activeWorkstreamKey}:${selectedNodeIdFromRoute ?? ""}`;
 
   useEffect(() => {
@@ -1074,11 +1190,71 @@ function GraphDashboard({
     if (!selectedNodeId || !viewModel) return null;
     return viewModel.derivedNodes.find((entry) => entry.node.id === selectedNodeId) ?? null;
   }, [selectedNodeId, viewModel]);
+  const nodeLaunchRecord = selectedEntry
+    ? nodeLaunchRecordsByNodeId.get(selectedEntry.node.id) ?? null
+    : null;
 
   const activeWorkstreamEntry = useMemo(() => {
     if (!activeWorkstream) return null;
     return workstreams.find((entry) => registryKey(entry) === registryKey(activeWorkstream)) ?? null;
   }, [activeWorkstream, workstreams]);
+  const runtimeOverlay = useMemo<WorkstreamRuntimeOverlay | null>(() => {
+    if (!viewModel) {
+      return null;
+    }
+    return buildWorkstreamRuntimeOverlay({
+      viewModel,
+      nodeSessionStatuses,
+      sessionStatusState: nodeSessionStatusState,
+      sessionStatusError: sessionList.error,
+      nodeLaunchRecords: nodeLaunchRecordsByNodeId,
+      launchRecordsState: nodeLaunchRecordLoading
+        ? "loading"
+        : nodeLaunchRecordError
+          ? "error"
+          : "ready",
+      launchRecordsError: nodeLaunchRecordError,
+    });
+  }, [
+    nodeLaunchRecordsByNodeId,
+    nodeLaunchRecordError,
+    nodeLaunchRecordLoading,
+    nodeSessionStatusState,
+    nodeSessionStatuses,
+    sessionList.error,
+    viewModel,
+  ]);
+  const selectedRuntimeOverlay = selectedEntry
+    ? runtimeOverlay?.nodesById.get(selectedEntry.node.id) ?? null
+    : null;
+
+  const selectedLaunchTarget = useMemo<LaunchOperationTarget | null>(() => {
+    if (!selectedEntry || !activeWorkstreamEntry) {
+      return null;
+    }
+    return {
+      graphPath: activeWorkstreamEntry.path,
+      nodeId: selectedEntry.node.id,
+    };
+  }, [activeWorkstreamEntry, selectedEntry]);
+
+  const selectedLaunchOperation = selectedLaunchTarget
+    ? launchOperationByKey[launchOperationKey(selectedLaunchTarget)] ?? null
+    : null;
+
+  const launchDialogEntry = useMemo(() => {
+    if (!launchDialogTarget || !viewModel) {
+      return null;
+    }
+    return viewModel.derivedNodes.find((entry) => entry.node.id === launchDialogTarget.nodeId) ?? null;
+  }, [launchDialogTarget, viewModel]);
+
+  const launchDialogOperation = launchDialogTarget
+    ? launchOperationByKey[launchOperationKey(launchDialogTarget)] ?? null
+    : null;
+
+  const launchDialogLatestClaim = launchDialogOperation?.latestClaim
+    ?? (sameLaunchTarget(launchDialogTarget, selectedLaunchTarget) ? nodeLaunchRecord?.latestClaim ?? null : null);
 
   const configureDisabledReason = useMemo(() => {
     if (!activeWorkstreamEntry || !isBackendReadableWorkstreamEntry(activeWorkstreamEntry)) {
@@ -1126,7 +1302,14 @@ function GraphDashboard({
   );
 
   const launchActionDisabledReason = useMemo(() => {
-    const latestClaim = nodeLaunchRecord?.latestClaim;
+    const operation = launchDialogOperation ?? selectedLaunchOperation;
+    if (operation?.status === "preparing") {
+      return "PAW init is already running for this node. Reopen the dialog to watch progress or wait for the prepared handoff.";
+    }
+    if (operation?.status === "launching") {
+      return "A terminal launch is already in progress for this node. Reopen the dialog to inspect the launch state.";
+    }
+    const latestClaim = launchDialogTarget ? launchDialogLatestClaim : nodeLaunchRecord?.latestClaim;
     if (!latestClaim?.blocksLaunch) {
       return null;
     }
@@ -1134,13 +1317,15 @@ function GraphDashboard({
       return "A Copilot terminal session is already bound to this node. The dialog remains available for the issue and prepared launch details, but Streamliner will not start another PAW init or terminal launch while that session is active.";
     }
     return "A terminal launch is already active for this node. The dialog remains available for the issue and prepared launch details, but Streamliner will not start another PAW init or terminal launch until the active claim resolves.";
-  }, [nodeLaunchRecord]);
+  }, [launchDialogLatestClaim, launchDialogOperation, launchDialogTarget, nodeLaunchRecord, selectedLaunchOperation]);
 
   const launchDefaults = useMemo<PawLaunchDialogDefaults | null>(() => {
-    if (!selectedEntry || !activeWorkstreamEntry) return null;
-    const inferredCwd = inferRepoRootFromGraphPath(activeWorkstreamEntry.path);
+    const defaultsEntry = launchDialogTarget ? launchDialogEntry : selectedEntry;
+    const graphPath = launchDialogTarget?.graphPath ?? activeWorkstreamEntry?.path;
+    if (!defaultsEntry || !graphPath) return null;
+    const inferredCwd = inferRepoRootFromGraphPath(graphPath);
     const cwdPreferenceKey = workstream
-      ? launchCwdRepoKey(workstream, selectedEntry.node.repoIds)
+      ? launchCwdRepoKey(workstream, defaultsEntry.node.repoIds)
       : null;
     const savedCwd = readLaunchCwdOverride(cwdPreferenceKey);
     return {
@@ -1149,12 +1334,12 @@ function GraphDashboard({
       cwd: savedCwd ?? inferredCwd,
       inferredCwd,
       cwdPreferenceKey,
-      graphPath: activeWorkstreamEntry.path,
+      graphPath,
       terminalPreference: "Manual terminal launch after preparation",
-      githubIssueLabel: selectedEntry.node.tracker?.type === "github"
-        ? workstreamTrackerLabel(selectedEntry.node.tracker)
+      githubIssueLabel: defaultsEntry.node.tracker?.type === "github"
+        ? workstreamTrackerLabel(defaultsEntry.node.tracker)
         : null,
-      githubIssueUrl: workstreamTrackerUrl(selectedEntry.node.tracker),
+      githubIssueUrl: workstreamTrackerUrl(defaultsEntry.node.tracker),
       terminal: {
         ...DEFAULT_PAW_TERMINAL_CONFIGURATION,
         preferredTerminal:
@@ -1163,32 +1348,33 @@ function GraphDashboard({
         title:
           renderWorkstreamTerminalTitleTemplate(
             workstream?.launchDefaults?.terminal?.titleTemplate,
-            selectedEntry.node,
-          ) ?? selectedEntry.node.title,
+            defaultsEntry.node,
+          ) ?? defaultsEntry.node.title,
         tabColor: workstream?.launchDefaults?.terminal?.tabColor ?? null,
       },
     };
-  }, [activeWorkstreamEntry, selectedEntry, workstream]);
+  }, [activeWorkstreamEntry?.path, launchDialogEntry, launchDialogTarget, selectedEntry, workstream]);
 
   useEffect(() => {
-    if (!selectedEntry || !activeWorkstreamEntry || !isBackendReadableWorkstreamEntry(activeWorkstreamEntry)) {
-      setNodeLaunchRecord(null);
+    if (!activeWorkstreamEntry || !isBackendReadableWorkstreamEntry(activeWorkstreamEntry)) {
+      setNodeLaunchRecords([]);
       setNodeLaunchRecordLoading(false);
       setNodeLaunchRecordError(null);
       return;
     }
     let cancelled = false;
+    setNodeLaunchRecords([]);
     setNodeLaunchRecordLoading(true);
     setNodeLaunchRecordError(null);
-    loadNodeLaunchRecord(activeWorkstreamEntry.path, selectedEntry.node.id)
-      .then((record) => {
+    loadGraphNodeLaunchRecords(activeWorkstreamEntry.path)
+      .then((records) => {
         if (!cancelled) {
-          setNodeLaunchRecord(record);
+          setNodeLaunchRecords(records);
         }
       })
       .catch((recordError: unknown) => {
         if (!cancelled) {
-          setNodeLaunchRecord(null);
+          setNodeLaunchRecords([]);
           setNodeLaunchRecordError(recordError instanceof Error ? recordError.message : String(recordError));
         }
       })
@@ -1200,7 +1386,224 @@ function GraphDashboard({
     return () => {
       cancelled = true;
     };
+  }, [activeWorkstreamEntry, nodeLaunchRecordRefreshKey]);
+
+  useEffect(() => {
+    if (
+      !activeWorkstreamEntry ||
+      !isBackendReadableWorkstreamEntry(activeWorkstreamEntry) ||
+      !selectedEntry
+    ) {
+      setSelectedNodeLaunchRecordLoading(false);
+      setSelectedNodeLaunchRecordError(null);
+      return;
+    }
+    const target = {
+      graphPath: activeWorkstreamEntry.path,
+      nodeId: selectedEntry.node.id,
+    };
+    let cancelled = false;
+    setSelectedNodeLaunchRecordLoading(true);
+    setSelectedNodeLaunchRecordError(null);
+    loadNodeLaunchRecord(target.graphPath, target.nodeId)
+      .then((state) => {
+        if (cancelled) {
+          return;
+        }
+        setNodeLaunchRecords((current) =>
+          mergeNodeLaunchRecord(current, target, state.record)
+        );
+        const key = launchOperationKey(target);
+        setLaunchOperationByKey((current) => {
+          if (!state.operation) {
+            return current;
+          }
+          const existing = current[key];
+          const progressEvents = existing &&
+              existing.preparationRunId === state.operation.preparationRunId &&
+              existing.progressEvents.length > state.operation.progressEvents.length
+            ? existing.progressEvents
+            : state.operation.progressEvents;
+          return {
+            ...current,
+            [key]: {
+              ...state.operation,
+              progressEvents,
+              handoff: state.operation.handoff ?? existing?.handoff ?? null,
+              terminalLaunch: state.operation.terminalLaunch ?? existing?.terminalLaunch ?? null,
+              error: state.operation.error ?? existing?.error ?? null,
+            },
+          };
+        });
+      })
+      .catch((recordError: unknown) => {
+        if (!cancelled) {
+          setSelectedNodeLaunchRecordError(
+            recordError instanceof Error ? recordError.message : String(recordError),
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setSelectedNodeLaunchRecordLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [activeWorkstreamEntry, nodeLaunchRecordRefreshKey, selectedEntry]);
+
+  const setLaunchOperation = useCallback((
+    target: LaunchOperationTarget,
+    nextOperation: NodeLaunchOperation,
+  ) => {
+    const key = launchOperationKey(target);
+    setLaunchOperationByKey((current) => ({
+      ...current,
+      [key]: nextOperation,
+    }));
+  }, []);
+
+  const updateLaunchOperation = useCallback((
+    target: LaunchOperationTarget,
+    updater: (current: NodeLaunchOperation | null) => NodeLaunchOperation,
+  ) => {
+    const key = launchOperationKey(target);
+    setLaunchOperationByKey((current) => ({
+      ...current,
+      [key]: updater(current[key] ?? null),
+    }));
+  }, []);
+
+  const applyPreparedLaunchHandoff = useCallback((
+    target: LaunchOperationTarget,
+    handoff: PawLaunchPreparationResponse,
+  ): PawLaunchPreparationResponse => {
+    const nextHandoff = clientHandoffFromPreparation(handoff);
+    updateLaunchOperation(target, (current) =>
+      createClientLaunchOperation(target, "prepared", {
+        ...(current ?? {}),
+        status: "prepared",
+        handoff: nextHandoff,
+        terminalLaunch: null,
+        error: null,
+        completedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+    );
+    setNodeLaunchRecordRefreshKey((current) => current + 1);
+    return nextHandoff;
+  }, [updateLaunchOperation]);
+
+  const applyPreparationFailure = useCallback((
+    target: LaunchOperationTarget,
+    payload: PawLaunchRunFinishedPayload,
+  ): string => {
+    const message = payload.error?.error ?? "Launch preparation failed.";
+    updateLaunchOperation(target, (current) =>
+      createClientLaunchOperation(target, "preparation_failed", {
+        ...(current ?? {}),
+        status: "preparation_failed",
+        handoff: null,
+        error: operationError(payload.error?.code ?? "launch_preparation_failed", message),
+        completedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+    );
+    return message;
+  }, [updateLaunchOperation]);
+
+  useEffect(() => {
+    if (
+      !launchDialogOpen ||
+      !launchDialogTarget ||
+      !launchDialogOperation?.preparationRunId ||
+      launchDialogOperation.status !== "preparing"
+    ) {
+      return;
+    }
+    const runId = launchDialogOperation.preparationRunId;
+    if (localRunStreamsRef.current.has(runId) || failedRunReattachRef.current.has(runId)) {
+      return;
+    }
+    let closed = false;
+    const source = new EventSource(
+      `/api/launch-preparations/runs/${encodeURIComponent(runId)}/events`,
+    );
+    source.addEventListener("progress", (event) => {
+      if (closed) {
+        return;
+      }
+      const progress = parseMessageEventData<PawLaunchProgressEvent>(event);
+      updateLaunchOperation(launchDialogTarget, (current) => {
+        const operation = current ?? createClientLaunchOperation(launchDialogTarget, "preparing");
+        return {
+          ...operation,
+          status: "preparing",
+          error: null,
+          updatedAt: progress.timestamp,
+          progressEvents: appendProgressEvent(operation.progressEvents, progress),
+        };
+      });
+    });
+    source.addEventListener("completed", (event) => {
+      if (closed) {
+        return;
+      }
+      const payload = parseMessageEventData<PawLaunchRunFinishedPayload>(event);
+      if (payload.result) {
+        applyPreparedLaunchHandoff(launchDialogTarget, payload.result);
+      }
+      source.close();
+    });
+    source.addEventListener("failed", (event) => {
+      if (closed) {
+        return;
+      }
+      applyPreparationFailure(launchDialogTarget, parseMessageEventData<PawLaunchRunFinishedPayload>(event));
+      source.close();
+    });
+    source.onerror = () => {
+      if (closed) {
+        return;
+      }
+      failedRunReattachRef.current.add(runId);
+      source.close();
+      void loadNodeLaunchRecord(launchDialogTarget.graphPath, launchDialogTarget.nodeId)
+        .then((state) => {
+          if (closed) {
+            return;
+          }
+          if (sameLaunchTarget(launchDialogTarget, selectedLaunchTarget)) {
+            setNodeLaunchRecords((current) =>
+              mergeNodeLaunchRecord(current, launchDialogTarget, state.record)
+            );
+          }
+          if (state.operation) {
+            setLaunchOperation(launchDialogTarget, state.operation);
+          }
+        })
+        .catch((recordError: unknown) => {
+          if (!closed) {
+            setNodeLaunchRecordError(recordError instanceof Error ? recordError.message : String(recordError));
+          }
+        });
+    };
+    return () => {
+      closed = true;
+      source.close();
+    };
+  }, [
+    applyPreparationFailure,
+    applyPreparedLaunchHandoff,
+    launchDialogOpen,
+    launchDialogOperation?.preparationRunId,
+    launchDialogOperation?.status,
+    launchDialogTarget,
+    selectedLaunchTarget,
+    setLaunchOperation,
+    updateLaunchOperation,
+  ]);
 
   const handleArchiveCurrent = async () => {
     if (!activeWorkstream) {
@@ -1216,12 +1619,12 @@ function GraphDashboard({
   };
 
   const handleOpenLaunchDialog = () => {
-    setLaunchError(null);
-    setLaunchHandoff(null);
-    setTerminalLaunchResult(null);
+    if (!selectedLaunchTarget) {
+      return;
+    }
+    setLaunchDialogTarget(selectedLaunchTarget);
     setLaunchReleaseError(null);
     setLaunchReleaseStatus(null);
-    setLaunchProgressEvents([]);
     setLaunchDialogOpen(true);
   };
 
@@ -1255,21 +1658,16 @@ function GraphDashboard({
   };
 
   const handleCloseLaunchDialog = () => {
-    if (launchPreparing || terminalLaunching || launchReleasing) {
-      return;
-    }
     setLaunchDialogOpen(false);
-    setLaunchError(null);
-    setLaunchHandoff(null);
-    setTerminalLaunchResult(null);
+    setLaunchDialogTarget(null);
     setLaunchReleaseError(null);
     setLaunchReleaseStatus(null);
-    setLaunchProgressEvents([]);
   };
 
   const handleReleaseLaunch = async () => {
-    const latestClaim = nodeLaunchRecord?.latestClaim;
-    if (!latestClaim) {
+    const target = launchDialogTarget ?? selectedLaunchTarget;
+    const latestClaim = launchDialogTarget ? launchDialogLatestClaim : nodeLaunchRecord?.latestClaim;
+    if (!target || !latestClaim) {
       return;
     }
     setLaunchReleasing(true);
@@ -1282,10 +1680,16 @@ function GraphDashboard({
           ? "Released the launch claim and detached the linked session."
           : "Released the launch claim.",
       );
-      if (activeWorkstreamEntry && selectedEntry) {
-        const refreshed = await loadNodeLaunchRecord(activeWorkstreamEntry.path, selectedEntry.node.id);
-        setNodeLaunchRecord(refreshed);
+      const refreshed = await loadNodeLaunchRecord(target.graphPath, target.nodeId);
+      if (sameLaunchTarget(target, selectedLaunchTarget)) {
+        setNodeLaunchRecords((current) =>
+          mergeNodeLaunchRecord(current, target, refreshed.record)
+        );
       }
+      if (refreshed.operation) {
+        setLaunchOperation(target, refreshed.operation);
+      }
+      setNodeLaunchRecordRefreshKey((current) => current + 1);
     } catch (releaseError: unknown) {
       setLaunchReleaseError(releaseError instanceof Error ? releaseError.message : String(releaseError));
     } finally {
@@ -1296,9 +1700,18 @@ function GraphDashboard({
   const launchTerminalFromHandoff = async (
     handoff: PawLaunchPreparationResponse,
     input: PawTerminalLaunchInput,
+    target: LaunchOperationTarget,
   ) => {
-    setTerminalLaunching(true);
-    setLaunchError(null);
+    updateLaunchOperation(target, (current) =>
+      createClientLaunchOperation(target, "launching", {
+        ...(current ?? {}),
+        status: "launching",
+        handoff,
+        terminalLaunch: null,
+        error: null,
+        updatedAt: new Date().toISOString(),
+      })
+    );
     try {
       const response = await fetch("/api/node-launches", {
         method: "POST",
@@ -1320,18 +1733,41 @@ function GraphDashboard({
         throw new Error(parsed.message);
       }
       const result = await response.json() as NodeTerminalLaunchResponse;
-      setTerminalLaunchResult(result);
+      updateLaunchOperation(target, (current) =>
+        createClientLaunchOperation(target, "launched_pending_binding", {
+          ...(current ?? {}),
+          status: "launched_pending_binding",
+          handoff,
+          terminalLaunch: result,
+          error: null,
+          completedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        })
+      );
       setNodeLaunchRecordRefreshKey((current) => current + 1);
     } catch (nextError) {
-      setLaunchError(nextError instanceof Error ? nextError.message : String(nextError));
+      updateLaunchOperation(target, (current) =>
+        createClientLaunchOperation(target, "terminal_failed", {
+          ...(current ?? {}),
+          status: "terminal_failed",
+          handoff,
+          terminalLaunch: null,
+          error: operationError(
+            "terminal_launch_failed",
+            nextError instanceof Error ? nextError.message : String(nextError),
+          ),
+          completedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        })
+      );
       setNodeLaunchRecordRefreshKey((current) => current + 1);
-    } finally {
-      setTerminalLaunching(false);
     }
   };
 
   const handleSubmitLaunch = async (configuration: PawLaunchDialogConfiguration) => {
-    if (!selectedEntry || !activeWorkstreamEntry || !launchDefaults) {
+    const target = launchDialogTarget ?? selectedLaunchTarget;
+    const targetEntry = launchDialogEntry ?? selectedEntry;
+    if (!target || !targetEntry || !activeWorkstreamEntry || !launchDefaults) {
       return;
     }
     const trimmedCwd = configuration.cwd.trim();
@@ -1340,18 +1776,28 @@ function GraphDashboard({
       ? trimmedCwd
       : undefined;
     writeLaunchCwdOverride(launchDefaults.cwdPreferenceKey, cwdOverride ?? null);
-    setLaunchPreparing(true);
-    setLaunchError(null);
-    setLaunchHandoff(null);
-    setLaunchProgressEvents([]);
+    updateLaunchOperation(target, (current) =>
+      createClientLaunchOperation(target, "preparing", {
+        ...(current ?? {}),
+        status: "preparing",
+        preparationRunId: null,
+        handoff: null,
+        terminalLaunch: null,
+        error: null,
+        progressEvents: [],
+        startedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+    );
     let closeProgressStream: (() => void) | undefined;
+    let activeRunId: string | null = null;
     try {
       const response = await fetch("/api/launch-preparations/runs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          nodeId: selectedEntry.node.id,
-          graphPath: activeWorkstreamEntry.path,
+          nodeId: targetEntry.node.id,
+          graphPath: target.graphPath,
           launchNonce: createLaunchNonce(),
           configuration: {
             ...(cwdOverride ? { cwd: cwdOverride } : {}),
@@ -1369,6 +1815,20 @@ function GraphDashboard({
       if (!started.runId) {
         throw new Error("Launch preparation did not return a run id.");
       }
+      activeRunId = started.runId;
+      localRunStreamsRef.current.add(activeRunId);
+      if (started.operation) {
+        setLaunchOperation(target, started.operation);
+      } else {
+        updateLaunchOperation(target, (current) =>
+          createClientLaunchOperation(target, "preparing", {
+            ...(current ?? {}),
+            status: "preparing",
+            preparationRunId: started.runId ?? null,
+            updatedAt: new Date().toISOString(),
+          })
+        );
+      }
 
       const preparedHandoff = await new Promise<PawLaunchPreparationResponse>((resolve, reject) => {
         const source = new EventSource(
@@ -1377,7 +1837,16 @@ function GraphDashboard({
         closeProgressStream = () => source.close();
         source.addEventListener("progress", (event) => {
           const progress = parseMessageEventData<PawLaunchProgressEvent>(event);
-          setLaunchProgressEvents((current) => [...current, progress].slice(-50));
+          updateLaunchOperation(target, (current) => {
+            const operation = current ?? createClientLaunchOperation(target, "preparing");
+            return {
+              ...operation,
+              status: "preparing",
+              error: null,
+              updatedAt: progress.timestamp,
+              progressEvents: appendProgressEvent(operation.progressEvents, progress),
+            };
+          });
         });
         source.addEventListener("completed", (event) => {
           const payload = parseMessageEventData<PawLaunchRunFinishedPayload>(event);
@@ -1386,29 +1855,13 @@ function GraphDashboard({
             reject(new Error("Launch preparation completed without a handoff."));
             return;
           }
-          const nextHandoff: PawLaunchPreparationResponse = {
-            cwd: handoff.cwd,
-            branch: handoff.branch,
-            pawWorkDir: handoff.pawWorkDir,
-            workflowContextPath: handoff.workflowContextPath,
-            streamlinerContextPath: handoff.streamlinerContextPath,
-            cliArgs: handoff.cliArgs,
-            terminal: handoff.terminal,
-            environment: handoff.environment,
-            sessionStateRoot: handoff.sessionStateRoot,
-            kickoffPrompt: handoff.kickoffPrompt,
-            kickoffAdditionalInstructions: handoff.kickoffAdditionalInstructions,
-            launchMetadata: handoff.launchMetadata,
-            contextPackage: handoff.contextPackage,
-          };
-          setLaunchHandoff(nextHandoff);
-          setTerminalLaunchResult(null);
-          setNodeLaunchRecordRefreshKey((current) => current + 1);
+          const nextHandoff = applyPreparedLaunchHandoff(target, handoff);
           resolve(nextHandoff);
         });
         source.addEventListener("failed", (event) => {
           const payload = parseMessageEventData<PawLaunchRunFinishedPayload>(event);
-          reject(new Error(payload.error?.error ?? "Launch preparation failed."));
+          const message = applyPreparationFailure(target, payload);
+          reject(new Error(message));
         });
         source.onerror = () => {
           reject(new Error("Lost connection to launch preparation progress stream."));
@@ -1419,21 +1872,38 @@ function GraphDashboard({
           kickoffPrompt: preparedHandoff.kickoffPrompt,
           terminalTitle: preparedHandoff.terminal.title ?? preparedHandoff.launchMetadata.workTitle,
           terminalColor: preparedHandoff.terminal.tabColor ?? null,
-        });
+        }, target);
       }
     } catch (nextError) {
-      setLaunchError(nextError instanceof Error ? nextError.message : String(nextError));
+      updateLaunchOperation(target, (current) => {
+        if (current?.status === "preparation_failed" || current?.status === "terminal_failed") {
+          return current;
+        }
+        return createClientLaunchOperation(target, "preparation_failed", {
+          ...(current ?? {}),
+          status: "preparation_failed",
+          handoff: null,
+          error: operationError(
+            "launch_preparation_failed",
+            nextError instanceof Error ? nextError.message : String(nextError),
+          ),
+          completedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
+      });
     } finally {
       closeProgressStream?.();
-      setLaunchPreparing(false);
+      if (activeRunId) {
+        localRunStreamsRef.current.delete(activeRunId);
+      }
     }
   };
 
   const handleLaunchTerminal = async (input: PawTerminalLaunchInput) => {
-    if (!launchHandoff) {
+    if (!launchDialogOperation?.handoff || !launchDialogTarget) {
       return;
     }
-    await launchTerminalFromHandoff(launchHandoff, input);
+    await launchTerminalFromHandoff(launchDialogOperation.handoff, input, launchDialogTarget);
   };
 
   if (error) {
@@ -1509,6 +1979,7 @@ function GraphDashboard({
             onNodeSelect={setSelectedNodeId}
             nodeSessionStatuses={nodeSessionStatuses}
             nodeSessionStatusState={nodeSessionStatusState}
+            runtimeOverlay={runtimeOverlay}
             sessionRouteForNode={sessionRouteForNode}
           />
         </ReactFlowProvider>
@@ -1520,23 +1991,25 @@ function GraphDashboard({
             canLaunch={canLaunchSelectedNode}
             launchDisabledReason={launchDisabledReason}
             launchRecord={nodeLaunchRecord}
-            launchRecordLoading={nodeLaunchRecordLoading}
-            launchRecordError={nodeLaunchRecordError}
+            launchOperation={selectedLaunchOperation}
+            launchRecordLoading={nodeLaunchRecordLoading || selectedNodeLaunchRecordLoading}
+            launchRecordError={nodeLaunchRecordError ?? selectedNodeLaunchRecordError}
+            runtimeOverlay={selectedRuntimeOverlay}
             onLaunch={handleOpenLaunchDialog}
           />
         </div>
       </div>
-      {launchDialogOpen && selectedEntry && launchDefaults ? (
+      {launchDialogOpen && launchDialogEntry && launchDefaults ? (
         <PawLaunchDialog
-          key={`${selectedEntry.node.id}:${launchDefaults.graphPath}`}
-          nodeTitle={selectedEntry.node.title}
+          key={`${launchDialogEntry.node.id}:${launchDefaults.graphPath}`}
+          nodeTitle={launchDialogEntry.node.title}
           defaults={launchDefaults}
-          preparing={launchPreparing}
-          launching={terminalLaunching}
-          error={launchError}
-          handoff={launchHandoff}
-          terminalLaunchResult={terminalLaunchResult}
-          progressEvents={launchProgressEvents}
+          preparing={launchDialogOperation?.status === "preparing"}
+          launching={launchDialogOperation?.status === "launching"}
+          error={launchDialogOperation?.error?.error ?? null}
+          handoff={launchDialogOperation?.handoff ?? null}
+          terminalLaunchResult={launchDialogOperation?.terminalLaunch ?? null}
+          progressEvents={launchDialogOperation?.progressEvents ?? []}
           actionDisabledReason={launchActionDisabledReason}
           releasingLaunch={launchReleasing}
           releaseError={launchReleaseError}
@@ -1544,7 +2017,7 @@ function GraphDashboard({
           onCancel={handleCloseLaunchDialog}
           onSubmit={handleSubmitLaunch}
           onLaunchTerminal={handleLaunchTerminal}
-          onReleaseLaunch={nodeLaunchRecord?.latestClaim?.blocksLaunch ? handleReleaseLaunch : undefined}
+          onReleaseLaunch={launchDialogLatestClaim?.blocksLaunch ? handleReleaseLaunch : undefined}
         />
       ) : null}
       {configurationDialogOpen && workstream ? (

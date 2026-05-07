@@ -163,6 +163,7 @@ export function createStreamlinerApiApp(
         createNodeLaunchesRouter({
           registryStore: store,
           claimStore: options.launchClaimStore,
+          nodeLaunchRecordStore,
           deps: options.nodeLaunchDeps,
         }),
       );
