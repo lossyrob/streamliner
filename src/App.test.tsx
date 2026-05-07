@@ -106,8 +106,15 @@ function buildTrackedWorkstream(overrides: Record<string, unknown> = {}): Record
   };
 }
 
-function buildLaunchGraph(status = "ready"): Record<string, unknown> {
+function buildLaunchGraph(
+  status = "ready",
+  overrides: {
+    graph?: Record<string, unknown>;
+    node?: Record<string, unknown>;
+  } = {},
+): Record<string, unknown> {
   return buildWorkstreamGraph({
+    ...overrides.graph,
     nodes: [
       {
         id: "launch-prompt-profiles",
@@ -124,6 +131,7 @@ function buildLaunchGraph(status = "ready"): Record<string, unknown> {
           number: 33,
         },
         dependsOn: [],
+        ...overrides.node,
       },
     ],
     checkpoints: [
@@ -1661,6 +1669,7 @@ describe("App sessions route", () => {
               workId: "launch-prompt-profiles",
               workTitle: "Launch prompt profiles",
               trackerUrl: "https://github.com/lossyrob/streamliner/issues/33",
+              launchPolicy: null,
             },
             contextPackage: {
               contextId: "ctx",
@@ -1867,6 +1876,7 @@ describe("App sessions route", () => {
               workId: "launch-prompt-profiles",
               workTitle: "Launch prompt profiles",
               trackerUrl: "https://github.com/lossyrob/streamliner/issues/33",
+              launchPolicy: null,
             },
             contextPackage: {
               contextId: "ctx",
@@ -2737,6 +2747,152 @@ describe("App sessions route", () => {
       expect(container.textContent).toContain(
         "Browser-only or missing graph sources cannot be prepared by the backend.",
       );
+    },
+    15_000,
+  );
+
+  it(
+    "disables launch preparation when workstream policy requires a GitHub issue",
+    async () => {
+      const graph = buildLaunchGraph("ready", {
+        graph: {
+          launchPolicy: { requiredTracker: "github-issue" },
+        },
+        node: {
+          tracker: undefined,
+        },
+      });
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return emptyNodeLaunchRecordResponse();
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      act(() => {
+        findCanvasNode(container, "Launch prompt profiles").click();
+      });
+      await settle();
+
+      expect(findButton(container, "Initialize PAW launch").disabled).toBe(true);
+      expect(container.textContent).toContain(
+        "requires a GitHub issue tracker before launch",
+      );
+      expect(container.textContent).toContain(
+        "edit graph.json launchPolicy if untracked launches are intentional",
+      );
+      expect(
+        fetchMock.mock.calls.some(([input]) =>
+          requestPath(input as RequestInfo | URL) === "/api/launch-preparations/runs"
+        ),
+      ).toBe(false);
+    },
+    15_000,
+  );
+
+  it(
+    "edits workstream configuration and applies terminal defaults to PAW launch",
+    async () => {
+      let graph = buildLaunchGraph();
+      let savedConfiguration: Record<string, unknown> | null = null;
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        if (path === "/api/workstreams/streamliner/api-test/configuration") {
+          savedConfiguration = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+          graph = {
+            ...graph,
+            launchPolicy: savedConfiguration.launchPolicy ?? undefined,
+            launchDefaults: savedConfiguration.launchDefaults ?? undefined,
+            updatedAt: "2026-05-07T18:10:33.000Z",
+          };
+          return jsonResponse({ workstream: graph });
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return emptyNodeLaunchRecordResponse();
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      act(() => {
+        findButton(container, "Configure…").click();
+      });
+      await settle();
+      setSelectValue(findSelectByLabel(container, "Required tracker"), "github-issue");
+      setSelectValue(findSelectByLabel(container, "Preferred terminal"), "windows-terminal");
+      setInputValue(
+        findInputByLabel(container, "Terminal tab title template"),
+        "{githubIssue} - {nodeTitle}",
+      );
+      act(() => {
+        findButtonByLabel(container, "Use terminal color #ff8c0a").click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Save configuration").click();
+      });
+      await settle(100);
+
+      expect(savedConfiguration).toEqual({
+        launchPolicy: { requiredTracker: "github-issue" },
+        launchDefaults: {
+          terminal: {
+            preferredTerminal: "windows-terminal",
+            titleTemplate: "{githubIssue} - {nodeTitle}",
+            tabColor: "#ff8c0a",
+          },
+        },
+      });
+      expect(container.textContent).not.toContain("Save durable launch policy");
+
+      act(() => {
+        findCanvasNode(container, "Launch prompt profiles").click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Initialize PAW launch").click();
+      });
+      await settle();
+
+      expect(findSelectByLabel(container, "Preferred terminal").value).toBe("windows-terminal");
+      expect(findInputByLabel(container, "Terminal tab title").value).toBe(
+        "#33 - Launch prompt profiles",
+      );
+      expect(container.textContent).toContain("Selected #ff8c0a");
     },
     15_000,
   );

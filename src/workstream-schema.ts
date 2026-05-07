@@ -25,6 +25,18 @@ export type WorkstreamNodeType = (typeof WORKSTREAM_NODE_TYPES)[number];
 export const WORKSTREAM_TRACKER_TYPES = ["github", "local"] as const;
 export type WorkstreamTrackerType = (typeof WORKSTREAM_TRACKER_TYPES)[number];
 
+export const WORKSTREAM_LAUNCH_REQUIRED_TRACKERS = ["github-issue"] as const;
+export type WorkstreamLaunchRequiredTracker =
+  (typeof WORKSTREAM_LAUNCH_REQUIRED_TRACKERS)[number];
+
+export const WORKSTREAM_LAUNCH_TERMINAL_PREFERENCES = [
+  "default",
+  "windows-terminal",
+  "powershell",
+] as const;
+export type WorkstreamLaunchTerminalPreference =
+  (typeof WORKSTREAM_LAUNCH_TERMINAL_PREFERENCES)[number];
+
 export const WORKSTREAM_CHECKPOINT_STATUSES = ["planned", "completed"] as const;
 export type WorkstreamCheckpointStatus =
   (typeof WORKSTREAM_CHECKPOINT_STATUSES)[number];
@@ -100,6 +112,20 @@ export interface WorkstreamRepo {
   role?: string;
 }
 
+export interface WorkstreamLaunchPolicy {
+  requiredTracker?: WorkstreamLaunchRequiredTracker;
+}
+
+export interface WorkstreamLaunchTerminalDefaults {
+  preferredTerminal?: WorkstreamLaunchTerminalPreference;
+  titleTemplate?: string | null;
+  tabColor?: string | null;
+}
+
+export interface WorkstreamLaunchDefaults {
+  terminal?: WorkstreamLaunchTerminalDefaults;
+}
+
 export interface WorkstreamNode {
   id: string;
   type: WorkstreamNodeType;
@@ -131,6 +157,8 @@ export interface WorkstreamDocument {
   createdAt: string;
   updatedAt: string;
   trackingIssue?: WorkstreamIssue;
+  launchPolicy?: WorkstreamLaunchPolicy;
+  launchDefaults?: WorkstreamLaunchDefaults;
   repos: WorkstreamRepo[];
   designRefs: WorkstreamDesignReference[];
   nodes: WorkstreamNode[];

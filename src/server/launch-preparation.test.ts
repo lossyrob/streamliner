@@ -237,6 +237,67 @@ function fakePreparedContext(root: string): PreparedLaunchContextPackage {
   };
 }
 
+function writeLaunchPolicyGraph(
+  root: string,
+  options: {
+    nodeId?: string;
+    tracker?: Record<string, unknown>;
+    launchPolicy?: Record<string, unknown>;
+    launchDefaults?: Record<string, unknown>;
+  } = {},
+): string {
+  const nodeId = options.nodeId ?? "launch-prompt-profiles";
+  const graphPath = join(
+    root,
+    ".streamliner",
+    "workstreams",
+    "session-launching-and-tracking",
+    "graph.json",
+  );
+  mkdirSync(dirname(graphPath), { recursive: true });
+  const node: Record<string, unknown> = {
+    id: nodeId,
+    type: "task",
+    title: "Launch prompt profiles",
+    summary: "Configure launch prompt profile behavior.",
+    status: "ready",
+    attention: "focus",
+    repoIds: ["streamliner"],
+    dependsOn: [],
+  };
+  if (options.tracker !== undefined) {
+    node.tracker = options.tracker;
+  }
+  const graph: Record<string, unknown> = {
+    schemaVersion: 1,
+    id: "session-launching-and-tracking",
+    projectKey: "streamliner",
+    title: "Session launching and tracking",
+    summary: "Launch and track worker sessions.",
+    status: "active",
+    attention: "focus",
+    createdAt: "2026-05-02T07:00:00.000Z",
+    updatedAt: "2026-05-02T08:00:00.000Z",
+    repos: [{
+      id: "streamliner",
+      owner: "lossyrob",
+      name: "streamliner",
+      role: "primary",
+    }],
+    designRefs: [],
+    nodes: [node],
+    checkpoints: [],
+  };
+  if (options.launchPolicy !== undefined) {
+    graph.launchPolicy = options.launchPolicy;
+  }
+  if (options.launchDefaults !== undefined) {
+    graph.launchDefaults = options.launchDefaults;
+  }
+  writeFileSync(graphPath, JSON.stringify(graph), "utf8");
+  return graphPath;
+}
+
 function createPawInitRunner(
   calls: PawInitRunnerInput[] = [],
 ): PawInitRunner {
@@ -646,6 +707,103 @@ describe("preparePawLaunch", () => {
     expect(result.cliArgs).toEqual([]);
   });
 
+  it("blocks PAW preparation before context work when policy requires a GitHub issue", async () => {
+    const root = createRootDir();
+    const graphPath = writeLaunchPolicyGraph(root, {
+      launchPolicy: { requiredTracker: "github-issue" },
+    });
+    const contextCalls: PrepareLaunchContextPackageOptions[] = [];
+
+    await expect(
+      preparePawLaunch({
+        nodeId: "launch-prompt-profiles",
+        graphPath,
+        cwd: root,
+        stateRoot: join(root, "state"),
+        pawInitRunner: createPawInitRunner(),
+        contextPreparer: createContextPreparer(root, contextCalls),
+      }),
+    ).rejects.toMatchObject({
+      code: "launch_policy_blocked",
+      statusCode: 412,
+      step: "validation",
+      input: "launchPolicy",
+      details: expect.objectContaining({
+        policyCode: "github_issue_tracker_required",
+        requiredTracker: "github-issue",
+        nodeId: "launch-prompt-profiles",
+      }),
+    });
+    expect(contextCalls).toHaveLength(0);
+  });
+
+  it("allows PAW preparation when required GitHub issue tracker is present", async () => {
+    const root = createRootDir();
+    const graphPath = writeLaunchPolicyGraph(root, {
+      launchPolicy: { requiredTracker: "github-issue" },
+      tracker: {
+        type: "github",
+        owner: "lossyrob",
+        repo: "streamliner",
+        number: 33,
+      },
+    });
+
+    const result = await preparePawLaunch({
+      nodeId: "launch-prompt-profiles",
+      graphPath,
+      cwd: root,
+      stateRoot: join(root, "state"),
+      pawInitRunner: createPawInitRunner(),
+      contextPreparer: createContextPreparer(root),
+    });
+
+    expect(result.launchMetadata.nodeId).toBe("launch-prompt-profiles");
+  });
+
+  it("uses workstream terminal defaults when launch configuration omits them", async () => {
+    const root = createRootDir();
+    const pawInitCalls: PawInitRunnerInput[] = [];
+    const graphPath = writeLaunchPolicyGraph(root, {
+      tracker: {
+        type: "github",
+        owner: "lossyrob",
+        repo: "streamliner",
+        number: 33,
+      },
+      launchDefaults: {
+        terminal: {
+          preferredTerminal: "windows-terminal",
+          titleTemplate: "{githubIssue} - {nodeTitle}",
+          tabColor: "#4891c8",
+        },
+      },
+    });
+
+    const result = await preparePawLaunch({
+      nodeId: "launch-prompt-profiles",
+      graphPath,
+      cwd: root,
+      stateRoot: join(root, "state"),
+      configuration: {
+        terminal: { tabColor: "#ff8c0a" },
+      },
+      pawInitRunner: createPawInitRunner(pawInitCalls),
+      contextPreparer: createContextPreparer(root),
+    });
+
+    expect(result.terminal).toEqual(expect.objectContaining({
+      preferredTerminal: "windows-terminal",
+      title: "#33 - Launch prompt profiles",
+      tabColor: "#ff8c0a",
+    }));
+    expect(pawInitCalls[0].configuration.terminal).toEqual(expect.objectContaining({
+      preferredTerminal: "windows-terminal",
+      title: "#33 - Launch prompt profiles",
+      tabColor: "#ff8c0a",
+    }));
+  });
+
   it("validates launch configuration field types", async () => {
     const root = createRootDir();
 
@@ -823,9 +981,52 @@ describe("launch preparation API route", () => {
     expect(response.body.kickoffPrompt).toContain("Start by loading the paw-lite workflow");
   });
 
+  it("returns a typed policy error through POST /api/launch-preparations", async () => {
+    const root = createRootDir();
+    const graphPath = writeLaunchPolicyGraph(root, {
+      launchPolicy: { requiredTracker: "github-issue" },
+    });
+    const store = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const api = createStreamlinerApiApp({
+      graphPath,
+      store,
+      launchPreparationDeps: {
+        cwd: root,
+        stateRoot: join(root, "state"),
+        pawInitRunner: createPawInitRunner(),
+        contextPreparer: createContextPreparer(root),
+      },
+    });
+    activeApps.push(api);
+
+    const response = await request(api.app)
+      .post("/api/launch-preparations")
+      .send({ nodeId: "launch-prompt-profiles" })
+      .expect(412);
+
+    expect(response.body).toEqual(expect.objectContaining({
+      code: "launch_policy_blocked",
+      step: "validation",
+      input: "launchPolicy",
+      error: expect.stringContaining("requires a GitHub issue tracker"),
+      details: expect.objectContaining({
+        policyCode: "github_issue_tracker_required",
+        requiredTracker: "github-issue",
+        nodeId: "launch-prompt-profiles",
+      }),
+    }));
+  });
+
   it("passes an existing prepared launch record into repeat PAW initialization", async () => {
     const root = createRootDir();
-    const graphPath = normalizePath(join(root, ".streamliner", "workstreams", "session-launching-and-tracking", "graph.json"));
+    const graphPath = normalizePath(writeLaunchPolicyGraph(root, {
+      tracker: {
+        type: "github",
+        owner: "lossyrob",
+        repo: "streamliner",
+        number: 33,
+      },
+    }));
     const store = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
     const nodeLaunchRecordStore = new NodeLaunchRecordStore({
       recordsPath: join(root, "state", "node-launch-records.json"),
@@ -879,6 +1080,7 @@ describe("launch preparation API route", () => {
 
   it("starts a PAW launch preparation run and exposes the completed result", async () => {
     const root = createRootDir();
+    const graphPath = normalizePath(writeLaunchPolicyGraph(root));
     const store = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
     const api = createStreamlinerApiApp({
       store,
@@ -895,7 +1097,7 @@ describe("launch preparation API route", () => {
       .post("/api/launch-preparations/runs")
       .send({
         nodeId: "launch-prompt-profiles",
-        graphPath: normalizePath(join(root, ".streamliner", "workstreams", "session-launching-and-tracking", "graph.json")),
+        graphPath,
         configuration: {
           cliArgs: [],
           workflowInstructions: "Use PAW with local final-pr-only review.",
@@ -931,7 +1133,7 @@ describe("launch preparation API route", () => {
     const launchRecord = await request(api.app)
       .get("/api/node-launch-records")
       .query({
-        graphPath: normalizePath(join(root, ".streamliner", "workstreams", "session-launching-and-tracking", "graph.json")),
+        graphPath,
         nodeId: "launch-prompt-profiles",
       })
       .expect(200);
@@ -959,7 +1161,7 @@ describe("launch preparation API route", () => {
 
   it("blocks duplicate preparation runs for the same graph node while allowing the first to continue", async () => {
     const root = createRootDir();
-    const graphPath = normalizePath(join(root, ".streamliner", "workstreams", "session-launching-and-tracking", "graph.json"));
+    const graphPath = normalizePath(writeLaunchPolicyGraph(root));
     const store = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
     let releaseContext!: () => void;
     const blockedContext = new Promise<void>((resolve) => {
@@ -1018,7 +1220,7 @@ describe("launch preparation API route", () => {
 
   it("uses the same duplicate operation gate for synchronous launch preparation", async () => {
     const root = createRootDir();
-    const graphPath = normalizePath(join(root, ".streamliner", "workstreams", "session-launching-and-tracking", "graph.json"));
+    const graphPath = normalizePath(writeLaunchPolicyGraph(root));
     const store = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
     let releaseContext!: () => void;
     const blockedContext = new Promise<void>((resolve) => {
@@ -1077,7 +1279,7 @@ describe("launch preparation API route", () => {
 
   it("persists failed preparation operations and allows retry", async () => {
     const root = createRootDir();
-    const graphPath = normalizePath(join(root, ".streamliner", "workstreams", "session-launching-and-tracking", "graph.json"));
+    const graphPath = normalizePath(writeLaunchPolicyGraph(root));
     const store = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
     let failContext = true;
     const api = createStreamlinerApiApp({

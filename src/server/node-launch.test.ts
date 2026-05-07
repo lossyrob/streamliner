@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -32,8 +32,66 @@ function normalizePath(path: string): string {
   return path.replace(/\\/g, "/");
 }
 
+function writeNodeLaunchGraph(
+  root: string,
+  options: {
+    launchPolicy?: Record<string, unknown>;
+    tracker?: Record<string, unknown>;
+  } = {},
+): string {
+  const graphDir = join(root, ".streamliner", "workstreams", "api-test");
+  const graphPath = join(graphDir, "graph.json");
+  const node: Record<string, unknown> = {
+    id: "terminal-launch",
+    type: "task",
+    title: "Terminal Launch",
+    summary: "Launch a terminal session.",
+    status: "ready",
+    attention: "focus",
+    repoIds: ["streamliner"],
+    dependsOn: [],
+  };
+  if (options.tracker !== undefined) {
+    node.tracker = options.tracker;
+  }
+  const graph: Record<string, unknown> = {
+    schemaVersion: 1,
+    id: "api-test",
+    projectKey: "streamliner",
+    title: "API Test",
+    summary: "Test workstream graph.",
+    status: "active",
+    attention: "focus",
+    createdAt: "2026-05-01T12:00:00.000Z",
+    updatedAt: "2026-05-01T12:00:00.000Z",
+    repos: [
+      {
+        id: "streamliner",
+        owner: "lossyrob",
+        name: "streamliner",
+      },
+    ],
+    designRefs: [],
+    nodes: [node],
+    checkpoints: [],
+  };
+  if (options.launchPolicy !== undefined) {
+    graph.launchPolicy = options.launchPolicy;
+  }
+  mkdirSync(graphDir, { recursive: true });
+  writeFileSync(graphPath, JSON.stringify(graph), "utf8");
+  return graphPath;
+}
+
 function fakeHandoff(root: string, overrides: Partial<PawLaunchHandoff> = {}): PawLaunchHandoff {
-  const graphPath = normalizePath(join(root, ".streamliner", "workstreams", "api-test", "graph.json"));
+  const graphPath = normalizePath(writeNodeLaunchGraph(root, {
+    tracker: {
+      type: "github",
+      owner: "lossyrob",
+      repo: "streamliner",
+      number: 44,
+    },
+  }));
   const contextPackagePath = normalizePath(join(root, "state", "launch-contexts", "ctx"));
   const contextFilePath = normalizePath(join(root, "state", "launch-contexts", "ctx", "context.md"));
   const base: PawLaunchHandoff = {
@@ -71,6 +129,7 @@ function fakeHandoff(root: string, overrides: Partial<PawLaunchHandoff> = {}): P
       workId: "terminal-launch",
       workTitle: "Terminal Launch",
       trackerUrl: "https://github.com/lossyrob/streamliner/issues/44",
+      launchPolicy: null,
     },
     contextPackage: {
       contextId: "ctx",
@@ -314,6 +373,112 @@ describe("launchPreparedNode", () => {
     ).toThrow(NodeLaunchError);
     expect(claimStore.listClaims()).toHaveLength(1);
   });
+
+  it("allows unconfigured prepared handoffs when the graph is no longer readable", () => {
+    const root = createRootDir();
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const handoff = fakeHandoff(root);
+    rmSync(handoff.launchMetadata.graphPath, { force: true });
+    const terminalCalls: unknown[] = [];
+
+    const result = launchPreparedNode(
+      registryStore,
+      claimStore,
+      handoff,
+      {
+        launchTerminal: (options) => {
+          terminalCalls.push(options);
+          return { method: "powershell", pid: 2 };
+        },
+      },
+    );
+
+    expect(result.launchClaim.status).toBe("pending");
+    expect(terminalCalls).toHaveLength(1);
+    expect(claimStore.listClaims()).toHaveLength(1);
+  });
+
+  it("fails closed when a prepared handoff had a launch policy but the graph is unreadable", () => {
+    const root = createRootDir();
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const handoff = fakeHandoff(root);
+    handoff.launchMetadata.launchPolicy = { requiredTracker: "github-issue" };
+    rmSync(handoff.launchMetadata.graphPath, { force: true });
+
+    let blockedError: unknown;
+    try {
+      launchPreparedNode(
+        registryStore,
+        claimStore,
+        handoff,
+        { launchTerminal: () => ({ method: "powershell", pid: 2 }) },
+      );
+    } catch (error: unknown) {
+      blockedError = error;
+    }
+
+    expect(blockedError).toBeInstanceOf(NodeLaunchError);
+    expect(blockedError).toMatchObject({
+      code: "launch_policy_unavailable",
+      details: expect.objectContaining({
+        reason: "graph_not_found",
+        nodeId: "terminal-launch",
+      }),
+    });
+    expect(claimStore.listClaims()).toHaveLength(0);
+    expect(registryStore.listSessions()).toEqual([]);
+  });
+
+  it("blocks stale prepared handoffs before creating a launch claim", () => {
+    const root = createRootDir();
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const handoff = fakeHandoff(root);
+    writeNodeLaunchGraph(root, {
+      launchPolicy: { requiredTracker: "github-issue" },
+    });
+    const terminalCalls: unknown[] = [];
+
+    expect(() =>
+      launchPreparedNode(
+        registryStore,
+        claimStore,
+        handoff,
+        {
+          launchTerminal: (options) => {
+            terminalCalls.push(options);
+            return { method: "powershell", pid: 2 };
+          },
+        },
+      )
+    ).toThrow(NodeLaunchError);
+
+    let blockedError: unknown;
+    try {
+      launchPreparedNode(
+        registryStore,
+        claimStore,
+        handoff,
+        { launchTerminal: () => ({ method: "powershell", pid: 3 }) },
+      );
+    } catch (error: unknown) {
+      blockedError = error;
+    }
+    expect(blockedError).toMatchObject({
+      code: "launch_policy_blocked",
+      statusCode: 412,
+      details: expect.objectContaining({
+        policyCode: "github_issue_tracker_required",
+        requiredTracker: "github-issue",
+        nodeId: "terminal-launch",
+      }),
+    });
+    expect(terminalCalls).toHaveLength(0);
+    expect(claimStore.listClaims()).toHaveLength(0);
+    expect(registryStore.listSessions()).toEqual([]);
+  });
 });
 
 describe("node launch API route", () => {
@@ -324,6 +489,7 @@ describe("node launch API route", () => {
     const api = createStreamlinerApiApp({
       store: registryStore,
       launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
       nodeLaunchDeps: {
         launchTerminal: () => ({ method: "powershell", pid: 777 }),
       },
@@ -349,6 +515,7 @@ describe("node launch API route", () => {
     const api = createStreamlinerApiApp({
       store: registryStore,
       launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
       nodeLaunchDeps: {
         launchTerminal: () => ({ method: "powershell", pid: 777 }),
       },
@@ -448,6 +615,7 @@ describe("node launch API route", () => {
     const api = createStreamlinerApiApp({
       store: registryStore,
       launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
       nodeLaunchDeps: {
         launchTerminal: () => ({ method: "powershell", pid: 777 }),
       },
@@ -473,5 +641,41 @@ describe("node launch API route", () => {
       }),
     }));
     expect(claimStore.listClaims()).toHaveLength(1);
+  });
+
+  it("returns a typed policy error through POST /api/node-launches", async () => {
+    const root = createRootDir();
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const handoff = fakeHandoff(root);
+    writeNodeLaunchGraph(root, {
+      launchPolicy: { requiredTracker: "github-issue" },
+    });
+    const api = createStreamlinerApiApp({
+      store: registryStore,
+      launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
+      nodeLaunchDeps: {
+        launchTerminal: () => ({ method: "powershell", pid: 777 }),
+      },
+    });
+    activeApps.push(api);
+
+    const response = await request(api.app)
+      .post("/api/node-launches")
+      .send({ handoff })
+      .expect(412);
+
+    expect(response.body).toEqual(expect.objectContaining({
+      code: "launch_policy_blocked",
+      error: expect.stringContaining("requires a GitHub issue tracker"),
+      details: expect.objectContaining({
+        policyCode: "github_issue_tracker_required",
+        requiredTracker: "github-issue",
+        nodeId: "terminal-launch",
+      }),
+    }));
+    expect(claimStore.listClaims()).toHaveLength(0);
+    expect(registryStore.listSessions()).toEqual([]);
   });
 });

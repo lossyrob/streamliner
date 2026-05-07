@@ -19,6 +19,10 @@ import {
   relinkRegisteredWorkstream,
   type WorkstreamRegistryOptions,
 } from "../workstream-registry";
+import {
+  updateWorkstreamConfigurationFile,
+  type WorkstreamConfigurationUpdateInput,
+} from "../workstream-configuration";
 import type { WorkstreamSourceType } from "../../workstream-registry-contract";
 
 function requestPath(body: unknown): string | null {
@@ -44,6 +48,31 @@ function requestSource(body: unknown): WorkstreamSourceAddRequest | null {
   return { path, type: type as WorkstreamSourceType };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function hasOwn(record: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key);
+}
+
+function requestConfiguration(body: unknown): WorkstreamConfigurationUpdateInput | null {
+  if (!isRecord(body)) {
+    return null;
+  }
+  const configuration: WorkstreamConfigurationUpdateInput = {};
+  let hasConfigurationField = false;
+  if (hasOwn(body, "launchPolicy")) {
+    hasConfigurationField = true;
+    configuration.launchPolicy = body.launchPolicy as WorkstreamConfigurationUpdateInput["launchPolicy"];
+  }
+  if (hasOwn(body, "launchDefaults")) {
+    hasConfigurationField = true;
+    configuration.launchDefaults = body.launchDefaults as WorkstreamConfigurationUpdateInput["launchDefaults"];
+  }
+  return hasConfigurationField ? configuration : null;
+}
+
 function errorCode(error: unknown): string | undefined {
   return error instanceof Error ? (error as Error & { code?: string }).code : undefined;
 }
@@ -64,6 +93,12 @@ function sendRegistryError(res: {
       return;
     case "EINVAL":
       res.status(400).json({ code: "invalid_workstream_identity", error: message });
+      return;
+    case "EINVALIDCONFIG":
+      res.status(400).json({ code: "invalid_workstream_configuration", error: message });
+      return;
+    case "EINVALIDGRAPH":
+      res.status(422).json({ code: "workstream_graph_invalid", error: message });
       return;
     case "ENOTDIR":
       res.status(400).json({ code: "source_path_not_directory", error: message });
@@ -210,6 +245,42 @@ export function createWorkstreamsRouter(options: WorkstreamRegistryOptions = {})
         return;
       }
       res.status(500).json({ code: "workstream_file_unreadable", error: message });
+    }
+  });
+
+  router.patch("/workstreams/:projectKey/:workstreamId/configuration", async (req, res) => {
+    const configuration = requestConfiguration(req.body);
+    if (!configuration) {
+      res.status(400).json({
+        code: "configuration_required",
+        error: "Expected request body to include workstream configuration fields.",
+      });
+      return;
+    }
+
+    const { projectKey, workstreamId } = req.params;
+    try {
+      let graph: Awaited<ReturnType<typeof readRegisteredGraph>>;
+      try {
+        graph = await readRegisteredGraph(projectKey, workstreamId, options);
+      } catch (error: unknown) {
+        if (errorCode(error) !== "ENOTREGISTERED") {
+          throw error;
+        }
+        graph = await readSourceWorkstreamGraph(projectKey, workstreamId, options);
+      }
+      const result = await updateWorkstreamConfigurationFile({
+        graphPath: graph.entry.path,
+        content: graph.content ?? "",
+        projectKey,
+        workstreamId,
+        configuration,
+        now: options.now,
+      });
+      res.setHeader("Last-Modified", result.lastModified);
+      res.json({ workstream: result.workstream });
+    } catch (error: unknown) {
+      sendRegistryError(res, error);
     }
   });
 

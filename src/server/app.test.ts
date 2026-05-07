@@ -532,6 +532,90 @@ describe("createStreamlinerApiApp", () => {
     expect(listResponse.body.workstreams).toEqual([]);
   });
 
+  it("updates persisted workstream launch configuration", async () => {
+    const rootDir = createRootDir();
+    const graphPath = join(rootDir, "graph.json");
+    writeFileSync(graphPath, JSON.stringify(buildGraph()), "utf8");
+    const api = createIsolatedApi(rootDir, {
+      now: () => new Date("2026-05-07T18:10:33.000Z"),
+    });
+    activeApps.push(api);
+    await request(api.app).post("/api/workstreams").send({ path: graphPath }).expect(201);
+
+    const updateResponse = await request(api.app)
+      .patch("/api/workstreams/streamliner/api-test/configuration")
+      .send({
+        launchPolicy: { requiredTracker: "github-issue" },
+        launchDefaults: {
+          terminal: {
+            preferredTerminal: "windows-terminal",
+            titleTemplate: "{githubIssue} - {nodeTitle}",
+            tabColor: "#FF8C0A",
+          },
+        },
+      })
+      .expect(200);
+
+    expect(updateResponse.body.workstream.launchPolicy).toEqual({
+      requiredTracker: "github-issue",
+    });
+    expect(updateResponse.body.workstream.launchDefaults).toEqual({
+      terminal: {
+        preferredTerminal: "windows-terminal",
+        titleTemplate: "{githubIssue} - {nodeTitle}",
+        tabColor: "#ff8c0a",
+      },
+    });
+    const persisted = JSON.parse(readFileSync(graphPath, "utf8")) as Record<string, unknown>;
+    expect(persisted.updatedAt).toBe("2026-05-07T18:10:33.000Z");
+    expect(persisted.launchPolicy).toEqual({ requiredTracker: "github-issue" });
+    expect(persisted.launchDefaults).toEqual({
+      terminal: {
+        preferredTerminal: "windows-terminal",
+        titleTemplate: "{githubIssue} - {nodeTitle}",
+        tabColor: "#ff8c0a",
+      },
+    });
+
+    await request(api.app)
+      .patch("/api/workstreams/streamliner/api-test/configuration")
+      .send({ launchPolicy: null, launchDefaults: null })
+      .expect(200);
+    const cleared = JSON.parse(readFileSync(graphPath, "utf8")) as Record<string, unknown>;
+    expect(cleared.launchPolicy).toBeUndefined();
+    expect(cleared.launchDefaults).toBeUndefined();
+  });
+
+  it("rejects invalid workstream launch configuration updates", async () => {
+    const rootDir = createRootDir();
+    const graphPath = join(rootDir, "graph.json");
+    writeFileSync(graphPath, JSON.stringify(buildGraph()), "utf8");
+    const api = createIsolatedApi(rootDir);
+    activeApps.push(api);
+    await request(api.app).post("/api/workstreams").send({ path: graphPath }).expect(201);
+
+    const response = await request(api.app)
+      .patch("/api/workstreams/streamliner/api-test/configuration")
+      .send({
+        launchDefaults: {
+          terminal: {
+            preferredTerminal: "zsh",
+            tabColor: "orange",
+          },
+        },
+      })
+      .expect(400);
+
+    expect(response.body.code).toBe("invalid_workstream_configuration");
+
+    const emptyResponse = await request(api.app)
+      .patch("/api/workstreams/streamliner/api-test/configuration")
+      .send({})
+      .expect(400);
+
+    expect(emptyResponse.body.code).toBe("configuration_required");
+  });
+
   it("migrates legacy recent graphs once and records migration warnings", async () => {
     const rootDir = createRootDir();
     const graphPath = join(rootDir, "graph.json");

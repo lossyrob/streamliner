@@ -7,11 +7,19 @@
   "status": "active",
   "attention": "focus",
   "createdAt": "2026-04-10T15:37:14.125Z",
-  "updatedAt": "2026-05-06T21:12:03.000Z",
+  "updatedAt": "2026-05-07T19:19:49.000Z",
   "trackingIssue": {
     "owner": "lossyrob",
     "repo": "streamliner",
     "number": 3
+  },
+  "launchPolicy": {
+    "requiredTracker": "github-issue"
+  },
+  "launchDefaults": {
+    "terminal": {
+      "titleTemplate": "{githubIssue} - {nodeTitle}"
+    }
   },
   "repos": [
     {

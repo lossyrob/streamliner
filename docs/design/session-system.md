@@ -48,13 +48,15 @@ The Wave 3 launch MVP is **PAW-only graph launch**. The contract is the interfac
 | Node ID | Graph selection | Which node to execute |
 | Target repo | Graph `repos` + config | Where the code lives |
 | Backend-readable graph path | Workstream registry entry | Local `graph.json` path the backend can read |
+| Launch policy | Graph `launchPolicy` | Optional durable preconditions, such as requiring a GitHub issue tracker before launch |
 | Launch instructions | Builder edit + default text | Natural-language guidance for the graph-launched PAW session. PAW init may use it to derive work title, work ID, target branch, review policy, and model settings, but general operating guidance belongs in the kickoff prompt rather than verbatim `Custom Workflow Instructions`. |
 | PAW prompt profile | Local Streamliner state | Optional reusable text snippet that can populate or update the launch instructions field |
 | CLI arguments | Default + builder override | Copilot CLI flags for the later worker launch; an explicit empty list is valid |
-| Terminal preference | Default + builder edit | Preferred visible terminal host for the worker launch |
+| Terminal preference | Graph `launchDefaults` + builder edit | Preferred visible terminal host for the worker launch |
+| Terminal presentation | Graph `launchDefaults` + builder edit | Optional default tab title template and tab/session color for the worker launch |
 | Launch nonce | Graph launch caller | Token preserved across preparation, claim creation, and final Copilot prompt binding |
 
-The builder selects a node in the graph and opens launch context from the inspector when the selected `WorkstreamDerivedNode` is operationally ready and the active workstream registry entry is backend-readable. Browser-directory workstreams remain visible in the graph UI, but they are not launchable in this MVP because the backend cannot read their graph file. Active or already-bound launch claims keep the dialog available for issue and prepared-launch context, but disable new PAW init or terminal launch actions for that node. Failed launch claims remain visible and retryable.
+The builder selects a node in the graph and opens launch context from the inspector when the selected `WorkstreamDerivedNode` is operationally ready, the active workstream registry entry is backend-readable, and the selected node satisfies any configured workstream `launchPolicy`. Browser-directory workstreams remain visible in the graph UI, but they are not launchable in this MVP because the backend cannot read their graph file. If `launchPolicy.requiredTracker` is `"github-issue"`, Streamliner disables launch for nodes without a GitHub issue tracker and explains that the node needs an issue first or the policy should be edited if untracked launches are intentional. Active or already-bound launch claims keep the dialog available for issue and prepared-launch context, but disable new PAW init or terminal launch actions for that node. Failed launch claims remain visible and retryable.
 
 This design specifies **local launches only**. The launch contract keeps an environment dimension so future remote execution can fit the same shape, but `devbox` launch is not defined here. Devbox observation is defined later as an extension of the session-tracking model, not as a launch mode.
 
@@ -83,7 +85,7 @@ Launch is a two-phase process: a **PAW init phase** that prepares all worker art
 
 #### Phase 1 — PAW Launch Initialization
 
-Streamliner's backend prepares a PAW handoff with one fully capable internal Copilot SDK session. Backend code still validates the selected graph node, computes deterministic metadata, and chooses local package paths, but context synthesis and PAW initialization now share the same SDK session, model context, tool access, and progress stream. The session preloads the installed `paw-init` skill, enables config discovery, approves built-in tool use, and adds Streamliner-owned `save_streamliner_context` and `complete_paw_init` tools. Initialization:
+Streamliner's backend prepares a PAW handoff with one fully capable internal Copilot SDK session. Before context assembly or PAW init begins, the backend evaluates any configured workstream launch policy against the selected node and returns a typed precondition error when the node is blocked. Backend code still validates the selected graph node, computes deterministic metadata, and chooses local package paths, but context synthesis and PAW initialization now share the same SDK session, model context, tool access, and progress stream. The session preloads the installed `paw-init` skill, enables config discovery, approves built-in tool use, and adds Streamliner-owned `save_streamliner_context` and `complete_paw_init` tools. Initialization:
 
 1. **Normalizes launch configuration** — applies defaults for workflow instruction text, CLI args, terminal mode, and environment values.
 2. **Prepares context inputs** — deterministically collects graph, brief, design-doc, and tracker/spec references plus freshness/unavailable-input metadata. This creates the target `launch-contexts/<context-id>/context.md` location and an internal SDK launch manifest with paths, URLs, selected-node metadata, unavailable-input diagnostics, existing launch details, and worktree policy, but it does not inline source bodies into the SDK's initial prompt.
@@ -91,7 +93,7 @@ Streamliner's backend prepares a PAW handoff with one fully capable internal Cop
 4. **Runs PAW init** — the same SDK session uses the `paw-init` skill with Copilot CLI-style repository, shell, GitHub, configured MCP, and custom-tool access. The prompts supply the builder launch instructions, selected node, tracker URL, saved context path, and manifest-derived worktree policy, and tell PAW init to use documented defaults/best judgment rather than asking follow-up questions. Streamliner asks PAW init to treat the builder text as launch guidance and configuration input, not as verbatim custom workflow-stage instructions unless the text explicitly defines a custom PAW sequence.
 5. **Installs the context file** — after `paw-init` writes or validates `WorkflowContext.md` through the normal PAW workflow path, the Streamliner-owned completion tool, `complete_paw_init`, copies the saved context package to `.paw/work/<work-id>/streamliner/context.md` and verifies that `WorkflowContext.md` records the installed Streamliner context as an Additional Input. For Streamliner PAW Lite node launches, `WorkflowContext.md` should use `Custom Workflow Instructions: none` and `Initial Prompt: none`; kickoff-prompt text, generated context content, and node-orientation prose belong in Streamliner's kickoff prompt or generated launch `context.md`. The Additional Inputs line should only carry the worker-facing Streamliner context file, not internal launch metadata such as staged context package paths, graph path, context ID, node ID, or nonce.
 6. **Filters kickoff-only guidance** — the SDK session returns `additionalKickoffInstructions` through `complete_paw_init`. This text contains only builder guidance that should appear in the launched worker's initial prompt and excludes workflow configuration already encoded in `WorkflowContext.md`.
-7. **Preserves launch metadata** — carries the launch nonce and future claim reference fields through metadata without owning claim persistence.
+7. **Preserves launch metadata** — carries the launch nonce, future claim reference fields, and the evaluated launch-policy snapshot through metadata without owning claim persistence.
 8. **Compiles kickoff prompt** — renders the Streamliner PAW-lite launch template with the issue URL, `WorkflowContext.md`, installed Streamliner context path, launch metadata needed for binding, and filtered additional kickoff instructions.
 9. **Returns structured output** — returns the handoff the terminal launcher needs.
 
@@ -108,14 +110,14 @@ Launch preparation output:
 | `terminal` | object | Prepared terminal launch mode and preferred terminal host |
 | `environment` | object | Non-secret environment values for the terminal launch |
 | `sessionStateRoot` | string | Path to Copilot session state directory in the local environment |
-| `launchMetadata` | object | Workstream, node, repo, branch, work ID/title, tracker, nonce, and claim metadata |
+| `launchMetadata` | object | Workstream, node, repo, branch, work ID/title, tracker, launch-policy snapshot, nonce, and claim metadata |
 | `contextPackage` | object | Context package metadata from context assembly |
 | `kickoffPrompt` | string | Initial prompt passed to Copilot CLI interactive mode |
 | `kickoffAdditionalInstructions` | string | Optional filtered builder guidance appended to the kickoff template after PAW workflow configuration has been removed |
 
 #### Phase 2 — Copilot CLI Interactive Launch
 
-After PAW launch initialization completes, terminal integration:
+After PAW launch initialization completes, terminal integration re-reads the current graph path from the prepared handoff and re-evaluates launch policy before any stateful side effect. This prevents stale prepared handoffs or non-UI callers from bypassing a policy that now requires a GitHub issue tracker. If the current graph is unavailable, terminal launch may continue only when the prepared handoff did not carry a `requiredTracker` snapshot; a handoff prepared under a known launch policy fails closed because the current policy cannot be verified. Terminal integration then:
 
 1. **Reject duplicate active launches** — before creating a new claim, check launch-claim diagnostics for the same workstream/node and reject non-terminal active-window or bound claims with a typed conflict. This is enforced in the backend service so future CLI, skill, or MCP callers get the same protection as the graph UI.
 2. **Record launch claim** — write a launch claim to Streamliner's runtime state binding the node to the expected session location before the worker session starts. The claim uses the nonce from the prepared handoff when one exists; otherwise the claim-minted nonce becomes the final launch nonce.
@@ -187,6 +189,7 @@ For the PAW MVP, the kickoff prompt starts from the same template a builder woul
 |---------|----------|
 | Node not launchable (wrong status, unmet deps) | Disable in the UI or reject with explanation |
 | Graph source is browser-only or unavailable to the backend | Disable in the UI or reject with unsupported-source explanation |
+| Launch policy blocks the node | Disable in the UI or reject with `launch_policy_blocked` before context assembly, PAW init, launch-claim creation, or terminal spawn. The message should direct the builder to create/promote a GitHub issue for the node or edit `graph.json` `launchPolicy` if untracked launches are intentional. |
 | Target repo not registered or inaccessible | Reject with explanation |
 | Branch conflict (already exists, dirty state) | Prompt builder for resolution |
 | Launch preparation failure (PAW initialization, context assembly, prompt compilation) | Report typed error with step/input details; do not start terminal |
@@ -321,7 +324,15 @@ The dialog uses the run route. `POST /api/launch-preparations/runs` returns a `r
 
 Internal SDK launch sessions persist under Streamliner's local state rather than the normal Copilot session-state root. The default root is `~/.streamliner/state/copilot-sdk/paw-launch/<context-id>/`, with `STREAMLINER_COPILOT_SDK_STATE_ROOT` available for override. Run progress and API logs surface the SDK `sessionId` and workspace path for debugging, but these internal sessions are not intended to appear in Streamliner's observed Sessions view.
 
-The PAW launch dialog is intentionally text-guided for this MVP. It exposes launch instructions, lightweight reusable text profiles, CLI args, terminal preference, graph source, a GitHub issue link when the selected node has one, and the prepared handoff after backend PAW init. The builder's launch instructions are trusted local intent and appear near the top of the SDK launch-preparation session's first prompt so context assembly and PAW init both weight them heavily. Once preparation completes, the prepared kickoff prompt is editable before terminal launch so the builder can inspect or refine the exact initial prompt sent to the visible worker. The primary action is labeled as running PAW init because the SDK session may read repository files, inspect git/GitHub context, execute shell tools, and write the PAW work artifacts before returning the structured handoff. PAW-owned metadata, structured presets, specialists, and dependent WorkflowContext constraints are deferred to issue #43 so Streamliner does not duplicate PAW's configuration rules.
+The PAW launch dialog is intentionally text-guided for this MVP. It exposes launch instructions, lightweight reusable text profiles, CLI args, terminal preference, graph source, a GitHub issue link when the selected node has one, and the prepared handoff after backend PAW init. Workstream `launchDefaults.terminal` pre-fills preferred terminal host, tab title, and tab color, but builders can still override those values per launch. The tab title can be derived from `titleTemplate` with `{githubIssue}`, `{nodeId}`, and `{nodeTitle}` variables; `{githubIssue}` renders as `#number` for GitHub-tracked nodes, and the configuration dialog surfaces those variables in inline help. The builder's launch instructions are trusted local intent and appear near the top of the SDK launch-preparation session's first prompt so context assembly and PAW init both weight them heavily. Once preparation completes, the prepared kickoff prompt is editable before terminal launch so the builder can inspect or refine the exact initial prompt sent to the visible worker. The primary action is labeled as running PAW init because the SDK session may read repository files, inspect git/GitHub context, execute shell tools, and write the PAW work artifacts before returning the structured handoff. PAW-owned metadata, structured presets, specialists, and dependent WorkflowContext constraints are deferred to issue #43 so Streamliner does not duplicate PAW's configuration rules.
+
+The workstream header exposes a configuration dialog for backend-readable graph files. It edits durable graph launch settings, including `launchPolicy.requiredTracker` and `launchDefaults.terminal`, through:
+
+```http
+PATCH /api/workstreams/:projectKey/:workstreamId/configuration
+```
+
+The route reads the selected registered or source-discovered graph, validates that the identity still matches the route, writes the updated graph JSON atomically, bumps `updatedAt`, and returns the parsed workstream document. Browser-directory workstreams remain read-only from the backend because the local API cannot write through the browser file handle.
 
 Reusable text prompt profiles are exposed as:
 

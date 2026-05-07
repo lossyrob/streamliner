@@ -44,6 +44,7 @@ export interface StreamlinerApiAppOptions {
   recentsPath?: string;
   workstreamRegistryPath?: string;
   workstreamSourceRegistryPath?: string;
+  now?: () => Date;
   readonlyMode?: boolean;
   relaunchDeps?: Partial<RelaunchDeps>;
   launchContextDeps?: LaunchContextRouteDeps;
@@ -131,6 +132,7 @@ export function createStreamlinerApiApp(
       registryPath: options.workstreamRegistryPath,
       sourceRegistryPath: options.workstreamSourceRegistryPath,
       recentsPath: options.recentsPath,
+      now: options.now,
     }),
   );
   app.use("/api", createRecentsRouter({ recentsPath: options.recentsPath }));

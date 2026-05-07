@@ -12,6 +12,8 @@ interface WorkstreamHeaderProps {
   trackedWorkstreams: WorkstreamRegistryListEntry[];
   onOpenWorkstream: (entry: WorkstreamRegistryListEntry) => void;
   onAddWorkstream: () => void | Promise<void>;
+  onConfigureWorkstream: () => void;
+  configureDisabledReason?: string | null;
   onUntrackWorkstream: (entry: WorkstreamRegistryListEntry) => void | Promise<void>;
 }
 
@@ -48,6 +50,8 @@ export function WorkstreamHeader({
   trackedWorkstreams,
   onOpenWorkstream,
   onAddWorkstream,
+  onConfigureWorkstream,
+  configureDisabledReason,
   onUntrackWorkstream,
 }: WorkstreamHeaderProps) {
   const [showWorkstreams, setShowWorkstreams] = useState(false);
@@ -170,6 +174,15 @@ export function WorkstreamHeader({
         >
           Manage sources…
         </a>
+        <button
+          className="sl-action-btn"
+          type="button"
+          onClick={onConfigureWorkstream}
+          disabled={Boolean(configureDisabledReason)}
+          title={configureDisabledReason ?? "Configure workstream launch settings"}
+        >
+          Configure…
+        </button>
       </div>
     </header>
   );

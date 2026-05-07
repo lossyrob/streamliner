@@ -13,6 +13,12 @@ import {
 } from "@github/copilot-sdk";
 
 import type { NodeLaunchRecord } from "../node-launch-record-contract";
+import type { WorkstreamLaunchDefaults, WorkstreamLaunchPolicy, WorkstreamNode } from "../workstream-schema";
+import { renderWorkstreamTerminalTitleTemplate } from "../workstream-launch-templates";
+import {
+  evaluateLaunchPolicyFromGraph,
+  launchPolicyDetails,
+} from "./launch-policy";
 import { getApiLogger } from "./logger";
 import {
   LaunchContextPreparationError,
@@ -45,6 +51,7 @@ const execFileAsync = promisify(execFile);
 export type LaunchPreparationErrorCode =
   | "invalid_node_id"
   | "invalid_launch_configuration"
+  | "launch_policy_blocked"
   | "paw_init_failed"
   | "context_preparation_failed"
   | "missing_context_package";
@@ -59,6 +66,7 @@ export class LaunchPreparationError extends Error {
   statusCode: number;
   step: LaunchPreparationStep;
   input?: string;
+  details?: Record<string, unknown>;
 
   constructor(
     code: LaunchPreparationErrorCode,
@@ -66,6 +74,7 @@ export class LaunchPreparationError extends Error {
     message: string,
     step: LaunchPreparationStep,
     input?: string,
+    details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "LaunchPreparationError";
@@ -74,6 +83,9 @@ export class LaunchPreparationError extends Error {
     this.step = step;
     if (input !== undefined) {
       this.input = input;
+    }
+    if (details !== undefined) {
+      this.details = details;
     }
   }
 }
@@ -222,6 +234,7 @@ export interface PawLaunchMetadata {
   workId: string;
   workTitle: string;
   trackerUrl: string | null;
+  launchPolicy: WorkstreamLaunchPolicy | null;
 }
 
 export interface PawLaunchHandoff {
@@ -475,6 +488,7 @@ function normalizeTerminalPreferences(
 
 function parseConfigurationInput(
   input: PawLaunchConfigurationInput | undefined,
+  defaults: { terminal?: Partial<PawLaunchTerminalPreferences> } = {},
 ): ParsedPawLaunchConfiguration {
   const rawCwd = assertOptionalString(input?.cwd, "configuration.cwd");
   const workflowInstructions = assertOptionalString(
@@ -496,6 +510,7 @@ function parseConfigurationInput(
     workflowInstructions,
     terminal: {
       ...DEFAULT_TERMINAL_PREFERENCES,
+      ...defaults.terminal,
       ...terminalOverrides,
     },
   };
@@ -1683,7 +1698,64 @@ export async function preparePawLaunch(
   }
 
   const sessionStateRoot = resolve(options.stateRoot ?? defaultStateRoot());
-  const parsedConfiguration = parseConfigurationInput(options.configuration);
+  let launchPolicy: WorkstreamLaunchPolicy | null = null;
+  let launchDefaults: WorkstreamLaunchDefaults | null = null;
+  let launchDefaultsNode: WorkstreamNode | null = null;
+  const policyGraphPath = options.graphPath ?? options.defaultGraphPath;
+  if (policyGraphPath) {
+    const policyResult = evaluateLaunchPolicyFromGraph({
+      graphPath: options.graphPath,
+      defaultGraphPath: options.defaultGraphPath,
+      nodeId: options.nodeId,
+    });
+    if (!policyResult.ok) {
+      if (policyResult.kind === "blocked") {
+        const details = launchPolicyDetails(policyResult.violation);
+        getApiLogger().withScope("launch-policy").info(
+          "rejected launch preparation",
+          details,
+        );
+        throw new LaunchPreparationError(
+          "launch_policy_blocked",
+          412,
+          policyResult.violation.message,
+          "validation",
+          "launchPolicy",
+          details,
+        );
+      }
+      throw new LaunchPreparationError(
+        "context_preparation_failed",
+        policyResult.statusCode,
+        policyResult.message,
+        "context-preparation",
+        policyResult.code,
+      );
+    }
+    launchPolicy = policyResult.launchPolicy;
+    launchDefaults = policyResult.launchDefaults;
+    launchDefaultsNode = policyResult.node;
+  }
+  const terminalTitleDefault = launchDefaultsNode
+    ? renderWorkstreamTerminalTitleTemplate(
+        launchDefaults?.terminal?.titleTemplate,
+        launchDefaultsNode,
+      )
+    : null;
+  const terminalDefaults = launchDefaults?.terminal
+    ? {
+        ...(launchDefaults.terminal.preferredTerminal
+          ? { preferredTerminal: launchDefaults.terminal.preferredTerminal }
+          : {}),
+        ...(launchDefaults.terminal.tabColor
+          ? { tabColor: launchDefaults.terminal.tabColor }
+          : {}),
+        ...(terminalTitleDefault ? { title: terminalTitleDefault } : {}),
+      }
+    : undefined;
+  const parsedConfiguration = parseConfigurationInput(options.configuration, {
+    terminal: terminalDefaults,
+  });
 
   const contextPreparer = options.contextPreparer ?? prepareLaunchContextPackage;
   let stagedContextPackage: LaunchContextPackage;
@@ -1825,6 +1897,7 @@ export async function preparePawLaunch(
     workId: pawInit.workId,
     workTitle: pawInit.workTitle,
     trackerUrl: trackerUrlOf(stagedContextPackage),
+    launchPolicy,
   };
   const kickoffPrompt = buildKickoffPrompt({
     workflowContextPath: pawInit.workflowContextPath,

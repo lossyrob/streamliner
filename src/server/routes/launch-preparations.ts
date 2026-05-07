@@ -160,6 +160,7 @@ export function createLaunchPreparationsRouter(options: {
           error: error.message,
           step: error.step,
           input: error.input,
+          details: error.details,
         });
         return;
       }
@@ -234,6 +235,7 @@ export function createLaunchPreparationsRouter(options: {
           error: error.message,
           step: error.step,
           input: error.input,
+          details: error.details,
         });
         return;
       }
