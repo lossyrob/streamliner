@@ -18,12 +18,13 @@ preserved builder presence and reused observation-based tracking, but it left
 Streamliner without programmatic control over long-running worker actors that
 Automated PAW Review Loop and similar orchestration features need.
 
-The SDK capability research for the `sdk-managed-worker-runtime` workstream
+The SDK capability research for issue #60 / PR #63, captured in
+`.streamliner/workstreams/sdk-managed-worker-runtime/docs/sdk-capability-parity.md`,
 concluded that a constrained first SDK-managed graph-node worker runtime is
 viable. The evidence covers repository context, working directory, tools, skills,
 MCP/plugin visibility, permissions, persistent SDK sessions, progress events,
 abort APIs, one-way terminal takeover through
-`copilot --resume <sdk-session-id>`, Streamliner plugin claim-binding evidence,
+`copilot --resume <sdkSessionId>`, Streamliner plugin claim-binding evidence,
 and local branch/commit/PR-draft production. The research also identified
 constraints that need to become product contract rather than implementation
 guesswork: browser progress must be allowlisted and redacted, cancellation must
@@ -58,7 +59,7 @@ The first cut is constrained:
    scoped permission profile.
 6. **Terminal takeover is one way.** Streamliner may interrupt a managed SDK
    session and launch visible Copilot CLI with
-   `copilot --resume <sdk-session-id>`. After takeover binds, ownership transfers
+   `copilot --resume <sdkSessionId>`. After takeover binds, ownership transfers
    to the terminal path and SDK control does not resume for that row.
 7. **Cleanup-after-merge is a backend lifecycle action.** Worktree/local-branch
    cleanup uses deterministic safety checks and records runtime state; it is not
@@ -109,7 +110,7 @@ action with guardrails and clear failure states.
 - Browser UI work can build a read-only terminal-like progress surface without
   exposing raw SDK event content.
 - Terminal takeover work has a clear terminal state: after a successful
-  `copilot --resume <sdk-session-id>` bind, the row is terminal-owned and SDK
+  `copilot --resume <sdkSessionId>` bind, the row is terminal-owned and SDK
   control is finished.
 - Automated PAW Review Loop should consume the managed runtime contract rather
   than inventing a separate actor/session substrate.

@@ -131,6 +131,7 @@ For this design node, testing means validating documentation integrity and
 reviewing the contract against issue #61:
 
 - Confirm the design docs build.
+- `npm run docs:build` and `npm run lint` were run for this branch.
 - Confirm Decision 009 appears in the design index and VitePress sidebar.
 - Confirm the workstream-local summary gives downstream substrate, UI,
   takeover/cleanup, gate, and review-loop workers enough direction without
@@ -163,3 +164,5 @@ Remote execution, multi-user/cloud workers, worker pools, automatic safe/unsafe
 node classification, full review/address/re-review orchestration, and
 SDK-to-CLI-to-SDK round-tripping remain out of scope for the accepted first-cut
 contract.
+
+Resolves #61.

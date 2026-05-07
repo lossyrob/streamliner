@@ -168,6 +168,10 @@ For the PAW MVP, the kickoff prompt starts from the same template a builder woul
 | PAW init asks a clarification question during preparation | Treat as `paw_init_failed`; surface the question/error in the dialog rather than waiting indefinitely |
 | Internal SDK launch session stalls | No short default timeout is applied; operators can set `STREAMLINER_PAW_LAUNCH_TIMEOUT_MS` as a whole-run watchdog and inspect the internal session state path surfaced in progress/logs |
 | Duplicate active launch | Backend returns a typed conflict for active-window or bound claims; UI disables/relabels the graph action |
+| Managed SDK worker start failure | Preserve the reserved registry row with typed `failed` or `waiting_for_builder` evidence when useful for diagnosis/retry; do not create a success-shaped active worker |
+| Managed SDK trust/binding failure | Keep the managed row visible with degraded diagnostics and do not create duplicate observed rows from filesystem-only SDK state |
+| Managed SDK permission denial blocks work | Transition to `waiting_for_builder` with redacted permission reason rather than auto-approving or silently retrying |
+| Managed SDK cancellation/takeover failure | Preserve the managed row and SDK identity, surface `cancel_timeout`, `cancel_evidence_inconclusive`, or `takeover_failed`, and require retry/cancel/manual recovery |
 | Copilot CLI launch failure | Report a typed error, mark the claim failed with `terminal-spawn-failed`, and clean up the reserved registry row through the claim-failure path |
 
 ## Context Assembly
@@ -511,7 +515,7 @@ Allowed browser-facing event classes:
 
 Always exclude raw user prompts, transformed prompts, assistant reasoning, reasoning deltas, tool arguments, tool results, terminal stdout/stderr, hook payload bodies, full paths when not already part of the launch surface, secrets, tokens, credential-manager data, and provider telemetry that would expose more than the builder-visible node context.
 
-Retention is bounded and summary-oriented. The first managed runtime should persist the most recent sanitized events per managed run in local runtime state, cap by both event count and byte size, and retain a latest human-readable summary for list/detail views after older events roll off. SSE clients can receive a replay window on reconnect, then live events. After terminal states, retain the bounded sanitized history long enough for review and cleanup diagnostics, then allow normal runtime-state retention policy to prune it. Raw excluded content is never retained for "debugging by default"; any future raw diagnostic capture needs an explicit content policy and builder opt-in.
+Retention is bounded and summary-oriented. The first managed runtime should persist the most recent sanitized events per managed run in local runtime state, cap by both event count and byte size, and retain a latest human-readable summary for list/detail views after older events roll off. SSE clients can receive a replay window on reconnect, then live events. API/runtime restart rehydrates the replay window and latest summary from that persisted sanitized runtime state when available; if the bounded event store is unavailable or pruned, the UI shows the latest summary plus a degraded replay diagnostic rather than fabricating a transcript. After terminal states, retain the bounded sanitized history long enough for review and cleanup diagnostics, then allow normal runtime-state retention policy to prune it. Raw excluded content is never retained for "debugging by default"; any future raw diagnostic capture needs an explicit content policy and builder opt-in.
 
 ### Permission Policy
 
@@ -571,7 +575,7 @@ PR and completion state are managed-runtime signals plus GitHub/Git evidence; th
 | `cleanup_ready` | Record when the linked PR is merged/accepted and cleanup safety checks may run. |
 | `cleaned_up` | Record after deterministic cleanup succeeds. |
 
-Cleanup-after-merge is a backend lifecycle action with PAW-aware inputs, not a model prompt. Before removing a worktree or local branch, the backend must verify the registry row, graph binding, expected repo/worktree, expected branch, PR URL/head relationship, merge/closed state, clean working tree, unpushed commits, and whether any other worktree or process still depends on the branch/path. Failed guardrails transition to `waiting_for_builder` with a typed reason; cleanup does not proceed by guessing.
+Cleanup-after-merge is an idempotent backend lifecycle action with PAW-aware inputs, not a model prompt. Before removing a worktree or local branch, the backend must verify the registry row, graph binding, expected repo/worktree, expected branch, PR URL/head relationship, merge/closed state, clean working tree, unpushed commits, and whether any other worktree or process still depends on the branch/path. Repeating cleanup after a verified prior success returns the recorded `cleaned_up` result; repeating after partial or externally completed cleanup succeeds only when the safety checks can prove the target branch/path is already gone for the expected merged PR. Failed guardrails transition to `waiting_for_builder` with a typed reason; cleanup does not proceed by guessing.
 
 Cleanup result belongs on managed runtime state and the registry projection. It may enable graph/UI badges and closeout actions, but it does not mutate `graph.json` or archive/delete the registry row unless the builder chooses a separate retention action.
 
@@ -592,8 +596,9 @@ Graph overlays remain a projection of the same registry rows. A managed row boun
 Automated PAW Review Loop may consume SDK-managed workers for implementation and reviewer actors only through this contract. It can rely on:
 
 - stable identity: registry row id, workstream id, node id, repo, branch, PAW work directory, `sdkSessionId` while managed, nullable `copilotSessionId`, and PR/review links when present;
-- lifecycle events: `starting`, `running`, `idle`, `waiting_for_builder`, `interrupt_requested`, `interrupted`, `pr_ready`, `review_ready`, `completed`, `cleanup_ready`, `cleaned_up`, `canceled`, `failed`, and `terminal_takeover`;
+- lifecycle events: `preparing`, `starting`, `running`, `idle`, `waiting_for_builder`, `interrupt_requested`, `interrupted`, `pr_ready`, `review_ready`, `completed`, `cleanup_ready`, `cleaning_up`, `cleaned_up`, `canceled`, `failed`, and `terminal_takeover`;
 - progress reads: bounded sanitized progress events and latest summary, not raw transcript access;
+- transport expectations: read lifecycle/progress through the local API's registry/session surfaces, SSE streams, or a future managed-run detail endpoint; write only through explicit managed runtime action endpoints/tools, never by editing registry files, graph files, or PAW artifacts directly;
 - permission posture: explicit per-launch managed permission profile and redacted denied-permission events;
 - takeover semantics: terminal takeover is final for SDK control, and the review loop must stop trying to drive that actor programmatically after `terminal_takeover`; and
 - cleanup/completion semantics: PR merge and cleanup are deterministic backend states with guardrails, not model-authored status claims.
