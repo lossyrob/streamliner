@@ -1063,8 +1063,8 @@ describe("App sessions route", () => {
       const graphNode = findCanvasNode(container, "Launch prompt profiles");
       expect(graphNode.textContent).toContain("runtime active");
       expect(graphNode.textContent).toContain("PAW implementation");
-      expect(container.textContent).toContain("Runtime overlay");
-      expect(container.textContent).toContain("Selected runtime");
+      expect(container.textContent).toContain("RUNTIME DETAILS");
+      expect(container.textContent).not.toContain("Runtime overlay");
       expect(container.textContent).toContain("PAW overlay worker (working)");
       expect(container.textContent).toContain("pending blocking launch");
       expect(

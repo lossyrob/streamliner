@@ -32,7 +32,6 @@ import { NodeInspector } from "./components/NodeInspector";
 import { OperationalStatusStrip } from "./components/OperationalStatusStrip";
 import { CheckpointStepper } from "./components/CheckpointStepper";
 import { WorkstreamHeader } from "./components/WorkstreamHeader";
-import { RuntimeOverlayPanel } from "./components/RuntimeOverlayPanel";
 import {
   PawLaunchDialog,
   type PawTerminalLaunchInput,
@@ -1065,6 +1064,9 @@ function GraphDashboard({
     sessionList.error,
     viewModel,
   ]);
+  const selectedRuntimeOverlay = selectedEntry
+    ? runtimeOverlay?.nodesById.get(selectedEntry.node.id) ?? null
+    : null;
 
   const launchDisabledReason = useMemo(() => {
     if (!selectedEntry) return undefined;
@@ -1447,12 +1449,6 @@ function GraphDashboard({
           />
         </ReactFlowProvider>
         <div className="sl-sidebar">
-          <RuntimeOverlayPanel
-            overlay={runtimeOverlay}
-            selectedNodeId={selectedEntry?.node.id ?? null}
-            loading={nodeLaunchRecordLoading}
-            error={nodeLaunchRecordError}
-          />
           <NodeInspector
             entry={selectedEntry}
             layout={layout}
@@ -1462,6 +1458,7 @@ function GraphDashboard({
             launchRecord={nodeLaunchRecord}
             launchRecordLoading={nodeLaunchRecordLoading}
             launchRecordError={nodeLaunchRecordError}
+            runtimeOverlay={selectedRuntimeOverlay}
             onLaunch={handleOpenLaunchDialog}
           />
         </div>

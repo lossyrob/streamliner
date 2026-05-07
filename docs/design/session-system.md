@@ -807,7 +807,7 @@ The runtime overlay is how Streamliner presents live session, launch, PAW, and t
 The exported `workstream-runtime-overlay` contract is the UI/gate-readable composition boundary. `buildWorkstreamRuntimeOverlay(...)` returns:
 
 - `nodes`: one `WorkstreamRuntimeNodeOverlay` per graph node, preserving the committed graph status and adding runtime session, launch, PAW, tracker, issue, and degradation slices.
-- `summary`: graph-wide counts and issues for dashboard rendering.
+- `summary`: graph-wide counts and issues for internal diagnostics and future gate consumers.
 - `gateReadiness`: `{ status, reasons }`, where `status` is `usable`, `degraded`, or `not-usable`.
 
 `usable` means composition succeeded and the overlay can distinguish committed graph state from runtime evidence. `degraded` means one or more runtime sources are missing, stale, ambiguous, or unresolved but the projection is still usable. `not-usable` means a required composition source, such as the session registry snapshot, failed in a way that prevents reliable runtime interpretation.
@@ -832,7 +832,7 @@ Runtime overlay precedence is explicit:
 | Session registry error | Marks the overlay not usable and surfaces the registry error as a graph-level reason. |
 | Launch records loading or unavailable | Keeps session/tracker projection usable but marks gate readiness degraded because launch-claim runtime evidence may be incomplete. |
 
-Graph nodes stay compact: they show the committed lifecycle badges, the existing bound-session pulse/pill, and small runtime chips only when there is runtime evidence or actionable degradation. The sidebar carries the richer summary, gate readiness, selected-node slices, and machine-readable degradation reasons. Indicator links to the Sessions surface continue to use workstream/node filters, so builders can correlate graph badges with registry rows without persisting runtime telemetry into the graph artifact.
+Graph nodes are the visible graph-wide runtime surface: they show committed lifecycle badges, the existing bound-session pulse/pill, and small runtime chips only when there is runtime evidence or actionable degradation. Selecting a node opens inspector-only runtime details for that node's session, launch, PAW, tracker, and degradation slices. The typed `summary` and `gateReadiness` contract remains available to downstream gates and automation, but the dashboard does not render a graph-wide runtime summary panel in the inspector sidebar. Indicator links to the Sessions surface continue to use workstream/node filters, so builders can correlate graph badges with registry rows without persisting runtime telemetry into the graph artifact.
 
 ### PAW Artifact Status Rendering
 
