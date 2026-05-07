@@ -981,6 +981,109 @@ a.sl-action-btn {
   gap: 12px;
 }
 
+.sl-runtime-card {
+  gap: 12px;
+}
+
+.sl-runtime-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.sl-runtime-stats > div {
+  min-width: 0;
+  padding: 9px 8px;
+  border-radius: 12px;
+  border: 1px solid rgba(20, 60, 130, 0.08);
+  background: rgba(20, 60, 130, 0.035);
+  display: grid;
+  gap: 2px;
+}
+
+.sl-runtime-stats span {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--sl-text);
+}
+
+.sl-runtime-stats small {
+  font-size: 10px;
+  line-height: 1.3;
+  color: var(--sl-text-dim);
+}
+
+.sl-runtime-issue-list,
+.sl-runtime-selected,
+.sl-runtime-fields {
+  display: grid;
+  gap: 8px;
+}
+
+.sl-runtime-issue {
+  display: grid;
+  gap: 3px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(20, 60, 130, 0.08);
+  background: rgba(20, 60, 130, 0.035);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--sl-text-mid);
+}
+
+.sl-runtime-issue.amber {
+  border-color: rgba(176, 120, 8, 0.18);
+  background: var(--sl-amber-bg);
+}
+
+.sl-runtime-issue.red {
+  border-color: rgba(200, 50, 50, 0.2);
+  background: rgba(200, 50, 50, 0.06);
+}
+
+.sl-runtime-issue-code {
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--sl-text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.sl-runtime-selected {
+  padding-top: 2px;
+  border-top: 1px solid rgba(20, 60, 130, 0.08);
+}
+
+.sl-runtime-selected-title {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--sl-text);
+}
+
+.sl-runtime-fields {
+  margin: 0;
+}
+
+.sl-runtime-fields > div {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.sl-runtime-fields dt {
+  color: var(--sl-text-dim);
+  font-weight: 800;
+}
+
+.sl-runtime-fields dd {
+  margin: 0;
+  color: var(--sl-text-mid);
+  overflow-wrap: anywhere;
+}
+
 .sl-node-launch-fields,
 .sl-node-launch-paths {
   display: grid;
@@ -3326,6 +3429,13 @@ a.sl-session-context-ref {
 
 .sl-node-session-link:hover {
   text-decoration: underline;
+}
+
+.sl-node-runtime {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
 }
 
 .sl-node-meta {

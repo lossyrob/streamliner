@@ -24,6 +24,7 @@ import type {
   GraphNodeSessionStatusState,
   GraphNodeSessionStatusSummary,
 } from "../graph-node-session-status";
+import type { WorkstreamRuntimeOverlay } from "../workstream-runtime-overlay";
 
 const nodeTypes = {
   workstreamTask: WorkstreamGraphNode,
@@ -72,6 +73,7 @@ interface WorkstreamCanvasProps {
   onNodeSelect: (nodeId: string | null) => void;
   nodeSessionStatuses?: ReadonlyMap<string, GraphNodeSessionStatusSummary>;
   nodeSessionStatusState?: GraphNodeSessionStatusState;
+  runtimeOverlay?: WorkstreamRuntimeOverlay | null;
   sessionRouteForNode?: (nodeId: string) => {
     href: string;
     onOpen: () => void | Promise<void>;
@@ -85,6 +87,7 @@ export function WorkstreamCanvas({
   onNodeSelect,
   nodeSessionStatuses = new Map(),
   nodeSessionStatusState = "ready",
+  runtimeOverlay = null,
   sessionRouteForNode,
 }: WorkstreamCanvasProps) {
   const reactFlow = useReactFlow();
@@ -127,6 +130,7 @@ export function WorkstreamCanvas({
             showId: false,
             sessionStatus: nodeSessionStatuses.get(ln.id) ?? null,
             sessionStatusState: nodeSessionStatusState,
+            runtimeOverlay: runtimeOverlay?.nodesById.get(ln.id) ?? null,
             sessionsHref: sessionRoute?.href ?? null,
             onOpenSessions: sessionRoute?.onOpen ?? null,
           },
@@ -135,7 +139,13 @@ export function WorkstreamCanvas({
           style: { width: ln.width, height: ln.height },
         };
       }),
-    [layout, nodeSessionStatusState, nodeSessionStatuses, sessionRouteForNode],
+    [
+      layout,
+      nodeSessionStatusState,
+      nodeSessionStatuses,
+      runtimeOverlay,
+      sessionRouteForNode,
+    ],
   );
   const nodes = useMemo<Node[]>(
     () => [...laneNodes, ...taskNodes],

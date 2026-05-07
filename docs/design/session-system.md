@@ -1,7 +1,7 @@
 ---
 kind: design-doc
 status: draft
-last_updated: 2026-05-06
+last_updated: 2026-05-07
 update_semantics: rewrite-in-place
 authoritative_for: "Session launching, lifecycle, registry contract, tracking, and runtime overlay"
 scope_tags:
@@ -800,42 +800,54 @@ The registry-level activity diagnostic codes currently include `events_missing`,
 
 ## Runtime Overlay
 
-The runtime overlay is how Streamliner presents live session and tracker state in the UI without modifying the committed graph. The overlay is a **projection of the session registry** ([Decision 004](decisions/004-session-registry-primary-surface.md)) filtered to entries whose `graphBinding` resolves to a visible node, joined with that node's committed status, observed liveness, tracker state, and PAW artifact status when artifacts are available. Sessions without `graphBinding`, and manual registry rows even when a builder has associated them with a node for bookkeeping, remain visible in the registry UI but do not render as graph-node session activity.
+The runtime overlay is how Streamliner presents live session, launch, PAW, and tracker state in the UI without modifying the committed graph. The overlay is a **projection** of the parsed workstream graph, graph-bound session registry rows ([Decision 004](decisions/004-session-registry-primary-surface.md)), graph-wide node launch records, and already-loaded tracker snapshots. It never writes runtime fields, launch claim summaries, session liveness, PAW artifact state, or tracker snapshots back into `graph.json` or changes `updatedAt`.
 
 ### Overlay Model
 
-The UI renders each node's state by combining three sources:
+The exported `workstream-runtime-overlay` contract is the UI/gate-readable composition boundary. `buildWorkstreamRuntimeOverlay(...)` returns:
 
-```
-Displayed state = committed graph status
-                + runtime session status (from observation)
-                + tracker status (from cached issue/PR state)
-```
+- `nodes`: one `WorkstreamRuntimeNodeOverlay` per graph node, preserving the committed graph status and adding runtime session, launch, PAW, tracker, issue, and degradation slices.
+- `summary`: graph-wide counts and issues for dashboard rendering.
+- `gateReadiness`: `{ status, reasons }`, where `status` is `usable`, `degraded`, or `not-usable`.
 
-| Committed status | Runtime session | Displayed as |
-|-----------------|-----------------|--------------|
-| `ready` | `launching` | Launching |
-| `ready` | `active` | In Progress |
-| `ready` | `idle` | Needs Attention |
-| `ready` | `idle` + `pendingInputRequest` | Needs Input |
-| `ready` | `ended` | Completed (pending artifact promotion) |
-| `ready` | none | Ready |
-| `in-progress` | any | Session status takes precedence |
-| `completed` | any | Completed |
+`usable` means composition succeeded and the overlay can distinguish committed graph state from runtime evidence. `degraded` means one or more runtime sources are missing, stale, ambiguous, or unresolved but the projection is still usable. `not-usable` means a required composition source, such as the session registry snapshot, failed in a way that prevents reliable runtime interpretation.
 
-Graph nodes use the same compact status pulse/pill language as My Sessions for bound runtime state. A task node displays a session indicator for registry rows whose `graphBinding.workstreamId` matches the active workstream and whose `graphBinding.nodeId` matches the node. The indicator shows the My Sessions activity label for the highest-attention bound row plus a count of all non-manual bound rows for that node. Attention ordering is explicit and stable: `waiting_for_input` ("waiting for you") outranks `interrupted`, which outranks `working`, which outranks the lowest tier of `exited` and `unknown`. Reserved launched rows that are bound before trusted observation arrives stay visible in that lowest fallback tier rather than disappearing.
+The dashboard consumes graph-wide launch records through `GET /api/node-launch-records?graphPath=...`, which returns `{ records }` with latest launch-claim summaries. The selected-node compatibility shape, `GET /api/node-launch-records?graphPath=...&nodeId=...` returning `{ record }`, remains available for narrower consumers. Both paths are read-only and are scoped by normalized graph path.
 
-Graph nodes without projected bound sessions remain visually silent; empty, loading, and session-registry error states do not add graph-card copy. This keeps node cards focused on graph lifecycle and tracker context unless there is actual node-bound runtime activity to surface. Indicator details link to the Sessions surface with workstream/node filters when row-level routing is unavailable, allowing the builder to correlate the graph badge with the underlying registry rows without writing any session telemetry back into `graph.json`.
+### Precedence and Degradation
+
+Runtime overlay precedence is explicit:
+
+| Evidence | Overlay behavior |
+|---|---|
+| Committed graph status | Always remains visible as the base state; runtime evidence adds detail and never promotes graph status. |
+| Pending blocking launch claim with no bound session | Renders the node as `launching` and records a degraded unresolved-launch reason. |
+| Non-pending blocking launch claim with no bound session | Renders the node as `unresolved` and records a degraded unresolved-launch reason. |
+| Bound session `activityStatus: working` | Renders active work while retaining committed node status. |
+| Bound session `activityStatus: waiting_for_input` or `activityEvidence.pendingInputRequest` | Renders needs-input attention using the same language as My Sessions. |
+| Bound session `activityStatus: interrupted` or stale process evidence | Renders interrupted/stale runtime degradation. |
+| Bound session `activityStatus: exited` before committed completion | Renders ended runtime evidence pending explicit artifact promotion. |
+| Multiple non-ended bound sessions | Uses the highest-attention session as primary and marks the node ambiguous instead of hiding the conflict. |
+| Session registry loading | Keeps the overlay usable but degraded until a snapshot arrives. |
+| Session registry error | Marks the overlay not usable and surfaces the registry error as a graph-level reason. |
+| Launch records loading or unavailable | Keeps session/tracker projection usable but marks gate readiness degraded because launch-claim runtime evidence may be incomplete. |
+
+Graph nodes stay compact: they show the committed lifecycle badges, the existing bound-session pulse/pill, and small runtime chips only when there is runtime evidence or actionable degradation. The sidebar carries the richer summary, gate readiness, selected-node slices, and machine-readable degradation reasons. Indicator links to the Sessions surface continue to use workstream/node filters, so builders can correlate graph badges with registry rows without persisting runtime telemetry into the graph artifact.
 
 ### PAW Artifact Status Rendering
 
-For PAW-backed sessions, the `pawWorkflow` field carries an artifact-derived status summary (see [Decision 008](decisions/008-paw-artifacts-for-workflow-status.md)). It is intentionally coarse: it reports the artifact evidence Streamliner can see, not a guaranteed workflow automaton state.
+For PAW-backed sessions, `pawWorkflow` carries an artifact-derived status summary (see [Decision 008](decisions/008-paw-artifacts-for-workflow-status.md)). It is intentionally coarse: it reports the artifact evidence Streamliner can see, not a guaranteed workflow automaton state.
 
-- **Recognized artifact set** — overlay shows a `🐾 PAW ...` label with the coarse status implied by known PAW artifacts and can link to the relevant artifact paths.
-- **No explicit PAW work directory** — overlay omits the PAW label rather than scanning cwd-adjacent `.paw/work` directories or guessing from unrelated PAW artifacts.
-- **Unavailable artifact path** — overlay shows liveness/session status from Copilot state and may retain PAW diagnostics in registry data, but does not invent workflow progress or show a PAW label.
+- **Recognized Streamliner-launched PAW session** — overlay shows the PAW workflow kind/stage as enrichment alongside, never instead of, the activity status.
+- **Expected but unavailable/unknown PAW evidence** — overlay keeps the session liveness visible and adds PAW degradation (`paw-evidence-unavailable` or `paw-evidence-unknown`) rather than inventing workflow progress.
+- **Detected PAW artifacts without Streamliner PAW launch metadata** — overlay marks PAW as degraded (`paw-not-streamliner-launched`) and does not infer graph work from cwd or adjacent `.paw/work` directories.
+- **No PAW evidence** — overlay omits PAW enrichment.
 
 Mutation-affecting affordances must not depend solely on artifact-derived status until the workstream explicitly defines the artifact patterns and confidence thresholds for that affordance.
+
+### Tracker Narrowing
+
+Tracker overlay only uses tracker state already present on the `WorkstreamDerivedNode`. A GitHub issue snapshot contributes issue/PR state; an active pull request contributes the selected PR state. A node with a GitHub tracker reference but no loaded snapshot is marked as tracker-degraded so the missing cache is visible. The runtime overlay does not fetch GitHub data, infer issue state from URLs, or persist tracker snapshots as part of Wave 4.
 
 ### Artifact Promotion
 

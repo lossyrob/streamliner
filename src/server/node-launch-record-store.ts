@@ -135,6 +135,14 @@ export class NodeLaunchRecordStore {
     return record ? withPathStatus(record) : null;
   }
 
+  async listByGraphPath(graphPath: string): Promise<NodeLaunchRecord[]> {
+    const document = await this.readDocument();
+    const key = normalizeGraphPathForKey(graphPath);
+    return document.records
+      .filter((candidate) => normalizeGraphPathForKey(candidate.graphPath) === key)
+      .map(withPathStatus);
+  }
+
   async upsertFromHandoff(handoff: PawLaunchHandoff, now = new Date()): Promise<NodeLaunchRecord> {
     const document = await this.readDocument();
     const metadata = handoff.launchMetadata;

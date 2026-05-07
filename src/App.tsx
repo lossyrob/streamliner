@@ -32,6 +32,7 @@ import { NodeInspector } from "./components/NodeInspector";
 import { OperationalStatusStrip } from "./components/OperationalStatusStrip";
 import { CheckpointStepper } from "./components/CheckpointStepper";
 import { WorkstreamHeader } from "./components/WorkstreamHeader";
+import { RuntimeOverlayPanel } from "./components/RuntimeOverlayPanel";
 import {
   PawLaunchDialog,
   type PawTerminalLaunchInput,
@@ -53,9 +54,9 @@ import type {
   NodeLaunchHandoff,
   NodeLaunchClaimState,
   NodeLaunchRecord,
-  NodeLaunchRecordResponse,
   NodeTerminalLaunchResponse,
 } from "./node-launch-record-contract";
+import { loadGraphNodeLaunchRecords } from "./node-launch-record-client";
 import {
   encodeRouteSegment,
   handleInAppLinkClick,
@@ -68,6 +69,10 @@ import {
   trackerUrl as workstreamTrackerUrl,
 } from "./workstream-links";
 import { useSessionRegistryList } from "./session-registry-client";
+import {
+  buildWorkstreamRuntimeOverlay,
+  type WorkstreamRuntimeOverlay,
+} from "./workstream-runtime-overlay";
 
 const POLL_INTERVAL_MS = 2000;
 const LAST_GRAPH_KEY = "streamliner:lastGraphPath";
@@ -345,20 +350,6 @@ async function parseErrorResponse(res: Response): Promise<GraphLoadError> {
   } catch {
     return { message: `Request failed (${res.status})` };
   }
-}
-
-async function loadNodeLaunchRecord(
-  graphPath: string,
-  nodeId: string,
-): Promise<NodeLaunchRecord | null> {
-  const params = new URLSearchParams({ graphPath, nodeId });
-  const response = await fetch(`/api/node-launch-records?${params.toString()}`);
-  if (!response.ok) {
-    const parsed = await parseErrorResponse(response);
-    throw new Error(parsed.message);
-  }
-  const body = await response.json() as NodeLaunchRecordResponse;
-  return body.record ?? null;
 }
 
 interface NodeLaunchReleaseResponse {
@@ -992,7 +983,7 @@ function GraphDashboard({
   const [launchReleaseError, setLaunchReleaseError] = useState<string | null>(null);
   const [launchReleaseStatus, setLaunchReleaseStatus] = useState<string | null>(null);
   const [launchProgressEvents, setLaunchProgressEvents] = useState<PawLaunchProgressEvent[]>([]);
-  const [nodeLaunchRecord, setNodeLaunchRecord] = useState<NodeLaunchRecord | null>(null);
+  const [nodeLaunchRecords, setNodeLaunchRecords] = useState<NodeLaunchRecord[]>([]);
   const [nodeLaunchRecordLoading, setNodeLaunchRecordLoading] = useState(false);
   const [nodeLaunchRecordError, setNodeLaunchRecordError] = useState<string | null>(null);
   const [nodeLaunchRecordRefreshKey, setNodeLaunchRecordRefreshKey] = useState(0);
@@ -1013,6 +1004,13 @@ function GraphDashboard({
     : sessionList.error
       ? "error"
       : "ready";
+  const nodeLaunchRecordsByNodeId = useMemo(() => {
+    const recordsByNodeId = new Map<string, NodeLaunchRecord>();
+    for (const record of nodeLaunchRecords) {
+      recordsByNodeId.set(record.nodeId, record);
+    }
+    return recordsByNodeId;
+  }, [nodeLaunchRecords]);
   const initialViewportFitKey = `${activeWorkstreamKey}:${selectedNodeIdFromRoute ?? ""}`;
 
   useEffect(() => {
@@ -1033,11 +1031,40 @@ function GraphDashboard({
     if (!selectedNodeId || !viewModel) return null;
     return viewModel.derivedNodes.find((entry) => entry.node.id === selectedNodeId) ?? null;
   }, [selectedNodeId, viewModel]);
+  const nodeLaunchRecord = selectedEntry
+    ? nodeLaunchRecordsByNodeId.get(selectedEntry.node.id) ?? null
+    : null;
 
   const activeWorkstreamEntry = useMemo(() => {
     if (!activeWorkstream) return null;
     return workstreams.find((entry) => registryKey(entry) === registryKey(activeWorkstream)) ?? null;
   }, [activeWorkstream, workstreams]);
+  const runtimeOverlay = useMemo<WorkstreamRuntimeOverlay | null>(() => {
+    if (!viewModel) {
+      return null;
+    }
+    return buildWorkstreamRuntimeOverlay({
+      viewModel,
+      nodeSessionStatuses,
+      sessionStatusState: nodeSessionStatusState,
+      sessionStatusError: sessionList.error,
+      nodeLaunchRecords: nodeLaunchRecordsByNodeId,
+      launchRecordsState: nodeLaunchRecordLoading
+        ? "loading"
+        : nodeLaunchRecordError
+          ? "error"
+          : "ready",
+      launchRecordsError: nodeLaunchRecordError,
+    });
+  }, [
+    nodeLaunchRecordsByNodeId,
+    nodeLaunchRecordError,
+    nodeLaunchRecordLoading,
+    nodeSessionStatusState,
+    nodeSessionStatuses,
+    sessionList.error,
+    viewModel,
+  ]);
 
   const launchDisabledReason = useMemo(() => {
     if (!selectedEntry) return undefined;
@@ -1110,24 +1137,25 @@ function GraphDashboard({
   }, [activeWorkstreamEntry, selectedEntry, workstream]);
 
   useEffect(() => {
-    if (!selectedEntry || !activeWorkstreamEntry || !isBackendReadableWorkstreamEntry(activeWorkstreamEntry)) {
-      setNodeLaunchRecord(null);
+    if (!activeWorkstreamEntry || !isBackendReadableWorkstreamEntry(activeWorkstreamEntry)) {
+      setNodeLaunchRecords([]);
       setNodeLaunchRecordLoading(false);
       setNodeLaunchRecordError(null);
       return;
     }
     let cancelled = false;
+    setNodeLaunchRecords([]);
     setNodeLaunchRecordLoading(true);
     setNodeLaunchRecordError(null);
-    loadNodeLaunchRecord(activeWorkstreamEntry.path, selectedEntry.node.id)
-      .then((record) => {
+    loadGraphNodeLaunchRecords(activeWorkstreamEntry.path)
+      .then((records) => {
         if (!cancelled) {
-          setNodeLaunchRecord(record);
+          setNodeLaunchRecords(records);
         }
       })
       .catch((recordError: unknown) => {
         if (!cancelled) {
-          setNodeLaunchRecord(null);
+          setNodeLaunchRecords([]);
           setNodeLaunchRecordError(recordError instanceof Error ? recordError.message : String(recordError));
         }
       })
@@ -1139,7 +1167,7 @@ function GraphDashboard({
     return () => {
       cancelled = true;
     };
-  }, [activeWorkstreamEntry, nodeLaunchRecordRefreshKey, selectedEntry]);
+  }, [activeWorkstreamEntry, nodeLaunchRecordRefreshKey]);
 
   const handleArchiveCurrent = async () => {
     if (!activeWorkstream) {
@@ -1192,10 +1220,7 @@ function GraphDashboard({
           ? "Released the launch claim and detached the linked session."
           : "Released the launch claim.",
       );
-      if (activeWorkstreamEntry && selectedEntry) {
-        const refreshed = await loadNodeLaunchRecord(activeWorkstreamEntry.path, selectedEntry.node.id);
-        setNodeLaunchRecord(refreshed);
-      }
+      setNodeLaunchRecordRefreshKey((current) => current + 1);
     } catch (releaseError: unknown) {
       setLaunchReleaseError(releaseError instanceof Error ? releaseError.message : String(releaseError));
     } finally {
@@ -1417,10 +1442,17 @@ function GraphDashboard({
             onNodeSelect={setSelectedNodeId}
             nodeSessionStatuses={nodeSessionStatuses}
             nodeSessionStatusState={nodeSessionStatusState}
+            runtimeOverlay={runtimeOverlay}
             sessionRouteForNode={sessionRouteForNode}
           />
         </ReactFlowProvider>
         <div className="sl-sidebar">
+          <RuntimeOverlayPanel
+            overlay={runtimeOverlay}
+            selectedNodeId={selectedEntry?.node.id ?? null}
+            loading={nodeLaunchRecordLoading}
+            error={nodeLaunchRecordError}
+          />
           <NodeInspector
             entry={selectedEntry}
             layout={layout}

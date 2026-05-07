@@ -12,6 +12,10 @@ function formatLabel(value: string): string {
   return value.replace(/[_-]+/g, " ").toLowerCase();
 }
 
+function formatPawStage(value: string | null): string {
+  return value ? formatLabel(value) : "workflow";
+}
+
 function highlightClassName(highlight: WorkstreamGraphNodeData["highlight"]) {
   switch (highlight) {
     case "selected":
@@ -41,6 +45,23 @@ function statusClassName(value: string) {
   }
 }
 
+function runtimeStatusClassName(value: string) {
+  switch (value) {
+    case "active":
+      return "status-green";
+    case "launching":
+    case "needs-input":
+      return "status-amber";
+    case "interrupted":
+    case "unresolved":
+      return "status-red";
+    case "ended":
+      return "muted";
+    default:
+      return "status-accent";
+  }
+}
+
 function NodeBadges({
   data,
   gate,
@@ -51,6 +72,11 @@ function NodeBadges({
   const pullRequestCount =
     data.entry.githubIssue?.linkedPullRequests.length ??
     (data.entry.activePullRequest ? 1 : 0);
+  const overlay = data.runtimeOverlay;
+  const showRuntimeStatus =
+    overlay &&
+    (overlay.runtimeStatus !== data.entry.operationalStatus ||
+      overlay.hasRuntimeEvidence);
 
   return (
     <div className="sl-node-badges">
@@ -70,6 +96,13 @@ function NodeBadges({
       {pullRequestCount > 0 ? (
         <span className="sl-node-pill muted">
           {pullRequestCount} PR{pullRequestCount === 1 ? "" : "s"}
+        </span>
+      ) : null}
+      {showRuntimeStatus && overlay ? (
+        <span
+          className={`sl-node-pill ${runtimeStatusClassName(overlay.runtimeStatus)}`}
+        >
+          runtime {formatLabel(overlay.runtimeStatus)}
         </span>
       ) : null}
     </div>
@@ -135,6 +168,75 @@ function NodeSessionIndicator({
   );
 }
 
+function NodeRuntimeOverlayIndicator({
+  data,
+  gate,
+}: {
+  data: WorkstreamGraphNodeData;
+  gate: boolean;
+}) {
+  if (gate || !data.runtimeOverlay) {
+    return null;
+  }
+
+  const overlay = data.runtimeOverlay;
+  const issueCount = overlay.degradationReasons.filter(
+    (reason) => reason.code !== "tracker-snapshot-missing",
+  ).length;
+  const chips: Array<{ key: string; label: string; className: string }> = [];
+  if (overlay.launch.unresolved) {
+    chips.push({
+      key: "launch",
+      label: overlay.runtimeStatus === "launching" ? "launching" : "launch unresolved",
+      className: runtimeStatusClassName(overlay.runtimeStatus),
+    });
+  }
+  if (overlay.paw.status === "recognized") {
+    chips.push({
+      key: "paw",
+      label: `PAW ${formatPawStage(overlay.paw.stage)}`,
+      className: "status-accent",
+    });
+  } else if (overlay.paw.status === "unavailable" || overlay.paw.status === "unknown") {
+    chips.push({
+      key: "paw-degraded",
+      label: "PAW degraded",
+      className: "status-amber",
+    });
+  }
+  if (overlay.session.ambiguous) {
+    chips.push({
+      key: "ambiguous",
+      label: "multiple sessions",
+      className: "status-amber",
+    });
+  }
+  if (issueCount > 0) {
+    chips.push({
+      key: "issues",
+      label: `${issueCount} runtime issue${issueCount === 1 ? "" : "s"}`,
+      className: "status-amber",
+    });
+  }
+
+  if (chips.length === 0) {
+    return null;
+  }
+
+  return (
+    <div
+      className="sl-node-runtime"
+      title={overlay.degradationReasons.map((reason) => reason.message).join(" ")}
+    >
+      {chips.map((chip) => (
+        <span key={chip.key} className={`sl-node-pill ${chip.className}`}>
+          {chip.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function NodeShell({
   data,
   gate,
@@ -163,6 +265,7 @@ function NodeShell({
       ) : null}
       <NodeBadges data={data} gate={gate} />
       <NodeSessionIndicator data={data} gate={gate} />
+      <NodeRuntimeOverlayIndicator data={data} gate={gate} />
       <div className="sl-node-summary">{data.entry.node.summary}</div>
       <div className="sl-node-meta">
         <span>{data.repoLabel}</span>
