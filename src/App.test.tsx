@@ -664,6 +664,18 @@ describe("App sessions route", () => {
         "Use saved final PR only workflow text.",
       );
 
+      setTextareaValue(
+        findTextareaByLabel(container, "Profile instructions"),
+        "Unsaved draft profile edits.",
+      );
+      act(() => {
+        findButton(container, "Refresh").click();
+      });
+      await settle(100);
+      expect(findTextareaByLabel(container, "Profile instructions").value).toBe(
+        "Unsaved draft profile edits.",
+      );
+
       act(() => {
         findButton(container, "Copy instructions").click();
       });
@@ -3152,6 +3164,10 @@ describe("App sessions route", () => {
         },
       });
       let savedConfiguration: Record<string, unknown> | null = null;
+      let resolveProfileList!: (response: Response) => void;
+      const profileListPromise = new Promise<Response>((resolve) => {
+        resolveProfileList = resolve;
+      });
       const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = requestPath(input);
         if (path === "/api/workstreams") {
@@ -3177,6 +3193,10 @@ describe("App sessions route", () => {
         if (path.startsWith("/api/node-launch-records?")) {
           return emptyNodeLaunchRecordResponse();
         }
+        if (path === "/api/paw-launch-prompt-profiles" && (!init?.method || init.method === "GET")) {
+          expect(init?.cache).toBe("no-store");
+          return profileListPromise;
+        }
         throw new Error(`Unexpected fetch: ${path}`);
       });
       vi.stubGlobal("fetch", fetchMock);
@@ -3189,6 +3209,19 @@ describe("App sessions route", () => {
 
       act(() => {
         findButton(container, "Configure…").click();
+      });
+      await settle(100);
+      expect(container.textContent).not.toContain("Missing profile: final-pr-only");
+      expect(container.textContent).toContain("Loading profile: final-pr-only");
+      act(() => {
+        resolveProfileList(jsonResponse({
+          profiles: [{
+            id: "final-pr-only",
+            name: "Final PR only",
+            instructions: "Use final PR only workflow.",
+            updatedAt: "2026-05-03T18:00:00.000Z",
+          }],
+        }));
       });
       await settle(100);
       setSelectValue(findSelectByLabel(container, "Required tracker"), "github-issue");

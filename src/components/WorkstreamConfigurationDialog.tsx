@@ -77,8 +77,10 @@ export function WorkstreamConfigurationDialog({
     workstream.launchDefaults?.promptProfileId ?? "",
   );
   const [validationError, setValidationError] = useState<string | null>(null);
+  const promptProfilesInitialLoadPending = promptProfilesLoading && promptProfiles.length === 0;
   const selectedDefaultMissing = Boolean(
     defaultPromptProfileId &&
+      !promptProfilesInitialLoadPending &&
       !promptProfiles.some((profile) => profile.id === defaultPromptProfileId),
   );
 
@@ -184,14 +186,14 @@ export function WorkstreamConfigurationDialog({
                 disabled={saving}
               >
                 <option value="">Custom launch instructions</option>
+                {defaultPromptProfileId && promptProfilesInitialLoadPending && (
+                  <option value={defaultPromptProfileId}>
+                    Loading profile: {defaultPromptProfileId}
+                  </option>
+                )}
                 {selectedDefaultMissing && (
                   <option value={defaultPromptProfileId}>
                     Missing profile: {defaultPromptProfileId}
-                  </option>
-                )}
-                {promptProfilesLoading && promptProfiles.length === 0 && (
-                  <option value="" disabled>
-                    Loading saved profiles...
                   </option>
                 )}
                 {promptProfiles.map((profile) => (
@@ -200,6 +202,9 @@ export function WorkstreamConfigurationDialog({
                   </option>
                 ))}
               </select>
+              {promptProfilesInitialLoadPending && (
+                <span className="sl-inline-status">Loading saved profiles...</span>
+              )}
               <span className="sl-field-note">
                 Profile IDs are local hints stored in graph.json. Rename keeps the same id;
                 deleted or unavailable profiles do not block launch.

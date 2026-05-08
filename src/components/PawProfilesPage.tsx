@@ -70,15 +70,11 @@ export function PawProfilesPage({
     if (!selectedProfileId) {
       return;
     }
-    const profile = profiles.find((candidate) => candidate.id === selectedProfileId);
-    if (!profile) {
+    if (!profiles.some((candidate) => candidate.id === selectedProfileId)) {
       setSelectedProfileId("");
       setName("");
       setInstructions("");
-      return;
     }
-    setName(profile.name);
-    setInstructions(profile.instructions);
   }, [profiles, selectedProfileId]);
 
   const selectProfile = (profile: PawPromptProfile) => {
