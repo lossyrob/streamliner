@@ -305,12 +305,12 @@ design layer, starting from the references but not limited to them.}
 it to Decisions. If it changes project design, promote it into the design
 layer.}
 
-## Closeout Punch List
-{Optional. Polish, cleanup, and confidence-gap items discovered while using or
-executing the workstream that should be resolved before closure but do not merit
-immediate hot work or standalone nodes. Keep this bounded; promote anything
-large, risky, or dependency-bearing into its own node, issue, candidate, or
-follow-on workstream.}
+## Closeout Observations
+{Optional. Lightweight polish, cleanup, and confidence-gap observations
+discovered while using or executing the workstream. These are not launched work
+yet. When closure work remains, materialize bounded items into a normal closeout
+batch node with a tracker issue; promote anything large, risky, or
+dependency-bearing into its own node, issue, candidate, or follow-on workstream.}
 ```
 
 ### Guidelines
@@ -321,9 +321,10 @@ follow-on workstream.}
 - **The `Design References` section is human-readable.** The graph's `designRefs` array is the machine-readable starting-point list. Keep them in sync.
 - **The brief's `Decisions` section is not a copy of the design docs.** Use it for workstream-local sequencing, decomposition, and execution choices.
 - **Current State is a durable summary, not a heartbeat log.** Rewrite it when the workstream meaningfully changes direction, ownership, or progress. Do not churn it for every session pulse, CI update, or tracker refresh.
-- **Use `Closeout Punch List` as a parking lot throughout execution.** It is for
-  bounded polish and cleanup discovered while dogfooding that should be handled
-  before closure but does not need immediate hot work or a standalone node.
+- **Use `Closeout Observations` as a parking lot throughout execution.** It is
+  for bounded polish and cleanup discovered while dogfooding. When real closure
+  work remains, materialize the bounded batch into a normal closeout task node
+  with a tracker issue instead of executing from brief prose.
 - **Runtime telemetry lives outside the brief.** Session IDs, heartbeats, node claims, and tracker caches belong in Streamliner's local runtime store.
 
 ---
@@ -427,7 +428,7 @@ orchestrator can split a coarse sketch node to unlock safe parallelism or manage
 real complexity, or merge nodes if one worker should own the interrelated
 changes.
 
-### Closeout punch-list lane
+### Closeout observation lane
 
 As a workstream executes, the operator may notice polish, UX adjustments, small
 seams, or final cleanup while using the evolving feature. These observations can
@@ -436,14 +437,15 @@ each observation into immediate hot work or its own graph node. PAW-backed worke
 sessions are intentionally heavyweight, and a pile of tiny closeout nodes can cost
 more to launch, review, and reconcile than the work itself.
 
-Use a closeout punch-list lane when the items are small, related to the current
+Use a closeout observation lane when the items are small, related to the current
 workstream, and low-risk:
 
-- record the items in the brief's optional `Closeout Punch List` section or a
+- record the items in the brief's optional `Closeout Observations` section or a
   workstream-local support file referenced from `Current State`;
 - keep accumulating and triaging items as the workstream progresses;
-- batch related items into one closeout node/session when there is actual work
-  worth launching, usually near a gate or closure point;
+- when there is actual work worth launching, usually near a gate or closure
+  point, materialize related bounded items into one normal closeout task node with
+  a tracker issue;
 - resolve every item before closure by marking it completed, deferred, or
   promoted.
 
@@ -451,13 +453,14 @@ Do not create an empty closeout node just to represent the possibility of polish
 The closure gate owns the validation question: "is there any remaining closeout
 work?" If the answer is no, the gate can pass without a closeout task node. If the
 answer is yes and the items are small enough to batch, create or promote a
-closeout task node before the gate. If the items are larger than polish, promote
-them out of the punch list.
+closeout task node with a tracker issue before the gate. The closeout issue owns
+the checklist, session, PR, review, and reconciliation mechanics. If the items
+are larger than polish, promote them out into normal work.
 
-Promote an item out of the punch list when it changes product/design semantics,
-needs its own gate or design decision, touches unrelated subsystems, carries
-meaningful review risk, makes the batch too large for one focused session, or
-produces an export another workstream will consume.
+Promote an observation out into normal work when it changes product/design
+semantics, needs its own gate or design decision, touches unrelated subsystems,
+carries meaningful review risk, makes the batch too large for one focused
+session, or produces an export another workstream will consume.
 
 **Attention levels (engagement control):**
 
@@ -815,10 +818,10 @@ The design docs describe the intended system from the operator's perspective. Th
 - **Include the design index plus the specific docs that matter.** Do not dump the whole design corpus into `designRefs`.
 - **Keep brief decisions workstream-local.** Project-wide architectural choices belong in design docs or decision records, not in the brief's `Decisions` section.
 - **Nodes should be outcome-oriented.** The title and summary describe what the node accomplishes, not the implementation steps. Implementation details go in the spec (issue or local file).
-- **Do not create one node per closeout polish item.** Collect bounded late-stage
-  polish in a closeout punch list and batch it into a single closeout
-  node/session when safe. Promote large or dependency-bearing items out of the
-  punch list.
+- **Do not create one node per closeout polish observation.** Collect bounded
+  late-stage polish as closeout observations. When real closure work remains,
+  materialize safe batches into a single closeout node with a tracker issue.
+  Promote large or dependency-bearing observations into normal work.
 - **Use gates at wave boundaries.** A gate marks where the operator evaluates the workstream before the next wave proceeds.
 - **Later-wave nodes are sketches.** They need a title, summary, and rough dependencies, but no tracker or detailed spec.
 - **Keep dependencies minimal.** Only add an edge if the upstream node's output is genuinely required by the downstream node.

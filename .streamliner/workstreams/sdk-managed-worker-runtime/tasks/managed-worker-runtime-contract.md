@@ -5,7 +5,7 @@
 - Workstream: `sdk-managed-worker-runtime`
 - Node ID: `managed-worker-runtime-contract`
 - Type: research
-- Status: ready
+- Status: completed
 
 ## Outcome
 
@@ -65,6 +65,12 @@ merge, or the exports Automated PAW Review Loop will consume.
   downstream node boundaries, dependencies, or gate placement.
 - Explicit requirements Automated PAW Review Loop can import for managed
   implementer/reviewer actors.
+
+## Completion
+
+Completed by PR #67, which closed GitHub issue #61. The node produced the
+managed-worker runtime contract for SDK-managed graph-node execution, including
+project design updates and a workstream-local implementation summary.
 
 ## Boundaries
 

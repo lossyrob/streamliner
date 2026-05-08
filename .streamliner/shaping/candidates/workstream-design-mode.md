@@ -135,56 +135,20 @@ promoted candidates move under `workstreams/candidates/archive/`, become
 workstream-local `docs/initial-shaping.md`, or remain as promoted candidate
 records.
 
-## Closeout Punch-List Lane
+## Checkpoint and Closeout Boundary
 
-Dogfooding Session Launching and Tracking revealed another lifecycle pattern:
-while a workstream is still executing, the builder notices polish, UX
-adjustments, small seams, or final cleanup that should happen before closure but
-does not need to interrupt the current node as hot work. These items should not
-automatically become separate graph nodes that each require a heavyweight PAW
-session.
+Dogfooding revealed that active workstreams need a way to accumulate closeout
+observations, validate checkpoints, and materialize bounded polish into normal
+closeout work. That behavior is important, but the detailed punch-list,
+checkpoint, closeout-batch, tracker issue, and gate interaction model now belongs
+to [Checkpoint and Closeout Experience](checkpoint-closeout-experience.md).
 
-Streamliner should support a **closeout punch-list lane**:
-
-- The orchestrator records builder-noticed polish items as they appear.
-- The items remain attached to the active workstream and current closeout/gate
-  context.
-- The orchestrator does a quick triage when recording each item: batch, promote,
-  defer, or reject as out of scope.
-- Small, related, low-risk items can be batched into one closeout node/session.
-- If no punch-list items exist, no closeout node is needed; the closure gate can
-  simply validate that there is no remaining closeout work.
-- Larger or dependency-bearing items are promoted to their own node, issue,
-  follow-on candidate, or separate workstream.
-- The final closure gate validates that the punch list was completed, deferred,
-  or promoted intentionally.
-
-This lane is different from normal workstream decomposition. It is not a place to
-hide major scope. It is a pressure-release valve for the reality that final
-product fit often appears through usage.
-
-Good punch-list items:
-
-- small UI polish discovered while dogfooding;
-- wording, affordance, or status-display improvements;
-- cleanup tightly coupled to the current wave's implementation;
-- minor behavior adjustments that do not change the workstream contract;
-- small tests/docs updates needed to close confidence gaps.
-
-Promote out of the punch list when an item:
-
-- changes core design or product semantics;
-- needs its own design decision, dependency, or gate;
-- touches unrelated subsystems;
-- is risky enough to need isolated review;
-- would make the batch too large for one focused session;
-- produces an export another workstream will consume.
-
-The product/UI version should let the builder quickly add punch-list items to an
-active workstream, let the orchestrator triage them as **batch**, **promote**,
-**defer**, or **done**, and let the builder launch one closeout session for the
-batched set. This keeps active workstreams fresh without turning every polish
-observation into a separate orchestration burden.
+Workstream Design Mode should stay focused on higher-level lifecycle questions:
+how ideas become candidates, how candidates become active workstreams, how active
+workstreams are archived, and how formation sessions receive enough context to
+create executable artifacts. It should reference checkpoint/closeout behavior as
+part of the active-workstream lifecycle, but it should not own the detailed
+punch-list UI or execution semantics.
 
 ## Candidate Note Template
 
@@ -244,7 +208,7 @@ Seeded
 
 - [Documentation System](documentation-system.md), because the shaping process may produce documentation conventions and may rely on clear separation between design, architecture, user, and shaping docs.
 - [Work Geometry Canvas](work-geometry-canvas.md), because both are concerned with making the shape of work visible.
-- [Checkpoint and Closeout Experience](checkpoint-closeout-experience.md), because candidate/active/archived lifecycle work now includes checkpoint validation and closeout punch-list behavior.
+- [Checkpoint and Closeout Experience](checkpoint-closeout-experience.md), because checkpoint validation and closeout behavior are part of active-workstream lifecycle, but their detailed punch-list and gate interaction model belongs there.
 
 ## Shaping Depth Guidance
 
@@ -346,10 +310,8 @@ candidate lifecycle, not necessarily the final product layout:
 - Should archive be a folder move, a state field, or both?
 - What is the UI shape for promoting a candidate into a workstream creation session?
 - What is the UI shape for archiving and browsing historical workstreams?
-- Where should closeout punch-list items live: brief section, graph node metadata,
-  local runtime state, tracker issue checklist, or a dedicated workstream file?
-- What UI should let a builder add punch-list items quickly and let an
-  orchestrator triage them as batch/promote/defer/done?
+- What handoff should Workstream Design Mode provide to Checkpoint and Closeout
+  Experience without duplicating that candidate's punch-list and gate model?
 - Should workstream design mode become a custom agent, a skill, product UI, or all three at different maturity stages?
 - Should focused workstream formation be a named mode of the orchestrator, a separate role, or both?
 

@@ -114,10 +114,11 @@ PowerShell path, one-way `copilot --resume <sdk-session-id>` terminal takeover,
 Streamliner plugin launch-claim spooling, and local branch/commit/PR-draft
 production.
 
-`managed-worker-runtime-contract` completed in PR #67 and closed issue #61. It
-accepted SDK-managed graph-node workers as a constrained-go local runtime and
-updated `docs/design/session-system.md`, Decision 009, and the workstream-local
-implementation contract summary.
+`managed-worker-runtime-contract` completed in PR #67 and closed issue #61. The
+contract accepts SDK-managed graph-node workers as a constrained-go local runtime,
+adds the implementation-facing summary under the workstream docs, and updates the
+project design layer through `docs/design/session-system.md` and Decision 009,
+`docs/design/decisions/009-sdk-managed-worker-runtime.md`.
 
 `foundation-contract-gate` (#62) passes with constraints after a targeted
 permission-posture amendment. The builder-selected `managed-sdk` launch is the
@@ -125,7 +126,13 @@ consent boundary for autonomous node execution. The first managed PAW worker mus
 record a `managed-autonomous` profile and run with a Copilot CLI
 YOLO/allow-all-equivalent posture, without introducing per-tool approval prompts
 during SDK-owned execution. Terminal-first launch remains supported and is still
-the right choice when the builder wants interactive presence from the start.
+available and is still the right choice when the builder wants interactive
+presence from the start.
+
+Wave 2 has been promoted to GitHub-backed tracking. The first parallel nodes are
+`managed-execution-substrate` (#73) and `builder-managed-runtime-ui` (#74).
+`terminal-takeover-cleanup-actions` (#75) follows those, and
+`managed-runtime-usability-gate` (#76) closes the wave.
 
 Wave 1 nodes may add workstream-local support documents under `docs/` when the
 findings are useful to downstream workers but do not yet belong directly in the
@@ -163,7 +170,10 @@ substrate and its remaining planned exports.
 - GitHub issue #59 is the parent tracker for this workstream. Wave 1 child
   trackers are #60 (`sdk-capability-parity-research`), #61
   (`managed-worker-runtime-contract`), and #62 (`foundation-contract-gate`);
-  local `tasks/*.md` specs remain durable support context.
+  Wave 2 child trackers are #73 (`managed-execution-substrate`), #74
+  (`builder-managed-runtime-ui`), #75 (`terminal-takeover-cleanup-actions`), and
+  #76 (`managed-runtime-usability-gate`). Local `tasks/*.md` specs remain
+  durable support context.
 - Use gates at the three consequential wave transitions: foundation contract
   acceptance, usable-runtime acceptance, and final export/closure acceptance.
 - Automated PAW Review Loop should wait for this workstream's managed-worker
@@ -180,7 +190,7 @@ implementation details, not foundation blockers:
 - first real Streamliner-node dogfood evidence before defaulting any node type to
   SDK-managed execution; and
 - later safety profiles or node-type recommendations beyond the initial
-  builder-selected `managed-autonomous` path.
+  builder-selected `managed-autonomous` profile.
 
 ## Imports and Exports
 
@@ -215,6 +225,9 @@ implementation details, not foundation blockers:
 - **SDK/CLI interoperability evidence:** Delivered by PR #63 and issue #60. The
   downstream implementation nodes should consume the constrained-go findings
   rather than rediscover SDK capability basics.
+- **Managed worker runtime contract:** Delivered by PR #67 and issue #61. The
+  foundation gate accepted the contract with a targeted `managed-autonomous`
+  permission-profile amendment.
 - **Session Launching and Tracking completion:** implementation nodes may depend
   on final names or shapes from that workstream's Wave 4 graph/session overlay
   exports.

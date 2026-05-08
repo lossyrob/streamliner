@@ -103,45 +103,47 @@ reviews what actually shipped, then may split a coarse sketch node to unlock saf
 parallelism or manage real complexity, merge adjacent nodes, or replace the
 sketch with a different node shape before creating tracker issues or local specs.
 
-#### Closeout punch-list lane
+#### Closeout observation lane
 
 During execution, the operator may discover small polish and cleanup items while
 using the feature. The orchestrator should capture those items without
 reflexively turning each one into hot work or a separate node. The items can
 accumulate before the final closure phase.
 
-Use a closeout punch-list lane when the items are bounded, low-risk, and tightly
+Use a closeout observation lane when the items are bounded, low-risk, and tightly
 coupled to the current workstream. The orchestrator records them, triages them,
-and batches related entries into a single closeout node/session when that is more
-efficient than many small worker launches, usually near a gate or closure point.
+and later materializes related entries into a normal closeout node with a tracker
+issue when that is more efficient than many small worker launches, usually near a
+gate or closure point.
 
-The punch-list lane is gate-owned and conditional. Do not create an empty
-closeout node just because the workstream is nearing closure. The closure gate
-asks whether any closeout work remains. If none exists, the gate can pass. If
-bounded polish exists, create or promote one closeout task node/session to handle
-the batch before the gate. If the items are too large, risky, or
-dependency-bearing, promote them out of the punch list.
+The closeout observation lane is gate-owned and conditional. Do not create an
+empty closeout node just because the workstream is nearing closure. The closure
+gate asks whether any closeout work remains. If none exists, the gate can pass.
+If bounded polish exists, create or promote one closeout task node with a tracker
+issue to handle the batch before the gate. That node/issue owns the checklist,
+session, PR, review, and reconciliation mechanics. If the items are too large,
+risky, or dependency-bearing, promote them out into normal work.
 
 The normal process is:
 
-1. The operator tells the orchestrator to add a punch-list item.
+1. The operator tells the orchestrator to add a closeout observation.
 2. The orchestrator records the item on the workstream and does a quick triage:
    batch, promote, defer, or reject as out of scope.
-3. The item stays parked until the orchestrator decides a closeout batch is worth
-   launching or the closure gate needs to resolve it.
-4. Reconciliation keeps the punch list honest as items are completed, deferred,
-   promoted, or dropped.
+3. The item stays parked until the orchestrator decides a closeout batch should
+   be materialized as a normal node/issue or the closure gate needs to resolve it.
+4. Reconciliation keeps closeout observations honest as items are completed,
+   deferred, promoted, or dropped.
 
-Each punch-list item should eventually be one of:
+Each closeout observation should eventually be one of:
 
 - **completed** in the closeout batch;
 - **deferred** explicitly with rationale;
 - **promoted** to its own node, tracker issue, candidate, or follow-on workstream;
 - **dropped** because it no longer matters after reconciliation.
 
-Promote out of the punch list when the item changes core semantics, needs a
-design decision or gate, touches unrelated systems, carries meaningful review
-risk, or produces an export another workstream depends on.
+Promote an observation out into normal work when the item changes core semantics,
+needs a design decision or gate, touches unrelated systems, carries meaningful
+review risk, or produces an export another workstream depends on.
 
 ### Bottom-up reconciliation
 
@@ -208,7 +210,7 @@ Inbox entries can include:
 - tracker status changed
 - session attached, detached, or disappeared
 - developer marked a burst of hot work
-- operator added or changed a closeout punch-list item
+- operator added or changed a closeout observation
 - design docs changed
 - graph and runtime state disagree
 - downstream checkpoint became ready
@@ -282,7 +284,7 @@ Useful triggers include:
 - worker completes a node
 - PR opens or merges
 - checkpoint or gate is reached
-- closeout punch-list item is added, resolved, deferred, or promoted
+- closeout observation is added, resolved, deferred, or promoted
 - wave transition begins
 - developer finishes direct presence or hot work
 - runtime state and graph state diverge

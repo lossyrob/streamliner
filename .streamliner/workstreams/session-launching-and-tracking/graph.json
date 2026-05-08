@@ -7,7 +7,7 @@
   "status": "active",
   "attention": "focus",
   "createdAt": "2026-04-10T15:37:14.125Z",
-  "updatedAt": "2026-05-07T19:19:49.000Z",
+  "updatedAt": "2026-05-07T21:11:47.000Z",
   "trackingIssue": {
     "owner": "lossyrob",
     "repo": "streamliner",
@@ -337,7 +337,7 @@
       "type": "task",
       "title": "Tracker-required launch policy",
       "summary": "Add a configurable launch precondition that can require graph nodes to have an associated tracker issue before Streamliner starts PAW preparation, launch-claim creation, or terminal spawn, with GitHub issue-backed nodes as the first supported policy target and clear UI/API blocking behavior when the policy is enabled.",
-      "status": "ready",
+      "status": "completed",
       "attention": "watch",
       "repoIds": ["streamliner"],
       "tracker": {
@@ -353,7 +353,7 @@
       "type": "task",
       "title": "Runtime overlay in UI",
       "summary": "Compose the linked Sessions and graph-node status surfaces into the committed graph runtime overlay, combining committed node status, bound Copilot session status, tracker state, and PAW artifact status for PAW-backed sessions without turning graph.json into a telemetry log.",
-      "status": "ready",
+      "status": "completed",
       "attention": "watch",
       "repoIds": ["streamliner"],
       "tracker": {
@@ -365,11 +365,27 @@
       "dependsOn": ["graph-node-session-status-ui", "paw-artifact-status-observation"]
     },
     {
+      "id": "concurrent-resumable-node-launches",
+      "type": "task",
+      "title": "Concurrent resumable node launches",
+      "summary": "Make graph node launch operations durable and reattachable so a builder can start PAW init or visible terminal launch for one node, close or navigate away while that operation continues, start additional node launches, and later return to each node's progress, prepared handoff, errors, launch claim, or terminal result without losing runtime state.",
+      "status": "completed",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "tracker": {
+        "type": "github",
+        "owner": "lossyrob",
+        "repo": "streamliner",
+        "number": 55
+      },
+      "dependsOn": ["terminal-launch-integration"]
+    },
+    {
       "id": "launch-and-tracking-gate",
       "type": "gate",
       "title": "Launch and tracking usable on the graph",
       "summary": "A node can launch a PAW-backed Copilot CLI session into a visible terminal through an API-first launch pipeline after a launch configuration dialog, context assembly, SDK paw-init, prompt templating, CLI default resolution, and launch-claim creation; Streamliner binds the resulting registry entry back to the node, shows it grouped/linked in My Sessions, and renders matching session status on the graph without committing telemetry into workstream artifacts. The gate verifies that any brief-level Closeout Punch List items are completed, deferred, promoted, or dropped. Future CLI/skill/MCP agent launch surfaces and future non-Windows terminal adapters should call this same pipeline rather than inventing a second path.",
-      "status": "planned",
+      "status": "ready",
       "attention": "focus",
       "repoIds": ["streamliner"],
       "tracker": {
@@ -378,7 +394,7 @@
         "repo": "streamliner",
         "number": 53
       },
-      "dependsOn": ["runtime-overlay-ui", "tracker-required-launch-policy"]
+      "dependsOn": ["runtime-overlay-ui", "tracker-required-launch-policy", "concurrent-resumable-node-launches"]
     }
   ],
   "checkpoints": [
@@ -418,7 +434,7 @@
     {
       "id": "tracking-visible",
       "title": "Tracking visible on the graph",
-      "summary": "Streamliner links My Sessions and the graph through registry graphBinding metadata, overlays bound Copilot session status onto graph nodes with matching status pills/pulses, derives PAW workflow status from artifacts, and keeps telemetry out of graph.json.",
+      "summary": "Streamliner links My Sessions and the graph through registry graphBinding metadata, overlays bound Copilot session status onto graph nodes with matching status pills/pulses, derives PAW workflow status from artifacts, enforces tracker-required launch policy where configured, preserves per-node launch operation state, and keeps telemetry out of graph.json.",
       "status": "planned",
       "nodeIds": [
         "session-event-observation",
@@ -427,6 +443,7 @@
         "paw-artifact-status-observation",
         "tracker-required-launch-policy",
         "runtime-overlay-ui",
+        "concurrent-resumable-node-launches",
         "launch-and-tracking-gate"
       ]
     }

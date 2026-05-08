@@ -67,6 +67,22 @@ wave is not necessarily "backend first, UI second." A more useful question is:
 substrate and UI monitoring are only useful together, they may be one wave with
 parallel nodes, not two waves.
 
+### Formation is pre-wave work
+
+A formed workstream should not count its own formation as Wave 1. Formation is
+the shaping activity that creates the workstream brief, graph, tracker issue,
+initial node specs, gates, checkpoints, and design references. Those artifacts
+make the workstream executable; they are not themselves the first execution
+wave.
+
+Wave 1 should start with the first real confidence transition after formation:
+research, design clarification, contract definition, implementation, validation,
+or another executable node that a worker can complete and a downstream node,
+gate, or workstream can rely on. If the only plausible Wave 1 is "form this
+workstream," the candidate is not ready to become an active workstream yet; keep
+shaping it, or create a pre-formation design session outside the workstream's
+wave graph.
+
 ## Gates and checkpoints
 
 Checkpoints and gates serve different purposes:
@@ -246,9 +262,11 @@ When forming or reshaping a workstream, ask:
 9. Are later-wave node breakdowns still hypotheses that should be revisited at
    promotion time?
 10. Does a node belong in the current wave as parallel/internal work, or does it
-    create a distinct confidence plateau that should wait for a later wave?
+     create a distinct confidence plateau that should wait for a later wave?
 11. Does each wave need a gate, or is a checkpoint-only transition sufficient?
-    Why?
+     Why?
+12. Does Wave 1 begin after formation with executable work, rather than spending
+    a wave or node on forming the workstream itself?
 
 The orchestrator can bias toward fewer, heavier nodes during formation, then
 split later-wave sketches when real complexity, contract boundaries, or safe

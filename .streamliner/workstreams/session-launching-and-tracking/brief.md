@@ -158,16 +158,25 @@ Graph node session status indicators are complete via PR #58 / issue #50: graph
 nodes now project non-manual registry rows with matching `graphBinding` metadata,
 show the highest-attention My Sessions status plus bound-session count, include
 loading/error/no-bound-session fallbacks, and link to a workstream/node-scoped
-Sessions view. Issue #47 has been promoted into Wave 4 as the tracker-required
-launch policy node because it changes launch preconditions, configuration, and
-backend/API enforcement rather than being small closeout polish. The remaining
-Wave 4 graph issues are #47 tracker-required launch policy, #52 runtime overlay
-in UI, and #53 the launch-and-tracking gate. Runtime overlay in UI is now ready
-because both graph-node session status and PAW artifact status observation are
-complete. PAW runtime status remains Wave 4 overlay enrichment rather than a
-launch blocker. Small launch-polish observations are tracked in the Closeout
-Punch List rather than promoted into graph nodes unless they grow too large,
-risky, or dependency-bearing to batch.
+Sessions view. Tracker-required launch policy is complete via PR #64 / issue
+#47: Streamliner now supports opt-in GitHub issue-backed launch requirements,
+enforces them before PAW preparation and terminal-launch side effects, and adds a
+workstream configuration UI/API. PR #64 also completed the workstream default
+terminal presentation metadata punch-list item by adding graph-backed
+`launchDefaults.terminal` support for terminal preference, title templates, and
+tab color defaults that prefill the PAW launch dialog while remaining
+overrideable per launch. Runtime overlay in UI is complete via PR #65 / issue
+#52: the dashboard now composes committed graph state with session, launch, PAW,
+and tracker runtime evidence, shows compact graph-card runtime chips and
+selected-node inspector details, and keeps telemetry out of `graph.json`.
+Concurrent resumable node launches are complete via PR #66 / issue #55: per-node
+runtime operation state now keeps PAW init progress, prepared handoffs, terminal
+results, errors, and claim projections rehydratable after dialogs close or other
+nodes are selected. With #47, #52, and #55 complete, #53 is the only remaining
+Wave 4 graph node and is ready for closeout. PAW runtime status remains Wave 4
+overlay enrichment rather than a launch blocker. Small launch-polish
+observations are tracked in the Closeout Punch List rather than promoted into
+graph nodes unless they grow too large, risky, or dependency-bearing to batch.
 Automated PAW Review Loop now owns the former follow-on review automation scope
 as a separate candidate workstream. Session Launching and Tracking should leave
 that workstream importable substrate: launch claims, registry `graphBinding`,
@@ -176,25 +185,27 @@ metadata where needed by launch and overlay surfaces, and runtime overlay
 primitives.
 
 ## Closeout Punch List
-- **batch — Resumable node launch dialog (#55):** The launch UI should support
-  parallel dogfooding: a builder can start PAW init/launch for one ready node,
-  close or navigate away from the dialog, start another node launch, and return
-  to each node's launch progress/handoff without losing runtime state.
+PR #64 completed the previously captured workstream default terminal presentation
+metadata item; it is no longer an active closeout item.
+
 - **batch — Terminal launch portability seam (#56):** The current launch
   implementation remains Windows-only, but Wave 4 closeout should review and
   lightly refactor the terminal launch seam so Windows Terminal / PowerShell
   assumptions are adapter-local and future macOS/Linux terminal support does not
   need to untangle launch claims, registry binding, or node-launch handoff code.
-- **batch — Launch prompt profile loading responsiveness:** When opening the PAW
-  launch dialog, saved prompt profiles should be available promptly in the load
-  profile dropdown without the builder repeatedly reopening it while slower
-  launch-artifact or inspector-panel API calls finish. Profile loading should not
-  be blocked behind unrelated launch-state lookup work.
+- **batch — Launch prompt profile dropdown reliability:** When opening the PAW
+  launch dialog repeatedly, saved prompt profiles should remain visible and
+  selectable in the load-profile dropdown. Profiles currently sometimes disappear
+  after launching a PAW session and opening another launch dialog, leaving only
+  custom instructions until the page/dialog is refreshed. The closeout fix should
+  cover both prompt profile loading responsiveness and stale/cleared profile list
+  state; profile availability should not be blocked behind unrelated
+  launch-artifact or inspector-panel API calls.
 
-These are parked polish items, not launchable graph nodes. Before the #53 gate
-passes, each item should be completed in a batched closeout session, deferred
-with rationale, promoted to its own node/candidate/workstream, or dropped if it
-no longer matters after reconciliation.
+These remaining items are parked polish items, not launchable graph nodes. Before
+the #53 gate passes, each item should be completed in a batched closeout session,
+deferred with rationale, promoted to its own node/candidate/workstream, or
+dropped if it no longer matters after reconciliation.
 
 ## Decisions
 - Use repo-local `.streamliner/workstreams/` for Streamliner's committed

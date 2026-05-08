@@ -3,11 +3,11 @@
   "id": "sdk-managed-worker-runtime",
   "projectKey": "streamliner",
   "title": "SDK-Managed Worker Runtime",
-  "summary": "Wave 1 passed the foundation contract gate with a constrained-go SDK-managed runtime contract. Wave 2 can proceed against the explicit managed-autonomous permission profile, registry/lifecycle/progress contract, one-way takeover, and cleanup guardrails.",
+  "summary": "Wave 1 passed the foundation contract gate with a constrained-go SDK-managed runtime contract. Wave 2 can proceed against the explicit managed-autonomous permission profile, registry/lifecycle/progress contract, one-way takeover, and cleanup guardrails; first implementation nodes are ready.",
   "status": "active",
   "attention": "focus",
   "createdAt": "2026-05-06T03:50:15.082Z",
-  "updatedAt": "2026-05-08T03:10:34.946Z",
+  "updatedAt": "2026-05-08T04:51:36.386Z",
   "trackingIssue": {
     "owner": "lossyrob",
     "repo": "streamliner",
@@ -140,6 +140,12 @@
       "status": "ready",
       "attention": "focus",
       "repoIds": ["streamliner"],
+      "tracker": {
+        "type": "github",
+        "owner": "lossyrob",
+        "repo": "streamliner",
+        "number": 73
+      },
       "dependsOn": ["foundation-contract-gate"]
     },
     {
@@ -150,6 +156,12 @@
       "status": "ready",
       "attention": "focus",
       "repoIds": ["streamliner"],
+      "tracker": {
+        "type": "github",
+        "owner": "lossyrob",
+        "repo": "streamliner",
+        "number": 74
+      },
       "dependsOn": ["foundation-contract-gate"]
     },
     {
@@ -160,6 +172,12 @@
       "status": "planned",
       "attention": "focus",
       "repoIds": ["streamliner"],
+      "tracker": {
+        "type": "github",
+        "owner": "lossyrob",
+        "repo": "streamliner",
+        "number": 75
+      },
       "dependsOn": ["managed-execution-substrate", "builder-managed-runtime-ui"]
     },
     {
@@ -170,6 +188,12 @@
       "status": "planned",
       "attention": "focus",
       "repoIds": ["streamliner"],
+      "tracker": {
+        "type": "github",
+        "owner": "lossyrob",
+        "repo": "streamliner",
+        "number": 76
+      },
       "dependsOn": ["terminal-takeover-cleanup-actions"]
     },
     {
