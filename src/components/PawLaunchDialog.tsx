@@ -710,11 +710,11 @@ export function PawLaunchDialog({
                   type="text"
                   value={cwd}
                   aria-label="Working directory"
-                  placeholder={defaults.inferredCwd || "Use backend-inferred graph repo root"}
+                  placeholder={defaults.inferredCwd || "Resolve from selected repo config"}
                   onChange={(event) => setCwd(event.target.value)}
                 />
                 <p className="sl-field-note">
-                  Defaults to the selected graph repo root. Changes are saved for{" "}
+                  Leave blank to resolve from the selected node's repo config. Changes are saved for{" "}
                   {defaults.cwdPreferenceKey ?? "this repo"}.
                 </p>
               </label>
@@ -796,7 +796,7 @@ export function PawLaunchDialog({
             )}
             <div>
               <span className="sl-section-label">Working directory</span>
-              <p>{cwd.trim() || defaults.inferredCwd || "Backend inferred"}</p>
+              <p>{cwd.trim() || defaults.inferredCwd || "Backend resolves selected repo"}</p>
             </div>
             <div>
               <span className="sl-section-label">Terminal</span>

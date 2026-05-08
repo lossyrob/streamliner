@@ -203,6 +203,108 @@ function buildFixture(root: string): { graphPath: string; stateRoot: string } {
   return { graphPath, stateRoot };
 }
 
+function buildOrchestratedTargetRepoFixture(root: string): {
+  graphPath: string;
+  stateRoot: string;
+  targetRepoRoot: string;
+  configPath: string;
+} {
+  const orchestrationRoot = join(root, "streamliner");
+  const targetRepoRoot = join(root, "vs-code-postgresql");
+  const workstreamDir = join(
+    orchestrationRoot,
+    ".streamliner",
+    "workstreams",
+    "edit-table-data-experience",
+  );
+  const graphPath = join(workstreamDir, "graph.json");
+  const stateRoot = join(root, "state");
+  const configPath = join(orchestrationRoot, ".streamliner", "config.json");
+
+  mkdirSync(workstreamDir, { recursive: true });
+  mkdirSync(join(targetRepoRoot, "docs", "design"), { recursive: true });
+  writeText(
+    configPath,
+    `${JSON.stringify(
+      {
+        version: 1,
+        workstreamsDir: "workstreams",
+        repos: {
+          "vs-code-postgresql": {
+            path: "../../vs-code-postgresql",
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  writeText(
+    join(workstreamDir, "brief.md"),
+    [
+      "# Edit table data experience",
+      "",
+      "## Purpose",
+      "Improve table editing from Streamliner orchestration.",
+      "",
+      "## Design References",
+      "- `vs-code-postgresql:docs/design/query-editor.md`",
+    ].join("\n"),
+  );
+  writeText(
+    join(targetRepoRoot, "docs", "design", "index.md"),
+    "# VS Code PostgreSQL Design\n\nStart with the query editor notes.\n",
+  );
+  writeText(
+    join(targetRepoRoot, "docs", "design", "query-editor.md"),
+    "# Query Editor\n\nTable editing workers should run in the extension checkout.\n",
+  );
+  writeText(
+    graphPath,
+    `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        id: "edit-table-data-experience",
+        projectKey: "postgres-tools",
+        title: "Edit table data experience",
+        summary: "Coordinate table editing work across repos.",
+        status: "active",
+        attention: "focus",
+        createdAt: "2026-05-04T19:00:00.000Z",
+        updatedAt: "2026-05-04T19:00:00.000Z",
+        repos: [
+          {
+            id: "vs-code-postgresql",
+            owner: "microsoft",
+            name: "vscode-postgresql",
+            role: "primary",
+          },
+        ],
+        designRefs: [
+          { repoId: "vs-code-postgresql", path: "docs/design/query-editor.md" },
+        ],
+        nodes: [
+          {
+            id: "extension-table-editing",
+            type: "task",
+            title: "Extension table editing",
+            summary: "Implement table editing in the extension repo.",
+            status: "ready",
+            attention: "focus",
+            repoIds: ["vs-code-postgresql"],
+            dependsOn: [],
+          },
+        ],
+        checkpoints: [],
+      },
+      null,
+      2,
+    )}\n`,
+  );
+
+  return { graphPath, stateRoot, targetRepoRoot, configPath };
+}
+
 afterEach(() => {
   for (const app of activeApps.splice(0)) {
     app.close();
@@ -334,6 +436,85 @@ describe("prepareLaunchContextPackage", () => {
         }),
       ]),
     );
+  });
+
+  it("resolves the launch repo root from selected node repo config instead of graph location", async () => {
+    const root = createRootDir();
+    const { graphPath, stateRoot, targetRepoRoot } = buildOrchestratedTargetRepoFixture(root);
+    const generationInputs: LaunchContextGenerationInput[] = [];
+
+    const result = await prepareLaunchContextPackage({
+      graphPath,
+      nodeId: "extension-table-editing",
+      stateRoot,
+      createContextId: () => "ctx-target-repo",
+      trackerResolver,
+      contextGenerator: createContextGenerator(generationInputs),
+    });
+
+    expect(result.metadata.repoRoot).toBe(normalizePath(targetRepoRoot));
+    expect(result.metadata.targetRepoIds).toEqual(["vs-code-postgresql"]);
+    expect(result.metadata.sourceReferences).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "graph",
+          path: normalizePath(graphPath),
+        }),
+        expect.objectContaining({
+          kind: "design",
+          repoId: "vs-code-postgresql",
+          path: "docs/design/query-editor.md",
+        }),
+      ]),
+    );
+    expect(result.unavailableInputs.find((input) => input.reason === "cross_repo_unavailable")).toBeUndefined();
+    expect(generationInputs[0]?.repoRoot).toBe(targetRepoRoot);
+    expect(generationInputs[0]?.designSources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          reference: expect.objectContaining({
+            repoId: "vs-code-postgresql",
+            path: "docs/design/query-editor.md",
+          }),
+          content: expect.stringContaining("extension checkout"),
+        }),
+      ]),
+    );
+  });
+
+  it("rejects launches when the selected node repo is missing from project config", async () => {
+    const root = createRootDir();
+    const { graphPath, stateRoot, configPath } = buildOrchestratedTargetRepoFixture(root);
+    writeText(
+      configPath,
+      `${JSON.stringify(
+        {
+          version: 1,
+          workstreamsDir: "workstreams",
+          repos: {
+            streamliner: {
+              path: "..",
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    await expect(
+      prepareLaunchContextPackage({
+        graphPath,
+        nodeId: "extension-table-editing",
+        stateRoot,
+        createContextId: () => "ctx-missing-target",
+        trackerResolver,
+        contextGenerator: createContextGenerator(),
+      }),
+    ).rejects.toMatchObject({
+      code: "target_repo_not_configured",
+      statusCode: 400,
+    });
   });
 
   it("builds the SDK prompt with worker-facing guardrails", async () => {
@@ -484,7 +665,7 @@ describe("prepareLaunchContextPackage", () => {
     const prompt = buildContextGenerationPrompt(input);
     expect(prompt).toContain("[Source truncated for prompt budget:");
     expect(prompt).not.toContain(truncatedTail);
-  });
+  }, 15_000);
 
   it("normalizes a single markdown fence from the generated context", async () => {
     const root = createRootDir();
