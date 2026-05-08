@@ -219,6 +219,38 @@ describe("DefaultManagedSdkRunner", () => {
     await flushManagedTurn();
   });
 
+  it("coalesces concurrent interrupts into one SDK abort", async () => {
+    sdkMock.session.sendAndWait.mockImplementationOnce(() => new Promise(() => undefined));
+    let releaseAbort: (() => void) | undefined;
+    sdkMock.session.abort.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => {
+        releaseAbort = resolve;
+      });
+    });
+
+    const runner = new DefaultManagedSdkRunner();
+    await runner.start(createStartInput(createCapture()));
+
+    const first = runner.interrupt({ registryId: "registry-row-1", reason: "Stop now." });
+    const second = runner.interrupt({ registryId: "registry-row-1", reason: "Stop again." });
+    await flushManagedTurn();
+    expect(sdkMock.session.abort).toHaveBeenCalledTimes(1);
+
+    releaseAbort?.();
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      {
+        ok: true,
+        evidenceState: "interrupted",
+        message: "Stop now.",
+      },
+      {
+        ok: true,
+        evidenceState: "interrupted",
+        message: "Stop now.",
+      },
+    ]);
+  });
+
   it("does not create review-ready or completion evidence from ordinary assistant prose", async () => {
     const capture = createCapture();
     sdkMock.session.sendAndWait.mockResolvedValueOnce({

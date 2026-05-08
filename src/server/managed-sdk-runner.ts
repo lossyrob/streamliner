@@ -71,6 +71,7 @@ interface ActiveManagedRun {
     stop: () => Promise<unknown[]>;
   };
   interrupted: boolean;
+  interruptPromise?: Promise<ManagedSdkInterruptResult>;
 }
 
 interface SafeManagedCallbacks {
@@ -378,13 +379,23 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
         message: "No active managed SDK session is attached to this API process.",
       };
     }
-    try {
+    if (!active.interruptPromise) {
       active.interrupted = true;
+      active.interruptPromise = this.abortActiveRun(active, input.reason);
+    }
+    return await active.interruptPromise;
+  }
+
+  private async abortActiveRun(
+    active: ActiveManagedRun,
+    reason: string | undefined,
+  ): Promise<ManagedSdkInterruptResult> {
+    try {
       await active.session.abort();
       return {
         ok: true,
         evidenceState: "interrupted",
-        message: input.reason ?? "Managed SDK session abort acknowledged.",
+        message: reason ?? "Managed SDK session abort acknowledged.",
       };
     } catch (error: unknown) {
       return {
