@@ -1203,7 +1203,7 @@ a.sl-action-btn {
   width: min(920px, 100%);
   margin: 0 auto;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
 }
 
@@ -1270,6 +1270,114 @@ a.sl-action-btn {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.sl-profiles-page {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.sl-profiles-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.sl-profile-manager {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(260px, 0.42fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.sl-profile-list-panel,
+.sl-profile-editor {
+  min-height: 0;
+  padding: 16px;
+  border: 1px solid rgba(20, 60, 130, 0.12);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.64);
+}
+
+.sl-profile-list-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sl-profile-list-head,
+.sl-profile-editor-head,
+.sl-profile-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.sl-profile-list-head p,
+.sl-profile-editor-head h2 {
+  margin: 4px 0 0;
+}
+
+.sl-profile-list {
+  display: grid;
+  gap: 8px;
+  overflow-y: auto;
+}
+
+.sl-profile-list-item {
+  display: grid;
+  gap: 5px;
+  padding: 11px 12px;
+  border: 1px solid rgba(20, 60, 130, 0.1);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.66);
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.sl-profile-list-item:hover:not(:disabled),
+.sl-profile-list-item.selected {
+  border-color: var(--sl-accent-border);
+  background: var(--sl-accent-bg);
+}
+
+.sl-profile-list-title {
+  color: var(--sl-text);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.sl-profile-list-item code,
+.sl-profile-editor-head code {
+  color: var(--sl-text-dim);
+  font-family: var(--sl-mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.sl-profile-editor {
+  display: grid;
+  gap: 14px;
+}
+
+.sl-profile-editor textarea {
+  min-height: 320px;
+  font-family: var(--sl-mono);
+  font-size: 12px;
+}
+
+.sl-profile-editor-actions {
+  justify-content: flex-start;
 }
 
 .sl-workstreams-home-header {
@@ -3108,6 +3216,11 @@ a.sl-session-context-ref {
   }
 
   .sl-paw-profile-tools {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sl-landing-cards,
+  .sl-profile-manager {
     grid-template-columns: minmax(0, 1fr);
   }
 

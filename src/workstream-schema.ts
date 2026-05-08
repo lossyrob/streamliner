@@ -123,6 +123,7 @@ export interface WorkstreamLaunchTerminalDefaults {
 }
 
 export interface WorkstreamLaunchDefaults {
+  promptProfileId?: string | null;
   terminal?: WorkstreamLaunchTerminalDefaults;
 }
 

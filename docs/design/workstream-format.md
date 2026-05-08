@@ -1,7 +1,7 @@
 ---
 kind: design-doc
 status: current
-last_updated: 2026-05-07
+last_updated: 2026-05-08
 update_semantics: rewrite-in-place
 authoritative_for: "Workstream artifact format and runtime-state boundaries"
 scope_tags:
@@ -214,7 +214,14 @@ If `launchPolicy` or `requiredTracker` is absent, Streamliner preserves the hist
 
 `launchDefaults` is an optional top-level graph configuration object for durable defaults that should apply to every launch prepared from the workstream. Defaults are intentionally limited to values a builder can still override per launch.
 
-The first supported nested object is `terminal`:
+Supported fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `promptProfileId` | string | | Local PAW launch prompt profile id to preselect when the launch dialog opens. This is a best-effort local hint, not a portable committed dependency: renamed profiles keep resolving by id, but missing or deleted profiles fall back to custom launch instructions and do not block parsing or launch. |
+| `terminal` | object | | Default terminal presentation settings for launches from this workstream. |
+
+The supported `terminal` fields are:
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -222,7 +229,7 @@ The first supported nested object is `terminal`:
 | `titleTemplate` | string | | Default terminal tab title template. Supported variables are `{githubIssue}` (`#number` for GitHub-tracked nodes), `{nodeId}`, and `{nodeTitle}`. If omitted, launches use the selected node title unless the builder overrides the title per launch. |
 | `tabColor` | `"#RRGGBB"` | | Default terminal tab/session color for workstream launches. If omitted, launches use the existing uncolored default unless the builder chooses a color per launch. |
 
-Unknown terminal preference values, non-string title templates, and invalid tab colors are rejected when the graph is parsed. Omitting `launchDefaults` preserves existing launch dialog defaults.
+Unknown terminal preference values, non-string title templates, invalid tab colors, and non-kebab-case `promptProfileId` values are rejected when the graph is parsed. Omitting `launchDefaults` preserves existing launch dialog defaults.
 
 ### Node
 
