@@ -10,6 +10,10 @@ import type {
   NodeTerminalLaunchResponse,
 } from "../node-launch-record-contract";
 import { humanizeLaunchClaim } from "./launch-claim-display";
+import {
+  mergePromptProfiles,
+  type PawPromptProfile,
+} from "./paw-prompt-profiles";
 import { TerminalColorQuickPicker } from "./SessionColorPicker";
 
 export type PawLaunchDialogHandoff = NodeLaunchHandoff;
@@ -32,6 +36,9 @@ export interface PawLaunchProgressEvent {
 interface PawLaunchDialogProps {
   nodeTitle: string;
   defaults: PawLaunchDialogDefaults;
+  promptProfiles?: PawPromptProfile[];
+  promptProfilesLoading?: boolean;
+  promptProfilesError?: string | null;
   preparing: boolean;
   launching: boolean;
   error: string | null;
@@ -45,14 +52,8 @@ interface PawLaunchDialogProps {
   onCancel: () => void;
   onSubmit: (configuration: PawLaunchDialogConfiguration) => void;
   onLaunchTerminal: (input: PawTerminalLaunchInput) => void;
+  onPromptProfilesChanged?: (profiles: PawPromptProfile[]) => void;
   onReleaseLaunch?: () => void;
-}
-
-interface PawPromptProfile {
-  id: string;
-  name: string;
-  instructions: string;
-  updatedAt: string;
 }
 
 interface WorkflowContextDocument {
@@ -147,40 +148,8 @@ function PawLaunchDebugPaths({ paths }: { paths: DebugPath[] }) {
   );
 }
 
-function profileUpdatedAtMs(profile: PawPromptProfile): number {
-  const parsed = Date.parse(profile.updatedAt);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function sortProfiles(profiles: PawPromptProfile[]): PawPromptProfile[] {
-  return [...profiles].sort((left, right) => left.name.localeCompare(right.name));
-}
-
 function profileNameKey(value: string): string {
   return value.toLocaleLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-}
-
-function mergePromptProfiles(
-  current: PawPromptProfile[],
-  incoming: PawPromptProfile[],
-): PawPromptProfile[] {
-  const byId = new Map(current.map((profile) => [profile.id, profile]));
-  for (const profile of incoming) {
-    const existing = byId.get(profile.id);
-    if (!existing || profileUpdatedAtMs(profile) >= profileUpdatedAtMs(existing)) {
-      byId.set(profile.id, profile);
-    }
-  }
-  return sortProfiles([...byId.values()]);
-}
-
-async function loadPromptProfiles(): Promise<PawPromptProfile[]> {
-  const response = await fetch("/api/paw-launch-prompt-profiles", { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(responseErrorMessage(response, "Could not load prompt profiles."));
-  }
-  const body = await response.json() as { profiles?: PawPromptProfile[] };
-  return Array.isArray(body.profiles) ? body.profiles : [];
 }
 
 async function savePromptProfile(input: {
@@ -321,6 +290,9 @@ function SelectField<T extends string>({
 export function PawLaunchDialog({
   nodeTitle,
   defaults,
+  promptProfiles = [],
+  promptProfilesLoading = false,
+  promptProfilesError = null,
   preparing,
   launching,
   error,
@@ -334,6 +306,7 @@ export function PawLaunchDialog({
   onCancel,
   onSubmit,
   onLaunchTerminal,
+  onPromptProfilesChanged,
   onReleaseLaunch,
 }: PawLaunchDialogProps) {
   const [workflowInstructions, setWorkflowInstructions] = useState(defaults.workflowInstructions);
@@ -345,7 +318,9 @@ export function PawLaunchDialog({
   const [terminalTitleEdited, setTerminalTitleEdited] = useState(false);
   const [terminalColorEdited, setTerminalColorEdited] = useState(false);
   const [launchAfterInit, setLaunchAfterInit] = useState(false);
-  const [profiles, setProfiles] = useState<PawPromptProfile[]>([]);
+  const [profiles, setProfiles] = useState<PawPromptProfile[]>(() =>
+    mergePromptProfiles([], promptProfiles)
+  );
   const [selectedProfileId, setSelectedProfileId] = useState("");
   const [profileName, setProfileName] = useState("");
   const [profileBusy, setProfileBusy] = useState(false);
@@ -380,23 +355,8 @@ export function PawLaunchDialog({
   const debugPaths = collectDebugPaths(progressEvents);
 
   useEffect(() => {
-    let cancelled = false;
-    setProfileError(null);
-    loadPromptProfiles()
-      .then((loadedProfiles) => {
-        if (!cancelled) {
-          setProfiles((current) => mergePromptProfiles(current, loadedProfiles));
-        }
-      })
-      .catch((loadError: unknown) => {
-        if (!cancelled) {
-          setProfileError(loadError instanceof Error ? loadError.message : String(loadError));
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    setProfiles((current) => mergePromptProfiles(current, promptProfiles));
+  }, [promptProfiles]);
 
   useEffect(() => {
     if (!handoff) {
@@ -505,6 +465,7 @@ export function PawLaunchDialog({
         instructions: trimmedInstructions,
       });
       setProfiles((current) => mergePromptProfiles(current, [saved]));
+      onPromptProfilesChanged?.([saved]);
       setSelectedProfileId(saved.id);
       setProfileName(saved.name);
       setProfileStatus(`${targetProfile ? "Updated" : "Saved"} "${saved.name}".`);
@@ -684,6 +645,11 @@ export function PawLaunchDialog({
                   onChange={(event) => applyProfile(event.target.value)}
                 >
                   <option value="">Custom launch instructions</option>
+                  {promptProfilesLoading && profiles.length === 0 && (
+                    <option value="" disabled>
+                      Loading saved profiles...
+                    </option>
+                  )}
                   {profiles.map((profile) => (
                     <option key={profile.id} value={profile.id}>
                       {profile.name}
@@ -710,9 +676,9 @@ export function PawLaunchDialog({
               </div>
             </div>
             <p className="sl-field-note">{profileSaveHelp}</p>
-            {(profileStatus || profileError) && (
-              <p className={profileError ? "sl-action-error" : "sl-inline-status"}>
-                {profileError ?? profileStatus}
+            {(promptProfilesLoading || profileStatus || profileError || promptProfilesError) && (
+              <p className={profileError || promptProfilesError ? "sl-action-error" : "sl-inline-status"}>
+                {profileError ?? promptProfilesError ?? profileStatus ?? "Loading saved profiles..."}
               </p>
             )}
             <TextAreaField

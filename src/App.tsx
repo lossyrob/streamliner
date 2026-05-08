@@ -38,6 +38,11 @@ import {
   type PawLaunchProgressEvent,
 } from "./components/PawLaunchDialog";
 import {
+  loadPromptProfiles,
+  mergePromptProfiles,
+  type PawPromptProfile,
+} from "./components/paw-prompt-profiles";
+import {
   WorkstreamConfigurationDialog,
   type WorkstreamConfigurationValues,
 } from "./components/WorkstreamConfigurationDialog";
@@ -1144,8 +1149,13 @@ function GraphDashboard({
   const [configurationDialogOpen, setConfigurationDialogOpen] = useState(false);
   const [configurationSaving, setConfigurationSaving] = useState(false);
   const [configurationError, setConfigurationError] = useState<string | null>(null);
+  const [promptProfiles, setPromptProfiles] = useState<PawPromptProfile[]>([]);
+  const [promptProfilesLoading, setPromptProfilesLoading] = useState(false);
+  const [promptProfilesError, setPromptProfilesError] = useState<string | null>(null);
   const failedRunReattachRef = useRef<Set<string>>(new Set());
   const localRunStreamsRef = useRef<Set<string>>(new Set());
+  const promptProfilesRequestRef = useRef<Promise<void> | null>(null);
+  const promptProfilesLoadedRef = useRef(false);
   const activeWorkstreamKey = activeWorkstream ? registryKey(activeWorkstream) : "";
   const sessionList = useSessionRegistryList(
     { workstreamId: activeWorkstream?.workstreamId ?? null },
@@ -1475,6 +1485,39 @@ function GraphDashboard({
     }));
   }, []);
 
+  const notePromptProfilesChanged = useCallback((profiles: PawPromptProfile[]) => {
+    setPromptProfiles((current) => mergePromptProfiles(current, profiles));
+  }, []);
+
+  const prefetchPromptProfiles = useCallback(() => {
+    if (promptProfilesLoadedRef.current || promptProfilesRequestRef.current) {
+      return promptProfilesRequestRef.current ?? Promise.resolve();
+    }
+    setPromptProfilesLoading(true);
+    setPromptProfilesError(null);
+    const request = loadPromptProfiles()
+      .then((loadedProfiles) => {
+        promptProfilesLoadedRef.current = true;
+        setPromptProfiles((current) => mergePromptProfiles(current, loadedProfiles));
+      })
+      .catch((loadError: unknown) => {
+        setPromptProfilesError(loadError instanceof Error ? loadError.message : String(loadError));
+      })
+      .finally(() => {
+        promptProfilesRequestRef.current = null;
+        setPromptProfilesLoading(false);
+      });
+    promptProfilesRequestRef.current = request;
+    return request;
+  }, []);
+
+  useEffect(() => {
+    if (!selectedLaunchTarget || !canLaunchSelectedNode) {
+      return;
+    }
+    void prefetchPromptProfiles();
+  }, [canLaunchSelectedNode, prefetchPromptProfiles, selectedLaunchTarget]);
+
   const applyPreparedLaunchHandoff = useCallback((
     target: LaunchOperationTarget,
     handoff: PawLaunchPreparationResponse,
@@ -1622,6 +1665,7 @@ function GraphDashboard({
     if (!selectedLaunchTarget) {
       return;
     }
+    void prefetchPromptProfiles();
     setLaunchDialogTarget(selectedLaunchTarget);
     setLaunchReleaseError(null);
     setLaunchReleaseStatus(null);
@@ -2004,6 +2048,9 @@ function GraphDashboard({
           key={`${launchDialogEntry.node.id}:${launchDefaults.graphPath}`}
           nodeTitle={launchDialogEntry.node.title}
           defaults={launchDefaults}
+          promptProfiles={promptProfiles}
+          promptProfilesLoading={promptProfilesLoading}
+          promptProfilesError={promptProfilesError}
           preparing={launchDialogOperation?.status === "preparing"}
           launching={launchDialogOperation?.status === "launching"}
           error={launchDialogOperation?.error?.error ?? null}
@@ -2017,6 +2064,7 @@ function GraphDashboard({
           onCancel={handleCloseLaunchDialog}
           onSubmit={handleSubmitLaunch}
           onLaunchTerminal={handleLaunchTerminal}
+          onPromptProfilesChanged={notePromptProfilesChanged}
           onReleaseLaunch={launchDialogLatestClaim?.blocksLaunch ? handleReleaseLaunch : undefined}
         />
       ) : null}

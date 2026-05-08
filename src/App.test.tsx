@@ -1262,6 +1262,89 @@ describe("App sessions route", () => {
   );
 
   it(
+    "loads PAW prompt profiles while selected launch-state lookup is still pending",
+    async () => {
+      const graph = buildLaunchGraph();
+      let resolveSelectedLaunchRecord!: (response: Response) => void;
+      const selectedLaunchRecordPromise = new Promise<Response>((resolve) => {
+        resolveSelectedLaunchRecord = resolve;
+      });
+      const fetchMock = vi.fn((input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return Promise.resolve(jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          }));
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return Promise.resolve(jsonResponse(graph));
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return Promise.resolve(
+            path.includes("nodeId=")
+              ? selectedLaunchRecordPromise
+              : emptyNodeLaunchRecordResponse(),
+          );
+        }
+        if (path === "/api/paw-launch-prompt-profiles") {
+          return Promise.resolve(jsonResponse({
+            profiles: [{
+              id: "final-pr-only",
+              name: "Final PR only",
+              instructions: "Use saved final PR only workflow text.",
+              updatedAt: "2026-05-03T18:00:00.000Z",
+            }],
+          }));
+        }
+        return Promise.reject(new Error(`Unexpected fetch: ${path}`));
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      MockEventSource.instances = [];
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      act(() => {
+        findCanvasNode(container, "Launch prompt profiles").click();
+      });
+      await settle(100);
+
+      expect(
+        fetchMock.mock.calls.some(([input]) =>
+          requestPath(input as RequestInfo | URL) === "/api/paw-launch-prompt-profiles"
+        ),
+      ).toBe(true);
+      expect(
+        fetchMock.mock.calls.some(([input]) =>
+          requestPath(input as RequestInfo | URL).startsWith("/api/node-launch-records?") &&
+          requestPath(input as RequestInfo | URL).includes("nodeId=launch-prompt-profiles")
+        ),
+      ).toBe(true);
+      expect(container.textContent).toContain("Loading launch details");
+
+      act(() => {
+        findButton(container, "Initialize PAW launch").click();
+      });
+      await settle(100);
+
+      const profileSelect = findSelectByLabel(container, "Load profile");
+      expect([...profileSelect.options].map((option) => option.textContent)).toContain("Final PR only");
+
+      act(() => {
+        resolveSelectedLaunchRecord(emptyNodeLaunchRecordResponse());
+      });
+      await settle(100);
+    },
+    15_000,
+  );
+
+  it(
     "keeps a newly saved PAW prompt profile visible when the initial profile load resolves later",
     async () => {
       const graph = buildLaunchGraph();
