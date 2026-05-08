@@ -1,5 +1,5 @@
 import type { FormEvent } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   type PawLaunchDialogConfiguration,
   type PawLaunchDialogDefaults,
@@ -51,7 +51,7 @@ interface PawLaunchDialogProps {
   releaseError?: string | null;
   releaseStatus?: string | null;
   onCancel: () => void;
-  onSubmit: (configuration: PawLaunchDialogConfiguration) => void;
+  onSubmit: (configuration: PawLaunchDialogConfiguration) => void | Promise<void>;
   onLaunchTerminal: (input: PawTerminalLaunchInput) => void;
   onPromptProfilesChanged?: (profiles: PawPromptProfile[]) => void;
   onReleaseLaunch?: () => void;
@@ -343,6 +343,7 @@ export function PawLaunchDialog({
   const [terminalColorEdited, setTerminalColorEdited] = useState(false);
   const [launchAfterInit, setLaunchAfterInit] = useState(false);
   const [terminalLaunchAfterInitPreference, setTerminalLaunchAfterInitPreference] = useState(false);
+  const submittingRef = useRef(false);
   const [profiles, setProfiles] = useState<PawPromptProfile[]>(() =>
     mergePromptProfiles([], promptProfiles)
   );
@@ -521,23 +522,31 @@ export function PawLaunchDialog({
     }
   };
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (instructionError || actionDisabledReason) {
       return;
     }
-    onSubmit({
-      runtimeKind,
-      cwd,
-      workflowInstructions: trimmedInstructions,
-      cliArgs: parseCliArgs(cliArgsText),
-      terminal: {
-        ...terminal,
-        title: trimmedTerminalTitle,
-        tabColor: terminalTabColor,
-      },
-      launchAfterInit: managedRuntimeSelected ? false : launchAfterInit,
-    });
+    if (submittingRef.current) {
+      return;
+    }
+    submittingRef.current = true;
+    try {
+      await onSubmit({
+        runtimeKind,
+        cwd,
+        workflowInstructions: trimmedInstructions,
+        cliArgs: parseCliArgs(cliArgsText),
+        terminal: {
+          ...terminal,
+          title: trimmedTerminalTitle,
+          tabColor: terminalTabColor,
+        },
+        launchAfterInit: managedRuntimeSelected ? false : launchAfterInit,
+      });
+    } finally {
+      submittingRef.current = false;
+    }
   };
 
   const handleRuntimeKindChange = (nextRuntimeKind: WorkstreamRuntimeKind) => {

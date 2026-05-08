@@ -68,6 +68,7 @@ import type {
   NodeTerminalLaunchResponse,
 } from "./node-launch-record-contract";
 import { loadGraphNodeLaunchRecords } from "./node-launch-record-client";
+import { launchManagedSdkRuntime } from "./managed-runtime-client";
 import {
   encodeRouteSegment,
   handleInAppLinkClick,
@@ -86,6 +87,10 @@ import {
   buildWorkstreamRuntimeOverlay,
   type WorkstreamRuntimeOverlay,
 } from "./workstream-runtime-overlay";
+import {
+  defaultManagedRuntimeActions,
+  isManagedRuntimeUnavailableError,
+} from "./managed-runtime-contract";
 
 const POLL_INTERVAL_MS = 2000;
 const LAST_GRAPH_KEY = "streamliner:lastGraphPath";
@@ -102,11 +107,6 @@ type PawLaunchPreparationResponse = NodeLaunchHandoff;
 interface PawLaunchRunStartResponse {
   runId?: string;
   status?: string;
-  operation?: NodeLaunchOperation | null;
-}
-
-interface ManagedSdkLaunchResponse {
-  record?: NodeLaunchRecord | null;
   operation?: NodeLaunchOperation | null;
 }
 
@@ -1332,6 +1332,9 @@ function GraphDashboard({
     if (operation?.status === "managed_starting") {
       return "A managed SDK launch is already in progress for this node. Reopen the dialog to inspect the launch state.";
     }
+    if (operation?.status === "bound" && operation.managedRuntime) {
+      return "A managed SDK runtime is already bound to this node.";
+    }
     const latestClaim = launchDialogTarget ? launchDialogLatestClaim : nodeLaunchRecord?.latestClaim;
     if (!latestClaim?.blocksLaunch) {
       return null;
@@ -1864,20 +1867,7 @@ function GraphDashboard({
               status: "info",
             },
           ],
-          actions: [
-            {
-              action: "terminal-takeover",
-              label: "Terminal takeover",
-              available: false,
-              reason: "Terminal takeover is not wired in this UI node.",
-            },
-            {
-              action: "cleanup",
-              label: "Cleanup",
-              available: false,
-              reason: "Cleanup is not wired in this UI node.",
-            },
-          ],
+          actions: defaultManagedRuntimeActions(),
         },
         error: null,
         progressEvents: [
@@ -1888,42 +1878,32 @@ function GraphDashboard({
           },
         ],
         startedAt: timestamp,
+        completedAt: null,
         updatedAt: timestamp,
       })
     );
     try {
-      const response = await fetch("/api/node-launches/managed", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          nodeId: targetEntry.node.id,
-          graphPath: target.graphPath,
-          launchNonce: createLaunchNonce(),
-          runtimeKind: "managed-sdk",
-          permissionProfile: "managed-autonomous",
-          configuration: {
-            ...(cwdOverride ? { cwd: cwdOverride } : {}),
-            runtimeKind: configuration.runtimeKind,
-            workflowInstructions: configuration.workflowInstructions,
-            cliArgs: configuration.cliArgs,
-            terminal: configuration.terminal,
-          },
-        }),
+      const result = await launchManagedSdkRuntime({
+        nodeId: targetEntry.node.id,
+        graphPath: target.graphPath,
+        launchNonce: createLaunchNonce(),
+        runtimeKind: "managed-sdk",
+        permissionProfile: "managed-autonomous",
+        configuration: {
+          ...(cwdOverride ? { cwd: cwdOverride } : {}),
+          workflowInstructions: configuration.workflowInstructions,
+          cliArgs: configuration.cliArgs,
+          terminal: configuration.terminal,
+        },
       });
-      if (!response.ok) {
-        const parsed = await parseErrorResponse(response);
-        if (
-          (response.status === 404 || response.status === 501) &&
-          (!parsed.code || parsed.code === "managed_runtime_unavailable")
-        ) {
-          throw new Error("Managed runtime not yet available on this build.");
-        }
-        throw new Error(parsed.message);
-      }
-      const result = await response.json() as ManagedSdkLaunchResponse;
       if (result.record) {
         setNodeLaunchRecords((current) =>
           mergeNodeLaunchRecord(current, target, result.record ?? null)
+        );
+      }
+      if (!result.operation) {
+        console.warn(
+          "managed-sdk launch: server omitted operation; synthesizing bound operation from record",
         );
       }
       setLaunchOperation(
@@ -1931,7 +1911,7 @@ function GraphDashboard({
         result.operation ??
           createClientLaunchOperation(target, "bound", {
             status: "bound",
-            managedRuntime: null,
+            managedRuntime: result.record?.managedRuntime ?? null,
             completedAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
           }),
@@ -1939,7 +1919,7 @@ function GraphDashboard({
       setNodeLaunchRecordRefreshKey((current) => current + 1);
     } catch (nextError) {
       const message = nextError instanceof Error ? nextError.message : String(nextError);
-      const unavailable = message === "Managed runtime not yet available on this build.";
+      const unavailable = isManagedRuntimeUnavailableError(nextError);
       updateLaunchOperation(target, (current) =>
         createClientLaunchOperation(
           target,

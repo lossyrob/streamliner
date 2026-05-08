@@ -639,6 +639,8 @@ describe("App sessions route", () => {
     expect(container.textContent).toContain("sdk-session-123");
     expect(container.textContent).toContain("Terminal takeover");
     expect(container.textContent).toContain("Cleanup");
+    expect(findButton(container, "Terminal takeover").disabled).toBe(true);
+    expect(findButton(container, "Cleanup").disabled).toBe(true);
   });
 
   it("shows a loading state while the workstreams registry is still fetching", async () => {
@@ -1913,12 +1915,16 @@ describe("App sessions route", () => {
           const body = JSON.parse(String(init.body)) as {
             runtimeKind: string;
             permissionProfile: string;
-            configuration: { workflowInstructions: string };
+            configuration: { workflowInstructions: string; runtimeKind?: string };
           };
           expect(body.runtimeKind).toBe("managed-sdk");
           expect(body.permissionProfile).toBe("managed-autonomous");
           expect(body.configuration.workflowInstructions).toContain("Use PAW");
-          return jsonResponse({ error: "Not implemented" }, 404);
+          expect(body.configuration).not.toHaveProperty("runtimeKind");
+          return jsonResponse({
+            code: "managed_runtime_unavailable",
+            error: "Not implemented",
+          }, 404);
         }
         throw new Error(`Unexpected fetch: ${path}`);
       });
@@ -1966,6 +1972,160 @@ describe("App sessions route", () => {
           ([input]) => requestPath(input as RequestInfo | URL) === "/api/node-launches",
         ),
       ).toBe(false);
+    },
+    15_000,
+  );
+
+  it(
+    "binds a successful managed SDK launch and blocks duplicate submissions",
+    async () => {
+      const graph = buildLaunchGraph();
+      const managedRuntime = {
+        runtimeKind: "managed-sdk",
+        runtimeOwner: "streamliner-sdk",
+        permissionProfile: "managed-autonomous",
+        lifecycleState: "review_ready",
+        lifecycleUpdatedAt: "2026-05-05T12:00:00.000Z",
+        summary: "Review is ready for builder handoff.",
+      };
+      const managedRecord = {
+        id: "managed-launch-record",
+        graphPath: "C:\\graphs\\api-test\\graph.json",
+        nodeId: "launch-prompt-profiles",
+        projectKey: "streamliner",
+        workstreamId: "api-test",
+        branch: "feature/launch-prompt-profiles",
+        workId: "launch-prompt-profiles",
+        workTitle: "Launch prompt profiles",
+        cwd: "C:\\graphs\\api-test",
+        pawWorkDir: "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles",
+        workflowContextPath:
+          "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles\\WorkflowContext.md",
+        streamlinerContextPath:
+          "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles\\streamliner\\context.md",
+        contextPackagePath: "C:\\state\\launch-contexts\\ctx",
+        contextFilePath: "C:\\state\\launch-contexts\\ctx\\context.md",
+        runtimeKind: "managed-sdk",
+        permissionProfile: "managed-autonomous",
+        managedRuntime,
+        launchNonce: "nonce-managed",
+        launchClaimRef: "claim-managed",
+        trackerUrl: "https://github.com/lossyrob/streamliner/issues/33",
+        createdAt: "2026-05-05T12:00:00.000Z",
+        updatedAt: "2026-05-05T12:00:00.000Z",
+        pathStatus: {
+          cwdExists: true,
+          pawWorkDirExists: true,
+          workflowContextExists: true,
+          streamlinerContextExists: true,
+          contextPackageExists: true,
+          contextFileExists: true,
+        },
+      };
+      let resolveManagedLaunch!: (response: Response) => void;
+      const managedLaunchPromise = new Promise<Response>((resolve) => {
+        resolveManagedLaunch = resolve;
+      });
+      let currentLaunchRecords: unknown[] = [];
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return jsonResponse({
+            record: currentLaunchRecords[0] ?? null,
+            records: currentLaunchRecords,
+          });
+        }
+        if (path === "/api/paw-launch-prompt-profiles") {
+          return jsonResponse({ profiles: [] });
+        }
+        if (path === "/api/node-launches/managed" && init?.method === "POST") {
+          return managedLaunchPromise;
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      act(() => {
+        findCanvasNode(container, "Launch prompt profiles").click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Initialize PAW launch").click();
+      });
+      await settle();
+      act(() => {
+        container.querySelector<HTMLInputElement>(
+          'input[name="paw-runtime-kind"][value="managed-sdk"]',
+        )?.click();
+      });
+      await settle();
+
+      const submitButton = findButton(container, "Start managed SDK worker");
+      act(() => {
+        submitButton.click();
+        submitButton.click();
+      });
+      await settle();
+
+      expect(
+        fetchMock.mock.calls.filter(
+          ([input]) => requestPath(input as RequestInfo | URL) === "/api/node-launches/managed",
+        ),
+      ).toHaveLength(1);
+      expect(container.textContent).toContain("Starting managed runtime...");
+
+      act(() => {
+        currentLaunchRecords = [managedRecord];
+        resolveManagedLaunch(jsonResponse({
+          record: managedRecord,
+          operation: {
+            id: "managed-launch-record",
+            graphPath: managedRecord.graphPath,
+            nodeId: managedRecord.nodeId,
+            status: "bound",
+            preparationRunId: null,
+            startedAt: "2026-05-05T12:00:00.000Z",
+            updatedAt: "2026-05-05T12:00:01.000Z",
+            completedAt: "2026-05-05T12:00:01.000Z",
+            handoff: null,
+            terminalLaunch: null,
+            managedRuntime,
+            error: null,
+            progressEvents: [],
+          },
+        }));
+      });
+      await settle(100);
+
+      expect(container.textContent).toContain("A managed SDK runtime is already bound to this node.");
+      expect(container.textContent).toContain("managed review ready");
+      const disabledSubmit = findButton(container, "Start managed SDK worker");
+      expect(disabledSubmit.disabled).toBe(true);
+      act(() => {
+        disabledSubmit.click();
+      });
+      await settle();
+      expect(
+        fetchMock.mock.calls.filter(
+          ([input]) => requestPath(input as RequestInfo | URL) === "/api/node-launches/managed",
+        ),
+      ).toHaveLength(1);
     },
     15_000,
   );
