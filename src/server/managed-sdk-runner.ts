@@ -15,6 +15,7 @@ import type {
   SessionRegistryRuntimeEvidenceInput,
   SessionRegistryRuntimeProgressEventInput,
 } from "../session-registry-contract";
+import { getApiLogger } from "./logger";
 
 export interface ManagedSdkRunnerStartInput {
   registryId: string;
@@ -70,8 +71,63 @@ interface ActiveManagedRun {
   interrupted: boolean;
 }
 
+interface SafeManagedCallbacks {
+  onLifecycleState: (state: SessionRegistryManagedLifecycleState, message: string) => void;
+  onProgress: (event: SessionRegistryRuntimeProgressEventInput) => void;
+  onEvidence: (evidence: SessionRegistryRuntimeEvidenceInput) => void;
+  onStarted: (details: ManagedSdkRunnerStartResult) => void;
+}
+
 const PR_URL_PATTERN =
   /https:\/\/(?<host>[^/\s<>)]+)\/(?<repo>[^/\s<>)]+\/[^/\s<>)]+)\/(?:pull|pulls|pull-requests)\/(?<number>\d+)/i;
+
+function errorLogDetails(error: unknown): Record<string, string> | string {
+  return error instanceof Error
+    ? { name: error.name, message: error.message }
+    : String(error);
+}
+
+function createSafeManagedCallbacks(input: ManagedSdkRunnerStartInput): SafeManagedCallbacks {
+  const logger = getApiLogger().withScope("managed-sdk-runner");
+  const report = (callback: string, error: unknown) => {
+    logger.warn("managed SDK callback failed", {
+      callback,
+      registryId: input.registryId,
+      launchClaimId: input.launchClaimId,
+      err: errorLogDetails(error),
+    });
+  };
+  return {
+    onLifecycleState: (state, message) => {
+      try {
+        input.onLifecycleState(state, message);
+      } catch (error: unknown) {
+        report("onLifecycleState", error);
+      }
+    },
+    onProgress: (event) => {
+      try {
+        input.onProgress(event);
+      } catch (error: unknown) {
+        report("onProgress", error);
+      }
+    },
+    onEvidence: (evidence) => {
+      try {
+        input.onEvidence(evidence);
+      } catch (error: unknown) {
+        report("onEvidence", error);
+      }
+    },
+    onStarted: (details) => {
+      try {
+        input.onStarted(details);
+      } catch (error: unknown) {
+        report("onStarted", error);
+      }
+    },
+  };
+}
 
 function sdkStateRootFor(workspacePath: string | undefined, fallback: string): string {
   return workspacePath ? dirname(workspacePath) : fallback;
@@ -223,6 +279,7 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
 
   async start(input: ManagedSdkRunnerStartInput): Promise<ManagedSdkRunnerStartResult> {
     const sdk = await import("@github/copilot-sdk");
+    const callbacks = createSafeManagedCallbacks(input);
     const client = new sdk.CopilotClient({
       cwd: input.cwd,
       cliArgs: [...input.cliArgs],
@@ -234,10 +291,10 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
     try {
       await client.start();
       clientStarted = true;
-      input.onLifecycleState("starting", "Starting managed SDK session.");
+      callbacks.onLifecycleState("starting", "Starting managed SDK session.");
       const permissionHandler: PermissionHandler = async (request, invocation) => {
         const decision = await sdk.approveAll(request, invocation);
-        input.onProgress({
+        callbacks.onProgress({
           type: "permission_decision",
           message: "Managed-autonomous permission approved.",
           data: permissionRequestData(request, decision),
@@ -251,27 +308,31 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
         streaming: true,
         onPermissionRequest: permissionHandler,
         onUserInputRequest: (request) => {
-          input.onProgress({
+          callbacks.onLifecycleState(
+            "waiting_for_builder",
+            "Managed SDK requested builder input; autonomous runtime did not select a provided choice.",
+          );
+          callbacks.onProgress({
             type: "assistant_status",
-            message: "Builder input requested by managed SDK session; auto-answering autonomously.",
+            message: "Builder input requested by managed SDK session; continuing without choosing an SDK-provided option.",
             data: {
               questionLength: request.question.length,
               choiceCount: request.choices?.length ?? 0,
             },
           });
           return {
-            answer: request.choices?.[0] ?? "Proceed autonomously using the launch context.",
-            wasFreeform: !request.choices?.length,
+            answer: "Proceed autonomously using the launch context where safe; otherwise stop and report the requested builder input.",
+            wasFreeform: true,
           };
         },
         onEvent: (event) => {
           const progress = progressForSdkEvent(event);
           if (progress) {
-            input.onProgress(progress);
+            callbacks.onProgress(progress);
           }
           const state = lifecycleForSdkEvent(event);
           if (state) {
-            input.onLifecycleState(state, `Managed SDK lifecycle changed to ${state}.`);
+            callbacks.onLifecycleState(state, `Managed SDK lifecycle changed to ${state}.`);
           }
         },
       });
@@ -287,10 +348,10 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
       sdkWorkspacePath: session.workspacePath ?? null,
       sdkStateRoot: sdkStateRootFor(session.workspacePath, input.sessionStateRoot),
     };
-    input.onStarted(result);
+    callbacks.onStarted(result);
     const activeRun: ActiveManagedRun = { client, session, interrupted: false };
     this.activeRuns.set(input.registryId, activeRun);
-    void this.runTurn(input, activeRun);
+    void this.runTurn(input, activeRun, callbacks);
     return result;
   }
 
@@ -323,27 +384,28 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
   private async runTurn(
     input: ManagedSdkRunnerStartInput,
     active: ActiveManagedRun,
+    callbacks: SafeManagedCallbacks,
   ): Promise<void> {
     try {
-      input.onLifecycleState("running", "Managed SDK worker started.");
+      callbacks.onLifecycleState("running", "Managed SDK worker started.");
       const response = await active.session.sendAndWait({ prompt: input.prompt });
       const content = assistantContent(response);
       const detectedEvidence = evidenceFromAssistantContent(content);
       for (const evidence of detectedEvidence) {
-        input.onEvidence(evidence);
-        input.onLifecycleState(
+        callbacks.onEvidence(evidence);
+        callbacks.onLifecycleState(
           lifecycleStateForEvidence(evidence.kind),
           `Managed SDK evidence detected: ${evidence.kind}.`,
         );
       }
       if (detectedEvidence.length === 0) {
-        input.onLifecycleState("completed", "Managed SDK worker completed.");
+        callbacks.onLifecycleState("completed", "Managed SDK worker completed.");
       }
     } catch (error: unknown) {
       if (active.interrupted) {
-        input.onLifecycleState("interrupted", "Managed SDK worker interrupted.");
+        callbacks.onLifecycleState("interrupted", "Managed SDK worker interrupted.");
       } else {
-        input.onLifecycleState(
+        callbacks.onLifecycleState(
           "failed",
           error instanceof Error ? error.message : String(error),
         );
@@ -362,7 +424,7 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
         cleanupErrors.push(error instanceof Error ? error.message : String(error));
       }
       if (cleanupErrors.length > 0) {
-        input.onProgress({
+        callbacks.onProgress({
           type: "error",
           message: "Managed SDK cleanup encountered an error.",
           data: { errorCount: cleanupErrors.length },

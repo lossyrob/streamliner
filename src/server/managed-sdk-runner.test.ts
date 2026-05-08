@@ -150,7 +150,7 @@ describe("DefaultManagedSdkRunner", () => {
     }
   });
 
-  it("auto-answers user-input requests without marking the session waiting for builder input", async () => {
+  it("does not select an SDK-provided choice for user-input requests", async () => {
     const capture = createCapture();
     const runner = new DefaultManagedSdkRunner();
     await runner.start(createStartInput(capture));
@@ -161,20 +161,62 @@ describe("DefaultManagedSdkRunner", () => {
     };
     const response = config.onUserInputRequest?.({
       question: "Continue?",
-      choices: ["Continue autonomously"],
+      choices: ["Delete the branch", "Open a PR"],
     });
 
     expect(response).toEqual({
-      answer: "Continue autonomously",
-      wasFreeform: false,
+      answer: "Proceed autonomously using the launch context where safe; otherwise stop and report the requested builder input.",
+      wasFreeform: true,
     });
-    expect(capture.states).not.toContain("waiting_for_builder");
+    expect(capture.states).toContain("waiting_for_builder");
     expect(capture.progress).toEqual(expect.arrayContaining([
       expect.objectContaining({
         type: "assistant_status",
-        message: expect.stringContaining("auto-answering autonomously"),
+        message: expect.stringContaining("without choosing an SDK-provided option"),
       }),
     ]));
+  });
+
+  it("does not let registry callback failures escape SDK callbacks", async () => {
+    sdkMock.session.sendAndWait.mockResolvedValueOnce({
+      data: {
+        content: "Created https://github.com/lossyrob/streamliner/pull/73",
+      },
+    });
+    const runner = new DefaultManagedSdkRunner();
+    await expect(runner.start(createStartInput(createCapture(), {
+      onLifecycleState: () => {
+        throw new Error("lifecycle patch failed");
+      },
+      onProgress: () => {
+        throw new Error("progress patch failed");
+      },
+      onEvidence: () => {
+        throw new Error("evidence patch failed");
+      },
+      onStarted: () => {
+        throw new Error("started patch failed");
+      },
+    }))).resolves.toEqual(expect.objectContaining({
+      registryId: "registry-row-1",
+      sdkSessionId: "sdk-test-session",
+    }));
+
+    const config = sdkMock.sessionConfigs[0] as {
+      onEvent?: (event: { type: string; data?: Record<string, unknown> }) => unknown;
+      onPermissionRequest?: (request: unknown, invocation: unknown) => Promise<unknown>;
+      onUserInputRequest?: (request: { question: string; choices?: string[] }) => unknown;
+    };
+    expect(() => config.onEvent?.({
+      type: "assistant.message",
+      data: { content: "status" },
+    })).not.toThrow();
+    await expect(config.onPermissionRequest?.({}, {})).resolves.toEqual({ kind: "allow" });
+    expect(() => config.onUserInputRequest?.({
+      question: "Need input?",
+      choices: ["Unsafe first option"],
+    })).not.toThrow();
+    await flushManagedTurn();
   });
 
   it("does not create review-ready or completion evidence from ordinary assistant prose", async () => {
