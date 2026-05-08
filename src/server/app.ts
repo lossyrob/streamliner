@@ -206,6 +206,7 @@ export function createStreamlinerApiApp(
           ? join(options.launchPreparationDeps.cwd, ".paw", "work")
           : undefined
       ),
+      nodeLaunchRecordStore,
     }),
   );
   app.use(

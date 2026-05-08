@@ -1,10 +1,12 @@
 import {
   mkdirSync,
   readFileSync,
+  readdirSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
+import { rename } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 
@@ -76,6 +78,10 @@ function writeRecordDocument(recordsPath: string, records: StoredRecordFixture[]
   );
 }
 
+function retryableFsError(code: string): NodeJS.ErrnoException {
+  return Object.assign(new Error(`${code} during replace`), { code });
+}
+
 function createClaim(
   claimStore: LaunchClaimFileStore,
   input: {
@@ -131,6 +137,40 @@ describe("NodeLaunchRecordStore", () => {
     await expect(store.get(graphPath.toUpperCase(), "node-a")).resolves.toEqual(
       expect.objectContaining({ nodeId: "node-a" }),
     );
+  });
+
+  it("retries transient Windows replace failures when writing records", async () => {
+    const root = createRootDir();
+    const recordsPath = join(root, "node-launch-records.json");
+    const graphPath = join(root, ".streamliner", "workstreams", "example", "graph.json");
+    let replaceAttempts = 0;
+    const store = new NodeLaunchRecordStore({
+      recordsPath,
+      atomicReplaceRetryDelaysMs: [0, 0],
+      replaceFile: async (source, destination) => {
+        replaceAttempts += 1;
+        if (replaceAttempts < 3) {
+          throw retryableFsError("EPERM");
+        }
+        await rename(source, destination);
+      },
+    });
+
+    await store.startPreparationOperation({
+      graphPath,
+      nodeId: "node-a",
+      runId: "run-a",
+      now: new Date("2026-05-07T21:30:00.000Z"),
+    });
+
+    expect(replaceAttempts).toBe(3);
+    const document = JSON.parse(readFileSync(recordsPath, "utf8")) as {
+      operations: Array<{ nodeId: string; status: string }>;
+    };
+    expect(document.operations).toEqual([
+      expect.objectContaining({ nodeId: "node-a", status: "preparing" }),
+    ]);
+    expect(readdirSync(root).filter((entry) => entry.includes(".tmp"))).toEqual([]);
   });
 });
 
