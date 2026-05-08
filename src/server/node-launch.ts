@@ -4,7 +4,8 @@ import type {
   SessionRegistryManagedLifecycleState,
   SessionRegistryPawLaunch,
 } from "../session-registry-schema";
-import { SessionRegistryFileStore } from "../session-registry/file-store";
+import type { SessionRegistryStore } from "../session-registry-contract";
+import type { SessionRegistryFileStore } from "../session-registry/file-store";
 import { isManagedRuntimeActive } from "../session-registry/managed-runtime";
 import {
   createLaunchClaim,
@@ -265,7 +266,7 @@ function lifecycleProgressMessage(state: SessionRegistryManagedLifecycleState): 
 }
 
 function hasActiveManagedRuntime(
-  registryStore: SessionRegistryFileStore,
+  registryStore: SessionRegistryStore,
   workstreamId: string,
   nodeId: string,
 ): boolean {
@@ -323,6 +324,9 @@ function reserveLaunchClaimForHandoff(
   handoff: PawLaunchHandoff,
   deps: NodeLaunchDeps,
 ): { claim: LaunchClaim; now: Date } {
+  // Launch claim reservation/failure cleanup intentionally still uses the
+  // concrete file store because createLaunchClaim/markClaimFailed need
+  // conditional row cleanup helpers that are outside SessionRegistryStore.
   if (handoff.launchMetadata.launchNonce !== null) {
     assertLaunchPromptToken(handoff.launchMetadata.launchNonce, "launch nonce");
   }

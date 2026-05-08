@@ -151,6 +151,10 @@ function buildReservedRowDescription(input: CreateLaunchClaimInput): string {
  * row is rolled back via `deleteSessionIf(..., copilotSessionId === null)`.
  * If even the rollback fails (e.g., disk full on cleanup), the
  * orphan-row recovery routine handles it on the next API restart.
+ *
+ * This helper deliberately accepts the concrete file store rather than the
+ * consumer SessionRegistryStore port because conditional rollback depends on
+ * file-store-only row predicates.
  */
 export function createLaunchClaim(
   registryStore: SessionRegistryFileStore,
@@ -268,6 +272,9 @@ function errorOutcome(
  * applies the FR-3 reserved-row cleanup rule: if the claim has a
  * reservedRegistryId and the row's copilotSessionId is still null,
  * delete the row; otherwise clear graphBinding.
+ *
+ * Like createLaunchClaim, this remains file-store-specific because the
+ * cleanup path uses conditional delete/bind helpers outside the public port.
  */
 export function markClaimFailed(
   registryStore: SessionRegistryFileStore,
