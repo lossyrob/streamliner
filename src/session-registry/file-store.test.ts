@@ -90,6 +90,178 @@ describe("SessionRegistryFileStore", () => {
     expect(existsSync(join(rootDir, "index.json"))).toBe(true);
   });
 
+  it("persists managed runtime metadata in entries, index, and list items", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+
+    const record = store.upsertSession({
+      id: "managed-row",
+      title: "Managed row",
+      description: "",
+      cwd: "C:\\repo",
+      repo: "lossyrob/streamliner",
+      branch: "feature/managed",
+      tags: [],
+      origin: { kind: "launched", launchClaimId: "claim-managed" },
+      graphBinding: {
+        workstreamId: "sdk-managed-worker-runtime",
+        nodeId: "managed-node",
+        launchClaimId: "claim-managed",
+      },
+    });
+
+    const updated = store.patchRuntimeMetadata(
+      record.id,
+      {
+        runtimeKind: "managed-sdk",
+        runtimeOwner: "streamliner-sdk",
+        lifecycleState: "running",
+        permissionProfile: "managed-autonomous",
+        launchClaimId: "claim-managed",
+        launchNonce: "nonce-managed",
+        sdkSessionId: "sdk-session-1",
+        sdkWorkspacePath: "C:\\Users\\rob\\.copilot\\sessions\\sdk-session-1\\workspace.yaml",
+        sdkStateRoot: "C:\\Users\\rob\\.copilot\\sessions\\sdk-session-1",
+        startedAt: "2026-05-07T12:00:00.000Z",
+        progressEvents: [{
+          type: "tool_started",
+          message: "Tool started.",
+          data: {
+            toolName: "powershell",
+            args: "raw command must not persist",
+          },
+        }],
+      },
+      new Date("2026-05-07T12:00:01.000Z"),
+    );
+
+    expect(updated.runtime).toEqual(expect.objectContaining({
+      runtimeKind: "managed-sdk",
+      runtimeOwner: "streamliner-sdk",
+      lifecycleState: "running",
+      permissionProfile: "managed-autonomous",
+      launchClaimId: "claim-managed",
+      launchNonce: "nonce-managed",
+      sdkSessionId: "sdk-session-1",
+      lastStateChangedAt: "2026-05-07T12:00:01.000Z",
+    }));
+    expect(updated.runtime?.progressEvents[0].data).toEqual({
+      toolName: "powershell",
+    });
+
+    const entry = readJsonFile<SessionRegistryRecord>(
+      join(rootDir, "entries", "managed-row.json"),
+    );
+    expect(entry.runtime?.lifecycleState).toBe("running");
+
+    const index = readJsonFile<{ entries: Array<{ runtime?: unknown }> }>(
+      join(rootDir, "index.json"),
+    );
+    expect(index.entries[0].runtime).toEqual(expect.objectContaining({
+      lifecycleState: "running",
+    }));
+
+    expect(store.listSessions()[0].runtime).toEqual(expect.objectContaining({
+      lifecycleState: "running",
+      sdkSessionId: "sdk-session-1",
+    }));
+  });
+
+  it("preserves additive runtime metadata when older-style upserts omit the field", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+
+    const record = store.upsertSession({
+      id: "mixed-version-runtime-row",
+      title: "Mixed version runtime row",
+      description: "",
+      cwd: "C:\\repo",
+      repo: "lossyrob/streamliner",
+      branch: "feature/managed",
+      tags: [],
+      origin: { kind: "launched", launchClaimId: "claim-mixed-version" },
+      graphBinding: {
+        workstreamId: "sdk-managed-worker-runtime",
+        nodeId: "managed-node",
+        launchClaimId: "claim-mixed-version",
+      },
+    });
+    store.patchRuntimeMetadata(record.id, {
+      runtimeKind: "managed-sdk",
+      runtimeOwner: "streamliner-sdk",
+      lifecycleState: "running",
+      permissionProfile: "managed-autonomous",
+      launchClaimId: "claim-mixed-version",
+      launchNonce: "nonce-mixed-version",
+      sdkSessionId: "sdk-session-mixed-version",
+    });
+
+    const rewritten = store.upsertSession({
+      id: record.id,
+      title: "Older writer title update",
+      description: "",
+      cwd: "C:\\repo",
+      repo: "lossyrob/streamliner",
+      branch: "feature/managed",
+      tags: [],
+      origin: { kind: "launched", launchClaimId: "claim-mixed-version" },
+      graphBinding: {
+        workstreamId: "sdk-managed-worker-runtime",
+        nodeId: "managed-node",
+        launchClaimId: "claim-mixed-version",
+      },
+    });
+
+    expect(rewritten.runtime).toEqual(expect.objectContaining({
+      runtimeKind: "managed-sdk",
+      runtimeOwner: "streamliner-sdk",
+      lifecycleState: "running",
+      sdkSessionId: "sdk-session-mixed-version",
+    }));
+    const entry = readJsonFile<SessionRegistryRecord>(
+      join(rootDir, "entries", "mixed-version-runtime-row.json"),
+    );
+    expect(entry.runtime?.sdkSessionId).toBe("sdk-session-mixed-version");
+  });
+
+  it("preserves long managed SDK identifiers and paths after reloading from disk", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+    const sdkSessionId = `sdk-${"s".repeat(300)}`;
+    const sdkWorkspacePath = `C:\\${"very-long-directory-name\\".repeat(30)}workspace.yaml`;
+    const sdkStateRoot = sdkWorkspacePath.slice(0, -"\\workspace.yaml".length);
+
+    const record = store.upsertSession({
+      id: "managed-long-path-row",
+      title: "Managed long path row",
+      description: "",
+      cwd: "C:\\repo",
+      origin: { kind: "launched", launchClaimId: "claim-managed-long" },
+    });
+
+    store.patchRuntimeMetadata(record.id, {
+      runtimeKind: "managed-sdk",
+      runtimeOwner: "streamliner-sdk",
+      lifecycleState: "running",
+      permissionProfile: "managed-autonomous",
+      launchClaimId: `claim-${"c".repeat(300)}`,
+      launchNonce: `nonce-${"n".repeat(300)}`,
+      sdkSessionId,
+      sdkWorkspacePath,
+      sdkStateRoot,
+    });
+
+    const reloadedStore = new SessionRegistryFileStore({ rootDir });
+    const reloaded = reloadedStore.getSession(record.id);
+
+    expect(reloaded?.runtime?.sdkSessionId).toBe(sdkSessionId);
+    expect(reloaded?.runtime?.sdkWorkspacePath).toBe(sdkWorkspacePath);
+    expect(reloaded?.runtime?.sdkStateRoot).toBe(sdkStateRoot);
+  });
+
   it("ranks list freshness by trustedLastSignalAt when it is newer than lastSeenAt", () => {
     // Discovery sets lastSeenAt from workspace.yaml mtime, which lags real
     // user activity. A session that just received a prompt.submitted hook

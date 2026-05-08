@@ -179,15 +179,24 @@ function projectOperation(
 ): NodeLaunchOperation {
   return {
     ...operation,
-    status: projectOperationStatus(operation.status, latestClaim),
+    status: projectOperationStatus(operation, latestClaim),
     latestClaim,
   };
 }
 
 function projectOperationStatus(
-  status: NodeLaunchOperationStatus,
+  operation: NodeLaunchOperation,
   latestClaim: NodeLaunchClaimState | null,
 ): NodeLaunchOperationStatus {
+  const status = operation.status;
+  if (
+    status === "managed_starting" ||
+    status === "managed_running" ||
+    status === "managed_failed" ||
+    operation.managedLaunch
+  ) {
+    return status;
+  }
   if (latestClaim?.status === "bound") {
     return "bound";
   }

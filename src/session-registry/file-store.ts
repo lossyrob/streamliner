@@ -26,10 +26,15 @@ import {
   type SessionRegistryListOptions,
   type SessionRegistryObservedLinkInput,
   type SessionRegistryPatch,
+  type SessionRegistryRuntimeMetadataPatch,
   type SessionRegistryStore,
   type SessionRegistryTrustedSignalInput,
   type SessionRegistryUpsertInput,
 } from "../session-registry-contract";
+import {
+  mergeSessionRegistryRuntimeMetadata,
+  normalizeSessionRegistryRuntimeMetadata,
+} from "./managed-runtime";
 import {
   DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
   SESSION_REGISTRY_ACTIVITY_CONFIDENCES,
@@ -143,6 +148,7 @@ const SESSION_REGISTRY_UPSERT_BASE_KEYS = [
   "origin",
   "lifecycleStatus",
   "graphBinding",
+  "runtime",
 ] as const;
 const LAUNCHED_SESSION_UPSERT_KEYS = [
   ...SESSION_REGISTRY_UPSERT_BASE_KEYS,
@@ -1271,6 +1277,14 @@ export function parseSessionRegistryUpsertInput(value: unknown): SessionRegistry
           ),
         }
       : {}),
+    ...(hasOwn(value, "runtime")
+      ? {
+          runtime: normalizeSessionRegistryRuntimeMetadata(
+            value.runtime,
+            "input.runtime",
+          ),
+        }
+      : {}),
   };
 
   if (origin.kind === "observed") {
@@ -1529,6 +1543,7 @@ function validateStoredRecord(
       } as SessionRegistryGraphBinding;
     })(),
     pawLaunch: normalizePawLaunch(rawRecord.pawLaunch, `${filePath}.pawLaunch`),
+    runtime: normalizeSessionRegistryRuntimeMetadata(rawRecord.runtime, `${filePath}.runtime`),
     aiSummary: ensureOptionalString(rawRecord.aiSummary, `${filePath}.aiSummary`),
     aiSummaryModel: ensureOptionalString(rawRecord.aiSummaryModel, `${filePath}.aiSummaryModel`),
     aiSummaryUpdatedAt: ensureOptionalString(
@@ -1700,6 +1715,7 @@ function validateIndexEntry(
     originKind,
     graphBinding: ensureOptionalGraphBinding(rawEntry.graphBinding, `${fieldName}.graphBinding`),
     pawLaunch: normalizePawLaunch(rawEntry.pawLaunch, `${fieldName}.pawLaunch`),
+    runtime: normalizeSessionRegistryRuntimeMetadata(rawEntry.runtime, `${fieldName}.runtime`),
     aiSummary: ensureOptionalString(rawEntry.aiSummary, `${fieldName}.aiSummary`),
     aiSummaryModel: ensureOptionalString(rawEntry.aiSummaryModel, `${fieldName}.aiSummaryModel`),
     aiSummaryUpdatedAt: ensureOptionalString(
@@ -1852,6 +1868,7 @@ function buildIndex(records: Iterable<StoredSessionRegistryRecord>): SessionRegi
     originKind: record.origin.kind,
     graphBinding: record.graphBinding ? cloneValue(record.graphBinding) : null,
     pawLaunch: record.pawLaunch ? cloneValue(record.pawLaunch) : null,
+    runtime: record.runtime ? cloneValue(record.runtime) : null,
     aiSummary: record.aiSummary,
     aiSummaryModel: record.aiSummaryModel,
     aiSummaryUpdatedAt: record.aiSummaryUpdatedAt,
@@ -2140,6 +2157,9 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       let nextPawLaunch = latestRecord?.pawLaunch
         ? cloneValue(latestRecord.pawLaunch)
         : null;
+      let nextRuntime = latestRecord?.runtime
+        ? cloneValue(latestRecord.runtime)
+        : null;
       let nextTrustedSignalSource = latestRecord?.trustedSignalSource ?? null;
       let nextTrustedStartedAt = latestRecord?.trustedStartedAt ?? null;
       let nextTrustedEndedAt = latestRecord?.trustedEndedAt ?? null;
@@ -2197,6 +2217,13 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         nextPawLaunch = latestRecord?.pawLaunch
           ? cloneValue(latestRecord.pawLaunch)
           : null;
+        nextRuntime = Object.prototype.hasOwnProperty.call(validatedInput, "runtime")
+          ? validatedInput.runtime
+            ? cloneValue(validatedInput.runtime)
+            : null
+          : latestRecord?.runtime
+            ? cloneValue(latestRecord.runtime)
+            : null;
         nextTrustedSignalSource =
           Object.prototype.hasOwnProperty.call(validatedInput, "trustedSignalSource")
             ? validatedInput.trustedSignalSource ?? null
@@ -2266,6 +2293,13 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         } else {
           nextPawLaunch = null;
         }
+        nextRuntime = Object.prototype.hasOwnProperty.call(validatedInput, "runtime")
+          ? validatedInput.runtime
+            ? cloneValue(validatedInput.runtime)
+            : null
+          : latestRecord?.runtime
+            ? cloneValue(latestRecord.runtime)
+            : null;
         nextTrustedSignalSource = null;
         nextTrustedStartedAt = null;
         nextTrustedEndedAt = null;
@@ -2298,6 +2332,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         origin: cloneValue(validatedInput.origin),
         graphBinding: nextGraphBinding,
         pawLaunch: nextPawLaunch,
+        runtime: nextRuntime,
         aiSummary: latestRecord?.aiSummary ?? null,
         aiSummaryModel: latestRecord?.aiSummaryModel ?? null,
         aiSummaryUpdatedAt: latestRecord?.aiSummaryUpdatedAt ?? null,
@@ -2790,6 +2825,9 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         pawLaunch: existingRecord?.pawLaunch
           ? cloneValue(existingRecord.pawLaunch)
           : null,
+        runtime: existingRecord?.runtime
+          ? cloneValue(existingRecord.runtime)
+          : null,
         trustedSignalSource: signalSource,
         trustedStartedAt:
           appliesStart
@@ -2943,6 +2981,48 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       };
 
       const storedRecord = mergeStoredRecord(existingRecord, nextRecord);
+      records.set(id, storedRecord);
+      const nextIndex = buildIndex(records.values());
+      this.persistEntry(storedRecord);
+      this.persistIndex(records, nextIndex);
+      this.commitSnapshot(records, nextIndex);
+      this.emitChange({
+        kind: SESSION_REGISTRY_CHANGE_EVENT_KINDS[0],
+        registryId: id,
+        snapshot: cloneValue(storedRecord),
+      });
+      return cloneValue(storedRecord);
+    });
+  }
+
+  patchRuntimeMetadata(
+    id: string,
+    patch: SessionRegistryRuntimeMetadataPatch,
+    now = new Date(),
+  ): SessionRegistryRecord {
+    return this.withWriteLock(() => {
+      const records = this.loadEntriesFromDisk();
+      const existingRecord = records.get(id);
+      if (!existingRecord) {
+        throw new SessionRegistryNotFoundError(id);
+      }
+      if (existingRecord.lifecycleStatus === "archived") {
+        throw new SessionRegistryArchivedError(id, "update runtime metadata");
+      }
+
+      const nextRuntime = mergeSessionRegistryRuntimeMetadata(
+        existingRecord.runtime,
+        patch,
+        now,
+      );
+      const nextRecord: SessionRegistryRecord = {
+        ...cloneValue(existingRecord),
+        runtime: nextRuntime,
+        updatedAt: now.toISOString(),
+      };
+
+      const storedRecord = mergeStoredRecord(existingRecord, nextRecord);
+      storedRecord.runtime = nextRuntime;
       records.set(id, storedRecord);
       const nextIndex = buildIndex(records.values());
       this.persistEntry(storedRecord);
@@ -3244,6 +3324,11 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
           ? cloneValue(reserved.pawLaunch)
           : observed.pawLaunch
             ? cloneValue(observed.pawLaunch)
+            : null,
+        runtime: reserved.runtime
+          ? cloneValue(reserved.runtime)
+          : observed.runtime
+            ? cloneValue(observed.runtime)
             : null,
         trustedSignalSource: observed.trustedSignalSource,
         trustedStartedAt: observed.trustedStartedAt,

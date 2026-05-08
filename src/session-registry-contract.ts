@@ -14,6 +14,13 @@ import type {
   SessionRegistryPawLaunch,
   SessionRegistryPawWorkflow,
   SessionRegistryRecord,
+  SessionRegistryManagedLifecycleState,
+  SessionRegistryRuntimeEvidenceKind,
+  SessionRegistryRuntimeKind,
+  SessionRegistryRuntimeMetadata,
+  SessionRegistryRuntimeOwner,
+  SessionRegistryRuntimePermissionProfile,
+  SessionRegistryRuntimeProgressEventType,
   SessionRegistryTitleSource,
   SessionRegistryTrustedEndReason,
   SessionRegistryTrustedExecutionKind,
@@ -56,6 +63,7 @@ export interface SessionRegistryListItem {
   originKind: SessionRegistryOriginKind;
   graphBinding: SessionRegistryGraphBinding | null;
   pawLaunch: SessionRegistryPawLaunch | null;
+  runtime?: SessionRegistryRuntimeMetadata | null;
   copilotSessionId: string | null;
   aiSummary: string | null;
   aiSummaryModel: string | null;
@@ -107,6 +115,7 @@ export interface ManualSessionRegistryUpsertInput
     "ended" | "archived"
   >;
   graphBinding?: SessionRegistryGraphBinding | null;
+  runtime?: SessionRegistryRuntimeMetadata | null;
 }
 
 export interface ObservedSessionRegistryUpsertInput
@@ -116,6 +125,7 @@ export interface ObservedSessionRegistryUpsertInput
   lastSeenAt?: string | null;
   lifecycleStatus?: SessionRegistryObservedLifecycleStatus;
   graphBinding?: SessionRegistryGraphBinding | null;
+  runtime?: SessionRegistryRuntimeMetadata | null;
   observedSessionKind?: SessionRegistryObservedSessionKind | null;
   copilotProcessState?: SessionRegistryCopilotProcessState | null;
   copilotProcessId?: number | null;
@@ -139,6 +149,7 @@ export interface LaunchedSessionRegistryUpsertInput
   >;
   graphBinding?: SessionRegistryGraphBinding | null;
   pawLaunch?: SessionRegistryPawLaunch | null;
+  runtime?: SessionRegistryRuntimeMetadata | null;
 }
 
 export interface SessionRegistryObservedLinkInput {
@@ -212,6 +223,40 @@ export interface SessionRegistryPatch {
   graphBinding?: SessionRegistryGraphBinding | null;
 }
 
+export interface SessionRegistryRuntimeProgressEventInput {
+  type: SessionRegistryRuntimeProgressEventType;
+  message: string;
+  timestamp?: string;
+  data?: Record<string, unknown>;
+}
+
+export interface SessionRegistryRuntimeEvidenceInput {
+  kind: SessionRegistryRuntimeEvidenceKind;
+  source: string;
+  detectedAt?: string;
+  url?: string | null;
+  repo?: string | null;
+  number?: number | null;
+  sha?: string | null;
+  summary?: string | null;
+}
+
+export interface SessionRegistryRuntimeMetadataPatch {
+  runtimeKind?: SessionRegistryRuntimeKind;
+  runtimeOwner?: SessionRegistryRuntimeOwner;
+  lifecycleState?: SessionRegistryManagedLifecycleState | null;
+  permissionProfile?: SessionRegistryRuntimePermissionProfile | null;
+  launchClaimId?: string | null;
+  launchNonce?: string | null;
+  sdkSessionId?: string | null;
+  sdkWorkspacePath?: string | null;
+  sdkStateRoot?: string | null;
+  startedAt?: string | null;
+  lastStateChangedAt?: string | null;
+  progressEvents?: SessionRegistryRuntimeProgressEventInput[];
+  evidence?: SessionRegistryRuntimeEvidenceInput[];
+}
+
 export const SESSION_REGISTRY_CHANGE_EVENT_KINDS = [
   "upsert",
   "delete",
@@ -266,6 +311,7 @@ export interface SessionRegistryStore {
   ): SessionRegistryRecord;
   recordTrustedSessionSignal(input: SessionRegistryTrustedSignalInput): SessionRegistryRecord;
   patchSession(id: string, patch: SessionRegistryPatch): SessionRegistryRecord;
+  patchRuntimeMetadata(id: string, patch: SessionRegistryRuntimeMetadataPatch): SessionRegistryRecord;
   archiveSession(id: string): SessionRegistryRecord;
   deleteSession(id: string): void;
   subscribe(listener: SessionRegistryChangeListener): () => void;

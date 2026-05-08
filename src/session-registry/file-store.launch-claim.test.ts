@@ -332,6 +332,58 @@ describe("SessionRegistryFileStore — launch-claim atomic primitives", () => {
       expect(fused?.pawLaunch?.pawWorkDir).toBe("C:/repo/work/.paw/work/work-D");
     });
 
+    it("preserves reserved managed runtime metadata when fusing observed rows", () => {
+      const reserved = makeReservedRow("claim-managed");
+      store.patchRuntimeMetadata(
+        reserved.id,
+        {
+          runtimeKind: "managed-sdk",
+          runtimeOwner: "streamliner-sdk",
+          lifecycleState: "running",
+          permissionProfile: "managed-autonomous",
+          launchClaimId: "claim-managed",
+          launchNonce: "nonce-managed",
+          progressEvents: [{
+            type: "lifecycle",
+            message: "Managed runtime started.",
+          }],
+        },
+        new Date("2026-05-02T01:00:00.000Z"),
+      );
+      const observed = store.upsertSession({
+        id: "observed-managed",
+        title: "Observed managed",
+        description: "",
+        cwd: "C:/repo/work",
+        repo: "lossyrob/streamliner",
+        branch: "feature/managed",
+        copilotSessionId: "copilot-managed",
+        lastSeenAt: "2026-05-02T01:30:00.000Z",
+        origin: { kind: "observed", importedFromCopilotSessionId: "copilot-managed" },
+      });
+
+      const result = store.fuseObservedRowIntoReservedRow({
+        reservedRowId: reserved.id,
+        observedRowId: observed.id,
+        bindClaim: {
+          workstreamId: "ws-1",
+          nodeId: "node-1",
+          launchClaimId: "claim-managed",
+        },
+      });
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.reservedRecord.copilotSessionId).toBe("copilot-managed");
+        expect(result.reservedRecord.runtime).toEqual(expect.objectContaining({
+          runtimeKind: "managed-sdk",
+          lifecycleState: "running",
+          permissionProfile: "managed-autonomous",
+          launchClaimId: "claim-managed",
+        }));
+      }
+    });
+
     it("rejects fusion when reserved row already attached to a different session", () => {
       const reserved = makeReservedRow("claim-E");
       // Attach a different session id to the reserved row.
