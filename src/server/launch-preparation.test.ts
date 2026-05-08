@@ -479,7 +479,52 @@ describe("preparePawLaunch", () => {
         join(targetCheckout, ".paw", "work", "launch-prompt-profiles"),
       ),
     ).resolves.toBe(join(targetCheckout, ".paw", "work", "launch-prompt-profiles"));
-  });
+  }, 15_000);
+
+  it("rejects PAW work dirs in a launch checkout from a different repository than the selected target", async () => {
+    const root = createRootDir();
+    const launchCwd = join(root, "coordination-repo");
+    createGitRepo(launchCwd, "https://github.com/acme/coordination.git");
+
+    const preparedContext = fakePreparedContext(launchCwd);
+    preparedContext.generationInput.workstream.repos = [{
+      id: "worker-target",
+      owner: "acme",
+      name: "worker-target",
+      role: "primary" as const,
+    }];
+    preparedContext.generationInput.node.repoIds = ["worker-target"];
+    preparedContext.metadata.targetRepoIds = ["worker-target"];
+    const input: PawLaunchSessionRunnerInput = {
+      nodeId: "launch-prompt-profiles",
+      graphPath: join(launchCwd, ".streamliner", "workstreams", "session-launching-and-tracking", "graph.json"),
+      cwd: launchCwd,
+      sessionStateRoot: join(root, "state"),
+      launchNonce: "nonce-target",
+      configuration: {
+        cwd: launchCwd,
+        cliArgs: ["--yolo"],
+        environment: {},
+        workflowInstructions: "Use PAW.",
+        terminal: {
+          launchMode: "manual",
+          preferredTerminal: "default",
+          title: null,
+          tabColor: null,
+        },
+      },
+      preparedContext,
+      existingLaunch: null,
+    };
+
+    await expect(
+      resolvePawWorkDirForLaunch(
+        input,
+        "launch-prompt-profiles",
+        join(launchCwd, ".paw", "work", "launch-prompt-profiles"),
+      ),
+    ).rejects.toThrow("selected node target repo");
+  }, 15_000);
 
   it("rejects PAW work dirs outside launch and selected target repositories", async () => {
     const root = createRootDir();
@@ -527,7 +572,7 @@ describe("preparePawLaunch", () => {
         join(unrelatedCheckout, ".paw", "work", "launch-prompt-profiles"),
       ),
     ).rejects.toThrow("selected node target repo");
-  });
+  }, 15_000);
 
   it("prepares a structured PAW handoff with defaults", async () => {
     const root = createRootDir();
@@ -688,6 +733,127 @@ describe("preparePawLaunch", () => {
     expect(result.cwd).toBe(normalizePath(graphRepoRoot));
     expect(result.pawWorkDir).toBe(
       normalizePath(join(graphRepoRoot, ".paw", "work", "runner-diagnostics-resume")),
+    );
+  });
+
+  it("defaults launch cwd to the selected target repo from project config", async () => {
+    const root = createRootDir();
+    const serverRoot = join(root, "streamliner-server");
+    const orchestrationRoot = join(root, "streamliner");
+    const targetRepoRoot = join(root, "vs-code-postgresql");
+    const workstreamDir = join(
+      orchestrationRoot,
+      ".streamliner",
+      "workstreams",
+      "edit-table-data-experience",
+    );
+    const graphPath = join(workstreamDir, "graph.json");
+    mkdirSync(workstreamDir, { recursive: true });
+    mkdirSync(join(targetRepoRoot, "docs", "design"), { recursive: true });
+    writeFileSync(
+      join(orchestrationRoot, ".streamliner", "config.json"),
+      JSON.stringify({
+        version: 1,
+        workstreamsDir: "workstreams",
+        repos: {
+          "vs-code-postgresql": {
+            path: "../../vs-code-postgresql",
+          },
+        },
+      }),
+      "utf8",
+    );
+    writeFileSync(
+      join(workstreamDir, "brief.md"),
+      "# Edit table data experience\n\nTarget the extension repository.\n",
+      "utf8",
+    );
+    writeFileSync(
+      join(targetRepoRoot, "docs", "design", "index.md"),
+      "# Target Repo Design\n",
+      "utf8",
+    );
+    writeFileSync(
+      graphPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        id: "edit-table-data-experience",
+        projectKey: "postgres-tools",
+        title: "Edit table data experience",
+        summary: "Exercise configured launch cwd selection.",
+        status: "active",
+        attention: "focus",
+        createdAt: "2026-05-04T19:00:00.000Z",
+        updatedAt: "2026-05-04T19:00:00.000Z",
+        repos: [
+          {
+            id: "vs-code-postgresql",
+            owner: "microsoft",
+            name: "vscode-postgresql",
+            role: "primary",
+          },
+        ],
+        designRefs: [],
+        nodes: [
+          {
+            id: "extension-table-editing",
+            type: "task",
+            title: "Extension table editing",
+            summary: "Initialize PAW in the target extension repo.",
+            status: "ready",
+            attention: "focus",
+            repoIds: ["vs-code-postgresql"],
+            dependsOn: [],
+          },
+        ],
+        checkpoints: [],
+      }),
+      "utf8",
+    );
+
+    const runnerCalls: PawLaunchSessionRunnerInput[] = [];
+    const result = await preparePawLaunch({
+      nodeId: "extension-table-editing",
+      graphPath,
+      cwd: serverRoot,
+      stateRoot: join(root, "state"),
+      pawLaunchRunner: async (input) => {
+        runnerCalls.push(input);
+        const workId = "extension-table-editing";
+        const pawWorkDir = join(input.cwd, ".paw", "work", workId);
+        return {
+          cwd: normalizePath(input.cwd),
+          branch: "feature/extension-table-editing",
+          workId,
+          workTitle: "Extension Table Editing",
+          pawWorkDir: normalizePath(pawWorkDir),
+          workflowContextPath: normalizePath(join(pawWorkDir, "WorkflowContext.md")),
+          streamlinerContextPath: normalizePath(join(pawWorkDir, "streamliner", "context.md")),
+          sessionStateRoot: normalizePath(input.sessionStateRoot),
+          contextPackage: {
+            contextId: input.preparedContext.metadata.contextId,
+            contextPackagePath: normalizePath(input.preparedContext.contextPackagePath),
+            contextFilePath: normalizePath(input.preparedContext.contextFilePath),
+            metadata: input.preparedContext.metadata,
+            unavailableInputs: input.preparedContext.metadata.unavailableInputs,
+          },
+        };
+      },
+    });
+
+    expect(runnerCalls).toHaveLength(1);
+    expect(runnerCalls[0]).toEqual(
+      expect.objectContaining({
+        cwd: targetRepoRoot,
+        configuration: expect.objectContaining({
+          cwd: targetRepoRoot,
+        }),
+      }),
+    );
+    expect(result.cwd).toBe(normalizePath(targetRepoRoot));
+    expect(result.contextPackage.metadata.repoRoot).toBe(normalizePath(targetRepoRoot));
+    expect(result.pawWorkDir).toBe(
+      normalizePath(join(targetRepoRoot, ".paw", "work", "extension-table-editing")),
     );
   });
 

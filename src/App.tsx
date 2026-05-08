@@ -230,20 +230,6 @@ function registryKey(entry: { projectKey: string; workstreamId: string }): strin
   return `${entry.projectKey}/${entry.workstreamId}`;
 }
 
-function dirnamePath(path: string): string {
-  const trimmed = path.trim();
-  const index = Math.max(trimmed.lastIndexOf("\\"), trimmed.lastIndexOf("/"));
-  return index > 0 ? trimmed.slice(0, index) : "";
-}
-
-function inferRepoRootFromGraphPath(graphPath: string): string {
-  const match = /[\\/]\.streamliner[\\/]/i.exec(graphPath);
-  if (match?.index !== undefined) {
-    return graphPath.slice(0, match.index);
-  }
-  return dirnamePath(graphPath);
-}
-
 function launchCwdRepoKey(
   workstream: WorkstreamDocument,
   repoIds: string[],
@@ -1334,7 +1320,7 @@ function GraphDashboard({
     const defaultsEntry = launchDialogTarget ? launchDialogEntry : selectedEntry;
     const graphPath = launchDialogTarget?.graphPath ?? activeWorkstreamEntry?.path;
     if (!defaultsEntry || !graphPath) return null;
-    const inferredCwd = inferRepoRootFromGraphPath(graphPath);
+    const inferredCwd = "";
     const cwdPreferenceKey = workstream
       ? launchCwdRepoKey(workstream, defaultsEntry.node.repoIds)
       : null;

@@ -1681,6 +1681,7 @@ describe("App sessions route", () => {
           }),
         }),
       );
+      expect(JSON.parse(String(launchCall?.[1]?.body)).configuration).not.toHaveProperty("cwd");
       expect(MockEventSource.instances.at(-1)?.url).toBe("/api/launch-preparations/runs/run-1/events");
       act(() => {
         MockEventSource.instances.at(-1)?.emit("progress", {
@@ -2483,7 +2484,7 @@ describe("App sessions route", () => {
       });
       await settle();
 
-      expect(findInputByLabel(container, "Working directory").value).toBe("C:\\graphs\\api-test");
+      expect(findInputByLabel(container, "Working directory").value).toBe("");
       setInputValue(findInputByLabel(container, "Working directory"), customCwd);
       await settle();
       act(() => {

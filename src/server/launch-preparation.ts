@@ -732,6 +732,15 @@ async function checkoutRemoteRepoSlug(checkoutRoot: string): Promise<string | nu
   }
 }
 
+async function launchCheckoutMatchesSelectedTarget(input: PawLaunchSessionRunnerInput): Promise<boolean> {
+  const targetRepoSlugs = selectedTargetRepoSlugs(input);
+  if (targetRepoSlugs.length === 0) {
+    return true;
+  }
+  const launchRepoSlug = await checkoutRemoteRepoSlug(input.cwd);
+  return !launchRepoSlug || targetRepoSlugs.includes(launchRepoSlug);
+}
+
 export async function resolvePawWorkDirForLaunch(
   input: PawLaunchSessionRunnerInput,
   workId: string,
@@ -739,7 +748,10 @@ export async function resolvePawWorkDirForLaunch(
 ): Promise<string> {
   const pawWorkDir = resolveProvidedPawWorkDir(input.cwd, workId, provided);
   if (isLaunchCheckoutPawWorkDir(input.cwd, pawWorkDir)) {
-    return pawWorkDir;
+    if (await launchCheckoutMatchesSelectedTarget(input)) {
+      return pawWorkDir;
+    }
+    throw new Error("pawWorkDir must be in a checkout for the selected node target repo when the launch cwd belongs to a different repository.");
   }
 
   const targetRepoSlugs = selectedTargetRepoSlugs(input);
