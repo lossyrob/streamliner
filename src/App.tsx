@@ -1156,6 +1156,7 @@ function GraphDashboard({
   const localRunStreamsRef = useRef<Set<string>>(new Set());
   const promptProfilesRequestRef = useRef<Promise<void> | null>(null);
   const promptProfilesLoadedRef = useRef(false);
+  const promptProfilesMountedRef = useRef(true);
   const activeWorkstreamKey = activeWorkstream ? registryKey(activeWorkstream) : "";
   const sessionList = useSessionRegistryList(
     { workstreamId: activeWorkstream?.workstreamId ?? null },
@@ -1489,6 +1490,13 @@ function GraphDashboard({
     setPromptProfiles((current) => mergePromptProfiles(current, profiles));
   }, []);
 
+  useEffect(() => {
+    promptProfilesMountedRef.current = true;
+    return () => {
+      promptProfilesMountedRef.current = false;
+    };
+  }, []);
+
   const prefetchPromptProfiles = useCallback(() => {
     if (promptProfilesLoadedRef.current || promptProfilesRequestRef.current) {
       return promptProfilesRequestRef.current ?? Promise.resolve();
@@ -1498,14 +1506,20 @@ function GraphDashboard({
     const request = loadPromptProfiles()
       .then((loadedProfiles) => {
         promptProfilesLoadedRef.current = true;
-        setPromptProfiles((current) => mergePromptProfiles(current, loadedProfiles));
+        if (promptProfilesMountedRef.current) {
+          setPromptProfiles((current) => mergePromptProfiles(current, loadedProfiles));
+        }
       })
       .catch((loadError: unknown) => {
-        setPromptProfilesError(loadError instanceof Error ? loadError.message : String(loadError));
+        if (promptProfilesMountedRef.current) {
+          setPromptProfilesError(loadError instanceof Error ? loadError.message : String(loadError));
+        }
       })
       .finally(() => {
         promptProfilesRequestRef.current = null;
-        setPromptProfilesLoading(false);
+        if (promptProfilesMountedRef.current) {
+          setPromptProfilesLoading(false);
+        }
       });
     promptProfilesRequestRef.current = request;
     return request;
