@@ -32,7 +32,7 @@ Build the feature in waves:
   kickoff-prompt templating, launch-claim binding, and the Copilot CLI
   interactive worker launch. Launches register into the Wave 2 registry rather
   than introducing a parallel tracking surface.
-- **Wave 4 — Sessions/graph linkage and runtime overlay:** use launch binding
+- **Wave 4 — Sessions/graph linkage and runtime overlay (done):** use launch binding
   metadata to tie the Sessions view and workstream graph together. Sessions
   launched from a workstream declare their workstream/node binding in the
   Sessions list, can be grouped by workstream, and link back into the workstream
@@ -43,7 +43,7 @@ Build the feature in waves:
 - **Automated PAW Review Loop candidate (moved out):** follow-on review,
   address-review, re-review, and review-session chain orchestration now belongs
   to `.streamliner/shaping/candidates/automated-paw-review-loop.md`. This
-  workstream retains the launch/session/node/PR substrate that candidate will
+  workstream exports the launch/session/node/PR substrate that candidate will
   import, not the review-loop product workflow itself.
 - **Future distribution workstream (deferred, non-blocking; tracked by issue
   #40):** package the proven launch/session pipeline behind a `streamliner` CLI,
@@ -172,11 +172,21 @@ selected-node inspector details, and keeps telemetry out of `graph.json`.
 Concurrent resumable node launches are complete via PR #66 / issue #55: per-node
 runtime operation state now keeps PAW init progress, prepared handoffs, terminal
 results, errors, and claim projections rehydratable after dialogs close or other
-nodes are selected. With #47, #52, and #55 complete, #53 is the only remaining
-Wave 4 graph node and is ready for closeout. PAW runtime status remains Wave 4
-overlay enrichment rather than a launch blocker. Small launch-polish
-observations are tracked in the Closeout Punch List rather than promoted into
-graph nodes unless they grow too large, risky, or dependency-bearing to batch.
+nodes are selected. Terminal launch portability seam closeout is complete via PR
+#71 / issue #56: the terminal launch path now routes through an explicit adapter
+seam while preserving existing Windows Terminal and PowerShell behavior,
+centralizes Copilot resume command construction, keeps launch claims / node
+records / PAW handoff preparation outside terminal-host concerns, and documents
+the future adapter boundary. PR #71 also completed the launch prompt profile
+dropdown reliability closeout item by prefetching and caching saved PAW launch
+prompt profiles independently from slower launch-record or inspector-panel
+lookups. Issue #53 completes the Wave 4 gate and closes the workstream: graph
+launch, session binding, My Sessions linkage, runtime overlay, PAW artifact
+enrichment, tracker-required launch policy, concurrent/resumable launches, and
+closeout polish have all landed. PAW runtime status remains overlay enrichment
+rather than a launch blocker. Future small dogfooding tweaks should be handled as
+post-close follow-up polish or promoted into new workstreams/candidates when they
+become dependency-bearing.
 Automated PAW Review Loop now owns the former follow-on review automation scope
 as a separate candidate workstream. Session Launching and Tracking should leave
 that workstream importable substrate: launch claims, registry `graphBinding`,
@@ -185,27 +195,24 @@ metadata where needed by launch and overlay surfaces, and runtime overlay
 primitives.
 
 ## Closeout Punch List
-PR #64 completed the previously captured workstream default terminal presentation
-metadata item; it is no longer an active closeout item.
+All Wave 4 closeout punch-list items have been resolved:
 
-- **batch — Terminal launch portability seam (#56):** The current launch
-  implementation remains Windows-only, but Wave 4 closeout should review and
-  lightly refactor the terminal launch seam so Windows Terminal / PowerShell
-  assumptions are adapter-local and future macOS/Linux terminal support does not
-  need to untangle launch claims, registry binding, or node-launch handoff code.
-- **batch — Launch prompt profile dropdown reliability:** When opening the PAW
-  launch dialog repeatedly, saved prompt profiles should remain visible and
-  selectable in the load-profile dropdown. Profiles currently sometimes disappear
-  after launching a PAW session and opening another launch dialog, leaving only
-  custom instructions until the page/dialog is refreshed. The closeout fix should
-  cover both prompt profile loading responsiveness and stale/cleared profile list
-  state; profile availability should not be blocked behind unrelated
-  launch-artifact or inspector-panel API calls.
+- **completed via PR #64 — Workstream default terminal presentation metadata:**
+  graph-backed `launchDefaults.terminal` supports terminal preference, title
+  templates, and tab color defaults that prefill the PAW launch dialog while
+  remaining overrideable per launch.
+- **completed via PR #71 / issue #56 — Terminal launch portability seam:** the
+  launch path now has an explicit terminal adapter seam and preserves current
+  Windows Terminal / PowerShell behavior while making future macOS/Linux terminal
+  adapters a downstream extension point.
+- **completed via PR #71 — Launch prompt profile dropdown reliability:** saved
+  PAW launch prompt profiles are prefetched and cached as soon as a launchable
+  node is selected, so the launch dialog dropdown is not blocked behind slower
+  launch-record or inspector-panel lookups.
 
-These remaining items are parked polish items, not launchable graph nodes. Before
-the #53 gate passes, each item should be completed in a batched closeout session,
-deferred with rationale, promoted to its own node/candidate/workstream, or
-dropped if it no longer matters after reconciliation.
+No active closeout punch-list items remain. The #53 gate completed Wave 4 and
+the workstream; future polish belongs in post-close follow-up rather than keeping
+this workstream open indefinitely.
 
 ## Decisions
 - Use repo-local `.streamliner/workstreams/` for Streamliner's committed
