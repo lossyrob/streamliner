@@ -375,12 +375,12 @@ function reserveLaunchClaimForHandoff(
   return { claim: claimOutcome.claim, now };
 }
 
-export function launchPreparedNode(
+export async function launchPreparedNode(
   registryStore: SessionRegistryFileStore,
   claimStore: LaunchClaimStore,
   handoff: PawLaunchHandoff,
   deps: NodeLaunchDeps = {},
-): NodeLaunchResult {
+): Promise<NodeLaunchResult> {
   const { claim, now } = reserveLaunchClaimForHandoff(
     registryStore,
     claimStore,

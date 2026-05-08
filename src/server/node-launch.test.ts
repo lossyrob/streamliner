@@ -240,13 +240,13 @@ describe("appendLaunchBindingPromptLines", () => {
 });
 
 describe("launchPreparedNode", () => {
-  it("creates a claim before launching Copilot CLI with trusted-hook env", () => {
+  it("creates a claim before launching Copilot CLI with trusted-hook env", async () => {
     const root = createRootDir();
     const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
     const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
     const terminalCalls: unknown[] = [];
 
-    const result = launchPreparedNode(
+    const result = await launchPreparedNode(
       registryStore,
       claimStore,
       fakeHandoff(root),
@@ -293,12 +293,12 @@ describe("launchPreparedNode", () => {
     ]);
   });
 
-  it("marks the claim failed when terminal spawn fails", () => {
+  it("marks the claim failed when terminal spawn fails", async () => {
     const root = createRootDir();
     const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
     const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
 
-    expect(() =>
+    await expect(
       launchPreparedNode(
         registryStore,
         claimStore,
@@ -309,7 +309,7 @@ describe("launchPreparedNode", () => {
           },
         },
       )
-    ).toThrow(NodeLaunchError);
+    ).rejects.toThrow(NodeLaunchError);
 
     const [entry] = claimStore.listClaims();
     const claim = claimStore.getClaim(entry.launchClaimId);
@@ -321,7 +321,7 @@ describe("launchPreparedNode", () => {
     expect(registryStore.listSessions()).toEqual([]);
   });
 
-  it("reports claim transition errors when terminal spawn failure cleanup fails", () => {
+  it("reports claim transition errors when terminal spawn failure cleanup fails", async () => {
     const root = createRootDir();
     const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
     const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
@@ -336,7 +336,7 @@ describe("launchPreparedNode", () => {
       subscribe: claimStore.subscribe.bind(claimStore),
     };
 
-    expect(() =>
+    await expect(
       launchPreparedNode(
         registryStore,
         failingClaimStore,
@@ -347,7 +347,7 @@ describe("launchPreparedNode", () => {
           },
         },
       )
-    ).toThrow(/spawn exploded; also failed to mark launch claim failed: claim store write failed/);
+    ).rejects.toThrow(/spawn exploded; also failed to mark launch claim failed: claim store write failed/);
 
     const [entry] = claimStore.listClaims();
     expect(claimStore.getClaim(entry.launchClaimId)).toEqual(expect.objectContaining({
@@ -356,26 +356,26 @@ describe("launchPreparedNode", () => {
     }));
   });
 
-  it("rejects duplicate active launches before creating another claim", () => {
+  it("rejects duplicate active launches before creating another claim", async () => {
     const root = createRootDir();
     const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
     const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
 
-    launchPreparedNode(
+    await launchPreparedNode(
       registryStore,
       claimStore,
       fakeHandoff(root),
       { launchTerminal: () => ({ method: "powershell", pid: 1 }) },
     );
 
-    expect(() =>
+    await expect(
       launchPreparedNode(
         registryStore,
         claimStore,
         fakeHandoff(root),
         { launchTerminal: () => ({ method: "powershell", pid: 2 }) },
       )
-    ).toThrow(NodeLaunchError);
+    ).rejects.toThrow(NodeLaunchError);
     expect(claimStore.listClaims()).toHaveLength(1);
   });
 
@@ -432,7 +432,7 @@ describe("launchPreparedNode", () => {
     }));
   });
 
-  it("allows unconfigured prepared handoffs when the graph is no longer readable", () => {
+  it("allows unconfigured prepared handoffs when the graph is no longer readable", async () => {
     const root = createRootDir();
     const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
     const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
@@ -440,7 +440,7 @@ describe("launchPreparedNode", () => {
     rmSync(handoff.launchMetadata.graphPath, { force: true });
     const terminalCalls: unknown[] = [];
 
-    const result = launchPreparedNode(
+    const result = await launchPreparedNode(
       registryStore,
       claimStore,
       handoff,
@@ -457,7 +457,7 @@ describe("launchPreparedNode", () => {
     expect(claimStore.listClaims()).toHaveLength(1);
   });
 
-  it("fails closed when a prepared handoff had a launch policy but the graph is unreadable", () => {
+  it("fails closed when a prepared handoff had a launch policy but the graph is unreadable", async () => {
     const root = createRootDir();
     const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
     const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
@@ -467,7 +467,7 @@ describe("launchPreparedNode", () => {
 
     let blockedError: unknown;
     try {
-      launchPreparedNode(
+      await launchPreparedNode(
         registryStore,
         claimStore,
         handoff,
@@ -489,7 +489,7 @@ describe("launchPreparedNode", () => {
     expect(registryStore.listSessions()).toEqual([]);
   });
 
-  it("blocks stale prepared handoffs before creating a launch claim", () => {
+  it("blocks stale prepared handoffs before creating a launch claim", async () => {
     const root = createRootDir();
     const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
     const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
@@ -499,7 +499,7 @@ describe("launchPreparedNode", () => {
     });
     const terminalCalls: unknown[] = [];
 
-    expect(() =>
+    await expect(
       launchPreparedNode(
         registryStore,
         claimStore,
@@ -511,11 +511,11 @@ describe("launchPreparedNode", () => {
           },
         },
       )
-    ).toThrow(NodeLaunchError);
+    ).rejects.toThrow(NodeLaunchError);
 
     let blockedError: unknown;
     try {
-      launchPreparedNode(
+      await launchPreparedNode(
         registryStore,
         claimStore,
         handoff,
@@ -886,7 +886,7 @@ describe("node launch API route", () => {
     const handoff = fakeHandoff(root);
 
     await nodeLaunchRecordStore.markTerminalLaunching(handoff);
-    const terminalLaunch = launchPreparedNode(
+    const terminalLaunch = await launchPreparedNode(
       registryStore,
       claimStore,
       handoff,

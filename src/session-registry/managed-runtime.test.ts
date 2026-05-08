@@ -126,6 +126,8 @@ describe("managed runtime metadata", () => {
     const runtime = mergeSessionRegistryRuntimeMetadata(
       null,
       {
+        runtimeKind: "managed-sdk",
+        runtimeOwner: "streamliner-sdk",
         progressEvents: Array.from({ length: MANAGED_RUNTIME_PROGRESS_EVENT_LIMIT + 5 }, (_, index) => ({
           type: "assistant_status",
           message: `event ${index + 1}`,
@@ -143,6 +145,8 @@ describe("managed runtime metadata", () => {
     const first = mergeSessionRegistryRuntimeMetadata(
       null,
       {
+        runtimeKind: "managed-sdk",
+        runtimeOwner: "streamliner-sdk",
         lifecycleState: "running",
         evidence: [{
           kind: "pr_ready",
@@ -176,6 +180,17 @@ describe("managed runtime metadata", () => {
     expect(second.evidence[0].summary).toBe("updated");
     expect(isManagedRuntimeActive(first)).toBe(true);
     expect(isManagedRuntimeActive(second)).toBe(false);
+  });
+
+  it("requires runtime identity when creating managed runtime metadata", () => {
+    expect(() =>
+      mergeSessionRegistryRuntimeMetadata(
+        null,
+        {
+          lifecycleState: "running",
+        },
+      )
+    ).toThrow(/runtimeKind is required/);
   });
 
   it("keeps terminal lifecycle states sticky while retaining late progress", () => {

@@ -7,9 +7,11 @@ import type {
   SessionEvent,
 } from "@github/copilot-sdk";
 
-import type {
-  SessionRegistryManagedLifecycleState,
-  SessionRegistryRuntimeEvidenceKind,
+import {
+  SESSION_REGISTRY_MANAGED_LIFECYCLE_STATES,
+  SESSION_REGISTRY_RUNTIME_EVIDENCE_KINDS,
+  type SessionRegistryManagedLifecycleState,
+  type SessionRegistryRuntimeEvidenceKind,
 } from "../session-registry-schema";
 import type {
   SessionRegistryRuntimeEvidenceInput,
@@ -78,8 +80,20 @@ interface SafeManagedCallbacks {
   onStarted: (details: ManagedSdkRunnerStartResult) => void;
 }
 
+type RuntimeEvidenceLifecycleState = Extract<
+  SessionRegistryManagedLifecycleState,
+  SessionRegistryRuntimeEvidenceKind
+>;
+
 const PR_URL_PATTERN =
   /https:\/\/(?<host>[^/\s<>)]+)\/(?<repo>[^/\s<>)]+\/[^/\s<>)]+)\/(?:pull|pulls|pull-requests)\/(?<number>\d+)/i;
+
+const MANAGED_LIFECYCLE_STATE_SET = new Set<string>(SESSION_REGISTRY_MANAGED_LIFECYCLE_STATES);
+for (const kind of SESSION_REGISTRY_RUNTIME_EVIDENCE_KINDS) {
+  if (!MANAGED_LIFECYCLE_STATE_SET.has(kind)) {
+    throw new Error(`Runtime evidence kind ${kind} is not a managed lifecycle state.`);
+  }
+}
 
 function errorLogDetails(error: unknown): Record<string, string> | string {
   return error instanceof Error
@@ -270,8 +284,8 @@ function evidenceFromAssistantContent(
 
 function lifecycleStateForEvidence(
   kind: SessionRegistryRuntimeEvidenceKind,
-): SessionRegistryManagedLifecycleState {
-  return kind;
+): RuntimeEvidenceLifecycleState {
+  return kind as RuntimeEvidenceLifecycleState;
 }
 
 export class DefaultManagedSdkRunner implements ManagedSdkRunner {

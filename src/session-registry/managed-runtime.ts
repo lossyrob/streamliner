@@ -352,9 +352,17 @@ export function mergeSessionRegistryRuntimeMetadata(
   const nextLifecycleState = lifecycleChanged
     ? patch.lifecycleState ?? null
     : current?.lifecycleState ?? (patch.lifecycleState !== undefined ? patch.lifecycleState : null);
+  const runtimeKind = patch.runtimeKind ?? current?.runtimeKind;
+  const runtimeOwner = patch.runtimeOwner ?? current?.runtimeOwner;
+  if (runtimeKind === undefined) {
+    throw new Error("runtimeKind is required when creating runtime metadata.");
+  }
+  if (runtimeOwner === undefined) {
+    throw new Error("runtimeOwner is required when creating runtime metadata.");
+  }
   return {
-    runtimeKind: patch.runtimeKind ?? current?.runtimeKind ?? "managed-sdk",
-    runtimeOwner: patch.runtimeOwner ?? current?.runtimeOwner ?? "streamliner-sdk",
+    runtimeKind,
+    runtimeOwner,
     lifecycleState:
       nextLifecycleState,
     permissionProfile:

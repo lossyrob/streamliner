@@ -353,7 +353,7 @@ export function createNodeLaunchesRouter(options: {
         res.status(201).json(result);
       } else {
         await options.nodeLaunchRecordStore?.markTerminalLaunching(handoff);
-        const result = launchPreparedNode(
+        const result = await launchPreparedNode(
           options.registryStore,
           options.claimStore,
           handoff,

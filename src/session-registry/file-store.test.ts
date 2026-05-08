@@ -168,6 +168,64 @@ describe("SessionRegistryFileStore", () => {
     }));
   });
 
+  it("preserves additive runtime metadata when older-style upserts omit the field", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+
+    const record = store.upsertSession({
+      id: "mixed-version-runtime-row",
+      title: "Mixed version runtime row",
+      description: "",
+      cwd: "C:\\repo",
+      repo: "lossyrob/streamliner",
+      branch: "feature/managed",
+      tags: [],
+      origin: { kind: "launched", launchClaimId: "claim-mixed-version" },
+      graphBinding: {
+        workstreamId: "sdk-managed-worker-runtime",
+        nodeId: "managed-node",
+        launchClaimId: "claim-mixed-version",
+      },
+    });
+    store.patchRuntimeMetadata(record.id, {
+      runtimeKind: "managed-sdk",
+      runtimeOwner: "streamliner-sdk",
+      lifecycleState: "running",
+      permissionProfile: "managed-autonomous",
+      launchClaimId: "claim-mixed-version",
+      launchNonce: "nonce-mixed-version",
+      sdkSessionId: "sdk-session-mixed-version",
+    });
+
+    const rewritten = store.upsertSession({
+      id: record.id,
+      title: "Older writer title update",
+      description: "",
+      cwd: "C:\\repo",
+      repo: "lossyrob/streamliner",
+      branch: "feature/managed",
+      tags: [],
+      origin: { kind: "launched", launchClaimId: "claim-mixed-version" },
+      graphBinding: {
+        workstreamId: "sdk-managed-worker-runtime",
+        nodeId: "managed-node",
+        launchClaimId: "claim-mixed-version",
+      },
+    });
+
+    expect(rewritten.runtime).toEqual(expect.objectContaining({
+      runtimeKind: "managed-sdk",
+      runtimeOwner: "streamliner-sdk",
+      lifecycleState: "running",
+      sdkSessionId: "sdk-session-mixed-version",
+    }));
+    const entry = readJsonFile<SessionRegistryRecord>(
+      join(rootDir, "entries", "mixed-version-runtime-row.json"),
+    );
+    expect(entry.runtime?.sdkSessionId).toBe("sdk-session-mixed-version");
+  });
+
   it("preserves long managed SDK identifiers and paths after reloading from disk", () => {
     const rootDir = createRootDir();
     createdRoots.push(rootDir);
