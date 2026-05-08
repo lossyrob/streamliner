@@ -5,6 +5,7 @@ import {
   MANAGED_RUNTIME_PROGRESS_STRING_LIMIT,
   isManagedRuntimeActive,
   mergeSessionRegistryRuntimeMetadata,
+  normalizeSessionRegistryRuntimeMetadata,
 } from "./managed-runtime";
 
 describe("managed runtime metadata", () => {
@@ -50,6 +51,75 @@ describe("managed runtime metadata", () => {
       toolName: "powershell",
       nested: { safeLabel: "kept" },
     });
+  });
+
+  it("keeps safe summary telemetry while redacting explicit sensitive keys", () => {
+    const runtime = mergeSessionRegistryRuntimeMetadata(
+      null,
+      {
+        runtimeKind: "managed-sdk",
+        runtimeOwner: "streamliner-sdk",
+        progressEvents: [{
+          type: "assistant_status",
+          message: "Telemetry summary.",
+          data: {
+            contentLength: 123,
+            inputTokens: 456,
+            outputTokens: 789,
+            argumentCount: 2,
+            questionLength: 42,
+            choiceCount: 3,
+            command: "Remove-Item secret.txt",
+            content: "raw assistant text",
+            args: { raw: true },
+            toolResult: "raw tool result",
+            nested: {
+              payload: "raw payload",
+              errorCount: 1,
+            },
+          },
+        }],
+      },
+      new Date("2026-05-07T12:00:00.000Z"),
+    );
+
+    expect(runtime.progressEvents[0].data).toEqual({
+      contentLength: 123,
+      inputTokens: 456,
+      outputTokens: 789,
+      argumentCount: 2,
+      questionLength: 42,
+      choiceCount: 3,
+      nested: {
+        errorCount: 1,
+      },
+    });
+  });
+
+  it("preserves opaque IDs and paths through merge and normalize", () => {
+    const sdkSessionId = `sdk-${"s".repeat(300)}`;
+    const sdkWorkspacePath = `C:\\${"deep\\".repeat(70)}workspace.yaml`;
+    const sdkStateRoot = sdkWorkspacePath.slice(0, -"\\workspace.yaml".length);
+
+    const runtime = mergeSessionRegistryRuntimeMetadata(
+      null,
+      {
+        runtimeKind: "managed-sdk",
+        runtimeOwner: "streamliner-sdk",
+        lifecycleState: "running",
+        launchClaimId: `claim-${"c".repeat(300)}`,
+        launchNonce: `nonce-${"n".repeat(300)}`,
+        sdkSessionId,
+        sdkWorkspacePath,
+        sdkStateRoot,
+      },
+      new Date("2026-05-07T12:00:00.000Z"),
+    );
+    const normalized = normalizeSessionRegistryRuntimeMetadata(runtime, "runtime");
+
+    expect(normalized?.sdkSessionId).toBe(sdkSessionId);
+    expect(normalized?.sdkWorkspacePath).toBe(sdkWorkspacePath);
+    expect(normalized?.sdkStateRoot).toBe(sdkStateRoot);
   });
 
   it("retains only the most recent managed progress events", () => {

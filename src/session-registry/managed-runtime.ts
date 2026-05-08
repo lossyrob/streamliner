@@ -19,8 +19,38 @@ import {
 export const MANAGED_RUNTIME_PROGRESS_EVENT_LIMIT = 50;
 export const MANAGED_RUNTIME_PROGRESS_STRING_LIMIT = 240;
 
-const SENSITIVE_DATA_KEY_PATTERN =
-  /(?:arg|argument|result|output|payload|prompt|reasoning|token|secret|credential|authorization|password|command|content)/i;
+const SENSITIVE_DATA_KEYS = new Set([
+  "arg",
+  "args",
+  "argument",
+  "arguments",
+  "authorization",
+  "command",
+  "content",
+  "credential",
+  "output",
+  "password",
+  "payload",
+  "prompt",
+  "reasoning",
+  "result",
+  "secret",
+  "token",
+  "tokens",
+  "toolargs",
+  "toolarguments",
+  "toolresult",
+]);
+
+const SAFE_SUMMARY_DATA_KEYS = new Set([
+  "argumentcount",
+  "choicecount",
+  "contentlength",
+  "errorcount",
+  "inputtokens",
+  "outputtokens",
+  "questionlength",
+]);
 
 const ACTIVE_MANAGED_LIFECYCLE_STATES = new Set<SessionRegistryManagedLifecycleState>([
   "preparing",
@@ -89,6 +119,16 @@ function optionalString(value: unknown, fieldName: string): string | null {
     throw new Error(`Expected ${fieldName} to be a string or null.`);
   }
   return truncateProgressString(value);
+}
+
+function optionalRawString(value: unknown, fieldName: string): string | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    throw new Error(`Expected ${fieldName} to be a string or null.`);
+  }
+  return value;
 }
 
 function optionalNumber(value: unknown, fieldName: string): number | null {
@@ -170,8 +210,16 @@ function truncateProgressString(value: string): string {
     : value;
 }
 
+function isSensitiveDataKey(key: string): boolean {
+  const normalized = key.toLowerCase();
+  if (SAFE_SUMMARY_DATA_KEYS.has(normalized)) {
+    return false;
+  }
+  return SENSITIVE_DATA_KEYS.has(normalized);
+}
+
 function sanitizeProgressData(value: unknown, key = "data", depth = 0): unknown {
-  if (SENSITIVE_DATA_KEY_PATTERN.test(key)) {
+  if (isSensitiveDataKey(key)) {
     return undefined;
   }
   if (value === null || value === undefined) {
@@ -235,10 +283,10 @@ function normalizeEvidence(value: unknown, fieldName: string): SessionRegistryRu
     kind: evidenceKind(value.kind, `${fieldName}.kind`),
     source: truncateProgressString(requireString(value.source, `${fieldName}.source`)),
     detectedAt: requireString(value.detectedAt, `${fieldName}.detectedAt`),
-    url: optionalString(value.url, `${fieldName}.url`),
-    repo: optionalString(value.repo, `${fieldName}.repo`),
+    url: optionalRawString(value.url, `${fieldName}.url`),
+    repo: optionalRawString(value.repo, `${fieldName}.repo`),
     number: optionalNumber(value.number, `${fieldName}.number`),
-    sha: optionalString(value.sha, `${fieldName}.sha`),
+    sha: optionalRawString(value.sha, `${fieldName}.sha`),
     summary: optionalString(value.summary, `${fieldName}.summary`),
   };
 }
@@ -263,13 +311,13 @@ export function normalizeSessionRegistryRuntimeMetadata(
     runtimeOwner: runtimeOwner(value.runtimeOwner, `${fieldName}.runtimeOwner`),
     lifecycleState: lifecycleState(value.lifecycleState, `${fieldName}.lifecycleState`),
     permissionProfile: permissionProfile(value.permissionProfile, `${fieldName}.permissionProfile`),
-    launchClaimId: optionalString(value.launchClaimId, `${fieldName}.launchClaimId`),
-    launchNonce: optionalString(value.launchNonce, `${fieldName}.launchNonce`),
-    sdkSessionId: optionalString(value.sdkSessionId, `${fieldName}.sdkSessionId`),
-    sdkWorkspacePath: optionalString(value.sdkWorkspacePath, `${fieldName}.sdkWorkspacePath`),
-    sdkStateRoot: optionalString(value.sdkStateRoot, `${fieldName}.sdkStateRoot`),
-    startedAt: optionalString(value.startedAt, `${fieldName}.startedAt`),
-    lastStateChangedAt: optionalString(value.lastStateChangedAt, `${fieldName}.lastStateChangedAt`),
+    launchClaimId: optionalRawString(value.launchClaimId, `${fieldName}.launchClaimId`),
+    launchNonce: optionalRawString(value.launchNonce, `${fieldName}.launchNonce`),
+    sdkSessionId: optionalRawString(value.sdkSessionId, `${fieldName}.sdkSessionId`),
+    sdkWorkspacePath: optionalRawString(value.sdkWorkspacePath, `${fieldName}.sdkWorkspacePath`),
+    sdkStateRoot: optionalRawString(value.sdkStateRoot, `${fieldName}.sdkStateRoot`),
+    startedAt: optionalRawString(value.startedAt, `${fieldName}.startedAt`),
+    lastStateChangedAt: optionalRawString(value.lastStateChangedAt, `${fieldName}.lastStateChangedAt`),
     progressEvents,
     evidence: Array.isArray(value.evidence)
       ? value.evidence.map((entry, index) => normalizeEvidence(entry, `${fieldName}.evidence[${index}]`))
@@ -383,10 +431,10 @@ function inputEvidenceToStoredEvidence(
     kind: input.kind,
     source: truncateProgressString(input.source),
     detectedAt,
-    url: input.url ? truncateProgressString(input.url) : null,
-    repo: input.repo ? truncateProgressString(input.repo) : null,
+    url: input.url ?? null,
+    repo: input.repo ?? null,
     number: input.number ?? null,
-    sha: input.sha ? truncateProgressString(input.sha) : null,
+    sha: input.sha ?? null,
     summary: input.summary ? truncateProgressString(input.summary) : null,
   };
 }

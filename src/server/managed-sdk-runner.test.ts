@@ -9,6 +9,7 @@ import type {
   SessionRegistryRuntimeEvidenceInput,
   SessionRegistryRuntimeProgressEventInput,
 } from "../session-registry/managed-runtime";
+import { mergeSessionRegistryRuntimeMetadata } from "../session-registry/managed-runtime";
 import {
   DefaultManagedSdkRunner,
   type ManagedSdkRunnerStartInput,
@@ -188,5 +189,45 @@ describe("DefaultManagedSdkRunner", () => {
 
     expect(capture.evidence).toEqual([]);
     expect(capture.states).not.toContain("review_ready");
+  });
+
+  it("emits assistant and usage summary telemetry that survives runtime sanitization", async () => {
+    const capture = createCapture();
+    const runner = new DefaultManagedSdkRunner();
+    await runner.start(createStartInput(capture));
+    await flushManagedTurn();
+
+    const config = sdkMock.sessionConfigs[0] as {
+      onEvent?: (event: { type: string; data?: Record<string, unknown> }) => unknown;
+    };
+    config.onEvent?.({
+      type: "assistant.message",
+      data: { content: "raw assistant text that must not persist" },
+    });
+    config.onEvent?.({
+      type: "session.usage_info",
+      data: { inputTokens: 12, outputTokens: 34 },
+    });
+
+    const runtime = mergeSessionRegistryRuntimeMetadata(
+      null,
+      {
+        runtimeKind: "managed-sdk",
+        runtimeOwner: "streamliner-sdk",
+        progressEvents: capture.progress.slice(-2),
+      },
+      new Date("2026-05-07T12:00:00.000Z"),
+    );
+
+    expect(runtime.progressEvents).toEqual([
+      expect.objectContaining({
+        type: "assistant_status",
+        data: { contentLength: 40 },
+      }),
+      expect.objectContaining({
+        type: "usage",
+        data: { inputTokens: 12, outputTokens: 34 },
+      }),
+    ]);
   });
 });

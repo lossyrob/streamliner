@@ -168,6 +168,42 @@ describe("SessionRegistryFileStore", () => {
     }));
   });
 
+  it("preserves long managed SDK identifiers and paths after reloading from disk", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+    const sdkSessionId = `sdk-${"s".repeat(300)}`;
+    const sdkWorkspacePath = `C:\\${"very-long-directory-name\\".repeat(30)}workspace.yaml`;
+    const sdkStateRoot = sdkWorkspacePath.slice(0, -"\\workspace.yaml".length);
+
+    const record = store.upsertSession({
+      id: "managed-long-path-row",
+      title: "Managed long path row",
+      description: "",
+      cwd: "C:\\repo",
+      origin: { kind: "launched", launchClaimId: "claim-managed-long" },
+    });
+
+    store.patchRuntimeMetadata(record.id, {
+      runtimeKind: "managed-sdk",
+      runtimeOwner: "streamliner-sdk",
+      lifecycleState: "running",
+      permissionProfile: "managed-autonomous",
+      launchClaimId: `claim-${"c".repeat(300)}`,
+      launchNonce: `nonce-${"n".repeat(300)}`,
+      sdkSessionId,
+      sdkWorkspacePath,
+      sdkStateRoot,
+    });
+
+    const reloadedStore = new SessionRegistryFileStore({ rootDir });
+    const reloaded = reloadedStore.getSession(record.id);
+
+    expect(reloaded?.runtime?.sdkSessionId).toBe(sdkSessionId);
+    expect(reloaded?.runtime?.sdkWorkspacePath).toBe(sdkWorkspacePath);
+    expect(reloaded?.runtime?.sdkStateRoot).toBe(sdkStateRoot);
+  });
+
   it("ranks list freshness by trustedLastSignalAt when it is newer than lastSeenAt", () => {
     // Discovery sets lastSeenAt from workspace.yaml mtime, which lags real
     // user activity. A session that just received a prompt.submitted hook
