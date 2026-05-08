@@ -66,6 +66,14 @@ const ACTIVE_MANAGED_LIFECYCLE_STATES = new Set<SessionRegistryManagedLifecycleS
   "terminal_takeover",
 ]);
 
+const TERMINAL_MANAGED_LIFECYCLE_STATES = new Set<SessionRegistryManagedLifecycleState>([
+  "canceled",
+  "cleaned_up",
+  "completed",
+  "failed",
+  "interrupted",
+]);
+
 export interface SessionRegistryRuntimeProgressEventInput {
   type: SessionRegistryRuntimeProgressEventType;
   message: string;
@@ -369,14 +377,16 @@ export function mergeSessionRegistryRuntimeMetadata(
   }
   const lifecycleChanged =
     patch.lifecycleState !== undefined &&
+    !isTerminalLifecycleState(current?.lifecycleState) &&
     patch.lifecycleState !== (current?.lifecycleState ?? null);
+  const nextLifecycleState = lifecycleChanged
+    ? patch.lifecycleState ?? null
+    : current?.lifecycleState ?? (patch.lifecycleState !== undefined ? patch.lifecycleState : null);
   return {
     runtimeKind: patch.runtimeKind ?? current?.runtimeKind ?? "managed-sdk",
     runtimeOwner: patch.runtimeOwner ?? current?.runtimeOwner ?? "streamliner-sdk",
     lifecycleState:
-      patch.lifecycleState !== undefined
-        ? patch.lifecycleState
-        : current?.lifecycleState ?? null,
+      nextLifecycleState,
     permissionProfile:
       patch.permissionProfile !== undefined
         ? patch.permissionProfile
@@ -411,6 +421,14 @@ export function mergeSessionRegistryRuntimeMetadata(
     progressEvents: [...currentProgress, ...nextProgress].slice(-MANAGED_RUNTIME_PROGRESS_EVENT_LIMIT),
     evidence: [...evidenceById.values()],
   };
+}
+
+function isTerminalLifecycleState(
+  state: SessionRegistryManagedLifecycleState | null | undefined,
+): boolean {
+  return state !== null &&
+    state !== undefined &&
+    TERMINAL_MANAGED_LIFECYCLE_STATES.has(state);
 }
 
 function inputEvidenceToStoredEvidence(

@@ -24,7 +24,7 @@ import type {
 } from "../../session-registry-contract";
 import { isLoopbackAddress } from "../config";
 import { getApiLogger } from "../logger";
-import type { ManagedSdkRunner } from "../managed-sdk-runner";
+import type { ManagedSdkInterruptResult, ManagedSdkRunner } from "../managed-sdk-runner";
 import { SessionRegistryEventStream } from "../session-events";
 
 function hasNonLoopbackForwardedFor(value: string | string[] | undefined): boolean {
@@ -239,8 +239,9 @@ export function createSessionsRouter(options: {
     }
     const body = isJsonObject(req.body) ? req.body : {};
     const reason = typeof body.reason === "string" ? body.reason : undefined;
+    let requested: SessionRegistryRecord;
     try {
-      const requested = target.store.patchRuntimeMetadata(sessionId, {
+      requested = target.store.patchRuntimeMetadata(sessionId, {
         lifecycleState: "interrupt_requested",
         progressEvents: [{
           type: "lifecycle",
@@ -248,13 +249,18 @@ export function createSessionsRouter(options: {
           data: reason ? { reason } : undefined,
         }],
       });
-      const outcome = options.managedSdkRunner?.interrupt
-        ? await options.managedSdkRunner.interrupt({ registryId: sessionId, reason })
-        : {
-            ok: false,
-            evidenceState: "waiting_for_builder" as const,
-            message: "No managed SDK runner is attached to this API process.",
-          };
+    } catch (error: unknown) {
+      const failure = managedRuntimeErrorResponse(error);
+      managedLogger.warn("interrupt request failed", {
+        sessionId,
+        statusCode: failure.statusCode,
+        err: errorLogDetails(error),
+      });
+      res.status(failure.statusCode).json({ error: failure.message });
+      return;
+    }
+    const outcome = await interruptManagedSdkRunner(options.managedSdkRunner, sessionId, reason);
+    try {
       const finalRecord = target.store.patchRuntimeMetadata(sessionId, {
         lifecycleState: outcome.evidenceState,
         progressEvents: [{
@@ -271,7 +277,7 @@ export function createSessionsRouter(options: {
       res.json({ outcome, session: finalRecord });
     } catch (error: unknown) {
       const failure = managedRuntimeErrorResponse(error);
-      managedLogger.warn("interrupt failed", {
+      managedLogger.warn("interrupt settle failed", {
         sessionId,
         statusCode: failure.statusCode,
         err: errorLogDetails(error),
@@ -301,38 +307,49 @@ export function createSessionsRouter(options: {
       res.status(target.statusCode).json({ error: target.message });
       return;
     }
+    let requested: SessionRegistryRecord;
     try {
-      const requested = target.store.patchRuntimeMetadata(sessionId, {
+      requested = target.store.patchRuntimeMetadata(sessionId, {
         lifecycleState: "interrupt_requested",
         progressEvents: [{
           type: "lifecycle",
           message: "Managed SDK cancellation requested.",
         }],
       });
-      const outcome = options.managedSdkRunner?.interrupt
-        ? await options.managedSdkRunner.interrupt({
-            registryId: sessionId,
-            reason: "Managed SDK run canceled by builder action.",
-          })
-        : {
-            ok: false,
-            evidenceState: "waiting_for_builder" as const,
-            message: "No managed SDK runner is attached to this API process.",
-          };
+    } catch (error: unknown) {
+      const failure = managedRuntimeErrorResponse(error);
+      managedLogger.warn("cancel request failed", {
+        sessionId,
+        statusCode: failure.statusCode,
+        err: errorLogDetails(error),
+      });
+      res.status(failure.statusCode).json({ error: failure.message });
+      return;
+    }
+    const hasRunner = Boolean(options.managedSdkRunner?.interrupt);
+    const outcome = await interruptManagedSdkRunner(
+      options.managedSdkRunner,
+      sessionId,
+      "Managed SDK run canceled by builder action.",
+    );
+    const finalState = outcome.ok || !hasRunner ? "canceled" : "failed";
+    try {
       const record = target.store.patchRuntimeMetadata(sessionId, {
-        lifecycleState: outcome.ok ? "canceled" : outcome.evidenceState,
+        lifecycleState: finalState,
         progressEvents: [{
-          type: outcome.ok ? "lifecycle" : "error",
-          message: outcome.ok
+          type: finalState === "canceled" ? "lifecycle" : "error",
+          message: finalState === "canceled"
             ? "Managed SDK run canceled by builder action."
             : outcome.message,
         }],
       });
-      const responseOutcome = outcome.ok
+      const responseOutcome = finalState === "canceled"
         ? {
             ...outcome,
             evidenceState: "canceled" as const,
-            message: "Managed SDK run canceled by builder action.",
+            message: outcome.ok
+              ? "Managed SDK run canceled by builder action."
+              : `${outcome.message}; recorded cancellation.`,
           }
         : outcome;
       managedLogger.info("cancel", {
@@ -344,7 +361,7 @@ export function createSessionsRouter(options: {
       res.json({ outcome: responseOutcome, session: record });
     } catch (error: unknown) {
       const failure = managedRuntimeErrorResponse(error);
-      managedLogger.warn("cancel failed", {
+      managedLogger.warn("cancel settle failed", {
         sessionId,
         statusCode: failure.statusCode,
         err: errorLogDetails(error),
@@ -441,6 +458,29 @@ export function createSessionsRouter(options: {
   });
 
   return router;
+}
+
+async function interruptManagedSdkRunner(
+  runner: ManagedSdkRunner | undefined,
+  registryId: string,
+  reason: string | undefined,
+): Promise<ManagedSdkInterruptResult> {
+  if (!runner?.interrupt) {
+    return {
+      ok: false,
+      evidenceState: "failed",
+      message: "No managed SDK runner is attached to this API process.",
+    };
+  }
+  try {
+    return await runner.interrupt({ registryId, reason });
+  } catch (error: unknown) {
+    return {
+      ok: false,
+      evidenceState: "failed",
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 type ManagedRuntimeTarget =

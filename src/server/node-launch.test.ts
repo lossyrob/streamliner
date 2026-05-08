@@ -984,6 +984,116 @@ describe("managed runtime session API routes", () => {
     }));
   });
 
+  it("settles managed interrupt and cancel failures to terminal states", async () => {
+    const root = createRootDir();
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const runner: ManagedSdkRunner = {
+      start: async (input) => ({
+        registryId: input.registryId,
+        sdkSessionId: null,
+        sdkWorkspacePath: null,
+        sdkStateRoot: null,
+      }),
+      interrupt: async () => {
+        throw new Error("SDK abort failed.");
+      },
+    };
+    const api = createStreamlinerApiApp({
+      store: registryStore,
+      launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
+      nodeLaunchDeps: {
+        managedSdkRunner: runner,
+      },
+    });
+    activeApps.push(api);
+    const interruptRecord = registryStore.upsertSession({
+      id: "managed-interrupt-failure-row",
+      title: "Managed interrupt failure row",
+      description: "",
+      cwd: normalizePath(root),
+      origin: { kind: "launched", launchClaimId: "claim-interrupt-failure" },
+      graphBinding: {
+        workstreamId: "ws-1",
+        nodeId: "node-interrupt-failure",
+        launchClaimId: "claim-interrupt-failure",
+      },
+    });
+    const cancelRecord = registryStore.upsertSession({
+      id: "managed-cancel-absent-runner-row",
+      title: "Managed cancel absent runner row",
+      description: "",
+      cwd: normalizePath(root),
+      origin: { kind: "launched", launchClaimId: "claim-cancel-absent-runner" },
+      graphBinding: {
+        workstreamId: "ws-1",
+        nodeId: "node-cancel-absent-runner",
+        launchClaimId: "claim-cancel-absent-runner",
+      },
+    });
+    for (const record of [interruptRecord, cancelRecord]) {
+      registryStore.patchRuntimeMetadata(record.id, {
+        runtimeKind: "managed-sdk",
+        runtimeOwner: "streamliner-sdk",
+        lifecycleState: "running",
+        permissionProfile: "managed-autonomous",
+        launchClaimId: record.graphBinding?.launchClaimId ?? null,
+        launchNonce: "nonce-route",
+      });
+    }
+
+    const interruptResponse = await request(api.app)
+      .post(`/api/sessions/${interruptRecord.id}/managed/interrupt`)
+      .send({})
+      .expect(200);
+    expect(interruptResponse.body).toEqual(expect.objectContaining({
+      outcome: expect.objectContaining({
+        ok: false,
+        evidenceState: "failed",
+        message: "SDK abort failed.",
+      }),
+      session: expect.objectContaining({
+        runtime: expect.objectContaining({
+          lifecycleState: "failed",
+        }),
+      }),
+    }));
+
+    const noInterruptRunnerApi = createStreamlinerApiApp({
+      store: registryStore,
+      launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records-2.json"),
+      nodeLaunchDeps: {
+        managedSdkRunner: {
+          start: async (input) => ({
+            registryId: input.registryId,
+            sdkSessionId: null,
+            sdkWorkspacePath: null,
+            sdkStateRoot: null,
+          }),
+        },
+      },
+    });
+    activeApps.push(noInterruptRunnerApi);
+    const cancelResponse = await request(noInterruptRunnerApi.app)
+      .post(`/api/sessions/${cancelRecord.id}/managed/cancel`)
+      .send({})
+      .expect(200);
+    expect(cancelResponse.body).toEqual(expect.objectContaining({
+      outcome: {
+        ok: false,
+        evidenceState: "canceled",
+        message: "No managed SDK runner is attached to this API process.; recorded cancellation.",
+      },
+      session: expect.objectContaining({
+        runtime: expect.objectContaining({
+          lifecycleState: "canceled",
+        }),
+      }),
+    }));
+  });
+
   it("rejects managed runtime actions for missing, archived, and non-managed sessions", async () => {
     const root = createRootDir();
     const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });

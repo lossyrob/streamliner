@@ -177,4 +177,43 @@ describe("managed runtime metadata", () => {
     expect(isManagedRuntimeActive(first)).toBe(true);
     expect(isManagedRuntimeActive(second)).toBe(false);
   });
+
+  it("keeps terminal lifecycle states sticky while retaining late progress", () => {
+    const rows = [
+      { initial: "failed", late: "running", expected: "failed" },
+      { initial: "canceled", late: "interrupted", expected: "canceled" },
+      { initial: "completed", late: undefined, expected: "completed" },
+    ] as const;
+
+    for (const row of rows) {
+      const current = mergeSessionRegistryRuntimeMetadata(
+        null,
+        {
+          runtimeKind: "managed-sdk",
+          runtimeOwner: "streamliner-sdk",
+          lifecycleState: row.initial,
+          progressEvents: [{
+            type: "lifecycle",
+            message: `Initial ${row.initial}.`,
+          }],
+        },
+        new Date("2026-05-07T12:00:00.000Z"),
+      );
+      const next = mergeSessionRegistryRuntimeMetadata(
+        current,
+        {
+          lifecycleState: row.late,
+          progressEvents: [{
+            type: "lifecycle",
+            message: "Late lifecycle callback observed.",
+          }],
+        },
+        new Date("2026-05-07T12:01:00.000Z"),
+      );
+
+      expect(next.lifecycleState).toBe(row.expected);
+      expect(next.progressEvents.at(-1)?.message).toBe("Late lifecycle callback observed.");
+      expect(next.lastStateChangedAt).toBe(current.lastStateChangedAt);
+    }
+  });
 });
