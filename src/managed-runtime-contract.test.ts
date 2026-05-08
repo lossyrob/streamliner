@@ -5,7 +5,6 @@ import {
   MANAGED_RUNTIME_PROGRESS_EVENT_INPUT_CAP,
   MANAGED_RUNTIME_PROGRESS_SUMMARY_MAX_LENGTH,
   defaultManagedRuntimeActions,
-  isManagedRuntimeUnavailableResponse,
   managedLifecycleStatusClass,
   managedRuntimeProgressEvents,
   resolveManagedRuntimeActions,
@@ -122,14 +121,6 @@ describe("managed runtime contract", () => {
       actions: [],
     })).toEqual(actions);
     expect(actions.every((action) => action.available === false)).toBe(true);
-  });
-
-  it("requires an explicit unavailable code for managed runtime unavailable responses", () => {
-    expect(isManagedRuntimeUnavailableResponse(404, "managed_runtime_unavailable")).toBe(true);
-    expect(isManagedRuntimeUnavailableResponse(501, "managed_runtime_unavailable")).toBe(true);
-    expect(isManagedRuntimeUnavailableResponse(503, "managed_runtime_unavailable")).toBe(true);
-    expect(isManagedRuntimeUnavailableResponse(404, undefined)).toBe(false);
-    expect(isManagedRuntimeUnavailableResponse(404, "not_found")).toBe(false);
   });
 
   it("sanitizes managed runtime projection fields before API projection", () => {

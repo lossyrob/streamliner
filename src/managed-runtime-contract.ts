@@ -1,3 +1,9 @@
+import type {
+  SessionRegistryRuntimeEvidence,
+  SessionRegistryRuntimeMetadata,
+  SessionRegistryRuntimeProgressEvent,
+} from "./session-registry-schema";
+
 // Forward compatibility policy: unknown managed-runtime literals from stored
 // projections are invalid for this reader, so callers should drop the projection
 // to null and keep the owning session/launch record rather than throwing.
@@ -42,8 +48,6 @@ export type ManagedRuntimeLifecycleState =
 export const MANAGED_RUNTIME_PROGRESS_EVENT_LIMIT = 8;
 export const MANAGED_RUNTIME_PROGRESS_EVENT_INPUT_CAP = 1000;
 export const MANAGED_RUNTIME_PROGRESS_SUMMARY_MAX_LENGTH = 240;
-export const MANAGED_RUNTIME_UNAVAILABLE_CODE = "managed_runtime_unavailable" as const;
-export const MANAGED_RUNTIME_UNAVAILABLE_STATUSES = [404, 501, 503] as const;
 
 export const MANAGED_RUNTIME_PROGRESS_KINDS = [
   "lifecycle",
@@ -310,50 +314,118 @@ export function resolveManagedRuntimeActions(
   return actions.length > 0 ? actions : defaultManagedRuntimeActions();
 }
 
-export function isManagedRuntimeUnavailableResponse(
-  status: number,
-  code: string | undefined,
-): boolean {
-  return (
-    MANAGED_RUNTIME_UNAVAILABLE_STATUSES.includes(
-      status as (typeof MANAGED_RUNTIME_UNAVAILABLE_STATUSES)[number],
-    ) &&
-    code === MANAGED_RUNTIME_UNAVAILABLE_CODE
-  );
+const RUNTIME_PROGRESS_KINDS_BY_EVENT_TYPE: Partial<
+  Record<SessionRegistryRuntimeProgressEvent["type"], ManagedRuntimeProgressKind>
+> = {
+  lifecycle: "lifecycle",
+  assistant_status: "assistant-status",
+  tool_started: "tool",
+  tool_completed: "tool",
+  permission_decision: "permission",
+  mcp_status: "mcp",
+  skill_status: "skill",
+  evidence: "summary",
+  terminal_takeover: "summary",
+  error: "summary",
+  usage: "usage",
+};
+
+function progressStatusForRuntimeEvent(
+  event: SessionRegistryRuntimeProgressEvent,
+): ManagedRuntimeProgressEvent["status"] {
+  if (event.type === "error") {
+    return "error";
+  }
+  if (event.type === "tool_completed" || event.type === "evidence") {
+    return "success";
+  }
+  if (event.type === "permission_decision") {
+    return "warning";
+  }
+  return "info";
 }
 
-export class ManagedRuntimeUnavailableError extends Error {
-  readonly kind = MANAGED_RUNTIME_UNAVAILABLE_CODE;
-  readonly source: "backend" | "transport";
-  readonly status?: number;
-  readonly code?: string;
-
-  constructor(
-    source: "backend" | "transport",
-    options: { cause?: unknown; status?: number; code?: string } = {},
-  ) {
-    super(
-      "Background sessions are not available on this build.",
-      options.cause !== undefined ? { cause: options.cause } : undefined,
-    );
-    this.name = "ManagedRuntimeUnavailableError";
-    this.source = source;
-    this.status = options.status;
-    this.code = options.code;
+function evidenceLinkKind(
+  evidence: SessionRegistryRuntimeEvidence,
+): ManagedRuntimeLinkKind {
+  switch (evidence.kind) {
+    case "pr_ready":
+      return "pull-request";
+    case "review_ready":
+      return "review";
+    case "cleanup_ready":
+    case "cleaned_up":
+      return "cleanup";
+    case "terminal_takeover":
+    case "completed":
+      return "completion";
+    default: {
+      const _exhaustive: never = evidence.kind;
+      return _exhaustive;
+    }
   }
 }
 
-export function isManagedRuntimeUnavailableError(
-  error: unknown,
-): error is ManagedRuntimeUnavailableError {
-  return (
-    error instanceof ManagedRuntimeUnavailableError ||
-    (
-      typeof error === "object" &&
-      error !== null &&
-      (error as { kind?: unknown }).kind === MANAGED_RUNTIME_UNAVAILABLE_CODE
-    )
-  );
+function latestRuntimeSummary(
+  runtime: SessionRegistryRuntimeMetadata,
+): string | null {
+  const evidenceSummary = [...runtime.evidence]
+    .reverse()
+    .find((evidence) => evidence.summary?.trim())?.summary;
+  if (evidenceSummary) {
+    return evidenceSummary;
+  }
+  const progressSummary = [...runtime.progressEvents]
+    .reverse()
+    .find((event) => event.message.trim())?.message;
+  return progressSummary ?? null;
+}
+
+export function managedRuntimeProjectionFromMetadata(
+  runtime: SessionRegistryRuntimeMetadata | null | undefined,
+): ManagedRuntimeProjection | null {
+  if (
+    !runtime ||
+    runtime.runtimeKind !== "managed-sdk" ||
+    runtime.runtimeOwner !== "streamliner-sdk" ||
+    !runtime.lifecycleState
+  ) {
+    return null;
+  }
+
+  const summary = latestRuntimeSummary(runtime);
+  const progress: ManagedRuntimeProgressEvent[] = runtime.progressEvents.map((event) => ({
+    timestamp: event.timestamp,
+    phase: event.type,
+    summary: progressEventSummary(event.message),
+    kind: RUNTIME_PROGRESS_KINDS_BY_EVENT_TYPE[event.type] ?? "summary",
+    status: progressStatusForRuntimeEvent(event),
+  }));
+  const links: ManagedRuntimeLink[] = runtime.evidence.map((evidence) => ({
+    kind: evidenceLinkKind(evidence),
+    label: formatManagedRuntimeLabel(evidence.kind),
+    url: evidence.url,
+    summary: evidence.summary,
+  }));
+
+  return {
+    runtimeKind: "managed-sdk",
+    runtimeOwner: "streamliner-sdk",
+    permissionProfile: "managed-autonomous",
+    lifecycleState: runtime.lifecycleState,
+    lifecycleUpdatedAt: runtime.lastStateChangedAt ?? runtime.startedAt,
+    summary,
+    blockerSummary: runtime.lifecycleState === "waiting_for_builder" ? summary : null,
+    errorSummary: runtime.lifecycleState === "failed" ? summary : null,
+    sdk: {
+      sdkSessionId: runtime.sdkSessionId,
+      sdkWorkspacePath: runtime.sdkWorkspacePath,
+      sdkStateRoot: runtime.sdkStateRoot,
+    },
+    progress,
+    links,
+    actions: defaultManagedRuntimeActions(),
+  };
 }
 
 export function sanitizeManagedRuntimeProjection(

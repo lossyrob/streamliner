@@ -1,5 +1,3 @@
-import type { ManagedRuntimeProjection } from "./managed-runtime-contract";
-
 export const SESSION_REGISTRY_SCHEMA_VERSION = 1 as const;
 
 export const SESSION_REGISTRY_LIFECYCLE_STATUSES = [
@@ -183,6 +181,75 @@ export const SESSION_REGISTRY_TRUSTED_EXECUTION_KINDS = [
 export type SessionRegistryTrustedExecutionKind =
   (typeof SESSION_REGISTRY_TRUSTED_EXECUTION_KINDS)[number];
 
+export const SESSION_REGISTRY_RUNTIME_KINDS = [
+  "terminal-cli",
+  "managed-sdk",
+] as const;
+export type SessionRegistryRuntimeKind =
+  (typeof SESSION_REGISTRY_RUNTIME_KINDS)[number];
+
+export const SESSION_REGISTRY_RUNTIME_OWNERS = [
+  "builder-terminal",
+  "streamliner-sdk",
+] as const;
+export type SessionRegistryRuntimeOwner =
+  (typeof SESSION_REGISTRY_RUNTIME_OWNERS)[number];
+
+export const SESSION_REGISTRY_RUNTIME_PERMISSION_PROFILES = [
+  "manual",
+  "managed-autonomous",
+] as const;
+export type SessionRegistryRuntimePermissionProfile =
+  (typeof SESSION_REGISTRY_RUNTIME_PERMISSION_PROFILES)[number];
+
+export const SESSION_REGISTRY_MANAGED_LIFECYCLE_STATES = [
+  "preparing",
+  "starting",
+  "running",
+  "idle",
+  "waiting_for_builder",
+  "interrupt_requested",
+  "interrupted",
+  "canceled",
+  "failed",
+  "pr_ready",
+  "review_ready",
+  "completed",
+  "cleanup_ready",
+  "cleaning_up",
+  "cleaned_up",
+  "terminal_takeover",
+] as const;
+export type SessionRegistryManagedLifecycleState =
+  (typeof SESSION_REGISTRY_MANAGED_LIFECYCLE_STATES)[number];
+
+export const SESSION_REGISTRY_RUNTIME_PROGRESS_EVENT_TYPES = [
+  "lifecycle",
+  "assistant_status",
+  "tool_started",
+  "tool_completed",
+  "permission_decision",
+  "mcp_status",
+  "skill_status",
+  "evidence",
+  "terminal_takeover",
+  "error",
+  "usage",
+] as const;
+export type SessionRegistryRuntimeProgressEventType =
+  (typeof SESSION_REGISTRY_RUNTIME_PROGRESS_EVENT_TYPES)[number];
+
+export const SESSION_REGISTRY_RUNTIME_EVIDENCE_KINDS = [
+  "pr_ready",
+  "review_ready",
+  "completed",
+  "cleanup_ready",
+  "cleaned_up",
+  "terminal_takeover",
+] as const;
+export type SessionRegistryRuntimeEvidenceKind =
+  (typeof SESSION_REGISTRY_RUNTIME_EVIDENCE_KINDS)[number];
+
 export const SESSION_REGISTRY_GITHUB_REF_TYPES = [
   "issue",
   "pr",
@@ -311,6 +378,43 @@ export interface SessionRegistryPawLaunch {
   streamlinerContextPath: string | null;
 }
 
+export interface SessionRegistryRuntimeProgressEvent {
+  id: string;
+  sequence: number;
+  type: SessionRegistryRuntimeProgressEventType;
+  message: string;
+  timestamp: string;
+  data?: Record<string, unknown>;
+}
+
+export interface SessionRegistryRuntimeEvidence {
+  id: string;
+  kind: SessionRegistryRuntimeEvidenceKind;
+  source: string;
+  detectedAt: string;
+  url: string | null;
+  repo: string | null;
+  number: number | null;
+  sha: string | null;
+  summary: string | null;
+}
+
+export interface SessionRegistryRuntimeMetadata {
+  runtimeKind: SessionRegistryRuntimeKind;
+  runtimeOwner: SessionRegistryRuntimeOwner;
+  lifecycleState: SessionRegistryManagedLifecycleState | null;
+  permissionProfile: SessionRegistryRuntimePermissionProfile | null;
+  launchClaimId: string | null;
+  launchNonce: string | null;
+  sdkSessionId: string | null;
+  sdkWorkspacePath: string | null;
+  sdkStateRoot: string | null;
+  startedAt: string | null;
+  lastStateChangedAt: string | null;
+  progressEvents: SessionRegistryRuntimeProgressEvent[];
+  evidence: SessionRegistryRuntimeEvidence[];
+}
+
 export interface ManualSessionRegistryOrigin {
   kind: "manual";
 }
@@ -350,7 +454,7 @@ export interface SessionRegistryRecord {
   origin: SessionRegistryOrigin;
   graphBinding: SessionRegistryGraphBinding | null;
   pawLaunch: SessionRegistryPawLaunch | null;
-  managedRuntime?: ManagedRuntimeProjection | null;
+  runtime?: SessionRegistryRuntimeMetadata | null;
   aiSummary: string | null;
   aiSummaryModel: string | null;
   aiSummaryUpdatedAt: string | null;
@@ -400,7 +504,7 @@ export interface SessionRegistryIndexEntry {
   originKind: SessionRegistryOriginKind;
   graphBinding: SessionRegistryGraphBinding | null;
   pawLaunch: SessionRegistryPawLaunch | null;
-  managedRuntime?: ManagedRuntimeProjection | null;
+  runtime?: SessionRegistryRuntimeMetadata | null;
   aiSummary: string | null;
   aiSummaryModel: string | null;
   aiSummaryUpdatedAt: string | null;

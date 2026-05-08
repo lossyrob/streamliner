@@ -118,6 +118,27 @@ function buildSession(
   };
 }
 
+function buildManagedRuntime(
+  overrides: Partial<NonNullable<SessionRegistryListItem["runtime"]>> = {},
+): NonNullable<SessionRegistryListItem["runtime"]> {
+  return {
+    runtimeKind: "managed-sdk",
+    runtimeOwner: "streamliner-sdk",
+    lifecycleState: "running",
+    permissionProfile: "managed-autonomous",
+    launchClaimId: "claim-managed",
+    launchNonce: "nonce-managed",
+    sdkSessionId: null,
+    sdkWorkspacePath: null,
+    sdkStateRoot: null,
+    startedAt: TEST_TIMESTAMP,
+    lastStateChangedAt: TEST_TIMESTAMP,
+    progressEvents: [],
+    evidence: [],
+    ...overrides,
+  };
+}
+
 function buildSessionSummary(
   nodeId: string,
   sessions: readonly SessionRegistryListItem[],
@@ -623,21 +644,27 @@ describe("buildWorkstreamRuntimeOverlay", () => {
         nodeId: "managed-node",
         launchClaimId: "claim-managed",
       },
-      managedRuntime: {
-        runtimeKind: "managed-sdk",
-        runtimeOwner: "streamliner-sdk",
-        permissionProfile: "managed-autonomous",
+      runtime: buildManagedRuntime({
         lifecycleState: "completed",
-        lifecycleUpdatedAt: TEST_TIMESTAMP,
-        summary: "Managed worker finished and opened a PR.",
-        progress: Array.from({ length: 12 }, (_, index) => ({
+        evidence: [{
+          id: "evidence-completed",
+          kind: "completed",
+          source: "test",
+          detectedAt: TEST_TIMESTAMP,
+          url: null,
+          repo: null,
+          number: null,
+          sha: null,
+          summary: "Managed worker finished and opened a PR.",
+        }],
+        progressEvents: Array.from({ length: 12 }, (_, index) => ({
+          id: `progress-${index}`,
+          sequence: index,
           timestamp: `2026-05-05T12:${String(index).padStart(2, "0")}:00.000Z`,
-          phase: "implementation",
-          summary: `Safe progress ${index}`,
-          kind: "summary",
-          status: "info",
+          type: "lifecycle",
+          message: `Safe progress ${index}`,
         })),
-      },
+      }),
     });
 
     const overlay = buildOverlay([entry], {
@@ -654,7 +681,7 @@ describe("buildWorkstreamRuntimeOverlay", () => {
     expect(node?.managedRuntime?.progress.at(-1)?.summary).toBe("Safe progress 11");
   });
 
-  it("uses the latest managed runtime projection between session and launch record", () => {
+  it("uses canonical session runtime metadata for managed lifecycle state", () => {
     const entry = buildDerivedNode({
       node: { id: "managed-latest-node", status: "ready" },
       operationalStatus: "ready",
@@ -665,23 +692,19 @@ describe("buildWorkstreamRuntimeOverlay", () => {
         nodeId: "managed-latest-node",
         launchClaimId: "claim-managed",
       },
-      managedRuntime: {
-        runtimeKind: "managed-sdk",
-        runtimeOwner: "streamliner-sdk",
-        permissionProfile: "managed-autonomous",
-        lifecycleState: "running",
-        lifecycleUpdatedAt: "2026-05-05T12:00:00.000Z",
-      },
+      runtime: buildManagedRuntime({
+        lifecycleState: "failed",
+        lastStateChangedAt: "2026-05-05T12:01:00.000Z",
+        progressEvents: [{
+          id: "progress-failed",
+          sequence: 1,
+          type: "error",
+          message: "Managed worker failed after the session poll.",
+          timestamp: "2026-05-05T12:01:00.000Z",
+        }],
+      }),
     });
     const record = buildLaunchRecord("managed-latest-node", null);
-    record.managedRuntime = {
-      runtimeKind: "managed-sdk",
-      runtimeOwner: "streamliner-sdk",
-      permissionProfile: "managed-autonomous",
-      lifecycleState: "failed",
-      lifecycleUpdatedAt: "2026-05-05T12:01:00.000Z",
-      errorSummary: "Managed worker failed after the session poll.",
-    };
 
     const overlay = buildOverlay([entry], {
       sessions: new Map([[entry.node.id, buildSessionSummary(entry.node.id, [session])]]),
@@ -689,7 +712,7 @@ describe("buildWorkstreamRuntimeOverlay", () => {
     });
     const node = overlay.nodesById.get("managed-latest-node");
 
-    expect(node?.managedRuntime?.source).toBe("launch-record");
+    expect(node?.managedRuntime?.source).toBe("session");
     expect(node?.managedRuntime?.lifecycleState).toBe("failed");
     expect(node?.degradationReasons.map((reason) => reason.code)).toContain(
       "managed-runtime-failed",
@@ -708,13 +731,9 @@ describe("buildWorkstreamRuntimeOverlay", () => {
         launchClaimId: "claim-managed",
       },
       activityStatus: "waiting_for_input",
-      managedRuntime: {
-        runtimeKind: "managed-sdk",
-        runtimeOwner: "streamliner-sdk",
-        permissionProfile: "managed-autonomous",
+      runtime: buildManagedRuntime({
         lifecycleState: "terminal_takeover",
-        lifecycleUpdatedAt: TEST_TIMESTAMP,
-      },
+      }),
     });
 
     const overlay = buildOverlay([entry], {
@@ -734,18 +753,26 @@ describe("buildWorkstreamRuntimeOverlay", () => {
       node: { id: "managed-failed-node", status: "ready" },
       operationalStatus: "ready",
     });
-    const record = buildLaunchRecord("managed-failed-node", null);
-    record.managedRuntime = {
-      runtimeKind: "managed-sdk",
-      runtimeOwner: "streamliner-sdk",
-      permissionProfile: "managed-autonomous",
-      lifecycleState: "failed",
-      lifecycleUpdatedAt: TEST_TIMESTAMP,
-      errorSummary: "Managed worker exited with review errors.",
-    };
+    const session = buildSession({
+      graphBinding: {
+        workstreamId: "runtime-overlay-ui",
+        nodeId: "managed-failed-node",
+        launchClaimId: "claim-managed",
+      },
+      runtime: buildManagedRuntime({
+        lifecycleState: "failed",
+        progressEvents: [{
+          id: "progress-failed",
+          sequence: 1,
+          type: "error",
+          message: "Managed worker exited with review errors.",
+          timestamp: TEST_TIMESTAMP,
+        }],
+      }),
+    });
 
     const overlay = buildOverlay([entry], {
-      launchRecords: new Map([[entry.node.id, record]]),
+      sessions: new Map([[entry.node.id, buildSessionSummary(entry.node.id, [session])]]),
     });
     const node = overlay.nodesById.get("managed-failed-node");
 
@@ -765,17 +792,20 @@ describe("buildWorkstreamRuntimeOverlay", () => {
       node: { id: "managed-takeover-node", status: "ready" },
       operationalStatus: "ready",
     });
-    const record = buildLaunchRecord("managed-takeover-node", null);
-    record.managedRuntime = {
-      runtimeKind: "managed-sdk",
-      runtimeOwner: "streamliner-sdk",
-      permissionProfile: "managed-autonomous",
-      lifecycleState: "terminal_takeover",
-      lifecycleUpdatedAt: TEST_TIMESTAMP,
-    };
+    const session = buildSession({
+      graphBinding: {
+        workstreamId: "runtime-overlay-ui",
+        nodeId: "managed-takeover-node",
+        launchClaimId: "claim-managed",
+      },
+      activityStatus: "exited",
+      runtime: buildManagedRuntime({
+        lifecycleState: "terminal_takeover",
+      }),
+    });
 
     const overlay = buildOverlay([entry], {
-      launchRecords: new Map([[entry.node.id, record]]),
+      sessions: new Map([[entry.node.id, buildSessionSummary(entry.node.id, [session])]]),
     });
     const node = overlay.nodesById.get("managed-takeover-node");
 
@@ -804,18 +834,26 @@ describe("buildWorkstreamRuntimeOverlay", () => {
       node: { id: "managed-waiting-node", status: "ready" },
       operationalStatus: "ready",
     });
-    const record = buildLaunchRecord("managed-waiting-node", null);
-    record.managedRuntime = {
-      runtimeKind: "managed-sdk",
-      runtimeOwner: "streamliner-sdk",
-      permissionProfile: "managed-autonomous",
-      lifecycleState: "waiting_for_builder",
-      lifecycleUpdatedAt: TEST_TIMESTAMP,
-      blockerSummary: "Needs builder confirmation for PR cleanup.",
-    };
+    const session = buildSession({
+      graphBinding: {
+        workstreamId: "runtime-overlay-ui",
+        nodeId: "managed-waiting-node",
+        launchClaimId: "claim-managed",
+      },
+      runtime: buildManagedRuntime({
+        lifecycleState: "waiting_for_builder",
+        progressEvents: [{
+          id: "progress-waiting",
+          sequence: 1,
+          type: "permission_decision",
+          message: "Needs builder confirmation for PR cleanup.",
+          timestamp: TEST_TIMESTAMP,
+        }],
+      }),
+    });
 
     const overlay = buildOverlay([entry], {
-      launchRecords: new Map([[entry.node.id, record]]),
+      sessions: new Map([[entry.node.id, buildSessionSummary(entry.node.id, [session])]]),
     });
     const node = overlay.nodesById.get("managed-waiting-node");
 

@@ -13,6 +13,8 @@ import type { WorkstreamRuntimeKind } from "../managed-runtime-contract";
 import { humanizeLaunchClaim } from "./launch-claim-display";
 import {
   mergePromptProfiles,
+  responseErrorMessage,
+  savePromptProfile,
   type PawPromptProfile,
 } from "./paw-prompt-profiles";
 import { TerminalColorQuickPicker } from "./SessionColorPicker";
@@ -37,6 +39,7 @@ export interface PawLaunchProgressEvent {
 interface PawLaunchDialogProps {
   nodeTitle: string;
   defaults: PawLaunchDialogDefaults;
+  defaultPromptProfileId?: string | null;
   promptProfiles?: PawPromptProfile[];
   promptProfilesLoading?: boolean;
   promptProfilesError?: string | null;
@@ -95,7 +98,7 @@ const RUNTIME_OPTIONS: Array<{
     value: "managed-sdk",
     label: "Background Session",
     description: "Run this node as an autonomous Streamliner session without opening a terminal.",
-    note: "Requires background session support; no per-tool approval UI.",
+    note: "Runs through Streamliner's managed runtime; no per-tool approval UI.",
   },
 ];
 
@@ -104,10 +107,6 @@ function parseCliArgs(value: string): string[] {
     .split(/\s+/g)
     .map((part) => part.trim())
     .filter(Boolean);
-}
-
-function responseErrorMessage(response: Response, fallback: string): string {
-  return `${fallback} (${response.status})`;
 }
 
 function progressLabel(type: string): string {
@@ -171,34 +170,6 @@ function PawLaunchDebugPaths({ paths }: { paths: DebugPath[] }) {
 
 function profileNameKey(value: string): string {
   return value.toLocaleLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-}
-
-async function savePromptProfile(input: {
-  id?: string;
-  name: string;
-  instructions: string;
-}): Promise<PawPromptProfile> {
-  const response = await fetch(
-    input.id
-      ? `/api/paw-launch-prompt-profiles/${encodeURIComponent(input.id)}`
-      : "/api/paw-launch-prompt-profiles",
-    {
-      method: input.id ? "PUT" : "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: input.name,
-        instructions: input.instructions,
-      }),
-    },
-  );
-  if (!response.ok) {
-    throw new Error(responseErrorMessage(response, "Could not save prompt profile."));
-  }
-  const body = await response.json() as { profile?: PawPromptProfile };
-  if (!body.profile) {
-    throw new Error("Prompt profile response was missing the saved profile.");
-  }
-  return body.profile;
 }
 
 async function loadWorkflowContext(path: string): Promise<WorkflowContextDocument> {
@@ -311,6 +282,7 @@ function SelectField<T extends string>({
 export function PawLaunchDialog({
   nodeTitle,
   defaults,
+  defaultPromptProfileId = null,
   promptProfiles = [],
   promptProfilesLoading = false,
   promptProfilesError = null,
@@ -359,6 +331,8 @@ export function PawLaunchDialog({
   const [workflowContextStatus, setWorkflowContextStatus] = useState<string | null>(null);
   const [workflowContextError, setWorkflowContextError] = useState<string | null>(null);
   const [kickoffPromptText, setKickoffPromptText] = useState("");
+  const defaultProfileAppliedRef = useRef(false);
+  const profileSelectionTouchedRef = useRef(false);
   const terminalLaunchClaimDisplay = terminalLaunchResult
     ? humanizeLaunchClaim(terminalLaunchResult.launchClaim)
     : null;
@@ -384,6 +358,24 @@ export function PawLaunchDialog({
   useEffect(() => {
     setProfiles((current) => mergePromptProfiles(current, promptProfiles));
   }, [promptProfiles]);
+
+  useEffect(() => {
+    if (
+      defaultProfileAppliedRef.current ||
+      profileSelectionTouchedRef.current ||
+      !defaultPromptProfileId
+    ) {
+      return;
+    }
+    const defaultProfile = profiles.find((profile) => profile.id === defaultPromptProfileId);
+    if (!defaultProfile) {
+      return;
+    }
+    defaultProfileAppliedRef.current = true;
+    setSelectedProfileId(defaultProfile.id);
+    setProfileName(defaultProfile.name);
+    setWorkflowInstructions(defaultProfile.instructions);
+  }, [defaultPromptProfileId, profiles]);
 
   useEffect(() => {
     if (!handoff) {
@@ -459,6 +451,7 @@ export function PawLaunchDialog({
     : "Choose a saved profile to update it, or enter a save name for a new profile.";
 
   const applyProfile = (profileId: string) => {
+    profileSelectionTouchedRef.current = true;
     setSelectedProfileId(profileId);
     setProfileStatus(null);
     setProfileError(null);
@@ -467,6 +460,16 @@ export function PawLaunchDialog({
       setWorkflowInstructions(profile.instructions);
       setProfileName(profile.name);
     }
+  };
+
+  const handleProfileNameChange = (value: string) => {
+    profileSelectionTouchedRef.current = true;
+    setProfileName(value);
+  };
+
+  const handleWorkflowInstructionsChange = (value: string) => {
+    profileSelectionTouchedRef.current = true;
+    setWorkflowInstructions(value);
   };
 
   const handleSaveProfile = async () => {
@@ -524,7 +527,7 @@ export function PawLaunchDialog({
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (instructionError || actionDisabledReason) {
+    if (preparing || launching || instructionError || actionDisabledReason) {
       return;
     }
     if (submittingRef.current) {
@@ -756,7 +759,7 @@ export function PawLaunchDialog({
                 label="Save name"
                 ariaLabel="Save name"
                 value={profileName}
-                onChange={setProfileName}
+                onChange={handleProfileNameChange}
                 placeholder="Name this reusable launch text"
               />
               <div className="sl-paw-profile-actions">
@@ -780,7 +783,7 @@ export function PawLaunchDialog({
               label="Launch instructions"
               ariaLabel="Launch instructions"
               value={workflowInstructions}
-              onChange={setWorkflowInstructions}
+              onChange={handleWorkflowInstructionsChange}
               rows={8}
               placeholder="Example: Use paw-lite, final-pr-only, no intermediate pauses unless blocked..."
             />
@@ -811,11 +814,11 @@ export function PawLaunchDialog({
                   type="text"
                   value={cwd}
                   aria-label="Working directory"
-                  placeholder={defaults.inferredCwd || "Use backend-inferred graph repo root"}
+                  placeholder={defaults.inferredCwd || "Resolve from selected repo config"}
                   onChange={(event) => setCwd(event.target.value)}
                 />
                 <p className="sl-field-note">
-                  Defaults to the selected graph repo root. Changes are saved for{" "}
+                  Leave blank to resolve from the selected node's repo config. Changes are saved for{" "}
                   {defaults.cwdPreferenceKey ?? "this repo"}.
                 </p>
               </label>
@@ -899,7 +902,7 @@ export function PawLaunchDialog({
             )}
             <div>
               <span className="sl-section-label">Working directory</span>
-              <p>{cwd.trim() || defaults.inferredCwd || "Backend inferred"}</p>
+              <p>{cwd.trim() || defaults.inferredCwd || "Backend resolves selected repo"}</p>
             </div>
             <div>
               <span className="sl-section-label">Runtime</span>

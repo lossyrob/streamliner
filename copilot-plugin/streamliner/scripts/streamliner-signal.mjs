@@ -13,6 +13,7 @@ const HOOK_EVENT_MAP = new Map([
 const VALID_START_SOURCES = new Set(["new", "resume", "startup"]);
 const VALID_END_REASONS = new Set(["complete", "error", "abort", "timeout", "user_exit"]);
 const COPILOT_SDK_SESSION_FS_MARKER = "/.streamliner/state/copilot-sdk-session-fs";
+const COPILOT_CLI_SUBAGENT_SESSION_ID_PATTERN = /^call_[A-Za-z0-9_-]{12,}$/;
 const DEFAULT_API_HOST = "127.0.0.1";
 const DEFAULT_API_PORT = 4319;
 
@@ -98,6 +99,10 @@ function isCopilotSdkSessionFsPath(value) {
   return nextCharacter === "" || nextCharacter === "/";
 }
 
+function isCopilotCliSubagentSessionId(value) {
+  return typeof value === "string" && COPILOT_CLI_SUBAGENT_SESSION_ID_PATTERN.test(value);
+}
+
 function buildSignal(hookName, payload) {
   const event = HOOK_EVENT_MAP.get(hookName);
   if (!event) {
@@ -115,7 +120,7 @@ function buildSignal(hookName, payload) {
   if (!sessionId || !cwd) {
     return null;
   }
-  if (isCopilotSdkSessionFsPath(cwd)) {
+  if (isCopilotSdkSessionFsPath(cwd) || isCopilotCliSubagentSessionId(sessionId)) {
     return null;
   }
 

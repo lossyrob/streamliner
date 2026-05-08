@@ -7,14 +7,24 @@ import {
 import type { LaunchClaimStore } from "../../launch-claim-contract";
 import { bindClaimViaTrustedSignal } from "../../session-registry/launch-claims";
 import { relaunchSession, type RelaunchDeps } from "../../session-registry/relaunch";
-import { SessionRegistryFileStore } from "../../session-registry/file-store";
+import {
+  SessionRegistryArchivedError,
+  SessionRegistryFileStore,
+  SessionRegistryNotFoundError,
+} from "../../session-registry/file-store";
 import { stopSession } from "../../session-registry/stop";
 import type {
+  SessionRegistryRecord,
+  SessionRegistryRuntimeEvidenceKind,
+} from "../../session-registry-schema";
+import type {
+  SessionRegistryRuntimeEvidenceInput,
   SessionRegistryStore,
   SessionRegistryTrustedSignalInput,
 } from "../../session-registry-contract";
 import { isLoopbackAddress } from "../config";
 import { getApiLogger } from "../logger";
+import type { ManagedSdkInterruptResult, ManagedSdkRunner } from "../managed-sdk-runner";
 import { SessionRegistryEventStream } from "../session-events";
 
 function hasNonLoopbackForwardedFor(value: string | string[] | undefined): boolean {
@@ -36,6 +46,7 @@ export function createSessionsRouter(options: {
   store: SessionRegistryStore;
   eventStream: SessionRegistryEventStream;
   relaunchDeps?: Partial<RelaunchDeps>;
+  managedSdkRunner?: ManagedSdkRunner;
   /**
    * Optional launch-claim store. When provided, the trusted-signal
    * intake (POST /api/sessions/signals) attempts Tier 2 launch-claim
@@ -48,6 +59,7 @@ export function createSessionsRouter(options: {
   const signalsLogger = getApiLogger().withScope("signals");
   const relaunchLogger = getApiLogger().withScope("relaunch");
   const stopLogger = getApiLogger().withScope("stop");
+  const managedLogger = getApiLogger().withScope("managed-runtime");
   const claimBindingLogger = options.launchClaimStore
     ? getApiLogger().withScope("launch-claim.binding")
     : null;
@@ -204,6 +216,209 @@ export function createSessionsRouter(options: {
     }
   });
 
+  router.post("/:id/managed/interrupt", async (req, res) => {
+    const sessionId = req.params.id;
+    if (isNonLoopbackRequest(req)) {
+      managedLogger.warn("rejected interrupt: non-loopback", { sessionId });
+      res.status(403).json({ error: "Managed runtime actions must originate from loopback." });
+      return;
+    }
+    if (!requestHasJsonContent(req)) {
+      managedLogger.warn("rejected interrupt: bad content-type", { sessionId });
+      res.status(415).json({ error: "Content-Type must be application/json." });
+      return;
+    }
+    const target = managedRuntimeTarget(options.store, sessionId);
+    if (!target.ok) {
+      managedLogger.warn("rejected interrupt: invalid target", {
+        sessionId,
+        statusCode: target.statusCode,
+      });
+      res.status(target.statusCode).json({ error: target.message });
+      return;
+    }
+    const body = isJsonObject(req.body) ? req.body : {};
+    const reason = typeof body.reason === "string" ? body.reason : undefined;
+    let requested: SessionRegistryRecord;
+    try {
+      requested = target.store.patchRuntimeMetadata(sessionId, {
+        lifecycleState: "interrupt_requested",
+        progressEvents: [{
+          type: "lifecycle",
+          message: "Managed SDK interruption requested.",
+          data: reason ? { reason } : undefined,
+        }],
+      });
+    } catch (error: unknown) {
+      const failure = managedRuntimeErrorResponse(error);
+      managedLogger.warn("interrupt request failed", {
+        sessionId,
+        statusCode: failure.statusCode,
+        err: errorLogDetails(error),
+      });
+      res.status(failure.statusCode).json({ error: failure.message });
+      return;
+    }
+    const outcome = await interruptManagedSdkRunner(options.managedSdkRunner, sessionId, reason);
+    try {
+      const finalRecord = target.store.patchRuntimeMetadata(sessionId, {
+        lifecycleState: outcome.evidenceState,
+        progressEvents: [{
+          type: outcome.ok ? "lifecycle" : "error",
+          message: outcome.message,
+        }],
+      });
+      managedLogger.info("interrupt", {
+        sessionId,
+        requestedState: requested.runtime?.lifecycleState,
+        outcome: outcome.evidenceState,
+        ok: outcome.ok,
+      });
+      res.json({ outcome, session: finalRecord });
+    } catch (error: unknown) {
+      const failure = managedRuntimeErrorResponse(error);
+      managedLogger.warn("interrupt settle failed", {
+        sessionId,
+        statusCode: failure.statusCode,
+        err: errorLogDetails(error),
+      });
+      res.status(failure.statusCode).json({ error: failure.message });
+    }
+  });
+
+  router.post("/:id/managed/cancel", async (req, res) => {
+    const sessionId = req.params.id;
+    if (isNonLoopbackRequest(req)) {
+      managedLogger.warn("rejected cancel: non-loopback", { sessionId });
+      res.status(403).json({ error: "Managed runtime actions must originate from loopback." });
+      return;
+    }
+    if (!requestHasJsonContent(req)) {
+      managedLogger.warn("rejected cancel: bad content-type", { sessionId });
+      res.status(415).json({ error: "Content-Type must be application/json." });
+      return;
+    }
+    const target = managedRuntimeTarget(options.store, sessionId);
+    if (!target.ok) {
+      managedLogger.warn("rejected cancel: invalid target", {
+        sessionId,
+        statusCode: target.statusCode,
+      });
+      res.status(target.statusCode).json({ error: target.message });
+      return;
+    }
+    let requested: SessionRegistryRecord;
+    try {
+      requested = target.store.patchRuntimeMetadata(sessionId, {
+        lifecycleState: "interrupt_requested",
+        progressEvents: [{
+          type: "lifecycle",
+          message: "Managed SDK cancellation requested.",
+        }],
+      });
+    } catch (error: unknown) {
+      const failure = managedRuntimeErrorResponse(error);
+      managedLogger.warn("cancel request failed", {
+        sessionId,
+        statusCode: failure.statusCode,
+        err: errorLogDetails(error),
+      });
+      res.status(failure.statusCode).json({ error: failure.message });
+      return;
+    }
+    const hasRunner = Boolean(options.managedSdkRunner?.interrupt);
+    const outcome = await interruptManagedSdkRunner(
+      options.managedSdkRunner,
+      sessionId,
+      "Managed SDK run canceled by builder action.",
+    );
+    const finalState = outcome.ok || !hasRunner ? "canceled" : "failed";
+    try {
+      const record = target.store.patchRuntimeMetadata(sessionId, {
+        lifecycleState: finalState,
+        progressEvents: [{
+          type: finalState === "canceled" ? "lifecycle" : "error",
+          message: finalState === "canceled"
+            ? "Managed SDK run canceled by builder action."
+            : outcome.message,
+        }],
+      });
+      const responseOutcome = finalState === "canceled"
+        ? {
+            ...outcome,
+            evidenceState: "canceled" as const,
+            message: outcome.ok
+              ? "Managed SDK run canceled by builder action."
+              : `${outcome.message}; recorded cancellation.`,
+          }
+        : outcome;
+      managedLogger.info("cancel", {
+        sessionId,
+        requestedState: requested.runtime?.lifecycleState,
+        outcome: record.runtime?.lifecycleState,
+        ok: outcome.ok,
+      });
+      res.json({ outcome: responseOutcome, session: record });
+    } catch (error: unknown) {
+      const failure = managedRuntimeErrorResponse(error);
+      managedLogger.warn("cancel settle failed", {
+        sessionId,
+        statusCode: failure.statusCode,
+        err: errorLogDetails(error),
+      });
+      res.status(failure.statusCode).json({ error: failure.message });
+    }
+  });
+
+  router.post("/:id/managed/evidence", (req, res) => {
+    const sessionId = req.params.id;
+    if (isNonLoopbackRequest(req)) {
+      managedLogger.warn("rejected evidence: non-loopback", { sessionId });
+      res.status(403).json({ error: "Managed runtime actions must originate from loopback." });
+      return;
+    }
+    if (!requestHasJsonContent(req)) {
+      managedLogger.warn("rejected evidence: bad content-type", { sessionId });
+      res.status(415).json({ error: "Content-Type must be application/json." });
+      return;
+    }
+    const target = managedRuntimeTarget(options.store, sessionId);
+    if (!target.ok) {
+      managedLogger.warn("rejected evidence: invalid target", {
+        sessionId,
+        statusCode: target.statusCode,
+      });
+      res.status(target.statusCode).json({ error: target.message });
+      return;
+    }
+    let evidence: SessionRegistryRuntimeEvidenceInput;
+    try {
+      evidence = parseRuntimeEvidenceInput(req.body);
+    } catch (error: unknown) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+      return;
+    }
+    try {
+      const record = target.store.patchRuntimeMetadata(sessionId, {
+        lifecycleState: evidence.kind,
+        evidence: [evidence],
+        progressEvents: [{
+          type: evidence.kind === "terminal_takeover" ? "terminal_takeover" : "evidence",
+          message: `Managed runtime evidence recorded: ${evidence.kind}.`,
+        }],
+      });
+      res.json(record);
+    } catch (error: unknown) {
+      const failure = managedRuntimeErrorResponse(error);
+      managedLogger.warn("evidence failed", {
+        sessionId,
+        statusCode: failure.statusCode,
+        err: errorLogDetails(error),
+      });
+      res.status(failure.statusCode).json({ error: failure.message });
+    }
+  });
+
   router.use((req, res, next) => {
     if (req.path === "/signals" && isNonLoopbackRequest(req)) {
       signalsLogger.warn("rejected: non-loopback signal");
@@ -243,4 +458,189 @@ export function createSessionsRouter(options: {
   });
 
   return router;
+}
+
+async function interruptManagedSdkRunner(
+  runner: ManagedSdkRunner | undefined,
+  registryId: string,
+  reason: string | undefined,
+): Promise<ManagedSdkInterruptResult> {
+  if (!runner?.interrupt) {
+    return {
+      ok: false,
+      evidenceState: "failed",
+      message: "No managed SDK runner is attached to this API process.",
+    };
+  }
+  try {
+    return await runner.interrupt({ registryId, reason });
+  } catch (error: unknown) {
+    return {
+      ok: false,
+      evidenceState: "failed",
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+type ManagedRuntimeTarget =
+  | { ok: true; store: SessionRegistryFileStore; record: SessionRegistryRecord }
+  | { ok: false; statusCode: number; message: string };
+
+function managedRuntimeTarget(
+  store: SessionRegistryStore,
+  sessionId: string,
+): ManagedRuntimeTarget {
+  if (!(store instanceof SessionRegistryFileStore)) {
+    return {
+      ok: false,
+      statusCode: 400,
+      message: "Managed runtime actions require the file-backed session registry.",
+    };
+  }
+  const record = store.getSession(sessionId);
+  if (!record) {
+    return {
+      ok: false,
+      statusCode: 404,
+      message: `Session ${sessionId} does not exist.`,
+    };
+  }
+  if (record.lifecycleStatus === "archived") {
+    return {
+      ok: false,
+      statusCode: 409,
+      message: `Archived session ${sessionId} cannot update managed runtime metadata.`,
+    };
+  }
+  const runtime = record.runtime;
+  if (!runtime || runtime.runtimeKind !== "managed-sdk" || runtime.runtimeOwner !== "streamliner-sdk") {
+    return {
+      ok: false,
+      statusCode: 409,
+      message: "Session is not a Streamliner-managed SDK runtime.",
+    };
+  }
+  return { ok: true, store, record };
+}
+
+function managedRuntimeErrorResponse(
+  error: unknown,
+): { statusCode: number; message: string } {
+  const message = error instanceof Error ? error.message : String(error);
+  if (error instanceof SessionRegistryNotFoundError) {
+    return { statusCode: 404, message };
+  }
+  if (error instanceof SessionRegistryArchivedError) {
+    return { statusCode: 409, message };
+  }
+  return { statusCode: 500, message };
+}
+
+function errorLogDetails(error: unknown): Record<string, string> | string {
+  return error instanceof Error
+    ? { name: error.name, message: error.message }
+    : String(error);
+}
+
+function requestHasJsonContent(req: { headers: Record<string, string | string[] | undefined> }): boolean {
+  const contentType = req.headers["content-type"] ?? "";
+  return typeof contentType === "string" && contentType.startsWith("application/json");
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+const MANAGED_EVIDENCE_KINDS = new Set<SessionRegistryRuntimeEvidenceKind>([
+  "pr_ready",
+  "review_ready",
+  "completed",
+  "cleanup_ready",
+  "cleaned_up",
+  "terminal_takeover",
+]);
+
+const MANAGED_EVIDENCE_SCALAR_MAX_LENGTH = 1024;
+
+function parseRuntimeEvidenceInput(value: unknown): SessionRegistryRuntimeEvidenceInput {
+  if (!isJsonObject(value)) {
+    throw new Error("Expected a JSON object body for managed runtime evidence.");
+  }
+  const kind = value.kind;
+  if (typeof kind !== "string" || !MANAGED_EVIDENCE_KINDS.has(kind as SessionRegistryRuntimeEvidenceKind)) {
+    throw new Error("kind must be a supported managed runtime evidence kind.");
+  }
+  const source = parseEvidenceSource(value.source);
+  return {
+    kind: kind as SessionRegistryRuntimeEvidenceKind,
+    source,
+    detectedAt: parseEvidenceTimestamp(value.detectedAt),
+    url: parseOptionalEvidenceString(value.url, "url"),
+    repo: parseOptionalEvidenceString(value.repo, "repo"),
+    number: parseOptionalEvidenceNumber(value.number),
+    sha: parseOptionalEvidenceString(value.sha, "sha"),
+    summary: parseOptionalEvidenceString(value.summary, "summary", { allowEmpty: true }),
+  };
+}
+
+function parseEvidenceSource(value: unknown): string {
+  if (value === undefined || value === null) {
+    return "api";
+  }
+  if (typeof value !== "string") {
+    throw new Error("source must be a string when provided.");
+  }
+  const source = value.trim();
+  if (source.length === 0) {
+    throw new Error("source must be non-empty when provided.");
+  }
+  if (source.length > MANAGED_EVIDENCE_SCALAR_MAX_LENGTH) {
+    throw new Error("source is too long.");
+  }
+  return source;
+}
+
+function parseEvidenceTimestamp(value: unknown): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw new Error("detectedAt must be an ISO timestamp string when provided.");
+  }
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) {
+    throw new Error("detectedAt must be a valid timestamp.");
+  }
+  return value;
+}
+
+function parseOptionalEvidenceString(
+  value: unknown,
+  fieldName: string,
+  options: { allowEmpty?: boolean } = {},
+): string | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    throw new Error(`${fieldName} must be a string when provided.`);
+  }
+  if (!options.allowEmpty && value.length === 0) {
+    throw new Error(`${fieldName} must be non-empty when provided.`);
+  }
+  if (value.length > MANAGED_EVIDENCE_SCALAR_MAX_LENGTH) {
+    throw new Error(`${fieldName} is too long.`);
+  }
+  return value.length === 0 ? null : value;
+}
+
+function parseOptionalEvidenceNumber(value: unknown): number | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
+    throw new Error("number must be a positive safe integer when provided.");
+  }
+  return value;
 }

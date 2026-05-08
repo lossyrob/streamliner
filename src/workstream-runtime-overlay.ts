@@ -9,6 +9,7 @@ import type {
 import {
   formatManagedRuntimeLabel,
   MANAGED_RUNTIME_LIFECYCLE_STATES,
+  managedRuntimeProjectionFromMetadata,
   managedRuntimeProgressEvents,
 } from "./managed-runtime-contract";
 import type {
@@ -503,9 +504,9 @@ function isTerminalManagedRuntimeLifecycle(
     case "completed":
     case "cleaned_up":
     case "terminal_takeover":
+      return true;
     case "failed":
     case "canceled":
-      return true;
     case "preparing":
     case "starting":
     case "running":
@@ -537,41 +538,18 @@ function unresolvedLaunchStatus(
 
 function buildManagedRuntimeOverlay(
   session: SessionRegistryListItem | null,
-  launchRecord: NodeLaunchRecord | undefined,
 ): WorkstreamManagedRuntimeOverlay | null {
-  const sessionProjection = session?.managedRuntime ?? null;
-  const launchRecordProjection = launchRecord?.managedRuntime ?? null;
-  const projection = selectManagedRuntimeProjection(sessionProjection, launchRecordProjection);
+  const projection = managedRuntimeProjectionFromMetadata(session?.runtime);
   if (!projection) {
     return null;
   }
   return {
     projection,
-    source: projection === sessionProjection ? "session" : "launch-record",
+    source: "session",
     lifecycleState: projection.lifecycleState,
     lifecycleLabel: formatManagedRuntimeLabel(projection.lifecycleState),
     progress: managedRuntimeProgressEvents(projection.progress),
   };
-}
-
-function managedRuntimeUpdatedAt(projection: ManagedRuntimeProjection): number {
-  const timestamp = Date.parse(projection.lifecycleUpdatedAt ?? "");
-  return Number.isFinite(timestamp) ? timestamp : 0;
-}
-
-function selectManagedRuntimeProjection(
-  sessionProjection: ManagedRuntimeProjection | null,
-  launchRecordProjection: ManagedRuntimeProjection | null,
-): ManagedRuntimeProjection | null {
-  if (sessionProjection && launchRecordProjection) {
-    const sessionTimestamp = managedRuntimeUpdatedAt(sessionProjection);
-    const launchRecordTimestamp = managedRuntimeUpdatedAt(launchRecordProjection);
-    if (launchRecordTimestamp > sessionTimestamp) {
-      return launchRecordProjection;
-    }
-    return sessionProjection;
-  }
-  return sessionProjection ?? launchRecordProjection;
 }
 
 export function managedRuntimeLifecycleOverlayStatus(
@@ -850,7 +828,7 @@ function buildNodeOverlay(
     );
   }
 
-  const managedRuntimeOverlay = buildManagedRuntimeOverlay(primarySession, launchRecord);
+  const managedRuntimeOverlay = buildManagedRuntimeOverlay(primarySession);
   const managedRuntimeStatus = statusFromManagedRuntime(
     entry.node.id,
     managedRuntimeOverlay,

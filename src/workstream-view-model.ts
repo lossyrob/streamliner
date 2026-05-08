@@ -238,6 +238,16 @@ function parseOptionalString(value: unknown, label: string): string | null | und
   return asNonEmptyString(value, label).trim();
 }
 
+function parseOptionalKebabCaseId(value: unknown, label: string): string | null | undefined {
+  if (typeof value === "undefined") {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  return asKebabCaseId(value, label);
+}
+
 function parseLaunchTerminalDefaults(
   value: unknown,
   label: string,
@@ -262,6 +272,7 @@ function parseLaunchDefaults(value: unknown, label: string): WorkstreamLaunchDef
   const record = asObject(value, label);
   const terminal = record.terminal;
   return {
+    promptProfileId: parseOptionalKebabCaseId(record.promptProfileId, `${label}.promptProfileId`),
     terminal:
       typeof terminal === "undefined"
         ? undefined

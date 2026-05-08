@@ -15,6 +15,7 @@ import type { ManagedRuntimeProjection } from "../managed-runtime-contract";
 import {
   formatManagedRuntimeLabel,
   managedLifecycleStatusClass,
+  managedRuntimeProjectionFromMetadata,
   managedRuntimeProgressEvents,
   resolveManagedRuntimeActions,
 } from "../managed-runtime-contract";
@@ -147,7 +148,7 @@ function toListItem(record: SessionRegistryRecord): SessionRegistryListItem {
     originKind: record.origin.kind,
     graphBinding: record.graphBinding,
     pawLaunch: record.pawLaunch,
-    managedRuntime: record.managedRuntime ?? null,
+    runtime: record.runtime ?? null,
     copilotSessionId: record.copilotSessionId,
     aiSummary: record.aiSummary,
     aiSummaryModel: record.aiSummaryModel,
@@ -886,7 +887,7 @@ function SessionWorkstreamContextChips({
 function getManagedRuntime(
   session: SessionRegistryListItem,
 ): ManagedRuntimeProjection | null {
-  return session.managedRuntime ?? null;
+  return managedRuntimeProjectionFromMetadata(session.runtime);
 }
 
 function managedRuntimeLifecycleText(runtime: ManagedRuntimeProjection): string {

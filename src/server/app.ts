@@ -31,6 +31,7 @@ import { createSessionsRouter } from "./routes/sessions";
 import { createWorkstreamsRouter } from "./routes/workstreams";
 import { SessionRegistryEventStream } from "./session-events";
 import type { NodeLaunchDeps } from "./node-launch";
+import { DefaultManagedSdkRunner } from "./managed-sdk-runner";
 
 export interface StreamlinerApiApp {
   app: Express;
@@ -98,6 +99,12 @@ export function createStreamlinerApiApp(
           : undefined
       ),
     });
+  const managedSdkRunner =
+    options.nodeLaunchDeps?.managedSdkRunner ?? new DefaultManagedSdkRunner();
+  const nodeLaunchDeps: NodeLaunchDeps = {
+    ...options.nodeLaunchDeps,
+    managedSdkRunner,
+  };
 
   app.disable("x-powered-by");
   app.use(express.json({ limit: "1mb" }));
@@ -164,7 +171,7 @@ export function createStreamlinerApiApp(
           registryStore: store,
           claimStore: options.launchClaimStore,
           nodeLaunchRecordStore,
-          deps: options.nodeLaunchDeps,
+          deps: nodeLaunchDeps,
         }),
       );
     } else {
@@ -215,6 +222,7 @@ export function createStreamlinerApiApp(
       store,
       eventStream,
       relaunchDeps: options.relaunchDeps,
+      managedSdkRunner,
       launchClaimStore: options.launchClaimStore,
     }),
   );

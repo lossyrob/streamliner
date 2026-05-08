@@ -13,14 +13,9 @@ import type {
   NodeLaunchOperationStatus,
   NodeLaunchRecord,
   NodeLaunchRecordPathStatus,
+  NodeManagedSdkLaunchResponse,
   NodeTerminalLaunchResponse,
 } from "../node-launch-record-contract";
-import type {
-  ManagedRuntimePermissionProfile,
-  ManagedRuntimeProjection,
-  WorkstreamRuntimeKind,
-} from "../managed-runtime-contract";
-import { sanitizeManagedRuntimeProjection } from "../managed-runtime-contract";
 import type { PawLaunchHandoff, PawLaunchProgressEvent } from "./launch-preparation";
 
 interface NodeLaunchRecordDocument {
@@ -40,10 +35,10 @@ const OPERATION_STATUSES = new Set<NodeLaunchOperationStatus>([
   "prepared",
   "preparation_failed",
   "launching",
-  "managed_starting",
-  "managed_unavailable",
-  "managed_failed",
   "launched_pending_binding",
+  "managed_starting",
+  "managed_running",
+  "managed_failed",
   "bound",
   "terminal_failed",
 ]);
@@ -62,8 +57,26 @@ interface AtomicWriteOptions {
   retryDelaysMs?: readonly number[];
 }
 
+const ACTIVE_LAUNCH_OPERATION_STATUSES = new Set<NodeLaunchOperationStatus>([
+  "preparing",
+  "launching",
+  "managed_starting",
+]);
+
 interface NodeErrnoException extends Error {
   code?: string;
+}
+
+export class DuplicateActiveNodeLaunchOperationError extends Error {
+  readonly statusCode = 409;
+  readonly code = "duplicate_active_launch_operation";
+  readonly operation: NodeLaunchOperation;
+
+  constructor(operation: NodeLaunchOperation) {
+    super(`Node ${operation.nodeId} already has an active launch operation.`);
+    this.name = "DuplicateActiveNodeLaunchOperationError";
+    this.operation = operation;
+  }
 }
 
 function defaultRecordsPath(): string {
@@ -106,53 +119,6 @@ function optionalStringField(record: Record<string, unknown>, key: string): stri
   return typeof value === "string" ? value : undefined;
 }
 
-function normalizeRuntimeKind(value: unknown): WorkstreamRuntimeKind | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (value === "terminal-cli" || value === "managed-sdk") {
-    return value;
-  }
-  console.warn("node-launch-record-store: dropping unrecognized runtimeKind", { value });
-  return undefined;
-}
-
-function normalizePermissionProfile(
-  value: unknown,
-): ManagedRuntimePermissionProfile | null | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (value === null) {
-    return null;
-  }
-  if (value === "managed-autonomous") {
-    return value;
-  }
-  console.warn("node-launch-record-store: dropping unrecognized permissionProfile", { value });
-  return null;
-}
-
-function normalizeManagedRuntimeProjection(
-  value: unknown,
-): ManagedRuntimeProjection | null | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (value === null) {
-    return null;
-  }
-  const projection = sanitizeManagedRuntimeProjection(value);
-  if (!projection) {
-    console.warn(
-      "node-launch-record-store: dropping unrecognized managedRuntime projection",
-      { value },
-    );
-    return null;
-  }
-  return projection;
-}
-
 function normalizeStoredRecord(value: unknown): StoredNodeLaunchRecord | null {
   if (!isRecord(value)) {
     return null;
@@ -180,9 +146,10 @@ function normalizeStoredRecord(value: unknown): StoredNodeLaunchRecord | null {
     contextFilePath: stringField(value, "contextFilePath"),
     sdkSessionWorkspacePath: optionalStringField(value, "sdkSessionWorkspacePath"),
     sdkSessionStateRoot: optionalStringField(value, "sdkSessionStateRoot"),
-    runtimeKind: normalizeRuntimeKind(value.runtimeKind),
-    permissionProfile: normalizePermissionProfile(value.permissionProfile),
-    managedRuntime: normalizeManagedRuntimeProjection(value.managedRuntime),
+    runtimeKind:
+      value.runtimeKind === "managed-sdk" || value.runtimeKind === "terminal-cli"
+        ? value.runtimeKind
+        : undefined,
     launchNonce: nullableStringField(value, "launchNonce"),
     launchClaimRef: nullableStringField(value, "launchClaimRef"),
     trackerUrl: nullableStringField(value, "trackerUrl"),
@@ -261,7 +228,7 @@ function normalizeStoredOperation(value: unknown): StoredNodeLaunchOperation | n
     completedAt: nullableStringField(value, "completedAt"),
     handoff: isRecord(value.handoff) ? value.handoff as unknown as NodeLaunchHandoff : null,
     terminalLaunch: isRecord(value.terminalLaunch) ? value.terminalLaunch as unknown as NodeTerminalLaunchResponse : null,
-    managedRuntime: normalizeManagedRuntimeProjection(value.managedRuntime) ?? null,
+    managedLaunch: isRecord(value.managedLaunch) ? value.managedLaunch as unknown as NodeManagedSdkLaunchResponse : null,
     error: normalizeOperationError(value.error),
     progressEvents: Array.isArray(value.progressEvents)
       ? value.progressEvents
@@ -419,6 +386,7 @@ export class NodeLaunchRecordStore {
         completedAt: null,
         handoff: null,
         terminalLaunch: null,
+        managedLaunch: null,
         error: null,
         progressEvents: [],
       };
@@ -462,6 +430,7 @@ export class NodeLaunchRecordStore {
         completedAt: timestamp,
         error: null,
         terminalLaunch: null,
+        managedLaunch: null,
       });
     });
   }
@@ -486,6 +455,7 @@ export class NodeLaunchRecordStore {
         completedAt: timestamp,
         handoff: null,
         terminalLaunch: null,
+        managedLaunch: null,
         error: operationError(input.error, timestamp),
         progressEvents: existing?.progressEvents ?? [],
       };
@@ -498,10 +468,11 @@ export class NodeLaunchRecordStore {
     handoff: PawLaunchHandoff,
     now = new Date(),
   ): Promise<NodeLaunchOperation> {
-    return await this.updateOperationFromHandoff(handoff, "launching", now, {
+    return await this.startLaunchOperationFromHandoff(handoff, "launching", now, {
       completedAt: null,
       error: null,
       terminalLaunch: null,
+      managedLaunch: null,
     });
   }
 
@@ -514,6 +485,58 @@ export class NodeLaunchRecordStore {
       completedAt: now.toISOString(),
       error: null,
       terminalLaunch,
+      managedLaunch: null,
+    });
+  }
+
+  async markManagedStarting(
+    handoff: PawLaunchHandoff,
+    now = new Date(),
+  ): Promise<NodeLaunchOperation> {
+    return await this.startLaunchOperationFromHandoff(handoff, "managed_starting", now, {
+      completedAt: null,
+      error: null,
+      terminalLaunch: null,
+      managedLaunch: null,
+    });
+  }
+
+  /**
+   * Marks the launch operation complete once the SDK runner accepts the node.
+   * The ongoing managed runtime state lives on the session registry record.
+   */
+  async markManagedRunning(
+    handoff: PawLaunchHandoff,
+    managedLaunch: NodeManagedSdkLaunchResponse,
+    now = new Date(),
+  ): Promise<NodeLaunchOperation> {
+    return await this.updateOperationFromHandoff(handoff, "managed_running", now, {
+      completedAt: now.toISOString(),
+      error: null,
+      terminalLaunch: null,
+      managedLaunch,
+    });
+  }
+
+  async markManagedFailed(input: {
+    handoff: PawLaunchHandoff;
+    error: OperationErrorInput;
+    now?: Date;
+  }): Promise<NodeLaunchOperation> {
+    return await this.updateDocument((document) => {
+      const graphPath = input.handoff.launchMetadata.graphPath;
+      const nodeId = input.handoff.launchMetadata.nodeId;
+      const existing = findStoredOperation(document, graphPath, nodeId);
+      if (existing && existing.status !== "managed_starting") {
+        return existing;
+      }
+      const timestamp = (input.now ?? new Date()).toISOString();
+      return operationFromHandoff(document, input.handoff, "managed_failed", timestamp, {
+        completedAt: timestamp,
+        error: operationError(input.error, timestamp),
+        terminalLaunch: null,
+        managedLaunch: null,
+      });
     });
   }
 
@@ -534,6 +557,7 @@ export class NodeLaunchRecordStore {
         completedAt: timestamp,
         error: operationError(input.error, timestamp),
         terminalLaunch: null,
+        managedLaunch: null,
       });
     });
   }
@@ -551,9 +575,30 @@ export class NodeLaunchRecordStore {
     handoff: PawLaunchHandoff,
     status: NodeLaunchOperationStatus,
     now: Date,
-    updates: Pick<StoredNodeLaunchOperation, "completedAt" | "error" | "terminalLaunch">,
+    updates: Pick<StoredNodeLaunchOperation, "completedAt" | "error" | "terminalLaunch" | "managedLaunch">,
   ): Promise<NodeLaunchOperation> {
     return await this.updateDocument((document) => {
+      const timestamp = now.toISOString();
+      return operationFromHandoff(document, handoff, status, timestamp, updates);
+    });
+  }
+
+  private async startLaunchOperationFromHandoff(
+    handoff: PawLaunchHandoff,
+    status: NodeLaunchOperationStatus,
+    now: Date,
+    updates: Pick<StoredNodeLaunchOperation, "completedAt" | "error" | "terminalLaunch" | "managedLaunch">,
+  ): Promise<NodeLaunchOperation> {
+    return await this.updateDocument((document) => {
+      const graphPath = handoff.launchMetadata.graphPath;
+      const nodeId = handoff.launchMetadata.nodeId;
+      const existing = findStoredOperation(document, graphPath, nodeId);
+      if (existing && ACTIVE_LAUNCH_OPERATION_STATUSES.has(existing.status)) {
+        throw new DuplicateActiveNodeLaunchOperationError({
+          ...existing,
+          progressEvents: [...existing.progressEvents],
+        });
+      }
       const timestamp = now.toISOString();
       return operationFromHandoff(document, handoff, status, timestamp, updates);
     });
@@ -636,11 +681,9 @@ function storedRecordFromHandoff(
   timestamp: string,
 ): StoredNodeLaunchRecord {
   const metadata = handoff.launchMetadata;
-  const launchHandoff = toNodeLaunchHandoff(handoff);
   const graphPath = metadata.graphPath;
   const nodeId = metadata.nodeId;
   const existing = findStoredRecord(document, graphPath, nodeId);
-  const runtimeKind = launchHandoff.runtimeKind ?? "terminal-cli";
   return {
     id: existing?.id ?? recordId(graphPath, nodeId),
     graphPath,
@@ -658,9 +701,7 @@ function storedRecordFromHandoff(
     contextFilePath: handoff.contextPackage.contextFilePath,
     sdkSessionWorkspacePath: handoff.sdkSession?.workspacePath,
     sdkSessionStateRoot: handoff.sdkSession?.stateRoot,
-    runtimeKind,
-    permissionProfile: launchHandoff.permissionProfile ?? null,
-    managedRuntime: runtimeKind === "managed-sdk" ? (existing?.managedRuntime ?? null) : null,
+    runtimeKind: handoff.runtimeKind ?? "terminal-cli",
     launchNonce: metadata.launchNonce,
     launchClaimRef: metadata.launchClaimRef,
     trackerUrl: metadata.trackerUrl,
@@ -674,13 +715,12 @@ function operationFromHandoff(
   handoff: PawLaunchHandoff,
   status: NodeLaunchOperationStatus,
   timestamp: string,
-  updates: Pick<StoredNodeLaunchOperation, "completedAt" | "error" | "terminalLaunch">,
+  updates: Pick<StoredNodeLaunchOperation, "completedAt" | "error" | "terminalLaunch" | "managedLaunch">,
 ): StoredNodeLaunchOperation {
   const graphPath = handoff.launchMetadata.graphPath;
   const nodeId = handoff.launchMetadata.nodeId;
   const existing = findStoredOperation(document, graphPath, nodeId);
   const launchHandoff = toNodeLaunchHandoff(handoff);
-  const runtimeKind = launchHandoff.runtimeKind ?? "terminal-cli";
   const nextOperation: StoredNodeLaunchOperation = {
     id: existing?.id ?? recordId(graphPath, nodeId),
     graphPath,
@@ -692,7 +732,7 @@ function operationFromHandoff(
     completedAt: updates.completedAt,
     handoff: launchHandoff,
     terminalLaunch: updates.terminalLaunch,
-    managedRuntime: runtimeKind === "managed-sdk" ? (existing?.managedRuntime ?? null) : null,
+    managedLaunch: updates.managedLaunch,
     error: updates.error,
     progressEvents: existing?.progressEvents ?? [],
   };

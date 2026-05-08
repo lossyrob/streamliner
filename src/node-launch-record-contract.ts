@@ -1,11 +1,11 @@
 import type {
-  ManagedRuntimePermissionProfile,
-  ManagedRuntimeProjection,
-  WorkstreamRuntimeKind,
-} from "./managed-runtime-contract";
+  LaunchClaimFailureCode,
+  LaunchClaimStatus,
+} from "./launch-claim-schema";
 import type { WorkstreamLaunchPolicy } from "./workstream-schema";
 
 export type NodeLaunchPreferredTerminal = "default" | "windows-terminal" | "powershell";
+export type NodeLaunchRuntimeKind = "terminal-cli" | "managed-sdk";
 
 export interface NodeLaunchTerminalPreferences {
   launchMode: "manual";
@@ -43,17 +43,10 @@ export interface NodeLaunchSdkSession {
   stateRoot: string;
 }
 
-import type {
-  LaunchClaimFailureCode,
-  LaunchClaimStatus,
-} from "./launch-claim-schema";
-
 export interface NodeLaunchHandoff {
-  // Managed execution (#73) owns non-terminal runtime handoff wiring.
-  runtimeKind?: WorkstreamRuntimeKind;
-  permissionProfile?: ManagedRuntimePermissionProfile | null;
   cwd: string;
   branch: string;
+  runtimeKind?: NodeLaunchRuntimeKind;
   pawWorkDir: string;
   workflowContextPath: string;
   streamlinerContextPath: string;
@@ -100,10 +93,15 @@ export type NodeLaunchOperationStatus =
   | "prepared"
   | "preparation_failed"
   | "launching"
-  | "managed_starting"
-  | "managed_unavailable"
-  | "managed_failed"
   | "launched_pending_binding"
+  | "managed_starting"
+  /**
+   * The managed SDK launch operation has successfully handed off to the
+   * managed runtime. This is terminal for the launch operation and uses
+   * completedAt; ongoing runtime lifecycle is tracked on session.runtime.
+   */
+  | "managed_running"
+  | "managed_failed"
   | "bound"
   | "terminal_failed";
 
@@ -140,6 +138,16 @@ export interface NodeTerminalLaunchResponse {
   };
 }
 
+export interface NodeManagedSdkLaunchResponse {
+  launchClaim: NodeLaunchClaimState;
+  runtimeKind: "managed-sdk";
+  registryId: string;
+  sdkSessionId: string | null;
+  sdkWorkspacePath: string | null;
+  sdkStateRoot: string | null;
+  permissionProfile: "managed-autonomous";
+}
+
 export interface NodeLaunchOperation {
   id: string;
   graphPath: string;
@@ -151,7 +159,7 @@ export interface NodeLaunchOperation {
   completedAt: string | null;
   handoff: NodeLaunchHandoff | null;
   terminalLaunch: NodeTerminalLaunchResponse | null;
-  managedRuntime?: ManagedRuntimeProjection | null;
+  managedLaunch?: NodeManagedSdkLaunchResponse | null;
   error: NodeLaunchOperationError | null;
   progressEvents: NodeLaunchOperationProgressEvent[];
   latestClaim?: NodeLaunchClaimState | null;
@@ -174,10 +182,7 @@ export interface NodeLaunchRecord {
   contextFilePath: string;
   sdkSessionWorkspacePath?: string;
   sdkSessionStateRoot?: string;
-  // Terminal preparation defaults this to terminal-cli until the managed substrate wires it.
-  runtimeKind?: WorkstreamRuntimeKind;
-  permissionProfile?: ManagedRuntimePermissionProfile | null;
-  managedRuntime?: ManagedRuntimeProjection | null;
+  runtimeKind?: NodeLaunchRuntimeKind;
   launchNonce: string | null;
   launchClaimRef: string | null;
   trackerUrl: string | null;

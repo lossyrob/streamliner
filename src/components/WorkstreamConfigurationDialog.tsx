@@ -10,6 +10,7 @@ import {
   type WorkstreamLaunchTerminalPreference,
 } from "../workstream-schema";
 import { WORKSTREAM_TERMINAL_TITLE_TEMPLATE_HELP } from "../workstream-launch-templates";
+import type { PawPromptProfile } from "./paw-prompt-profiles";
 import { TerminalColorQuickPicker } from "./SessionColorPicker";
 
 export interface WorkstreamConfigurationValues {
@@ -19,6 +20,9 @@ export interface WorkstreamConfigurationValues {
 
 interface WorkstreamConfigurationDialogProps {
   workstream: WorkstreamDocument;
+  promptProfiles?: PawPromptProfile[];
+  promptProfilesLoading?: boolean;
+  promptProfilesError?: string | null;
   saving: boolean;
   error?: string | null;
   onCancel: () => void;
@@ -49,6 +53,9 @@ function terminalPreferenceHelp(preference: WorkstreamLaunchTerminalPreference):
 
 export function WorkstreamConfigurationDialog({
   workstream,
+  promptProfiles = [],
+  promptProfilesLoading = false,
+  promptProfilesError = null,
   saving,
   error,
   onCancel,
@@ -66,7 +73,16 @@ export function WorkstreamConfigurationDialog({
   const [terminalColor, setTerminalColor] = useState(
     workstream.launchDefaults?.terminal?.tabColor ?? "",
   );
+  const [defaultPromptProfileId, setDefaultPromptProfileId] = useState(
+    workstream.launchDefaults?.promptProfileId ?? "",
+  );
   const [validationError, setValidationError] = useState<string | null>(null);
+  const promptProfilesInitialLoadPending = promptProfilesLoading && promptProfiles.length === 0;
+  const selectedDefaultMissing = Boolean(
+    defaultPromptProfileId &&
+      !promptProfilesInitialLoadPending &&
+      !promptProfiles.some((profile) => profile.id === defaultPromptProfileId),
+  );
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -82,9 +98,13 @@ export function WorkstreamConfigurationDialog({
       ...(titleTemplate.trim() ? { titleTemplate: titleTemplate.trim() } : {}),
       ...(color ? { tabColor: color.toLowerCase() } : {}),
     };
+    const launchDefaults = {
+      ...(defaultPromptProfileId ? { promptProfileId: defaultPromptProfileId } : {}),
+      ...(Object.keys(terminal).length > 0 ? { terminal } : {}),
+    };
     void onSave({
       launchPolicy: requiredTracker ? { requiredTracker } : null,
-      launchDefaults: Object.keys(terminal).length > 0 ? { terminal } : null,
+      launchDefaults: Object.keys(launchDefaults).length > 0 ? launchDefaults : null,
     });
   };
 
@@ -145,6 +165,53 @@ export function WorkstreamConfigurationDialog({
               <span className="sl-field-note">
                 GitHub issue requirement blocks ready nodes with local or missing trackers.
               </span>
+            </label>
+          </section>
+
+          <section className="sl-workstream-config-section">
+            <div>
+              <span className="sl-section-label">PAW PROFILE DEFAULT</span>
+              <h3 className="sl-workstream-config-title">Launch instructions</h3>
+              <p className="sl-field-note">
+                Preselect a local PAW launch prompt profile when launching nodes from this workstream.
+                Missing profiles fall back to custom launch instructions.
+              </p>
+            </div>
+            <label className="sl-field">
+              <span>Default load profile</span>
+              <select
+                aria-label="Default load profile"
+                value={defaultPromptProfileId}
+                onChange={(event) => setDefaultPromptProfileId(event.target.value)}
+                disabled={saving}
+              >
+                <option value="">Custom launch instructions</option>
+                {defaultPromptProfileId && promptProfilesInitialLoadPending && (
+                  <option value={defaultPromptProfileId}>
+                    Loading profile: {defaultPromptProfileId}
+                  </option>
+                )}
+                {selectedDefaultMissing && (
+                  <option value={defaultPromptProfileId}>
+                    Missing profile: {defaultPromptProfileId}
+                  </option>
+                )}
+                {promptProfiles.map((profile) => (
+                  <option key={profile.id} value={profile.id}>
+                    {profile.name} ({profile.id})
+                  </option>
+                ))}
+              </select>
+              {promptProfilesInitialLoadPending && (
+                <span className="sl-inline-status">Loading saved profiles...</span>
+              )}
+              <span className="sl-field-note">
+                Profile IDs are local hints stored in graph.json. Rename keeps the same id;
+                deleted or unavailable profiles do not block launch.
+              </span>
+              {promptProfilesError && (
+                <span className="sl-action-error">{promptProfilesError}</span>
+              )}
             </label>
           </section>
 

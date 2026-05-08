@@ -26,6 +26,10 @@ import {
   type SessionRegistryTrustedSignalSource,
   type SessionRegistryTrustedStartSource,
 } from "../session-registry-schema";
+import {
+  isCopilotCliSubagentSessionId,
+  isCopilotHelperSessionIdentity,
+} from "./copilot-helper-sessions";
 import { isCopilotSdkSessionFsPath } from "./copilot-sdk-session-paths";
 
 export const SESSION_REGISTRY_SIGNAL_SPOOL_ROOT = resolve(
@@ -132,9 +136,21 @@ export function getTrustedSessionSignalSpoolRoot(): string {
 }
 
 export function shouldIgnoreTrustedSessionSignal(
-  input: Pick<SessionRegistryTrustedSignalInput, "cwd">,
+  input: Pick<SessionRegistryTrustedSignalInput, "cwd" | "sessionId">,
 ): boolean {
-  return isCopilotSdkSessionFsPath(input.cwd);
+  return isCopilotHelperSessionIdentity(input);
+}
+
+export function ignoredTrustedSessionSignalReason(
+  input: Pick<SessionRegistryTrustedSignalInput, "cwd" | "sessionId">,
+): "copilot-cli-subagent" | "copilot-sdk-session-fs" | null {
+  if (isCopilotCliSubagentSessionId(input.sessionId)) {
+    return "copilot-cli-subagent";
+  }
+  if (isCopilotSdkSessionFsPath(input.cwd)) {
+    return "copilot-sdk-session-fs";
+  }
+  return null;
 }
 
 export function parseTrustedSessionSignalInput(

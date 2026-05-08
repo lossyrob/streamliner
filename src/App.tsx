@@ -11,7 +11,6 @@ import "./streamliner-theme.css";
 import {
   parseWorkstreamDocument,
   buildWorkstreamViewModel,
-  type WorkstreamDerivedNode,
 } from "./workstream-view-model";
 import { buildWorkstreamGraphLayout } from "./workstream-graph";
 import type { WorkstreamDocument } from "./workstream-schema";
@@ -38,6 +37,7 @@ import {
   type PawTerminalLaunchInput,
   type PawLaunchProgressEvent,
 } from "./components/PawLaunchDialog";
+import { PawProfilesPage } from "./components/PawProfilesPage";
 import {
   loadPromptProfiles,
   mergePromptProfiles,
@@ -65,10 +65,10 @@ import type {
   NodeLaunchOperation,
   NodeLaunchRecord,
   NodeLaunchRecordResponse,
+  NodeManagedSdkLaunchResponse,
   NodeTerminalLaunchResponse,
 } from "./node-launch-record-contract";
 import { loadGraphNodeLaunchRecords } from "./node-launch-record-client";
-import { launchManagedSdkRuntime } from "./managed-runtime-client";
 import {
   encodeRouteSegment,
   handleInAppLinkClick,
@@ -87,10 +87,6 @@ import {
   buildWorkstreamRuntimeOverlay,
   type WorkstreamRuntimeOverlay,
 } from "./workstream-runtime-overlay";
-import {
-  defaultManagedRuntimeActions,
-  isManagedRuntimeUnavailableError,
-} from "./managed-runtime-contract";
 
 const POLL_INTERVAL_MS = 2000;
 const LAST_GRAPH_KEY = "streamliner:lastGraphPath";
@@ -127,6 +123,18 @@ interface LoadedNodeLaunchState {
   operation: NodeLaunchOperation | null;
 }
 
+interface ManagedSdkLaunchApiResponse {
+  runtimeKind: "managed-sdk";
+  launchClaim: NodeLaunchClaimState;
+  managedSdk: {
+    registryId: string;
+    sdkSessionId: string | null;
+    sdkWorkspacePath: string | null;
+    sdkStateRoot: string | null;
+    permissionProfile: "managed-autonomous";
+  };
+}
+
 interface LaunchOperationTarget {
   graphPath: string;
   nodeId: string;
@@ -158,6 +166,13 @@ function readDashboardRoute(): DashboardRoute {
       workstreamId: workstreamId && isKebabCaseId(workstreamId) ? workstreamId : null,
       nodeId: nodeId && isKebabCaseId(nodeId) ? nodeId : null,
     };
+  }
+  if (
+    window.location.pathname === "/settings" ||
+    window.location.pathname === "/settings/profiles" ||
+    window.location.pathname === "/profiles"
+  ) {
+    return { view: "settings", section: "profiles" };
   }
   if (window.location.pathname === "/" || window.location.pathname === "") {
     return { view: "landing" };
@@ -234,20 +249,6 @@ function useDashboardRoute() {
 
 function registryKey(entry: { projectKey: string; workstreamId: string }): string {
   return `${entry.projectKey}/${entry.workstreamId}`;
-}
-
-function dirnamePath(path: string): string {
-  const trimmed = path.trim();
-  const index = Math.max(trimmed.lastIndexOf("\\"), trimmed.lastIndexOf("/"));
-  return index > 0 ? trimmed.slice(0, index) : "";
-}
-
-function inferRepoRootFromGraphPath(graphPath: string): string {
-  const match = /[\\/]\.streamliner[\\/]/i.exec(graphPath);
-  if (match?.index !== undefined) {
-    return graphPath.slice(0, match.index);
-  }
-  return dirnamePath(graphPath);
 }
 
 function launchCwdRepoKey(
@@ -376,7 +377,7 @@ function createClientLaunchOperation(
     completedAt: null,
     handoff: null,
     terminalLaunch: null,
-    managedRuntime: null,
+    managedLaunch: null,
     error: null,
     progressEvents: [],
     ...overrides,
@@ -391,6 +392,20 @@ function operationError(
     code,
     error,
     timestamp: new Date().toISOString(),
+  };
+}
+
+function managedLaunchFromApiResponse(
+  result: ManagedSdkLaunchApiResponse,
+): NodeManagedSdkLaunchResponse {
+  return {
+    launchClaim: result.launchClaim,
+    runtimeKind: "managed-sdk",
+    registryId: result.managedSdk.registryId,
+    sdkSessionId: result.managedSdk.sdkSessionId,
+    sdkWorkspacePath: result.managedSdk.sdkWorkspacePath,
+    sdkStateRoot: result.managedSdk.sdkStateRoot,
+    permissionProfile: result.managedSdk.permissionProfile,
   };
 }
 
@@ -421,7 +436,6 @@ function clientHandoffFromPreparation(
     kickoffPrompt: handoff.kickoffPrompt,
     kickoffAdditionalInstructions: handoff.kickoffAdditionalInstructions,
     runtimeKind: handoff.runtimeKind ?? "terminal-cli",
-    permissionProfile: handoff.permissionProfile ?? null,
     launchMetadata: handoff.launchMetadata,
     contextPackage: handoff.contextPackage,
     sdkSession: handoff.sdkSession,
@@ -1119,6 +1133,81 @@ function WorkstreamHome({
   );
 }
 
+function usePromptProfilesState() {
+  const [profiles, setProfiles] = useState<PawPromptProfile[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const requestRef = useRef<Promise<void> | null>(null);
+  const mountedRef = useRef(true);
+  const mutationVersionRef = useRef(0);
+  const deletedProfileIdsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const noteProfilesChanged = useCallback((changedProfiles: PawPromptProfile[]) => {
+    mutationVersionRef.current += 1;
+    for (const profile of changedProfiles) {
+      deletedProfileIdsRef.current.delete(profile.id);
+    }
+    setProfiles((current) => mergePromptProfiles(current, changedProfiles));
+  }, []);
+
+  const noteProfileDeleted = useCallback((id: string) => {
+    mutationVersionRef.current += 1;
+    deletedProfileIdsRef.current.add(id);
+    setProfiles((current) => current.filter((profile) => profile.id !== id));
+  }, []);
+
+  const refresh = useCallback(() => {
+    if (requestRef.current) {
+      return requestRef.current;
+    }
+    setLoading(true);
+    setError(null);
+    const requestMutationVersion = mutationVersionRef.current;
+    const request = loadPromptProfiles()
+      .then((loadedProfiles) => {
+        if (mountedRef.current) {
+          if (mutationVersionRef.current === requestMutationVersion) {
+            deletedProfileIdsRef.current.clear();
+            setProfiles(() => mergePromptProfiles([], loadedProfiles));
+          } else {
+            const deletedProfileIds = deletedProfileIdsRef.current;
+            const retainedProfiles = loadedProfiles.filter((profile) => !deletedProfileIds.has(profile.id));
+            setProfiles((current) => mergePromptProfiles(current, retainedProfiles));
+          }
+        }
+      })
+      .catch((loadError: unknown) => {
+        if (mountedRef.current) {
+          setError(loadError instanceof Error ? loadError.message : String(loadError));
+        }
+      })
+      .finally(() => {
+        requestRef.current = null;
+        if (mountedRef.current) {
+          setLoading(false);
+        }
+      });
+    requestRef.current = request;
+    return request;
+  }, []);
+
+  return {
+    profiles,
+    loading,
+    error,
+    refresh,
+    noteProfilesChanged,
+    noteProfileDeleted,
+  };
+}
+
 function GraphDashboard({
   workstream,
   error,
@@ -1132,12 +1221,22 @@ function GraphDashboard({
   onManageSources,
   onRouteHome,
   selectedNodeIdFromRoute,
+  promptProfiles,
+  promptProfilesLoading,
+  promptProfilesError,
+  onRefreshPromptProfiles,
+  onPromptProfilesChanged,
 }: ReturnType<typeof useGraphLoader> & {
   onOpenWorkstream: (entry: WorkstreamRegistryListEntry) => void | Promise<void>;
   onOpenSessions: (target?: { workstreamId?: string | null; nodeId?: string | null }) => void | Promise<void>;
   onManageSources: () => void;
   onRouteHome: () => void;
   selectedNodeIdFromRoute?: string | null;
+  promptProfiles: PawPromptProfile[];
+  promptProfilesLoading: boolean;
+  promptProfilesError: string | null;
+  onRefreshPromptProfiles: () => Promise<void> | void;
+  onPromptProfilesChanged: (profiles: PawPromptProfile[]) => void;
 }) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(
     selectedNodeIdFromRoute ?? null,
@@ -1158,14 +1257,8 @@ function GraphDashboard({
   const [configurationDialogOpen, setConfigurationDialogOpen] = useState(false);
   const [configurationSaving, setConfigurationSaving] = useState(false);
   const [configurationError, setConfigurationError] = useState<string | null>(null);
-  const [promptProfiles, setPromptProfiles] = useState<PawPromptProfile[]>([]);
-  const [promptProfilesLoading, setPromptProfilesLoading] = useState(false);
-  const [promptProfilesError, setPromptProfilesError] = useState<string | null>(null);
   const failedRunReattachRef = useRef<Set<string>>(new Set());
   const localRunStreamsRef = useRef<Set<string>>(new Set());
-  const promptProfilesRequestRef = useRef<Promise<void> | null>(null);
-  const promptProfilesLoadedRef = useRef(false);
-  const promptProfilesMountedRef = useRef(true);
   const activeWorkstreamKey = activeWorkstream ? registryKey(activeWorkstream) : "";
   const sessionList = useSessionRegistryList(
     { workstreamId: activeWorkstream?.workstreamId ?? null },
@@ -1323,33 +1416,31 @@ function GraphDashboard({
 
   const launchActionDisabledReason = useMemo(() => {
     const operation = launchDialogOperation ?? selectedLaunchOperation;
-    if (operation?.status === "preparing") {
-      return "PAW init is already running for this node. Reopen the dialog to watch progress or wait for the prepared handoff.";
-    }
-    if (operation?.status === "launching") {
-      return "A terminal launch is already in progress for this node. Reopen the dialog to inspect the launch state.";
-    }
-    if (operation?.status === "managed_starting") {
-      return "A background session launch is already in progress for this node. Reopen the dialog to inspect the launch state.";
-    }
-    if (operation?.status === "bound" && operation.managedRuntime) {
-      return "A background session is already bound to this node.";
-    }
     const latestClaim = launchDialogTarget ? launchDialogLatestClaim : nodeLaunchRecord?.latestClaim;
     if (!latestClaim?.blocksLaunch) {
       return null;
     }
+    const activeRuntimeLabel =
+      operation?.managedLaunch || operation?.handoff?.runtimeKind === "managed-sdk"
+        ? "background session"
+        : "terminal launch";
     if (latestClaim.status === "bound") {
-      return "A Copilot terminal session is already bound to this node. The dialog remains available for the issue and prepared launch details, but Streamliner will not start another PAW init or terminal launch while that session is active.";
+      return `A ${activeRuntimeLabel} is already bound to this node. The dialog remains available for the issue and prepared launch details, but Streamliner will not start another PAW init or launch while that session is active.`;
     }
-    return "A terminal launch is already active for this node. The dialog remains available for the issue and prepared launch details, but Streamliner will not start another PAW init or terminal launch until the active claim resolves.";
-  }, [launchDialogLatestClaim, launchDialogOperation, launchDialogTarget, nodeLaunchRecord, selectedLaunchOperation]);
+    return `A ${activeRuntimeLabel} is already active for this node. The dialog remains available for the issue and prepared launch details, but Streamliner will not start another PAW init or launch until the active claim resolves.`;
+  }, [
+    launchDialogLatestClaim,
+    launchDialogOperation,
+    launchDialogTarget,
+    nodeLaunchRecord,
+    selectedLaunchOperation,
+  ]);
 
   const launchDefaults = useMemo<PawLaunchDialogDefaults | null>(() => {
     const defaultsEntry = launchDialogTarget ? launchDialogEntry : selectedEntry;
     const graphPath = launchDialogTarget?.graphPath ?? activeWorkstreamEntry?.path;
     if (!defaultsEntry || !graphPath) return null;
-    const inferredCwd = inferRepoRootFromGraphPath(graphPath);
+    const inferredCwd = "";
     const cwdPreferenceKey = workstream
       ? launchCwdRepoKey(workstream, defaultsEntry.node.repoIds)
       : null;
@@ -1502,44 +1593,9 @@ function GraphDashboard({
     }));
   }, []);
 
-  const notePromptProfilesChanged = useCallback((profiles: PawPromptProfile[]) => {
-    setPromptProfiles((current) => mergePromptProfiles(current, profiles));
-  }, []);
-
-  useEffect(() => {
-    promptProfilesMountedRef.current = true;
-    return () => {
-      promptProfilesMountedRef.current = false;
-    };
-  }, []);
-
   const prefetchPromptProfiles = useCallback(() => {
-    if (promptProfilesLoadedRef.current || promptProfilesRequestRef.current) {
-      return promptProfilesRequestRef.current ?? Promise.resolve();
-    }
-    setPromptProfilesLoading(true);
-    setPromptProfilesError(null);
-    const request = loadPromptProfiles()
-      .then((loadedProfiles) => {
-        promptProfilesLoadedRef.current = true;
-        if (promptProfilesMountedRef.current) {
-          setPromptProfiles((current) => mergePromptProfiles(current, loadedProfiles));
-        }
-      })
-      .catch((loadError: unknown) => {
-        if (promptProfilesMountedRef.current) {
-          setPromptProfilesError(loadError instanceof Error ? loadError.message : String(loadError));
-        }
-      })
-      .finally(() => {
-        promptProfilesRequestRef.current = null;
-        if (promptProfilesMountedRef.current) {
-          setPromptProfilesLoading(false);
-        }
-      });
-    promptProfilesRequestRef.current = request;
-    return request;
-  }, []);
+    return onRefreshPromptProfiles();
+  }, [onRefreshPromptProfiles]);
 
   useEffect(() => {
     if (!selectedLaunchTarget || !canLaunchSelectedNode) {
@@ -1703,6 +1759,7 @@ function GraphDashboard({
   };
 
   const handleOpenConfigurationDialog = () => {
+    void prefetchPromptProfiles();
     setConfigurationError(null);
     setConfigurationDialogOpen(true);
   };
@@ -1838,37 +1895,18 @@ function GraphDashboard({
     }
   };
 
-  const launchManagedSdkFromConfiguration = async (
-    configuration: PawLaunchDialogConfiguration,
+  const launchManagedSdkFromHandoff = async (
+    handoff: PawLaunchPreparationResponse,
     target: LaunchOperationTarget,
-    targetEntry: WorkstreamDerivedNode,
-    cwdOverride: string | undefined,
   ) => {
     const timestamp = new Date().toISOString();
     updateLaunchOperation(target, (current) =>
       createClientLaunchOperation(target, "managed_starting", {
         ...(current ?? {}),
         status: "managed_starting",
-        handoff: null,
+        handoff,
         terminalLaunch: null,
-        managedRuntime: {
-          runtimeKind: "managed-sdk",
-          runtimeOwner: "streamliner-sdk",
-          permissionProfile: "managed-autonomous",
-          lifecycleState: "starting",
-          lifecycleUpdatedAt: timestamp,
-          summary: "Requesting a background session.",
-          progress: [
-            {
-              timestamp,
-              phase: "starting",
-              summary: "Submitting background session launch request.",
-              kind: "lifecycle",
-              status: "info",
-            },
-          ],
-          actions: defaultManagedRuntimeActions(),
-        },
+        managedLaunch: null,
         error: null,
         progressEvents: [
           {
@@ -1883,35 +1921,37 @@ function GraphDashboard({
       })
     );
     try {
-      const result = await launchManagedSdkRuntime({
-        nodeId: targetEntry.node.id,
-        graphPath: target.graphPath,
-        launchNonce: createLaunchNonce(),
-        runtimeKind: "managed-sdk",
-        permissionProfile: "managed-autonomous",
-        configuration: {
-          ...(cwdOverride ? { cwd: cwdOverride } : {}),
-          workflowInstructions: configuration.workflowInstructions,
-          cliArgs: configuration.cliArgs,
-          terminal: configuration.terminal,
-        },
+      const response = await fetch("/api/node-launches", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          handoff: {
+            ...handoff,
+            runtimeKind: "managed-sdk",
+          },
+        }),
       });
-      if (result.record) {
-        setNodeLaunchRecords((current) =>
-          mergeNodeLaunchRecord(current, target, result.record ?? null)
-        );
+      if (!response.ok) {
+        const parsed = await parseErrorResponse(response);
+        throw new Error(parsed.message);
       }
-      if (!result.operation) {
-        console.warn(
-          "managed-sdk launch: server omitted operation; synthesizing bound operation from record",
+      const result = await response.json() as ManagedSdkLaunchApiResponse;
+      const managedLaunch = managedLaunchFromApiResponse(result);
+      const refreshed = await loadNodeLaunchRecord(target.graphPath, target.nodeId);
+      if (refreshed.record) {
+        setNodeLaunchRecords((current) =>
+          mergeNodeLaunchRecord(current, target, refreshed.record)
         );
       }
       setLaunchOperation(
         target,
-        result.operation ??
-          createClientLaunchOperation(target, "bound", {
-            status: "bound",
-            managedRuntime: result.record?.managedRuntime ?? null,
+        refreshed.operation ??
+          createClientLaunchOperation(target, "managed_running", {
+            status: "managed_running",
+            handoff,
+            terminalLaunch: null,
+            managedLaunch,
+            latestClaim: result.launchClaim,
             completedAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
           }),
@@ -1919,24 +1959,21 @@ function GraphDashboard({
       setNodeLaunchRecordRefreshKey((current) => current + 1);
     } catch (nextError) {
       const message = nextError instanceof Error ? nextError.message : String(nextError);
-      const unavailable = isManagedRuntimeUnavailableError(nextError);
       updateLaunchOperation(target, (current) =>
         createClientLaunchOperation(
           target,
-          unavailable ? "managed_unavailable" : "managed_failed",
+          "managed_failed",
           {
             ...(current ?? {}),
-            status: unavailable ? "managed_unavailable" : "managed_failed",
-            managedRuntime: null,
-            error: operationError(
-              unavailable ? "managed_runtime_unavailable" : "managed_runtime_failed",
-              message,
-            ),
+            status: "managed_failed",
+            managedLaunch: null,
+            error: operationError("managed_runtime_failed", message),
             completedAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
           },
         )
       );
+      setNodeLaunchRecordRefreshKey((current) => current + 1);
     }
   };
 
@@ -1952,15 +1989,6 @@ function GraphDashboard({
       ? trimmedCwd
       : undefined;
     writeLaunchCwdOverride(launchDefaults.cwdPreferenceKey, cwdOverride ?? null);
-    if (configuration.runtimeKind === "managed-sdk") {
-      await launchManagedSdkFromConfiguration(
-        configuration,
-        target,
-        targetEntry,
-        cwdOverride,
-      );
-      return;
-    }
     updateLaunchOperation(target, (current) =>
       createClientLaunchOperation(target, "preparing", {
         ...(current ?? {}),
@@ -1968,6 +1996,7 @@ function GraphDashboard({
         preparationRunId: null,
         handoff: null,
         terminalLaunch: null,
+        managedLaunch: null,
         error: null,
         progressEvents: [],
         startedAt: new Date().toISOString(),
@@ -2053,7 +2082,9 @@ function GraphDashboard({
           reject(new Error("Lost connection to launch preparation progress stream."));
         };
       });
-      if (configuration.launchAfterInit) {
+      if (preparedHandoff.runtimeKind === "managed-sdk") {
+        await launchManagedSdkFromHandoff(preparedHandoff, target);
+      } else if (configuration.launchAfterInit) {
         await launchTerminalFromHandoff(preparedHandoff, {
           kickoffPrompt: preparedHandoff.kickoffPrompt,
           terminalTitle: preparedHandoff.terminal.title ?? preparedHandoff.launchMetadata.workTitle,
@@ -2190,6 +2221,7 @@ function GraphDashboard({
           key={`${launchDialogEntry.node.id}:${launchDefaults.graphPath}`}
           nodeTitle={launchDialogEntry.node.title}
           defaults={launchDefaults}
+          defaultPromptProfileId={workstream.launchDefaults?.promptProfileId ?? null}
           promptProfiles={promptProfiles}
           promptProfilesLoading={promptProfilesLoading}
           promptProfilesError={promptProfilesError}
@@ -2209,7 +2241,7 @@ function GraphDashboard({
           onCancel={handleCloseLaunchDialog}
           onSubmit={handleSubmitLaunch}
           onLaunchTerminal={handleLaunchTerminal}
-          onPromptProfilesChanged={notePromptProfilesChanged}
+          onPromptProfilesChanged={onPromptProfilesChanged}
           onReleaseLaunch={launchDialogLatestClaim?.blocksLaunch ? handleReleaseLaunch : undefined}
         />
       ) : null}
@@ -2217,6 +2249,9 @@ function GraphDashboard({
         <WorkstreamConfigurationDialog
           key={`${workstream.projectKey ?? ""}:${workstream.id}:${workstream.updatedAt}`}
           workstream={workstream}
+          promptProfiles={promptProfiles}
+          promptProfilesLoading={promptProfilesLoading}
+          promptProfilesError={promptProfilesError}
           saving={configurationSaving}
           error={configurationError}
           onCancel={handleCloseConfigurationDialog}
@@ -2247,6 +2282,55 @@ function MigrationWarningsBanner({
   );
 }
 
+function SettingsPage({
+  profiles,
+  profilesLoading,
+  profilesError,
+  onRefreshProfiles,
+  onProfilesChanged,
+  onProfileDeleted,
+}: {
+  profiles: PawPromptProfile[];
+  profilesLoading: boolean;
+  profilesError: string | null;
+  onRefreshProfiles: () => Promise<void>;
+  onProfilesChanged: (profiles: PawPromptProfile[]) => void;
+  onProfileDeleted: (profileId: string) => void;
+}) {
+  return (
+    <div className="sl-shell-panel">
+      <div className="sl-settings-page">
+        <aside className="sl-settings-sidebar" aria-label="Streamliner settings sections">
+          <div className="sl-settings-sidebar-head">
+            <span className="sl-eyebrow">Settings</span>
+          </div>
+          <nav className="sl-settings-nav" aria-label="Streamliner settings">
+            <a
+              className="sl-settings-nav-item active"
+              href={routePath({ view: "settings", section: "profiles" })}
+              aria-current="page"
+              onClick={(event) => event.preventDefault()}
+            >
+              <span>PAW profiles</span>
+              <small>Launch prompt defaults</small>
+            </a>
+          </nav>
+        </aside>
+        <main className="sl-settings-content">
+          <PawProfilesPage
+            profiles={profiles}
+            loading={profilesLoading}
+            error={profilesError}
+            onRefresh={onRefreshProfiles}
+            onProfilesChanged={onProfilesChanged}
+            onProfileDeleted={onProfileDeleted}
+          />
+        </main>
+      </div>
+    </div>
+  );
+}
+
 function DashboardNav({
   route,
   onRouteChange,
@@ -2255,6 +2339,7 @@ function DashboardNav({
   onRouteChange: (route: DashboardRoute) => void | Promise<void>;
 }) {
   const workstreamsActive = route.view === "workstreams" || route.view === "workstream";
+  const settingsActive = route.view === "settings";
 
   return (
     <div className="sl-shell-nav">
@@ -2292,6 +2377,22 @@ function DashboardNav({
         >
           Sessions
         </a>
+        <a
+          className={`sl-action-btn sl-icon-action${settingsActive ? " active" : ""}`}
+          href={routePath({ view: "settings", section: "profiles" })}
+          aria-label="Streamliner settings"
+          title="Streamliner settings"
+          aria-current={settingsActive ? "page" : undefined}
+          onClick={(event) => handleInAppLinkClick(event, () => onRouteChange({ view: "settings", section: "profiles" }))}
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
+            <path
+              d="M19.4 13.5c.1-.5.1-1 .1-1.5s0-1-.1-1.5l2-1.5-2-3.5-2.4 1a7.5 7.5 0 0 0-2.6-1.5L14 2.4h-4l-.4 2.6A7.5 7.5 0 0 0 7 6.5l-2.4-1-2 3.5 2 1.5c-.1.5-.1 1-.1 1.5s0 1 .1 1.5l-2 1.5 2 3.5 2.4-1a7.5 7.5 0 0 0 2.6 1.5l.4 2.6h4l.4-2.6a7.5 7.5 0 0 0 2.6-1.5l2.4 1 2-3.5-2-1.5ZM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z"
+              fill="currentColor"
+            />
+          </svg>
+          <span className="sl-visually-hidden">Streamliner settings</span>
+        </a>
       </div>
     </div>
   );
@@ -2300,6 +2401,7 @@ function DashboardNav({
 export default function App() {
   const { route, setRoute } = useDashboardRoute();
   const graphLoader = useGraphLoader(route, true);
+  const promptProfileState = usePromptProfilesState();
   const beforeLeaveRef = useRef<(() => Promise<boolean>) | null>(null);
 
   const handleRouteChange = useCallback(
@@ -2361,7 +2463,16 @@ export default function App() {
     <div className="sl-root">
       <DashboardNav route={route} onRouteChange={handleRouteChange} />
       <MigrationWarningsBanner warnings={graphLoader.migrationWarnings} />
-      {route.view === "sessions" ? (
+      {route.view === "settings" ? (
+        <SettingsPage
+          profiles={promptProfileState.profiles}
+          profilesLoading={promptProfileState.loading}
+          profilesError={promptProfileState.error}
+          onRefreshProfiles={promptProfileState.refresh}
+          onProfilesChanged={promptProfileState.noteProfilesChanged}
+          onProfileDeleted={promptProfileState.noteProfileDeleted}
+        />
+      ) : route.view === "sessions" ? (
         <SessionsPage
           registerBeforeLeave={registerBeforeLeave}
           workstreams={graphLoader.workstreams}
@@ -2377,6 +2488,11 @@ export default function App() {
           onManageSources={manageSources}
           onRouteHome={() => setRoute({ view: "workstreams" }, "replace")}
           selectedNodeIdFromRoute={route.nodeId ?? null}
+          promptProfiles={promptProfileState.profiles}
+          promptProfilesLoading={promptProfileState.loading}
+          promptProfilesError={promptProfileState.error}
+          onRefreshPromptProfiles={promptProfileState.refresh}
+          onPromptProfilesChanged={promptProfileState.noteProfilesChanged}
         />
       ) : route.view === "workstreams" ? (
         <WorkstreamHome
