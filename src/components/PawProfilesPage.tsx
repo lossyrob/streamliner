@@ -188,7 +188,6 @@ export function PawProfilesPage({
       <header className="sl-profiles-header">
         <div>
           <span className="sl-eyebrow">PAW profiles</span>
-          <h1 className="sl-title">Launch prompt profiles</h1>
           <p className="sl-summary">
             Manage reusable PAW launch instruction snippets without selecting a workstream node.
           </p>

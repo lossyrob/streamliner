@@ -1312,13 +1312,6 @@ a.sl-action-btn {
   gap: 18px;
 }
 
-.sl-settings-sidebar-head h1 {
-  margin: 6px 0 0;
-  color: var(--sl-text);
-  font-size: 24px;
-  letter-spacing: -0.04em;
-}
-
 .sl-settings-nav {
   display: grid;
   gap: 8px;

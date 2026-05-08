@@ -2194,7 +2194,6 @@ function SettingsPage({
         <aside className="sl-settings-sidebar" aria-label="Streamliner settings sections">
           <div className="sl-settings-sidebar-head">
             <span className="sl-eyebrow">Settings</span>
-            <h1>Streamliner settings</h1>
           </div>
           <nav className="sl-settings-nav" aria-label="Streamliner settings">
             <a

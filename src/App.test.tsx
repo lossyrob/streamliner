@@ -590,9 +590,9 @@ describe("App sessions route", () => {
       await settle(100);
 
       expect(window.location.pathname).toBe("/settings/profiles");
-      expect(container.textContent).toContain("Streamliner settings");
-      expect(container.textContent).toContain("PAW profiles");
-      expect(container.textContent).toContain("Launch prompt profiles");
+      expect(container.querySelector(".sl-settings-sidebar-head")?.textContent?.trim()).toBe("Settings");
+      expect(container.querySelector(".sl-profiles-header")?.textContent).toContain("PAW profiles");
+      expect(container.querySelector(".sl-profiles-header")?.textContent).not.toContain("Launch prompt profiles");
       expect(container.textContent).toContain("No launch prompt profiles yet");
     },
     15_000,
@@ -660,9 +660,9 @@ describe("App sessions route", () => {
       });
       await settle(100);
 
-      expect(container.textContent).toContain("Streamliner settings");
-      expect(container.textContent).toContain("PAW profiles");
-      expect(container.textContent).toContain("Launch prompt profiles");
+      expect(container.querySelector(".sl-settings-sidebar-head")?.textContent?.trim()).toBe("Settings");
+      expect(container.querySelector(".sl-profiles-header")?.textContent).toContain("PAW profiles");
+      expect(container.querySelector(".sl-profiles-header")?.textContent).not.toContain("Launch prompt profiles");
       act(() => {
         findButtonByLabel(container, "Select profile Final PR only").click();
       });
