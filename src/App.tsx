@@ -154,8 +154,12 @@ function readDashboardRoute(): DashboardRoute {
       nodeId: nodeId && isKebabCaseId(nodeId) ? nodeId : null,
     };
   }
-  if (window.location.pathname === "/profiles") {
-    return { view: "profiles" };
+  if (
+    window.location.pathname === "/settings" ||
+    window.location.pathname === "/settings/profiles" ||
+    window.location.pathname === "/profiles"
+  ) {
+    return { view: "settings", section: "profiles" };
   }
   if (window.location.pathname === "/" || window.location.pathname === "") {
     return { view: "landing" };
@@ -810,14 +814,12 @@ function LandingPage({
   registryError,
   onOpenSessions,
   onOpenWorkstreams,
-  onOpenProfiles,
 }: {
   message?: string;
   workstreamCount: number;
   registryError: string | null;
   onOpenSessions: () => void | Promise<void>;
   onOpenWorkstreams: () => void | Promise<void>;
-  onOpenProfiles: () => void | Promise<void>;
 }) {
   return (
     <div className="sl-shell-panel">
@@ -857,18 +859,6 @@ function LandingPage({
               Browse, label, relaunch, and manage local Copilot CLI sessions.
             </span>
             <span className="sl-landing-card-meta">Open session registry</span>
-          </a>
-          <a
-            className="sl-landing-card"
-            href={routePath({ view: "profiles" })}
-            onClick={(event) => handleInAppLinkClick(event, onOpenProfiles)}
-          >
-            <span className="sl-landing-card-kicker">Reusable PAW text</span>
-            <span className="sl-landing-card-title">Profiles</span>
-            <span className="sl-landing-card-copy">
-              Inspect, copy, and maintain saved launch prompt profiles outside the node launch flow.
-            </span>
-            <span className="sl-landing-card-meta">Manage launch profiles</span>
           </a>
         </div>
       </div>
@@ -2183,6 +2173,56 @@ function MigrationWarningsBanner({
   );
 }
 
+function SettingsPage({
+  profiles,
+  profilesLoading,
+  profilesError,
+  onRefreshProfiles,
+  onProfilesChanged,
+  onProfileDeleted,
+}: {
+  profiles: PawPromptProfile[];
+  profilesLoading: boolean;
+  profilesError: string | null;
+  onRefreshProfiles: () => Promise<void>;
+  onProfilesChanged: (profiles: PawPromptProfile[]) => void;
+  onProfileDeleted: (profileId: string) => void;
+}) {
+  return (
+    <div className="sl-shell-panel">
+      <div className="sl-settings-page">
+        <aside className="sl-settings-sidebar" aria-label="Streamliner settings sections">
+          <div className="sl-settings-sidebar-head">
+            <span className="sl-eyebrow">Settings</span>
+            <h1>Streamliner settings</h1>
+          </div>
+          <nav className="sl-settings-nav" aria-label="Streamliner settings">
+            <a
+              className="sl-settings-nav-item active"
+              href={routePath({ view: "settings", section: "profiles" })}
+              aria-current="page"
+              onClick={(event) => event.preventDefault()}
+            >
+              <span>PAW profiles</span>
+              <small>Launch prompt defaults</small>
+            </a>
+          </nav>
+        </aside>
+        <main className="sl-settings-content">
+          <PawProfilesPage
+            profiles={profiles}
+            loading={profilesLoading}
+            error={profilesError}
+            onRefresh={onRefreshProfiles}
+            onProfilesChanged={onProfilesChanged}
+            onProfileDeleted={onProfileDeleted}
+          />
+        </main>
+      </div>
+    </div>
+  );
+}
+
 function DashboardNav({
   route,
   onRouteChange,
@@ -2191,6 +2231,7 @@ function DashboardNav({
   onRouteChange: (route: DashboardRoute) => void | Promise<void>;
 }) {
   const workstreamsActive = route.view === "workstreams" || route.view === "workstream";
+  const settingsActive = route.view === "settings";
 
   return (
     <div className="sl-shell-nav">
@@ -2229,12 +2270,20 @@ function DashboardNav({
           Sessions
         </a>
         <a
-          className={`sl-action-btn${route.view === "profiles" ? " active" : ""}`}
-          href={routePath({ view: "profiles" })}
-          aria-current={route.view === "profiles" ? "page" : undefined}
-          onClick={(event) => handleInAppLinkClick(event, () => onRouteChange({ view: "profiles" }))}
+          className={`sl-action-btn sl-icon-action${settingsActive ? " active" : ""}`}
+          href={routePath({ view: "settings", section: "profiles" })}
+          aria-label="Streamliner settings"
+          title="Streamliner settings"
+          aria-current={settingsActive ? "page" : undefined}
+          onClick={(event) => handleInAppLinkClick(event, () => onRouteChange({ view: "settings", section: "profiles" }))}
         >
-          PAW profiles
+          <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
+            <path
+              d="M19.4 13.5c.1-.5.1-1 .1-1.5s0-1-.1-1.5l2-1.5-2-3.5-2.4 1a7.5 7.5 0 0 0-2.6-1.5L14 2.4h-4l-.4 2.6A7.5 7.5 0 0 0 7 6.5l-2.4-1-2 3.5 2 1.5c-.1.5-.1 1-.1 1.5s0 1 .1 1.5l-2 1.5 2 3.5 2.4-1a7.5 7.5 0 0 0 2.6 1.5l.4 2.6h4l.4-2.6a7.5 7.5 0 0 0 2.6-1.5l2.4 1 2-3.5-2-1.5ZM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z"
+              fill="currentColor"
+            />
+          </svg>
+          <span className="sl-visually-hidden">Streamliner settings</span>
         </a>
       </div>
     </div>
@@ -2295,11 +2344,6 @@ export default function App() {
     [setRoute],
   );
 
-  const openProfiles = useCallback(
-    () => handleRouteChange({ view: "profiles" }),
-    [handleRouteChange],
-  );
-
   const untrackFromHome = useCallback(
     async (entry: WorkstreamRegistryListEntry) => {
       await graphLoader.untrack(entry);
@@ -2311,12 +2355,12 @@ export default function App() {
     <div className="sl-root">
       <DashboardNav route={route} onRouteChange={handleRouteChange} />
       <MigrationWarningsBanner warnings={graphLoader.migrationWarnings} />
-      {route.view === "profiles" ? (
-        <PawProfilesPage
+      {route.view === "settings" ? (
+        <SettingsPage
           profiles={promptProfileState.profiles}
-          loading={promptProfileState.loading}
-          error={promptProfileState.error}
-          onRefresh={promptProfileState.refresh}
+          profilesLoading={promptProfileState.loading}
+          profilesError={promptProfileState.error}
+          onRefreshProfiles={promptProfileState.refresh}
           onProfilesChanged={promptProfileState.noteProfilesChanged}
           onProfileDeleted={promptProfileState.noteProfileDeleted}
         />
@@ -2366,7 +2410,6 @@ export default function App() {
           workstreamCount={graphLoader.workstreams.length}
           onOpenSessions={() => openSessions()}
           onOpenWorkstreams={() => handleRouteChange({ view: "workstreams" })}
-          onOpenProfiles={openProfiles}
         />
       )}
     </div>

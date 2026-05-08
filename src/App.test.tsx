@@ -561,7 +561,7 @@ describe("App sessions route", () => {
       expect(container.textContent).toContain("Keep parallel work visible.");
       expect(container.textContent).toContain("Workstreams");
       expect(container.textContent).toContain("Sessions");
-      expect(container.textContent).toContain("Profiles");
+      expect(container.textContent).not.toContain("Launch prompt profiles");
       expect(container.textContent).not.toContain("My Sessions");
       expect(window.location.search).toBe("");
       expect(
@@ -580,13 +580,18 @@ describe("App sessions route", () => {
 
       const sessionsLink = findLink(container, "Sessions");
       expect(sessionsLink.getAttribute("href")).toBe("/sessions");
+      const settingsLink = container.querySelector<HTMLAnchorElement>('a[aria-label="Streamliner settings"]');
+      expect(settingsLink).toBeInstanceOf(HTMLAnchorElement);
+      expect(settingsLink?.getAttribute("href")).toBe("/settings/profiles");
 
       act(() => {
-        findLink(container, "PAW profiles").click();
+        settingsLink?.click();
       });
       await settle(100);
 
-      expect(window.location.pathname).toBe("/profiles");
+      expect(window.location.pathname).toBe("/settings/profiles");
+      expect(container.textContent).toContain("Streamliner settings");
+      expect(container.textContent).toContain("PAW profiles");
       expect(container.textContent).toContain("Launch prompt profiles");
       expect(container.textContent).toContain("No launch prompt profiles yet");
     },
@@ -594,7 +599,7 @@ describe("App sessions route", () => {
   );
 
   it(
-    "manages PAW launch prompt profiles from the standalone route",
+    "manages PAW launch prompt profiles from settings",
     async () => {
       const copyText = vi.fn(async () => {});
       Object.defineProperty(navigator, "clipboard", {
@@ -648,13 +653,15 @@ describe("App sessions route", () => {
         throw new Error(`Unexpected fetch: ${path}`);
       });
       vi.stubGlobal("fetch", fetchMock);
-      window.history.pushState({}, "", "/profiles");
+      window.history.pushState({}, "", "/settings/profiles");
 
       act(() => {
         root.render(<App />);
       });
       await settle(100);
 
+      expect(container.textContent).toContain("Streamliner settings");
+      expect(container.textContent).toContain("PAW profiles");
       expect(container.textContent).toContain("Launch prompt profiles");
       act(() => {
         findButtonByLabel(container, "Select profile Final PR only").click();
