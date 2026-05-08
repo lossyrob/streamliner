@@ -64,3 +64,10 @@ Use a server-side GitHub status service instead of browser-direct GitHub calls s
 - If a GitHub issue API response is actually a PR, normalize it as PR status for PR refs and as issue status for issue refs only when the caller requested issue status.
 - Keep UI labels compact to avoid overcrowding graph node cards and session rows.
 - Before implementing normalization, verify the exact field compatibility of `WorkstreamGithubSnapshot`, `WorkstreamGithubIssueSnapshot`, `WorkstreamGithubPullRequestSnapshot`, `buildWorkstreamViewModel(workstream, githubSnapshot)`, runtime overlay tracker fields, and `SessionsPage` GitHub chip props.
+
+## Implementation status
+
+- [x] GitHub status API and normalization
+- [x] Client status loading and workstream integration
+- [x] Session GitHub status cues
+- [x] Tests and UI verification

@@ -12,7 +12,9 @@ import type { SessionRegistryStore } from "../session-registry-contract";
 import { getApiLogger } from "./logger";
 import { createAccessLogMiddleware } from "./middleware/access-log";
 import { NodeLaunchRecordStore } from "./node-launch-record-store";
+import type { GithubStatusServiceOptions } from "./github-status-service";
 import { createGraphRouter } from "./routes/graph";
+import { createGithubStatusRouter } from "./routes/github-status";
 import {
   createLaunchContextsRouter,
   type LaunchContextRouteDeps,
@@ -56,6 +58,7 @@ export interface StreamlinerApiAppOptions {
    * `GET /api/launch-claims[/:id]` for diagnostic UI consumption. */
   launchClaimStore?: LaunchClaimStore;
   nodeLaunchDeps?: NodeLaunchDeps;
+  githubStatusDeps?: GithubStatusServiceOptions;
 }
 
 const malformedJsonHandler: ErrorRequestHandler = (error, _req, res, next) => {
@@ -141,6 +144,12 @@ export function createStreamlinerApiApp(
     createGraphRouter({
       defaultGraphPath: options.graphPath,
       recentsPath: options.recentsPath,
+    }),
+  );
+  app.use(
+    "/api",
+    createGithubStatusRouter({
+      serviceOptions: options.githubStatusDeps,
     }),
   );
   app.use(

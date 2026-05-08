@@ -5,6 +5,13 @@ import {
   getActivityStatusLabel,
 } from "./session-activity-status";
 import { handleInAppLinkClick } from "../dashboard-routing";
+import {
+  githubIssueSnapshotLabel,
+  githubIssueSnapshotTone,
+  githubPullRequestSnapshotLabel,
+  githubPullRequestSnapshotTone,
+  githubStatusToneClass,
+} from "../github-status-view";
 import type { WorkstreamGraphNodeData } from "../workstream-graph";
 import { trackerLabel, trackerUrl } from "../workstream-links";
 
@@ -96,6 +103,26 @@ function NodeBadges({
       {pullRequestCount > 0 ? (
         <span className="sl-node-pill muted">
           {pullRequestCount} PR{pullRequestCount === 1 ? "" : "s"}
+        </span>
+      ) : null}
+      {data.entry.githubIssue ? (
+        <span
+          className={`sl-node-pill ${githubStatusToneClass(
+            githubIssueSnapshotTone(data.entry.githubIssue),
+          )}`}
+          title={data.entry.githubIssue.error ?? data.entry.githubIssue.title}
+        >
+          {githubIssueSnapshotLabel(data.entry.githubIssue)}
+        </span>
+      ) : null}
+      {data.entry.activePullRequest ? (
+        <span
+          className={`sl-node-pill ${githubStatusToneClass(
+            githubPullRequestSnapshotTone(data.entry.activePullRequest),
+          )}`}
+          title={data.entry.activePullRequest.title}
+        >
+          {githubPullRequestSnapshotLabel(data.entry.activePullRequest)}
         </span>
       ) : null}
       {showRuntimeStatus && overlay ? (

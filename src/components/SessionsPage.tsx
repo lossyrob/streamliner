@@ -52,6 +52,15 @@ import {
   TerminalColorQuickPicker,
 } from "./SessionColorPicker";
 import { sessionRegistryListUrl } from "../session-registry-client";
+import {
+  githubStatusForRef,
+  useGithubStatusLookup,
+} from "../github-status-client";
+import {
+  type GithubStatusRef,
+  type GithubStatusResult,
+  githubStatusTone,
+} from "../github-status";
 
 const SESSION_POLL_INTERVAL_MS = 15_000;
 const SESSION_EVENT_REFETCH_DEBOUNCE_MS = 150;
@@ -669,6 +678,15 @@ function githubRefRepo(ref: DerivedGithubRef, session: SessionRegistryListItem):
   return ref.repo ?? session.repo;
 }
 
+function githubRepoParts(repo: string | null): { owner: string; repo: string } | null {
+  const trimmed = repo?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const match = trimmed.match(/^([\w.-]+)\/([\w.-]+)$/);
+  return match ? { owner: match[1], repo: match[2] } : null;
+}
+
 function normalizeGithubRepoForUrl(repo: string | null): string | null {
   const trimmed = repo?.trim();
   if (!trimmed) {
@@ -700,6 +718,51 @@ function safeGithubRefUrl(url: string | null): string | null {
   return null;
 }
 
+function githubStatusRefForDerivedRef(
+  ref: DerivedGithubRef,
+  session: SessionRegistryListItem,
+): GithubStatusRef | null {
+  if (ref.type !== "issue" && ref.type !== "pr") {
+    return null;
+  }
+  const repo = githubRepoParts(githubRefRepo(ref, session));
+  if (!repo) {
+    return null;
+  }
+  return {
+    type: ref.type,
+    owner: repo.owner,
+    repo: repo.repo,
+    number: ref.number,
+  };
+}
+
+function githubStatusRefsForSessions(
+  sessions: readonly SessionRegistryListItem[],
+  selectedSession: SessionRegistryListItem | null,
+): GithubStatusRef[] {
+  const seen = new Set<string>();
+  const refs: GithubStatusRef[] = [];
+  const sourceSessions = selectedSession
+    ? [...sessions, selectedSession]
+    : sessions;
+  for (const session of sourceSessions) {
+    for (const ref of session.derivedGithubRefs) {
+      const statusRef = githubStatusRefForDerivedRef(ref, session);
+      if (!statusRef) {
+        continue;
+      }
+      const key = `${statusRef.type}:${statusRef.owner}/${statusRef.repo}#${statusRef.number}`.toLowerCase();
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      refs.push(statusRef);
+    }
+  }
+  return refs;
+}
+
 function githubRefUrl(ref: DerivedGithubRef, session: SessionRegistryListItem): string | null {
   const explicitUrl = safeGithubRefUrl(ref.url);
   if (explicitUrl) {
@@ -720,31 +783,48 @@ interface GithubRefChipProps {
   refItem: DerivedGithubRef;
   session: SessionRegistryListItem;
   className: string;
+  status?: GithubStatusResult | null;
   showRepo?: boolean;
 }
 
-function GithubRefChip({ refItem, session, className, showRepo = false }: GithubRefChipProps) {
+function GithubRefChip({
+  refItem,
+  session,
+  className,
+  status = null,
+  showRepo = false,
+}: GithubRefChipProps) {
   const label = githubRefLabel(refItem);
   const repo = githubRefRepo(refItem, session);
   const url = githubRefUrl(refItem, session);
+  const statusClass = status ? ` github-status ${githubStatusTone(status)}` : "";
+  const statusTitle = status?.error
+    ? `${status.statusLabel}: ${status.error.message}`
+    : status?.statusLabel;
   const content = (
     <>
       {label}
       {showRepo && repo ? ` · ${repo}` : ""}
+      {status ? ` · ${status.statusLabel}` : ""}
     </>
   );
 
   if (!url) {
-    return <span className={className}>{content}</span>;
+    return (
+      <span className={`${className}${statusClass}`} title={statusTitle}>
+        {content}
+      </span>
+    );
   }
 
   return (
     <a
-      className={`${className} linkable`}
+      className={`${className}${statusClass} linkable`}
       href={url}
       target="_blank"
       rel="noopener noreferrer"
-      aria-label={`Open ${label} in GitHub`}
+      aria-label={`Open ${statusTitle ? `${label} (${statusTitle})` : label} in GitHub`}
+      title={statusTitle}
       onClick={(event) => event.stopPropagation()}
     >
       {content}
@@ -1173,6 +1253,7 @@ export function SessionsPage({
   const [syncState, setSyncState] = useState<SyncState>("connecting");
   const [conflictPending, setConflictPending] = useState<SessionConflictState | null>(null);
   const [creatingState, setCreatingState] = useState<SaveState>("idle");
+  const [githubStatusRefreshKey, setGithubStatusRefreshKey] = useState(0);
   const eventRefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipUnmountFlushRef = useRef(false);
   const saveRequestIdRef = useRef(0);
@@ -1191,6 +1272,7 @@ export function SessionsPage({
   const applySessionList = useCallback(
     (nextSessions: SessionRegistryListItem[], keepSelection = true) => {
       setSessions(nextSessions);
+      setGithubStatusRefreshKey((current) => current + 1);
       setError(null);
         const currentCreating = creatingRef.current;
         const currentSelectedId = selectedIdRef.current;
@@ -1426,6 +1508,14 @@ export function SessionsPage({
         (session) => !isSessionStale(session, staleSessionDays),
       ),
     [endedFilteredSessions, staleSessionDays],
+  );
+  const githubStatusRefs = useMemo(
+    () => githubStatusRefsForSessions(visibleSessions, selectedSession),
+    [selectedSession, visibleSessions],
+  );
+  const githubStatuses = useGithubStatusLookup(
+    githubStatusRefs,
+    githubStatusRefreshKey,
   );
   const hiddenGraphScopedManualCount = sessions.length - graphScopedSessions.length;
   const hiddenObservedSessionCount =
@@ -2300,6 +2390,10 @@ export function SessionsPage({
                                   refItem={ref}
                                   session={session}
                                   className="sl-session-row-context-chip important"
+                                  status={githubStatusForRef(
+                                    githubStatuses.statuses,
+                                    githubStatusRefForDerivedRef(ref, session),
+                                  )}
                                 />
                               ))}
                               {session.tags.map((tag) => (
@@ -2500,6 +2594,7 @@ export function SessionsPage({
                 <SessionOverview
                   session={selectedSession}
                   workstreamLinkage={selectedSessionLinkage}
+                  githubStatuses={githubStatuses.statuses}
                   onOpenWorkstream={onOpenWorkstream}
                 />
               )}
@@ -2570,6 +2665,7 @@ export function SessionsPage({
 interface SessionOverviewProps {
   session: SessionRegistryListItem;
   workstreamLinkage: SessionWorkstreamLinkageResolution | null;
+  githubStatuses: ReadonlyMap<string, GithubStatusResult>;
   onOpenWorkstream?: (target: WorkstreamRouteTarget) => void | Promise<void>;
 }
 
@@ -2858,6 +2954,7 @@ function CopyableValue({ value, label }: CopyableValueProps) {
 function SessionOverview({
   session,
   workstreamLinkage,
+  githubStatuses,
   onOpenWorkstream,
 }: SessionOverviewProps) {
   const summary = getSessionSummaryDisplay(session);
@@ -3040,6 +3137,10 @@ function SessionOverview({
                         refItem={ref}
                         session={session}
                         className="sl-session-context-ref"
+                        status={githubStatusForRef(
+                          githubStatuses,
+                          githubStatusRefForDerivedRef(ref, session),
+                        )}
                         showRepo
                       />
                     ))}

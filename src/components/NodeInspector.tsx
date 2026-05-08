@@ -10,6 +10,13 @@ import type {
   WorkstreamRuntimeNodeOverlay,
   WorkstreamRuntimeOverlayIssue,
 } from "../workstream-runtime-overlay";
+import {
+  githubIssueSnapshotLabel,
+  githubIssueSnapshotTone,
+  githubPullRequestSnapshotLabel,
+  githubPullRequestSnapshotTone,
+  githubStatusPillClass,
+} from "../github-status-view";
 import { trackerLabel, trackerUrl } from "../workstream-links";
 import { humanizeLaunchClaim } from "./launch-claim-display";
 
@@ -271,6 +278,33 @@ export function NodeInspector({
   const tracker = trackerLabel(node.tracker);
   const trackerHref = trackerUrl(node.tracker);
   const trackerLabelText = node.tracker?.type === "github" ? "Issue" : "Tracker";
+  const trackerStatusChips = [
+    entry.githubIssue
+      ? {
+          key: "issue",
+          label: githubIssueSnapshotLabel(entry.githubIssue),
+          tone: githubIssueSnapshotTone(entry.githubIssue),
+          title: entry.githubIssue.error ?? entry.githubIssue.title,
+        }
+      : null,
+    entry.activePullRequest
+      ? {
+          key: "pr",
+          label: githubPullRequestSnapshotLabel(entry.activePullRequest),
+          tone: githubPullRequestSnapshotTone(entry.activePullRequest),
+          title: entry.activePullRequest.title,
+        }
+      : null,
+  ].filter(
+    (
+      chip,
+    ): chip is {
+      key: string;
+      label: string;
+      tone: ReturnType<typeof githubIssueSnapshotTone>;
+      title: string;
+    } => chip !== null,
+  );
   const latestClaim = launchRecord?.latestClaim ?? launchOperation?.latestClaim ?? null;
   const latestClaimDisplay = latestClaim ? humanizeLaunchClaim(latestClaim) : null;
   const launchButtonLabel = latestClaim?.blocksLaunch || launchOperation?.status === "preparing" || launchOperation?.status === "launching"
@@ -315,6 +349,19 @@ export function NodeInspector({
                 tracker
               )}
             </span>
+            {trackerStatusChips.length > 0 && (
+              <span className="sl-inspector-github-status">
+                {trackerStatusChips.map((chip) => (
+                  <span
+                    key={chip.key}
+                    className={`sl-pill ${githubStatusPillClass(chip.tone)}`}
+                    title={chip.title}
+                  >
+                    {chip.label}
+                  </span>
+                ))}
+              </span>
+            )}
           </div>
         )}
         {repoLabels.length > 0 && (
