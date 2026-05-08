@@ -270,7 +270,7 @@ function hasActiveManagedRuntime(
   nodeId: string,
 ): boolean {
   return registryStore
-    .listSessions({ includeArchived: true, workstreamId, nodeId })
+    .listSessions({ includeArchived: false, workstreamId, nodeId })
     .some((session) => isManagedRuntimeActive(session.runtime));
 }
 

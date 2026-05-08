@@ -416,7 +416,6 @@ function isActiveOperation(status: string): boolean {
   return (
     status === "preparing" ||
     status === "launching" ||
-    status === "managed_starting" ||
-    status === "managed_running"
+    status === "managed_starting"
   );
 }

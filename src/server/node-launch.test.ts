@@ -716,6 +716,110 @@ describe("node launch API route", () => {
     }));
   });
 
+  it("allows relaunch after a managed operation reaches a terminal lifecycle state", async () => {
+    const root = createRootDir();
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    let now = new Date();
+    let startCount = 0;
+    const runner: ManagedSdkRunner = {
+      start: async (input) => {
+        startCount += 1;
+        const result = {
+          registryId: input.registryId,
+          sdkSessionId: `sdk-relaunch-${startCount}`,
+          sdkWorkspacePath: normalizePath(join(root, "sdk", `workspace-${startCount}.yaml`)),
+          sdkStateRoot: normalizePath(join(root, "sdk")),
+        };
+        input.onStarted(result);
+        input.onLifecycleState("completed", "Managed SDK worker completed.");
+        return result;
+      },
+    };
+    const api = createStreamlinerApiApp({
+      store: registryStore,
+      launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
+      nodeLaunchDeps: {
+        managedSdkRunner: runner,
+        now: () => now,
+      },
+    });
+    activeApps.push(api);
+    const handoff = fakeHandoff(root, { runtimeKind: "managed-sdk" });
+
+    const firstResponse = await request(api.app)
+      .post("/api/node-launches")
+      .send({ handoff })
+      .expect(201);
+    now = new Date(Date.now() + 10 * 60 * 1000);
+    const secondResponse = await request(api.app)
+      .post("/api/node-launches")
+      .send({ handoff })
+      .expect(201);
+
+    expect(startCount).toBe(2);
+    expect(firstResponse.body.managedSdk.sdkSessionId).toBe("sdk-relaunch-1");
+    expect(secondResponse.body.managedSdk.sdkSessionId).toBe("sdk-relaunch-2");
+  });
+
+  it("does not let archived managed runtime metadata block a replacement launch", async () => {
+    const root = createRootDir();
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const runner: ManagedSdkRunner = {
+      start: async (input) => {
+        const result = {
+          registryId: input.registryId,
+          sdkSessionId: "sdk-after-archive",
+          sdkWorkspacePath: normalizePath(join(root, "sdk", "workspace.yaml")),
+          sdkStateRoot: normalizePath(join(root, "sdk")),
+        };
+        input.onStarted(result);
+        return result;
+      },
+    };
+    const staleRecord = registryStore.upsertSession({
+      id: "archived-running-managed-row",
+      title: "Archived running managed row",
+      description: "",
+      cwd: normalizePath(root),
+      origin: { kind: "launched", launchClaimId: "stale-claim" },
+      graphBinding: {
+        workstreamId: "api-test",
+        nodeId: "terminal-launch",
+        launchClaimId: "stale-claim",
+      },
+    });
+    registryStore.patchRuntimeMetadata(staleRecord.id, {
+      runtimeKind: "managed-sdk",
+      runtimeOwner: "streamliner-sdk",
+      lifecycleState: "running",
+      permissionProfile: "managed-autonomous",
+      launchClaimId: "stale-claim",
+      launchNonce: "stale-nonce",
+    });
+    registryStore.archiveSession(staleRecord.id);
+    const api = createStreamlinerApiApp({
+      store: registryStore,
+      launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
+      nodeLaunchDeps: {
+        managedSdkRunner: runner,
+      },
+    });
+    activeApps.push(api);
+
+    const response = await request(api.app)
+      .post("/api/node-launches")
+      .send({ handoff: fakeHandoff(root, { runtimeKind: "managed-sdk" }) })
+      .expect(201);
+
+    expect(response.body.managedSdk).toEqual(expect.objectContaining({
+      sdkSessionId: "sdk-after-archive",
+    }));
+  });
+
   it("does not let a later terminal failure clobber a successful launch operation", async () => {
     const root = createRootDir();
     const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
