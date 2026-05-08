@@ -1432,4 +1432,37 @@ describe("managed runtime session API routes", () => {
     expect(archivedResponse.body.error).toContain("Archived session");
     expect(registryStore.getSession(nonManagedRecord.id)?.runtime ?? null).toBeNull();
   });
+
+  it("rejects managed runtime actions from non-loopback or non-JSON requests", async () => {
+    const root = createRootDir();
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const api = createStreamlinerApiApp({
+      store: registryStore,
+      launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
+    });
+    activeApps.push(api);
+    const paths = [
+      "/api/sessions/guarded-managed-row/managed/interrupt",
+      "/api/sessions/guarded-managed-row/managed/cancel",
+      "/api/sessions/guarded-managed-row/managed/evidence",
+    ];
+
+    for (const path of paths) {
+      const nonLoopbackResponse = await request(api.app)
+        .post(path)
+        .set("X-Forwarded-For", "203.0.113.10")
+        .send({})
+        .expect(403);
+      expect(nonLoopbackResponse.body.error).toContain("loopback");
+
+      const contentTypeResponse = await request(api.app)
+        .post(path)
+        .set("Content-Type", "text/plain")
+        .send("not-json")
+        .expect(415);
+      expect(contentTypeResponse.body.error).toContain("Content-Type must be application/json");
+    }
+  });
 });
