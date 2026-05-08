@@ -8,6 +8,7 @@ import type {
 } from "./managed-runtime-contract";
 import {
   formatManagedRuntimeLabel,
+  MANAGED_RUNTIME_LIFECYCLE_STATES,
   managedRuntimeProgressEvents,
 } from "./managed-runtime-contract";
 import type {
@@ -488,6 +489,39 @@ function statusFromManagedRuntime(
     case "cleanup_ready":
     case "cleaning_up":
       return "active";
+    default: {
+      const _exhaustive: never = managedRuntime.lifecycleState;
+      throw new Error(`unhandled managed lifecycle state: ${String(_exhaustive)}`);
+    }
+  }
+}
+
+function isTerminalManagedRuntimeLifecycle(
+  state: ManagedRuntimeLifecycleState,
+): boolean {
+  switch (state) {
+    case "completed":
+    case "cleaned_up":
+    case "terminal_takeover":
+    case "failed":
+    case "canceled":
+      return true;
+    case "preparing":
+    case "starting":
+    case "running":
+    case "idle":
+    case "waiting_for_builder":
+    case "interrupt_requested":
+    case "interrupted":
+    case "pr_ready":
+    case "review_ready":
+    case "cleanup_ready":
+    case "cleaning_up":
+      return false;
+    default: {
+      const _exhaustive: never = state;
+      throw new Error(`unhandled managed lifecycle state: ${String(_exhaustive)}`);
+    }
   }
 }
 
@@ -505,18 +539,72 @@ function buildManagedRuntimeOverlay(
   session: SessionRegistryListItem | null,
   launchRecord: NodeLaunchRecord | undefined,
 ): WorkstreamManagedRuntimeOverlay | null {
-  const projection = session?.managedRuntime ?? launchRecord?.managedRuntime ?? null;
+  const sessionProjection = session?.managedRuntime ?? null;
+  const launchRecordProjection = launchRecord?.managedRuntime ?? null;
+  const projection = selectManagedRuntimeProjection(sessionProjection, launchRecordProjection);
   if (!projection) {
     return null;
   }
   return {
     projection,
-    source: session?.managedRuntime ? "session" : "launch-record",
+    source: projection === sessionProjection ? "session" : "launch-record",
     lifecycleState: projection.lifecycleState,
     lifecycleLabel: formatManagedRuntimeLabel(projection.lifecycleState),
     progress: managedRuntimeProgressEvents(projection.progress),
   };
 }
+
+function managedRuntimeUpdatedAt(projection: ManagedRuntimeProjection): number {
+  const timestamp = Date.parse(projection.lifecycleUpdatedAt ?? "");
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function selectManagedRuntimeProjection(
+  sessionProjection: ManagedRuntimeProjection | null,
+  launchRecordProjection: ManagedRuntimeProjection | null,
+): ManagedRuntimeProjection | null {
+  if (sessionProjection && launchRecordProjection) {
+    const sessionTimestamp = managedRuntimeUpdatedAt(sessionProjection);
+    const launchRecordTimestamp = managedRuntimeUpdatedAt(launchRecordProjection);
+    if (launchRecordTimestamp > sessionTimestamp) {
+      return launchRecordProjection;
+    }
+    return sessionProjection;
+  }
+  return sessionProjection ?? launchRecordProjection;
+}
+
+export function managedRuntimeLifecycleOverlayStatus(
+  state: ManagedRuntimeLifecycleState,
+): WorkstreamRuntimeNodeStatus {
+  const status = statusFromManagedRuntime(
+    "managed-runtime-contract",
+    {
+      projection: {
+        runtimeKind: "managed-sdk",
+        runtimeOwner: "streamliner-sdk",
+        permissionProfile: "managed-autonomous",
+        lifecycleState: state,
+      },
+      source: "session",
+      lifecycleState: state,
+      lifecycleLabel: formatManagedRuntimeLabel(state),
+      progress: [],
+    },
+    [],
+  );
+  if (!status) {
+    throw new Error(`managed lifecycle state produced no status: ${state}`);
+  }
+  return status;
+}
+
+export const MANAGED_RUNTIME_LIFECYCLE_OVERLAY_STATUSES = Object.fromEntries(
+  MANAGED_RUNTIME_LIFECYCLE_STATES.map((state) => [
+    state,
+    managedRuntimeLifecycleOverlayStatus(state),
+  ]),
+) as Record<ManagedRuntimeLifecycleState, WorkstreamRuntimeNodeStatus>;
 
 function buildSessionOverlay(
   summary: GraphNodeSessionStatusSummary | undefined,
@@ -768,9 +856,20 @@ function buildNodeOverlay(
     managedRuntimeOverlay,
     issues,
   );
-  const runtimeStatus = managedRuntimeStatus ?? (primarySession
-    ? statusFromSession(entry.node.id, entry.node.status, primarySession, issues)
-    : launchStatus ?? entry.operationalStatus);
+  const shouldUsePrimaryRuntimeStatus = Boolean(
+    managedRuntimeStatus &&
+      managedRuntimeOverlay &&
+      isTerminalManagedRuntimeLifecycle(managedRuntimeOverlay.lifecycleState) &&
+      (primarySession || launchStatus !== null),
+  );
+  const primaryRuntimeStatus = shouldUsePrimaryRuntimeStatus || !managedRuntimeStatus
+    ? primarySession
+      ? statusFromSession(entry.node.id, entry.node.status, primarySession, issues)
+      : launchStatus ?? entry.operationalStatus
+    : null;
+  const runtimeStatus: WorkstreamRuntimeNodeStatus = shouldUsePrimaryRuntimeStatus
+    ? primaryRuntimeStatus ?? managedRuntimeStatus ?? entry.operationalStatus
+    : managedRuntimeStatus ?? primaryRuntimeStatus ?? entry.operationalStatus;
 
   const launchOverlay = buildLaunchOverlay(launchRecord, launchStatus !== null);
   const pawOverlay = buildPawOverlay(entry.node.id, primarySession, issues);
