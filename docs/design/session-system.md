@@ -17,7 +17,10 @@ code_paths:
   - src/server/**
   - src/components/NodeInspector.tsx
   - src/components/PawLaunchDialog.tsx
+  - src/components/PawProfilesPage.tsx
   - src/components/SessionsPage.tsx
+  - src/components/WorkstreamConfigurationDialog.tsx
+  - src/components/paw-prompt-profiles.ts
   - src/server/session/**
   - src/server/context/**
   - src/components/session/**
@@ -50,7 +53,7 @@ The Wave 3 launch MVP is **PAW-only graph launch**. The contract is the interfac
 | Backend-readable graph path | Workstream registry entry | Local `graph.json` path the backend can read |
 | Launch policy | Graph `launchPolicy` | Optional durable preconditions, such as requiring a GitHub issue tracker before launch |
 | Launch instructions | Builder edit + default text | Natural-language guidance for the graph-launched PAW session. PAW init may use it to derive work title, work ID, target branch, review policy, and model settings, but general operating guidance belongs in the kickoff prompt rather than verbatim `Custom Workflow Instructions`. |
-| PAW prompt profile | Local Streamliner state | Optional reusable text snippet that can populate or update the launch instructions field |
+| PAW prompt profile | Local Streamliner state + graph `launchDefaults.promptProfileId` | Optional reusable text snippet that can populate or update the launch instructions field. A workstream may store a local profile id as a best-effort default selection. |
 | CLI arguments | Default + builder override | Copilot CLI flags for the later worker launch; an explicit empty list is valid |
 | Terminal preference | Graph `launchDefaults` + builder edit | Preferred visible terminal host for the worker launch |
 | Terminal presentation | Graph `launchDefaults` + builder edit | Optional default tab title template and tab/session color for the worker launch |
@@ -162,7 +165,9 @@ The implemented launch surface is a text-guided PAW init dialog, not the full PA
 - CLI args default to `--yolo`; an explicit empty override remains empty.
 - Terminal launch mode is `manual` with a default terminal preference; `default` means "use Windows Terminal when available, otherwise PowerShell," not an alias for PowerShell. After PAW init completes, Streamliner uses those values to open the visible worker terminal.
 
-The dialog supports lightweight PAW prompt profiles: named reusable text snippets stored at the local Streamliner server state level. Profiles are not PAW-owned metadata and do not encode structured constraints; selecting one only replaces the free-text launch instructions, and the builder can edit the text before running PAW init. The dialog can save the current text as a new profile or update the selected profile.
+The dialog supports lightweight PAW prompt profiles: named reusable text snippets stored at the local Streamliner server state level. Profiles are not PAW-owned metadata and do not encode structured constraints; selecting one only replaces the free-text launch instructions, and the builder can edit the text before running PAW init. The dialog can save the current text as a new profile or update the selected profile. If the workstream's `launchDefaults.promptProfileId` matches a local profile, the dialog preselects it once while opening; if the profile is missing or later deleted, launch falls back to custom instructions without blocking the node.
+
+The Streamliner settings page at `/settings/profiles` is the primary management surface for these local PAW prompt profiles. The top-level dashboard navigation keeps Workstreams and Sessions as the main application areas, with profile management behind the settings gear and a settings sidebar section. The profile manager shares the same application-level profile state as the launch dialog, refreshes from the local API without browser caching, and supports create, edit, duplicate, copy-instructions, and delete actions. Mutations update shared in-memory state immediately, so a profile changed in settings is visible the next time the launch dialog opens in the same browser session.
 
 After PAW init succeeds, the dialog loads the generated `WorkflowContext.md` so the builder can review or make last-minute manual edits before terminal launch. The edit surface is intentionally bounded to the prepared PAW work directory. It is a debugging and correction affordance for the launch MVP, not a replacement for PAW init's normal workflow generation. The dialog then calls the same backend node-launch route as non-UI callers to create the claim and open the worker terminal.
 
@@ -324,9 +329,9 @@ The dialog uses the run route. `POST /api/launch-preparations/runs` returns a `r
 
 Internal SDK launch sessions persist under Streamliner's local state rather than the normal Copilot session-state root. The default root is `~/.streamliner/state/copilot-sdk/paw-launch/<context-id>/`, with `STREAMLINER_COPILOT_SDK_STATE_ROOT` available for override. Run progress and API logs surface the SDK `sessionId` and workspace path for debugging, but these internal sessions are not intended to appear in Streamliner's observed Sessions view.
 
-The PAW launch dialog is intentionally text-guided for this MVP. It exposes launch instructions, lightweight reusable text profiles, CLI args, terminal preference, graph source, a GitHub issue link when the selected node has one, and the prepared handoff after backend PAW init. Workstream `launchDefaults.terminal` pre-fills preferred terminal host, tab title, and tab color, but builders can still override those values per launch. The tab title can be derived from `titleTemplate` with `{githubIssue}`, `{nodeId}`, and `{nodeTitle}` variables; `{githubIssue}` renders as `#number` for GitHub-tracked nodes, and the configuration dialog surfaces those variables in inline help. The builder's launch instructions are trusted local intent and appear near the top of the SDK launch-preparation session's first prompt so context assembly and PAW init both weight them heavily. Once preparation completes, the prepared kickoff prompt is editable before terminal launch so the builder can inspect or refine the exact initial prompt sent to the visible worker. The primary action is labeled as running PAW init because the SDK session may read repository files, inspect git/GitHub context, execute shell tools, and write the PAW work artifacts before returning the structured handoff. PAW-owned metadata, structured presets, specialists, and dependent WorkflowContext constraints are deferred to issue #43 so Streamliner does not duplicate PAW's configuration rules.
+The PAW launch dialog is intentionally text-guided for this MVP. It exposes launch instructions, lightweight reusable text profiles, CLI args, terminal preference, graph source, a GitHub issue link when the selected node has one, and the prepared handoff after backend PAW init. Workstream `launchDefaults.promptProfileId` can preselect a local profile, and `launchDefaults.terminal` pre-fills preferred terminal host, tab title, and tab color; builders can still override those values per launch. The tab title can be derived from `titleTemplate` with `{githubIssue}`, `{nodeId}`, and `{nodeTitle}` variables; `{githubIssue}` renders as `#number` for GitHub-tracked nodes, and the configuration dialog surfaces those variables in inline help. The builder's launch instructions are trusted local intent and appear near the top of the SDK launch-preparation session's first prompt so context assembly and PAW init both weight them heavily. Once preparation completes, the prepared kickoff prompt is editable before terminal launch so the builder can inspect or refine the exact initial prompt sent to the visible worker. The primary action is labeled as running PAW init because the SDK session may read repository files, inspect git/GitHub context, execute shell tools, and write the PAW work artifacts before returning the structured handoff. PAW-owned metadata, structured presets, specialists, and dependent WorkflowContext constraints are deferred to issue #43 so Streamliner does not duplicate PAW's configuration rules.
 
-The workstream header exposes a configuration dialog for backend-readable graph files. It edits durable graph launch settings, including `launchPolicy.requiredTracker` and `launchDefaults.terminal`, through:
+The workstream header exposes a configuration dialog for backend-readable graph files. It edits durable graph launch settings, including `launchPolicy.requiredTracker`, `launchDefaults.promptProfileId`, and `launchDefaults.terminal`, through:
 
 ```http
 PATCH /api/workstreams/:projectKey/:workstreamId/configuration
@@ -340,9 +345,10 @@ Reusable text prompt profiles are exposed as:
 GET /api/paw-launch-prompt-profiles
 POST /api/paw-launch-prompt-profiles
 PUT /api/paw-launch-prompt-profiles/:id
+DELETE /api/paw-launch-prompt-profiles/:id
 ```
 
-Profiles are stored in local Streamliner state as `paw-launch-prompt-profiles.json`. Each record contains an id, name, instructions, created timestamp, and updated timestamp. `POST` creates a new profile from the current workflow text; `PUT` updates the selected profile. The server validates non-empty names and instruction text but does not interpret PAW semantics.
+Profiles are stored in local Streamliner state as `paw-launch-prompt-profiles.json`. Each record contains an id, name, instructions, created timestamp, and updated timestamp. `GET` is non-cacheable from the browser, `POST` creates a new profile from workflow text, `PUT` updates the selected profile, and `DELETE` removes a profile by id with a `204` response. The server validates non-empty names and instruction text but does not interpret PAW semantics. Deleting a profile does not scan or cascade workstream `launchDefaults.promptProfileId` references; dangling ids remain harmless local hints and fall back to custom launch instructions.
 
 The post-init review/edit surface for PAW WorkflowContext is exposed as:
 

@@ -405,6 +405,24 @@ describe("createStreamlinerApiApp", () => {
         instructions: "Use PAW final-pr-review only.",
       }),
     ]);
+
+    await request(api.app)
+      .delete("/api/paw-launch-prompt-profiles/final-pr-only")
+      .expect(204);
+
+    await request(api.app)
+      .get("/api/paw-launch-prompt-profiles")
+      .expect(200, { profiles: [] });
+
+    await request(api.app)
+      .delete("/api/paw-launch-prompt-profiles/final-pr-only")
+      .expect(404)
+      .expect((res) => {
+        expect(res.body).toEqual(expect.objectContaining({
+          code: "prompt_profile_not_found",
+          error: "Prompt profile not found.",
+        }));
+      });
   });
 
   it("dedupes existing PAW launch prompt profiles by name", async () => {
@@ -616,6 +634,7 @@ describe("createStreamlinerApiApp", () => {
       .send({
         launchPolicy: { requiredTracker: "github-issue" },
         launchDefaults: {
+          promptProfileId: "final-pr-only",
           terminal: {
             preferredTerminal: "windows-terminal",
             titleTemplate: "{githubIssue} - {nodeTitle}",
@@ -629,6 +648,7 @@ describe("createStreamlinerApiApp", () => {
       requiredTracker: "github-issue",
     });
     expect(updateResponse.body.workstream.launchDefaults).toEqual({
+      promptProfileId: "final-pr-only",
       terminal: {
         preferredTerminal: "windows-terminal",
         titleTemplate: "{githubIssue} - {nodeTitle}",
@@ -639,6 +659,7 @@ describe("createStreamlinerApiApp", () => {
     expect(persisted.updatedAt).toBe("2026-05-07T18:10:33.000Z");
     expect(persisted.launchPolicy).toEqual({ requiredTracker: "github-issue" });
     expect(persisted.launchDefaults).toEqual({
+      promptProfileId: "final-pr-only",
       terminal: {
         preferredTerminal: "windows-terminal",
         titleTemplate: "{githubIssue} - {nodeTitle}",

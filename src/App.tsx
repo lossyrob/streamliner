@@ -37,6 +37,7 @@ import {
   type PawTerminalLaunchInput,
   type PawLaunchProgressEvent,
 } from "./components/PawLaunchDialog";
+import { PawProfilesPage } from "./components/PawProfilesPage";
 import {
   loadPromptProfiles,
   mergePromptProfiles,
@@ -153,6 +154,13 @@ function readDashboardRoute(): DashboardRoute {
       nodeId: nodeId && isKebabCaseId(nodeId) ? nodeId : null,
     };
   }
+  if (
+    window.location.pathname === "/settings" ||
+    window.location.pathname === "/settings/profiles" ||
+    window.location.pathname === "/profiles"
+  ) {
+    return { view: "settings", section: "profiles" };
+  }
   if (window.location.pathname === "/" || window.location.pathname === "") {
     return { view: "landing" };
   }
@@ -206,10 +214,10 @@ function useDashboardRoute() {
   }, []);
 
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("view") === "sessions") {
-      window.history.replaceState({}, "", "/sessions");
-    }
-  }, []);
+  if (new URLSearchParams(window.location.search).get("view") === "sessions") {
+    window.history.replaceState({}, "", "/sessions");
+  }
+}, []);
 
   const setRoute = useCallback((nextRoute: DashboardRoute, mode: "push" | "replace" = "push") => {
     const path = routePath(nextRoute);
@@ -1096,6 +1104,81 @@ function WorkstreamHome({
   );
 }
 
+function usePromptProfilesState() {
+  const [profiles, setProfiles] = useState<PawPromptProfile[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const requestRef = useRef<Promise<void> | null>(null);
+  const mountedRef = useRef(true);
+  const mutationVersionRef = useRef(0);
+  const deletedProfileIdsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const noteProfilesChanged = useCallback((changedProfiles: PawPromptProfile[]) => {
+    mutationVersionRef.current += 1;
+    for (const profile of changedProfiles) {
+      deletedProfileIdsRef.current.delete(profile.id);
+    }
+    setProfiles((current) => mergePromptProfiles(current, changedProfiles));
+  }, []);
+
+  const noteProfileDeleted = useCallback((id: string) => {
+    mutationVersionRef.current += 1;
+    deletedProfileIdsRef.current.add(id);
+    setProfiles((current) => current.filter((profile) => profile.id !== id));
+  }, []);
+
+  const refresh = useCallback(() => {
+    if (requestRef.current) {
+      return requestRef.current;
+    }
+    setLoading(true);
+    setError(null);
+    const requestMutationVersion = mutationVersionRef.current;
+    const request = loadPromptProfiles()
+      .then((loadedProfiles) => {
+        if (mountedRef.current) {
+          if (mutationVersionRef.current === requestMutationVersion) {
+            deletedProfileIdsRef.current.clear();
+            setProfiles(() => mergePromptProfiles([], loadedProfiles));
+          } else {
+            const deletedProfileIds = deletedProfileIdsRef.current;
+            const retainedProfiles = loadedProfiles.filter((profile) => !deletedProfileIds.has(profile.id));
+            setProfiles((current) => mergePromptProfiles(current, retainedProfiles));
+          }
+        }
+      })
+      .catch((loadError: unknown) => {
+        if (mountedRef.current) {
+          setError(loadError instanceof Error ? loadError.message : String(loadError));
+        }
+      })
+      .finally(() => {
+        requestRef.current = null;
+        if (mountedRef.current) {
+          setLoading(false);
+        }
+      });
+    requestRef.current = request;
+    return request;
+  }, []);
+
+  return {
+    profiles,
+    loading,
+    error,
+    refresh,
+    noteProfilesChanged,
+    noteProfileDeleted,
+  };
+}
+
 function GraphDashboard({
   workstream,
   error,
@@ -1109,12 +1192,22 @@ function GraphDashboard({
   onManageSources,
   onRouteHome,
   selectedNodeIdFromRoute,
+  promptProfiles,
+  promptProfilesLoading,
+  promptProfilesError,
+  onRefreshPromptProfiles,
+  onPromptProfilesChanged,
 }: ReturnType<typeof useGraphLoader> & {
   onOpenWorkstream: (entry: WorkstreamRegistryListEntry) => void | Promise<void>;
   onOpenSessions: (target?: { workstreamId?: string | null; nodeId?: string | null }) => void | Promise<void>;
   onManageSources: () => void;
   onRouteHome: () => void;
   selectedNodeIdFromRoute?: string | null;
+  promptProfiles: PawPromptProfile[];
+  promptProfilesLoading: boolean;
+  promptProfilesError: string | null;
+  onRefreshPromptProfiles: () => Promise<void> | void;
+  onPromptProfilesChanged: (profiles: PawPromptProfile[]) => void;
 }) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(
     selectedNodeIdFromRoute ?? null,
@@ -1135,14 +1228,8 @@ function GraphDashboard({
   const [configurationDialogOpen, setConfigurationDialogOpen] = useState(false);
   const [configurationSaving, setConfigurationSaving] = useState(false);
   const [configurationError, setConfigurationError] = useState<string | null>(null);
-  const [promptProfiles, setPromptProfiles] = useState<PawPromptProfile[]>([]);
-  const [promptProfilesLoading, setPromptProfilesLoading] = useState(false);
-  const [promptProfilesError, setPromptProfilesError] = useState<string | null>(null);
   const failedRunReattachRef = useRef<Set<string>>(new Set());
   const localRunStreamsRef = useRef<Set<string>>(new Set());
-  const promptProfilesRequestRef = useRef<Promise<void> | null>(null);
-  const promptProfilesLoadedRef = useRef(false);
-  const promptProfilesMountedRef = useRef(true);
   const activeWorkstreamKey = activeWorkstream ? registryKey(activeWorkstream) : "";
   const sessionList = useSessionRegistryList(
     { workstreamId: activeWorkstream?.workstreamId ?? null },
@@ -1472,44 +1559,9 @@ function GraphDashboard({
     }));
   }, []);
 
-  const notePromptProfilesChanged = useCallback((profiles: PawPromptProfile[]) => {
-    setPromptProfiles((current) => mergePromptProfiles(current, profiles));
-  }, []);
-
-  useEffect(() => {
-    promptProfilesMountedRef.current = true;
-    return () => {
-      promptProfilesMountedRef.current = false;
-    };
-  }, []);
-
   const prefetchPromptProfiles = useCallback(() => {
-    if (promptProfilesLoadedRef.current || promptProfilesRequestRef.current) {
-      return promptProfilesRequestRef.current ?? Promise.resolve();
-    }
-    setPromptProfilesLoading(true);
-    setPromptProfilesError(null);
-    const request = loadPromptProfiles()
-      .then((loadedProfiles) => {
-        promptProfilesLoadedRef.current = true;
-        if (promptProfilesMountedRef.current) {
-          setPromptProfiles((current) => mergePromptProfiles(current, loadedProfiles));
-        }
-      })
-      .catch((loadError: unknown) => {
-        if (promptProfilesMountedRef.current) {
-          setPromptProfilesError(loadError instanceof Error ? loadError.message : String(loadError));
-        }
-      })
-      .finally(() => {
-        promptProfilesRequestRef.current = null;
-        if (promptProfilesMountedRef.current) {
-          setPromptProfilesLoading(false);
-        }
-      });
-    promptProfilesRequestRef.current = request;
-    return request;
-  }, []);
+    return onRefreshPromptProfiles();
+  }, [onRefreshPromptProfiles]);
 
   useEffect(() => {
     if (!selectedLaunchTarget || !canLaunchSelectedNode) {
@@ -1673,6 +1725,7 @@ function GraphDashboard({
   };
 
   const handleOpenConfigurationDialog = () => {
+    void prefetchPromptProfiles();
     setConfigurationError(null);
     setConfigurationDialogOpen(true);
   };
@@ -2048,6 +2101,7 @@ function GraphDashboard({
           key={`${launchDialogEntry.node.id}:${launchDefaults.graphPath}`}
           nodeTitle={launchDialogEntry.node.title}
           defaults={launchDefaults}
+          defaultPromptProfileId={workstream.launchDefaults?.promptProfileId ?? null}
           promptProfiles={promptProfiles}
           promptProfilesLoading={promptProfilesLoading}
           promptProfilesError={promptProfilesError}
@@ -2064,7 +2118,7 @@ function GraphDashboard({
           onCancel={handleCloseLaunchDialog}
           onSubmit={handleSubmitLaunch}
           onLaunchTerminal={handleLaunchTerminal}
-          onPromptProfilesChanged={notePromptProfilesChanged}
+          onPromptProfilesChanged={onPromptProfilesChanged}
           onReleaseLaunch={launchDialogLatestClaim?.blocksLaunch ? handleReleaseLaunch : undefined}
         />
       ) : null}
@@ -2072,6 +2126,9 @@ function GraphDashboard({
         <WorkstreamConfigurationDialog
           key={`${workstream.projectKey ?? ""}:${workstream.id}:${workstream.updatedAt}`}
           workstream={workstream}
+          promptProfiles={promptProfiles}
+          promptProfilesLoading={promptProfilesLoading}
+          promptProfilesError={promptProfilesError}
           saving={configurationSaving}
           error={configurationError}
           onCancel={handleCloseConfigurationDialog}
@@ -2102,6 +2159,55 @@ function MigrationWarningsBanner({
   );
 }
 
+function SettingsPage({
+  profiles,
+  profilesLoading,
+  profilesError,
+  onRefreshProfiles,
+  onProfilesChanged,
+  onProfileDeleted,
+}: {
+  profiles: PawPromptProfile[];
+  profilesLoading: boolean;
+  profilesError: string | null;
+  onRefreshProfiles: () => Promise<void>;
+  onProfilesChanged: (profiles: PawPromptProfile[]) => void;
+  onProfileDeleted: (profileId: string) => void;
+}) {
+  return (
+    <div className="sl-shell-panel">
+      <div className="sl-settings-page">
+        <aside className="sl-settings-sidebar" aria-label="Streamliner settings sections">
+          <div className="sl-settings-sidebar-head">
+            <span className="sl-eyebrow">Settings</span>
+          </div>
+          <nav className="sl-settings-nav" aria-label="Streamliner settings">
+            <a
+              className="sl-settings-nav-item active"
+              href={routePath({ view: "settings", section: "profiles" })}
+              aria-current="page"
+              onClick={(event) => event.preventDefault()}
+            >
+              <span>PAW profiles</span>
+              <small>Launch prompt defaults</small>
+            </a>
+          </nav>
+        </aside>
+        <main className="sl-settings-content">
+          <PawProfilesPage
+            profiles={profiles}
+            loading={profilesLoading}
+            error={profilesError}
+            onRefresh={onRefreshProfiles}
+            onProfilesChanged={onProfilesChanged}
+            onProfileDeleted={onProfileDeleted}
+          />
+        </main>
+      </div>
+    </div>
+  );
+}
+
 function DashboardNav({
   route,
   onRouteChange,
@@ -2110,6 +2216,7 @@ function DashboardNav({
   onRouteChange: (route: DashboardRoute) => void | Promise<void>;
 }) {
   const workstreamsActive = route.view === "workstreams" || route.view === "workstream";
+  const settingsActive = route.view === "settings";
 
   return (
     <div className="sl-shell-nav">
@@ -2147,6 +2254,22 @@ function DashboardNav({
         >
           Sessions
         </a>
+        <a
+          className={`sl-action-btn sl-icon-action${settingsActive ? " active" : ""}`}
+          href={routePath({ view: "settings", section: "profiles" })}
+          aria-label="Streamliner settings"
+          title="Streamliner settings"
+          aria-current={settingsActive ? "page" : undefined}
+          onClick={(event) => handleInAppLinkClick(event, () => onRouteChange({ view: "settings", section: "profiles" }))}
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
+            <path
+              d="M19.4 13.5c.1-.5.1-1 .1-1.5s0-1-.1-1.5l2-1.5-2-3.5-2.4 1a7.5 7.5 0 0 0-2.6-1.5L14 2.4h-4l-.4 2.6A7.5 7.5 0 0 0 7 6.5l-2.4-1-2 3.5 2 1.5c-.1.5-.1 1-.1 1.5s0 1 .1 1.5l-2 1.5 2 3.5 2.4-1a7.5 7.5 0 0 0 2.6 1.5l.4 2.6h4l.4-2.6a7.5 7.5 0 0 0 2.6-1.5l2.4 1 2-3.5-2-1.5ZM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z"
+              fill="currentColor"
+            />
+          </svg>
+          <span className="sl-visually-hidden">Streamliner settings</span>
+        </a>
       </div>
     </div>
   );
@@ -2155,6 +2278,7 @@ function DashboardNav({
 export default function App() {
   const { route, setRoute } = useDashboardRoute();
   const graphLoader = useGraphLoader(route, true);
+  const promptProfileState = usePromptProfilesState();
   const beforeLeaveRef = useRef<(() => Promise<boolean>) | null>(null);
 
   const handleRouteChange = useCallback(
@@ -2216,7 +2340,16 @@ export default function App() {
     <div className="sl-root">
       <DashboardNav route={route} onRouteChange={handleRouteChange} />
       <MigrationWarningsBanner warnings={graphLoader.migrationWarnings} />
-      {route.view === "sessions" ? (
+      {route.view === "settings" ? (
+        <SettingsPage
+          profiles={promptProfileState.profiles}
+          profilesLoading={promptProfileState.loading}
+          profilesError={promptProfileState.error}
+          onRefreshProfiles={promptProfileState.refresh}
+          onProfilesChanged={promptProfileState.noteProfilesChanged}
+          onProfileDeleted={promptProfileState.noteProfileDeleted}
+        />
+      ) : route.view === "sessions" ? (
         <SessionsPage
           registerBeforeLeave={registerBeforeLeave}
           workstreams={graphLoader.workstreams}
@@ -2232,6 +2365,11 @@ export default function App() {
           onManageSources={manageSources}
           onRouteHome={() => setRoute({ view: "workstreams" }, "replace")}
           selectedNodeIdFromRoute={route.nodeId ?? null}
+          promptProfiles={promptProfileState.profiles}
+          promptProfilesLoading={promptProfileState.loading}
+          promptProfilesError={promptProfileState.error}
+          onRefreshPromptProfiles={promptProfileState.refresh}
+          onPromptProfilesChanged={promptProfileState.noteProfilesChanged}
         />
       ) : route.view === "workstreams" ? (
         <WorkstreamHome

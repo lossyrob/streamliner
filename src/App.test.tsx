@@ -520,6 +520,9 @@ describe("App sessions route", () => {
         if (path === "/api/workstreams") {
           return jsonResponse({ version: 1, migrationWarnings: [], workstreams: [] });
         }
+        if (path === "/api/paw-launch-prompt-profiles") {
+          return jsonResponse({ profiles: [] });
+        }
         if (path.startsWith("/api/graph.json")) {
           return new Response("missing graph", { status: 404 });
         }
@@ -558,6 +561,7 @@ describe("App sessions route", () => {
       expect(container.textContent).toContain("Keep parallel work visible.");
       expect(container.textContent).toContain("Workstreams");
       expect(container.textContent).toContain("Sessions");
+      expect(container.textContent).not.toContain("Launch prompt profiles");
       expect(container.textContent).not.toContain("My Sessions");
       expect(window.location.search).toBe("");
       expect(
@@ -576,6 +580,141 @@ describe("App sessions route", () => {
 
       const sessionsLink = findLink(container, "Sessions");
       expect(sessionsLink.getAttribute("href")).toBe("/sessions");
+      const settingsLink = container.querySelector<HTMLAnchorElement>('a[aria-label="Streamliner settings"]');
+      expect(settingsLink).toBeInstanceOf(HTMLAnchorElement);
+      expect(settingsLink?.getAttribute("href")).toBe("/settings/profiles");
+
+      act(() => {
+        settingsLink?.click();
+      });
+      await settle(100);
+
+      expect(window.location.pathname).toBe("/settings/profiles");
+      expect(container.querySelector(".sl-settings-sidebar-head")?.textContent?.trim()).toBe("Settings");
+      expect(container.querySelector(".sl-profiles-header")?.textContent).toContain("PAW profiles");
+      expect(container.querySelector(".sl-profiles-header")?.textContent).not.toContain("Launch prompt profiles");
+      expect(container.textContent).toContain("No launch prompt profiles yet");
+    },
+    15_000,
+  );
+
+  it(
+    "manages PAW launch prompt profiles from settings",
+    async () => {
+      const copyText = vi.fn(async () => {});
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: { writeText: copyText },
+      });
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      let profiles = [{
+        id: "final-pr-only",
+        name: "Final PR only",
+        instructions: "Use saved final PR only workflow text.",
+        updatedAt: "2026-05-03T18:00:00.000Z",
+      }];
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({ version: 1, migrationWarnings: [], workstreams: [] });
+        }
+        if (path === "/api/paw-launch-prompt-profiles" && (!init?.method || init.method === "GET")) {
+          expect(init?.cache).toBe("no-store");
+          return jsonResponse({ profiles });
+        }
+        if (path === "/api/paw-launch-prompt-profiles" && init?.method === "POST") {
+          const body = JSON.parse(String(init.body)) as { name: string; instructions: string };
+          const profile = {
+            id: body.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""),
+            name: body.name,
+            instructions: body.instructions,
+            updatedAt: "2026-05-03T18:01:00.000Z",
+          };
+          profiles = [...profiles, profile];
+          return jsonResponse({ profile }, 201);
+        }
+        if (path === "/api/paw-launch-prompt-profiles/final-pr-only-copy" && init?.method === "PUT") {
+          const body = JSON.parse(String(init.body)) as { name: string; instructions: string };
+          const profile = {
+            id: "final-pr-only-copy",
+            name: body.name,
+            instructions: body.instructions,
+            updatedAt: "2026-05-03T18:02:00.000Z",
+          };
+          profiles = profiles.map((candidate) =>
+            candidate.id === profile.id ? profile : candidate
+          );
+          return jsonResponse({ profile });
+        }
+        if (path === "/api/paw-launch-prompt-profiles/final-pr-only-copy" && init?.method === "DELETE") {
+          profiles = profiles.filter((profile) => profile.id !== "final-pr-only-copy");
+          return new Response(null, { status: 204 });
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState({}, "", "/settings/profiles");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      expect(container.querySelector(".sl-settings-sidebar-head")?.textContent?.trim()).toBe("Settings");
+      expect(container.querySelector(".sl-profiles-header")?.textContent).toContain("PAW profiles");
+      expect(container.querySelector(".sl-profiles-header")?.textContent).not.toContain("Launch prompt profiles");
+      act(() => {
+        findButtonByLabel(container, "Select profile Final PR only").click();
+      });
+      await settle();
+      expect(findTextareaByLabel(container, "Profile instructions").value).toBe(
+        "Use saved final PR only workflow text.",
+      );
+
+      setTextareaValue(
+        findTextareaByLabel(container, "Profile instructions"),
+        "Unsaved draft profile edits.",
+      );
+      act(() => {
+        findButton(container, "Refresh").click();
+      });
+      await settle(100);
+      expect(findTextareaByLabel(container, "Profile instructions").value).toBe(
+        "Unsaved draft profile edits.",
+      );
+
+      act(() => {
+        findButton(container, "Copy instructions").click();
+      });
+      await settle();
+      expect(copyText).toHaveBeenCalledWith("Use saved final PR only workflow text.");
+
+      act(() => {
+        findButton(container, "Duplicate profile").click();
+      });
+      await settle(100);
+      expect(findInputByLabel(container, "Profile name").value).toBe("Final PR only copy");
+
+      setInputValue(findInputByLabel(container, "Profile name"), "Final PR only updated");
+      setTextareaValue(
+        findTextareaByLabel(container, "Profile instructions"),
+        "Updated standalone profile text.",
+      );
+      act(() => {
+        findButton(container, "Save changes").click();
+      });
+      await settle(100);
+      expect(container.textContent).toContain('Updated "Final PR only updated".');
+
+      act(() => {
+        findButton(container, "Delete profile").click();
+      });
+      await settle(100);
+      expect(window.confirm).toHaveBeenCalledWith(
+        'Delete "Final PR only updated"? Workstreams configured to use this profile will fall back to custom launch instructions.',
+      );
+      expect(container.textContent).toContain('Deleted "Final PR only updated".');
+      expect(container.textContent).not.toContain("final-pr-only-copy");
     },
     15_000,
   );
@@ -673,6 +812,16 @@ describe("App sessions route", () => {
         }
         if (path.startsWith("/api/node-launch-records?")) {
           return emptyNodeLaunchRecordResponse();
+        }
+        if (path === "/api/paw-launch-prompt-profiles") {
+          return jsonResponse({
+            profiles: [{
+              id: "final-pr-only",
+              name: "Final PR only",
+              instructions: "Use final PR only workflow.",
+              updatedAt: "2026-05-03T18:00:00.000Z",
+            }],
+          });
         }
         throw new Error(`Unexpected fetch: ${path}`);
       });
@@ -1429,6 +1578,122 @@ describe("App sessions route", () => {
           requestPath(input as RequestInfo | URL) === "/api/launch-preparations/runs",
         ),
       ).toBe(false);
+    },
+    15_000,
+  );
+
+  it(
+    "preselects the configured workstream launch prompt profile and falls back when it is missing",
+    async () => {
+      const graph = buildLaunchGraph("ready", {
+        graph: {
+          launchDefaults: {
+            promptProfileId: "final-pr-only",
+          },
+        },
+      });
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return emptyNodeLaunchRecordResponse();
+        }
+        if (path === "/api/paw-launch-prompt-profiles" && (!init?.method || init.method === "GET")) {
+          return jsonResponse({
+            profiles: [{
+              id: "final-pr-only",
+              name: "Final PR only",
+              instructions: "Use configured default profile text.",
+              updatedAt: "2026-05-03T18:00:00.000Z",
+            }],
+          });
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      MockEventSource.instances = [];
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      act(() => {
+        findCanvasNode(container, "Launch prompt profiles").click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Initialize PAW launch").click();
+      });
+      await settle(100);
+
+      expect(findSelectByLabel(container, "Load profile").value).toBe("final-pr-only");
+      expect(findTextareaByLabel(container, "Launch instructions").value).toBe(
+        "Use configured default profile text.",
+      );
+
+      const fallbackGraph = buildLaunchGraph("ready", {
+        graph: {
+          launchDefaults: {
+            promptProfileId: "missing-profile",
+          },
+        },
+      });
+      fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(fallbackGraph);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return emptyNodeLaunchRecordResponse();
+        }
+        if (path === "/api/paw-launch-prompt-profiles" && (!init?.method || init.method === "GET")) {
+          return jsonResponse({ profiles: [] });
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+
+      await act(async () => {
+        root.unmount();
+        await Promise.resolve();
+      });
+      root = createRoot(container);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+      act(() => {
+        findCanvasNode(container, "Launch prompt profiles").click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Initialize PAW launch").click();
+      });
+      await settle(100);
+
+      expect(findSelectByLabel(container, "Load profile").value).toBe("");
+      expect(findTextareaByLabel(container, "Launch instructions").value).toContain(
+        "Use PAW with a local final-pr-only review policy.",
+      );
     },
     15_000,
   );
@@ -2899,8 +3164,18 @@ describe("App sessions route", () => {
   it(
     "edits workstream configuration and applies terminal defaults to PAW launch",
     async () => {
-      let graph = buildLaunchGraph();
+      let graph = buildLaunchGraph("ready", {
+        graph: {
+          launchDefaults: {
+            promptProfileId: "final-pr-only",
+          },
+        },
+      });
       let savedConfiguration: Record<string, unknown> | null = null;
+      let resolveProfileList!: (response: Response) => void;
+      const profileListPromise = new Promise<Response>((resolve) => {
+        resolveProfileList = resolve;
+      });
       const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = requestPath(input);
         if (path === "/api/workstreams") {
@@ -2926,6 +3201,10 @@ describe("App sessions route", () => {
         if (path.startsWith("/api/node-launch-records?")) {
           return emptyNodeLaunchRecordResponse();
         }
+        if (path === "/api/paw-launch-prompt-profiles" && (!init?.method || init.method === "GET")) {
+          expect(init?.cache).toBe("no-store");
+          return profileListPromise;
+        }
         throw new Error(`Unexpected fetch: ${path}`);
       });
       vi.stubGlobal("fetch", fetchMock);
@@ -2939,8 +3218,22 @@ describe("App sessions route", () => {
       act(() => {
         findButton(container, "Configure…").click();
       });
-      await settle();
+      await settle(100);
+      expect(container.textContent).not.toContain("Missing profile: final-pr-only");
+      expect(container.textContent).toContain("Loading profile: final-pr-only");
+      act(() => {
+        resolveProfileList(jsonResponse({
+          profiles: [{
+            id: "final-pr-only",
+            name: "Final PR only",
+            instructions: "Use final PR only workflow.",
+            updatedAt: "2026-05-03T18:00:00.000Z",
+          }],
+        }));
+      });
+      await settle(100);
       setSelectValue(findSelectByLabel(container, "Required tracker"), "github-issue");
+      expect(findSelectByLabel(container, "Default load profile").value).toBe("final-pr-only");
       setSelectValue(findSelectByLabel(container, "Preferred terminal"), "windows-terminal");
       setInputValue(
         findInputByLabel(container, "Terminal tab title template"),
@@ -2958,6 +3251,7 @@ describe("App sessions route", () => {
       expect(savedConfiguration).toEqual({
         launchPolicy: { requiredTracker: "github-issue" },
         launchDefaults: {
+          promptProfileId: "final-pr-only",
           terminal: {
             preferredTerminal: "windows-terminal",
             titleTemplate: "{githubIssue} - {nodeTitle}",

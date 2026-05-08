@@ -1,5 +1,5 @@
 import type { FormEvent } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   type PawLaunchDialogConfiguration,
   type PawLaunchDialogDefaults,
@@ -12,6 +12,8 @@ import type {
 import { humanizeLaunchClaim } from "./launch-claim-display";
 import {
   mergePromptProfiles,
+  responseErrorMessage,
+  savePromptProfile,
   type PawPromptProfile,
 } from "./paw-prompt-profiles";
 import { TerminalColorQuickPicker } from "./SessionColorPicker";
@@ -36,6 +38,7 @@ export interface PawLaunchProgressEvent {
 interface PawLaunchDialogProps {
   nodeTitle: string;
   defaults: PawLaunchDialogDefaults;
+  defaultPromptProfileId?: string | null;
   promptProfiles?: PawPromptProfile[];
   promptProfilesLoading?: boolean;
   promptProfilesError?: string | null;
@@ -83,10 +86,6 @@ function parseCliArgs(value: string): string[] {
     .split(/\s+/g)
     .map((part) => part.trim())
     .filter(Boolean);
-}
-
-function responseErrorMessage(response: Response, fallback: string): string {
-  return `${fallback} (${response.status})`;
 }
 
 function progressLabel(type: string): string {
@@ -150,34 +149,6 @@ function PawLaunchDebugPaths({ paths }: { paths: DebugPath[] }) {
 
 function profileNameKey(value: string): string {
   return value.toLocaleLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-}
-
-async function savePromptProfile(input: {
-  id?: string;
-  name: string;
-  instructions: string;
-}): Promise<PawPromptProfile> {
-  const response = await fetch(
-    input.id
-      ? `/api/paw-launch-prompt-profiles/${encodeURIComponent(input.id)}`
-      : "/api/paw-launch-prompt-profiles",
-    {
-      method: input.id ? "PUT" : "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: input.name,
-        instructions: input.instructions,
-      }),
-    },
-  );
-  if (!response.ok) {
-    throw new Error(responseErrorMessage(response, "Could not save prompt profile."));
-  }
-  const body = await response.json() as { profile?: PawPromptProfile };
-  if (!body.profile) {
-    throw new Error("Prompt profile response was missing the saved profile.");
-  }
-  return body.profile;
 }
 
 async function loadWorkflowContext(path: string): Promise<WorkflowContextDocument> {
@@ -290,6 +261,7 @@ function SelectField<T extends string>({
 export function PawLaunchDialog({
   nodeTitle,
   defaults,
+  defaultPromptProfileId = null,
   promptProfiles = [],
   promptProfilesLoading = false,
   promptProfilesError = null,
@@ -333,6 +305,8 @@ export function PawLaunchDialog({
   const [workflowContextStatus, setWorkflowContextStatus] = useState<string | null>(null);
   const [workflowContextError, setWorkflowContextError] = useState<string | null>(null);
   const [kickoffPromptText, setKickoffPromptText] = useState("");
+  const defaultProfileAppliedRef = useRef(false);
+  const profileSelectionTouchedRef = useRef(false);
   const terminalLaunchClaimDisplay = terminalLaunchResult
     ? humanizeLaunchClaim(terminalLaunchResult.launchClaim)
     : null;
@@ -357,6 +331,24 @@ export function PawLaunchDialog({
   useEffect(() => {
     setProfiles((current) => mergePromptProfiles(current, promptProfiles));
   }, [promptProfiles]);
+
+  useEffect(() => {
+    if (
+      defaultProfileAppliedRef.current ||
+      profileSelectionTouchedRef.current ||
+      !defaultPromptProfileId
+    ) {
+      return;
+    }
+    const defaultProfile = profiles.find((profile) => profile.id === defaultPromptProfileId);
+    if (!defaultProfile) {
+      return;
+    }
+    defaultProfileAppliedRef.current = true;
+    setSelectedProfileId(defaultProfile.id);
+    setProfileName(defaultProfile.name);
+    setWorkflowInstructions(defaultProfile.instructions);
+  }, [defaultPromptProfileId, profiles]);
 
   useEffect(() => {
     if (!handoff) {
@@ -432,6 +424,7 @@ export function PawLaunchDialog({
     : "Choose a saved profile to update it, or enter a save name for a new profile.";
 
   const applyProfile = (profileId: string) => {
+    profileSelectionTouchedRef.current = true;
     setSelectedProfileId(profileId);
     setProfileStatus(null);
     setProfileError(null);
@@ -440,6 +433,16 @@ export function PawLaunchDialog({
       setWorkflowInstructions(profile.instructions);
       setProfileName(profile.name);
     }
+  };
+
+  const handleProfileNameChange = (value: string) => {
+    profileSelectionTouchedRef.current = true;
+    setProfileName(value);
+  };
+
+  const handleWorkflowInstructionsChange = (value: string) => {
+    profileSelectionTouchedRef.current = true;
+    setWorkflowInstructions(value);
   };
 
   const handleSaveProfile = async () => {
@@ -661,7 +664,7 @@ export function PawLaunchDialog({
                 label="Save name"
                 ariaLabel="Save name"
                 value={profileName}
-                onChange={setProfileName}
+                onChange={handleProfileNameChange}
                 placeholder="Name this reusable launch text"
               />
               <div className="sl-paw-profile-actions">
@@ -685,7 +688,7 @@ export function PawLaunchDialog({
               label="Launch instructions"
               ariaLabel="Launch instructions"
               value={workflowInstructions}
-              onChange={setWorkflowInstructions}
+              onChange={handleWorkflowInstructionsChange}
               rows={8}
               placeholder="Example: Use paw-lite, final-pr-only, no intermediate pauses unless blocked..."
             />
