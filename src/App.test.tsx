@@ -1925,6 +1925,8 @@ describe("App sessions route", () => {
       });
       await settle(100);
 
+      expect(container.textContent).toContain("Running PAW init...");
+      expect(container.textContent).not.toContain("PAW init is already running for this node");
       const launchCall = fetchMock.mock.calls.find(
         ([input, init]) =>
           requestPath(input as RequestInfo | URL) === "/api/launch-preparations/runs" &&

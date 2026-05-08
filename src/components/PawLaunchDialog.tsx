@@ -500,7 +500,7 @@ export function PawLaunchDialog({
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (instructionError || actionDisabledReason) {
+    if (preparing || launching || instructionError || actionDisabledReason) {
       return;
     }
     onSubmit({

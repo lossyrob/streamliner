@@ -1386,13 +1386,6 @@ function GraphDashboard({
   );
 
   const launchActionDisabledReason = useMemo(() => {
-    const operation = launchDialogOperation ?? selectedLaunchOperation;
-    if (operation?.status === "preparing") {
-      return "PAW init is already running for this node. Reopen the dialog to watch progress or wait for the prepared handoff.";
-    }
-    if (operation?.status === "launching") {
-      return "A terminal launch is already in progress for this node. Reopen the dialog to inspect the launch state.";
-    }
     const latestClaim = launchDialogTarget ? launchDialogLatestClaim : nodeLaunchRecord?.latestClaim;
     if (!latestClaim?.blocksLaunch) {
       return null;
@@ -1401,7 +1394,7 @@ function GraphDashboard({
       return "A Copilot terminal session is already bound to this node. The dialog remains available for the issue and prepared launch details, but Streamliner will not start another PAW init or terminal launch while that session is active.";
     }
     return "A terminal launch is already active for this node. The dialog remains available for the issue and prepared launch details, but Streamliner will not start another PAW init or terminal launch until the active claim resolves.";
-  }, [launchDialogLatestClaim, launchDialogOperation, launchDialogTarget, nodeLaunchRecord, selectedLaunchOperation]);
+  }, [launchDialogLatestClaim, launchDialogTarget, nodeLaunchRecord]);
 
   const launchDefaults = useMemo<PawLaunchDialogDefaults | null>(() => {
     const defaultsEntry = launchDialogTarget ? launchDialogEntry : selectedEntry;
