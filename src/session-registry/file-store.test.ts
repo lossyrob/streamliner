@@ -134,6 +134,31 @@ describe("SessionRegistryFileStore", () => {
       join(rootDir, "entries", `${record.id}.json`),
     );
     expect(entry.managedRuntime?.runtimeKind).toBe("managed-sdk");
+
+    const preserved = store.upsertSession({
+      id: record.id,
+      title: "Managed worker renamed",
+      cwd: "C:\\repo",
+      repo: "lossyrob/streamliner",
+      branch: "feature/managed-runtime",
+      origin: { kind: "launched", launchClaimId: "claim-managed" },
+    });
+    expect(preserved.managedRuntime?.lifecycleState).toBe("running");
+    expect(store.listSessions()[0]?.managedRuntime?.summary).toBe(
+      "Managed worker is running.",
+    );
+
+    const cleared = store.upsertSession({
+      id: record.id,
+      title: "Managed worker cleared",
+      cwd: "C:\\repo",
+      repo: "lossyrob/streamliner",
+      branch: "feature/managed-runtime",
+      origin: { kind: "launched", launchClaimId: "claim-managed" },
+      managedRuntime: null,
+    });
+    expect(cleared.managedRuntime).toBeNull();
+    expect(store.listSessions()[0]?.managedRuntime).toBeNull();
   });
 
   it("drops unrecognized managed runtime projections without quarantining the session", () => {
