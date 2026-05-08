@@ -1022,6 +1022,70 @@ describe("managed runtime session API routes", () => {
     }));
   });
 
+  it("rejects malformed managed runtime evidence input", async () => {
+    const root = createRootDir();
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const api = createStreamlinerApiApp({
+      store: registryStore,
+      launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
+    });
+    activeApps.push(api);
+    const record = registryStore.upsertSession({
+      id: "managed-evidence-validation-row",
+      title: "Managed evidence validation row",
+      description: "",
+      cwd: normalizePath(root),
+      origin: { kind: "launched", launchClaimId: "claim-evidence-validation" },
+      graphBinding: {
+        workstreamId: "ws-1",
+        nodeId: "node-1",
+        launchClaimId: "claim-evidence-validation",
+      },
+    });
+    registryStore.patchRuntimeMetadata(record.id, {
+      runtimeKind: "managed-sdk",
+      runtimeOwner: "streamliner-sdk",
+      lifecycleState: "running",
+      permissionProfile: "managed-autonomous",
+      launchClaimId: "claim-evidence-validation",
+      launchNonce: "nonce-evidence-validation",
+    });
+
+    await request(api.app)
+      .post(`/api/sessions/${record.id}/managed/evidence`)
+      .send({ kind: "pr_ready", source: "test", number: "123" })
+      .expect(400)
+      .expect((response) => {
+        expect(response.body.error).toContain("number must be a positive safe integer");
+      });
+
+    await request(api.app)
+      .post(`/api/sessions/${record.id}/managed/evidence`)
+      .send({ kind: "pr_ready", source: "test", detectedAt: "not-a-date" })
+      .expect(400)
+      .expect((response) => {
+        expect(response.body.error).toContain("detectedAt must be a valid timestamp");
+      });
+
+    await request(api.app)
+      .post(`/api/sessions/${record.id}/managed/evidence`)
+      .send({ kind: "pr_ready", source: "test", sha: "" })
+      .expect(400)
+      .expect((response) => {
+        expect(response.body.error).toContain("sha must be non-empty");
+      });
+
+    await request(api.app)
+      .post(`/api/sessions/${record.id}/managed/evidence`)
+      .send({ kind: "pr_ready", source: "x".repeat(1025) })
+      .expect(400)
+      .expect((response) => {
+        expect(response.body.error).toContain("source is too long");
+      });
+  });
+
   it("returns a canceled outcome when cancel persists the canceled lifecycle", async () => {
     const root = createRootDir();
     const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });

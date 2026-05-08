@@ -70,7 +70,8 @@ interface ActiveManagedRun {
   interrupted: boolean;
 }
 
-const PR_URL_PATTERN = /https:\/\/github\.com\/([^/\s]+\/[^/\s]+)\/pull\/(\d+)/i;
+const PR_URL_PATTERN =
+  /https:\/\/(?<host>[^/\s<>)]+)\/(?<repo>[^/\s<>)]+\/[^/\s<>)]+)\/(?:pull|pulls|pull-requests)\/(?<number>\d+)/i;
 
 function sdkStateRootFor(workspacePath: string | undefined, fallback: string): string {
   return workspacePath ? dirname(workspacePath) : fallback;
@@ -192,13 +193,19 @@ function evidenceFromAssistantContent(
   }
   const evidence: SessionRegistryRuntimeEvidenceInput[] = [];
   const prMatch = content.match(PR_URL_PATTERN);
-  if (prMatch) {
+  const repo = prMatch?.groups?.repo;
+  const numberText = prMatch?.groups?.number;
+  if (prMatch && repo && numberText) {
+    const number = Number(numberText);
+    if (!Number.isSafeInteger(number) || number <= 0) {
+      return [];
+    }
     evidence.push({
       kind: "pr_ready",
       source: "sdk-assistant-message",
       url: prMatch[0],
-      repo: prMatch[1],
-      number: Number(prMatch[2]),
+      repo,
+      number,
       summary: "PR URL detected in managed SDK assistant output.",
     });
   }

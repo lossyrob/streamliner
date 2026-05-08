@@ -561,6 +561,8 @@ const MANAGED_EVIDENCE_KINDS = new Set<SessionRegistryRuntimeEvidenceKind>([
   "terminal_takeover",
 ]);
 
+const MANAGED_EVIDENCE_SCALAR_MAX_LENGTH = 1024;
+
 function parseRuntimeEvidenceInput(value: unknown): SessionRegistryRuntimeEvidenceInput {
   if (!isJsonObject(value)) {
     throw new Error("Expected a JSON object body for managed runtime evidence.");
@@ -569,19 +571,76 @@ function parseRuntimeEvidenceInput(value: unknown): SessionRegistryRuntimeEviden
   if (typeof kind !== "string" || !MANAGED_EVIDENCE_KINDS.has(kind as SessionRegistryRuntimeEvidenceKind)) {
     throw new Error("kind must be a supported managed runtime evidence kind.");
   }
-  const source = typeof value.source === "string" && value.source.trim().length > 0
-    ? value.source
-    : "api";
+  const source = parseEvidenceSource(value.source);
   return {
     kind: kind as SessionRegistryRuntimeEvidenceKind,
     source,
-    detectedAt: typeof value.detectedAt === "string" ? value.detectedAt : undefined,
-    url: typeof value.url === "string" ? value.url : null,
-    repo: typeof value.repo === "string" ? value.repo : null,
-    number: typeof value.number === "number" && Number.isInteger(value.number) && value.number > 0
-      ? value.number
-      : null,
-    sha: typeof value.sha === "string" ? value.sha : null,
-    summary: typeof value.summary === "string" ? value.summary : null,
+    detectedAt: parseEvidenceTimestamp(value.detectedAt),
+    url: parseOptionalEvidenceString(value.url, "url"),
+    repo: parseOptionalEvidenceString(value.repo, "repo"),
+    number: parseOptionalEvidenceNumber(value.number),
+    sha: parseOptionalEvidenceString(value.sha, "sha"),
+    summary: parseOptionalEvidenceString(value.summary, "summary", { allowEmpty: true }),
   };
+}
+
+function parseEvidenceSource(value: unknown): string {
+  if (value === undefined || value === null) {
+    return "api";
+  }
+  if (typeof value !== "string") {
+    throw new Error("source must be a string when provided.");
+  }
+  const source = value.trim();
+  if (source.length === 0) {
+    throw new Error("source must be non-empty when provided.");
+  }
+  if (source.length > MANAGED_EVIDENCE_SCALAR_MAX_LENGTH) {
+    throw new Error("source is too long.");
+  }
+  return source;
+}
+
+function parseEvidenceTimestamp(value: unknown): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw new Error("detectedAt must be an ISO timestamp string when provided.");
+  }
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) {
+    throw new Error("detectedAt must be a valid timestamp.");
+  }
+  return value;
+}
+
+function parseOptionalEvidenceString(
+  value: unknown,
+  fieldName: string,
+  options: { allowEmpty?: boolean } = {},
+): string | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    throw new Error(`${fieldName} must be a string when provided.`);
+  }
+  if (!options.allowEmpty && value.length === 0) {
+    throw new Error(`${fieldName} must be non-empty when provided.`);
+  }
+  if (value.length > MANAGED_EVIDENCE_SCALAR_MAX_LENGTH) {
+    throw new Error(`${fieldName} is too long.`);
+  }
+  return value.length === 0 ? null : value;
+}
+
+function parseOptionalEvidenceNumber(value: unknown): number | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
+    throw new Error("number must be a positive safe integer when provided.");
+  }
+  return value;
 }

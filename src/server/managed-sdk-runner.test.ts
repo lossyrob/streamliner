@@ -191,6 +191,45 @@ describe("DefaultManagedSdkRunner", () => {
     expect(capture.states).not.toContain("review_ready");
   });
 
+  it("detects supported PR URL formats as PR-ready evidence", async () => {
+    const capture = createCapture();
+    sdkMock.session.sendAndWait.mockResolvedValueOnce({
+      data: {
+        content: "Created [the PR](https://github.example.com/lossyrob/streamliner/pull-requests/987).",
+      },
+    });
+
+    const runner = new DefaultManagedSdkRunner();
+    await runner.start(createStartInput(capture));
+    await flushManagedTurn();
+
+    expect(capture.evidence).toEqual([
+      expect.objectContaining({
+        kind: "pr_ready",
+        repo: "lossyrob/streamliner",
+        number: 987,
+        url: "https://github.example.com/lossyrob/streamliner/pull-requests/987",
+      }),
+    ]);
+    expect(capture.states).toContain("pr_ready");
+  });
+
+  it("ignores PR URLs with unsafe integer pull request numbers", async () => {
+    const capture = createCapture();
+    sdkMock.session.sendAndWait.mockResolvedValueOnce({
+      data: {
+        content: "Created https://github.com/lossyrob/streamliner/pull/9007199254740993",
+      },
+    });
+
+    const runner = new DefaultManagedSdkRunner();
+    await runner.start(createStartInput(capture));
+    await flushManagedTurn();
+
+    expect(capture.evidence).toEqual([]);
+    expect(capture.states).not.toContain("pr_ready");
+  });
+
   it("emits assistant and usage summary telemetry that survives runtime sanitization", async () => {
     const capture = createCapture();
     const runner = new DefaultManagedSdkRunner();
