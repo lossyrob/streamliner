@@ -96,6 +96,11 @@ export type NodeLaunchOperationStatus =
   | "launching"
   | "launched_pending_binding"
   | "managed_starting"
+  /**
+   * The managed SDK launch operation has successfully handed off to the
+   * managed runtime. This is terminal for the launch operation and uses
+   * completedAt; ongoing runtime lifecycle is tracked on session.runtime.
+   */
   | "managed_running"
   | "managed_failed"
   | "bound"

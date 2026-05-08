@@ -501,6 +501,10 @@ export class NodeLaunchRecordStore {
     });
   }
 
+  /**
+   * Marks the launch operation complete once the SDK runner accepts the node.
+   * The ongoing managed runtime state lives on the session registry record.
+   */
   async markManagedRunning(
     handoff: PawLaunchHandoff,
     managedLaunch: NodeManagedSdkLaunchResponse,
