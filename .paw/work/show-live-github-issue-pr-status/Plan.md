@@ -13,7 +13,7 @@ Use a server-side GitHub status service instead of browser-direct GitHub calls s
 - Add shared status contract types for issue/PR refs and normalized results.
 - Add a server status service that:
   - canonicalizes and dedupes refs by `(type, owner, repo, number)` before fetching,
-  - fetches current GitHub REST status with optional `GITHUB_TOKEN`/`GH_TOKEN`,
+  - fetches current GitHub REST status with optional `GITHUB_TOKEN`/`GH_TOKEN`, falling back to anonymous REST with degraded/rate-limited results instead of hard-failing when no token is configured,
   - caches positive results for an initial short TTL around one minute and caches negative/rate-limit results briefly so polling does not hammer GitHub,
   - detects rate-limit responses (`429` or `403` with exhausted GitHub rate-limit headers) and returns normalized degraded/rate-limited status without failing the whole batch,
   - returns per-ref success/error metadata without failing the whole batch,
@@ -28,7 +28,7 @@ Use a server-side GitHub status service instead of browser-direct GitHub calls s
 - Convert issue results into `WorkstreamGithubSnapshot` and pass it to `buildWorkstreamViewModel(workstream, githubSnapshot)`.
 - Preserve current behavior when status loading fails by showing existing static links and letting runtime overlay report missing/degraded status.
 - For browser-sourced workstreams, use client-extracted refs against the status endpoint when available; if the local API is unavailable, omit live status and keep static links.
-- Tie status refresh to existing workstream reload/focus polling triggers rather than adding an independent high-frequency timer.
+- Tie status refresh to existing workstream reload/focus polling triggers rather than adding an independent high-frequency timer, and rely on the server cache TTL so focus/reload bursts do not refetch the same refs immediately.
 
 ### 3. Session GitHub status cues
 
@@ -51,6 +51,7 @@ Use a server-side GitHub status service instead of browser-direct GitHub calls s
 
 - GitHub status is runtime-only and never written into graph JSON or session registry files.
 - REST is the v1 answer to the WorkShaping REST-vs-GraphQL question. It is sufficient for issue state, PR state/draft/merged status, and stable URLs; server-side dedupe, caching, and rate-limit handling mitigate the per-ref request cost, and richer review/check semantics can be improved later.
+- V1 keeps review/check status opportunistic: expose `PR checks pending/failing/passing` only if it can be derived from available PR fields or a lightweight status endpoint without expanding the core batch contract; otherwise show the PR lifecycle label and leave richer checks/review decision for follow-up.
 - Use short-lived server caching and request dedupe to keep polling lightweight.
 - Use GET rather than POST for the batch endpoint so readonly preview mode can still show live status.
 - Use compact v1 UI labels: `issue open`, `issue closed`, `issue unknown`, `PR draft`, `PR open`, `PR merged`, `PR closed`, `PR checks pending`, `PR checks failing`, and `PR checks passing`.
