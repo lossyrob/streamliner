@@ -13,6 +13,7 @@ import type {
   NodeLaunchOperationStatus,
   NodeLaunchRecord,
   NodeLaunchRecordPathStatus,
+  NodeManagedSdkLaunchResponse,
   NodeTerminalLaunchResponse,
 } from "../node-launch-record-contract";
 import type { PawLaunchHandoff, PawLaunchProgressEvent } from "./launch-preparation";
@@ -35,6 +36,9 @@ const OPERATION_STATUSES = new Set<NodeLaunchOperationStatus>([
   "preparation_failed",
   "launching",
   "launched_pending_binding",
+  "managed_starting",
+  "managed_running",
+  "managed_failed",
   "bound",
   "terminal_failed",
 ]);
@@ -124,6 +128,10 @@ function normalizeStoredRecord(value: unknown): StoredNodeLaunchRecord | null {
     contextFilePath: stringField(value, "contextFilePath"),
     sdkSessionWorkspacePath: optionalStringField(value, "sdkSessionWorkspacePath"),
     sdkSessionStateRoot: optionalStringField(value, "sdkSessionStateRoot"),
+    runtimeKind:
+      value.runtimeKind === "managed-sdk" || value.runtimeKind === "terminal-cli"
+        ? value.runtimeKind
+        : undefined,
     launchNonce: nullableStringField(value, "launchNonce"),
     launchClaimRef: nullableStringField(value, "launchClaimRef"),
     trackerUrl: nullableStringField(value, "trackerUrl"),
@@ -202,6 +210,7 @@ function normalizeStoredOperation(value: unknown): StoredNodeLaunchOperation | n
     completedAt: nullableStringField(value, "completedAt"),
     handoff: isRecord(value.handoff) ? value.handoff as unknown as NodeLaunchHandoff : null,
     terminalLaunch: isRecord(value.terminalLaunch) ? value.terminalLaunch as unknown as NodeTerminalLaunchResponse : null,
+    managedLaunch: isRecord(value.managedLaunch) ? value.managedLaunch as unknown as NodeManagedSdkLaunchResponse : null,
     error: normalizeOperationError(value.error),
     progressEvents: Array.isArray(value.progressEvents)
       ? value.progressEvents
@@ -359,6 +368,7 @@ export class NodeLaunchRecordStore {
         completedAt: null,
         handoff: null,
         terminalLaunch: null,
+        managedLaunch: null,
         error: null,
         progressEvents: [],
       };
@@ -402,6 +412,7 @@ export class NodeLaunchRecordStore {
         completedAt: timestamp,
         error: null,
         terminalLaunch: null,
+        managedLaunch: null,
       });
     });
   }
@@ -426,6 +437,7 @@ export class NodeLaunchRecordStore {
         completedAt: timestamp,
         handoff: null,
         terminalLaunch: null,
+        managedLaunch: null,
         error: operationError(input.error, timestamp),
         progressEvents: existing?.progressEvents ?? [],
       };
@@ -442,6 +454,7 @@ export class NodeLaunchRecordStore {
       completedAt: null,
       error: null,
       terminalLaunch: null,
+      managedLaunch: null,
     });
   }
 
@@ -454,6 +467,48 @@ export class NodeLaunchRecordStore {
       completedAt: now.toISOString(),
       error: null,
       terminalLaunch,
+      managedLaunch: null,
+    });
+  }
+
+  async markManagedStarting(
+    handoff: PawLaunchHandoff,
+    now = new Date(),
+  ): Promise<NodeLaunchOperation> {
+    return await this.updateOperationFromHandoff(handoff, "managed_starting", now, {
+      completedAt: null,
+      error: null,
+      terminalLaunch: null,
+      managedLaunch: null,
+    });
+  }
+
+  async markManagedRunning(
+    handoff: PawLaunchHandoff,
+    managedLaunch: NodeManagedSdkLaunchResponse,
+    now = new Date(),
+  ): Promise<NodeLaunchOperation> {
+    return await this.updateOperationFromHandoff(handoff, "managed_running", now, {
+      completedAt: now.toISOString(),
+      error: null,
+      terminalLaunch: null,
+      managedLaunch,
+    });
+  }
+
+  async markManagedFailed(input: {
+    handoff: PawLaunchHandoff;
+    error: OperationErrorInput;
+    now?: Date;
+  }): Promise<NodeLaunchOperation> {
+    return await this.updateDocument((document) => {
+      const timestamp = (input.now ?? new Date()).toISOString();
+      return operationFromHandoff(document, input.handoff, "managed_failed", timestamp, {
+        completedAt: timestamp,
+        error: operationError(input.error, timestamp),
+        terminalLaunch: null,
+        managedLaunch: null,
+      });
     });
   }
 
@@ -474,6 +529,7 @@ export class NodeLaunchRecordStore {
         completedAt: timestamp,
         error: operationError(input.error, timestamp),
         terminalLaunch: null,
+        managedLaunch: null,
       });
     });
   }
@@ -491,7 +547,7 @@ export class NodeLaunchRecordStore {
     handoff: PawLaunchHandoff,
     status: NodeLaunchOperationStatus,
     now: Date,
-    updates: Pick<StoredNodeLaunchOperation, "completedAt" | "error" | "terminalLaunch">,
+    updates: Pick<StoredNodeLaunchOperation, "completedAt" | "error" | "terminalLaunch" | "managedLaunch">,
   ): Promise<NodeLaunchOperation> {
     return await this.updateDocument((document) => {
       const timestamp = now.toISOString();
@@ -596,6 +652,7 @@ function storedRecordFromHandoff(
     contextFilePath: handoff.contextPackage.contextFilePath,
     sdkSessionWorkspacePath: handoff.sdkSession?.workspacePath,
     sdkSessionStateRoot: handoff.sdkSession?.stateRoot,
+    runtimeKind: handoff.runtimeKind ?? "terminal-cli",
     launchNonce: metadata.launchNonce,
     launchClaimRef: metadata.launchClaimRef,
     trackerUrl: metadata.trackerUrl,
@@ -609,7 +666,7 @@ function operationFromHandoff(
   handoff: PawLaunchHandoff,
   status: NodeLaunchOperationStatus,
   timestamp: string,
-  updates: Pick<StoredNodeLaunchOperation, "completedAt" | "error" | "terminalLaunch">,
+  updates: Pick<StoredNodeLaunchOperation, "completedAt" | "error" | "terminalLaunch" | "managedLaunch">,
 ): StoredNodeLaunchOperation {
   const graphPath = handoff.launchMetadata.graphPath;
   const nodeId = handoff.launchMetadata.nodeId;
@@ -625,6 +682,7 @@ function operationFromHandoff(
     completedAt: updates.completedAt,
     handoff: toNodeLaunchHandoff(handoff),
     terminalLaunch: updates.terminalLaunch,
+    managedLaunch: updates.managedLaunch,
     error: updates.error,
     progressEvents: existing?.progressEvents ?? [],
   };

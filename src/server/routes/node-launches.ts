@@ -9,6 +9,7 @@ import {
 } from "../launch-preparation";
 import {
   isLaunchPromptToken,
+  launchManagedSdkNode,
   launchPreparedNode,
   NodeLaunchError,
   summarizeLaunchClaim,
@@ -218,6 +219,19 @@ function parseTerminal(value: unknown): PawLaunchTerminalPreferences {
   };
 }
 
+function parseRuntimeKind(value: unknown): PawLaunchHandoff["runtimeKind"] {
+  if (value === undefined || value === null) {
+    return "terminal-cli";
+  }
+  if (value === "terminal-cli" || value === "managed-sdk") {
+    return value;
+  }
+  throw badRequest(
+    "handoff.runtimeKind must be \"terminal-cli\" or \"managed-sdk\".",
+    "handoff.runtimeKind",
+  );
+}
+
 function parseLaunchMetadata(value: unknown): PawLaunchMetadata {
   const record = isRecord(value)
     ? value
@@ -275,6 +289,7 @@ function parseBody(body: unknown): ParsedBody {
       kickoffAdditionalInstructions: optionalStringField(handoffRecord, "kickoffAdditionalInstructions"),
       cliArgs: stringArrayField(handoffRecord, "cliArgs", "handoff.cliArgs"),
       terminal: parseTerminal(handoffRecord.terminal),
+      runtimeKind: parseRuntimeKind(handoffRecord.runtimeKind ?? bodyRecord.runtimeKind),
       environment: stringRecordField(handoffRecord, "environment", "handoff.environment"),
       sessionStateRoot: stringField(handoffRecord, "sessionStateRoot", "handoff.sessionStateRoot"),
       launchMetadata,
@@ -318,25 +333,55 @@ export function createNodeLaunchesRouter(options: {
         });
         return;
       }
-      await options.nodeLaunchRecordStore?.markTerminalLaunching(handoff);
-      const result = launchPreparedNode(
-        options.registryStore,
-        options.claimStore,
-        handoff,
-        options.deps,
-      );
-      await options.nodeLaunchRecordStore?.markTerminalLaunched(handoff, result);
-      res.status(201).json(result);
+      if (handoff.runtimeKind === "managed-sdk") {
+        await options.nodeLaunchRecordStore?.markManagedStarting(handoff);
+        const result = await launchManagedSdkNode(
+          options.registryStore,
+          options.claimStore,
+          handoff,
+          options.deps,
+        );
+        await options.nodeLaunchRecordStore?.markManagedRunning(handoff, {
+          launchClaim: result.launchClaim,
+          runtimeKind: "managed-sdk",
+          registryId: result.managedSdk.registryId,
+          sdkSessionId: result.managedSdk.sdkSessionId,
+          sdkWorkspacePath: result.managedSdk.sdkWorkspacePath,
+          sdkStateRoot: result.managedSdk.sdkStateRoot,
+          permissionProfile: result.managedSdk.permissionProfile,
+        });
+        res.status(201).json(result);
+      } else {
+        await options.nodeLaunchRecordStore?.markTerminalLaunching(handoff);
+        const result = launchPreparedNode(
+          options.registryStore,
+          options.claimStore,
+          handoff,
+          options.deps,
+        );
+        await options.nodeLaunchRecordStore?.markTerminalLaunched(handoff, result);
+        res.status(201).json(result);
+      }
     } catch (error: unknown) {
       if (error instanceof NodeLaunchError) {
         if (handoff && error.code !== "duplicate_active_launch") {
-          await options.nodeLaunchRecordStore?.markTerminalFailed({
-            handoff,
-            error: {
-              code: error.code,
-              error: error.message,
-            },
-          });
+          if (handoff.runtimeKind === "managed-sdk") {
+            await options.nodeLaunchRecordStore?.markManagedFailed({
+              handoff,
+              error: {
+                code: error.code,
+                error: error.message,
+              },
+            });
+          } else {
+            await options.nodeLaunchRecordStore?.markTerminalFailed({
+              handoff,
+              error: {
+                code: error.code,
+                error: error.message,
+              },
+            });
+          }
         }
         const body: Record<string, unknown> = {
           code: error.code,
@@ -368,5 +413,10 @@ export function createNodeLaunchesRouter(options: {
 }
 
 function isActiveOperation(status: string): boolean {
-  return status === "preparing" || status === "launching";
+  return (
+    status === "preparing" ||
+    status === "launching" ||
+    status === "managed_starting" ||
+    status === "managed_running"
+  );
 }

@@ -11,11 +11,13 @@ import { SessionRegistryFileStore } from "../session-registry/file-store";
 import type { PawLaunchHandoff } from "./launch-preparation";
 import {
   appendLaunchBindingPromptLines,
+  launchManagedSdkNode,
   launchPreparedNode,
   NodeLaunchError,
 } from "./node-launch";
 import { createStreamlinerApiApp, type StreamlinerApiApp } from "./app";
 import { NodeLaunchRecordStore } from "./node-launch-record-store";
+import type { ManagedSdkRunner, ManagedSdkRunnerStartInput } from "./managed-sdk-runner";
 
 const createdRoots: string[] = [];
 const activeApps: StreamlinerApiApp[] = [];
@@ -481,6 +483,94 @@ describe("launchPreparedNode", () => {
   });
 });
 
+describe("launchManagedSdkNode", () => {
+  it("reserves a canonical row and starts the SDK runner with launch-claim env", async () => {
+    const root = createRootDir();
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const startInputs: ManagedSdkRunnerStartInput[] = [];
+    const runner: ManagedSdkRunner = {
+      start: async (input) => {
+        startInputs.push(input);
+        input.onProgress({
+          type: "tool_started",
+          message: "Tool started.",
+          data: {
+            toolName: "powershell",
+            args: "raw command should not persist",
+          },
+        });
+        input.onEvidence({
+          kind: "pr_ready",
+          source: "test-runner",
+          url: "https://github.com/lossyrob/streamliner/pull/73",
+          repo: "lossyrob/streamliner",
+          number: 73,
+          summary: "PR ready.",
+        });
+        const result = {
+          registryId: input.registryId,
+          sdkSessionId: "sdk-session-73",
+          sdkWorkspacePath: normalizePath(join(root, "sdk", "workspace.yaml")),
+          sdkStateRoot: normalizePath(join(root, "sdk")),
+        };
+        input.onStarted(result);
+        return result;
+      },
+    };
+
+    const result = await launchManagedSdkNode(
+      registryStore,
+      claimStore,
+      fakeHandoff(root, { runtimeKind: "managed-sdk" }),
+      {
+        now: () => new Date("2026-05-07T12:00:00.000Z"),
+        managedSdkRunner: runner,
+      },
+    );
+
+    expect(result.runtimeKind).toBe("managed-sdk");
+    expect(result.managedSdk).toEqual(expect.objectContaining({
+      registryId: result.launchClaim.reservedRegistryId,
+      sdkSessionId: "sdk-session-73",
+      permissionProfile: "managed-autonomous",
+    }));
+    expect(startInputs).toHaveLength(1);
+    expect(startInputs[0].environment).toEqual(expect.objectContaining({
+      STREAMLINER_LOG_LEVEL: "debug",
+      STREAMLINER_LAUNCH_CLAIM_ID: result.launchClaim.launchClaimId,
+      STREAMLINER_MANAGED_RUNTIME_KIND: "managed-sdk",
+      STREAMLINER_MANAGED_PERMISSION_PROFILE: "managed-autonomous",
+    }));
+    expect(startInputs[0].prompt).toContain(
+      `Streamliner launch claim: ${result.launchClaim.launchClaimId}`,
+    );
+
+    const record = registryStore.getSession(result.managedSdk.registryId);
+    expect(record?.runtime).toEqual(expect.objectContaining({
+      runtimeKind: "managed-sdk",
+      runtimeOwner: "streamliner-sdk",
+      lifecycleState: "running",
+      permissionProfile: "managed-autonomous",
+      launchClaimId: result.launchClaim.launchClaimId,
+      launchNonce: claimStore.getClaim(result.launchClaim.launchClaimId)?.launchNonce,
+      sdkSessionId: "sdk-session-73",
+    }));
+    expect(record?.runtime?.progressEvents.some((event) =>
+      event.type === "tool_started" && event.data?.toolName === "powershell"
+    )).toBe(true);
+    expect(record?.runtime?.progressEvents.some((event) =>
+      Object.prototype.hasOwnProperty.call(event.data ?? {}, "args")
+    )).toBe(false);
+    expect(record?.runtime?.evidence).toEqual([
+      expect.objectContaining({
+        kind: "pr_ready",
+        number: 73,
+      }),
+    ]);
+  });
+});
+
 describe("node launch API route", () => {
   it("rejects non-loopback callers", async () => {
     const root = createRootDir();
@@ -557,6 +647,67 @@ describe("node launch API route", () => {
           method: "powershell",
           pid: 777,
         },
+      }),
+      latestClaim: expect.objectContaining({
+        status: "pending",
+        blocksLaunch: true,
+      }),
+    }));
+  });
+
+  it("launches a managed SDK handoff through POST /api/node-launches", async () => {
+    const root = createRootDir();
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const runner: ManagedSdkRunner = {
+      start: async (input) => {
+        const result = {
+          registryId: input.registryId,
+          sdkSessionId: "sdk-route-session",
+          sdkWorkspacePath: normalizePath(join(root, "sdk", "workspace.yaml")),
+          sdkStateRoot: normalizePath(join(root, "sdk")),
+        };
+        input.onStarted(result);
+        return result;
+      },
+    };
+    const api = createStreamlinerApiApp({
+      store: registryStore,
+      launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
+      nodeLaunchDeps: {
+        managedSdkRunner: runner,
+      },
+    });
+    activeApps.push(api);
+    const handoff = fakeHandoff(root, { runtimeKind: "managed-sdk" });
+
+    const response = await request(api.app)
+      .post("/api/node-launches")
+      .send({ handoff })
+      .expect(201);
+
+    expect(response.body).toEqual(expect.objectContaining({
+      runtimeKind: "managed-sdk",
+      managedSdk: expect.objectContaining({
+        sdkSessionId: "sdk-route-session",
+        permissionProfile: "managed-autonomous",
+      }),
+    }));
+    expect(response.body).not.toHaveProperty("terminal");
+
+    const operation = await request(api.app)
+      .get("/api/node-launch-records")
+      .query({
+        graphPath: handoff.launchMetadata.graphPath,
+        nodeId: "terminal-launch",
+      })
+      .expect(200);
+    expect(operation.body.operation).toEqual(expect.objectContaining({
+      status: "managed_running",
+      managedLaunch: expect.objectContaining({
+        sdkSessionId: "sdk-route-session",
+        registryId: response.body.managedSdk.registryId,
       }),
       latestClaim: expect.objectContaining({
         status: "pending",
@@ -677,5 +828,222 @@ describe("node launch API route", () => {
     }));
     expect(claimStore.listClaims()).toHaveLength(0);
     expect(registryStore.listSessions()).toEqual([]);
+  });
+});
+
+describe("managed runtime session API routes", () => {
+  it("records evidence and interrupts managed SDK sessions", async () => {
+    const root = createRootDir();
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const runner: ManagedSdkRunner = {
+      start: async (input) => ({
+        registryId: input.registryId,
+        sdkSessionId: null,
+        sdkWorkspacePath: null,
+        sdkStateRoot: null,
+      }),
+      interrupt: async (input) => ({
+        ok: true,
+        evidenceState: "interrupted",
+        message: input.reason ?? "Interrupted.",
+      }),
+    };
+    const api = createStreamlinerApiApp({
+      store: registryStore,
+      launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
+      nodeLaunchDeps: {
+        managedSdkRunner: runner,
+      },
+    });
+    activeApps.push(api);
+    const record = registryStore.upsertSession({
+      id: "managed-route-row",
+      title: "Managed route row",
+      description: "",
+      cwd: normalizePath(root),
+      origin: { kind: "launched", launchClaimId: "claim-route" },
+      graphBinding: {
+        workstreamId: "ws-1",
+        nodeId: "node-1",
+        launchClaimId: "claim-route",
+      },
+    });
+    registryStore.patchRuntimeMetadata(record.id, {
+      runtimeKind: "managed-sdk",
+      runtimeOwner: "streamliner-sdk",
+      lifecycleState: "running",
+      permissionProfile: "managed-autonomous",
+      launchClaimId: "claim-route",
+      launchNonce: "nonce-route",
+    });
+
+    const evidenceResponse = await request(api.app)
+      .post(`/api/sessions/${record.id}/managed/evidence`)
+      .send({
+        kind: "review_ready",
+        source: "test",
+        summary: "Ready for review.",
+      })
+      .expect(200);
+
+    expect(evidenceResponse.body.runtime).toEqual(expect.objectContaining({
+      lifecycleState: "review_ready",
+      evidence: [
+        expect.objectContaining({
+          kind: "review_ready",
+          source: "test",
+          summary: "Ready for review.",
+        }),
+      ],
+    }));
+
+    const interruptResponse = await request(api.app)
+      .post(`/api/sessions/${record.id}/managed/interrupt`)
+      .send({ reason: "Need builder review." })
+      .expect(200);
+
+    expect(interruptResponse.body).toEqual(expect.objectContaining({
+      outcome: {
+        ok: true,
+        evidenceState: "interrupted",
+        message: "Need builder review.",
+      },
+      session: expect.objectContaining({
+        runtime: expect.objectContaining({
+          lifecycleState: "interrupted",
+        }),
+      }),
+    }));
+  });
+
+  it("returns a canceled outcome when cancel persists the canceled lifecycle", async () => {
+    const root = createRootDir();
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const runner: ManagedSdkRunner = {
+      start: async (input) => ({
+        registryId: input.registryId,
+        sdkSessionId: null,
+        sdkWorkspacePath: null,
+        sdkStateRoot: null,
+      }),
+      interrupt: async () => ({
+        ok: true,
+        evidenceState: "interrupted",
+        message: "Interrupted.",
+      }),
+    };
+    const api = createStreamlinerApiApp({
+      store: registryStore,
+      launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
+      nodeLaunchDeps: {
+        managedSdkRunner: runner,
+      },
+    });
+    activeApps.push(api);
+    const record = registryStore.upsertSession({
+      id: "managed-cancel-row",
+      title: "Managed cancel row",
+      description: "",
+      cwd: normalizePath(root),
+      origin: { kind: "launched", launchClaimId: "claim-cancel" },
+      graphBinding: {
+        workstreamId: "ws-1",
+        nodeId: "node-cancel",
+        launchClaimId: "claim-cancel",
+      },
+    });
+    registryStore.patchRuntimeMetadata(record.id, {
+      runtimeKind: "managed-sdk",
+      runtimeOwner: "streamliner-sdk",
+      lifecycleState: "running",
+      permissionProfile: "managed-autonomous",
+      launchClaimId: "claim-cancel",
+      launchNonce: "nonce-cancel",
+    });
+
+    const cancelResponse = await request(api.app)
+      .post(`/api/sessions/${record.id}/managed/cancel`)
+      .send({})
+      .expect(200);
+
+    expect(cancelResponse.body).toEqual(expect.objectContaining({
+      outcome: {
+        ok: true,
+        evidenceState: "canceled",
+        message: "Managed SDK run canceled by builder action.",
+      },
+      session: expect.objectContaining({
+        runtime: expect.objectContaining({
+          lifecycleState: "canceled",
+        }),
+      }),
+    }));
+  });
+
+  it("rejects managed runtime actions for missing, archived, and non-managed sessions", async () => {
+    const root = createRootDir();
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const api = createStreamlinerApiApp({
+      store: registryStore,
+      launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
+    });
+    activeApps.push(api);
+    const nonManagedRecord = registryStore.upsertSession({
+      id: "terminal-route-row",
+      title: "Terminal route row",
+      description: "",
+      cwd: normalizePath(root),
+      origin: { kind: "launched", launchClaimId: "claim-terminal" },
+      graphBinding: {
+        workstreamId: "ws-1",
+        nodeId: "node-terminal",
+        launchClaimId: "claim-terminal",
+      },
+    });
+    const archivedRecord = registryStore.upsertSession({
+      id: "archived-managed-route-row",
+      title: "Archived managed route row",
+      description: "",
+      cwd: normalizePath(root),
+      origin: { kind: "launched", launchClaimId: "claim-archived" },
+      graphBinding: {
+        workstreamId: "ws-1",
+        nodeId: "node-archived",
+        launchClaimId: "claim-archived",
+      },
+    });
+    registryStore.patchRuntimeMetadata(archivedRecord.id, {
+      runtimeKind: "managed-sdk",
+      runtimeOwner: "streamliner-sdk",
+      lifecycleState: "running",
+      permissionProfile: "managed-autonomous",
+      launchClaimId: "claim-archived",
+      launchNonce: "nonce-archived",
+    });
+    registryStore.archiveSession(archivedRecord.id);
+
+    const nonManagedResponse = await request(api.app)
+      .post(`/api/sessions/${nonManagedRecord.id}/managed/evidence`)
+      .send({ kind: "completed" })
+      .expect(409);
+    const missingResponse = await request(api.app)
+      .post("/api/sessions/missing-managed-row/managed/evidence")
+      .send({ kind: "completed" })
+      .expect(404);
+    const archivedResponse = await request(api.app)
+      .post(`/api/sessions/${archivedRecord.id}/managed/interrupt`)
+      .send({})
+      .expect(409);
+
+    expect(nonManagedResponse.body.error).toContain("not a Streamliner-managed SDK runtime");
+    expect(missingResponse.body.error).toContain("does not exist");
+    expect(archivedResponse.body.error).toContain("Archived session");
+    expect(registryStore.getSession(nonManagedRecord.id)?.runtime ?? null).toBeNull();
   });
 });

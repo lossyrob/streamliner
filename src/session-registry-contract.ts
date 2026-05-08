@@ -14,6 +14,7 @@ import type {
   SessionRegistryPawLaunch,
   SessionRegistryPawWorkflow,
   SessionRegistryRecord,
+  SessionRegistryRuntimeMetadata,
   SessionRegistryTitleSource,
   SessionRegistryTrustedEndReason,
   SessionRegistryTrustedExecutionKind,
@@ -56,6 +57,7 @@ export interface SessionRegistryListItem {
   originKind: SessionRegistryOriginKind;
   graphBinding: SessionRegistryGraphBinding | null;
   pawLaunch: SessionRegistryPawLaunch | null;
+  runtime?: SessionRegistryRuntimeMetadata | null;
   copilotSessionId: string | null;
   aiSummary: string | null;
   aiSummaryModel: string | null;
@@ -107,6 +109,7 @@ export interface ManualSessionRegistryUpsertInput
     "ended" | "archived"
   >;
   graphBinding?: SessionRegistryGraphBinding | null;
+  runtime?: SessionRegistryRuntimeMetadata | null;
 }
 
 export interface ObservedSessionRegistryUpsertInput
@@ -116,6 +119,7 @@ export interface ObservedSessionRegistryUpsertInput
   lastSeenAt?: string | null;
   lifecycleStatus?: SessionRegistryObservedLifecycleStatus;
   graphBinding?: SessionRegistryGraphBinding | null;
+  runtime?: SessionRegistryRuntimeMetadata | null;
   observedSessionKind?: SessionRegistryObservedSessionKind | null;
   copilotProcessState?: SessionRegistryCopilotProcessState | null;
   copilotProcessId?: number | null;
@@ -139,6 +143,7 @@ export interface LaunchedSessionRegistryUpsertInput
   >;
   graphBinding?: SessionRegistryGraphBinding | null;
   pawLaunch?: SessionRegistryPawLaunch | null;
+  runtime?: SessionRegistryRuntimeMetadata | null;
 }
 
 export interface SessionRegistryObservedLinkInput {

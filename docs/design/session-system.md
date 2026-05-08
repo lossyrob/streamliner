@@ -140,6 +140,9 @@ The API projects the following operation states:
 | `preparation_failed` | PAW init or context preparation failed | Retry is intentional; progress/error details remain visible |
 | `launching` | The terminal-launch request is creating a claim and spawning Copilot CLI | Same-node duplicate terminal launch is blocked |
 | `launched_pending_binding` | Terminal spawn returned and the launch claim is pending within its binding window | Duplicate launch remains blocked by claim state |
+| `managed_starting` | The managed-launch request has reserved the canonical row/claim and is creating the SDK session | Same-node duplicate terminal or managed launch is blocked |
+| `managed_running` | The managed SDK session started and Streamliner owns the worker runtime | Duplicate launch remains blocked while the managed lifecycle remains active |
+| `managed_failed` | Managed SDK startup failed after launch operation creation | Retry is intentional after the failed claim/runtime state is non-blocking |
 | `bound` | Observation bound the launch claim to a registry row/session | Duplicate launch remains blocked while that bound session is active |
 | `terminal_failed` | Claim creation or terminal spawn failed | Retry is intentional after the failed claim is non-blocking |
 
@@ -147,7 +150,7 @@ The API projects the following operation states:
 
 Launch preparation run events are replayable through the existing run SSE endpoint while the API process still has the run buffer. The operation snapshot is the source of truth on dialog reopen: it carries the preparation run id, bounded progress history, last error, prepared handoff, terminal launch result, and claim projection. If the run id is unknown, the SSE buffer has rotated, or the API restarted, the UI falls back to the operation snapshot and presents the appropriate retry, review, or launch action instead of resetting to a blank dialog.
 
-The terminal-launch route remains a synchronous POST. To make that phase reattachable enough for the graph UI, the backend writes `launching` before claim creation/spawn and writes either `launched_pending_binding` with the terminal result or `terminal_failed` with diagnostic details before returning. The in-flight terminal-spawn window is bounded by the request, while the post-return binding state is represented by the operation snapshot plus launch-claim projection.
+The terminal-launch route remains a synchronous POST. To make that phase reattachable enough for the graph UI, the backend writes `launching` before claim creation/spawn and writes either `launched_pending_binding` with the terminal result or `terminal_failed` with diagnostic details before returning. The managed-launch route uses the same operation store: it writes `managed_starting` before SDK startup and then `managed_running` with the managed session facts or `managed_failed` with diagnostic details. The in-flight terminal-spawn and managed-start windows are bounded by the request, while post-return binding/managed lifecycle state is represented by the operation snapshot plus launch-claim and session-registry runtime projections.
 
 The launch dialog is non-modal with respect to operation ownership. Closing the dialog or selecting another node only hides/unsubscribes the current view; it does not cancel the server-side preparation run or clear the node's operation. Reopening a prepared operation restores the handoff, kickoff prompt editor, and `WorkflowContext.md` review access. Starting a second node launch uses a separate operation key so progress, errors, terminal results, and claims cannot bleed between nodes.
 
@@ -481,14 +484,14 @@ The session registry remains the canonical row for a managed worker. The registr
 
 | Field | Meaning |
 |-------|---------|
-| `runtimeKind` | `terminal-cli` for visible terminal sessions, `managed-sdk` for SDK-managed workers. Legacy observed/manual rows default to `terminal-cli` unless a future migration records a more precise value. |
-| `runtimeOwner` | `terminal` when a human-visible Copilot CLI owns interaction, `streamliner-sdk` while Streamliner's SDK runtime owns the worker, or `null` for manual/unresolved rows. |
-| `sdkSessionId` | Resumable Copilot SDK session id for managed workers. It remains separate from `copilotSessionId` even if the underlying Copilot runtime uses the same string as a resumable session identity. |
-| `sdkWorkspacePath` / `sdkStateRoot` | Local paths needed for SDK resume, diagnostics, and terminal takeover. They are registry/runtime metadata, not graph artifacts. |
+| `runtime.runtimeKind` | `terminal-cli` for visible terminal sessions, `managed-sdk` for SDK-managed workers. Legacy observed/manual rows omit the runtime object unless a future migration records a more precise value. |
+| `runtime.runtimeOwner` | `builder-terminal` when a human-visible Copilot CLI owns interaction, `streamliner-sdk` while Streamliner's SDK runtime owns the worker, or absent for manual/unresolved rows. |
+| `runtime.sdkSessionId` | Resumable Copilot SDK session id for managed workers. It remains separate from `copilotSessionId` even if the underlying Copilot runtime uses the same string as a resumable session identity. |
+| `runtime.sdkWorkspacePath` / `runtime.sdkStateRoot` | Local paths needed for SDK resume, diagnostics, and terminal takeover. They are registry/runtime metadata, not graph artifacts. |
 | `copilotSessionId` | Populated by terminal observation when a visible Copilot CLI/Agency session is trusted or when terminal takeover binds. It stays `null` for purely SDK-managed rows. |
-| `managedLifecycle` | Managed-runtime lifecycle state and evidence. It is separate from `lifecycleStatus`, `activityStatus`, and `pawWorkflow`. |
-| `managedProgress` | Pointer to the sanitized progress stream and latest summary in local runtime state. Raw prompts, reasoning, tool payloads, and terminal output are not stored here. |
-| `managedCompletion` | Optional PR/review/completion metadata such as PR URL, branch/head sha, completion signal, cleanup readiness, and cleanup result. |
+| `runtime.lifecycleState` | Managed-runtime lifecycle state. It is separate from `lifecycleStatus`, `activityStatus`, and `pawWorkflow`. |
+| `runtime.progressEvents` | Bounded sanitized progress stream in local registry/runtime state. Raw prompts, reasoning, tool payloads, and terminal output are not stored here. |
+| `runtime.evidence` | Optional PR/review/completion/cleanup/takeover metadata such as PR URL, PR number, commit SHA, completion signal, cleanup readiness, and cleanup result. |
 
 Managed runtime details live in local runtime state, for example under a managed-session subtree keyed by the registry id. The exact file layout can evolve, but it must follow the same runtime-state rules as the registry: schema versioning, single logical writer, write-then-rename for materialized state, and quarantine or typed failure on incompatible data. Managed lifecycle/progress telemetry must never be written to committed `graph.json`; graph cards and My Sessions read it as a projection through the registry/API.
 
@@ -542,11 +545,11 @@ Allowed browser-facing event classes:
 | Class | Safe fields |
 |-------|-------------|
 | `lifecycle` | Managed lifecycle state, timestamp, registry id, workstream/node, coarse reason code, confidence/evidence level. |
-| `agent.message` | Short status-oriented assistant text after truncation/redaction; no hidden reasoning or prompt reconstruction. |
-| `tool.started` / `tool.completed` | Tool name or MCP server/tool label, opaque call id, success/failure boolean, coarse error category. |
-| `permission.requested` / `permission.completed` | Permission category, decision (`approved`, `rejected`, `requires_builder`), and redacted reason code. |
-| `mcp.status` / `skill.invoked` | MCP server or skill name/version/status when useful for diagnostics. |
-| `pr` / `review` / `cleanup` | PR URL or number when public to the repo, review-ready marker, cleanup state/result, and safety-check outcome. |
+| `assistant_status` | Short status-oriented assistant metadata after truncation/redaction; no hidden reasoning or prompt reconstruction. |
+| `tool_started` / `tool_completed` | Tool name or MCP server/tool label, opaque call id, success/failure boolean, coarse error category. |
+| `permission_decision` | Permission category, decision (`approved`, `rejected`, `requires_builder`), and redacted reason code. |
+| `mcp_status` / `skill_status` | MCP server or skill name/version/status when useful for diagnostics. |
+| `evidence` / `terminal_takeover` | PR URL or number when public to the repo, review-ready marker, cleanup state/result, takeover marker, and safety-check outcome. |
 | `usage` | Token or duration counters only when the UI opts into showing them. |
 
 Always exclude raw user prompts, transformed prompts, assistant reasoning, reasoning deltas, tool arguments, tool results, terminal stdout/stderr, hook payload bodies, full paths when not already part of the launch surface, secrets, tokens, credential-manager data, and provider telemetry that would expose more than the builder-visible node context.

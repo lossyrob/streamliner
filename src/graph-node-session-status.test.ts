@@ -121,4 +121,60 @@ describe("buildGraphNodeSessionStatusMap", () => {
     expect(summary?.count).toBe(2);
     expect(summary?.primarySession.id).toBe("unknown-session");
   });
+
+  it("uses managed runtime lifecycle states and runtime freshness for attention ordering", () => {
+    const summary = buildGraphNodeSessionStatusMap(
+      [
+        buildSession({
+          id: "working-cli",
+          activityStatus: "working",
+          updatedAt: "2026-05-05T12:10:00.000Z",
+        }),
+        buildSession({
+          id: "running-managed",
+          runtime: {
+            runtimeKind: "managed-sdk",
+            runtimeOwner: "streamliner-sdk",
+            lifecycleState: "running",
+            permissionProfile: "managed-autonomous",
+            launchClaimId: "claim-running",
+            launchNonce: "nonce-running",
+            sdkSessionId: null,
+            sdkWorkspacePath: null,
+            sdkStateRoot: null,
+            startedAt: "2026-05-05T12:00:00.000Z",
+            lastStateChangedAt: "2026-05-05T12:02:00.000Z",
+            progressEvents: [],
+            evidence: [],
+          },
+        }),
+        buildSession({
+          id: "waiting-managed",
+          runtime: {
+            runtimeKind: "managed-sdk",
+            runtimeOwner: "streamliner-sdk",
+            lifecycleState: "waiting_for_builder",
+            permissionProfile: "managed-autonomous",
+            launchClaimId: "claim-waiting",
+            launchNonce: "nonce-waiting",
+            sdkSessionId: null,
+            sdkWorkspacePath: null,
+            sdkStateRoot: null,
+            startedAt: "2026-05-05T12:00:00.000Z",
+            lastStateChangedAt: "2026-05-05T12:01:00.000Z",
+            progressEvents: [],
+            evidence: [],
+          },
+        }),
+      ],
+      "session-launching-and-tracking",
+    ).get("graph-node-session-status-ui");
+
+    expect(summary?.sessions.map((session) => session.id)).toEqual([
+      "waiting-managed",
+      "running-managed",
+      "working-cli",
+    ]);
+    expect(summary?.primarySession.id).toBe("waiting-managed");
+  });
 });

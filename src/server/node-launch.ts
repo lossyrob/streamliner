@@ -1,7 +1,11 @@
 import type { LaunchClaim, LaunchClaimStatus } from "../launch-claim-schema";
 import type { LaunchClaimStore } from "../launch-claim-contract";
-import type { SessionRegistryPawLaunch } from "../session-registry-schema";
+import type {
+  SessionRegistryManagedLifecycleState,
+  SessionRegistryPawLaunch,
+} from "../session-registry-schema";
 import { SessionRegistryFileStore } from "../session-registry/file-store";
+import { isManagedRuntimeActive } from "../session-registry/managed-runtime";
 import {
   createLaunchClaim,
   kickoffNonceLine,
@@ -20,13 +24,19 @@ import {
   launchPolicyDetails,
 } from "./launch-policy";
 import { getApiLogger } from "./logger";
+import {
+  DefaultManagedSdkRunner,
+  type ManagedSdkRunner,
+  type ManagedSdkRunnerStartResult,
+} from "./managed-sdk-runner";
 
 export type NodeLaunchErrorCode =
   | "launch_policy_blocked"
   | "launch_policy_unavailable"
   | "duplicate_active_launch"
   | "launch_claim_failed"
-  | "terminal_spawn_failed";
+  | "terminal_spawn_failed"
+  | "managed_sdk_start_failed";
 
 export class NodeLaunchError extends Error {
   readonly code: NodeLaunchErrorCode;
@@ -68,6 +78,7 @@ export interface NodeLaunchClaimSummary {
 }
 
 export interface NodeLaunchResult {
+  runtimeKind: "terminal-cli";
   launchClaim: NodeLaunchClaimSummary;
   terminal: TerminalLaunchResult;
   cwd: string;
@@ -78,8 +89,27 @@ export interface NodeLaunchResult {
   };
 }
 
+export interface NodeManagedSdkLaunchResult {
+  runtimeKind: "managed-sdk";
+  launchClaim: NodeLaunchClaimSummary;
+  managedSdk: {
+    registryId: string;
+    sdkSessionId: string | null;
+    sdkWorkspacePath: string | null;
+    sdkStateRoot: string | null;
+    permissionProfile: "managed-autonomous";
+  };
+  cwd: string;
+  branch: string;
+  command: {
+    cliArgs: string[];
+    promptNonceLine: string;
+  };
+}
+
 export interface NodeLaunchDeps {
   launchTerminal?: (options: TerminalLaunchOptions) => TerminalLaunchResult;
+  managedSdkRunner?: ManagedSdkRunner;
   now?: () => Date;
 }
 
@@ -230,54 +260,73 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export function launchPreparedNode(
+function lifecycleProgressMessage(state: SessionRegistryManagedLifecycleState): string {
+  return `Managed SDK lifecycle changed to ${state}.`;
+}
+
+function hasActiveManagedRuntime(
   registryStore: SessionRegistryFileStore,
-  claimStore: LaunchClaimStore,
-  handoff: PawLaunchHandoff,
-  deps: NodeLaunchDeps = {},
-): NodeLaunchResult {
-  if (handoff.launchMetadata.launchNonce !== null) {
-    assertLaunchPromptToken(handoff.launchMetadata.launchNonce, "launch nonce");
-  }
+  workstreamId: string,
+  nodeId: string,
+): boolean {
+  return registryStore
+    .listSessions({ includeArchived: true, workstreamId, nodeId })
+    .some((session) => isManagedRuntimeActive(session.runtime));
+}
+
+function assertLaunchPolicyAllows(handoff: PawLaunchHandoff): void {
   const policyResult = evaluateLaunchPolicyFromGraph({
     graphPath: handoff.launchMetadata.graphPath,
     nodeId: handoff.launchMetadata.nodeId,
   });
-  if (!policyResult.ok) {
-    if (policyResult.kind === "blocked") {
-      const details = launchPolicyDetails(policyResult.violation);
-      getApiLogger().withScope("launch-policy").info(
-        "rejected terminal launch",
-        details,
-      );
-      throw new NodeLaunchError(
-        "launch_policy_blocked",
-        412,
-        policyResult.violation.message,
-        null,
-        details,
-      );
-    }
-    const details = {
-      reason: policyResult.code,
-      input: policyResult.input,
-      nodeId: handoff.launchMetadata.nodeId,
-    };
-    if (!handoff.launchMetadata.launchPolicy?.requiredTracker) {
-      getApiLogger().withScope("launch-policy").warn(
-        "terminal launch policy graph unavailable; allowing unconfigured prepared handoff",
-        details,
-      );
-    } else {
-      throw new NodeLaunchError(
-        "launch_policy_unavailable",
-        policyResult.statusCode,
-        policyResult.message,
-        null,
-        details,
-      );
-    }
+  if (policyResult.ok) {
+    return;
   }
+  if (policyResult.kind === "blocked") {
+    const details = launchPolicyDetails(policyResult.violation);
+    getApiLogger().withScope("launch-policy").info(
+      "rejected node launch",
+      details,
+    );
+    throw new NodeLaunchError(
+      "launch_policy_blocked",
+      412,
+      policyResult.violation.message,
+      null,
+      details,
+    );
+  }
+  const details = {
+    reason: policyResult.code,
+    input: policyResult.input,
+    nodeId: handoff.launchMetadata.nodeId,
+  };
+  if (!handoff.launchMetadata.launchPolicy?.requiredTracker) {
+    getApiLogger().withScope("launch-policy").warn(
+      "node launch policy graph unavailable; allowing unconfigured prepared handoff",
+      details,
+    );
+    return;
+  }
+  throw new NodeLaunchError(
+    "launch_policy_unavailable",
+    policyResult.statusCode,
+    policyResult.message,
+    null,
+    details,
+  );
+}
+
+function reserveLaunchClaimForHandoff(
+  registryStore: SessionRegistryFileStore,
+  claimStore: LaunchClaimStore,
+  handoff: PawLaunchHandoff,
+  deps: NodeLaunchDeps,
+): { claim: LaunchClaim; now: Date } {
+  if (handoff.launchMetadata.launchNonce !== null) {
+    assertLaunchPromptToken(handoff.launchMetadata.launchNonce, "launch nonce");
+  }
+  assertLaunchPolicyAllows(handoff);
   const now = deps.now?.() ?? new Date();
   const blockingClaim = findBlockingLaunchClaim(
     claimStore,
@@ -285,11 +334,18 @@ export function launchPreparedNode(
     handoff.launchMetadata.nodeId,
     now,
   );
-  if (blockingClaim) {
+  if (
+    blockingClaim ||
+    hasActiveManagedRuntime(
+      registryStore,
+      handoff.launchMetadata.workstreamId,
+      handoff.launchMetadata.nodeId,
+    )
+  ) {
     throw new NodeLaunchError(
       "duplicate_active_launch",
       409,
-      `Node ${handoff.launchMetadata.nodeId} already has an active launch claim.`,
+      `Node ${handoff.launchMetadata.nodeId} already has an active launch claim or managed runtime.`,
       blockingClaim,
     );
   }
@@ -316,8 +372,22 @@ export function launchPreparedNode(
       claimOutcome.error.message,
     );
   }
+  return { claim: claimOutcome.claim, now };
+}
 
-  const claim = claimOutcome.claim;
+export function launchPreparedNode(
+  registryStore: SessionRegistryFileStore,
+  claimStore: LaunchClaimStore,
+  handoff: PawLaunchHandoff,
+  deps: NodeLaunchDeps = {},
+): NodeLaunchResult {
+  const { claim, now } = reserveLaunchClaimForHandoff(
+    registryStore,
+    claimStore,
+    handoff,
+    deps,
+  );
+  const terminalTitle = terminalTitleFor(handoff);
   const kickoffPrompt = appendLaunchBindingPromptLines(
     handoff.kickoffPrompt,
     claim.launchNonce,
@@ -342,6 +412,7 @@ export function launchPreparedNode(
   try {
     const terminal = (deps.launchTerminal ?? launchTerminal)(terminalOptions);
     return {
+      runtimeKind: "terminal-cli",
       launchClaim: summarizeLaunchClaim(claim, now),
       terminal,
       cwd: handoff.cwd,
@@ -396,4 +467,151 @@ export function launchPreparedNode(
       failedClaim,
     );
   }
+}
+
+export async function launchManagedSdkNode(
+  registryStore: SessionRegistryFileStore,
+  claimStore: LaunchClaimStore,
+  handoff: PawLaunchHandoff,
+  deps: NodeLaunchDeps = {},
+): Promise<NodeManagedSdkLaunchResult> {
+  const { claim, now } = reserveLaunchClaimForHandoff(
+    registryStore,
+    claimStore,
+    handoff,
+    deps,
+  );
+  if (!claim.reservedRegistryId) {
+    throw new NodeLaunchError(
+      "launch_claim_failed",
+      500,
+      "Managed SDK launch requires a reserved registry row.",
+      claim,
+    );
+  }
+  const registryId = claim.reservedRegistryId;
+  const kickoffPrompt = appendLaunchBindingPromptLines(
+    handoff.kickoffPrompt,
+    claim.launchNonce,
+    claim.launchClaimId,
+  );
+  registryStore.patchRuntimeMetadata(registryId, {
+    runtimeKind: "managed-sdk",
+    runtimeOwner: "streamliner-sdk",
+    lifecycleState: "preparing",
+    permissionProfile: "managed-autonomous",
+    launchClaimId: claim.launchClaimId,
+    launchNonce: claim.launchNonce,
+    startedAt: now.toISOString(),
+    progressEvents: [{
+      type: "lifecycle",
+      message: "Managed SDK launch reserved canonical registry row.",
+      timestamp: now.toISOString(),
+      data: {
+        workstreamId: handoff.launchMetadata.workstreamId,
+        nodeId: handoff.launchMetadata.nodeId,
+        launchClaimId: claim.launchClaimId,
+      },
+    }],
+  }, now);
+  const runner = deps.managedSdkRunner ?? new DefaultManagedSdkRunner();
+  let startResult: ManagedSdkRunnerStartResult;
+  try {
+    startResult = await runner.start({
+      registryId,
+      launchClaimId: claim.launchClaimId,
+      launchNonce: claim.launchNonce,
+      cwd: handoff.cwd,
+      branch: handoff.branch,
+      prompt: kickoffPrompt,
+      cliArgs: [...handoff.cliArgs],
+      environment: {
+        ...handoff.environment,
+        STREAMLINER_LAUNCH_CLAIM_ID: claim.launchClaimId,
+        STREAMLINER_MANAGED_RUNTIME_KIND: "managed-sdk",
+        STREAMLINER_MANAGED_PERMISSION_PROFILE: "managed-autonomous",
+      },
+      sessionStateRoot: handoff.sessionStateRoot,
+      onLifecycleState: (state, message) => {
+        registryStore.patchRuntimeMetadata(registryId, {
+          lifecycleState: state,
+          progressEvents: [{
+            type: "lifecycle",
+            message: message || lifecycleProgressMessage(state),
+          }],
+        });
+      },
+      onProgress: (event) => {
+        registryStore.patchRuntimeMetadata(registryId, {
+          progressEvents: [event],
+        });
+      },
+      onEvidence: (evidence) => {
+        registryStore.patchRuntimeMetadata(registryId, {
+          evidence: [evidence],
+          progressEvents: [{
+            type: "evidence",
+            message: `Managed SDK evidence recorded: ${evidence.kind}.`,
+          }],
+        });
+      },
+      onStarted: (details) => {
+        registryStore.patchRuntimeMetadata(registryId, {
+          lifecycleState: "running",
+          sdkSessionId: details.sdkSessionId,
+          sdkWorkspacePath: details.sdkWorkspacePath,
+          sdkStateRoot: details.sdkStateRoot,
+          progressEvents: [{
+            type: "lifecycle",
+            message: "Managed SDK session started.",
+            data: {
+              sdkSessionId: details.sdkSessionId,
+              hasWorkspacePath: Boolean(details.sdkWorkspacePath),
+            },
+          }],
+        });
+      },
+    });
+  } catch (error: unknown) {
+    const message = errorMessage(error);
+    registryStore.patchRuntimeMetadata(registryId, {
+      lifecycleState: "failed",
+      progressEvents: [{
+        type: "error",
+        message,
+      }],
+    });
+    markClaimFailed(
+      registryStore,
+      claimStore,
+      claim.launchClaimId,
+      "internal-error",
+      message,
+      deps.now ? { now: deps.now } : undefined,
+    );
+    throw new NodeLaunchError(
+      "managed_sdk_start_failed",
+      500,
+      `Failed to start managed SDK worker: ${message}`,
+      claim,
+    );
+  }
+
+  return {
+    runtimeKind: "managed-sdk",
+    launchClaim: summarizeLaunchClaim(claim, now),
+    managedSdk: {
+      registryId,
+      sdkSessionId: startResult.sdkSessionId,
+      sdkWorkspacePath: startResult.sdkWorkspacePath,
+      sdkStateRoot: startResult.sdkStateRoot,
+      permissionProfile: "managed-autonomous",
+    },
+    cwd: handoff.cwd,
+    branch: handoff.branch,
+    command: {
+      cliArgs: [...handoff.cliArgs],
+      promptNonceLine: kickoffNonceLine(claim.launchNonce),
+    },
+  };
 }
