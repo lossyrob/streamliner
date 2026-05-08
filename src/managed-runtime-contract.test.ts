@@ -2,9 +2,31 @@ import { describe, expect, it } from "vitest";
 
 import {
   MANAGED_RUNTIME_LIFECYCLE_STATES,
+  MANAGED_RUNTIME_PROGRESS_EVENT_INPUT_CAP,
+  MANAGED_RUNTIME_PROGRESS_SUMMARY_MAX_LENGTH,
+  defaultManagedRuntimeActions,
+  isManagedRuntimeUnavailableResponse,
+  managedLifecycleStatusClass,
   managedRuntimeProgressEvents,
+  resolveManagedRuntimeActions,
   sanitizeManagedRuntimeProjection,
 } from "./managed-runtime-contract";
+
+function hasLoneSurrogate(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) {
+        return true;
+      }
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+}
 
 describe("managed runtime contract", () => {
   it("defines the launch lifecycle states used by the managed SDK UI", () => {
@@ -44,8 +66,70 @@ describe("managed runtime contract", () => {
     expect(progress).toHaveLength(8);
     expect(progress[0]?.timestamp).toBe("2026-05-05T12:02:00.000Z");
     expect(progress[0]?.summary.endsWith("...")).toBe(true);
+    expect(progress[0]?.summary.length).toBeLessThanOrEqual(
+      MANAGED_RUNTIME_PROGRESS_SUMMARY_MAX_LENGTH,
+    );
     expect(progress[0]).not.toHaveProperty("rawPrompt");
     expect(progress[0]).not.toHaveProperty("toolArguments");
+  });
+
+  it("truncates progress summaries without splitting surrogate pairs", () => {
+    const progress = managedRuntimeProgressEvents([
+      {
+        timestamp: "2026-05-05T12:00:00.000Z",
+        phase: "implementation",
+        summary: `${"a".repeat(MANAGED_RUNTIME_PROGRESS_SUMMARY_MAX_LENGTH - 2)}\u{1f642}x`,
+      },
+    ]);
+
+    expect(progress[0]?.summary.length).toBeLessThanOrEqual(
+      MANAGED_RUNTIME_PROGRESS_SUMMARY_MAX_LENGTH,
+    );
+    expect(progress[0]?.summary.endsWith("...")).toBe(true);
+    expect(hasLoneSurrogate(progress[0]?.summary ?? "")).toBe(false);
+  });
+
+  it("caps progress input before filtering", () => {
+    const progress = managedRuntimeProgressEvents([
+      {
+        timestamp: "2026-05-05T12:00:00.000Z",
+        phase: "implementation",
+        summary: "outside cap",
+      },
+      ...Array.from({ length: MANAGED_RUNTIME_PROGRESS_EVENT_INPUT_CAP }, () => ({
+        ignored: "invalid",
+      })),
+    ]);
+
+    expect(progress).toEqual([]);
+  });
+
+  it("defines a status class for every managed lifecycle state", () => {
+    for (const state of MANAGED_RUNTIME_LIFECYCLE_STATES) {
+      expect(managedLifecycleStatusClass(state)).toMatch(/^(green|amber|red|muted|accent)$/);
+    }
+  });
+
+  it("provides default managed runtime action placeholders", () => {
+    const actions = defaultManagedRuntimeActions();
+
+    expect(resolveManagedRuntimeActions(null)).toEqual(actions);
+    expect(resolveManagedRuntimeActions({
+      runtimeKind: "managed-sdk",
+      runtimeOwner: "streamliner-sdk",
+      permissionProfile: "managed-autonomous",
+      lifecycleState: "running",
+      actions: [],
+    })).toEqual(actions);
+    expect(actions.every((action) => action.available === false)).toBe(true);
+  });
+
+  it("requires an explicit unavailable code for managed runtime unavailable responses", () => {
+    expect(isManagedRuntimeUnavailableResponse(404, "managed_runtime_unavailable")).toBe(true);
+    expect(isManagedRuntimeUnavailableResponse(501, "managed_runtime_unavailable")).toBe(true);
+    expect(isManagedRuntimeUnavailableResponse(503, "managed_runtime_unavailable")).toBe(true);
+    expect(isManagedRuntimeUnavailableResponse(404, undefined)).toBe(false);
+    expect(isManagedRuntimeUnavailableResponse(404, "not_found")).toBe(false);
   });
 
   it("sanitizes managed runtime projection fields before API projection", () => {

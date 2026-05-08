@@ -1,3 +1,6 @@
+// Forward compatibility policy: unknown managed-runtime literals from stored
+// projections are invalid for this reader, so callers should drop the projection
+// to null and keep the owning session/launch record rather than throwing.
 export const WORKSTREAM_RUNTIME_KINDS = [
   "terminal-cli",
   "managed-sdk",
@@ -6,7 +9,6 @@ export type WorkstreamRuntimeKind = (typeof WORKSTREAM_RUNTIME_KINDS)[number];
 
 export const MANAGED_RUNTIME_OWNERS = [
   "streamliner-sdk",
-  "terminal",
 ] as const;
 export type ManagedRuntimeOwner = (typeof MANAGED_RUNTIME_OWNERS)[number];
 
@@ -38,7 +40,10 @@ export type ManagedRuntimeLifecycleState =
   (typeof MANAGED_RUNTIME_LIFECYCLE_STATES)[number];
 
 export const MANAGED_RUNTIME_PROGRESS_EVENT_LIMIT = 8;
+export const MANAGED_RUNTIME_PROGRESS_EVENT_INPUT_CAP = 1000;
 export const MANAGED_RUNTIME_PROGRESS_SUMMARY_MAX_LENGTH = 240;
+export const MANAGED_RUNTIME_UNAVAILABLE_CODE = "managed_runtime_unavailable" as const;
+export const MANAGED_RUNTIME_UNAVAILABLE_STATUSES = [404, 501, 503] as const;
 
 export const MANAGED_RUNTIME_PROGRESS_KINDS = [
   "lifecycle",
@@ -187,6 +192,25 @@ function isManagedRuntimeActionKind(
   return value === "terminal-takeover" || value === "cleanup";
 }
 
+function assertUnhandledManagedLifecycleState(state: never): never {
+  throw new Error(`unhandled managed lifecycle state: ${String(state)}`);
+}
+
+function progressEventSummary(value: string): string {
+  if (value.length <= MANAGED_RUNTIME_PROGRESS_SUMMARY_MAX_LENGTH) {
+    return value;
+  }
+  const maxBodyLength = MANAGED_RUNTIME_PROGRESS_SUMMARY_MAX_LENGTH - 3;
+  let summary = "";
+  for (const char of value) {
+    if (summary.length + char.length > maxBodyLength) {
+      break;
+    }
+    summary += char;
+  }
+  return `${summary}...`;
+}
+
 export function formatManagedRuntimeLabel(value: string): string {
   return value.replace(/[_-]+/g, " ");
 }
@@ -199,11 +223,13 @@ export function managedLifecycleStatusClass(
     case "idle":
     case "pr_ready":
     case "review_ready":
-    case "completed":
     case "cleanup_ready":
     case "cleaning_up":
-    case "cleaned_up":
       return "green";
+    case "completed":
+    case "cleaned_up":
+    case "terminal_takeover":
+      return "muted";
     case "preparing":
     case "starting":
     case "waiting_for_builder":
@@ -213,8 +239,8 @@ export function managedLifecycleStatusClass(
     case "canceled":
     case "failed":
       return "red";
-    case "terminal_takeover":
-      return "muted";
+    default:
+      return assertUnhandledManagedLifecycleState(state);
   }
 }
 
@@ -226,6 +252,7 @@ export function managedRuntimeProgressEvents(
     return [];
   }
   return events
+    .slice(-MANAGED_RUNTIME_PROGRESS_EVENT_INPUT_CAP)
     .filter(isRecord)
     .filter(
       (event) =>
@@ -238,10 +265,7 @@ export function managedRuntimeProgressEvents(
       const progressEvent: ManagedRuntimeProgressEvent = {
         timestamp: event.timestamp as string,
         phase: event.phase as string,
-        summary:
-          (event.summary as string).length > MANAGED_RUNTIME_PROGRESS_SUMMARY_MAX_LENGTH
-            ? `${(event.summary as string).slice(0, MANAGED_RUNTIME_PROGRESS_SUMMARY_MAX_LENGTH - 3)}...`
-            : event.summary as string,
+        summary: progressEventSummary(event.summary as string),
       };
       if (isManagedRuntimeProgressKind(event.kind)) {
         progressEvent.kind = event.kind;
@@ -260,6 +284,76 @@ export function managedRuntimeProgressEvents(
       }
       return progressEvent;
     });
+}
+
+export function defaultManagedRuntimeActions(): ManagedRuntimeActionAvailability[] {
+  return [
+    {
+      action: "terminal-takeover",
+      label: "Terminal takeover",
+      available: false,
+      reason: "Terminal takeover is available in a future update.",
+    },
+    {
+      action: "cleanup",
+      label: "Cleanup",
+      available: false,
+      reason: "Cleanup is available in a future update.",
+    },
+  ];
+}
+
+export function resolveManagedRuntimeActions(
+  projection: ManagedRuntimeProjection | null | undefined,
+): ManagedRuntimeActionAvailability[] {
+  const actions = projection?.actions ?? [];
+  return actions.length > 0 ? actions : defaultManagedRuntimeActions();
+}
+
+export function isManagedRuntimeUnavailableResponse(
+  status: number,
+  code: string | undefined,
+): boolean {
+  return (
+    MANAGED_RUNTIME_UNAVAILABLE_STATUSES.includes(
+      status as (typeof MANAGED_RUNTIME_UNAVAILABLE_STATUSES)[number],
+    ) &&
+    code === MANAGED_RUNTIME_UNAVAILABLE_CODE
+  );
+}
+
+export class ManagedRuntimeUnavailableError extends Error {
+  readonly kind = MANAGED_RUNTIME_UNAVAILABLE_CODE;
+  readonly source: "backend" | "transport";
+  readonly status?: number;
+  readonly code?: string;
+
+  constructor(
+    source: "backend" | "transport",
+    options: { cause?: unknown; status?: number; code?: string } = {},
+  ) {
+    super(
+      "Managed runtime not yet available on this build.",
+      options.cause !== undefined ? { cause: options.cause } : undefined,
+    );
+    this.name = "ManagedRuntimeUnavailableError";
+    this.source = source;
+    this.status = options.status;
+    this.code = options.code;
+  }
+}
+
+export function isManagedRuntimeUnavailableError(
+  error: unknown,
+): error is ManagedRuntimeUnavailableError {
+  return (
+    error instanceof ManagedRuntimeUnavailableError ||
+    (
+      typeof error === "object" &&
+      error !== null &&
+      (error as { kind?: unknown }).kind === MANAGED_RUNTIME_UNAVAILABLE_CODE
+    )
+  );
 }
 
 export function sanitizeManagedRuntimeProjection(

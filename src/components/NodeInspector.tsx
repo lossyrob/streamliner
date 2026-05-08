@@ -13,6 +13,7 @@ import type {
 import {
   formatManagedRuntimeLabel,
   managedLifecycleStatusClass,
+  resolveManagedRuntimeActions,
 } from "../managed-runtime-contract";
 import { trackerLabel, trackerUrl } from "../workstream-links";
 import { humanizeLaunchClaim } from "./launch-claim-display";
@@ -248,12 +249,16 @@ function RuntimeDetails({ overlay }: { overlay: WorkstreamRuntimeNodeOverlay | n
               </ol>
             )}
             <div className="sl-managed-runtime-placeholder-actions">
-              <button type="button" disabled>
-                Terminal takeover
-              </button>
-              <button type="button" disabled>
-                Cleanup
-              </button>
+              {resolveManagedRuntimeActions(managedRuntime.projection).map((action) => (
+                <button
+                  key={action.action}
+                  type="button"
+                  disabled={!action.available}
+                  title={action.reason ?? "Not available"}
+                >
+                  {action.label}
+                </button>
+              ))}
             </div>
           </div>
         )}

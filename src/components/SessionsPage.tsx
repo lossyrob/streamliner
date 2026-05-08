@@ -16,6 +16,7 @@ import {
   formatManagedRuntimeLabel,
   managedLifecycleStatusClass,
   managedRuntimeProgressEvents,
+  resolveManagedRuntimeActions,
 } from "../managed-runtime-contract";
 import {
   handleInAppLinkClick,
@@ -2900,20 +2901,7 @@ function CopyableValue({ value, label }: CopyableValueProps) {
 function ManagedRuntimeOverview({ runtime }: { runtime: ManagedRuntimeProjection }) {
   const progressEvents = managedRuntimeProgressEvents(runtime.progress);
   const sdk = runtime.sdk ?? null;
-  const actions = runtime.actions ?? [
-    {
-      action: "terminal-takeover",
-      label: "Terminal takeover",
-      available: false,
-      reason: "Not wired in this UI node",
-    },
-    {
-      action: "cleanup",
-      label: "Cleanup",
-      available: false,
-      reason: "Not wired in this UI node",
-    },
-  ];
+  const actions = resolveManagedRuntimeActions(runtime);
 
   return (
     <section className="sl-session-overview-section managed-runtime">
@@ -2967,7 +2955,7 @@ function ManagedRuntimeOverview({ runtime }: { runtime: ManagedRuntimeProjection
             key={action.action}
             type="button"
             className="sl-managed-runtime-action"
-            disabled
+            disabled={!action.available}
             title={action.reason ?? "Not available"}
           >
             {action.label}
