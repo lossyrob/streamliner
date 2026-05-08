@@ -8,6 +8,10 @@ import type {
   SessionRegistryCopilotProcessState,
   SessionRegistryObservedSessionKind,
 } from "../session-registry-schema";
+import {
+  isCopilotCliSubagentSessionId,
+  isCopilotHelperSessionIdentity,
+} from "./copilot-helper-sessions";
 import { isCopilotSdkSessionFsPath } from "./copilot-sdk-session-paths";
 import { SessionRegistryFileStore } from "./file-store";
 
@@ -282,6 +286,7 @@ function classifyObservedSessionKind(
 ): SessionRegistryObservedSessionKind {
   if (
     ignoredObservedCopilotSessionIds.has(sessionId) ||
+    isCopilotCliSubagentSessionId(sessionId) ||
     isCopilotSdkSessionFsPath(cwd) ||
     isSummarizerPromptSummary(summary)
   ) {
@@ -296,7 +301,10 @@ function isHelperLikeObservedRegistrySession(
   return (
     session.originKind === "observed" &&
     (session.observedSessionKind === "helper" ||
-      isCopilotSdkSessionFsPath(session.cwd) ||
+      isCopilotHelperSessionIdentity({
+        sessionId: session.copilotSessionId ?? session.id,
+        cwd: session.cwd,
+      }) ||
       looksLikeSummarizerPromptTitle(session.title) ||
       session.description.startsWith("AI summary helper ·"))
   );

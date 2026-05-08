@@ -182,6 +182,33 @@ describe("handleSessionRegistryApiRequest", () => {
     expect(store.listSessions({ includeArchived: true })).toEqual([]);
   });
 
+  it("ignores Copilot CLI subagent hook signals", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+
+    const response = handleSessionRegistryApiRequest(store, {
+      method: "POST",
+      url: `${SESSION_REGISTRY_API_BASE_PATH}/signals`,
+      body: {
+        event: "session.started",
+        source: "copilot-cli-hook",
+        sessionId: "call_I4jAXfET9zZZNc23C2qdmG4s",
+        timestamp: "2026-04-24T20:00:00.000Z",
+        cwd: "C:\\repo",
+        hookSource: "new",
+        executionKind: "copilot_cli",
+      },
+    });
+
+    expect(response?.statusCode).toBe(202);
+    expect(response?.body).toEqual({
+      ignored: true,
+      reason: "copilot-cli-subagent",
+    });
+    expect(store.listSessions({ includeArchived: true })).toEqual([]);
+  });
+
   it("maps lock errors and bad request bodies", () => {
     const rootDir = createRootDir();
     createdRoots.push(rootDir);

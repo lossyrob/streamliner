@@ -186,6 +186,28 @@ describe("trusted session signal spool", () => {
     expect(existsSync(join(signalRoot, SESSION_REGISTRY_SIGNAL_PENDING_DIR))).toBe(false);
   });
 
+  it("drops Copilot CLI subagent hook signals before posting or spooling", async () => {
+    const signalRoot = createRootDir();
+    const stateRoot = createRootDir();
+
+    await runSignalScript(
+      "sessionStart",
+      {
+        sessionId: "call_I4jAXfET9zZZNc23C2qdmG4s",
+        timestamp: "2026-04-24T20:00:00.000Z",
+        cwd: "C:\\repo",
+        source: "new",
+      },
+      {
+        STREAMLINER_SESSION_SIGNAL_SPOOL_ROOT: signalRoot,
+        STREAMLINER_STATE_ROOT: stateRoot,
+        STREAMLINER_SESSION_SIGNAL_ENDPOINT: "http://127.0.0.1:1/disabled",
+      },
+    );
+
+    expect(existsSync(join(signalRoot, SESSION_REGISTRY_SIGNAL_PENDING_DIR))).toBe(false);
+  });
+
   it("writes collision-safe complete files for same-session same-timestamp signals", () => {
     const rootDir = createRootDir();
     const now = () => new Date("2026-04-24T20:00:00.000Z");
@@ -221,7 +243,7 @@ describe("trusted session signal spool", () => {
     expect(existsSync(second)).toBe(true);
   });
 
-  it("drops Streamliner SDK helper hook signals without failing ingest", () => {
+  it("drops helper hook signals without failing ingest", () => {
     const signalRoot = createRootDir();
     const registryRoot = createRootDir();
     const store = new SessionRegistryFileStore({ rootDir: registryRoot });
@@ -238,9 +260,21 @@ describe("trusted session signal spool", () => {
       },
       { rootDir: signalRoot },
     );
+    writeTrustedSessionSignalSpoolFile(
+      {
+        event: "session.started",
+        source: "copilot-cli-hook",
+        sessionId: "call_I4jAXfET9zZZNc23C2qdmG4s",
+        timestamp: "2026-04-24T20:00:00.000Z",
+        cwd: "C:\\repo",
+        hookSource: "new",
+        executionKind: "copilot_cli",
+      },
+      { rootDir: signalRoot },
+    );
 
     expect(drainTrustedSessionSignalSpool(store, { rootDir: signalRoot })).toEqual({
-      processed: 1,
+      processed: 2,
       failed: 0,
     });
     expect(readdirSync(join(signalRoot, SESSION_REGISTRY_SIGNAL_PENDING_DIR))).toEqual([]);

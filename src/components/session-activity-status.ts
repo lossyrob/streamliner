@@ -1,4 +1,5 @@
 import type { SessionRegistryListItem } from "../session-registry-contract";
+import { isCopilotCliSubagentSessionId } from "../session-registry/copilot-helper-sessions";
 import {
   isTrustedActiveSession,
   isTrustedInterruptedSession,
@@ -17,6 +18,7 @@ export function isHelperLikeObservedSession(
   return (
     session.originKind === "observed" &&
     (session.observedSessionKind === "helper" ||
+      isCopilotCliSubagentSessionId(session.copilotSessionId ?? session.id) ||
       looksLikeSummarizerPrompt(session.title) ||
       session.description.startsWith("AI summary helper ·"))
   );

@@ -10,8 +10,8 @@ import {
   parseSessionRegistryUpsertInput,
 } from "./file-store";
 import {
+  ignoredTrustedSessionSignalReason,
   parseTrustedSessionSignalInput,
-  shouldIgnoreTrustedSessionSignal,
 } from "./trusted-session-signals";
 
 export const SESSION_REGISTRY_API_BASE_PATH = "/api/sessions";
@@ -126,10 +126,11 @@ export function handleSessionRegistryApiRequest(
         };
       }
       const signal = parseTrustedSessionSignalInput(request.body);
-      if (shouldIgnoreTrustedSessionSignal(signal)) {
+      const ignoredReason = ignoredTrustedSessionSignalReason(signal);
+      if (ignoredReason) {
         return {
           statusCode: 202,
-          body: { ignored: true, reason: "copilot-sdk-session-fs" },
+          body: { ignored: true, reason: ignoredReason },
         };
       }
       const recorded = store.recordTrustedSessionSignal(signal);

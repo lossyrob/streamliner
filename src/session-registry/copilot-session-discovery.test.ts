@@ -272,6 +272,18 @@ describe("copilot session discovery", () => {
         "updated_at: 2026-04-23T18:28:32.345Z",
       ].join("\n"),
     );
+    writeWorkspaceFile(
+      sessionRoot,
+      "call_I4jAXfET9zZZNc23C2qdmG4s",
+      [
+        "id: call_I4jAXfET9zZZNc23C2qdmG4s",
+        "cwd: C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+        "repository: lossyrob/streamliner",
+        "branch: feature/manual-session-registry",
+        "summary: Explore session registry",
+        "updated_at: 2026-04-23T18:28:32.345Z",
+      ].join("\n"),
+    );
     writeFileSync(
       join(sessionRoot, "stale-lock-session", "inuse.999999.lock"),
       "",
@@ -289,6 +301,12 @@ describe("copilot session discovery", () => {
         }),
         expect.objectContaining({
           sessionId: "sdk-helper-session",
+          observedSessionKind: "helper",
+          copilotProcessState: "none",
+          lifecycleStatus: "ended",
+        }),
+        expect.objectContaining({
+          sessionId: "call_I4jAXfET9zZZNc23C2qdmG4s",
           observedSessionKind: "helper",
           copilotProcessState: "none",
           lifecycleStatus: "ended",
@@ -339,10 +357,20 @@ describe("copilot session discovery", () => {
       hookSource: "new",
       executionKind: "copilot_cli",
     });
+    store.recordTrustedSessionSignal({
+      event: "session.started",
+      source: "copilot-cli-hook",
+      sessionId: "call_I4jAXfET9zZZNc23C2qdmG4s",
+      timestamp: "2026-04-24T20:00:00.000Z",
+      cwd: "C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+      hookSource: "new",
+      executionKind: "copilot_cli",
+    });
 
-    expect(syncDiscoveredCopilotSessions(store, sessionRoot)).toBe(2);
+    expect(syncDiscoveredCopilotSessions(store, sessionRoot)).toBe(3);
     expect(store.getSession("legacy-helper")).toBeNull();
     expect(store.getSession("trusted-sdk-helper")).toBeNull();
+    expect(store.getSession("call_I4jAXfET9zZZNc23C2qdmG4s")).toBeNull();
   });
 
   it("skips importing helper sessions into the persisted observed registry", () => {
@@ -383,6 +411,18 @@ describe("copilot session discovery", () => {
         "updated_at: 2026-04-23T19:28:32.345Z",
       ].join("\n"),
       { active: true },
+    );
+    writeWorkspaceFile(
+      sessionRoot,
+      "call_I4jAXfET9zZZNc23C2qdmG4s",
+      [
+        "id: call_I4jAXfET9zZZNc23C2qdmG4s",
+        "cwd: C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+        "repository: lossyrob/streamliner",
+        "branch: feature/manual-session-registry",
+        "summary: Explore session registry",
+        "updated_at: 2026-04-23T20:28:32.345Z",
+      ].join("\n"),
     );
 
     const store = new SessionRegistryFileStore({ rootDir: registryRoot });
