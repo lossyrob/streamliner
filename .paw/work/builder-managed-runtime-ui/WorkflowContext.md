@@ -38,4 +38,4 @@ Issue URL: https://github.com/lossyrob/streamliner/issues/74
 Remote: origin
 Artifact Lifecycle: commit-and-clean
 Artifact Paths: auto-derived
-Additional Inputs: none
+Additional Inputs: streamliner-context=C:/Users/robemanuele/proj/streamliner/streamliner-builder-managed-runtime-ui/.paw/work/builder-managed-runtime-ui/streamliner/context.md
