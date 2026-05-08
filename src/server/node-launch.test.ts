@@ -565,6 +565,89 @@ describe("node launch API route", () => {
     }));
   });
 
+  it("clears stale managed runtime metadata when a node is prepared for terminal launch", async () => {
+    const root = createRootDir();
+    const recordsPath = join(root, "state", "node-launch-records.json");
+    mkdirSync(join(root, "state"), { recursive: true });
+    const handoff = fakeHandoff(root);
+    const managedRuntime = {
+      runtimeKind: "managed-sdk",
+      runtimeOwner: "streamliner-sdk",
+      permissionProfile: "managed-autonomous",
+      lifecycleState: "running",
+      lifecycleUpdatedAt: "2026-05-05T12:00:00.000Z",
+    };
+    writeFileSync(
+      recordsPath,
+      JSON.stringify({
+        version: 1,
+        records: [
+          {
+            id: "existing-managed-record",
+            graphPath: handoff.launchMetadata.graphPath,
+            nodeId: handoff.launchMetadata.nodeId,
+            projectKey: handoff.launchMetadata.projectKey,
+            workstreamId: handoff.launchMetadata.workstreamId,
+            branch: handoff.branch,
+            workId: handoff.launchMetadata.workId,
+            workTitle: handoff.launchMetadata.workTitle,
+            cwd: handoff.cwd,
+            pawWorkDir: handoff.pawWorkDir,
+            workflowContextPath: handoff.workflowContextPath,
+            streamlinerContextPath: handoff.streamlinerContextPath,
+            contextPackagePath: handoff.contextPackage.contextPackagePath,
+            contextFilePath: handoff.contextPackage.contextFilePath,
+            runtimeKind: "managed-sdk",
+            permissionProfile: "managed-autonomous",
+            managedRuntime,
+            launchNonce: handoff.launchMetadata.launchNonce,
+            launchClaimRef: handoff.launchMetadata.launchClaimRef,
+            trackerUrl: handoff.launchMetadata.trackerUrl,
+            createdAt: "2026-05-05T12:00:00.000Z",
+            updatedAt: "2026-05-05T12:00:00.000Z",
+          },
+        ],
+        operations: [
+          {
+            id: "existing-managed-record",
+            graphPath: handoff.launchMetadata.graphPath,
+            nodeId: handoff.launchMetadata.nodeId,
+            status: "bound",
+            preparationRunId: null,
+            startedAt: "2026-05-05T12:00:00.000Z",
+            updatedAt: "2026-05-05T12:00:00.000Z",
+            completedAt: "2026-05-05T12:00:00.000Z",
+            handoff: {
+              ...handoff,
+              runtimeKind: "managed-sdk",
+              permissionProfile: "managed-autonomous",
+            },
+            terminalLaunch: null,
+            managedRuntime,
+            error: null,
+            progressEvents: [],
+          },
+        ],
+      }),
+      "utf8",
+    );
+    const nodeLaunchRecordStore = new NodeLaunchRecordStore({ recordsPath });
+
+    await nodeLaunchRecordStore.markPreparationSucceeded(handoff);
+
+    const record = await nodeLaunchRecordStore.get(
+      handoff.launchMetadata.graphPath,
+      handoff.launchMetadata.nodeId,
+    );
+    const operation = await nodeLaunchRecordStore.getOperation(
+      handoff.launchMetadata.graphPath,
+      handoff.launchMetadata.nodeId,
+    );
+    expect(record?.runtimeKind).toBe("terminal-cli");
+    expect(record?.managedRuntime).toBeNull();
+    expect(operation?.managedRuntime).toBeNull();
+  });
+
   it("does not let a later terminal failure clobber a successful launch operation", async () => {
     const root = createRootDir();
     const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });

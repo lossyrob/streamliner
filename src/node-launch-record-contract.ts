@@ -107,6 +107,10 @@ export type NodeLaunchOperationStatus =
   | "bound"
   | "terminal_failed";
 
+export function isActiveNodeLaunchOperationStatus(status: string): boolean {
+  return status === "preparing" || status === "launching" || status === "managed_starting";
+}
+
 export interface NodeLaunchOperationProgressEvent {
   type: string;
   message: string;

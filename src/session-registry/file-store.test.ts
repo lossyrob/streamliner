@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { SessionRegistryPatch, SessionRegistryUpsertInput } from "../session-registry-contract";
 import {
@@ -134,6 +134,40 @@ describe("SessionRegistryFileStore", () => {
       join(rootDir, "entries", `${record.id}.json`),
     );
     expect(entry.managedRuntime?.runtimeKind).toBe("managed-sdk");
+  });
+
+  it("drops unrecognized managed runtime projections without quarantining the session", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+    const record = store.upsertSession({
+      title: "Managed worker",
+      cwd: "C:\\repo",
+      origin: { kind: "launched", launchClaimId: "claim-managed" },
+      managedRuntime: {
+        runtimeKind: "managed-sdk",
+        runtimeOwner: "streamliner-sdk",
+        permissionProfile: "managed-autonomous",
+        lifecycleState: "running",
+      },
+    });
+    const entryPath = join(rootDir, "entries", `${record.id}.json`);
+    const rawRecord = readJsonFile<SessionRegistryRecord>(entryPath);
+    rawRecord.managedRuntime = {
+      ...(rawRecord.managedRuntime ?? {}),
+      lifecycleState: "cleanup_failed",
+    } as unknown as SessionRegistryRecord["managedRuntime"];
+    writeFileSync(entryPath, JSON.stringify(rawRecord, null, 2), "utf8");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const reloadedStore = new SessionRegistryFileStore({ rootDir });
+      expect(reloadedStore.getSession(record.id)?.managedRuntime).toBeNull();
+      expect(reloadedStore.listSessions()[0]?.id).toBe(record.id);
+      expect(reloadedStore.listSessions()[0]?.managedRuntime).toBeNull();
+      expect(existsSync(entryPath)).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it("ranks list freshness by trustedLastSignalAt when it is newer than lastSeenAt", () => {

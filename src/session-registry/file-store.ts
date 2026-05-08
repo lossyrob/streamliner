@@ -1177,11 +1177,19 @@ function normalizeManagedRuntimeProjection(
     return null;
   }
   if (!isJsonObject(value)) {
-    throw new Error(`Expected ${fieldName} to be an object or null.`);
+    console.warn(
+      "session-registry: dropping unrecognized managedRuntime projection (forward-compat)",
+      { fieldName, value },
+    );
+    return null;
   }
   const projection = sanitizeManagedRuntimeProjection(value);
   if (!projection) {
-    throw new Error(`Expected ${fieldName} to be a managed runtime projection.`);
+    console.warn(
+      "session-registry: dropping unrecognized managedRuntime projection (forward-compat)",
+      { fieldName, value },
+    );
+    return null;
   }
   return projection;
 }

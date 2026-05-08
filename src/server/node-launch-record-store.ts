@@ -107,7 +107,14 @@ function optionalStringField(record: Record<string, unknown>, key: string): stri
 }
 
 function normalizeRuntimeKind(value: unknown): WorkstreamRuntimeKind | undefined {
-  return value === "terminal-cli" || value === "managed-sdk" ? value : undefined;
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === "terminal-cli" || value === "managed-sdk") {
+    return value;
+  }
+  console.warn("node-launch-record-store: dropping unrecognized runtimeKind", { value });
+  return undefined;
 }
 
 function normalizePermissionProfile(
@@ -116,7 +123,14 @@ function normalizePermissionProfile(
   if (value === undefined) {
     return undefined;
   }
-  return value === "managed-autonomous" ? value : null;
+  if (value === null) {
+    return null;
+  }
+  if (value === "managed-autonomous") {
+    return value;
+  }
+  console.warn("node-launch-record-store: dropping unrecognized permissionProfile", { value });
+  return null;
 }
 
 function normalizeManagedRuntimeProjection(
@@ -125,7 +139,18 @@ function normalizeManagedRuntimeProjection(
   if (value === undefined) {
     return undefined;
   }
-  return sanitizeManagedRuntimeProjection(value);
+  if (value === null) {
+    return null;
+  }
+  const projection = sanitizeManagedRuntimeProjection(value);
+  if (!projection) {
+    console.warn(
+      "node-launch-record-store: dropping unrecognized managedRuntime projection",
+      { value },
+    );
+    return null;
+  }
+  return projection;
 }
 
 function normalizeStoredRecord(value: unknown): StoredNodeLaunchRecord | null {
@@ -615,6 +640,7 @@ function storedRecordFromHandoff(
   const graphPath = metadata.graphPath;
   const nodeId = metadata.nodeId;
   const existing = findStoredRecord(document, graphPath, nodeId);
+  const runtimeKind = launchHandoff.runtimeKind ?? "terminal-cli";
   return {
     id: existing?.id ?? recordId(graphPath, nodeId),
     graphPath,
@@ -632,9 +658,9 @@ function storedRecordFromHandoff(
     contextFilePath: handoff.contextPackage.contextFilePath,
     sdkSessionWorkspacePath: handoff.sdkSession?.workspacePath,
     sdkSessionStateRoot: handoff.sdkSession?.stateRoot,
-    runtimeKind: launchHandoff.runtimeKind ?? "terminal-cli",
+    runtimeKind,
     permissionProfile: launchHandoff.permissionProfile ?? null,
-    managedRuntime: existing?.managedRuntime ?? null,
+    managedRuntime: runtimeKind === "managed-sdk" ? (existing?.managedRuntime ?? null) : null,
     launchNonce: metadata.launchNonce,
     launchClaimRef: metadata.launchClaimRef,
     trackerUrl: metadata.trackerUrl,
@@ -654,6 +680,7 @@ function operationFromHandoff(
   const nodeId = handoff.launchMetadata.nodeId;
   const existing = findStoredOperation(document, graphPath, nodeId);
   const launchHandoff = toNodeLaunchHandoff(handoff);
+  const runtimeKind = launchHandoff.runtimeKind ?? "terminal-cli";
   const nextOperation: StoredNodeLaunchOperation = {
     id: existing?.id ?? recordId(graphPath, nodeId),
     graphPath,
@@ -665,7 +692,7 @@ function operationFromHandoff(
     completedAt: updates.completedAt,
     handoff: launchHandoff,
     terminalLaunch: updates.terminalLaunch,
-    managedRuntime: existing?.managedRuntime ?? null,
+    managedRuntime: runtimeKind === "managed-sdk" ? (existing?.managedRuntime ?? null) : null,
     error: updates.error,
     progressEvents: existing?.progressEvents ?? [],
   };
