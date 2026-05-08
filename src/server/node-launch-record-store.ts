@@ -1,8 +1,9 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 import type {
   NodeLaunchHandoff,
@@ -26,6 +27,7 @@ type StoredNodeLaunchRecord = Omit<NodeLaunchRecord, "pathStatus">;
 type StoredNodeLaunchOperation = NodeLaunchOperation;
 
 const OPERATION_EVENT_BUFFER_SIZE = 50;
+const ATOMIC_REPLACE_RETRY_DELAYS_MS = [25, 50, 100, 200, 400] as const;
 const OPERATION_STATUSES = new Set<NodeLaunchOperationStatus>([
   "launchable",
   "preparing",
@@ -44,6 +46,17 @@ interface OperationErrorInput {
   input?: string;
 }
 
+type ReplaceFile = (source: string, destination: string) => Promise<void>;
+
+interface AtomicWriteOptions {
+  replaceFile?: ReplaceFile;
+  retryDelaysMs?: readonly number[];
+}
+
+interface NodeErrnoException extends Error {
+  code?: string;
+}
+
 function defaultRecordsPath(): string {
   const stateRoot = resolve(process.env.STREAMLINER_STATE_ROOT ?? join(homedir(), ".streamliner", "state"));
   return join(stateRoot, "node-launch-records.json");
@@ -51,6 +64,10 @@ function defaultRecordsPath(): string {
 
 function normalizeGraphPathForKey(graphPath: string): string {
   return resolve(graphPath).toLowerCase();
+}
+
+function normalizePathForComparison(path: string): string {
+  return resolve(path).toLowerCase();
 }
 
 function recordId(graphPath: string, nodeId: string): string {
@@ -199,6 +216,49 @@ function existsIfPresent(path: string | undefined): boolean | undefined {
   return path ? existsSync(path) : undefined;
 }
 
+function isNodeErrnoException(error: unknown): error is NodeErrnoException {
+  return error instanceof Error;
+}
+
+function isRetryableAtomicReplaceError(error: unknown): boolean {
+  if (!isNodeErrnoException(error)) {
+    return false;
+  }
+  return error.code === "EPERM" || error.code === "EACCES" || error.code === "EBUSY";
+}
+
+export async function writeFileWithAtomicReplace(
+  filePath: string,
+  content: string,
+  options: AtomicWriteOptions = {},
+): Promise<void> {
+  await mkdir(dirname(filePath), { recursive: true });
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
+  const replaceFile = options.replaceFile ?? rename;
+  const retryDelaysMs = options.retryDelaysMs ?? ATOMIC_REPLACE_RETRY_DELAYS_MS;
+  let replaced = false;
+  try {
+    await writeFile(tempPath, content, "utf8");
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await replaceFile(tempPath, filePath);
+        replaced = true;
+        return;
+      } catch (error: unknown) {
+        const retryDelayMs = retryDelaysMs[attempt];
+        if (retryDelayMs === undefined || !isRetryableAtomicReplaceError(error)) {
+          throw error;
+        }
+        await delay(retryDelayMs);
+      }
+    }
+  } finally {
+    if (!replaced) {
+      await unlink(tempPath).catch(() => undefined);
+    }
+  }
+}
+
 function pathStatus(record: StoredNodeLaunchRecord): NodeLaunchRecordPathStatus {
   const status: NodeLaunchRecordPathStatus = {
     cwdExists: existsSync(record.cwd),
@@ -228,10 +288,18 @@ function withPathStatus(record: StoredNodeLaunchRecord): NodeLaunchRecord {
 
 export class NodeLaunchRecordStore {
   private readonly recordsPath: string;
+  private readonly replaceFile: ReplaceFile;
+  private readonly atomicReplaceRetryDelaysMs: readonly number[];
   private writeChain: Promise<void> = Promise.resolve();
 
-  constructor(options: { recordsPath?: string } = {}) {
+  constructor(options: {
+    recordsPath?: string;
+    replaceFile?: ReplaceFile;
+    atomicReplaceRetryDelaysMs?: readonly number[];
+  } = {}) {
     this.recordsPath = options.recordsPath ?? defaultRecordsPath();
+    this.replaceFile = options.replaceFile ?? rename;
+    this.atomicReplaceRetryDelaysMs = options.atomicReplaceRetryDelaysMs ?? ATOMIC_REPLACE_RETRY_DELAYS_MS;
   }
 
   async get(graphPath: string, nodeId: string): Promise<NodeLaunchRecord | null> {
@@ -258,6 +326,17 @@ export class NodeLaunchRecordStore {
       candidate.nodeId === nodeId && normalizeGraphPathForKey(candidate.graphPath) === key
     );
     return operation ? { ...operation, progressEvents: [...operation.progressEvents] } : null;
+  }
+
+  async hasWorkflowContextPath(path: string): Promise<boolean> {
+    const document = await this.readDocument();
+    const normalizedPath = normalizePathForComparison(path);
+    return document.records.some((record) =>
+      normalizePathForComparison(record.workflowContextPath) === normalizedPath
+    ) || document.operations.some((operation) =>
+      operation.handoff?.workflowContextPath &&
+      normalizePathForComparison(operation.handoff.workflowContextPath) === normalizedPath
+    );
   }
 
   async startPreparationOperation(input: {
@@ -458,10 +537,14 @@ export class NodeLaunchRecordStore {
   }
 
   private async writeDocument(document: NodeLaunchRecordDocument): Promise<void> {
-    await mkdir(dirname(this.recordsPath), { recursive: true });
-    const tempPath = `${this.recordsPath}.${process.pid}.${Date.now()}.tmp`;
-    await writeFile(tempPath, `${JSON.stringify(document, null, 2)}\n`, "utf8");
-    await rename(tempPath, this.recordsPath);
+    await writeFileWithAtomicReplace(
+      this.recordsPath,
+      `${JSON.stringify(document, null, 2)}\n`,
+      {
+        replaceFile: this.replaceFile,
+        retryDelaysMs: this.atomicReplaceRetryDelaysMs,
+      },
+    );
   }
 }
 

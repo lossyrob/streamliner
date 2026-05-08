@@ -491,6 +491,75 @@ describe("createStreamlinerApiApp", () => {
       .expect(400);
   });
 
+  it("reads and updates target-repo WorkflowContext files from known launch records", async () => {
+    const rootDir = createRootDir();
+    const coordinationRoot = join(rootDir, "coordination");
+    const pawWorkRoot = join(coordinationRoot, ".paw", "work");
+    const targetRoot = createRootDir();
+    const workflowContextPath = join(targetRoot, ".paw", "work", "target-node", "WorkflowContext.md");
+    const graphPath = join(coordinationRoot, ".streamliner", "workstreams", "api-test", "graph.json");
+    mkdirSync(dirname(workflowContextPath), { recursive: true });
+    writeFileSync(
+      workflowContextPath,
+      "# WorkflowContext\nAdditional Inputs: streamliner-context=streamliner/context.md\n",
+      "utf8",
+    );
+    const recordsPath = join(rootDir, "node-launch-records.json");
+    writeFileSync(
+      recordsPath,
+      `${JSON.stringify({
+        version: 1,
+        records: [{
+          id: "target-node-record",
+          graphPath,
+          nodeId: "target-node",
+          projectKey: "api-test",
+          workstreamId: "api-test",
+          branch: "feature/target-node",
+          workId: "target-node",
+          workTitle: "Target Node",
+          cwd: targetRoot,
+          pawWorkDir: dirname(workflowContextPath),
+          workflowContextPath,
+          streamlinerContextPath: join(dirname(workflowContextPath), "streamliner", "context.md"),
+          contextPackagePath: join(rootDir, "launch-contexts", "ctx-target"),
+          contextFilePath: join(rootDir, "launch-contexts", "ctx-target", "context.md"),
+          launchNonce: null,
+          launchClaimRef: null,
+          trackerUrl: null,
+          createdAt: "2026-05-07T21:30:00.000Z",
+          updatedAt: "2026-05-07T21:30:00.000Z",
+        }],
+        operations: [],
+      }, null, 2)}\n`,
+      "utf8",
+    );
+    const api = createIsolatedApi(rootDir, { pawWorkRoot });
+    activeApps.push(api);
+
+    const readResponse = await request(api.app)
+      .get("/api/paw-workflow-context")
+      .query({ path: workflowContextPath })
+      .expect(200);
+    expect(readResponse.body.content).toContain("Additional Inputs");
+
+    const updatedContent = "# WorkflowContext\nAdditional Inputs: streamliner-context=streamliner/context.md\n\n## Notes\nTarget repo edit.\n";
+    await request(api.app)
+      .put("/api/paw-workflow-context")
+      .send({ path: workflowContextPath, content: updatedContent })
+      .expect(200);
+    expect(readFileSync(workflowContextPath, "utf8")).toBe(updatedContent);
+
+    const unknownRoot = createRootDir();
+    const unknownWorkflowContextPath = join(unknownRoot, ".paw", "work", "unknown-node", "WorkflowContext.md");
+    mkdirSync(dirname(unknownWorkflowContextPath), { recursive: true });
+    writeFileSync(unknownWorkflowContextPath, updatedContent, "utf8");
+    await request(api.app)
+      .get("/api/paw-workflow-context")
+      .query({ path: unknownWorkflowContextPath })
+      .expect(400);
+  });
+
   it("registers, loads, relinks, and deletes tracked workstreams", async () => {
     const rootDir = createRootDir();
     const graphPath = join(rootDir, "graph.json");

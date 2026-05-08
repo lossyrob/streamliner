@@ -4,6 +4,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 
 import { Router } from "express";
 
+import type { NodeLaunchRecordStore } from "../node-launch-record-store";
+
 const MAX_WORKFLOW_CONTEXT_LENGTH = 200_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -21,7 +23,7 @@ function checkoutRootForPawWorkRoot(pawWorkRoot: string): string {
   return dirname(dirname(resolve(pawWorkRoot)));
 }
 
-function isValidWorkflowContextPath(root: string, path: string): boolean {
+function isWorkflowContextPathShape(path: string): boolean {
   if (basename(path) !== "WorkflowContext.md") {
     return false;
   }
@@ -34,20 +36,37 @@ function isValidWorkflowContextPath(root: string, path: string): boolean {
   if (basename(pawRoot) !== ".paw") {
     return false;
   }
+  return true;
+}
+
+function isValidWorkflowContextPath(root: string, path: string): boolean {
+  if (!isWorkflowContextPathShape(path)) {
+    return false;
+  }
+  const pawWorkDir = dirname(path);
+  const workRoot = dirname(pawWorkDir);
+  const pawRoot = dirname(workRoot);
   const checkoutRoot = dirname(pawRoot);
   const trustedCheckoutRoot = checkoutRootForPawWorkRoot(root);
   return isPathInside(root, path) || isPathInside(dirname(trustedCheckoutRoot), checkoutRoot);
 }
 
-function resolveWorkflowContextPath(value: unknown, root: string): string {
+async function resolveWorkflowContextPath(
+  value: unknown,
+  root: string,
+  nodeLaunchRecordStore: NodeLaunchRecordStore | undefined,
+): Promise<string> {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw Object.assign(new Error("WorkflowContext path is required."), { statusCode: 400 });
   }
   const resolved = resolve(value);
-  if (!isValidWorkflowContextPath(root, resolved)) {
-    throw Object.assign(new Error("WorkflowContext path must be a WorkflowContext.md file under .paw/work in the launch checkout or a sibling worktree."), { statusCode: 400 });
+  if (isValidWorkflowContextPath(root, resolved)) {
+    return resolved;
   }
-  return resolved;
+  if (isWorkflowContextPathShape(resolved) && await nodeLaunchRecordStore?.hasWorkflowContextPath(resolved)) {
+    return resolved;
+  }
+  throw Object.assign(new Error("WorkflowContext path must be a WorkflowContext.md file under .paw/work in the launch checkout, a sibling worktree, or a known node launch record."), { statusCode: 400 });
 }
 
 function normalizeContent(value: unknown): string {
@@ -81,13 +100,14 @@ async function workflowContextResponse(path: string): Promise<{
 
 export function createPawWorkflowContextRouter(options: {
   pawWorkRoot?: string;
+  nodeLaunchRecordStore?: NodeLaunchRecordStore;
 } = {}): Router {
   const router = Router();
   const pawWorkRoot = resolve(options.pawWorkRoot ?? join(process.cwd(), ".paw", "work"));
 
   router.get("/paw-workflow-context", async (req, res, next) => {
     try {
-      const path = resolveWorkflowContextPath(req.query.path, pawWorkRoot);
+      const path = await resolveWorkflowContextPath(req.query.path, pawWorkRoot, options.nodeLaunchRecordStore);
       res.json(await workflowContextResponse(path));
     } catch (error: unknown) {
       next(error);
@@ -97,7 +117,7 @@ export function createPawWorkflowContextRouter(options: {
   router.put("/paw-workflow-context", async (req, res, next) => {
     try {
       const body = isRecord(req.body) ? req.body : {};
-      const path = resolveWorkflowContextPath(body.path, pawWorkRoot);
+      const path = await resolveWorkflowContextPath(body.path, pawWorkRoot, options.nodeLaunchRecordStore);
       const content = normalizeContent(body.content);
       await mkdir(dirname(path), { recursive: true });
       await writeFile(path, content, "utf8");
