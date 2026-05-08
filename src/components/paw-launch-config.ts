@@ -1,3 +1,5 @@
+import type { WorkstreamRuntimeKind } from "../managed-runtime-contract";
+
 export const DEFAULT_PAW_WORKFLOW_INSTRUCTIONS = [
   "Use PAW with a local final-pr-only review policy.",
   "Do not pause for intermediate review unless there is a serious blocker, unsafe ambiguity, missing credentials/infrastructure, or material scope mismatch.",
@@ -23,6 +25,7 @@ export const DEFAULT_PAW_TERMINAL_CONFIGURATION: PawLaunchTerminalConfiguration 
 };
 
 export interface PawLaunchDialogDefaults {
+  runtimeKind?: WorkstreamRuntimeKind;
   workflowInstructions: string;
   cliArgsText: string;
   cwd: string;
@@ -36,6 +39,7 @@ export interface PawLaunchDialogDefaults {
 }
 
 export interface PawLaunchDialogConfiguration {
+  runtimeKind: WorkstreamRuntimeKind;
   cwd: string;
   workflowInstructions: string;
   cliArgs: string[];

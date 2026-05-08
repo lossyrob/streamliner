@@ -1,3 +1,5 @@
+import type { ManagedRuntimeProjection } from "./managed-runtime-contract";
+
 export const SESSION_REGISTRY_SCHEMA_VERSION = 1 as const;
 
 export const SESSION_REGISTRY_LIFECYCLE_STATUSES = [
@@ -348,6 +350,7 @@ export interface SessionRegistryRecord {
   origin: SessionRegistryOrigin;
   graphBinding: SessionRegistryGraphBinding | null;
   pawLaunch: SessionRegistryPawLaunch | null;
+  managedRuntime?: ManagedRuntimeProjection | null;
   aiSummary: string | null;
   aiSummaryModel: string | null;
   aiSummaryUpdatedAt: string | null;
@@ -397,6 +400,7 @@ export interface SessionRegistryIndexEntry {
   originKind: SessionRegistryOriginKind;
   graphBinding: SessionRegistryGraphBinding | null;
   pawLaunch: SessionRegistryPawLaunch | null;
+  managedRuntime?: ManagedRuntimeProjection | null;
   aiSummary: string | null;
   aiSummaryModel: string | null;
   aiSummaryUpdatedAt: string | null;

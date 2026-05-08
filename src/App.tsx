@@ -11,6 +11,7 @@ import "./streamliner-theme.css";
 import {
   parseWorkstreamDocument,
   buildWorkstreamViewModel,
+  type WorkstreamDerivedNode,
 } from "./workstream-view-model";
 import { buildWorkstreamGraphLayout } from "./workstream-graph";
 import type { WorkstreamDocument } from "./workstream-schema";
@@ -101,6 +102,11 @@ type PawLaunchPreparationResponse = NodeLaunchHandoff;
 interface PawLaunchRunStartResponse {
   runId?: string;
   status?: string;
+  operation?: NodeLaunchOperation | null;
+}
+
+interface ManagedSdkLaunchResponse {
+  record?: NodeLaunchRecord | null;
   operation?: NodeLaunchOperation | null;
 }
 
@@ -370,6 +376,7 @@ function createClientLaunchOperation(
     completedAt: null,
     handoff: null,
     terminalLaunch: null,
+    managedRuntime: null,
     error: null,
     progressEvents: [],
     ...overrides,
@@ -413,6 +420,8 @@ function clientHandoffFromPreparation(
     sessionStateRoot: handoff.sessionStateRoot,
     kickoffPrompt: handoff.kickoffPrompt,
     kickoffAdditionalInstructions: handoff.kickoffAdditionalInstructions,
+    runtimeKind: handoff.runtimeKind ?? "terminal-cli",
+    permissionProfile: handoff.permissionProfile ?? null,
     launchMetadata: handoff.launchMetadata,
     contextPackage: handoff.contextPackage,
     sdkSession: handoff.sdkSession,
@@ -1320,6 +1329,9 @@ function GraphDashboard({
     if (operation?.status === "launching") {
       return "A terminal launch is already in progress for this node. Reopen the dialog to inspect the launch state.";
     }
+    if (operation?.status === "managed_starting") {
+      return "A managed SDK launch is already in progress for this node. Reopen the dialog to inspect the launch state.";
+    }
     const latestClaim = launchDialogTarget ? launchDialogLatestClaim : nodeLaunchRecord?.latestClaim;
     if (!latestClaim?.blocksLaunch) {
       return null;
@@ -1341,6 +1353,7 @@ function GraphDashboard({
     const savedCwd = readLaunchCwdOverride(cwdPreferenceKey);
     return {
       workflowInstructions: DEFAULT_PAW_WORKFLOW_INSTRUCTIONS,
+      runtimeKind: "terminal-cli",
       cliArgsText: "--yolo",
       cwd: savedCwd ?? inferredCwd,
       inferredCwd,
@@ -1822,6 +1835,131 @@ function GraphDashboard({
     }
   };
 
+  const launchManagedSdkFromConfiguration = async (
+    configuration: PawLaunchDialogConfiguration,
+    target: LaunchOperationTarget,
+    targetEntry: WorkstreamDerivedNode,
+    cwdOverride: string | undefined,
+  ) => {
+    const timestamp = new Date().toISOString();
+    updateLaunchOperation(target, (current) =>
+      createClientLaunchOperation(target, "managed_starting", {
+        ...(current ?? {}),
+        status: "managed_starting",
+        handoff: null,
+        terminalLaunch: null,
+        managedRuntime: {
+          runtimeKind: "managed-sdk",
+          runtimeOwner: "streamliner-sdk",
+          permissionProfile: "managed-autonomous",
+          lifecycleState: "starting",
+          lifecycleUpdatedAt: timestamp,
+          summary: "Requesting a Streamliner-managed SDK worker.",
+          progress: [
+            {
+              timestamp,
+              phase: "starting",
+              summary: "Submitting managed runtime launch request.",
+              kind: "lifecycle",
+              status: "info",
+            },
+          ],
+          actions: [
+            {
+              action: "terminal-takeover",
+              label: "Terminal takeover",
+              available: false,
+              reason: "Terminal takeover is not wired in this UI node.",
+            },
+            {
+              action: "cleanup",
+              label: "Cleanup",
+              available: false,
+              reason: "Cleanup is not wired in this UI node.",
+            },
+          ],
+        },
+        error: null,
+        progressEvents: [
+          {
+            type: "managed-runtime-starting",
+            message: "Submitting managed runtime launch request.",
+            timestamp,
+          },
+        ],
+        startedAt: timestamp,
+        updatedAt: timestamp,
+      })
+    );
+    try {
+      const response = await fetch("/api/node-launches/managed", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nodeId: targetEntry.node.id,
+          graphPath: target.graphPath,
+          launchNonce: createLaunchNonce(),
+          runtimeKind: "managed-sdk",
+          permissionProfile: "managed-autonomous",
+          configuration: {
+            ...(cwdOverride ? { cwd: cwdOverride } : {}),
+            runtimeKind: configuration.runtimeKind,
+            workflowInstructions: configuration.workflowInstructions,
+            cliArgs: configuration.cliArgs,
+            terminal: configuration.terminal,
+          },
+        }),
+      });
+      if (!response.ok) {
+        const parsed = await parseErrorResponse(response);
+        if (
+          (response.status === 404 || response.status === 501) &&
+          (!parsed.code || parsed.code === "managed_runtime_unavailable")
+        ) {
+          throw new Error("Managed runtime not yet available on this build.");
+        }
+        throw new Error(parsed.message);
+      }
+      const result = await response.json() as ManagedSdkLaunchResponse;
+      if (result.record) {
+        setNodeLaunchRecords((current) =>
+          mergeNodeLaunchRecord(current, target, result.record ?? null)
+        );
+      }
+      setLaunchOperation(
+        target,
+        result.operation ??
+          createClientLaunchOperation(target, "bound", {
+            status: "bound",
+            managedRuntime: null,
+            completedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          }),
+      );
+      setNodeLaunchRecordRefreshKey((current) => current + 1);
+    } catch (nextError) {
+      const message = nextError instanceof Error ? nextError.message : String(nextError);
+      const unavailable = message === "Managed runtime not yet available on this build.";
+      updateLaunchOperation(target, (current) =>
+        createClientLaunchOperation(
+          target,
+          unavailable ? "managed_unavailable" : "managed_failed",
+          {
+            ...(current ?? {}),
+            status: unavailable ? "managed_unavailable" : "managed_failed",
+            managedRuntime: null,
+            error: operationError(
+              unavailable ? "managed_runtime_unavailable" : "managed_runtime_failed",
+              message,
+            ),
+            completedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+        )
+      );
+    }
+  };
+
   const handleSubmitLaunch = async (configuration: PawLaunchDialogConfiguration) => {
     const target = launchDialogTarget ?? selectedLaunchTarget;
     const targetEntry = launchDialogEntry ?? selectedEntry;
@@ -1834,6 +1972,15 @@ function GraphDashboard({
       ? trimmedCwd
       : undefined;
     writeLaunchCwdOverride(launchDefaults.cwdPreferenceKey, cwdOverride ?? null);
+    if (configuration.runtimeKind === "managed-sdk") {
+      await launchManagedSdkFromConfiguration(
+        configuration,
+        target,
+        targetEntry,
+        cwdOverride,
+      );
+      return;
+    }
     updateLaunchOperation(target, (current) =>
       createClientLaunchOperation(target, "preparing", {
         ...(current ?? {}),
@@ -1859,6 +2006,7 @@ function GraphDashboard({
           launchNonce: createLaunchNonce(),
           configuration: {
             ...(cwdOverride ? { cwd: cwdOverride } : {}),
+            runtimeKind: configuration.runtimeKind,
             workflowInstructions: configuration.workflowInstructions,
             cliArgs: configuration.cliArgs,
             terminal: configuration.terminal,
@@ -2065,7 +2213,10 @@ function GraphDashboard({
           promptProfiles={promptProfiles}
           promptProfilesLoading={promptProfilesLoading}
           promptProfilesError={promptProfilesError}
-          preparing={launchDialogOperation?.status === "preparing"}
+          preparing={
+            launchDialogOperation?.status === "preparing" ||
+            launchDialogOperation?.status === "managed_starting"
+          }
           launching={launchDialogOperation?.status === "launching"}
           error={launchDialogOperation?.error?.error ?? null}
           handoff={launchDialogOperation?.handoff ?? null}

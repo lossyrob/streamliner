@@ -580,6 +580,67 @@ describe("App sessions route", () => {
     15_000,
   );
 
+  it("renders managed runtime state in My Sessions rows and details", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = requestPath(input);
+      if (path.startsWith("/api/sessions")) {
+        return jsonResponse([
+          buildSession({
+            id: "managed-session",
+            title: "Managed worker",
+            originKind: "launched",
+            managedRuntime: {
+              runtimeKind: "managed-sdk",
+              runtimeOwner: "streamliner-sdk",
+              permissionProfile: "managed-autonomous",
+              lifecycleState: "review_ready",
+              lifecycleUpdatedAt: "2026-05-05T12:00:00.000Z",
+              summary: "Review is ready for builder handoff.",
+              sdk: {
+                sdkSessionId: "sdk-session-123",
+                sdkWorkspacePath: "C:\\state\\sdk-session-123",
+                sdkStateRoot: "C:\\state\\sdk-session-123\\state",
+              },
+              progress: [
+                {
+                  timestamp: "2026-05-05T11:59:00.000Z",
+                  phase: "review",
+                  summary: "Prepared final review handoff.",
+                  kind: "review",
+                  status: "success",
+                },
+              ],
+            },
+          }),
+        ]);
+      }
+      if (path === "/api/workstreams") {
+        return jsonResponse({ version: 1, migrationWarnings: [], workstreams: [] });
+      }
+      throw new Error(`Unexpected fetch: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.pushState({}, "", "/sessions");
+
+    act(() => {
+      root.render(<App />);
+    });
+    await settle();
+
+    expect(container.textContent).toContain("managed sdk");
+    expect(container.textContent).toContain("review ready");
+    act(() => {
+      findSessionRow(container, "Managed worker").click();
+    });
+    await settle();
+
+    expect(container.textContent).toContain("Managed runtime");
+    expect(container.textContent).toContain("managed autonomous");
+    expect(container.textContent).toContain("sdk-session-123");
+    expect(container.textContent).toContain("Terminal takeover");
+    expect(container.textContent).toContain("Cleanup");
+  });
+
   it("shows a loading state while the workstreams registry is still fetching", async () => {
     let resolveRegistry!: (response: Response) => void;
     const registryPromise = new Promise<Response>((resolve) => {
@@ -1671,6 +1732,7 @@ describe("App sessions route", () => {
           nodeId: "launch-prompt-profiles",
           graphPath: "C:\\graphs\\api-test\\graph.json",
           configuration: expect.objectContaining({
+            runtimeKind: "terminal-cli",
             workflowInstructions: "Prefer the final PR review path.",
             cliArgs: [],
             terminal: expect.objectContaining({
@@ -1826,6 +1888,89 @@ describe("App sessions route", () => {
   );
 
   it(
+    "shows managed SDK runtime as unavailable without falling back to terminal launch",
+    async () => {
+      const graph = buildLaunchGraph();
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return emptyNodeLaunchRecordResponse();
+        }
+        if (path === "/api/paw-launch-prompt-profiles") {
+          return jsonResponse({ profiles: [] });
+        }
+        if (path === "/api/node-launches/managed" && init?.method === "POST") {
+          const body = JSON.parse(String(init.body)) as {
+            runtimeKind: string;
+            permissionProfile: string;
+            configuration: { workflowInstructions: string };
+          };
+          expect(body.runtimeKind).toBe("managed-sdk");
+          expect(body.permissionProfile).toBe("managed-autonomous");
+          expect(body.configuration.workflowInstructions).toContain("Use PAW");
+          return jsonResponse({ error: "Not implemented" }, 404);
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      act(() => {
+        findCanvasNode(container, "Launch prompt profiles").click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Initialize PAW launch").click();
+      });
+      await settle();
+
+      const managedRadio = container.querySelector<HTMLInputElement>(
+        'input[name="paw-runtime-kind"][value="managed-sdk"]',
+      );
+      expect(managedRadio).toBeInstanceOf(HTMLInputElement);
+      act(() => {
+        managedRadio?.click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Start managed SDK worker").click();
+      });
+      await settle(100);
+
+      expect(container.textContent).toContain(
+        "Managed runtime not yet available on this build.",
+      );
+      expect(
+        fetchMock.mock.calls.some(
+          ([input]) =>
+            requestPath(input as RequestInfo | URL) === "/api/launch-preparations/runs",
+        ),
+      ).toBe(false);
+      expect(
+        fetchMock.mock.calls.some(
+          ([input]) => requestPath(input as RequestInfo | URL) === "/api/node-launches",
+        ),
+      ).toBe(false);
+    },
+    15_000,
+  );
+
+  it(
     "launches the terminal automatically when launch after init is checked",
     async () => {
       const graph = buildLaunchGraph();
@@ -1915,6 +2060,22 @@ describe("App sessions route", () => {
         findInputByLabel(container, "Launch after init").click();
       });
       await settle();
+      const launchAfterInitInput = findInputByLabel(container, "Launch after init");
+      expect(launchAfterInitInput.checked).toBe(true);
+      act(() => {
+        container.querySelector<HTMLInputElement>(
+          'input[name="paw-runtime-kind"][value="managed-sdk"]',
+        )?.click();
+      });
+      await settle();
+      expect(findInputByLabel(container, "Launch after init").checked).toBe(false);
+      act(() => {
+        container.querySelector<HTMLInputElement>(
+          'input[name="paw-runtime-kind"][value="terminal-cli"]',
+        )?.click();
+      });
+      await settle();
+      expect(findInputByLabel(container, "Launch after init").checked).toBe(true);
       expect(findButton(container, "Run PAW init and launch")).toBeDefined();
       act(() => {
         findButton(container, "Run PAW init and launch").click();

@@ -3,6 +3,14 @@ import type {
   GraphNodeSessionStatusSummary,
 } from "./graph-node-session-status";
 import type {
+  ManagedRuntimeLifecycleState,
+  ManagedRuntimeProjection,
+} from "./managed-runtime-contract";
+import {
+  formatManagedRuntimeLabel,
+  managedRuntimeProgressEvents,
+} from "./managed-runtime-contract";
+import type {
   NodeLaunchClaimState,
   NodeLaunchRecord,
 } from "./node-launch-record-contract";
@@ -43,6 +51,8 @@ export type WorkstreamRuntimeOverlayReasonCode =
   | "session-interrupted"
   | "session-stale-process"
   | "session-ended-unpromoted"
+  | "managed-runtime-failed"
+  | "managed-runtime-waiting-for-builder"
   | "paw-evidence-unavailable"
   | "paw-evidence-unknown"
   | "paw-not-streamliner-launched"
@@ -154,6 +164,14 @@ export interface WorkstreamRuntimePawOverlay {
   diagnostics: readonly string[];
 }
 
+export interface WorkstreamManagedRuntimeOverlay {
+  projection: ManagedRuntimeProjection;
+  source: "session" | "launch-record";
+  lifecycleState: ManagedRuntimeLifecycleState;
+  lifecycleLabel: string;
+  progress: NonNullable<ManagedRuntimeProjection["progress"]>;
+}
+
 export interface WorkstreamRuntimeTrackerOverlay {
   status: WorkstreamRuntimeTrackerStatus;
   tracker: WorkstreamTracker | null;
@@ -170,6 +188,7 @@ export interface WorkstreamRuntimeNodeOverlay {
   hasRuntimeEvidence: boolean;
   session: WorkstreamRuntimeSessionOverlay;
   launch: WorkstreamRuntimeLaunchOverlay;
+  managedRuntime: WorkstreamManagedRuntimeOverlay | null;
   paw: WorkstreamRuntimePawOverlay;
   tracker: WorkstreamRuntimeTrackerOverlay;
   issues: readonly WorkstreamRuntimeOverlayIssue[];
@@ -419,6 +438,59 @@ function statusFromSession(
   return "unresolved";
 }
 
+function statusFromManagedRuntime(
+  nodeId: string,
+  managedRuntime: WorkstreamManagedRuntimeOverlay | null,
+  issues: WorkstreamRuntimeOverlayIssue[],
+): WorkstreamRuntimeNodeStatus | null {
+  if (!managedRuntime) {
+    return null;
+  }
+  switch (managedRuntime.lifecycleState) {
+    case "preparing":
+    case "starting":
+      return "launching";
+    case "waiting_for_builder":
+      issues.push(
+        nodeIssue(
+          nodeId,
+          "managed-runtime-waiting-for-builder",
+          "warning",
+          "degraded",
+          "The managed SDK worker is waiting for builder action.",
+        ),
+      );
+      return "needs-input";
+    case "interrupt_requested":
+    case "interrupted":
+    case "canceled":
+      return "interrupted";
+    case "failed":
+      issues.push(
+        nodeIssue(
+          nodeId,
+          "managed-runtime-failed",
+          "warning",
+          "degraded",
+          managedRuntime.projection.errorSummary ??
+            "The managed SDK worker reported a failed lifecycle state.",
+        ),
+      );
+      return "interrupted";
+    case "completed":
+    case "cleaned_up":
+    case "terminal_takeover":
+      return "ended";
+    case "running":
+    case "idle":
+    case "pr_ready":
+    case "review_ready":
+    case "cleanup_ready":
+    case "cleaning_up":
+      return "active";
+  }
+}
+
 function unresolvedLaunchStatus(
   claim: NodeLaunchClaimState | null,
   hasBoundSession: boolean,
@@ -427,6 +499,23 @@ function unresolvedLaunchStatus(
     return null;
   }
   return claim.status === "pending" ? "launching" : "unresolved";
+}
+
+function buildManagedRuntimeOverlay(
+  session: SessionRegistryListItem | null,
+  launchRecord: NodeLaunchRecord | undefined,
+): WorkstreamManagedRuntimeOverlay | null {
+  const projection = session?.managedRuntime ?? launchRecord?.managedRuntime ?? null;
+  if (!projection) {
+    return null;
+  }
+  return {
+    projection,
+    source: session?.managedRuntime ? "session" : "launch-record",
+    lifecycleState: projection.lifecycleState,
+    lifecycleLabel: formatManagedRuntimeLabel(projection.lifecycleState),
+    progress: managedRuntimeProgressEvents(projection.progress),
+  };
 }
 
 function buildSessionOverlay(
@@ -673,9 +762,15 @@ function buildNodeOverlay(
     );
   }
 
-  const runtimeStatus = primarySession
+  const managedRuntimeOverlay = buildManagedRuntimeOverlay(primarySession, launchRecord);
+  const managedRuntimeStatus = statusFromManagedRuntime(
+    entry.node.id,
+    managedRuntimeOverlay,
+    issues,
+  );
+  const runtimeStatus = managedRuntimeStatus ?? (primarySession
     ? statusFromSession(entry.node.id, entry.node.status, primarySession, issues)
-    : launchStatus ?? entry.operationalStatus;
+    : launchStatus ?? entry.operationalStatus);
 
   const launchOverlay = buildLaunchOverlay(launchRecord, launchStatus !== null);
   const pawOverlay = buildPawOverlay(entry.node.id, primarySession, issues);
@@ -693,9 +788,11 @@ function buildNodeOverlay(
     hasRuntimeEvidence:
       primarySession !== null ||
       launchOverlay.latestClaim !== null ||
+      managedRuntimeOverlay !== null ||
       pawOverlay.status === "recognized",
     session: sessionOverlay,
     launch: launchOverlay,
+    managedRuntime: managedRuntimeOverlay,
     paw: pawOverlay,
     tracker: trackerOverlay,
     issues,

@@ -11,6 +11,12 @@ import {
 
 import type { SessionRegistryListItem, SessionRegistryPatch } from "../session-registry-contract";
 import type { SessionRegistryRecord } from "../session-registry-schema";
+import type { ManagedRuntimeProjection } from "../managed-runtime-contract";
+import {
+  formatManagedRuntimeLabel,
+  managedLifecycleStatusClass,
+  managedRuntimeProgressEvents,
+} from "../managed-runtime-contract";
 import {
   handleInAppLinkClick,
   workstreamRoutePath,
@@ -140,6 +146,7 @@ function toListItem(record: SessionRegistryRecord): SessionRegistryListItem {
     originKind: record.origin.kind,
     graphBinding: record.graphBinding,
     pawLaunch: record.pawLaunch,
+    managedRuntime: record.managedRuntime ?? null,
     copilotSessionId: record.copilotSessionId,
     aiSummary: record.aiSummary,
     aiSummaryModel: record.aiSummaryModel,
@@ -872,6 +879,25 @@ function SessionWorkstreamContextChips({
         </WorkstreamLinkChip>
       )}
     </>
+  );
+}
+
+function getManagedRuntime(
+  session: SessionRegistryListItem,
+): ManagedRuntimeProjection | null {
+  return session.managedRuntime ?? null;
+}
+
+function managedRuntimeLifecycleText(runtime: ManagedRuntimeProjection): string {
+  return formatManagedRuntimeLabel(runtime.lifecycleState);
+}
+
+function managedRuntimeSummaryText(runtime: ManagedRuntimeProjection): string {
+  return (
+    runtime.summary ??
+    runtime.blockerSummary ??
+    runtime.errorSummary ??
+    `Managed SDK worker is ${managedRuntimeLifecycleText(runtime)}.`
   );
 }
 
@@ -2209,6 +2235,7 @@ export function SessionsPage({
                     const signalClass = activitySignalClass(session.activityStatus);
                     const signalDetail = trustedStatus ?? observedStatus ?? session.originKind;
                     const rowFolderLeaf = leafName(rowWorktree ?? session.cwd);
+                    const rowManagedRuntime = getManagedRuntime(session);
                     const rowPawWorkflow = visiblePawWorkflow(session);
                     const rowLinkage =
                       sessionLinkages.get(session.id) ??
@@ -2220,7 +2247,9 @@ export function SessionsPage({
                     const rowDetail =
                       summary.text && summary.status !== "missing"
                         ? summary.text
-                        : session.description || null;
+                        : rowManagedRuntime
+                          ? managedRuntimeSummaryText(rowManagedRuntime)
+                          : session.description || null;
                     return (
                       <div
                         key={session.id}
@@ -2286,6 +2315,19 @@ export function SessionsPage({
                                 linkage={rowLinkage}
                                 onOpenWorkstream={onOpenWorkstream}
                               />
+                              {rowManagedRuntime && (
+                                <>
+                                  <span className="sl-session-row-context-chip managed-runtime">
+                                    managed sdk
+                                  </span>
+                                  <span
+                                    className={`sl-session-row-context-chip managed-runtime ${managedLifecycleStatusClass(rowManagedRuntime.lifecycleState)}`}
+                                    title={managedRuntimeSummaryText(rowManagedRuntime)}
+                                  >
+                                    {managedRuntimeLifecycleText(rowManagedRuntime)}
+                                  </span>
+                                </>
+                              )}
                               {rowPawWorkflow && (
                                 <span
                                   className="sl-session-row-context-chip paw-workflow recognized"
@@ -2855,6 +2897,107 @@ function CopyableValue({ value, label }: CopyableValueProps) {
   );
 }
 
+function ManagedRuntimeOverview({ runtime }: { runtime: ManagedRuntimeProjection }) {
+  const progressEvents = managedRuntimeProgressEvents(runtime.progress);
+  const sdk = runtime.sdk ?? null;
+  const actions = runtime.actions ?? [
+    {
+      action: "terminal-takeover",
+      label: "Terminal takeover",
+      available: false,
+      reason: "Not wired in this UI node",
+    },
+    {
+      action: "cleanup",
+      label: "Cleanup",
+      available: false,
+      reason: "Not wired in this UI node",
+    },
+  ];
+
+  return (
+    <section className="sl-session-overview-section managed-runtime">
+      <h3 className="sl-session-overview-heading">Managed runtime</h3>
+      <div className="sl-session-managed-runtime-banner">
+        <span
+          className={`sl-managed-runtime-state ${managedLifecycleStatusClass(runtime.lifecycleState)}`}
+        >
+          {managedRuntimeLifecycleText(runtime)}
+        </span>
+        <span>{managedRuntimeSummaryText(runtime)}</span>
+      </div>
+      <dl className="sl-session-kv">
+        <dt>Runtime</dt>
+        <dd>managed sdk</dd>
+        <dt>Owner</dt>
+        <dd>{formatManagedRuntimeLabel(runtime.runtimeOwner)}</dd>
+        <dt>Permission profile</dt>
+        <dd>{formatManagedRuntimeLabel(runtime.permissionProfile)}</dd>
+        <dt>Lifecycle</dt>
+        <dd>{managedRuntimeLifecycleText(runtime)}</dd>
+        <dt>Updated</dt>
+        <dd>{formatTimestamp(runtime.lifecycleUpdatedAt ?? null)}</dd>
+        {sdk?.sdkSessionId && (
+          <>
+            <dt>SDK session</dt>
+            <dd>
+              <CopyableValue
+                value={sdk.sdkSessionId}
+                label={`Copy SDK session ID ${sdk.sdkSessionId}`}
+              />
+            </dd>
+          </>
+        )}
+        {sdk?.sdkWorkspacePath && (
+          <>
+            <dt>SDK workspace</dt>
+            <dd>{sdk.sdkWorkspacePath}</dd>
+          </>
+        )}
+        {sdk?.sdkStateRoot && (
+          <>
+            <dt>SDK state</dt>
+            <dd>{sdk.sdkStateRoot}</dd>
+          </>
+        )}
+      </dl>
+      <div className="sl-session-managed-actions">
+        {actions.map((action) => (
+          <button
+            key={action.action}
+            type="button"
+            className="sl-managed-runtime-action"
+            disabled
+            title={action.reason ?? "Not available"}
+          >
+            {action.label}
+          </button>
+        ))}
+      </div>
+      {progressEvents.length > 0 && (
+        <ol className="sl-session-managed-progress">
+          {progressEvents.map((event) => (
+            <li key={`${event.timestamp}-${event.phase}-${event.summary}`}>
+              <span className="sl-session-managed-progress-time">
+                {formatTimestamp(event.timestamp)}
+              </span>
+              <span className="sl-session-managed-progress-phase">
+                {formatManagedRuntimeLabel(event.phase)}
+              </span>
+              <span>{event.summary}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+      {(runtime.blockerSummary || runtime.errorSummary) && (
+        <div className="sl-session-overview-note">
+          {runtime.blockerSummary ?? runtime.errorSummary}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function SessionOverview({
   session,
   workstreamLinkage,
@@ -2867,6 +3010,7 @@ function SessionOverview({
   const displaySessionId = getDisplaySessionId(session);
   const restartCommand = buildRestartCommand(session);
   const pawWorkflow = visiblePawWorkflow(session);
+  const managedRuntime = getManagedRuntime(session);
   return (
     <div className="sl-session-overview">
       <section className="sl-session-overview-section">
@@ -2910,6 +3054,8 @@ function SessionOverview({
         </div>
         {summary.note && <div className="sl-session-overview-note">{summary.note}</div>}
       </section>
+
+      {managedRuntime && <ManagedRuntimeOverview runtime={managedRuntime} />}
 
       {workstreamLinkage && workstreamLinkage.status !== "unbound" && (
         <section className="sl-session-overview-section">

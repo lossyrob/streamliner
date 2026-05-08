@@ -31,6 +31,10 @@ import {
   type SessionRegistryUpsertInput,
 } from "../session-registry-contract";
 import {
+  sanitizeManagedRuntimeProjection,
+  type ManagedRuntimeProjection,
+} from "../managed-runtime-contract";
+import {
   DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
   SESSION_REGISTRY_ACTIVITY_CONFIDENCES,
   SESSION_REGISTRY_ACTIVITY_DIAGNOSTIC_CODES,
@@ -147,6 +151,7 @@ const SESSION_REGISTRY_UPSERT_BASE_KEYS = [
 const LAUNCHED_SESSION_UPSERT_KEYS = [
   ...SESSION_REGISTRY_UPSERT_BASE_KEYS,
   "pawLaunch",
+  "managedRuntime",
 ] as const;
 const OBSERVED_SESSION_UPSERT_KEYS = [
   ...SESSION_REGISTRY_UPSERT_BASE_KEYS,
@@ -1164,6 +1169,23 @@ function normalizePawLaunch(
   };
 }
 
+function normalizeManagedRuntimeProjection(
+  value: unknown,
+  fieldName: string,
+): ManagedRuntimeProjection | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (!isJsonObject(value)) {
+    throw new Error(`Expected ${fieldName} to be an object or null.`);
+  }
+  const projection = sanitizeManagedRuntimeProjection(value);
+  if (!projection) {
+    throw new Error(`Expected ${fieldName} to be a managed runtime projection.`);
+  }
+  return projection;
+}
+
 function inferLegacyTitleSource(value: {
   title: string;
   cwd: string;
@@ -1414,6 +1436,14 @@ export function parseSessionRegistryUpsertInput(value: unknown): SessionRegistry
           pawLaunch: normalizePawLaunch(value.pawLaunch, "input.pawLaunch"),
         }
       : {}),
+    ...(hasOwn(value, "managedRuntime")
+      ? {
+          managedRuntime: normalizeManagedRuntimeProjection(
+            value.managedRuntime,
+            "input.managedRuntime",
+          ),
+        }
+      : {}),
     ...(hasOwn(value, "lifecycleStatus")
       ? {
           lifecycleStatus: parseCreateLifecycleStatus(
@@ -1529,6 +1559,10 @@ function validateStoredRecord(
       } as SessionRegistryGraphBinding;
     })(),
     pawLaunch: normalizePawLaunch(rawRecord.pawLaunch, `${filePath}.pawLaunch`),
+    managedRuntime: normalizeManagedRuntimeProjection(
+      rawRecord.managedRuntime,
+      `${filePath}.managedRuntime`,
+    ),
     aiSummary: ensureOptionalString(rawRecord.aiSummary, `${filePath}.aiSummary`),
     aiSummaryModel: ensureOptionalString(rawRecord.aiSummaryModel, `${filePath}.aiSummaryModel`),
     aiSummaryUpdatedAt: ensureOptionalString(
@@ -1700,6 +1734,10 @@ function validateIndexEntry(
     originKind,
     graphBinding: ensureOptionalGraphBinding(rawEntry.graphBinding, `${fieldName}.graphBinding`),
     pawLaunch: normalizePawLaunch(rawEntry.pawLaunch, `${fieldName}.pawLaunch`),
+    managedRuntime: normalizeManagedRuntimeProjection(
+      rawEntry.managedRuntime,
+      `${fieldName}.managedRuntime`,
+    ),
     aiSummary: ensureOptionalString(rawEntry.aiSummary, `${fieldName}.aiSummary`),
     aiSummaryModel: ensureOptionalString(rawEntry.aiSummaryModel, `${fieldName}.aiSummaryModel`),
     aiSummaryUpdatedAt: ensureOptionalString(
@@ -1852,6 +1890,7 @@ function buildIndex(records: Iterable<StoredSessionRegistryRecord>): SessionRegi
     originKind: record.origin.kind,
     graphBinding: record.graphBinding ? cloneValue(record.graphBinding) : null,
     pawLaunch: record.pawLaunch ? cloneValue(record.pawLaunch) : null,
+    managedRuntime: record.managedRuntime ? cloneValue(record.managedRuntime) : null,
     aiSummary: record.aiSummary,
     aiSummaryModel: record.aiSummaryModel,
     aiSummaryUpdatedAt: record.aiSummaryUpdatedAt,
@@ -2298,6 +2337,10 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         origin: cloneValue(validatedInput.origin),
         graphBinding: nextGraphBinding,
         pawLaunch: nextPawLaunch,
+        managedRuntime:
+          "managedRuntime" in validatedInput
+            ? cloneValue(validatedInput.managedRuntime ?? null)
+            : cloneValue(latestRecord?.managedRuntime ?? null),
         aiSummary: latestRecord?.aiSummary ?? null,
         aiSummaryModel: latestRecord?.aiSummaryModel ?? null,
         aiSummaryUpdatedAt: latestRecord?.aiSummaryUpdatedAt ?? null,

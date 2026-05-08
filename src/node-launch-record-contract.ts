@@ -1,3 +1,8 @@
+import type {
+  ManagedRuntimePermissionProfile,
+  ManagedRuntimeProjection,
+  WorkstreamRuntimeKind,
+} from "./managed-runtime-contract";
 import type { WorkstreamLaunchPolicy } from "./workstream-schema";
 
 export type NodeLaunchPreferredTerminal = "default" | "windows-terminal" | "powershell";
@@ -44,6 +49,9 @@ import type {
 } from "./launch-claim-schema";
 
 export interface NodeLaunchHandoff {
+  // Managed execution (#73) owns non-terminal runtime handoff wiring.
+  runtimeKind?: WorkstreamRuntimeKind;
+  permissionProfile?: ManagedRuntimePermissionProfile | null;
   cwd: string;
   branch: string;
   pawWorkDir: string;
@@ -92,6 +100,9 @@ export type NodeLaunchOperationStatus =
   | "prepared"
   | "preparation_failed"
   | "launching"
+  | "managed_starting"
+  | "managed_unavailable"
+  | "managed_failed"
   | "launched_pending_binding"
   | "bound"
   | "terminal_failed";
@@ -136,6 +147,7 @@ export interface NodeLaunchOperation {
   completedAt: string | null;
   handoff: NodeLaunchHandoff | null;
   terminalLaunch: NodeTerminalLaunchResponse | null;
+  managedRuntime?: ManagedRuntimeProjection | null;
   error: NodeLaunchOperationError | null;
   progressEvents: NodeLaunchOperationProgressEvent[];
   latestClaim?: NodeLaunchClaimState | null;
@@ -158,6 +170,10 @@ export interface NodeLaunchRecord {
   contextFilePath: string;
   sdkSessionWorkspacePath?: string;
   sdkSessionStateRoot?: string;
+  // Terminal preparation defaults this to terminal-cli until the managed substrate wires it.
+  runtimeKind?: WorkstreamRuntimeKind;
+  permissionProfile?: ManagedRuntimePermissionProfile | null;
+  managedRuntime?: ManagedRuntimeProjection | null;
   launchNonce: string | null;
   launchClaimRef: string | null;
   trackerUrl: string | null;

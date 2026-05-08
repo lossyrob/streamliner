@@ -15,6 +15,12 @@ import type {
   NodeLaunchRecordPathStatus,
   NodeTerminalLaunchResponse,
 } from "../node-launch-record-contract";
+import type {
+  ManagedRuntimePermissionProfile,
+  ManagedRuntimeProjection,
+  WorkstreamRuntimeKind,
+} from "../managed-runtime-contract";
+import { sanitizeManagedRuntimeProjection } from "../managed-runtime-contract";
 import type { PawLaunchHandoff, PawLaunchProgressEvent } from "./launch-preparation";
 
 interface NodeLaunchRecordDocument {
@@ -34,6 +40,9 @@ const OPERATION_STATUSES = new Set<NodeLaunchOperationStatus>([
   "prepared",
   "preparation_failed",
   "launching",
+  "managed_starting",
+  "managed_unavailable",
+  "managed_failed",
   "launched_pending_binding",
   "bound",
   "terminal_failed",
@@ -97,6 +106,28 @@ function optionalStringField(record: Record<string, unknown>, key: string): stri
   return typeof value === "string" ? value : undefined;
 }
 
+function normalizeRuntimeKind(value: unknown): WorkstreamRuntimeKind | undefined {
+  return value === "terminal-cli" || value === "managed-sdk" ? value : undefined;
+}
+
+function normalizePermissionProfile(
+  value: unknown,
+): ManagedRuntimePermissionProfile | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return value === "managed-autonomous" ? value : null;
+}
+
+function normalizeManagedRuntimeProjection(
+  value: unknown,
+): ManagedRuntimeProjection | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return sanitizeManagedRuntimeProjection(value);
+}
+
 function normalizeStoredRecord(value: unknown): StoredNodeLaunchRecord | null {
   if (!isRecord(value)) {
     return null;
@@ -124,6 +155,9 @@ function normalizeStoredRecord(value: unknown): StoredNodeLaunchRecord | null {
     contextFilePath: stringField(value, "contextFilePath"),
     sdkSessionWorkspacePath: optionalStringField(value, "sdkSessionWorkspacePath"),
     sdkSessionStateRoot: optionalStringField(value, "sdkSessionStateRoot"),
+    runtimeKind: normalizeRuntimeKind(value.runtimeKind),
+    permissionProfile: normalizePermissionProfile(value.permissionProfile),
+    managedRuntime: normalizeManagedRuntimeProjection(value.managedRuntime),
     launchNonce: nullableStringField(value, "launchNonce"),
     launchClaimRef: nullableStringField(value, "launchClaimRef"),
     trackerUrl: nullableStringField(value, "trackerUrl"),
@@ -202,6 +236,7 @@ function normalizeStoredOperation(value: unknown): StoredNodeLaunchOperation | n
     completedAt: nullableStringField(value, "completedAt"),
     handoff: isRecord(value.handoff) ? value.handoff as unknown as NodeLaunchHandoff : null,
     terminalLaunch: isRecord(value.terminalLaunch) ? value.terminalLaunch as unknown as NodeTerminalLaunchResponse : null,
+    managedRuntime: normalizeManagedRuntimeProjection(value.managedRuntime) ?? null,
     error: normalizeOperationError(value.error),
     progressEvents: Array.isArray(value.progressEvents)
       ? value.progressEvents
@@ -576,6 +611,7 @@ function storedRecordFromHandoff(
   timestamp: string,
 ): StoredNodeLaunchRecord {
   const metadata = handoff.launchMetadata;
+  const launchHandoff = toNodeLaunchHandoff(handoff);
   const graphPath = metadata.graphPath;
   const nodeId = metadata.nodeId;
   const existing = findStoredRecord(document, graphPath, nodeId);
@@ -596,6 +632,9 @@ function storedRecordFromHandoff(
     contextFilePath: handoff.contextPackage.contextFilePath,
     sdkSessionWorkspacePath: handoff.sdkSession?.workspacePath,
     sdkSessionStateRoot: handoff.sdkSession?.stateRoot,
+    runtimeKind: launchHandoff.runtimeKind ?? "terminal-cli",
+    permissionProfile: launchHandoff.permissionProfile ?? null,
+    managedRuntime: existing?.managedRuntime ?? null,
     launchNonce: metadata.launchNonce,
     launchClaimRef: metadata.launchClaimRef,
     trackerUrl: metadata.trackerUrl,
@@ -614,6 +653,7 @@ function operationFromHandoff(
   const graphPath = handoff.launchMetadata.graphPath;
   const nodeId = handoff.launchMetadata.nodeId;
   const existing = findStoredOperation(document, graphPath, nodeId);
+  const launchHandoff = toNodeLaunchHandoff(handoff);
   const nextOperation: StoredNodeLaunchOperation = {
     id: existing?.id ?? recordId(graphPath, nodeId),
     graphPath,
@@ -623,8 +663,9 @@ function operationFromHandoff(
     startedAt: existing?.startedAt ?? timestamp,
     updatedAt: timestamp,
     completedAt: updates.completedAt,
-    handoff: toNodeLaunchHandoff(handoff),
+    handoff: launchHandoff,
     terminalLaunch: updates.terminalLaunch,
+    managedRuntime: existing?.managedRuntime ?? null,
     error: updates.error,
     progressEvents: existing?.progressEvents ?? [],
   };

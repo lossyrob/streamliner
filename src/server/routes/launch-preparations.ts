@@ -293,7 +293,7 @@ export function createLaunchPreparationsRouter(options: {
 }
 
 function isActiveOperation(status: string): boolean {
-  return status === "preparing" || status === "launching";
+  return status === "preparing" || status === "launching" || status === "managed_starting";
 }
 
 function toOperationError(error: unknown): {

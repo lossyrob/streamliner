@@ -20,6 +20,7 @@ import type {
   SessionRegistryTrustedSignalSource,
   SessionRegistryTrustedStartSource,
 } from "./session-registry-schema";
+import type { ManagedRuntimeProjection } from "./managed-runtime-contract";
 
 export type SessionRegistryBuilderLifecycleStatus = Exclude<
   SessionRegistryLifecycleStatus,
@@ -56,6 +57,7 @@ export interface SessionRegistryListItem {
   originKind: SessionRegistryOriginKind;
   graphBinding: SessionRegistryGraphBinding | null;
   pawLaunch: SessionRegistryPawLaunch | null;
+  managedRuntime?: ManagedRuntimeProjection | null;
   copilotSessionId: string | null;
   aiSummary: string | null;
   aiSummaryModel: string | null;
@@ -139,6 +141,7 @@ export interface LaunchedSessionRegistryUpsertInput
   >;
   graphBinding?: SessionRegistryGraphBinding | null;
   pawLaunch?: SessionRegistryPawLaunch | null;
+  managedRuntime?: ManagedRuntimeProjection | null;
 }
 
 export interface SessionRegistryObservedLinkInput {

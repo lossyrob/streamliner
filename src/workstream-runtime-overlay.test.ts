@@ -604,6 +604,77 @@ describe("buildWorkstreamRuntimeOverlay", () => {
     );
   });
 
+  it("projects managed runtime lifecycle without promoting committed graph status", () => {
+    const entry = buildDerivedNode({
+      node: { id: "managed-node", status: "ready" },
+      operationalStatus: "ready",
+    });
+    const session = buildSession({
+      id: "managed-session",
+      graphBinding: {
+        workstreamId: "runtime-overlay-ui",
+        nodeId: "managed-node",
+        launchClaimId: "claim-managed",
+      },
+      managedRuntime: {
+        runtimeKind: "managed-sdk",
+        runtimeOwner: "streamliner-sdk",
+        permissionProfile: "managed-autonomous",
+        lifecycleState: "completed",
+        lifecycleUpdatedAt: TEST_TIMESTAMP,
+        summary: "Managed worker finished and opened a PR.",
+        progress: Array.from({ length: 12 }, (_, index) => ({
+          timestamp: `2026-05-05T12:${String(index).padStart(2, "0")}:00.000Z`,
+          phase: "implementation",
+          summary: `Safe progress ${index}`,
+          kind: "summary",
+          status: "info",
+        })),
+      },
+    });
+
+    const overlay = buildOverlay([entry], {
+      sessions: new Map([
+        [entry.node.id, buildSessionSummary(entry.node.id, [session])],
+      ]),
+    });
+    const node = overlay.nodesById.get("managed-node");
+
+    expect(node?.committedStatus).toBe("ready");
+    expect(node?.runtimeStatus).toBe("ended");
+    expect(node?.managedRuntime?.lifecycleState).toBe("completed");
+    expect(node?.managedRuntime?.progress).toHaveLength(8);
+    expect(node?.managedRuntime?.progress.at(-1)?.summary).toBe("Safe progress 11");
+  });
+
+  it("surfaces waiting managed runtime lifecycle as builder input without changing graph status", () => {
+    const entry = buildDerivedNode({
+      node: { id: "managed-waiting-node", status: "ready" },
+      operationalStatus: "ready",
+    });
+    const record = buildLaunchRecord("managed-waiting-node", null);
+    record.managedRuntime = {
+      runtimeKind: "managed-sdk",
+      runtimeOwner: "streamliner-sdk",
+      permissionProfile: "managed-autonomous",
+      lifecycleState: "waiting_for_builder",
+      lifecycleUpdatedAt: TEST_TIMESTAMP,
+      blockerSummary: "Needs builder confirmation for PR cleanup.",
+    };
+
+    const overlay = buildOverlay([entry], {
+      launchRecords: new Map([[entry.node.id, record]]),
+    });
+    const node = overlay.nodesById.get("managed-waiting-node");
+
+    expect(node?.committedStatus).toBe("ready");
+    expect(node?.runtimeStatus).toBe("needs-input");
+    expect(node?.hasRuntimeEvidence).toBe(true);
+    expect(node?.degradationReasons.map((reason) => reason.code)).toContain(
+      "managed-runtime-waiting-for-builder",
+    );
+  });
+
   it("reports registry loading as degraded and registry errors as not-usable", () => {
     const entry = buildDerivedNode();
 

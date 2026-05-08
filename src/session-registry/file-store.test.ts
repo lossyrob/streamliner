@@ -90,6 +90,52 @@ describe("SessionRegistryFileStore", () => {
     expect(existsSync(join(rootDir, "index.json"))).toBe(true);
   });
 
+  it("preserves managed runtime metadata on launched sessions and list projections", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+
+    const record = store.upsertSession({
+      title: "Managed worker",
+      cwd: "C:\\repo",
+      repo: "lossyrob/streamliner",
+      branch: "feature/managed-runtime",
+      origin: { kind: "launched", launchClaimId: "claim-managed" },
+      graphBinding: {
+        workstreamId: "sdk-managed-worker-runtime",
+        nodeId: "builder-managed-runtime-ui",
+        launchClaimId: "claim-managed",
+      },
+      managedRuntime: {
+        runtimeKind: "managed-sdk",
+        runtimeOwner: "streamliner-sdk",
+        permissionProfile: "managed-autonomous",
+        lifecycleState: "running",
+        lifecycleUpdatedAt: "2026-05-05T12:00:00.000Z",
+        summary: "Managed worker is running.",
+        progress: [
+          {
+            timestamp: "2026-05-05T12:00:00.000Z",
+            phase: "starting",
+            summary: "Started managed runtime.",
+            kind: "lifecycle",
+            status: "success",
+          },
+        ],
+      },
+    });
+
+    expect(record.managedRuntime?.lifecycleState).toBe("running");
+    expect(store.listSessions()[0]?.managedRuntime?.permissionProfile).toBe(
+      "managed-autonomous",
+    );
+
+    const entry = readJsonFile<SessionRegistryRecord>(
+      join(rootDir, "entries", `${record.id}.json`),
+    );
+    expect(entry.managedRuntime?.runtimeKind).toBe("managed-sdk");
+  });
+
   it("ranks list freshness by trustedLastSignalAt when it is newer than lastSeenAt", () => {
     // Discovery sets lastSeenAt from workspace.yaml mtime, which lags real
     // user activity. A session that just received a prompt.submitted hook
