@@ -431,6 +431,10 @@ describe("session registry schema", () => {
           nextPatch.lifecycleStatus ?? record.lifecycleStatus,
         tags: nextPatch.tags ?? record.tags,
       }),
+      patchRuntimeMetadata: (id) => ({
+        ...record,
+        id,
+      }),
       archiveSession: (id) => ({
         ...record,
         id,

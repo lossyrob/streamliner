@@ -26,6 +26,7 @@ import {
   type SessionRegistryListOptions,
   type SessionRegistryObservedLinkInput,
   type SessionRegistryPatch,
+  type SessionRegistryRuntimeMetadataPatch,
   type SessionRegistryStore,
   type SessionRegistryTrustedSignalInput,
   type SessionRegistryUpsertInput,
@@ -33,7 +34,6 @@ import {
 import {
   mergeSessionRegistryRuntimeMetadata,
   normalizeSessionRegistryRuntimeMetadata,
-  type SessionRegistryRuntimeMetadataPatch,
 } from "./managed-runtime";
 import {
   DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,

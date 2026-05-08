@@ -15,6 +15,10 @@ import {
   type SessionRegistryRuntimeProgressEvent,
   type SessionRegistryRuntimeProgressEventType,
 } from "../session-registry-schema";
+import type {
+  SessionRegistryRuntimeEvidenceInput,
+  SessionRegistryRuntimeMetadataPatch,
+} from "../session-registry-contract";
 
 export const MANAGED_RUNTIME_PROGRESS_EVENT_LIMIT = 50;
 export const MANAGED_RUNTIME_PROGRESS_STRING_LIMIT = 240;
@@ -73,40 +77,6 @@ const TERMINAL_MANAGED_LIFECYCLE_STATES = new Set<SessionRegistryManagedLifecycl
   "failed",
   "interrupted",
 ]);
-
-export interface SessionRegistryRuntimeProgressEventInput {
-  type: SessionRegistryRuntimeProgressEventType;
-  message: string;
-  timestamp?: string;
-  data?: Record<string, unknown>;
-}
-
-export interface SessionRegistryRuntimeEvidenceInput {
-  kind: SessionRegistryRuntimeEvidenceKind;
-  source: string;
-  detectedAt?: string;
-  url?: string | null;
-  repo?: string | null;
-  number?: number | null;
-  sha?: string | null;
-  summary?: string | null;
-}
-
-export interface SessionRegistryRuntimeMetadataPatch {
-  runtimeKind?: SessionRegistryRuntimeKind;
-  runtimeOwner?: SessionRegistryRuntimeOwner;
-  lifecycleState?: SessionRegistryManagedLifecycleState | null;
-  permissionProfile?: SessionRegistryRuntimePermissionProfile | null;
-  launchClaimId?: string | null;
-  launchNonce?: string | null;
-  sdkSessionId?: string | null;
-  sdkWorkspacePath?: string | null;
-  sdkStateRoot?: string | null;
-  startedAt?: string | null;
-  lastStateChangedAt?: string | null;
-  progressEvents?: SessionRegistryRuntimeProgressEventInput[];
-  evidence?: SessionRegistryRuntimeEvidenceInput[];
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

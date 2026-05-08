@@ -260,6 +260,7 @@ function createEventStreamStore(options: {
     attachObservedSession: unsupportedStoreCall,
     recordTrustedSessionSignal: unsupportedStoreCall,
     patchSession: unsupportedStoreCall,
+    patchRuntimeMetadata: unsupportedStoreCall,
     archiveSession: unsupportedStoreCall,
     deleteSession: unsupportedStoreCall,
     subscribe: (listener: SessionRegistryChangeListener) => {

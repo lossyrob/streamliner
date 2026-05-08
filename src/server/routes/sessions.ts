@@ -17,8 +17,8 @@ import type {
   SessionRegistryRecord,
   SessionRegistryRuntimeEvidenceKind,
 } from "../../session-registry-schema";
-import type { SessionRegistryRuntimeEvidenceInput } from "../../session-registry/managed-runtime";
 import type {
+  SessionRegistryRuntimeEvidenceInput,
   SessionRegistryStore,
   SessionRegistryTrustedSignalInput,
 } from "../../session-registry-contract";

@@ -14,7 +14,7 @@ import type {
 import type {
   SessionRegistryRuntimeEvidenceInput,
   SessionRegistryRuntimeProgressEventInput,
-} from "../session-registry/managed-runtime";
+} from "../session-registry-contract";
 
 export interface ManagedSdkRunnerStartInput {
   registryId: string;

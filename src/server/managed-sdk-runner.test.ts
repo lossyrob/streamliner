@@ -8,7 +8,7 @@ import type {
 import type {
   SessionRegistryRuntimeEvidenceInput,
   SessionRegistryRuntimeProgressEventInput,
-} from "../session-registry/managed-runtime";
+} from "../session-registry-contract";
 import { mergeSessionRegistryRuntimeMetadata } from "../session-registry/managed-runtime";
 import {
   DefaultManagedSdkRunner,
