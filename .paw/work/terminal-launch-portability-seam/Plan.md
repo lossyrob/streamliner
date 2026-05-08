@@ -43,7 +43,7 @@ git diff --check
 Because the implementation touches rendered UI, capture a representative dashboard screenshot with:
 
 ```powershell
-node scripts\screenshot.mjs --graph C:\Users\robemanuele\proj\streamliner\streamliner-runtime-overlay-polish\.streamliner\workstreams\session-launching-and-tracking\graph.json --out .screenshots\after-runtime-overlay-polish.png --select-node launch-prompt-profiles
+node scripts\screenshot.mjs --graph C:\Users\robemanuele\proj\streamliner\streamliner-runtime-overlay-polish\.streamliner\workstreams\session-launching-and-tracking\graph.json --out .screenshots\after-runtime-overlay-polish.png --viewport 1800x1200
 ```
 
 The screenshot capture is a repository UI quality gate from the iterative-ui workflow rather than a separate shaped product requirement.
