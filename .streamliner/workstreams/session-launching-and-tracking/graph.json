@@ -3,11 +3,11 @@
   "id": "session-launching-and-tracking",
   "projectKey": "streamliner",
   "title": "Session launching and tracking",
-  "summary": "Wave 1 design foundation complete. Wave 2 pivots to a local-first manual session registry (issue #9) to deliver restart-resilient session tracking ahead of the launch pipeline. Launch-from-graph and graph overlay follow in Waves 3-4.",
-  "status": "active",
-  "attention": "focus",
+  "summary": "Completed: Streamliner can launch PAW-backed Copilot worker sessions from graph nodes, bind them into the local session registry, project runtime/session/PAW/tracker status back onto the graph, and leave API-first launch/session/node substrate for follow-on workstreams.",
+  "status": "completed",
+  "attention": "parked",
   "createdAt": "2026-04-10T15:37:14.125Z",
-  "updatedAt": "2026-05-07T21:11:47.000Z",
+  "updatedAt": "2026-05-08T05:15:06.000Z",
   "trackingIssue": {
     "owner": "lossyrob",
     "repo": "streamliner",
@@ -385,8 +385,8 @@
       "type": "gate",
       "title": "Launch and tracking usable on the graph",
       "summary": "A node can launch a PAW-backed Copilot CLI session into a visible terminal through an API-first launch pipeline after a launch configuration dialog, context assembly, SDK paw-init, prompt templating, CLI default resolution, and launch-claim creation; Streamliner binds the resulting registry entry back to the node, shows it grouped/linked in My Sessions, and renders matching session status on the graph without committing telemetry into workstream artifacts. The gate verifies that any brief-level Closeout Punch List items are completed, deferred, promoted, or dropped. Future CLI/skill/MCP agent launch surfaces and future non-Windows terminal adapters should call this same pipeline rather than inventing a second path.",
-      "status": "ready",
-      "attention": "focus",
+      "status": "completed",
+      "attention": "parked",
       "repoIds": ["streamliner"],
       "tracker": {
         "type": "github",
@@ -434,8 +434,8 @@
     {
       "id": "tracking-visible",
       "title": "Tracking visible on the graph",
-      "summary": "Streamliner links My Sessions and the graph through registry graphBinding metadata, overlays bound Copilot session status onto graph nodes with matching status pills/pulses, derives PAW workflow status from artifacts, enforces tracker-required launch policy where configured, preserves per-node launch operation state, and keeps telemetry out of graph.json.",
-      "status": "planned",
+      "summary": "Completed: Streamliner links My Sessions and the graph through registry graphBinding metadata, overlays bound Copilot session status onto graph nodes with matching status pills/pulses, derives PAW workflow status from artifacts, enforces tracker-required launch policy where configured, preserves per-node launch operation state, and keeps telemetry out of graph.json.",
+      "status": "completed",
       "nodeIds": [
         "session-event-observation",
         "sessions-workstream-linkage-ui",
