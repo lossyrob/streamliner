@@ -16,7 +16,10 @@ import {
   NodeLaunchError,
 } from "./node-launch";
 import { createStreamlinerApiApp, type StreamlinerApiApp } from "./app";
-import { NodeLaunchRecordStore } from "./node-launch-record-store";
+import {
+  DuplicateActiveNodeLaunchOperationError,
+  NodeLaunchRecordStore,
+} from "./node-launch-record-store";
 import type { ManagedSdkRunner, ManagedSdkRunnerStartInput } from "./managed-sdk-runner";
 
 const createdRoots: string[] = [];
@@ -374,6 +377,59 @@ describe("launchPreparedNode", () => {
       )
     ).toThrow(NodeLaunchError);
     expect(claimStore.listClaims()).toHaveLength(1);
+  });
+
+  it("atomically rejects duplicate active launch operation reservations", async () => {
+    const root = createRootDir();
+    const nodeLaunchRecordStore = new NodeLaunchRecordStore({
+      recordsPath: join(root, "state", "node-launch-records.json"),
+    });
+    const handoff = fakeHandoff(root, { runtimeKind: "managed-sdk" });
+
+    const results = await Promise.allSettled([
+      nodeLaunchRecordStore.markManagedStarting(handoff),
+      nodeLaunchRecordStore.markManagedStarting(handoff),
+    ]);
+    const fulfilled = results.filter((result) => result.status === "fulfilled");
+    const rejected = results.filter((result) => result.status === "rejected");
+
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]).toEqual(expect.objectContaining({
+      reason: expect.any(DuplicateActiveNodeLaunchOperationError),
+    }));
+    const operation = await nodeLaunchRecordStore.getOperation(
+      handoff.launchMetadata.graphPath,
+      handoff.launchMetadata.nodeId,
+    );
+    expect(operation).toEqual(expect.objectContaining({
+      status: "managed_starting",
+    }));
+  });
+
+  it("reports managed start cleanup failures after preserving claim failure", async () => {
+    const root = createRootDir();
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const runner: ManagedSdkRunner = {
+      start: async (input) => {
+        registryStore.archiveSession(input.registryId);
+        throw new Error("sdk exploded");
+      },
+    };
+
+    await expect(launchManagedSdkNode(
+      registryStore,
+      claimStore,
+      fakeHandoff(root, { runtimeKind: "managed-sdk" }),
+      { managedSdkRunner: runner },
+    )).rejects.toThrow(/sdk exploded; also failed to record managed runtime failure/);
+
+    const [claimEntry] = claimStore.listClaims();
+    expect(claimEntry).toEqual(expect.objectContaining({ status: "failed" }));
+    expect(claimStore.getClaim(claimEntry.launchClaimId)).toEqual(expect.objectContaining({
+      failureCode: "internal-error",
+    }));
   });
 
   it("allows unconfigured prepared handoffs when the graph is no longer readable", () => {
@@ -858,6 +914,58 @@ describe("node launch API route", () => {
           method: "powershell",
           pid: 777,
         },
+      }),
+      error: null,
+    }));
+  });
+
+  it("does not let a later managed failure clobber a successful launch operation", async () => {
+    const root = createRootDir();
+    const nodeLaunchRecordStore = new NodeLaunchRecordStore({
+      recordsPath: join(root, "state", "node-launch-records.json"),
+    });
+    const handoff = fakeHandoff(root, { runtimeKind: "managed-sdk" });
+    const now = new Date().toISOString();
+
+    await nodeLaunchRecordStore.markManagedStarting(handoff);
+    await nodeLaunchRecordStore.markManagedRunning(handoff, {
+      launchClaim: {
+        launchClaimId: "claim-managed-success",
+        status: "pending",
+        launchedAt: now,
+        updatedAt: now,
+        bindingWindowExpiresAt: now,
+        reservedRegistryId: "registry-managed-success",
+        boundRegistryId: null,
+        boundCopilotSessionId: null,
+        failureCode: null,
+        failureReason: null,
+        blocksLaunch: true,
+        retryable: false,
+      },
+      runtimeKind: "managed-sdk",
+      registryId: "registry-managed-success",
+      sdkSessionId: "sdk-managed-success",
+      sdkWorkspacePath: null,
+      sdkStateRoot: null,
+      permissionProfile: "managed-autonomous",
+    });
+    await nodeLaunchRecordStore.markManagedFailed({
+      handoff,
+      error: {
+        code: "managed_sdk_start_failed",
+        error: "late losing request failed",
+      },
+    });
+
+    const operation = await nodeLaunchRecordStore.getOperation(
+      handoff.launchMetadata.graphPath,
+      handoff.launchMetadata.nodeId,
+    );
+    expect(operation).toEqual(expect.objectContaining({
+      status: "managed_running",
+      managedLaunch: expect.objectContaining({
+        sdkSessionId: "sdk-managed-success",
       }),
       error: null,
     }));

@@ -398,11 +398,16 @@ export function createNodeLaunchesRouter(options: {
       }
       if (error instanceof Error && "statusCode" in error) {
         const statusCode = (error as { statusCode?: unknown }).statusCode;
-        res.status(typeof statusCode === "number" ? statusCode : 400).json({
+        const body: Record<string, unknown> = {
           code: (error as { code?: unknown }).code ?? "invalid_node_launch_handoff",
           error: error.message,
           input: (error as { input?: unknown }).input,
-        });
+        };
+        const operation = (error as { operation?: unknown }).operation;
+        if (operation !== undefined) {
+          body.operation = operation;
+        }
+        res.status(typeof statusCode === "number" ? statusCode : 400).json(body);
         return;
       }
       next(error);

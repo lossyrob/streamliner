@@ -574,25 +574,65 @@ export async function launchManagedSdkNode(
     });
   } catch (error: unknown) {
     const message = errorMessage(error);
-    registryStore.patchRuntimeMetadata(registryId, {
-      lifecycleState: "failed",
-      progressEvents: [{
-        type: "error",
+    const logger = getApiLogger().withScope("node-launch");
+    const cleanupFailures: string[] = [];
+    try {
+      registryStore.patchRuntimeMetadata(registryId, {
+        lifecycleState: "failed",
+        progressEvents: [{
+          type: "error",
+          message,
+        }],
+      });
+    } catch (runtimePatchError: unknown) {
+      const patchMessage = errorMessage(runtimePatchError);
+      cleanupFailures.push(`record managed runtime failure: ${patchMessage}`);
+      logger.error("managed SDK start failure runtime transition failed", {
+        launchClaimId: claim.launchClaimId,
+        workstreamId: claim.workstreamId,
+        nodeId: claim.nodeId,
+        registryId,
+        err: errorLogDetails(runtimePatchError),
+      });
+    }
+    try {
+      const failed = markClaimFailed(
+        registryStore,
+        claimStore,
+        claim.launchClaimId,
+        "internal-error",
         message,
-      }],
+        deps.now ? { now: deps.now } : undefined,
+      );
+      if (!failed.ok) {
+        cleanupFailures.push("mark launch claim failed: launch claim was not found");
+      }
+    } catch (claimFailureError: unknown) {
+      const claimFailureMessage = errorMessage(claimFailureError);
+      cleanupFailures.push(`mark launch claim failed: ${claimFailureMessage}`);
+      logger.error("managed SDK start failure claim transition failed", {
+        launchClaimId: claim.launchClaimId,
+        workstreamId: claim.workstreamId,
+        nodeId: claim.nodeId,
+        registryId,
+        err: errorLogDetails(claimFailureError),
+      });
+    }
+    logger.error("managed SDK start failed", {
+      launchClaimId: claim.launchClaimId,
+      workstreamId: claim.workstreamId,
+      nodeId: claim.nodeId,
+      registryId,
+      cleanup: cleanupFailures.length > 0 ? "failed" : "recorded",
+      err: errorLogDetails(error),
     });
-    markClaimFailed(
-      registryStore,
-      claimStore,
-      claim.launchClaimId,
-      "internal-error",
-      message,
-      deps.now ? { now: deps.now } : undefined,
-    );
+    const cleanupMessage = cleanupFailures.length > 0
+      ? `; also failed to ${cleanupFailures.join("; failed to ")}`
+      : "";
     throw new NodeLaunchError(
       "managed_sdk_start_failed",
       500,
-      `Failed to start managed SDK worker: ${message}`,
+      `Failed to start managed SDK worker: ${message}${cleanupMessage}`,
       claim,
     );
   }

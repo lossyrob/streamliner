@@ -57,8 +57,26 @@ interface AtomicWriteOptions {
   retryDelaysMs?: readonly number[];
 }
 
+const ACTIVE_LAUNCH_OPERATION_STATUSES = new Set<NodeLaunchOperationStatus>([
+  "preparing",
+  "launching",
+  "managed_starting",
+]);
+
 interface NodeErrnoException extends Error {
   code?: string;
+}
+
+export class DuplicateActiveNodeLaunchOperationError extends Error {
+  readonly statusCode = 409;
+  readonly code = "duplicate_active_launch_operation";
+  readonly operation: NodeLaunchOperation;
+
+  constructor(operation: NodeLaunchOperation) {
+    super(`Node ${operation.nodeId} already has an active launch operation.`);
+    this.name = "DuplicateActiveNodeLaunchOperationError";
+    this.operation = operation;
+  }
 }
 
 function defaultRecordsPath(): string {
@@ -450,7 +468,7 @@ export class NodeLaunchRecordStore {
     handoff: PawLaunchHandoff,
     now = new Date(),
   ): Promise<NodeLaunchOperation> {
-    return await this.updateOperationFromHandoff(handoff, "launching", now, {
+    return await this.startLaunchOperationFromHandoff(handoff, "launching", now, {
       completedAt: null,
       error: null,
       terminalLaunch: null,
@@ -475,7 +493,7 @@ export class NodeLaunchRecordStore {
     handoff: PawLaunchHandoff,
     now = new Date(),
   ): Promise<NodeLaunchOperation> {
-    return await this.updateOperationFromHandoff(handoff, "managed_starting", now, {
+    return await this.startLaunchOperationFromHandoff(handoff, "managed_starting", now, {
       completedAt: null,
       error: null,
       terminalLaunch: null,
@@ -502,6 +520,12 @@ export class NodeLaunchRecordStore {
     now?: Date;
   }): Promise<NodeLaunchOperation> {
     return await this.updateDocument((document) => {
+      const graphPath = input.handoff.launchMetadata.graphPath;
+      const nodeId = input.handoff.launchMetadata.nodeId;
+      const existing = findStoredOperation(document, graphPath, nodeId);
+      if (existing && existing.status !== "managed_starting") {
+        return existing;
+      }
       const timestamp = (input.now ?? new Date()).toISOString();
       return operationFromHandoff(document, input.handoff, "managed_failed", timestamp, {
         completedAt: timestamp,
@@ -550,6 +574,27 @@ export class NodeLaunchRecordStore {
     updates: Pick<StoredNodeLaunchOperation, "completedAt" | "error" | "terminalLaunch" | "managedLaunch">,
   ): Promise<NodeLaunchOperation> {
     return await this.updateDocument((document) => {
+      const timestamp = now.toISOString();
+      return operationFromHandoff(document, handoff, status, timestamp, updates);
+    });
+  }
+
+  private async startLaunchOperationFromHandoff(
+    handoff: PawLaunchHandoff,
+    status: NodeLaunchOperationStatus,
+    now: Date,
+    updates: Pick<StoredNodeLaunchOperation, "completedAt" | "error" | "terminalLaunch" | "managedLaunch">,
+  ): Promise<NodeLaunchOperation> {
+    return await this.updateDocument((document) => {
+      const graphPath = handoff.launchMetadata.graphPath;
+      const nodeId = handoff.launchMetadata.nodeId;
+      const existing = findStoredOperation(document, graphPath, nodeId);
+      if (existing && ACTIVE_LAUNCH_OPERATION_STATUSES.has(existing.status)) {
+        throw new DuplicateActiveNodeLaunchOperationError({
+          ...existing,
+          progressEvents: [...existing.progressEvents],
+        });
+      }
       const timestamp = now.toISOString();
       return operationFromHandoff(document, handoff, status, timestamp, updates);
     });
