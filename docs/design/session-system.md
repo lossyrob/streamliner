@@ -1,7 +1,7 @@
 ---
 kind: design-doc
 status: draft
-last_updated: 2026-05-07
+last_updated: 2026-05-08
 update_semantics: rewrite-in-place
 authoritative_for: "Session launching, lifecycle, registry contract, tracking, and runtime overlay"
 scope_tags:
@@ -75,7 +75,7 @@ Node launch has an explicit runtime dimension:
 | `terminal-cli` | Start a visible Copilot CLI session after PAW launch preparation. The builder can watch and type in the terminal immediately. | Remains the supported terminal-first path and the safe default when the builder wants direct presence. |
 | `managed-sdk` | Start a headless Copilot SDK session owned by Streamliner's local runtime. The builder monitors a browser-facing progress projection and can interrupt or take over through a visible terminal. | Builder-selected only. Streamliner does not automatically classify nodes as safe or unsafe for managed execution in the first cut. |
 
-Runtime selection is independent of permission policy. Choosing `managed-sdk` says Streamliner owns the worker process and lifecycle; it does not imply `approveAll`. A managed launch must choose an explicit unattended-worker permission posture, and the default managed PAW worker posture approves only scoped, repository-local work needed for node execution while rejecting or surfacing high-risk, out-of-scope, credential, system-wide, or ambiguous operations for builder attention.
+Runtime selection is independent of the recorded permission profile. Choosing `managed-sdk` says Streamliner owns the worker process and lifecycle; the builder's explicit node-launch action is also the consent boundary for autonomous tool execution. The first managed PAW worker records a `managed-autonomous` permission profile and runs with a Copilot CLI YOLO/allow-all-equivalent posture, so model-requested tool calls do not introduce per-tool approval prompts. Streamliner still scopes the launch to the selected node, worktree, repo, branch, and PAW context, projects redacted progress, and keeps deterministic backend guardrails for Streamliner-owned actions such as terminal takeover and cleanup.
 
 Terminal-first launch must not be removed or degraded by the managed runtime. If managed launch fails before a worker session exists, the launch fails honestly and remains retryable; it does not silently fall back to a terminal launch unless the builder explicitly chooses that runtime.
 
@@ -198,7 +198,7 @@ For the PAW MVP, the kickoff prompt starts from the same template a builder woul
 | Duplicate active launch | Backend returns a typed conflict for active-window or bound claims; UI disables/relabels the graph action |
 | Managed SDK worker start failure | Preserve the reserved registry row with typed `failed` or `waiting_for_builder` evidence when useful for diagnosis/retry; do not create a success-shaped active worker |
 | Managed SDK trust/binding failure | Keep the managed row visible with degraded diagnostics and do not create duplicate observed rows from filesystem-only SDK state |
-| Managed SDK permission denial blocks work | Transition to `waiting_for_builder` with redacted permission reason rather than auto-approving or silently retrying |
+| Managed SDK permission profile is missing or unsupported | Fail before worker start, or transition to `waiting_for_builder` with a typed profile/configuration reason; do not downgrade into hidden per-tool prompts or silently choose a different runtime |
 | Managed SDK cancellation/takeover failure | Preserve the managed row and SDK identity, surface `cancel_timeout`, `cancel_evidence_inconclusive`, or `takeover_failed`, and require retry/cancel/manual recovery |
 | Copilot CLI launch failure | Report a typed error, mark the claim failed with `terminal-spawn-failed`, and clean up the reserved registry row through the claim-failure path |
 
@@ -525,7 +525,7 @@ The local API is the trust boundary for managed workers. It owns registry mutati
 
 Managed launch uses a row-first binding model:
 
-1. Validate the selected graph node, workstream source, target repo/worktree, PAW work directory, permission posture, and launch nonce.
+1. Validate the selected graph node, workstream source, target repo/worktree, PAW work directory, `managed-autonomous` permission profile, and launch nonce.
 2. Create or reserve the registry row with `origin.kind: launched`, `runtimeKind: managed-sdk`, `runtimeOwner: streamliner-sdk`, `graphBinding`, `pawLaunch`, and the expected worktree/branch metadata.
 3. Start the SDK session in a state root compatible with later `copilot --resume <sdkSessionId>` takeover, and record `sdkSessionId`, `sdkWorkspacePath`, and SDK/runtime versions.
 4. Write managed lifecycle/progress records directly through the local API/runtime writer. Existing Copilot CLI plugin hook signals are useful corroboration when they appear, but SDK-managed admission does not rely solely on plugin hook delivery.
@@ -555,17 +555,19 @@ Retention is bounded and summary-oriented. The first managed runtime should pers
 
 ### Permission Policy
 
-Launch preparation may use broad internal SDK permissions because it is a short, supervised setup operation. Unattended SDK-managed workers must not inherit that posture. A managed launch must record a permission profile and make permission denial visible in lifecycle/progress.
+Launch preparation may use broad internal SDK permissions because it is a short, supervised setup operation. SDK-managed workers must make the autonomous posture explicit instead of accidentally inheriting that internal setup behavior.
 
-The first managed PAW worker profile should:
+For the first managed PAW worker, the builder's explicit `managed-sdk` node launch is the approval boundary. The runtime records a `managed-autonomous` permission profile on the launch/registry state and configures the SDK worker with a Copilot CLI YOLO/allow-all-equivalent posture. Model-requested tool calls proceed without per-tool approval prompts or builder modal interruptions while the managed run is active.
 
-- allow Streamliner-owned lifecycle/progress tools;
-- allow repository-local file, shell, Git, and GitHub operations needed for the selected node only when they stay within the selected worktree/repo and match the configured policy;
-- reject or require builder action for writes outside the worktree, credential or token access, broad destructive commands, unexpected network/API calls, process-wide configuration changes, and ambiguous operations;
-- transition to `waiting_for_builder` or `failed` with a typed reason when denied work blocks progress; and
-- record permission decisions as redacted progress events, not raw command/tool payloads.
+That autonomy is constrained by launch ownership rather than prompt-by-prompt approval:
 
-This policy is separate from runtime selection. A builder chooses SDK-managed execution for a node, and then the managed runtime enforces the configured permission posture for that launch.
+- Streamliner starts the worker only for the selected graph node, worktree, repo, branch, PAW work directory, and launch nonce.
+- The UI must show the selected runtime and `managed-autonomous` profile before launch so the builder can choose terminal-first execution instead when they want interactive presence.
+- Tool activity is projected as redacted progress metadata, never as raw command arguments, tool results, prompts, or secrets.
+- Provider/SDK-level permission failures, missing profile support, or runtime configuration mismatches transition to `waiting_for_builder` or `failed` with typed reasons; Streamliner must not silently switch to per-tool prompts, auto-fallback to a terminal, or run without a recorded profile.
+- Deterministic Streamliner-owned actions such as terminal takeover, cleanup-after-merge, graph promotion, registry deletion, and worktree/branch removal keep their explicit backend guardrails and confirmation/failure behavior. The autonomous profile applies to the SDK worker's model-requested tool execution, not to those lifecycle actions.
+
+Future profiles can add narrower or interactive permission modes, but the Wave 2 implementation contract should not depend on per-tool approval for the default SDK-managed autonomous node path.
 
 ### Interruption, Cancellation, and Pause Semantics
 
@@ -635,7 +637,7 @@ Automated PAW Review Loop may consume SDK-managed workers for implementation and
 - lifecycle events: `preparing`, `starting`, `running`, `idle`, `waiting_for_builder`, `interrupt_requested`, `interrupted`, `pr_ready`, `review_ready`, `completed`, `cleanup_ready`, `cleaning_up`, `cleaned_up`, `canceled`, `failed`, and `terminal_takeover`;
 - progress reads: bounded sanitized progress events and latest summary, not raw transcript access;
 - transport expectations: read lifecycle/progress through the local API's registry/session surfaces, SSE streams, or a future managed-run detail endpoint; write only through explicit managed runtime action endpoints/tools, never by editing registry files, graph files, or PAW artifacts directly;
-- permission posture: explicit per-launch managed permission profile and redacted denied-permission events;
+- permission posture: explicit `managed-autonomous` launch profile, no per-tool approval flow during SDK-owned execution, and typed/redacted profile or provider-permission failures when autonomy cannot proceed;
 - takeover semantics: terminal takeover is final for SDK control, and the review loop must stop trying to drive that actor programmatically after `terminal_takeover`; and
 - cleanup/completion semantics: PR merge and cleanup are deterministic backend states with guardrails, not model-authored status claims.
 
@@ -1237,7 +1239,7 @@ infrastructure.
 ### In This Design
 
 - MVP launch from the graph for PAW-backed Copilot CLI worker sessions, including a launch configuration dialog, SDK context assembly, SDK `paw-init`, prompt-template compilation, configurable Copilot CLI arguments, launch-claim binding, and terminal launch
-- SDK-managed local graph-node worker runtime as a builder-selected option, including registry identity, lifecycle/progress projection, permission posture, interruption/cancel, one-way terminal takeover, PR/review/completion signals, cleanup-after-merge, and Automated PAW Review Loop consumption requirements
+- SDK-managed local graph-node worker runtime as a builder-selected option, including registry identity, lifecycle/progress projection, `managed-autonomous` permission posture, interruption/cancel, one-way terminal takeover, PR/review/completion signals, cleanup-after-merge, and Automated PAW Review Loop consumption requirements
 - Observation-based session tracking via Copilot state files
 - Plugin hook signals for low-latency status hints
 - Registered-devbox observation vocabulary for trusted hook forwarding and remote session-state access

@@ -22,9 +22,12 @@ or unsafe for managed execution.
 | `terminal-cli` | Current visible Copilot CLI worker path after PAW launch preparation. Builder can watch and type in the terminal. |
 | `managed-sdk` | Streamliner starts and owns a headless Copilot SDK worker for the node. Builder monitors a sanitized browser progress projection and can interrupt, take over, or clean up through managed actions. |
 
-Runtime selection and permission policy are separate. Managed launch never means
-`approveAll`; the launch must record an explicit unattended-worker permission
-profile.
+Runtime selection and permission profile are separate, but the first managed PAW
+worker uses autonomous execution. Builder selection of `managed-sdk` at node
+launch is the consent boundary; the launch records a `managed-autonomous`
+profile and runs the SDK worker with a Copilot CLI YOLO/allow-all-equivalent
+posture. Model-requested tool calls do not introduce per-tool approval prompts
+while Streamliner owns the SDK session.
 
 ## Registry and runtime state
 
@@ -137,8 +140,9 @@ branch. Guardrail failures move to `waiting_for_builder` with typed reasons.
 ### Managed execution substrate
 
 Implement the SDK session owner, managed runtime state writer, registry metadata,
-progress redaction/retention, permission profile, cancellation, PR/completion
-signals, and cleanup guardrails against the authoritative design.
+progress redaction/retention, `managed-autonomous` permission profile,
+cancellation, PR/completion signals, and cleanup guardrails against the
+authoritative design.
 
 ### Builder-managed runtime UI
 
@@ -154,13 +158,18 @@ cleanup-after-merge.
 
 ### Foundation contract gate
 
-Evaluate the accepted contract in `session-system.md`, Decision 009, and this
-summary. No workstream graph or tracker amendment is required by the contract as
-written; downstream node boundaries remain aligned with the current graph.
+The gate passes with constraints after the permission-posture amendment:
+capability evidence and the accepted runtime contract support a constrained-go
+path for SDK-managed workers, but Wave 2 must implement `managed-autonomous` as
+an explicit node-launch profile with no per-tool approval flow during SDK-owned
+execution. Downstream node boundaries remain aligned with the current graph:
+managed execution substrate and builder-managed runtime UI can proceed first,
+then terminal takeover/cleanup actions, followed by the usability gate.
 
 ### Automated PAW Review Loop
 
 Consume managed workers through registry identity, lifecycle events, redacted
-progress, PR/review-ready signals, explicit permission posture, takeover
-finality, and cleanup/completion signals. Do not infer live actor state from PAW
-artifacts alone, and do not create a separate worker identity/progress store.
+progress, PR/review-ready signals, the `managed-autonomous` permission profile,
+takeover finality, and cleanup/completion signals. Do not infer live actor state
+from PAW artifacts alone, do not expect per-tool approval prompts, and do not
+create a separate worker identity/progress store.

@@ -72,6 +72,8 @@ area.
   workstream routing and graph-source model
 - `streamliner:docs/design/decisions/008-paw-artifacts-for-workflow-status.md` -
   PAW artifact-derived workflow status
+- `streamliner:docs/design/decisions/009-sdk-managed-worker-runtime.md` -
+  accepted SDK-managed graph-node worker runtime contract
 
 ## Boundaries
 
@@ -112,10 +114,18 @@ PowerShell path, one-way `copilot --resume <sdk-session-id>` terminal takeover,
 Streamliner plugin launch-claim spooling, and local branch/commit/PR-draft
 production.
 
-The next ready node is `managed-worker-runtime-contract` (#61). It should consume
-the capability report, turn the constrained-go findings into a product/runtime
-contract, and update the project design layer before the foundation contract gate
-(#62).
+`managed-worker-runtime-contract` completed in PR #67 and closed issue #61. It
+accepted SDK-managed graph-node workers as a constrained-go local runtime and
+updated `docs/design/session-system.md`, Decision 009, and the workstream-local
+implementation contract summary.
+
+`foundation-contract-gate` (#62) passes with constraints after a targeted
+permission-posture amendment. The builder-selected `managed-sdk` launch is the
+consent boundary for autonomous node execution. The first managed PAW worker must
+record a `managed-autonomous` profile and run with a Copilot CLI
+YOLO/allow-all-equivalent posture, without introducing per-tool approval prompts
+during SDK-owned execution. Terminal-first launch remains supported and is still
+the right choice when the builder wants interactive presence from the start.
 
 Wave 1 nodes may add workstream-local support documents under `docs/` when the
 findings are useful to downstream workers but do not yet belong directly in the
@@ -145,6 +155,11 @@ substrate and its remaining planned exports.
 - Initial safety posture is builder choice. The SDK-managed launch option should
   be available for nodes, and Streamliner can learn later which node types should
   default to or warn against it.
+- SDK-managed autonomous execution uses node launch as the consent boundary. The
+  first managed PAW worker records a `managed-autonomous` profile and runs with a
+  YOLO/allow-all-equivalent tool posture while Streamliner owns the SDK session;
+  it must not pause for per-tool approval prompts or silently fall back to another
+  runtime.
 - GitHub issue #59 is the parent tracker for this workstream. Wave 1 child
   trackers are #60 (`sdk-capability-parity-research`), #61
   (`managed-worker-runtime-contract`), and #62 (`foundation-contract-gate`);
@@ -156,20 +171,16 @@ substrate and its remaining planned exports.
 
 ## Open Questions
 
-- How should #61 phrase the constrained-go safety posture now that SDK-managed
-  workers have practical parity evidence but still need explicit runtime
-  contract boundaries?
-- How should registry ownership transfer work when Streamliner launches
-  `copilot --resume <sdk-session-id>` and hands an SDK-managed session to a
-  visible terminal?
-- What is the durable managed-worker lifecycle/status taxonomy, and which fields
-  belong in registry records versus runtime overlays?
-- Which progress projection fields are stable enough for the first browser-facing
-  read-only terminal-like surface, and which remain diagnostics-only?
-- Which design changes belong in `docs/design/session-system.md`, and which
-  require a new decision record?
-- How much of cleanup-after-merge is a generic managed-session lifecycle action
-  versus PAW-specific cleanup prompt behavior?
+Wave 1 resolved the gate-level contract questions. Remaining questions are Wave 2
+implementation details, not foundation blockers:
+
+- exact persisted field/API names for managed lifecycle, progress, completion,
+  permission profile, takeover, and cleanup state;
+- numeric retention caps for sanitized progress event count and byte size;
+- first real Streamliner-node dogfood evidence before defaulting any node type to
+  SDK-managed execution; and
+- later safety profiles or node-type recommendations beyond the initial
+  builder-selected `managed-autonomous` path.
 
 ## Imports and Exports
 
@@ -187,8 +198,8 @@ substrate and its remaining planned exports.
 ### Exports
 
 - **Managed worker runtime contract:** lifecycle states, status transitions,
-  progress-stream shape, pause/cancel semantics, PR/completion signals, and
-  cleanup semantics.
+  progress-stream shape, autonomous permission posture, pause/cancel semantics,
+  PR/completion signals, and cleanup semantics.
 - **Terminal takeover contract:** first-cut one-way ownership transfer from
   SDK-managed runtime to visible Copilot CLI.
 - **Session registry metadata for SDK-managed sessions:** fields and overlay
@@ -202,8 +213,8 @@ substrate and its remaining planned exports.
 ### External Dependencies
 
 - **SDK/CLI interoperability evidence:** Delivered by PR #63 and issue #60. The
-  contract node should consume the constrained-go findings rather than
-  rediscover SDK capability basics.
+  downstream implementation nodes should consume the constrained-go findings
+  rather than rediscover SDK capability basics.
 - **Session Launching and Tracking completion:** implementation nodes may depend
   on final names or shapes from that workstream's Wave 4 graph/session overlay
   exports.
@@ -212,4 +223,6 @@ substrate and its remaining planned exports.
 
 No closeout items yet. During dogfooding, small polish or confidence-gap items
 should be parked here and batched near the closure gate unless they change core
-semantics, need their own gate, or produce downstream exports.
+semantics, need their own gate, or produce downstream exports. The foundation
+gate's only promoted constraint is the explicit `managed-autonomous`
+permission-profile requirement for Wave 2.

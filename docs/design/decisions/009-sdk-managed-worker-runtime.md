@@ -122,3 +122,27 @@ action with guardrails and clear failure states.
   and byte retention plus latest-summary persistence.
 - The first managed runtime should be dogfooded on a real Streamliner node PR
   before Streamliner defaults any node type to managed execution.
+
+## 2026-05-08 gate amendment: autonomous permission posture
+
+The foundation-contract gate resolves the permission-profile ambiguity in item 5.
+For the first managed PAW worker, builder selection of `managed-sdk` at node
+launch is the consent boundary for autonomous tool execution. The runtime records
+a `managed-autonomous` permission profile and configures SDK-managed worker tool
+execution with a Copilot CLI YOLO/allow-all-equivalent posture, so the worker
+does not pause for per-tool approval prompts while Streamliner owns the SDK
+session.
+
+This amends "Managed workers do not inherit launch-preparation `approveAll`" to
+mean the autonomous profile must be explicit, durable, and tied to the selected
+node launch rather than accidentally inherited from the internal PAW
+initialization helper. Streamliner still scopes the launch to the selected node,
+worktree, repo, branch, and PAW context; projects only redacted progress; and
+keeps deterministic backend guardrails for Streamliner-owned lifecycle actions
+such as terminal takeover, cleanup-after-merge, graph promotion, registry
+deletion, and worktree/branch removal.
+
+If the runtime cannot record or honor the autonomous profile, the managed launch
+fails or moves to `waiting_for_builder` with typed evidence. It must not silently
+degrade into hidden per-tool prompts, silently choose a different runtime, or
+pretend the worker is autonomous when SDK/provider policy blocked tool execution.
