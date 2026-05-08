@@ -1,15 +1,11 @@
 import type { SessionRegistryListItem } from "../session-registry-contract";
+import {
+  buildCopilotResumeCommand,
+  quotePowerShellLiteral,
+} from "../terminal-command";
 
 export function getDisplaySessionId(session: SessionRegistryListItem): string {
   return session.copilotSessionId ?? session.id;
-}
-
-function quotePowerShellLiteral(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`;
-}
-
-function buildCopilotResumeCommand(copilotSessionId: string): string {
-  return `copilot ${quotePowerShellLiteral(`--resume=${copilotSessionId}`)}`;
 }
 
 function normalizePathForPowerShell(value: string): string {

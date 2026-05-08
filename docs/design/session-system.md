@@ -1077,7 +1077,7 @@ Mutation-affecting affordances must not depend solely on artifact-derived status
 
 ### Tracker Narrowing
 
-Tracker overlay only uses tracker state already present on the `WorkstreamDerivedNode`. A GitHub issue snapshot contributes issue/PR state; an active pull request contributes the selected PR state. A node with a GitHub tracker reference but no loaded snapshot is marked as tracker-degraded so the missing cache is visible. The runtime overlay does not fetch GitHub data, infer issue state from URLs, or persist tracker snapshots as part of Wave 4.
+Tracker overlay only uses tracker state already present on the `WorkstreamDerivedNode`. A GitHub issue snapshot contributes issue/PR state; an active pull request contributes the selected PR state. A node with a GitHub tracker reference but no loaded snapshot is treated as tracker-linked metadata rather than degraded runtime state: the inspector can say that a live issue/PR snapshot is not loaded, but the node should not show a degradation reason or affect gate readiness solely because Streamliner has not fetched GitHub. The runtime overlay does not fetch GitHub data, infer issue state from URLs, or persist tracker snapshots as part of Wave 4.
 
 ### Artifact Promotion
 
@@ -1096,6 +1096,22 @@ Sessions run in visible terminals. The builder sees:
 - Streamliner's UI shows a session list with node binding, status, and terminal reference
 
 Conceptually, the launch integration is doing the equivalent of `copilot -i "<kickoff prompt>" .` in the prepared `cwd`, even if the exact terminal adapter wraps that command differently for the local platform.
+
+### Terminal Adapter Seam
+
+The node launch and relaunch pipelines treat the terminal as an adapter boundary.
+Launch claims, registry binding, graph-node handoff parsing, node launch records,
+and relaunch validation are Streamliner API/session concepts; terminal host
+selection and shell command encoding are adapter concerns.
+
+The current adapter is Windows-only. It owns Windows Terminal discovery, `wt.exe`
+argument construction, PowerShell Core detection, PowerShell fallback,
+PowerShell launch-script creation, and the PowerShell command strings used for
+`copilot -i` and `copilot --resume=<id>`. The public compatibility values remain
+`default`, `windows-terminal`, and `powershell`; `default` currently means
+"prefer Windows Terminal when available, otherwise PowerShell." Future macOS or
+Linux adapters should implement the same launch request shape rather than
+changing launch claims, graph binding, node launch records, or relaunch state.
 
 ### Operator Presence
 

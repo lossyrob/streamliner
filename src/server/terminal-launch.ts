@@ -4,28 +4,53 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
+import { quotePowerShellLiteral } from "../terminal-command";
+export {
+  buildCopilotResumeCommand,
+  quotePowerShellLiteral,
+} from "../terminal-command";
+
+export const TERMINAL_HOST_PREFERENCES = [
+  "default",
+  "windows-terminal",
+  "powershell",
+] as const;
+export type TerminalHostPreference = (typeof TERMINAL_HOST_PREFERENCES)[number];
+
+export type TerminalLaunchMethod = "windows-terminal" | "powershell";
+
 /** Result of a terminal launch attempt */
 export interface TerminalLaunchResult {
   /** Which terminal method was used */
-  method: "windows-terminal" | "powershell";
+  method: TerminalLaunchMethod;
   /** PID of the spawned process (if available) */
   pid: number | undefined;
 }
 
-/** Options for launching a terminal */
-export interface TerminalLaunchOptions {
+export interface TerminalLaunchRequest {
   /** Absolute path to set as working directory */
   cwd: string;
   /** Command to execute in the terminal (optional) */
   command?: string;
   /** Additional environment values for the spawned shell */
   env?: Record<string, string>;
-  /** Preferred terminal host. Defaults to Windows Terminal with PowerShell fallback. */
-  preferredTerminal?: "default" | "windows-terminal" | "powershell";
-  /** Tab title (optional, Windows Terminal only) */
+  /** Preferred local terminal host for the adapter to honor when possible. */
+  hostPreference: TerminalHostPreference;
+  /** Tab title (optional; adapter support varies) */
   title?: string;
-  /** Tab color as hex string e.g. "#FF0000" (optional, Windows Terminal only) */
+  /** Tab color as hex string e.g. "#FF0000" (optional; adapter support varies) */
   tabColor?: string;
+}
+
+/** Options for launching a terminal */
+export interface TerminalLaunchOptions extends Omit<TerminalLaunchRequest, "hostPreference"> {
+  /** Preferred terminal host. Defaults to Windows Terminal with PowerShell fallback. */
+  preferredTerminal?: TerminalHostPreference;
+}
+
+export interface TerminalLaunchAdapter {
+  readonly id: string;
+  launch(request: TerminalLaunchRequest): TerminalLaunchResult;
 }
 
 /** Cache for Windows Terminal availability check */
@@ -61,27 +86,24 @@ function isPowerShellCoreAvailable(): boolean {
   }
 }
 
+function selectPowerShellExecutable(): string {
+  return isPowerShellCoreAvailable() ? "pwsh.exe" : "powershell.exe";
+}
+
 /**
- * Launch a terminal with the given options.
- * Tries Windows Terminal first, falls back to PowerShell.
- * Process is spawned detached so it outlives the server.
+ * Normalize the compatibility launch options into the adapter-facing request.
  */
-export function launchTerminal(
-  options: TerminalLaunchOptions
-): TerminalLaunchResult {
-  if (options.preferredTerminal === "powershell") {
-    return launchPowerShellTerminal(options);
-  }
-  if (options.preferredTerminal === "windows-terminal") {
-    if (isWindowsTerminalAvailable()) {
-      return launchWindowsTerminal(options);
-    }
-    return launchPowerShellTerminal(options);
-  }
-  if (isWindowsTerminalAvailable()) {
-    return launchWindowsTerminal(options);
-  }
-  return launchPowerShellTerminal(options);
+export function normalizeTerminalLaunchRequest(
+  options: TerminalLaunchOptions,
+): TerminalLaunchRequest {
+  return {
+    cwd: options.cwd,
+    command: options.command,
+    env: options.env,
+    hostPreference: options.preferredTerminal ?? "default",
+    title: options.title,
+    tabColor: options.tabColor,
+  };
 }
 
 function escapeForWindowsTerminal(value: string): string {
@@ -140,10 +162,6 @@ export function buildSpawnEnv(
   return env;
 }
 
-export function quotePowerShellLiteral(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`;
-}
-
 function terminalLaunchScriptRoot(): string {
   return resolve(process.env.STREAMLINER_TERMINAL_LAUNCH_SCRIPT_ROOT ?? join(
     homedir(),
@@ -153,19 +171,19 @@ function terminalLaunchScriptRoot(): string {
   ));
 }
 
-function createPowerShellLaunchScript(options: TerminalLaunchOptions): string {
+function createPowerShellLaunchScript(request: TerminalLaunchRequest): string {
   const root = terminalLaunchScriptRoot();
   mkdirSync(root, { recursive: true });
   const scriptPath = join(root, `launch-${Date.now()}-${randomUUID()}.ps1`);
-  const escapedCwd = options.cwd.replace(/'/g, "''");
+  const escapedCwd = request.cwd.replace(/'/g, "''");
   const lines = [
     "$streamlinerLaunchScriptPath = $PSCommandPath",
     "if ($streamlinerLaunchScriptPath) { Remove-Item -LiteralPath $streamlinerLaunchScriptPath -Force -ErrorAction Continue }",
     "$ErrorActionPreference = 'Stop'",
     `Set-Location -LiteralPath '${escapedCwd}'`,
   ];
-  if (options.command) {
-    lines.push(options.command);
+  if (request.command) {
+    lines.push(request.command);
   }
   writeFileSync(scriptPath, `${lines.join("\n")}\n`, { encoding: "utf8", mode: 0o600 });
   return scriptPath;
@@ -179,7 +197,8 @@ export interface CopilotInteractiveCommandOptions {
 }
 
 /**
- * Builds the PowerShell command used for visible Copilot CLI worker launches.
+ * Builds the PowerShell command used by the current Windows terminal adapter for
+ * visible Copilot CLI worker launches.
  *
  * The kickoff prompt and CLI args intentionally use different encoding paths:
  * prompt text is serialized as JSON and parsed inside PowerShell because it may
@@ -200,67 +219,102 @@ export function buildCopilotInteractiveCommand(options: CopilotInteractiveComman
   return `${decodedPrompt}; ${commandParts.join(" ")}`;
 }
 
-function launchWindowsTerminal(options: TerminalLaunchOptions): TerminalLaunchResult {
-  const args: string[] = ["new-tab"];
+export class WindowsTerminalLaunchAdapter implements TerminalLaunchAdapter {
+  readonly id = "windows";
 
-  if (options.title) {
-    args.push("--title", escapeForWindowsTerminal(options.title));
-    args.push("--suppressApplicationTitle");
+  launch(request: TerminalLaunchRequest): TerminalLaunchResult {
+    if (request.hostPreference === "powershell") {
+      return this.launchPowerShellTerminal(request);
+    }
+    if (request.hostPreference === "windows-terminal") {
+      if (isWindowsTerminalAvailable()) {
+        return this.launchWindowsTerminal(request);
+      }
+      return this.launchPowerShellTerminal(request);
+    }
+    if (isWindowsTerminalAvailable()) {
+      return this.launchWindowsTerminal(request);
+    }
+    return this.launchPowerShellTerminal(request);
   }
 
-  if (options.tabColor && isValidHexColor(options.tabColor)) {
-    args.push("--tabColor", options.tabColor);
+  private launchWindowsTerminal(request: TerminalLaunchRequest): TerminalLaunchResult {
+    const args: string[] = ["new-tab"];
+
+    if (request.title) {
+      args.push("--title", escapeForWindowsTerminal(request.title));
+      args.push("--suppressApplicationTitle");
+    }
+
+    if (request.tabColor && isValidHexColor(request.tabColor)) {
+      args.push("--tabColor", request.tabColor);
+    }
+
+    args.push("-d", escapeForWindowsTerminal(request.cwd));
+
+    if (request.command) {
+      args.push(selectPowerShellExecutable(), "-NoExit", "-File", createPowerShellLaunchScript(request));
+    }
+
+    const child = spawn("wt.exe", args, {
+      detached: true,
+      stdio: "ignore",
+      env: buildSpawnEnv(request.env),
+    });
+
+    child.unref();
+
+    if (child.pid === undefined) {
+      throw new Error("Failed to spawn Windows Terminal process");
+    }
+
+    return {
+      method: "windows-terminal",
+      pid: child.pid,
+    };
   }
 
-  args.push("-d", escapeForWindowsTerminal(options.cwd));
+  private launchPowerShellTerminal(request: TerminalLaunchRequest): TerminalLaunchResult {
+    const executable = selectPowerShellExecutable();
+    const escapedCwd = request.cwd.replace(/'/g, "''");
+    const args = request.command
+      ? ["-NoExit", "-File", createPowerShellLaunchScript(request)]
+      : ["-NoExit", "-Command", `Set-Location -LiteralPath '${escapedCwd}'`];
 
-  if (options.command) {
-    args.push("pwsh.exe", "-NoExit", "-File", createPowerShellLaunchScript(options));
+    const child = spawn(executable, args, {
+      detached: true,
+      stdio: "ignore",
+      env: buildSpawnEnv(request.env),
+    });
+
+    child.unref();
+
+    if (child.pid === undefined) {
+      throw new Error("Failed to spawn PowerShell process");
+    }
+
+    return {
+      method: "powershell",
+      pid: child.pid,
+    };
   }
-
-  const child = spawn("wt.exe", args, {
-    detached: true,
-    stdio: "ignore",
-    env: buildSpawnEnv(options.env),
-  });
-
-  child.unref();
-
-  if (child.pid === undefined) {
-    throw new Error("Failed to spawn Windows Terminal process");
-  }
-
-  return {
-    method: "windows-terminal",
-    pid: child.pid,
-  };
 }
 
-function launchPowerShellTerminal(
-  options: TerminalLaunchOptions
+const WINDOWS_TERMINAL_LAUNCH_ADAPTER = new WindowsTerminalLaunchAdapter();
+
+export function getDefaultTerminalLaunchAdapter(): TerminalLaunchAdapter {
+  return WINDOWS_TERMINAL_LAUNCH_ADAPTER;
+}
+
+/**
+ * Launch a terminal with the given compatibility options.
+ * Process is spawned detached so it outlives the server.
+ */
+export function launchTerminal(
+  options: TerminalLaunchOptions,
+  adapter: TerminalLaunchAdapter = getDefaultTerminalLaunchAdapter(),
 ): TerminalLaunchResult {
-  const executable = isPowerShellCoreAvailable() ? "pwsh.exe" : "powershell.exe";
-  const escapedCwd = options.cwd.replace(/'/g, "''");
-  const args = options.command
-    ? ["-NoExit", "-File", createPowerShellLaunchScript(options)]
-    : ["-NoExit", "-Command", `Set-Location -LiteralPath '${escapedCwd}'`];
-
-  const child = spawn(executable, args, {
-    detached: true,
-    stdio: "ignore",
-    env: buildSpawnEnv(options.env),
-  });
-
-  child.unref();
-
-  if (child.pid === undefined) {
-    throw new Error("Failed to spawn PowerShell process");
-  }
-
-  return {
-    method: "powershell",
-    pid: child.pid,
-  };
+  return adapter.launch(normalizeTerminalLaunchRequest(options));
 }
 
 /**

@@ -476,7 +476,7 @@ describe("buildWorkstreamRuntimeOverlay", () => {
     expect(overlay.gateReadiness.status).toBe("degraded");
   });
 
-  it("surfaces tracker references without snapshots as tracker-degraded", () => {
+  it("treats tracker references without snapshots as linked metadata", () => {
     const entry = buildDerivedNode({
       node: {
         id: "tracker-node",
@@ -494,8 +494,13 @@ describe("buildWorkstreamRuntimeOverlay", () => {
     const overlay = buildOverlay([entry]);
     const node = overlay.nodesById.get("tracker-node");
 
-    expect(node?.tracker.status).toBe("degraded");
-    expect(overlay.summary.counts.trackerDegradedNodes).toBe(1);
+    expect(node?.tracker.status).toBe("linked");
+    expect(node?.degradationReasons.map((reason) => reason.code)).not.toContain(
+      "tracker-snapshot-missing",
+    );
+    expect(overlay.summary.counts.degradedNodes).toBe(0);
+    expect(overlay.summary.counts.trackerDegradedNodes).toBe(0);
+    expect(overlay.gateReadiness.status).toBe("usable");
     expect(overlay.summary.issues.map((issue) => issue.code)).toContain(
       "tracker-snapshot-missing",
     );

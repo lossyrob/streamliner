@@ -65,6 +65,7 @@ export type WorkstreamRuntimePawStatus =
 
 export type WorkstreamRuntimeTrackerStatus =
   | "none"
+  | "linked"
   | "snapshot"
   | "degraded";
 
@@ -606,13 +607,13 @@ function buildTrackerOverlay(
       nodeIssue(
         entry.node.id,
         "tracker-snapshot-missing",
-        "warning",
-        "degraded",
+        "info",
+        "none",
         "The node has a GitHub tracker reference, but no tracker snapshot was provided.",
       ),
     );
     return {
-      status: "degraded",
+      status: "linked",
       tracker: entry.node.tracker,
       githubIssue: null,
       activePullRequest: entry.activePullRequest ?? null,

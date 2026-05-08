@@ -155,6 +155,8 @@ function RuntimeDetails({ overlay }: { overlay: WorkstreamRuntimeNodeOverlay | n
   const trackerSummary =
     overlay.tracker.status === "snapshot"
       ? trackerSnapshotSummary || "Tracker snapshot loaded."
+      : overlay.tracker.status === "linked"
+        ? "GitHub tracker linked; live issue/PR snapshot not loaded."
       : overlay.tracker.status === "degraded"
         ? "Tracker reference is present but no snapshot is loaded."
         : "No tracker reference.";

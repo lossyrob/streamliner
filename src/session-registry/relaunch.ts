@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import type { SessionRegistryRecord } from "../session-registry-schema";
 import type { SessionRegistryStore } from "../session-registry-contract";
 import {
+  buildCopilotResumeCommand,
   type TerminalLaunchOptions,
   type TerminalLaunchResult,
   launchTerminal,
@@ -35,14 +36,6 @@ export interface RelaunchError {
 export type RelaunchOutcome =
   | { ok: true; result: RelaunchResult }
   | { ok: false; error: RelaunchError };
-
-function quotePowerShellLiteral(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`;
-}
-
-function buildCopilotResumeCommand(copilotSessionId: string): string {
-  return `copilot ${quotePowerShellLiteral(`--resume=${copilotSessionId}`)}`;
-}
 
 export interface RelaunchDeps {
   getSession: (id: string) => SessionRegistryRecord | null;
