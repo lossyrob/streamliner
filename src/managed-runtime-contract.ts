@@ -333,7 +333,7 @@ export class ManagedRuntimeUnavailableError extends Error {
     options: { cause?: unknown; status?: number; code?: string } = {},
   ) {
     super(
-      "Managed runtime not yet available on this build.",
+      "Background sessions are not available on this build.",
       options.cause !== undefined ? { cause: options.cause } : undefined,
     );
     this.name = "ManagedRuntimeUnavailableError";

@@ -203,7 +203,7 @@ function RuntimeDetails({ overlay }: { overlay: WorkstreamRuntimeNodeOverlay | n
                 <span
                   className={`sl-runtime-inline-state ${managedLifecycleStatusClass(managedRuntime.lifecycleState)}`}
                 >
-                  managed sdk / {managedRuntime.lifecycleLabel}
+                  background session / {managedRuntime.lifecycleLabel}
                 </span>
               ) : (
                 "terminal cli"
@@ -235,7 +235,7 @@ function RuntimeDetails({ overlay }: { overlay: WorkstreamRuntimeNodeOverlay | n
                 {managedRuntime.projection.summary ??
                   managedRuntime.projection.blockerSummary ??
                   managedRuntime.projection.errorSummary ??
-                  "Managed runtime progress is summarized from sanitized lifecycle events."}
+                  "Background session progress is summarized from sanitized lifecycle events."}
               </span>
             </div>
             {managedRuntime.progress.length > 0 && (

@@ -458,7 +458,7 @@ function statusFromManagedRuntime(
           "managed-runtime-waiting-for-builder",
           "warning",
           "degraded",
-          "The managed SDK worker is waiting for builder action.",
+          "The background session is waiting for builder action.",
         ),
       );
       return "needs-input";
@@ -473,8 +473,8 @@ function statusFromManagedRuntime(
           "managed-runtime-failed",
           "warning",
           "degraded",
-          managedRuntime.projection.errorSummary ??
-            "The managed SDK worker reported a failed lifecycle state.",
+            managedRuntime.projection.errorSummary ??
+            "The background session reported a failed lifecycle state.",
         ),
       );
       return "interrupted";

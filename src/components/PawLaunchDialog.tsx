@@ -93,9 +93,9 @@ const RUNTIME_OPTIONS: Array<{
   },
   {
     value: "managed-sdk",
-    label: "Managed SDK",
-    description: "Ask Streamliner to run the worker as an SDK-managed autonomous session.",
-    note: "Requires the managed runtime backend; no per-tool approval UI.",
+    label: "Background Session",
+    description: "Run this node as an autonomous Streamliner session without opening a terminal.",
+    note: "Requires background session support; no per-tool approval UI.",
   },
 ];
 
@@ -588,15 +588,15 @@ export function PawLaunchDialog({
             <div className="sl-sheet-head-pills">
               <span className="sl-pill accent">PAW init</span>
               <span className="sl-pill muted">
-                {managedRuntimeSelected ? "Managed SDK" : "Terminal CLI"}
+                {managedRuntimeSelected ? "Background Session" : "Terminal CLI"}
               </span>
             </div>
             <h2 className="sl-sheet-title">Launch PAW session</h2>
             <p className="sl-paw-launch-subtitle">
               Selected node: <strong>{nodeTitle}</strong>. Streamliner assembles
               launch context and then either starts the existing visible Copilot CLI
-              worker terminal path or asks the managed runtime backend to run the
-              worker as a Streamliner-owned SDK session.
+              worker terminal path or runs the node as a background session without
+              opening a terminal.
             </p>
             {defaults.githubIssueLabel && (
               <p className="sl-paw-launch-tracker">
@@ -634,7 +634,7 @@ export function PawLaunchDialog({
                   <span className="sl-section-label">PAW init progress</span>
                   <p>
                     {managedRuntimeSelected
-                      ? "Streamliner is requesting a managed SDK worker for this node."
+                      ? "Streamliner is starting a background session for this node."
                       : "Streamliner is running one internal Copilot SDK session for context assembly and PAW init."}
                   </p>
                 </div>
@@ -690,8 +690,8 @@ export function PawLaunchDialog({
                 <span className="sl-section-label">Worker runtime</span>
                 <p>
                   Choose how Streamliner should run the node after launch context
-                  is prepared. Managed SDK uses the managed-autonomous permission
-                  profile and does not add per-tool approval prompts.
+                  is prepared. Background Session runs as an autonomous Streamliner
+                  session and does not add per-tool approval prompts.
                 </p>
               </div>
             </div>
@@ -863,7 +863,7 @@ export function PawLaunchDialog({
                 <strong>Launch after init</strong>
                 <small>
                   {managedRuntimeSelected
-                    ? "Managed SDK starts through the backend runtime path and does not hand off to a visible terminal."
+                    ? "Background Session starts in the background and does not hand off to a visible terminal."
                     : "Start the terminal immediately when PAW init finishes instead of stopping for prompt and WorkflowContext review."}
                 </small>
               </span>
@@ -905,7 +905,7 @@ export function PawLaunchDialog({
               <span className="sl-section-label">Runtime</span>
               <p>
                 {managedRuntimeSelected
-                  ? "Managed SDK / managed-autonomous"
+                  ? "Background Session / managed-autonomous"
                   : `Terminal CLI / ${defaults.terminalPreference} (${terminal.preferredTerminal})`}
               </p>
             </div>
@@ -917,7 +917,7 @@ export function PawLaunchDialog({
               <span className="sl-section-label">Launch mode</span>
               <p>
                 {managedRuntimeSelected
-                  ? "Start managed runtime when submitted"
+                  ? "Start background session when submitted"
                   : launchAfterInit
                     ? "Launch terminal after PAW init"
                     : "Review before terminal launch"}
@@ -1089,10 +1089,10 @@ export function PawLaunchDialog({
             >
               {preparing
                 ? managedRuntimeSelected
-                  ? "Starting managed runtime..."
+                  ? "Starting background session..."
                   : "Running PAW init..."
                 : managedRuntimeSelected
-                  ? "Start managed SDK worker"
+                  ? "Start background session"
                   : launchAfterInit
                     ? "Run PAW init and launch"
                     : "Run PAW init"}

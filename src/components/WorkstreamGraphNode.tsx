@@ -207,7 +207,7 @@ function NodeRuntimeOverlayIndicator({
   if (overlay.managedRuntime) {
     chips.push({
       key: "managed-runtime",
-      label: `managed ${overlay.managedRuntime.lifecycleLabel}`,
+      label: `background ${overlay.managedRuntime.lifecycleLabel}`,
       className: runtimeStatusClassName(overlay.runtimeStatus),
     });
   }

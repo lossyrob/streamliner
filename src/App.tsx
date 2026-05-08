@@ -1330,10 +1330,10 @@ function GraphDashboard({
       return "A terminal launch is already in progress for this node. Reopen the dialog to inspect the launch state.";
     }
     if (operation?.status === "managed_starting") {
-      return "A managed SDK launch is already in progress for this node. Reopen the dialog to inspect the launch state.";
+      return "A background session launch is already in progress for this node. Reopen the dialog to inspect the launch state.";
     }
     if (operation?.status === "bound" && operation.managedRuntime) {
-      return "A managed SDK runtime is already bound to this node.";
+      return "A background session is already bound to this node.";
     }
     const latestClaim = launchDialogTarget ? launchDialogLatestClaim : nodeLaunchRecord?.latestClaim;
     if (!latestClaim?.blocksLaunch) {
@@ -1857,12 +1857,12 @@ function GraphDashboard({
           permissionProfile: "managed-autonomous",
           lifecycleState: "starting",
           lifecycleUpdatedAt: timestamp,
-          summary: "Requesting a Streamliner-managed SDK worker.",
+          summary: "Requesting a background session.",
           progress: [
             {
               timestamp,
               phase: "starting",
-              summary: "Submitting managed runtime launch request.",
+              summary: "Submitting background session launch request.",
               kind: "lifecycle",
               status: "info",
             },
@@ -1873,7 +1873,7 @@ function GraphDashboard({
         progressEvents: [
           {
             type: "managed-runtime-starting",
-            message: "Submitting managed runtime launch request.",
+            message: "Submitting background session launch request.",
             timestamp,
           },
         ],

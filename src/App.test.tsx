@@ -627,14 +627,14 @@ describe("App sessions route", () => {
     });
     await settle();
 
-    expect(container.textContent).toContain("managed sdk");
+    expect(container.textContent).toContain("background session");
     expect(container.textContent).toContain("review ready");
     act(() => {
       findSessionRow(container, "Managed worker").click();
     });
     await settle();
 
-    expect(container.textContent).toContain("Managed runtime");
+    expect(container.textContent).toContain("Background session");
     expect(container.textContent).toContain("managed autonomous");
     expect(container.textContent).toContain("sdk-session-123");
     expect(container.textContent).toContain("Terminal takeover");
@@ -1954,12 +1954,12 @@ describe("App sessions route", () => {
       });
       await settle();
       act(() => {
-        findButton(container, "Start managed SDK worker").click();
+        findButton(container, "Start background session").click();
       });
       await settle(100);
 
       expect(container.textContent).toContain(
-        "Managed runtime not yet available on this build.",
+        "Background sessions are not available on this build.",
       );
       expect(
         fetchMock.mock.calls.some(
@@ -2076,7 +2076,7 @@ describe("App sessions route", () => {
       });
       await settle();
 
-      const submitButton = findButton(container, "Start managed SDK worker");
+      const submitButton = findButton(container, "Start background session");
       act(() => {
         submitButton.click();
         submitButton.click();
@@ -2088,7 +2088,7 @@ describe("App sessions route", () => {
           ([input]) => requestPath(input as RequestInfo | URL) === "/api/node-launches/managed",
         ),
       ).toHaveLength(1);
-      expect(container.textContent).toContain("Starting managed runtime...");
+      expect(container.textContent).toContain("Starting background session...");
 
       act(() => {
         currentLaunchRecords = [managedRecord];
@@ -2113,9 +2113,9 @@ describe("App sessions route", () => {
       });
       await settle(100);
 
-      expect(container.textContent).toContain("A managed SDK runtime is already bound to this node.");
-      expect(container.textContent).toContain("managed review ready");
-      const disabledSubmit = findButton(container, "Start managed SDK worker");
+      expect(container.textContent).toContain("A background session is already bound to this node.");
+      expect(container.textContent).toContain("background review ready");
+      const disabledSubmit = findButton(container, "Start background session");
       expect(disabledSubmit.disabled).toBe(true);
       act(() => {
         disabledSubmit.click();

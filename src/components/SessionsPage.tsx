@@ -898,7 +898,7 @@ function managedRuntimeSummaryText(runtime: ManagedRuntimeProjection): string {
     runtime.summary ??
     runtime.blockerSummary ??
     runtime.errorSummary ??
-    `Managed SDK worker is ${managedRuntimeLifecycleText(runtime)}.`
+    `Background session is ${managedRuntimeLifecycleText(runtime)}.`
   );
 }
 
@@ -2319,7 +2319,7 @@ export function SessionsPage({
                               {rowManagedRuntime && (
                                 <>
                                   <span className="sl-session-row-context-chip managed-runtime">
-                                    managed sdk
+                                    background session
                                   </span>
                                   <span
                                     className={`sl-session-row-context-chip managed-runtime ${managedLifecycleStatusClass(rowManagedRuntime.lifecycleState)}`}
@@ -2905,7 +2905,7 @@ function ManagedRuntimeOverview({ runtime }: { runtime: ManagedRuntimeProjection
 
   return (
     <section className="sl-session-overview-section managed-runtime">
-      <h3 className="sl-session-overview-heading">Managed runtime</h3>
+      <h3 className="sl-session-overview-heading">Background session</h3>
       <div className="sl-session-managed-runtime-banner">
         <span
           className={`sl-managed-runtime-state ${managedLifecycleStatusClass(runtime.lifecycleState)}`}
@@ -2916,7 +2916,7 @@ function ManagedRuntimeOverview({ runtime }: { runtime: ManagedRuntimeProjection
       </div>
       <dl className="sl-session-kv">
         <dt>Runtime</dt>
-        <dd>managed sdk</dd>
+        <dd>background session</dd>
         <dt>Owner</dt>
         <dd>{formatManagedRuntimeLabel(runtime.runtimeOwner)}</dd>
         <dt>Permission profile</dt>
