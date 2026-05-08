@@ -3,11 +3,11 @@
   "id": "sdk-managed-worker-runtime",
   "projectKey": "streamliner",
   "title": "SDK-Managed Worker Runtime",
-  "summary": "Foundation research produced a constrained-go SDK capability report in PR #63. Wave 1 is now ready for the managed-worker runtime contract and foundation gate; Wave 2 remains provisional until that contract is accepted.",
+  "summary": "Wave 1 passed the foundation contract gate with a constrained-go SDK-managed runtime contract. Wave 2 can proceed against the explicit managed-autonomous permission profile, registry/lifecycle/progress contract, one-way takeover, and cleanup guardrails.",
   "status": "active",
   "attention": "focus",
   "createdAt": "2026-05-06T03:50:15.082Z",
-  "updatedAt": "2026-05-06T21:47:38.969Z",
+  "updatedAt": "2026-05-08T03:10:34.946Z",
   "trackingIssue": {
     "owner": "lossyrob",
     "repo": "streamliner",
@@ -77,6 +77,10 @@
     {
       "repoId": "streamliner",
       "path": "docs/design/decisions/008-paw-artifacts-for-workflow-status.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/009-sdk-managed-worker-runtime.md"
     }
   ],
   "nodes": [
@@ -100,8 +104,8 @@
       "id": "managed-worker-runtime-contract",
       "type": "research",
       "title": "Managed worker runtime contract",
-      "summary": "Turn the constrained-go SDK capability findings into the accepted product/runtime contract for managed node execution: lifecycle states, registry identity, progress stream, permission policy, node launch selection, one-way terminal takeover, cleanup, and review-loop exports.",
-      "status": "ready",
+      "summary": "Completed via PR #67 plus #62 gate amendment: accepted the product/runtime contract for managed node execution, including lifecycle states, registry identity, redacted progress, managed-autonomous permission posture, node launch selection, one-way terminal takeover, cleanup, and review-loop exports.",
+      "status": "completed",
       "attention": "focus",
       "repoIds": ["streamliner"],
       "tracker": {
@@ -116,8 +120,8 @@
       "id": "foundation-contract-gate",
       "type": "gate",
       "title": "Foundation contract gate",
-      "summary": "Builder validates SDK viability and the first-cut runtime contract before implementation nodes build against it.",
-      "status": "planned",
+      "summary": "Passed with constraints: SDK capability evidence and runtime contract support a constrained-go path, and Wave 2 must implement builder-selected managed-autonomous execution with no per-tool approval flow during SDK-owned runs.",
+      "status": "completed",
       "attention": "focus",
       "repoIds": ["streamliner"],
       "tracker": {
@@ -132,8 +136,8 @@
       "id": "managed-execution-substrate",
       "type": "task",
       "title": "Managed execution substrate",
-      "summary": "Implement the SDK-managed node execution path behind the accepted contract, including launch context consumption, worker lifecycle state, progress emission, interruption semantics, PR/completion detection, and managed-session registry metadata.",
-      "status": "planned",
+      "summary": "Implement the SDK-managed node execution path behind the accepted contract, including launch context consumption, managed-autonomous permission profile, worker lifecycle state, progress emission, interruption semantics, PR/completion detection, and managed-session registry metadata.",
+      "status": "ready",
       "attention": "focus",
       "repoIds": ["streamliner"],
       "dependsOn": ["foundation-contract-gate"]
@@ -142,8 +146,8 @@
       "id": "builder-managed-runtime-ui",
       "type": "task",
       "title": "Builder-facing managed runtime UI",
-      "summary": "Expose SDK-managed execution in the node launch and monitoring surfaces: per-node runtime selection, read-only terminal-like progress, managed-session identity, status/PR links, and lifecycle actions shaped by the runtime contract.",
-      "status": "planned",
+      "summary": "Expose SDK-managed execution in the node launch and monitoring surfaces: per-node runtime selection, managed-autonomous consent/profile display, read-only terminal-like progress, managed-session identity, status/PR links, and lifecycle actions shaped by the runtime contract.",
+      "status": "ready",
       "attention": "focus",
       "repoIds": ["streamliner"],
       "dependsOn": ["foundation-contract-gate"]
@@ -193,8 +197,8 @@
     {
       "id": "foundation-contract-aligned",
       "title": "Foundation contract aligned",
-      "summary": "SDK capability parity is understood and the builder has accepted the managed-worker runtime contract.",
-      "status": "planned",
+      "summary": "SDK capability parity is understood and the builder has accepted the managed-worker runtime contract with explicit managed-autonomous permission constraints.",
+      "status": "completed",
       "nodeIds": [
         "sdk-capability-parity-research",
         "managed-worker-runtime-contract",
