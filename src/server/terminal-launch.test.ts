@@ -221,6 +221,40 @@ describe("terminal-launch", () => {
       expect(script.content).toContain("npm run dev");
     });
 
+    it("uses Windows PowerShell inside Windows Terminal when PowerShell Core is unavailable", () => {
+      vi.mocked(execSync).mockImplementation((command) => {
+        if (command === "where wt") {
+          return Buffer.from("");
+        }
+        if (command === "where pwsh") {
+          throw new Error("not found");
+        }
+        return Buffer.from("");
+      });
+
+      launchTerminal({
+        cwd: "C:\\Users\\test\\workspace",
+        command: "npm run dev",
+      });
+
+      expect(spawn).toHaveBeenCalledWith(
+        "wt.exe",
+        [
+          "new-tab",
+          "-d",
+          "C:\\Users\\test\\workspace",
+          "powershell.exe",
+          "-NoExit",
+          "-File",
+          expect.stringMatching(/launch-.*\.ps1$/),
+        ],
+        expect.objectContaining({ detached: true, stdio: "ignore" })
+      );
+      const script = readLaunchScriptFromSpawnCall();
+      expect(script.content).toContain("Set-Location -LiteralPath 'C:\\Users\\test\\workspace'");
+      expect(script.content).toContain("npm run dev");
+    });
+
     it("passes additional environment values to the spawned terminal", () => {
       launchTerminal({
         cwd: "C:\\Users\\test\\workspace",

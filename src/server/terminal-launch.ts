@@ -86,6 +86,10 @@ function isPowerShellCoreAvailable(): boolean {
   }
 }
 
+function selectPowerShellExecutable(): string {
+  return isPowerShellCoreAvailable() ? "pwsh.exe" : "powershell.exe";
+}
+
 /**
  * Normalize the compatibility launch options into the adapter-facing request.
  */
@@ -249,7 +253,7 @@ export class WindowsTerminalLaunchAdapter implements TerminalLaunchAdapter {
     args.push("-d", escapeForWindowsTerminal(request.cwd));
 
     if (request.command) {
-      args.push("pwsh.exe", "-NoExit", "-File", createPowerShellLaunchScript(request));
+      args.push(selectPowerShellExecutable(), "-NoExit", "-File", createPowerShellLaunchScript(request));
     }
 
     const child = spawn("wt.exe", args, {
@@ -271,7 +275,7 @@ export class WindowsTerminalLaunchAdapter implements TerminalLaunchAdapter {
   }
 
   private launchPowerShellTerminal(request: TerminalLaunchRequest): TerminalLaunchResult {
-    const executable = isPowerShellCoreAvailable() ? "pwsh.exe" : "powershell.exe";
+    const executable = selectPowerShellExecutable();
     const escapedCwd = request.cwd.replace(/'/g, "''");
     const args = request.command
       ? ["-NoExit", "-File", createPowerShellLaunchScript(request)]
