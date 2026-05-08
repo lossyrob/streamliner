@@ -46,6 +46,7 @@ export type WorkstreamRuntimeOverlayReasonCode =
   | "paw-evidence-unavailable"
   | "paw-evidence-unknown"
   | "paw-not-streamliner-launched"
+  | "tracker-snapshot-error"
   | "tracker-snapshot-missing";
 
 export type WorkstreamRuntimeNodeStatus =
@@ -594,6 +595,23 @@ function buildTrackerOverlay(
   }
 
   if (entry.githubIssue) {
+    if (entry.githubIssue.error) {
+      issues.push(
+        nodeIssue(
+          entry.node.id,
+          "tracker-snapshot-error",
+          "warning",
+          "degraded",
+          `The node's GitHub tracker snapshot is degraded: ${entry.githubIssue.error}`,
+        ),
+      );
+      return {
+        status: "degraded",
+        tracker: entry.node.tracker,
+        githubIssue: entry.githubIssue,
+        activePullRequest: entry.activePullRequest ?? null,
+      };
+    }
     return {
       status: "snapshot",
       tracker: entry.node.tracker,

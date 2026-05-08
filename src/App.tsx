@@ -539,7 +539,9 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
   const [error, setError] = useState<GraphLoadError | null>(null);
   const [registryError, setRegistryError] = useState<string | null>(null);
   const [workstreams, setWorkstreams] = useState<WorkstreamRegistryListEntry[]>([]);
-  const [archivedWorkstreams, setArchivedWorkstreams] = useState<WorkstreamRegistryListEntry[]>([]);
+  const [archivedWorkstreams, setArchivedWorkstreams] = useState<
+    WorkstreamRegistryListEntry[]
+  >([]);
   const [sources, setSources] = useState<WorkstreamSourceListEntry[]>([]);
   const [conflicts, setConflicts] = useState<WorkstreamConflict[]>([]);
   const [migrationWarnings, setMigrationWarnings] = useState<WorkstreamRegistryWarning[]>([]);
@@ -550,7 +552,10 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const applyRegistryResponse = useCallback((body: WorkstreamRegistryListResponse) => {
-    const mergedWorkstreams = mergeWorkstreamEntries(body.workstreams, listBrowserWorkstreamEntries());
+    const mergedWorkstreams = mergeWorkstreamEntries(
+      body.workstreams,
+      listBrowserWorkstreamEntries(),
+    );
     workstreamsRef.current = mergedWorkstreams;
     setWorkstreams(mergedWorkstreams);
     setArchivedWorkstreams(body.archivedWorkstreams ?? []);
@@ -568,9 +573,11 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
       const parsed = await parseErrorResponse(res);
       throw new Error(parsed.message);
     }
-    return applyRegistryResponse(normalizeRegistryListResponse(
-      await res.json() as Partial<WorkstreamRegistryListResponse>,
-    ));
+    return applyRegistryResponse(
+      normalizeRegistryListResponse(
+        (await res.json()) as Partial<WorkstreamRegistryListResponse>,
+      ),
+    );
   }, [applyRegistryResponse]);
 
   const loadRegistered = useCallback(
@@ -629,11 +636,11 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
         return;
       }
       const text = await res.text();
-       const doc = parseWorkstreamDocument(text);
-       lastModifiedRef.current = res.headers.get("Last-Modified");
-       setWorkstream(doc);
-       setGithubStatusRefreshKey((current) => current + 1);
-       setError(null);
+      const doc = parseWorkstreamDocument(text);
+      lastModifiedRef.current = res.headers.get("Last-Modified");
+      setWorkstream(doc);
+      setGithubStatusRefreshKey((current) => current + 1);
+      setError(null);
       await fetchRegistry();
     },
     [fetchRegistry],

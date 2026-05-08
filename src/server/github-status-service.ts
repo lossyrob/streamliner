@@ -169,6 +169,7 @@ function errorStatus(
     type: "issue",
     state: "unknown",
     stateReason: null,
+    linkedPullRequests: [],
   };
 }
 
@@ -196,11 +197,11 @@ function validationFromMergeState(
     case "has_hooks":
       return "passing";
     case "dirty":
+    case "unstable":
       return "failing";
     case "blocked":
     case "behind":
     case "draft":
-    case "unstable":
     case "unknown":
       return "pending";
     default:
@@ -255,6 +256,7 @@ function normalizeIssue(
   ref: GithubStatusRef,
   payload: unknown,
   fetchedAt: string,
+  linkedPullRequests: GithubPullRequestStatusResult[] = [],
 ): GithubIssueStatusResult {
   if (!isRecord(payload)) {
     return errorStatus(ref, fetchedAt, {
@@ -272,6 +274,7 @@ function normalizeIssue(
     url: stringField(payload, "html_url") ?? htmlUrl(ref),
     state,
     stateReason: stringField(payload, "state_reason"),
+    linkedPullRequests,
     fetchedAt,
     statusLabel: issueStatusLabel(state),
   };
@@ -313,6 +316,74 @@ function normalizePullRequest(
   };
 }
 
+function timelineUrl(ref: GithubStatusRef): string {
+  const owner = encodeURIComponent(ref.owner);
+  const repo = encodeURIComponent(ref.repo);
+  return `${GITHUB_API_BASE_URL}/repos/${owner}/${repo}/issues/${ref.number}/timeline?per_page=100`;
+}
+
+function repoFromRepositoryUrl(value: unknown): { owner: string; repo: string } | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const match = value.match(/\/repos\/([^/]+)\/([^/]+)$/i);
+  return match
+    ? {
+        owner: decodeURIComponent(match[1]),
+        repo: decodeURIComponent(match[2]),
+      }
+    : null;
+}
+
+function linkedPullRequestRefsFromTimeline(
+  ref: GithubStatusRef,
+  payload: unknown,
+): GithubStatusRef[] {
+  if (!Array.isArray(payload)) {
+    return [];
+  }
+
+  const refs: GithubStatusRef[] = [];
+  const seen = new Set<string>();
+  for (const event of payload) {
+    if (!isRecord(event)) {
+      continue;
+    }
+    const source = event.source;
+    if (!isRecord(source)) {
+      continue;
+    }
+    const issue = source.issue;
+    if (!isRecord(issue) || !isRecord(issue.pull_request)) {
+      continue;
+    }
+    const number = issue.number;
+    if (
+      typeof number !== "number" ||
+      !Number.isSafeInteger(number) ||
+      number <= 0
+    ) {
+      continue;
+    }
+    const repo = repoFromRepositoryUrl(issue.repository_url) ?? {
+      owner: ref.owner,
+      repo: ref.repo,
+    };
+    const linkedRef: GithubStatusRef = {
+      type: "pr",
+      owner: repo.owner,
+      repo: repo.repo,
+      number,
+    };
+    const key = githubStatusRefKey(linkedRef);
+    if (!seen.has(key)) {
+      seen.add(key);
+      refs.push(linkedRef);
+    }
+  }
+  return refs;
+}
+
 export function createGithubStatusService(
   options: GithubStatusServiceOptions = {},
 ): GithubStatusService {
@@ -349,9 +420,63 @@ export function createGithubStatusService(
       }
 
       const payload = await response.json();
-      return ref.type === "pr"
-        ? normalizePullRequest(ref, payload, fetchedAt)
-        : normalizeIssue(ref, payload, fetchedAt);
+      if (ref.type === "pr") {
+        return normalizePullRequest(ref, payload, fetchedAt);
+      }
+
+      const linkedPullRequests: GithubPullRequestStatusResult[] = [];
+      try {
+        const timelineResponse = await fetchImpl(timelineUrl(ref), { headers });
+        if (timelineResponse.ok) {
+          const linkedRefs = linkedPullRequestRefsFromTimeline(
+            ref,
+            await timelineResponse.json(),
+          );
+          for (const linkedRef of linkedRefs) {
+            try {
+              const pullRequestResponse = await fetchImpl(githubUrl(linkedRef), {
+                headers,
+              });
+              if (!pullRequestResponse.ok) {
+                linkedPullRequests.push(
+                  errorStatus(linkedRef, fetchedAt, {
+                    code: errorCodeForStatus(pullRequestResponse),
+                    message: errorMessageForStatus(linkedRef, pullRequestResponse),
+                    status: pullRequestResponse.status,
+                    retryAfterSeconds: parseRetryAfter(pullRequestResponse.headers),
+                  }) as GithubPullRequestStatusResult,
+                );
+                continue;
+              }
+              linkedPullRequests.push(
+                normalizePullRequest(
+                  linkedRef,
+                  await pullRequestResponse.json(),
+                  fetchedAt,
+                ),
+              );
+            } catch (error) {
+              linkedPullRequests.push(
+                errorStatus(linkedRef, fetchedAt, {
+                  code: "github_fetch_failed",
+                  message: error instanceof Error ? error.message : String(error),
+                }) as GithubPullRequestStatusResult,
+              );
+            }
+          }
+        } else {
+          logger.warn("linked-pr-discovery-degraded", {
+            ref: githubStatusRefKey(ref),
+            status: timelineResponse.status,
+          });
+        }
+      } catch (error) {
+        logger.warn("linked-pr-discovery-failed", {
+          ref: githubStatusRefKey(ref),
+          err: error,
+        });
+      }
+      return normalizeIssue(ref, payload, fetchedAt, linkedPullRequests);
     } catch (error) {
       return errorStatus(ref, fetchedAt, {
         code: "github_fetch_failed",

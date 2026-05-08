@@ -82,6 +82,9 @@ describe("GitHub status API", () => {
           state_reason: null,
         });
       }
+      if (url.endsWith("/issues/69/timeline?per_page=100")) {
+        return githubResponse([]);
+      }
       if (url.endsWith("/pulls/70")) {
         return githubResponse({
           title: "Implement live status",
@@ -127,13 +130,75 @@ describe("GitHub status API", () => {
         },
       ],
     });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
 
     await request(api.app)
       .get("/api/github/status")
       .query({ ref: "issue:lossyrob/streamliner#69" })
       .expect(200);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("includes linked PR status from issue timeline events", async () => {
+    const fetchMock = vi.fn<GithubStatusFetch>(async (url) => {
+      if (url.endsWith("/issues/69")) {
+        return githubResponse({
+          title: "Show live GitHub status",
+          html_url: "https://github.com/lossyrob/streamliner/issues/69",
+          state: "open",
+          state_reason: null,
+        });
+      }
+      if (url.endsWith("/issues/69/timeline?per_page=100")) {
+        return githubResponse([
+          {
+            event: "cross-referenced",
+            source: {
+              issue: {
+                number: 70,
+                repository_url: "https://api.github.com/repos/lossyrob/streamliner",
+                pull_request: {
+                  url: "https://api.github.com/repos/lossyrob/streamliner/pulls/70",
+                },
+              },
+            },
+          },
+        ]);
+      }
+      if (url.endsWith("/pulls/70")) {
+        return githubResponse({
+          title: "Implement live status",
+          html_url: "https://github.com/lossyrob/streamliner/pull/70",
+          state: "open",
+          draft: false,
+          merged: false,
+          mergeable_state: "unstable",
+        });
+      }
+      throw new Error(`Unexpected GitHub URL: ${url}`);
+    });
+    const api = createApi(fetchMock);
+
+    const response = await request(api.app)
+      .get("/api/github/status")
+      .query({ ref: "issue:lossyrob/streamliner#69" })
+      .expect(200);
+
+    expect(response.body.statuses[0]).toMatchObject({
+      key: "issue:lossyrob/streamliner#69",
+      type: "issue",
+      linkedPullRequests: [
+        {
+          key: "pr:lossyrob/streamliner#70",
+          type: "pr",
+          state: "open",
+          validationState: "failing",
+          validationLabel: "checks failing",
+          statusLabel: "PR checks failing",
+        },
+      ],
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it("returns per-ref degraded status for rate limits", async () => {

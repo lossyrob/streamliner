@@ -36,6 +36,7 @@ export interface GithubIssueStatusResult extends GithubStatusResultBase {
   type: "issue";
   state: "open" | "closed" | "unknown";
   stateReason: string | null;
+  linkedPullRequests: GithubPullRequestStatusResult[];
 }
 
 export interface GithubPullRequestStatusResult extends GithubStatusResultBase {

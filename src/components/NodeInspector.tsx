@@ -159,14 +159,19 @@ function RuntimeDetails({ overlay }: { overlay: WorkstreamRuntimeNodeOverlay | n
   ]
     .filter(Boolean)
     .join(" / ");
-  const trackerSummary =
-    overlay.tracker.status === "snapshot"
-      ? trackerSnapshotSummary || "Tracker snapshot loaded."
-      : overlay.tracker.status === "linked"
-        ? "GitHub tracker linked; live issue/PR snapshot not loaded."
-      : overlay.tracker.status === "degraded"
-        ? "Tracker reference is present but no snapshot is loaded."
-        : "No tracker reference.";
+  let trackerSummary = "No tracker reference.";
+  if (overlay.tracker.status === "snapshot") {
+    trackerSummary = trackerSnapshotSummary || "Tracker snapshot loaded.";
+  } else if (
+    overlay.tracker.status === "degraded" &&
+    overlay.tracker.githubIssue?.error
+  ) {
+    trackerSummary = `GitHub tracker snapshot degraded: ${overlay.tracker.githubIssue.error}`;
+  } else if (overlay.tracker.status === "linked") {
+    trackerSummary = "GitHub tracker linked; live issue/PR snapshot not loaded.";
+  } else if (overlay.tracker.status === "degraded") {
+    trackerSummary = "Tracker reference is present but no snapshot is loaded.";
+  }
 
   return (
     <div className="sl-sidebar-section">

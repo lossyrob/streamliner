@@ -94,7 +94,21 @@ export function workstreamGithubSnapshotFromStatuses(
       stateReason: status.stateReason,
       title: status.title ?? `Issue #${status.ref.number}`,
       url: status.url,
-      linkedPullRequests: [] as WorkstreamGithubPullRequestSnapshot[],
+      linkedPullRequests: status.linkedPullRequests.map(
+        (pullRequest): WorkstreamGithubPullRequestSnapshot => ({
+          owner: pullRequest.ref.owner,
+          repo: pullRequest.ref.repo,
+          number: pullRequest.ref.number,
+          title: pullRequest.title ?? `PR #${pullRequest.ref.number}`,
+          url: pullRequest.url,
+          state: pullRequest.state,
+          isDraft: pullRequest.isDraft,
+          reviewDecision: pullRequest.reviewDecision,
+          mergeStateStatus: pullRequest.mergeStateStatus,
+          validationState: pullRequest.validationState,
+          validationLabel: pullRequest.validationLabel,
+        }),
+      ),
       fetchedAt: status.fetchedAt,
       error: status.error?.message,
     }));
@@ -144,11 +158,11 @@ export function useGithubStatusLookup(
         if (controller.signal.aborted) {
           return;
         }
-        setState({
-          statuses: EMPTY_STATUS_LOOKUP,
+        setState((current) => ({
+          statuses: current.statuses,
           loading: false,
           error: error instanceof Error ? error.message : String(error),
-        });
+        }));
       });
 
     return () => controller.abort();

@@ -1256,6 +1256,28 @@ describe("App sessions route", () => {
                 stateReason: "completed",
                 title: "Launch prompt profiles",
                 url: "https://github.com/lossyrob/streamliner/issues/33",
+                linkedPullRequests: [
+                  {
+                    key: "pr:lossyrob/streamliner#34",
+                    ref: {
+                      type: "pr",
+                      owner: "lossyrob",
+                      repo: "streamliner",
+                      number: 34,
+                    },
+                    type: "pr",
+                    title: "Finish launch prompt profiles",
+                    url: "https://github.com/lossyrob/streamliner/pull/34",
+                    state: "open",
+                    isDraft: false,
+                    reviewDecision: null,
+                    mergeStateStatus: "unstable",
+                    validationState: "failing",
+                    validationLabel: "checks failing",
+                    fetchedAt: "2026-05-08T12:00:00.000Z",
+                    statusLabel: "PR checks failing",
+                  },
+                ],
                 fetchedAt: "2026-05-08T12:00:00.000Z",
                 statusLabel: "issue closed",
               },
@@ -1278,8 +1300,61 @@ describe("App sessions route", () => {
 
       const graphNode = findCanvasNode(container, "Launch prompt profiles");
       expect(graphNode.textContent).toContain("issue closed");
+      expect(graphNode.textContent).toContain("1 PR");
+      expect(graphNode.textContent).toContain("PR checks failing");
       expect(container.textContent).toContain("Issue:");
       expect(container.textContent).toContain("issue closed");
+      expect(container.textContent).toContain("PR checks failing");
+    },
+    15_000,
+  );
+
+  it(
+    "keeps static tracker UI when live GitHub status fails",
+    async () => {
+      const graph = buildLaunchGraph("planned");
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        if (path === "/api/sessions?workstreamId=api-test") {
+          return jsonResponse([]);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return jsonResponse({ record: null, records: [] });
+        }
+        if (path.startsWith("/api/github/status?")) {
+          return jsonResponse({ error: "GitHub unavailable" }, 503);
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState(
+        {},
+        "",
+        "/workstreams/streamliner/api-test/nodes/launch-prompt-profiles",
+      );
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(150);
+
+      expect(container.textContent).toContain("Launch prompt profiles");
+      expect(container.textContent).toContain("Issue:");
+      expect(container.textContent).toContain("lossyrob/streamliner#33");
+      expect(container.textContent).toContain(
+        "GitHub tracker linked; live issue/PR snapshot not loaded.",
+      );
+      expect(container.textContent).not.toContain("GitHub unavailable");
     },
     15_000,
   );
