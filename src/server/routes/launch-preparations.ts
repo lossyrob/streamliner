@@ -20,6 +20,7 @@ import type {
   LaunchContextTrackerResolver,
 } from "../launch-context";
 import type { NodeLaunchRecordStore } from "../node-launch-record-store";
+import { isActiveNodeLaunchOperationStatus } from "../../node-launch-record-contract";
 import { getApiLogger } from "../logger";
 
 export interface LaunchPreparationRouteDeps {
@@ -116,7 +117,7 @@ export function createLaunchPreparationsRouter(options: {
       const existingOperation = graphPath && nodeId.trim()
         ? await operationStore?.getOperation(graphPath, nodeId)
         : null;
-      if (existingOperation && isActiveOperation(existingOperation.status)) {
+      if (existingOperation && isActiveNodeLaunchOperationStatus(existingOperation.status)) {
         res.status(409).json({
           code: "duplicate_active_launch_operation",
           error: `Node ${nodeId} already has an active launch operation.`,
@@ -180,7 +181,7 @@ export function createLaunchPreparationsRouter(options: {
       const existingOperation = graphPath && nodeId.trim()
         ? await operationStore?.getOperation(graphPath, nodeId)
         : null;
-      if (existingOperation && isActiveOperation(existingOperation.status)) {
+      if (existingOperation && isActiveNodeLaunchOperationStatus(existingOperation.status)) {
         res.status(409).json({
           code: "duplicate_active_launch_operation",
           error: `Node ${nodeId} already has an active launch operation.`,
@@ -290,10 +291,6 @@ export function createLaunchPreparationsRouter(options: {
   });
 
   return router;
-}
-
-function isActiveOperation(status: string): boolean {
-  return status === "preparing" || status === "launching";
 }
 
 function toOperationError(error: unknown): {

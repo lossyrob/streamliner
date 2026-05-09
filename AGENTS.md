@@ -82,9 +82,9 @@ contract, or the launch/relaunch behavior.
 - PAW (Plan → Activity → Work) workflow artifacts live in `.paw/work/<id>/`.
 - For most non-trivial changes, run a planning pass before editing code.
 - For UI changes, include PR screenshots captured with `scripts/screenshot.mjs`.
-  Commit them under `.github/pr-screenshots/<pr-number>/` and embed them with
-  GitHub same-site `blob/<branch-or-sha>/...png?raw=true` URLs; avoid stable
-  `raw.githubusercontent.com` links for private/tokenized assets because they
-  can render as broken images in PR bodies.
+  Commit screenshots only to the dedicated `pr-screenshots` branch under
+  `pr/<pr-number>/`, embed them with same-site
+  `blob/pr-screenshots/pr/<pr-number>/...png?raw=true` URLs, and never include
+  screenshot files in feature PR diffs.
 - Commits should include `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>`
   when authored by an AI agent.

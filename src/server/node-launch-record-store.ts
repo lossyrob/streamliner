@@ -720,6 +720,7 @@ function operationFromHandoff(
   const graphPath = handoff.launchMetadata.graphPath;
   const nodeId = handoff.launchMetadata.nodeId;
   const existing = findStoredOperation(document, graphPath, nodeId);
+  const launchHandoff = toNodeLaunchHandoff(handoff);
   const nextOperation: StoredNodeLaunchOperation = {
     id: existing?.id ?? recordId(graphPath, nodeId),
     graphPath,
@@ -729,7 +730,7 @@ function operationFromHandoff(
     startedAt: existing?.startedAt ?? timestamp,
     updatedAt: timestamp,
     completedAt: updates.completedAt,
-    handoff: toNodeLaunchHandoff(handoff),
+    handoff: launchHandoff,
     terminalLaunch: updates.terminalLaunch,
     managedLaunch: updates.managedLaunch,
     error: updates.error,

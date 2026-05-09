@@ -65,6 +65,7 @@ import type {
   NodeLaunchOperation,
   NodeLaunchRecord,
   NodeLaunchRecordResponse,
+  NodeManagedSdkLaunchResponse,
   NodeTerminalLaunchResponse,
 } from "./node-launch-record-contract";
 import { loadGraphNodeLaunchRecords } from "./node-launch-record-client";
@@ -120,6 +121,18 @@ interface PawLaunchRunFinishedPayload {
 interface LoadedNodeLaunchState {
   record: NodeLaunchRecord | null;
   operation: NodeLaunchOperation | null;
+}
+
+interface ManagedSdkLaunchApiResponse {
+  runtimeKind: "managed-sdk";
+  launchClaim: NodeLaunchClaimState;
+  managedSdk: {
+    registryId: string;
+    sdkSessionId: string | null;
+    sdkWorkspacePath: string | null;
+    sdkStateRoot: string | null;
+    permissionProfile: "managed-autonomous";
+  };
 }
 
 interface LaunchOperationTarget {
@@ -214,10 +227,10 @@ function useDashboardRoute() {
   }, []);
 
   useEffect(() => {
-  if (new URLSearchParams(window.location.search).get("view") === "sessions") {
-    window.history.replaceState({}, "", "/sessions");
-  }
-}, []);
+    if (new URLSearchParams(window.location.search).get("view") === "sessions") {
+      window.history.replaceState({}, "", "/sessions");
+    }
+  }, []);
 
   const setRoute = useCallback((nextRoute: DashboardRoute, mode: "push" | "replace" = "push") => {
     const path = routePath(nextRoute);
@@ -364,6 +377,7 @@ function createClientLaunchOperation(
     completedAt: null,
     handoff: null,
     terminalLaunch: null,
+    managedLaunch: null,
     error: null,
     progressEvents: [],
     ...overrides,
@@ -378,6 +392,20 @@ function operationError(
     code,
     error,
     timestamp: new Date().toISOString(),
+  };
+}
+
+function managedLaunchFromApiResponse(
+  result: ManagedSdkLaunchApiResponse,
+): NodeManagedSdkLaunchResponse {
+  return {
+    launchClaim: result.launchClaim,
+    runtimeKind: "managed-sdk",
+    registryId: result.managedSdk.registryId,
+    sdkSessionId: result.managedSdk.sdkSessionId,
+    sdkWorkspacePath: result.managedSdk.sdkWorkspacePath,
+    sdkStateRoot: result.managedSdk.sdkStateRoot,
+    permissionProfile: result.managedSdk.permissionProfile,
   };
 }
 
@@ -407,6 +435,7 @@ function clientHandoffFromPreparation(
     sessionStateRoot: handoff.sessionStateRoot,
     kickoffPrompt: handoff.kickoffPrompt,
     kickoffAdditionalInstructions: handoff.kickoffAdditionalInstructions,
+    runtimeKind: handoff.runtimeKind ?? "terminal-cli",
     launchMetadata: handoff.launchMetadata,
     contextPackage: handoff.contextPackage,
     sdkSession: handoff.sdkSession,
@@ -1386,15 +1415,26 @@ function GraphDashboard({
   );
 
   const launchActionDisabledReason = useMemo(() => {
+    const operation = launchDialogOperation ?? selectedLaunchOperation;
     const latestClaim = launchDialogTarget ? launchDialogLatestClaim : nodeLaunchRecord?.latestClaim;
     if (!latestClaim?.blocksLaunch) {
       return null;
     }
+    const activeRuntimeLabel =
+      operation?.managedLaunch || operation?.handoff?.runtimeKind === "managed-sdk"
+        ? "background session"
+        : "terminal launch";
     if (latestClaim.status === "bound") {
-      return "A Copilot terminal session is already bound to this node. The dialog remains available for the issue and prepared launch details, but Streamliner will not start another PAW init or terminal launch while that session is active.";
+      return `A ${activeRuntimeLabel} is already bound to this node. The dialog remains available for the issue and prepared launch details, but Streamliner will not start another PAW init or launch while that session is active.`;
     }
-    return "A terminal launch is already active for this node. The dialog remains available for the issue and prepared launch details, but Streamliner will not start another PAW init or terminal launch until the active claim resolves.";
-  }, [launchDialogLatestClaim, launchDialogTarget, nodeLaunchRecord]);
+    return `A ${activeRuntimeLabel} is already active for this node. The dialog remains available for the issue and prepared launch details, but Streamliner will not start another PAW init or launch until the active claim resolves.`;
+  }, [
+    launchDialogLatestClaim,
+    launchDialogOperation,
+    launchDialogTarget,
+    nodeLaunchRecord,
+    selectedLaunchOperation,
+  ]);
 
   const launchDefaults = useMemo<PawLaunchDialogDefaults | null>(() => {
     const defaultsEntry = launchDialogTarget ? launchDialogEntry : selectedEntry;
@@ -1407,6 +1447,7 @@ function GraphDashboard({
     const savedCwd = readLaunchCwdOverride(cwdPreferenceKey);
     return {
       workflowInstructions: DEFAULT_PAW_WORKFLOW_INSTRUCTIONS,
+      runtimeKind: "terminal-cli",
       cliArgsText: "--yolo",
       cwd: savedCwd ?? inferredCwd,
       inferredCwd,
@@ -1854,6 +1895,88 @@ function GraphDashboard({
     }
   };
 
+  const launchManagedSdkFromHandoff = async (
+    handoff: PawLaunchPreparationResponse,
+    target: LaunchOperationTarget,
+  ) => {
+    const timestamp = new Date().toISOString();
+    updateLaunchOperation(target, (current) =>
+      createClientLaunchOperation(target, "managed_starting", {
+        ...(current ?? {}),
+        status: "managed_starting",
+        handoff,
+        terminalLaunch: null,
+        managedLaunch: null,
+        error: null,
+        progressEvents: [
+          {
+            type: "managed-runtime-starting",
+            message: "Submitting background session launch request.",
+            timestamp,
+          },
+        ],
+        startedAt: timestamp,
+        completedAt: null,
+        updatedAt: timestamp,
+      })
+    );
+    try {
+      const response = await fetch("/api/node-launches", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          handoff: {
+            ...handoff,
+            runtimeKind: "managed-sdk",
+          },
+        }),
+      });
+      if (!response.ok) {
+        const parsed = await parseErrorResponse(response);
+        throw new Error(parsed.message);
+      }
+      const result = await response.json() as ManagedSdkLaunchApiResponse;
+      const managedLaunch = managedLaunchFromApiResponse(result);
+      const refreshed = await loadNodeLaunchRecord(target.graphPath, target.nodeId);
+      if (refreshed.record) {
+        setNodeLaunchRecords((current) =>
+          mergeNodeLaunchRecord(current, target, refreshed.record)
+        );
+      }
+      setLaunchOperation(
+        target,
+        refreshed.operation ??
+          createClientLaunchOperation(target, "managed_running", {
+            status: "managed_running",
+            handoff,
+            terminalLaunch: null,
+            managedLaunch,
+            latestClaim: result.launchClaim,
+            completedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          }),
+      );
+      setNodeLaunchRecordRefreshKey((current) => current + 1);
+    } catch (nextError) {
+      const message = nextError instanceof Error ? nextError.message : String(nextError);
+      updateLaunchOperation(target, (current) =>
+        createClientLaunchOperation(
+          target,
+          "managed_failed",
+          {
+            ...(current ?? {}),
+            status: "managed_failed",
+            managedLaunch: null,
+            error: operationError("managed_runtime_failed", message),
+            completedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+        )
+      );
+      setNodeLaunchRecordRefreshKey((current) => current + 1);
+    }
+  };
+
   const handleSubmitLaunch = async (configuration: PawLaunchDialogConfiguration) => {
     const target = launchDialogTarget ?? selectedLaunchTarget;
     const targetEntry = launchDialogEntry ?? selectedEntry;
@@ -1873,6 +1996,7 @@ function GraphDashboard({
         preparationRunId: null,
         handoff: null,
         terminalLaunch: null,
+        managedLaunch: null,
         error: null,
         progressEvents: [],
         startedAt: new Date().toISOString(),
@@ -1891,6 +2015,7 @@ function GraphDashboard({
           launchNonce: createLaunchNonce(),
           configuration: {
             ...(cwdOverride ? { cwd: cwdOverride } : {}),
+            runtimeKind: configuration.runtimeKind,
             workflowInstructions: configuration.workflowInstructions,
             cliArgs: configuration.cliArgs,
             terminal: configuration.terminal,
@@ -1957,7 +2082,9 @@ function GraphDashboard({
           reject(new Error("Lost connection to launch preparation progress stream."));
         };
       });
-      if (configuration.launchAfterInit) {
+      if (preparedHandoff.runtimeKind === "managed-sdk") {
+        await launchManagedSdkFromHandoff(preparedHandoff, target);
+      } else if (configuration.launchAfterInit) {
         await launchTerminalFromHandoff(preparedHandoff, {
           kickoffPrompt: preparedHandoff.kickoffPrompt,
           terminalTitle: preparedHandoff.terminal.title ?? preparedHandoff.launchMetadata.workTitle,
@@ -2098,7 +2225,10 @@ function GraphDashboard({
           promptProfiles={promptProfiles}
           promptProfilesLoading={promptProfilesLoading}
           promptProfilesError={promptProfilesError}
-          preparing={launchDialogOperation?.status === "preparing"}
+          preparing={
+            launchDialogOperation?.status === "preparing" ||
+            launchDialogOperation?.status === "managed_starting"
+          }
           launching={launchDialogOperation?.status === "launching"}
           error={launchDialogOperation?.error?.error ?? null}
           handoff={launchDialogOperation?.handoff ?? null}

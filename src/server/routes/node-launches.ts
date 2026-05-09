@@ -16,6 +16,7 @@ import {
   type NodeLaunchDeps,
 } from "../node-launch";
 import type { NodeLaunchRecordStore } from "../node-launch-record-store";
+import { isActiveNodeLaunchOperationStatus } from "../../node-launch-record-contract";
 import { SessionRegistryFileStore } from "../../session-registry/file-store";
 import {
   WORKSTREAM_LAUNCH_REQUIRED_TRACKERS,
@@ -325,7 +326,7 @@ export function createNodeLaunchesRouter(options: {
         handoff.launchMetadata.graphPath,
         handoff.launchMetadata.nodeId,
       );
-      if (existingOperation && isActiveOperation(existingOperation.status)) {
+      if (existingOperation && isActiveNodeLaunchOperationStatus(existingOperation.status)) {
         res.status(409).json({
           code: "duplicate_active_launch_operation",
           error: `Node ${handoff.launchMetadata.nodeId} already has an active launch operation.`,
@@ -415,12 +416,4 @@ export function createNodeLaunchesRouter(options: {
   });
 
   return router;
-}
-
-function isActiveOperation(status: string): boolean {
-  return (
-    status === "preparing" ||
-    status === "launching" ||
-    status === "managed_starting"
-  );
 }

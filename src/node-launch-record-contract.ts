@@ -1,3 +1,7 @@
+import type {
+  LaunchClaimFailureCode,
+  LaunchClaimStatus,
+} from "./launch-claim-schema";
 import type { WorkstreamLaunchPolicy } from "./workstream-schema";
 
 export type NodeLaunchPreferredTerminal = "default" | "windows-terminal" | "powershell";
@@ -38,11 +42,6 @@ export interface NodeLaunchSdkSession {
   workspacePath?: string;
   stateRoot: string;
 }
-
-import type {
-  LaunchClaimFailureCode,
-  LaunchClaimStatus,
-} from "./launch-claim-schema";
 
 export interface NodeLaunchHandoff {
   cwd: string;
@@ -105,6 +104,10 @@ export type NodeLaunchOperationStatus =
   | "managed_failed"
   | "bound"
   | "terminal_failed";
+
+export function isActiveNodeLaunchOperationStatus(status: string): boolean {
+  return status === "preparing" || status === "launching" || status === "managed_starting";
+}
 
 export interface NodeLaunchOperationProgressEvent {
   type: string;
