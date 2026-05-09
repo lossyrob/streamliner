@@ -1,5 +1,5 @@
-import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync, realpathSync } from "node:fs";
 import { basename, resolve } from "node:path";
 
 import type { SessionRegistryListItem } from "../session-registry-contract";
@@ -18,11 +18,14 @@ export const MANAGED_CLEANUP_BLOCKER_CODES = [
   "missing-branch",
   "branch-mismatch",
   "protected-branch",
+  "invalid-branch",
   "branch-shared",
   "dirty-worktree",
   "live-process",
   "missing-pr-evidence",
   "github-auth-mismatch",
+  "github-network-unavailable",
+  "github-repo-not-found",
   "github-verification-unavailable",
   "pr-not-merged",
   "pr-head-missing",
@@ -63,11 +66,14 @@ export interface ManagedCleanupExecutionResult {
   blockers: ManagedCleanupBlocker[];
 }
 
+type Awaitable<T> = T | Promise<T>;
+
 export interface ManagedCleanupDeps {
   cwd: string;
   existsSync: (path: string) => boolean;
-  runGit: (cwd: string, args: string[]) => CommandResult;
-  runGh: (cwd: string, args: string[]) => CommandResult;
+  runGit: (cwd: string, args: string[]) => Awaitable<CommandResult>;
+  runGh: (cwd: string, args: string[]) => Awaitable<CommandResult>;
+  commandTimeoutMs?: number;
 }
 
 interface CommandResult {
@@ -98,22 +104,27 @@ interface PullRequestFacts {
 }
 
 const PROTECTED_BRANCHES = new Set(["main", "master", "develop", "trunk"]);
+const DEFAULT_COMMAND_TIMEOUT_MS = 15_000;
+const activeCleanupLocks = new Map<string, Promise<void>>();
 
-export function defaultManagedCleanupDeps(): ManagedCleanupDeps {
+export function defaultManagedCleanupDeps(
+  commandTimeoutMs = DEFAULT_COMMAND_TIMEOUT_MS,
+): ManagedCleanupDeps {
   return {
     cwd: process.cwd(),
     existsSync,
-    runGit: (cwd, args) => runCommand("git", args, cwd),
-    runGh: (cwd, args) => runCommand("gh", args, cwd),
+    commandTimeoutMs,
+    runGit: (cwd, args) => runCommand("git", args, cwd, commandTimeoutMs),
+    runGh: (cwd, args) => runCommand("gh", args, cwd, commandTimeoutMs),
   };
 }
 
-export function validateManagedCleanup(
+export async function validateManagedCleanup(
   record: SessionRegistryRecord,
   sessions: readonly SessionRegistryListItem[],
   deps: Partial<ManagedCleanupDeps> = {},
-): ManagedCleanupValidation {
-  const resolved = { ...defaultManagedCleanupDeps(), ...deps };
+): Promise<ManagedCleanupValidation> {
+  const resolved = { ...defaultManagedCleanupDeps(deps.commandTimeoutMs), ...deps };
   const blockers: ManagedCleanupBlocker[] = [];
   const runtime = record.runtime;
   if (!runtime) {
@@ -159,13 +170,13 @@ export function validateManagedCleanup(
     }
   }
 
-  const repoRootResult = git(resolved, targetPath, ["rev-parse", "--show-toplevel"]);
+  const repoRootResult = await git(resolved, targetPath, ["rev-parse", "--show-toplevel"]);
   if (!repoRootResult.ok) {
     blockers.push(blocker("git-command-failed", "Unable to resolve git repository root.", repoRootResult.message));
     return { ok: false, blockers };
   }
   const repoRoot = repoRootResult.stdout.trim();
-  const worktreeList = git(resolved, repoRoot, ["worktree", "list", "--porcelain"]);
+  const worktreeList = await git(resolved, repoRoot, ["worktree", "list", "--porcelain"]);
   if (!worktreeList.ok) {
     blockers.push(blocker("git-command-failed", "Unable to list git worktrees.", worktreeList.message));
     return { ok: false, blockers };
@@ -177,10 +188,15 @@ export function validateManagedCleanup(
   }
 
   const expectedBranch = record.derivedBranch ?? record.branch ?? null;
+  const branchSafe = expectedBranch !== null &&
+    !PROTECTED_BRANCHES.has(expectedBranch.toLowerCase()) &&
+    isSafeBranchName(expectedBranch);
   if (!expectedBranch) {
     blockers.push(blocker("missing-branch", "Session has no expected branch recorded."));
-  } else if (PROTECTED_BRANCHES.has(expectedBranch)) {
+  } else if (PROTECTED_BRANCHES.has(expectedBranch.toLowerCase())) {
     blockers.push(blocker("protected-branch", `Refusing to delete protected branch ${expectedBranch}.`));
+  } else if (!isSafeBranchName(expectedBranch)) {
+    blockers.push(blocker("invalid-branch", `Refusing to delete unsafe branch name ${expectedBranch}.`));
   }
   if (worktree?.branch && expectedBranch && worktree.branch !== expectedBranch) {
     blockers.push(blocker(
@@ -200,7 +216,7 @@ export function validateManagedCleanup(
     }
   }
 
-  const status = git(resolved, targetPath, ["status", "--porcelain=v1", "--untracked-files=normal"]);
+  const status = await git(resolved, targetPath, ["status", "--porcelain=v1", "--untracked-files=normal"]);
   if (!status.ok) {
     blockers.push(blocker("git-command-failed", "Unable to inspect worktree status.", status.message));
   } else if (status.stdout.trim().length > 0) {
@@ -213,7 +229,7 @@ export function validateManagedCleanup(
   if (!prEvidence || !prEvidence.repo || !prEvidence.number) {
     blockers.push(blocker("missing-pr-evidence", "Cleanup requires linked PR evidence."));
   } else {
-    const facts = loadPullRequestFacts(resolved, repoRoot, prEvidence);
+    const facts = await loadPullRequestFacts(resolved, repoRoot, prEvidence);
     if (!facts.ok) {
       blockers.push(facts.blocker);
     } else if (facts.facts.state !== "MERGED" && !facts.facts.mergedAt) {
@@ -222,12 +238,12 @@ export function validateManagedCleanup(
       const headSha = facts.facts.headRefOid ?? prEvidence.sha;
       if (!headSha) {
         blockers.push(blocker("pr-head-missing", `PR #${prEvidence.number} did not report a head SHA.`));
-      } else if (expectedBranch) {
+      } else if (expectedBranch && branchSafe) {
         prHeadSha = headSha;
         prUrl = facts.facts.url ?? prEvidence.url;
-        const branchSafe = validateBranchTipAgainstPrHead(resolved, targetPath, expectedBranch, headSha);
-        if (!branchSafe.ok) {
-          blockers.push(branchSafe.blocker);
+        const tipSafe = await validateBranchTipAgainstPrHead(resolved, targetPath, expectedBranch, headSha);
+        if (!tipSafe.ok) {
+          blockers.push(tipSafe.blocker);
         }
       }
     }
@@ -237,6 +253,7 @@ export function validateManagedCleanup(
     blockers.length > 0 ||
     !worktree ||
     !expectedBranch ||
+    !branchSafe ||
     !prEvidence ||
     !prEvidence.repo ||
     !prEvidence.number ||
@@ -261,33 +278,50 @@ export function validateManagedCleanup(
   };
 }
 
-export function executeManagedCleanup(
+export async function executeManagedCleanup(
   plan: ManagedCleanupPlan,
   deps: Partial<ManagedCleanupDeps> = {},
-): ManagedCleanupExecutionResult {
-  const resolved = { ...defaultManagedCleanupDeps(), ...deps };
+): Promise<ManagedCleanupExecutionResult> {
+  const resolved = { ...defaultManagedCleanupDeps(deps.commandTimeoutMs), ...deps };
   let removedWorktree = false;
   let deletedBranch = false;
-  const removeResult = git(resolved, plan.repoRoot, ["worktree", "remove", plan.worktreePath]);
+  const removeResult = await git(resolved, plan.repoRoot, ["worktree", "remove", "--", plan.worktreePath]);
   if (!removeResult.ok) {
-    return {
-      ok: false,
-      message: "Failed to remove linked worktree.",
-      removedWorktree,
-      deletedBranch,
-      blockers: [blocker("cleanup-command-failed", "Failed to remove linked worktree.", removeResult.message)],
-    };
+    const worktreeList = await git(resolved, plan.repoRoot, ["worktree", "list", "--porcelain"]);
+    if (worktreeList.ok && !findWorktree(plan.worktreePath, parseWorktreeList(worktreeList.stdout))) {
+      removedWorktree = true;
+    } else {
+      return {
+        ok: false,
+        message: "Failed to remove linked worktree.",
+        removedWorktree,
+        deletedBranch,
+        blockers: [blocker("cleanup-command-failed", "Failed to remove linked worktree.", removeResult.message)],
+      };
+    }
+  } else {
+    removedWorktree = true;
   }
-  removedWorktree = true;
 
-  const branchExists = git(resolved, plan.repoRoot, [
+  const branchExists = await git(resolved, plan.repoRoot, [
     "show-ref",
     "--verify",
     "--quiet",
+    "--",
     `refs/heads/${plan.branch}`,
   ], true);
   if (branchExists.status === 0) {
-    const deleteResult = git(resolved, plan.repoRoot, ["branch", "-d", plan.branch]);
+    const branchSafe = await validateBranchStillDeletable(resolved, plan);
+    if (!branchSafe.ok) {
+      return {
+        ok: false,
+        message: "Removed worktree, but branch deletion is no longer safe.",
+        removedWorktree,
+        deletedBranch,
+        blockers: [branchSafe.blocker],
+      };
+    }
+    const deleteResult = await git(resolved, plan.repoRoot, ["branch", "-D", "--", plan.branch]);
     if (!deleteResult.ok) {
       return {
         ok: false,
@@ -309,27 +343,96 @@ export function executeManagedCleanup(
   };
 }
 
-function runCommand(command: string, args: string[], cwd: string): CommandResult {
-  const result = spawnSync(command, args, {
-    cwd,
-    encoding: "utf8",
-    stdio: "pipe",
+export async function withManagedCleanupLock<T>(
+  key: string,
+  task: () => Promise<T>,
+): Promise<T> {
+  const previous = activeCleanupLocks.get(key) ?? Promise.resolve();
+  const wait = previous.catch(() => undefined);
+  let release: () => void = () => undefined;
+  const current = new Promise<void>((resolveCurrent) => {
+    release = resolveCurrent;
   });
-  return {
-    status: result.status ?? 1,
-    stdout: typeof result.stdout === "string" ? result.stdout : "",
-    stderr: typeof result.stderr === "string" ? result.stderr : "",
-    error: result.error instanceof Error ? result.error.message : undefined,
-  };
+  const next = wait.then(() => current);
+  activeCleanupLocks.set(key, next);
+  await wait;
+  try {
+    return await task();
+  } finally {
+    release();
+    if (activeCleanupLocks.get(key) === next) {
+      activeCleanupLocks.delete(key);
+    }
+  }
 }
 
-function git(
+function runCommand(
+  command: string,
+  args: string[],
+  cwd: string,
+  timeoutMs: number,
+): Promise<CommandResult> {
+  return new Promise((resolveCommand) => {
+    let child;
+    try {
+      child = spawn(command, args, { cwd, stdio: "pipe" });
+    } catch (error: unknown) {
+      resolveCommand({
+        status: 1,
+        stdout: "",
+        stderr: "",
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill();
+    }, timeoutMs);
+    child.stdout?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk) => {
+      stdout += String(chunk);
+    });
+    child.stderr?.setEncoding("utf8");
+    child.stderr?.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolveCommand({
+        status: 1,
+        stdout,
+        stderr,
+        error: error.message,
+      });
+    });
+    child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolveCommand({
+        status: timedOut ? 124 : code ?? 1,
+        stdout,
+        stderr,
+        error: timedOut ? `${command} timed out after ${timeoutMs}ms.` : undefined,
+      });
+    });
+  });
+}
+
+async function git(
   deps: ManagedCleanupDeps,
   cwd: string,
   args: string[],
   allowFailure = false,
-): { ok: true; stdout: string; status: number } | { ok: false; message: string; status: number } {
-  const result = deps.runGit(cwd, args);
+): Promise<{ ok: true; stdout: string; status: number } | { ok: false; message: string; status: number }> {
+  const result = await deps.runGit(cwd, args);
   if (result.status === 0 || allowFailure) {
     return { ok: true, stdout: result.stdout, status: result.status };
   }
@@ -378,7 +481,12 @@ function findWorktree(path: string, worktrees: readonly GitWorktree[]): GitWorkt
 }
 
 function normalizePathKey(path: string): string {
-  const resolved = resolve(path);
+  let resolved = resolve(path);
+  try {
+    resolved = realpathSync.native(resolved);
+  } catch {
+    // Missing paths are handled by validation; fall back to lexical resolution.
+  }
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
@@ -393,18 +501,20 @@ function isLiveSession(record: SessionRegistryRecord): boolean {
 }
 
 function findPullRequestEvidence(record: SessionRegistryRecord): PullRequestEvidence | null {
-  const evidence = [...(record.runtime?.evidence ?? [])]
-    .reverse()
-    .find((entry) =>
+  const evidence = latestByTimestamp(
+    (record.runtime?.evidence ?? []).filter((entry) =>
       (entry.kind === "cleanup_ready" || entry.kind === "pr_ready") &&
       entry.number !== null
-    );
+    ),
+    (entry) => entry.detectedAt,
+  );
   if (evidence) {
     return evidenceToPullRequestEvidence(evidence, record.repo);
   }
-  const derived = [...record.derivedGithubRefs]
-    .reverse()
-    .find((entry) => entry.type === "pr");
+  const derived = latestByTimestamp(
+    record.derivedGithubRefs.filter((entry) => entry.type === "pr"),
+    (entry) => entry.lastSeenAt ?? entry.firstSeenAt,
+  );
   if (!derived) {
     return null;
   }
@@ -428,18 +538,24 @@ function evidenceToPullRequestEvidence(
   };
 }
 
-function loadPullRequestFacts(
+async function loadPullRequestFacts(
   deps: ManagedCleanupDeps,
   cwd: string,
   evidence: PullRequestEvidence,
-): { ok: true; facts: PullRequestFacts } | { ok: false; blocker: ManagedCleanupBlocker } {
+): Promise<{ ok: true; facts: PullRequestFacts } | { ok: false; blocker: ManagedCleanupBlocker }> {
   if (!evidence.repo || !evidence.number) {
     return {
       ok: false,
       blocker: blocker("missing-pr-evidence", "Cleanup requires a PR repo and number."),
     };
   }
-  const result = deps.runGh(cwd, [
+  if (!isSafeGitHubRepo(evidence.repo)) {
+    return {
+      ok: false,
+      blocker: blocker("missing-pr-evidence", `Cleanup requires a safe GitHub repo slug, got ${evidence.repo}.`),
+    };
+  }
+  const result = await deps.runGh(cwd, [
     "pr",
     "view",
     String(evidence.number),
@@ -456,6 +572,26 @@ function loadPullRequestFacts(
         blocker: blocker(
           "github-auth-mismatch",
           `Unable to verify merge state for ${evidence.repo}#${evidence.number} with the configured GitHub credentials.`,
+          detail,
+        ),
+      };
+    }
+    if (isGitHubNetworkUnavailable(detail)) {
+      return {
+        ok: false,
+        blocker: blocker(
+          "github-network-unavailable",
+          `Unable to reach GitHub while verifying ${evidence.repo}#${evidence.number}.`,
+          detail,
+        ),
+      };
+    }
+    if (isGitHubRepoNotFound(detail)) {
+      return {
+        ok: false,
+        blocker: blocker(
+          "github-repo-not-found",
+          `Unable to find repository ${evidence.repo} while verifying PR #${evidence.number}.`,
           detail,
         ),
       };
@@ -493,16 +629,24 @@ function loadPullRequestFacts(
 }
 
 function isGitHubAuthMismatch(message: string): boolean {
-  return /auth|not logged in|permission|resource not accessible|http 40[13]|could not resolve/i.test(message);
+  return /auth|not logged in|permission|resource not accessible|http 40[13]/i.test(message);
 }
 
-function validateBranchTipAgainstPrHead(
+function isGitHubNetworkUnavailable(message: string): boolean {
+  return /could not resolve host|enotfound|econnreset|etimedout|timed? out|network|tls/i.test(message);
+}
+
+function isGitHubRepoNotFound(message: string): boolean {
+  return /repository not found|could not resolve to a repository|http 404|not found/i.test(message);
+}
+
+async function validateBranchTipAgainstPrHead(
   deps: ManagedCleanupDeps,
   worktreePath: string,
   branch: string,
   headSha: string,
-): { ok: true } | { ok: false; blocker: ManagedCleanupBlocker } {
-  const tip = git(deps, worktreePath, ["rev-parse", branch]);
+): Promise<{ ok: true } | { ok: false; blocker: ManagedCleanupBlocker }> {
+  const tip = await git(deps, worktreePath, ["rev-parse", "--verify", "--", branch]);
   if (!tip.ok) {
     return {
       ok: false,
@@ -513,11 +657,21 @@ function validateBranchTipAgainstPrHead(
   if (branchTip === headSha) {
     return { ok: true };
   }
-  const branchTipAncestor = git(deps, worktreePath, ["merge-base", "--is-ancestor", branchTip, headSha], true);
+  const branchTipAncestor = await git(
+    deps,
+    worktreePath,
+    ["merge-base", "--is-ancestor", branchTip, headSha],
+    true,
+  );
   if (branchTipAncestor.ok && branchTipAncestor.status === 0) {
     return { ok: true };
   }
-  const headAncestor = git(deps, worktreePath, ["merge-base", "--is-ancestor", headSha, branchTip], true);
+  const headAncestor = await git(
+    deps,
+    worktreePath,
+    ["merge-base", "--is-ancestor", headSha, branchTip],
+    true,
+  );
   if (headAncestor.ok && headAncestor.status === 0) {
     return {
       ok: false,
@@ -534,6 +688,79 @@ function validateBranchTipAgainstPrHead(
       `Unable to prove branch ${branch} is at or behind the merged PR head.`,
     ),
   };
+}
+
+async function validateBranchStillDeletable(
+  deps: ManagedCleanupDeps,
+  plan: ManagedCleanupPlan,
+): Promise<{ ok: true } | { ok: false; blocker: ManagedCleanupBlocker }> {
+  if (PROTECTED_BRANCHES.has(plan.branch.toLowerCase())) {
+    return {
+      ok: false,
+      blocker: blocker("protected-branch", `Refusing to delete protected branch ${plan.branch}.`),
+    };
+  }
+  if (!isSafeBranchName(plan.branch)) {
+    return {
+      ok: false,
+      blocker: blocker("invalid-branch", `Refusing to delete unsafe branch name ${plan.branch}.`),
+    };
+  }
+  const worktreeList = await git(deps, plan.repoRoot, ["worktree", "list", "--porcelain"]);
+  if (!worktreeList.ok) {
+    return {
+      ok: false,
+      blocker: blocker(
+        "git-command-failed",
+        "Unable to re-list git worktrees before branch deletion.",
+        worktreeList.message,
+      ),
+    };
+  }
+  const shared = parseWorktreeList(worktreeList.stdout).find((entry) =>
+    entry.branch === plan.branch && !samePath(entry.path, plan.worktreePath)
+  );
+  if (shared) {
+    return {
+      ok: false,
+      blocker: blocker("branch-shared", `Branch ${plan.branch} is checked out by ${shared.path}.`),
+    };
+  }
+  return await validateBranchTipAgainstPrHead(deps, plan.repoRoot, plan.branch, plan.pr.headSha);
+}
+
+function latestByTimestamp<T>(
+  items: readonly T[],
+  timestamp: (item: T) => string | null,
+): T | undefined {
+  return items
+    .map((item, index) => ({
+      item,
+      index,
+      time: Date.parse(timestamp(item) ?? ""),
+    }))
+    .sort((left, right) =>
+      (Number.isFinite(right.time) ? right.time : 0) -
+        (Number.isFinite(left.time) ? left.time : 0) ||
+      right.index - left.index
+    )[0]?.item;
+}
+
+function isSafeBranchName(branch: string): boolean {
+  return branch.length > 0 &&
+    !branch.startsWith("-") &&
+    !branch.includes("..") &&
+    !branch.includes("@{") &&
+    !branch.includes("\\") &&
+    !branch.includes("//") &&
+    !branch.endsWith("/") &&
+    !branch.endsWith(".") &&
+    !branch.endsWith(".lock") &&
+    !/[\u0000-\u001f\u007f ~^:?*\[]/.test(branch);
+}
+
+function isSafeGitHubRepo(repo: string): boolean {
+  return /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo);
 }
 
 function blocker(

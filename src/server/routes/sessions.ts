@@ -11,6 +11,7 @@ import {
   executeManagedCleanup,
   managedCleanupSummary,
   validateManagedCleanup,
+  withManagedCleanupLock,
   type ManagedCleanupDeps,
 } from "../managed-cleanup";
 import {
@@ -588,134 +589,133 @@ export function createSessionsRouter(options: {
       res.status(415).json({ error: "Content-Type must be application/json." });
       return;
     }
-    const target = managedRuntimeTarget(options.store, sessionId, {
-      allowedOwners: ["streamliner-sdk", "builder-terminal"],
-    });
-    if (!target.ok) {
-      managedLogger.warn("rejected cleanup: invalid target", {
-        sessionId,
-        statusCode: target.statusCode,
-      });
-      res.status(target.statusCode).json({ error: target.message });
-      return;
-    }
-    const cleanupRuntime = target.record.runtime;
-    if (!cleanupRuntime) {
-      res.status(409).json({ error: "Session is not a Streamliner-managed SDK runtime." });
-      return;
-    }
-    const cleanupRuntimeOwner = cleanupRuntime.runtimeOwner;
-    const validation = validateManagedCleanup(
-      target.record,
-      target.store.listSessions({ includeArchived: false }),
-      options.managedCleanupDeps,
-    );
-    if (!validation.ok) {
-      const message = validation.blockers[0]?.message ?? "Cleanup is blocked by managed runtime guardrails.";
-      try {
-        const blocked = target.store.patchRuntimeMetadata(sessionId, {
-          runtimeOwner: cleanupRuntimeOwner,
-          lifecycleState: "waiting_for_builder",
-          progressEvents: [{
-            type: "error",
-            message,
-            data: {
-              blockerCount: validation.blockers.length,
-              firstBlockerCode: validation.blockers[0]?.code,
+    try {
+      await withManagedCleanupLock(sessionId, async () => {
+        const target = managedRuntimeTarget(options.store, sessionId, {
+          allowedOwners: ["streamliner-sdk", "builder-terminal"],
+        });
+        if (!target.ok) {
+          managedLogger.warn("rejected cleanup: invalid target", {
+            sessionId,
+            statusCode: target.statusCode,
+          });
+          res.status(target.statusCode).json({ error: target.message });
+          return;
+        }
+        if (!target.record.runtime) {
+          res.status(409).json({ error: "Session is not a Streamliner-managed SDK runtime." });
+          return;
+        }
+        const validation = await validateManagedCleanup(
+          target.record,
+          target.store.listSessions({ includeArchived: false }),
+          options.managedCleanupDeps,
+        );
+        if (!validation.ok) {
+          const message = validation.blockers[0]?.message ?? "Cleanup is blocked by managed runtime guardrails.";
+          const blocked = target.store.patchRuntimeMetadata(sessionId, {
+            lifecycleState: "waiting_for_builder",
+            progressEvents: [{
+              type: "error",
+              message,
+              data: {
+                blockerCount: validation.blockers.length,
+                firstBlockerCode: validation.blockers[0]?.code,
+              },
+            }],
+          });
+          res.json({
+            outcome: {
+              ok: false,
+              evidenceState: "waiting_for_builder",
+              message,
+              blockers: validation.blockers,
             },
+            session: blocked,
+          });
+          return;
+        }
+
+        const cleaning = target.store.patchRuntimeMetadata(sessionId, {
+          lifecycleState: "cleaning_up",
+          progressEvents: [{
+            type: "lifecycle",
+            message: "Managed cleanup-after-merge started.",
           }],
         });
-        res.json({
-          outcome: {
-            ok: false,
-            evidenceState: "waiting_for_builder",
-            message,
-            blockers: validation.blockers,
-          },
-          session: blocked,
+        assertManagedRuntimePatch(cleaning, {
+          lifecycleState: "cleaning_up",
+          context: "cleanup start",
         });
-      } catch (error: unknown) {
-        const failure = managedRuntimeErrorResponse(error);
-        res.status(failure.statusCode).json({ error: failure.message });
-      }
-      return;
-    }
-
-    try {
-      target.store.patchRuntimeMetadata(sessionId, {
-        runtimeOwner: cleanupRuntimeOwner,
-        lifecycleState: "cleaning_up",
-        progressEvents: [{
-          type: "lifecycle",
-          message: "Managed cleanup-after-merge started.",
-        }],
-      });
-      const cleanup = executeManagedCleanup(validation.plan, options.managedCleanupDeps);
-      if (!cleanup.ok) {
-        const failed = target.store.patchRuntimeMetadata(sessionId, {
-          runtimeOwner: cleanupRuntimeOwner,
-          lifecycleState: "waiting_for_builder",
+        const cleanup = await executeManagedCleanup(validation.plan, options.managedCleanupDeps);
+        if (!cleanup.ok) {
+          const failed = target.store.patchRuntimeMetadata(sessionId, {
+            lifecycleState: "waiting_for_builder",
+            progressEvents: [{
+              type: "error",
+              message: cleanup.message,
+              data: {
+                removedWorktree: cleanup.removedWorktree,
+                deletedBranch: cleanup.deletedBranch,
+                blockerCount: cleanup.blockers.length,
+                firstBlockerCode: cleanup.blockers[0]?.code,
+              },
+            }],
+          });
+          res.json({
+            outcome: {
+              ok: false,
+              evidenceState: "waiting_for_builder",
+              message: cleanup.message,
+              blockers: cleanup.blockers,
+              removedWorktree: cleanup.removedWorktree,
+              deletedBranch: cleanup.deletedBranch,
+            },
+            session: failed,
+          });
+          return;
+        }
+        const summary = managedCleanupSummary(validation.plan, cleanup);
+        const cleaned = target.store.patchRuntimeMetadata(sessionId, {
+          lifecycleState: "cleaned_up",
+          evidence: [{
+            kind: "cleaned_up",
+            source: "managed-cleanup",
+            repo: validation.plan.pr.repo,
+            number: validation.plan.pr.number,
+            sha: validation.plan.pr.headSha,
+            url: validation.plan.pr.url,
+            summary,
+          }],
           progressEvents: [{
-            type: "error",
-            message: cleanup.message,
+            type: "evidence",
+            message: summary,
             data: {
               removedWorktree: cleanup.removedWorktree,
               deletedBranch: cleanup.deletedBranch,
-              blockerCount: cleanup.blockers.length,
-              firstBlockerCode: cleanup.blockers[0]?.code,
             },
           }],
         });
+        assertManagedRuntimePatch(cleaned, {
+          lifecycleState: "cleaned_up",
+          context: "cleanup finish",
+        });
+        managedLogger.info("cleanup", {
+          sessionId,
+          worktreePath: validation.plan.worktreePath,
+          branch: validation.plan.branch,
+          pr: validation.plan.pr.number,
+        });
         res.json({
           outcome: {
-            ok: false,
-            evidenceState: "waiting_for_builder",
-            message: cleanup.message,
-            blockers: cleanup.blockers,
+            ok: true,
+            evidenceState: "cleaned_up",
+            message: summary,
             removedWorktree: cleanup.removedWorktree,
             deletedBranch: cleanup.deletedBranch,
           },
-          session: failed,
+          session: cleaned,
         });
-        return;
-      }
-      const summary = managedCleanupSummary(validation.plan, cleanup);
-      const cleaned = target.store.patchRuntimeMetadata(sessionId, {
-        runtimeOwner: cleanupRuntimeOwner,
-        lifecycleState: "cleaned_up",
-        evidence: [{
-          kind: "cleaned_up",
-          source: "managed-cleanup",
-          repo: validation.plan.pr.repo,
-          number: validation.plan.pr.number,
-          sha: validation.plan.pr.headSha,
-          url: validation.plan.pr.url,
-          summary,
-        }],
-        progressEvents: [{
-          type: "evidence",
-          message: summary,
-          data: {
-            removedWorktree: cleanup.removedWorktree,
-            deletedBranch: cleanup.deletedBranch,
-          },
-        }],
-      });
-      managedLogger.info("cleanup", {
-        sessionId,
-        worktreePath: validation.plan.worktreePath,
-        branch: validation.plan.branch,
-        pr: validation.plan.pr.number,
-      });
-      res.json({
-        outcome: {
-          ok: true,
-          evidenceState: "cleaned_up",
-          message: summary,
-          removedWorktree: cleanup.removedWorktree,
-          deletedBranch: cleanup.deletedBranch,
-        },
-        session: cleaned,
       });
     } catch (error: unknown) {
       const failure = managedRuntimeErrorResponse(error);
@@ -724,7 +724,9 @@ export function createSessionsRouter(options: {
         statusCode: failure.statusCode,
         err: errorLogDetails(error),
       });
-      res.status(failure.statusCode).json({ error: failure.message });
+      if (!res.headersSent) {
+        res.status(failure.statusCode).json({ error: failure.message });
+      }
     }
   });
 

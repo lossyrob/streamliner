@@ -1770,16 +1770,16 @@ describe("managed runtime session API routes", () => {
           if (args.join(" ") === "status --porcelain=v1 --untracked-files=normal") {
             return { status: 0, stdout: "", stderr: "" };
           }
-          if (args.join(" ") === "rev-parse feature/cleanup") {
+          if (args.join(" ") === "rev-parse --verify -- feature/cleanup") {
             return { status: 0, stdout: "abc123\n", stderr: "" };
           }
-          if (args.join(" ") === "show-ref --verify --quiet refs/heads/feature/cleanup") {
+          if (args.join(" ") === "show-ref --verify --quiet -- refs/heads/feature/cleanup") {
             return { status: 0, stdout: "", stderr: "" };
           }
-          if (args.join(" ") === `worktree remove ${normalizePath(root)}`) {
+          if (args.join(" ") === `worktree remove -- ${normalizePath(root)}`) {
             return { status: 0, stdout: "", stderr: "" };
           }
-          if (args.join(" ") === "branch -d feature/cleanup") {
+          if (args.join(" ") === "branch -D -- feature/cleanup") {
             return { status: 0, stdout: "", stderr: "" };
           }
           return { status: 1, stdout: "", stderr: `Unexpected git command: ${args.join(" ")}` };
@@ -1840,7 +1840,7 @@ describe("managed runtime session API routes", () => {
         }),
       }),
     }));
-    expect(gitCalls.some((call) => call.endsWith("git branch -d feature/cleanup"))).toBe(true);
+    expect(gitCalls.some((call) => call.endsWith("git branch -D -- feature/cleanup"))).toBe(true);
   });
 
   it("settles managed interrupt and cancel failures to terminal states", async () => {
