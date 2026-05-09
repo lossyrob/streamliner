@@ -61,6 +61,16 @@ export interface ManagedSdkRunner {
   interrupt?(input: ManagedSdkInterruptInput): Promise<ManagedSdkInterruptResult>;
 }
 
+export const DEFAULT_MANAGED_SDK_TURN_IDLE_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+
+export interface DefaultManagedSdkRunnerOptions {
+  /**
+   * Timeout passed to the SDK convenience wait for session.idle. This is a
+   * supervision guard only; SDK timeouts do not abort in-flight work.
+   */
+  turnIdleTimeoutMs?: number;
+}
+
 interface ActiveManagedRun {
   session: {
     abort: () => Promise<void>;
@@ -146,6 +156,22 @@ function createSafeManagedCallbacks(input: ManagedSdkRunnerStartInput): SafeMana
 
 function sdkStateRootFor(workspacePath: string | undefined, fallback: string): string {
   return workspacePath ? dirname(workspacePath) : fallback;
+}
+
+function managedSdkTurnIdleTimeoutMs(): number {
+  const raw = process.env.STREAMLINER_MANAGED_SDK_TURN_IDLE_TIMEOUT_MS;
+  if (raw === undefined || raw.trim() === "") {
+    return DEFAULT_MANAGED_SDK_TURN_IDLE_TIMEOUT_MS;
+  }
+  const parsed = Number(raw);
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return parsed;
+  }
+  getApiLogger().withScope("managed-sdk-runner").warn(
+    "invalid STREAMLINER_MANAGED_SDK_TURN_IDLE_TIMEOUT_MS; using default",
+    { value: raw, defaultMs: DEFAULT_MANAGED_SDK_TURN_IDLE_TIMEOUT_MS },
+  );
+  return DEFAULT_MANAGED_SDK_TURN_IDLE_TIMEOUT_MS;
 }
 
 function permissionRequestData(
@@ -291,6 +317,11 @@ function lifecycleStateForEvidence(
 
 export class DefaultManagedSdkRunner implements ManagedSdkRunner {
   private readonly activeRuns = new Map<string, ActiveManagedRun>();
+  private readonly turnIdleTimeoutMs: number;
+
+  constructor(options: DefaultManagedSdkRunnerOptions = {}) {
+    this.turnIdleTimeoutMs = options.turnIdleTimeoutMs ?? managedSdkTurnIdleTimeoutMs();
+  }
 
   async start(input: ManagedSdkRunnerStartInput): Promise<ManagedSdkRunnerStartResult> {
     const sdk = await import("@github/copilot-sdk");
@@ -413,7 +444,10 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
   ): Promise<void> {
     try {
       callbacks.onLifecycleState("running", "Managed SDK worker started.");
-      const response = await active.session.sendAndWait({ prompt: input.prompt });
+      const response = await active.session.sendAndWait(
+        { prompt: input.prompt },
+        this.turnIdleTimeoutMs,
+      );
       const content = assistantContent(response);
       const detectedEvidence = evidenceFromAssistantContent(content);
       for (const evidence of detectedEvidence) {

@@ -11,6 +11,7 @@ import type {
 } from "../session-registry-contract";
 import { mergeSessionRegistryRuntimeMetadata } from "../session-registry/managed-runtime";
 import {
+  DEFAULT_MANAGED_SDK_TURN_IDLE_TIMEOUT_MS,
   DefaultManagedSdkRunner,
   type ManagedSdkRunnerStartInput,
   type ManagedSdkRunnerStartResult,
@@ -118,6 +119,7 @@ describe("DefaultManagedSdkRunner", () => {
     sdkMock.session.disconnect.mockResolvedValue(undefined);
     sdkMock.session.sendAndWait.mockResolvedValue({ data: { content: "Managed turn finished." } });
     sdkMock.approveAll.mockReturnValue({ kind: "allow" });
+    delete process.env.STREAMLINER_MANAGED_SDK_TURN_IDLE_TIMEOUT_MS;
   });
 
   it("passes launch environment through SDK client options without mutating process.env", async () => {
@@ -148,6 +150,33 @@ describe("DefaultManagedSdkRunner", () => {
         process.env[envKey] = previousValue;
       }
     }
+  });
+
+  it("overrides the SDK default 60s idle wait for autonomous managed turns", async () => {
+    const capture = createCapture();
+    const runner = new DefaultManagedSdkRunner();
+
+    await runner.start(createStartInput(capture));
+    await flushManagedTurn();
+
+    expect(sdkMock.session.sendAndWait).toHaveBeenCalledWith(
+      { prompt: "Run the managed node." },
+      DEFAULT_MANAGED_SDK_TURN_IDLE_TIMEOUT_MS,
+    );
+    expect(capture.states).not.toContain("failed");
+  });
+
+  it("allows managed SDK idle wait timeout to be configured for supervision", async () => {
+    const capture = createCapture();
+    const runner = new DefaultManagedSdkRunner({ turnIdleTimeoutMs: 123_456 });
+
+    await runner.start(createStartInput(capture));
+    await flushManagedTurn();
+
+    expect(sdkMock.session.sendAndWait).toHaveBeenCalledWith(
+      { prompt: "Run the managed node." },
+      123_456,
+    );
   });
 
   it("does not select an SDK-provided choice for user-input requests", async () => {
