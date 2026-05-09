@@ -808,6 +808,7 @@ describe("App sessions route", () => {
       init?.method === "POST"
     )).toBe(true);
     expect(container.textContent).toContain("Terminal takeover opened visible Copilot CLI.");
+    expect(findButton(container, "Terminal takeover opened visible Copilot CLI.").disabled).toBe(true);
   });
 
   it("shows a loading state while the workstreams registry is still fetching", async () => {

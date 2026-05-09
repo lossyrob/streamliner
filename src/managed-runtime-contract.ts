@@ -82,6 +82,13 @@ export type ManagedRuntimeActionKind =
   | "terminal-takeover"
   | "cleanup";
 
+export const MANAGED_RUNTIME_ACTION_ROUTE_SUFFIXES = {
+  interrupt: "interrupt",
+  cancel: "cancel",
+  "terminal-takeover": "takeover",
+  cleanup: "cleanup",
+} as const satisfies Record<ManagedRuntimeActionKind, string>;
+
 export interface ManagedRuntimeSafeLink {
   label: string;
   url?: string | null;
@@ -390,9 +397,7 @@ function managedRuntimeActionsFromMetadata(
   const takeoverAvailable = sdkOwned &&
     Boolean(runtime.sdkSessionId) &&
     SDK_TAKEOVER_STATES.has(state);
-  const cleanupReady = state === "cleanup_ready" ||
-    runtime.evidence.some((evidence) => evidence.kind === "cleanup_ready");
-  const cleanupAvailable = cleanupReady && state !== "cleaning_up" && state !== "cleaned_up";
+  const cleanupAvailable = isManagedRuntimeCleanupAvailable(runtime);
   return [
     {
       action: "interrupt",
@@ -439,6 +444,15 @@ function managedRuntimeActionsFromMetadata(
             : "Cleanup is unavailable until merged PR cleanup is ready.",
     },
   ];
+}
+
+export function isManagedRuntimeCleanupAvailable(
+  runtime: Pick<SessionRegistryRuntimeMetadata, "lifecycleState" | "evidence">,
+): boolean {
+  const state = runtime.lifecycleState;
+  const cleanupReady = state === "cleanup_ready" ||
+    runtime.evidence.some((evidence) => evidence.kind === "cleanup_ready");
+  return cleanupReady && state !== "cleaning_up" && state !== "cleaned_up";
 }
 
 function progressStatusForRuntimeEvent(

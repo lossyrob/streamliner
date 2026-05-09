@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { ManagedRuntimeActionAvailability } from "../managed-runtime-contract";
+import {
+  MANAGED_RUNTIME_ACTION_ROUTE_SUFFIXES,
+  type ManagedRuntimeActionAvailability,
+} from "../managed-runtime-contract";
 
 type ManagedActionState = "idle" | "running" | "success" | "error";
 
@@ -20,19 +23,38 @@ export function ManagedRuntimeActionButton({
   const [state, setState] = useState<ManagedActionState>("idle");
   const [detail, setDetail] = useState("");
   const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
     return () => {
+      mountedRef.current = false;
+      abortControllerRef.current?.abort();
       if (resetTimerRef.current) {
         clearTimeout(resetTimerRef.current);
       }
     };
   }, []);
 
+  useEffect(() => {
+    setState("idle");
+    setDetail("");
+    if (resetTimerRef.current) {
+      clearTimeout(resetTimerRef.current);
+      resetTimerRef.current = null;
+    }
+  }, [action.action, action.available, sessionId]);
+
   const runAction = useCallback(async () => {
     if (!action.available || state === "running") {
       return;
     }
+    if (resetTimerRef.current) {
+      clearTimeout(resetTimerRef.current);
+      resetTimerRef.current = null;
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
     setState("running");
     setDetail("");
     try {
@@ -40,6 +62,7 @@ export function ManagedRuntimeActionButton({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(managedActionBody(action.action)),
+        signal: controller.signal,
       });
       const body = await response.json().catch(() => ({})) as {
         error?: string;
@@ -48,21 +71,31 @@ export function ManagedRuntimeActionButton({
       if (!response.ok) {
         throw new Error(body.error ?? `Managed action failed (${response.status})`);
       }
+      if (!mountedRef.current) {
+        return;
+      }
       setState("success");
       setDetail(body.outcome?.message ?? `${action.label} requested.`);
       await onComplete?.();
     } catch (error: unknown) {
+      if (!mountedRef.current || isAbortError(error)) {
+        return;
+      }
       setState("error");
       setDetail(error instanceof Error ? error.message : String(error));
+      resetTimerRef.current = setTimeout(() => {
+        if (!mountedRef.current) {
+          return;
+        }
+        setState("idle");
+        setDetail("");
+        resetTimerRef.current = null;
+      }, 10_000);
+    } finally {
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null;
+      }
     }
-    if (resetTimerRef.current) {
-      clearTimeout(resetTimerRef.current);
-    }
-    resetTimerRef.current = setTimeout(() => {
-      setState("idle");
-      setDetail("");
-      resetTimerRef.current = null;
-    }, 10_000);
   }, [action, onComplete, sessionId, state]);
 
   const label = state === "running"
@@ -81,7 +114,7 @@ export function ManagedRuntimeActionButton({
       className={`sl-managed-runtime-action${state === "success" ? " success" : ""}${
         state === "error" ? " error" : ""
       }${state === "running" ? " running" : ""}${className ? ` ${className}` : ""}`}
-      disabled={!action.available || state === "running"}
+      disabled={!action.available || state === "running" || state === "success"}
       title={title}
       onClick={(event) => {
         event.stopPropagation();
@@ -98,15 +131,19 @@ function managedActionUrl(
   action: ManagedRuntimeActionAvailability["action"],
 ): string {
   const encoded = encodeURIComponent(sessionId);
+  return `/api/sessions/${encoded}/managed/${MANAGED_RUNTIME_ACTION_ROUTE_SUFFIXES[action]}`;
+}
+
+function managedActionBody(
+  action: ManagedRuntimeActionAvailability["action"],
+): Record<string, string> {
   switch (action) {
     case "interrupt":
-      return `/api/sessions/${encoded}/managed/interrupt`;
+      return { reason: "Builder requested managed runtime interruption." };
     case "cancel":
-      return `/api/sessions/${encoded}/managed/cancel`;
     case "terminal-takeover":
-      return `/api/sessions/${encoded}/managed/takeover`;
     case "cleanup":
-      return `/api/sessions/${encoded}/managed/cleanup`;
+      return {};
     default: {
       const _exhaustive: never = action;
       return _exhaustive;
@@ -114,11 +151,6 @@ function managedActionUrl(
   }
 }
 
-function managedActionBody(
-  action: ManagedRuntimeActionAvailability["action"],
-): Record<string, string> {
-  if (action === "interrupt") {
-    return { reason: "Builder requested managed runtime interruption." };
-  }
-  return {};
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
 }

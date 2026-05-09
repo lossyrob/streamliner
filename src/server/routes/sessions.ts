@@ -4,6 +4,7 @@ import {
   handleSessionRegistryApiRequest,
   SESSION_REGISTRY_API_BASE_PATH,
 } from "../../session-registry/http-api";
+import { MANAGED_RUNTIME_ACTION_ROUTE_SUFFIXES } from "../../managed-runtime-contract";
 import type { LaunchClaimStore } from "../../launch-claim-contract";
 import { bindClaimViaTrustedSignal } from "../../session-registry/launch-claims";
 import { relaunchSession, type RelaunchDeps } from "../../session-registry/relaunch";
@@ -237,7 +238,9 @@ export function createSessionsRouter(options: {
     }
   });
 
-  router.post("/:id/managed/interrupt", async (req, res) => {
+  router.post(
+    `/:id/managed/${MANAGED_RUNTIME_ACTION_ROUTE_SUFFIXES.interrupt}`,
+    async (req, res) => {
     const sessionId = req.params.id;
     if (isNonLoopbackRequest(req)) {
       managedLogger.warn("rejected interrupt: non-loopback", { sessionId });
@@ -309,9 +312,12 @@ export function createSessionsRouter(options: {
       });
       res.status(failure.statusCode).json({ error: failure.message });
     }
-  });
+    },
+  );
 
-  router.post("/:id/managed/cancel", async (req, res) => {
+  router.post(
+    `/:id/managed/${MANAGED_RUNTIME_ACTION_ROUTE_SUFFIXES.cancel}`,
+    async (req, res) => {
     const sessionId = req.params.id;
     if (isNonLoopbackRequest(req)) {
       managedLogger.warn("rejected cancel: non-loopback", { sessionId });
@@ -398,9 +404,12 @@ export function createSessionsRouter(options: {
       });
       res.status(failure.statusCode).json({ error: failure.message });
     }
-  });
+    },
+  );
 
-  router.post("/:id/managed/takeover", async (req, res) => {
+  router.post(
+    `/:id/managed/${MANAGED_RUNTIME_ACTION_ROUTE_SUFFIXES["terminal-takeover"]}`,
+    async (req, res) => {
     const sessionId = req.params.id;
     if (isNonLoopbackRequest(req)) {
       managedLogger.warn("rejected takeover: non-loopback", { sessionId });
@@ -575,9 +584,12 @@ export function createSessionsRouter(options: {
       });
       res.status(failure.statusCode).json({ error: failure.message });
     }
-  });
+    },
+  );
 
-  router.post("/:id/managed/cleanup", async (req, res) => {
+  router.post(
+    `/:id/managed/${MANAGED_RUNTIME_ACTION_ROUTE_SUFFIXES.cleanup}`,
+    async (req, res) => {
     const sessionId = req.params.id;
     if (isNonLoopbackRequest(req)) {
       managedLogger.warn("rejected cleanup: non-loopback", { sessionId });
@@ -728,7 +740,8 @@ export function createSessionsRouter(options: {
         res.status(failure.statusCode).json({ error: failure.message });
       }
     }
-  });
+    },
+  );
 
   router.post("/:id/managed/evidence", (req, res) => {
     const sessionId = req.params.id;

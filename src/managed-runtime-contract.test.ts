@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   MANAGED_RUNTIME_LIFECYCLE_STATES,
+  MANAGED_RUNTIME_ACTION_ROUTE_SUFFIXES,
   MANAGED_RUNTIME_PROGRESS_EVENT_INPUT_CAP,
   MANAGED_RUNTIME_PROGRESS_SUMMARY_MAX_LENGTH,
   defaultManagedRuntimeActions,
+  isManagedRuntimeCleanupAvailable,
   managedLifecycleStatusClass,
   managedRuntimeProjectionFromMetadata,
   managedRuntimeProgressEvents,
@@ -152,6 +154,15 @@ describe("managed runtime contract", () => {
     ]);
   });
 
+  it("centralizes managed action route suffixes", () => {
+    expect(MANAGED_RUNTIME_ACTION_ROUTE_SUFFIXES).toEqual({
+      interrupt: "interrupt",
+      cancel: "cancel",
+      "terminal-takeover": "takeover",
+      cleanup: "cleanup",
+    });
+  });
+
   it("projects state-aware actions for SDK-owned managed sessions", () => {
     const projection = managedRuntimeProjectionFromMetadata(managedRuntime());
 
@@ -191,6 +202,20 @@ describe("managed runtime contract", () => {
     expect(resolveManagedRuntimeActions(projection).find((action) =>
       action.action === "cleanup"
     )?.available).toBe(true);
+    expect(isManagedRuntimeCleanupAvailable(managedRuntime({
+      lifecycleState: "completed",
+      evidence: [{
+        id: "evidence-1",
+        kind: "cleanup_ready",
+        source: "managed-sdk",
+        detectedAt: "2026-05-05T12:02:00.000Z",
+        url: "https://github.com/lossyrob/streamliner/pull/75",
+        repo: "lossyrob/streamliner",
+        number: 75,
+        sha: "abc123",
+        summary: "PR merged and cleanup is ready.",
+      }],
+    }))).toBe(true);
   });
 
   it("projects terminal-owned takeover sessions with SDK actions disabled", () => {
