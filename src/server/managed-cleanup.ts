@@ -756,7 +756,18 @@ function isSafeBranchName(branch: string): boolean {
     !branch.endsWith("/") &&
     !branch.endsWith(".") &&
     !branch.endsWith(".lock") &&
-    !/[\u0000-\u001f\u007f ~^:?*\[]/.test(branch);
+    !hasUnsafeBranchCharacter(branch);
+}
+
+function hasUnsafeBranchCharacter(branch: string): boolean {
+  const disallowed = " ~^:?*[";
+  for (const character of branch) {
+    const code = character.charCodeAt(0);
+    if (code <= 31 || code === 127 || disallowed.includes(character)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function isSafeGitHubRepo(repo: string): boolean {
