@@ -42,6 +42,7 @@ Use `npm run api` for a non-watch API process. The API serves `GET /api/health`,
 | `STREAMLINER_LOG_LEVEL` | `info` | Minimum log level (`debug`/`info`/`warn`/`error`) |
 | `STREAMLINER_LOG_DIR` | `~/.streamliner/state/logs` | Override the log file directory |
 | `STREAMLINER_LOG_CONSOLE` | `1` | Set to `0` to suppress console mirroring of log entries |
+| `STREAMLINER_STATE_ROOT` | `~/.streamliner/state` | Base directory for local Streamliner state such as session launch settings |
 | `STREAMLINER_WORKSTREAM_REGISTRY` | `~/.streamliner/state/workstream-registry/workstreams.json` | Override the tracked workstream registry path |
 | `STREAMLINER_WORKSTREAM_SOURCE_REGISTRY` | `~/.streamliner/state/workstream-registry/sources.json` | Override the workstream source registry path |
 | `STREAMLINER_RECENTS_PATH` | `~/.streamliner/recent-graphs.json` | Override the legacy recents path |
@@ -51,6 +52,19 @@ Use `npm run api` for a non-watch API process. The API serves `GET /api/health`,
 When no `STREAMLINER_GRAPH` is set and no recent graph is available, `GET /api/graph.json` returns a 404. The dashboard handles that by falling back to Vite's static `public/example-project.json` fixture. Use the "Load workstream…" button to select a different workstream JSON file.
 
 The API process writes structured JSON-lines logs to `~/.streamliner/state/logs/api-YYYY-MM-DD.log`. See [`docs/operations/logging.md`](docs/operations/logging.md) for the format, scope reference, and grep/jq recipes.
+
+## Session launch defaults
+
+Streamliner stores default Copilot CLI option tokens for terminal launches in
+`~/.streamliner/state/session-launch-settings.json`. Configure them from
+**Settings -> Session launch**. Fresh state defaults to `--yolo`; clearing the
+editor and saving records an intentional empty default list.
+
+Terminal PAW launches record the resolved args on the session. Relaunch and
+restart command previews use recorded args first, including recorded empty args,
+then current configured defaults for historical sessions without recorded args.
+Streamliner appends its own `--resume=<session>` argument during relaunch, so do
+not include `--resume` in the defaults.
 
 ## Worktree preview instances
 

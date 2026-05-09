@@ -7,6 +7,10 @@ export interface SessionLaunchSettings {
   defaultCliArgs: string[];
 }
 
+export interface SessionLaunchSettingsInput {
+  defaultCliArgs: unknown;
+}
+
 interface SessionLaunchSettingsDocument {
   version: 1;
   defaultCliArgs: string[];
@@ -137,7 +141,7 @@ export function readSessionLaunchSettingsSync(path = defaultSessionLaunchSetting
 }
 
 export async function writeSessionLaunchSettings(
-  settings: SessionLaunchSettings,
+  settings: SessionLaunchSettingsInput,
   path = defaultSessionLaunchSettingsPath(),
 ): Promise<SessionLaunchSettings> {
   const defaultCliArgs = normalizeDefaultCliArgs(settings.defaultCliArgs);
