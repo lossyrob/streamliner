@@ -44,7 +44,9 @@ configuration.
 Historical sessions are not migrated. Sessions without recorded launch args use
 the current configured defaults when relaunched. Sessions with recorded args do
 not read settings during relaunch, so a malformed settings file cannot block a
-session that already carries its original launch flags.
+session that already carries its original launch flags. If settings are
+malformed during relaunch of a historical session, Streamliner falls back to the
+built-in `--yolo` default so the session remains recoverable.
 
 ### Integration Points
 
@@ -111,8 +113,9 @@ defaults.
 
 - Empty settings are preserved as an intentional empty default list.
 - Recorded empty args win over configured defaults during relaunch.
-- Malformed settings block default-based relaunches but do not block sessions
-  that already have recorded args.
+- Malformed settings are surfaced in Settings. Historical relaunches that need
+  defaults fall back to built-in `--yolo`; recorded-args relaunches do not read
+  settings.
 - `--resume` is rejected in settings because Streamliner appends it during
   relaunch.
 

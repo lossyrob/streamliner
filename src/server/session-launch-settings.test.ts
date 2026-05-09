@@ -88,6 +88,7 @@ describe("session launch settings", () => {
       await expect(readSessionLaunchSettings(path)).rejects.toMatchObject({
         code: "session_launch_settings_malformed",
         statusCode: 500,
+        message: expect.stringContaining(path),
       });
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -135,6 +136,15 @@ describe("session launch settings", () => {
         .expect(400)
         .expect(({ body }) => {
           expect(body.code).toBe("invalid_session_launch_settings");
+        });
+
+      await request(app)
+        .put("/api/session-launch-settings")
+        .send({ defaultCLIArgs: ["--yolo"] })
+        .expect(400)
+        .expect(({ body }) => {
+          expect(body.code).toBe("invalid_session_launch_settings");
+          expect(body.error).toContain("defaultCLIArgs");
         });
     } finally {
       rmSync(root, { recursive: true, force: true });

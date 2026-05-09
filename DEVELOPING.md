@@ -42,7 +42,7 @@ Use `npm run api` for a non-watch API process. The API serves `GET /api/health`,
 | `STREAMLINER_LOG_LEVEL` | `info` | Minimum log level (`debug`/`info`/`warn`/`error`) |
 | `STREAMLINER_LOG_DIR` | `~/.streamliner/state/logs` | Override the log file directory |
 | `STREAMLINER_LOG_CONSOLE` | `1` | Set to `0` to suppress console mirroring of log entries |
-| `STREAMLINER_STATE_ROOT` | `~/.streamliner/state` | Base directory for local Streamliner state such as session launch settings |
+| `STREAMLINER_STATE_ROOT` | `~/.streamliner/state` | Base directory for session launch settings and other APIs that do not have a more specific path override |
 | `STREAMLINER_WORKSTREAM_REGISTRY` | `~/.streamliner/state/workstream-registry/workstreams.json` | Override the tracked workstream registry path |
 | `STREAMLINER_WORKSTREAM_SOURCE_REGISTRY` | `~/.streamliner/state/workstream-registry/sources.json` | Override the workstream source registry path |
 | `STREAMLINER_RECENTS_PATH` | `~/.streamliner/recent-graphs.json` | Override the legacy recents path |

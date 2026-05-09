@@ -587,6 +587,7 @@ describe("preparePawLaunch", () => {
         workflowInstructions: "Use PAW final-pr-only with no intermediate pauses.",
         environment: { STREAMLINER_LOG_LEVEL: "debug" },
       },
+      defaultCliArgs: ["--yolo"],
       pawInitRunner: createPawInitRunner(pawCalls),
       contextPreparer: createContextPreparer(root, contextCalls),
     });

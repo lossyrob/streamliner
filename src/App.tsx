@@ -48,6 +48,7 @@ import {
   FALLBACK_SESSION_LAUNCH_DEFAULT_CLI_ARGS,
   formatSessionLaunchCliArgsText,
   loadSessionLaunchSettings,
+  SessionLaunchSettingsRequestError,
   type SessionLaunchSettings,
 } from "./components/session-launch-settings";
 import {
@@ -174,10 +175,14 @@ function readDashboardRoute(): DashboardRoute {
       nodeId: nodeId && isKebabCaseId(nodeId) ? nodeId : null,
     };
   }
-  if (window.location.pathname === "/settings/session-launch" || window.location.pathname === "/settings") {
+  if (window.location.pathname === "/settings/session-launch") {
     return { view: "settings", section: "session-launch" };
   }
-  if (window.location.pathname === "/settings/profiles" || window.location.pathname === "/profiles") {
+  if (
+    window.location.pathname === "/settings" ||
+    window.location.pathname === "/settings/profiles" ||
+    window.location.pathname === "/profiles"
+  ) {
     return { view: "settings", section: "profiles" };
   }
   if (window.location.pathname === "/" || window.location.pathname === "") {
@@ -1219,7 +1224,9 @@ function useSessionLaunchSettingsState() {
     defaultCliArgs: [...FALLBACK_SESSION_LAUNCH_DEFAULT_CLI_ARGS],
   });
   const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [responseError, setResponseError] = useState(false);
   const requestRef = useRef<Promise<void> | null>(null);
   const mountedRef = useRef(true);
   const mutationVersionRef = useRef(0);
@@ -1234,6 +1241,8 @@ function useSessionLaunchSettingsState() {
   const noteSettingsChanged = useCallback((changedSettings: SessionLaunchSettings) => {
     mutationVersionRef.current += 1;
     setSettings(changedSettings);
+    setLoaded(true);
+    setResponseError(false);
     setError(null);
   }, []);
 
@@ -1243,15 +1252,22 @@ function useSessionLaunchSettingsState() {
     }
     setLoading(true);
     setError(null);
+    setResponseError(false);
     const requestMutationVersion = mutationVersionRef.current;
     const request = loadSessionLaunchSettings()
       .then((loadedSettings) => {
         if (mountedRef.current && mutationVersionRef.current === requestMutationVersion) {
           setSettings(loadedSettings);
+          setLoaded(true);
         }
       })
       .catch((loadError: unknown) => {
         if (mountedRef.current) {
+          setSettings({
+            defaultCliArgs: [...FALLBACK_SESSION_LAUNCH_DEFAULT_CLI_ARGS],
+          });
+          setLoaded(true);
+          setResponseError(loadError instanceof SessionLaunchSettingsRequestError);
           setError(loadError instanceof Error ? loadError.message : String(loadError));
         }
       })
@@ -1280,7 +1296,9 @@ function useSessionLaunchSettingsState() {
   return {
     settings,
     loading,
+    loaded,
     error,
+    responseError,
     refresh,
     noteSettingsChanged,
   };
@@ -1599,7 +1617,7 @@ function GraphDashboard({
     launchDialogEntry,
     launchDialogTarget,
     selectedEntry,
-    sessionLaunchSettings.defaultCliArgs,
+    sessionLaunchSettings?.defaultCliArgs,
     workstream,
   ]);
 
@@ -2548,7 +2566,7 @@ function SettingsPage({
   onRefreshProfiles: () => Promise<void>;
   onProfilesChanged: (profiles: PawPromptProfile[]) => void;
   onProfileDeleted: (profileId: string) => void;
-  sessionLaunchSettings: SessionLaunchSettings;
+  sessionLaunchSettings: SessionLaunchSettings | null;
   sessionLaunchSettingsLoading: boolean;
   sessionLaunchSettingsError: string | null;
   onRefreshSessionLaunchSettings: () => Promise<void> | void;
@@ -2755,7 +2773,7 @@ export default function App() {
           onRefreshProfiles={promptProfileState.refresh}
           onProfilesChanged={promptProfileState.noteProfilesChanged}
           onProfileDeleted={promptProfileState.noteProfileDeleted}
-          sessionLaunchSettings={sessionLaunchSettingsState.settings}
+          sessionLaunchSettings={sessionLaunchSettingsState.responseError ? null : sessionLaunchSettingsState.settings}
           sessionLaunchSettingsLoading={sessionLaunchSettingsState.loading}
           sessionLaunchSettingsError={sessionLaunchSettingsState.error}
           onRefreshSessionLaunchSettings={sessionLaunchSettingsState.refresh}
@@ -2765,7 +2783,11 @@ export default function App() {
         <SessionsPage
           registerBeforeLeave={registerBeforeLeave}
           workstreams={graphLoader.workstreams}
-          defaultCliArgs={sessionLaunchSettingsState.settings.defaultCliArgs}
+          defaultCliArgs={
+            sessionLaunchSettingsState.loaded
+              ? sessionLaunchSettingsState.settings.defaultCliArgs
+              : null
+          }
           onOpenWorkstream={openWorkstream}
           routeWorkstreamId={route.workstreamId ?? null}
           routeNodeId={route.nodeId ?? null}

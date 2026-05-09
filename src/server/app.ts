@@ -34,14 +34,30 @@ import { SessionRegistryEventStream } from "./session-events";
 import type { NodeLaunchDeps } from "./node-launch";
 import { DefaultManagedSdkRunner } from "./managed-sdk-runner";
 import {
+  DEFAULT_COPILOT_CLI_ARGS,
   readSessionLaunchSettings,
   readSessionLaunchSettingsSync,
+  SessionLaunchSettingsError,
 } from "./session-launch-settings";
 
 export interface StreamlinerApiApp {
   app: Express;
   eventStream: SessionRegistryEventStream;
   close: () => void;
+}
+
+function loadRelaunchDefaultCliArgs(settingsPath?: string): string[] {
+  try {
+    return readSessionLaunchSettingsSync(settingsPath).defaultCliArgs;
+  } catch (error: unknown) {
+    if (
+      error instanceof SessionLaunchSettingsError &&
+      error.code === "session_launch_settings_malformed"
+    ) {
+      return [...DEFAULT_COPILOT_CLI_ARGS];
+    }
+    throw error;
+  }
 }
 
 export interface StreamlinerApiAppOptions {
@@ -241,7 +257,7 @@ export function createStreamlinerApiApp(
       relaunchDeps: {
         ...options.relaunchDeps,
         loadDefaultCliArgs: options.relaunchDeps?.loadDefaultCliArgs
-          ?? (() => readSessionLaunchSettingsSync(options.sessionLaunchSettingsPath).defaultCliArgs),
+          ?? (() => loadRelaunchDefaultCliArgs(options.sessionLaunchSettingsPath)),
       },
       managedSdkRunner,
       launchClaimStore: options.launchClaimStore,

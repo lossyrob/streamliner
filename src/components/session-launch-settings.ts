@@ -5,6 +5,16 @@ export interface SessionLaunchSettings {
 const SESSION_LAUNCH_SETTINGS_ENDPOINT = "/api/session-launch-settings";
 export const FALLBACK_SESSION_LAUNCH_DEFAULT_CLI_ARGS = ["--yolo"] as const;
 
+export class SessionLaunchSettingsRequestError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "SessionLaunchSettingsRequestError";
+    this.status = status;
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -57,7 +67,7 @@ async function parseSettingsResponse(response: Response): Promise<SessionLaunchS
     const message = isRecord(payload) && typeof payload.error === "string"
       ? payload.error
       : `Session launch settings request failed with ${response.status}.`;
-    throw new Error(message);
+    throw new SessionLaunchSettingsRequestError(response.status, message);
   }
   return normalizeSettings(payload);
 }

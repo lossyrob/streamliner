@@ -9,7 +9,7 @@ import {
 } from "./session-launch-settings";
 
 interface SessionLaunchSettingsPageProps {
-  settings: SessionLaunchSettings;
+  settings: SessionLaunchSettings | null;
   loading: boolean;
   error: string | null;
   onRefresh: () => Promise<void> | void;
@@ -24,9 +24,10 @@ export function SessionLaunchSettingsPage({
   onSettingsChanged,
 }: SessionLaunchSettingsPageProps) {
   const [cliArgsText, setCliArgsText] = useState(() =>
-    formatSessionLaunchCliArgsText(settings.defaultCliArgs)
+    settings ? formatSessionLaunchCliArgsText(settings.defaultCliArgs) : ""
   );
   const [busy, setBusy] = useState(false);
+  const [dirty, setDirty] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -35,10 +36,10 @@ export function SessionLaunchSettingsPage({
   }, [onRefresh]);
 
   useEffect(() => {
-    if (!busy) {
+    if (!busy && !dirty && settings) {
       setCliArgsText(formatSessionLaunchCliArgsText(settings.defaultCliArgs));
     }
-  }, [busy, settings.defaultCliArgs]);
+  }, [busy, dirty, settings]);
 
   const handleSave = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -48,6 +49,8 @@ export function SessionLaunchSettingsPage({
     try {
       const defaultCliArgs = parseSessionLaunchCliArgsText(cliArgsText);
       const saved = await saveSessionLaunchSettings({ defaultCliArgs });
+      setCliArgsText(formatSessionLaunchCliArgsText(saved.defaultCliArgs));
+      setDirty(false);
       onSettingsChanged(saved);
       setStatus(
         saved.defaultCliArgs.length === 0
@@ -63,12 +66,14 @@ export function SessionLaunchSettingsPage({
 
   const resetToYolo = () => {
     setCliArgsText("--yolo");
-    setStatus(null);
+    setDirty(true);
+    setStatus("Click Save defaults to persist --yolo.");
     setActionError(null);
   };
 
   const clearDefaults = () => {
     setCliArgsText("");
+    setDirty(true);
     setStatus("Empty defaults are saved only after you click Save defaults.");
     setActionError(null);
   };
@@ -99,7 +104,11 @@ export function SessionLaunchSettingsPage({
             <span className="sl-section-label">Default Copilot CLI args</span>
             <h2>Terminal launch defaults</h2>
           </div>
-          <code>{settings.defaultCliArgs.length === 0 ? "empty" : settings.defaultCliArgs.join(" ")}</code>
+          <code>
+            {settings
+              ? settings.defaultCliArgs.length === 0 ? "empty" : settings.defaultCliArgs.join(" ")
+              : "not loaded"}
+          </code>
         </div>
 
         <label className="sl-field">
@@ -109,6 +118,7 @@ export function SessionLaunchSettingsPage({
             value={cliArgsText}
             onChange={(event) => {
               setCliArgsText(event.target.value);
+              setDirty(true);
               setStatus(null);
               setActionError(null);
             }}

@@ -107,6 +107,7 @@ describe("Launch Claim Binding — end-to-end integration", () => {
         expectedCwd: cwd,
         bindingWindowMs: 5 * 60_000,
         retentionWindowMs: 60 * 60_000,
+        cliArgs: ["--yolo", "--model=gpt-5.5"],
       },
       {
         mintLaunchClaimId: () => "claim-INTEGRATION",
@@ -123,6 +124,7 @@ describe("Launch Claim Binding — end-to-end integration", () => {
     expect(reservedSnapshot?.origin).toEqual({
       kind: "launched",
       launchClaimId: "claim-INTEGRATION",
+      cliArgs: ["--yolo", "--model=gpt-5.5"],
     });
     expect(reservedSnapshot?.graphBinding?.launchClaimId).toBe("claim-INTEGRATION");
     expect(reservedSnapshot?.copilotSessionId).toBeNull();
@@ -174,6 +176,11 @@ describe("Launch Claim Binding — end-to-end integration", () => {
     // (b) Reserved row absorbed observation; duplicate was deleted.
     const fusedRow = registryStore.getSession("reg-INTEGRATION");
     expect(fusedRow?.copilotSessionId).toBe("copilot-INTEGRATION");
+    expect(fusedRow?.origin).toEqual({
+      kind: "launched",
+      launchClaimId: "claim-INTEGRATION",
+      cliArgs: ["--yolo", "--model=gpt-5.5"],
+    });
     expect(fusedRow?.graphBinding).toEqual({
       workstreamId: "session-launching-and-tracking",
       nodeId: "launch-claim-binding",

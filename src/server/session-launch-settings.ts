@@ -47,8 +47,12 @@ function isMissingFileError(error: unknown): boolean {
   return isRecord(error) && error.code === "ENOENT";
 }
 
-function invalidSettingsFile(message: string): SessionLaunchSettingsError {
-  return new SessionLaunchSettingsError("session_launch_settings_malformed", 500, message);
+function malformedSettingsMessage(path: string): string {
+  return `Session launch settings store is malformed at ${path}.`;
+}
+
+function invalidSettingsFile(path: string): SessionLaunchSettingsError {
+  return new SessionLaunchSettingsError("session_launch_settings_malformed", 500, malformedSettingsMessage(path));
 }
 
 function invalidSettingsInput(message: string): SessionLaunchSettingsError {
@@ -90,36 +94,36 @@ export function normalizeDefaultCliArgs(value: unknown): string[] {
   });
 }
 
-function normalizeStoredDefaultCliArgs(value: unknown): string[] {
+function normalizeStoredDefaultCliArgs(value: unknown, path: string): string[] {
   try {
     return normalizeDefaultCliArgs(value);
   } catch (error: unknown) {
     if (error instanceof SessionLaunchSettingsError) {
-      throw invalidSettingsFile("Session launch settings store is malformed.");
+      throw invalidSettingsFile(path);
     }
     throw error;
   }
 }
 
-function parseDocument(parsed: unknown): SessionLaunchSettings {
+function parseDocument(parsed: unknown, path: string): SessionLaunchSettings {
   if (!isRecord(parsed)) {
-    throw invalidSettingsFile("Session launch settings store is malformed.");
+    throw invalidSettingsFile(path);
   }
   return {
-    defaultCliArgs: normalizeStoredDefaultCliArgs(parsed.defaultCliArgs),
+    defaultCliArgs: normalizeStoredDefaultCliArgs(parsed.defaultCliArgs, path),
   };
 }
 
 export async function readSessionLaunchSettings(path = defaultSessionLaunchSettingsPath()): Promise<SessionLaunchSettings> {
   try {
     const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
-    return parseDocument(parsed);
+    return parseDocument(parsed, path);
   } catch (error: unknown) {
     if (isMissingFileError(error)) {
       return { defaultCliArgs: [...DEFAULT_COPILOT_CLI_ARGS] };
     }
     if (error instanceof SyntaxError) {
-      throw invalidSettingsFile("Session launch settings store is malformed.");
+      throw invalidSettingsFile(path);
     }
     throw error;
   }
@@ -128,13 +132,13 @@ export async function readSessionLaunchSettings(path = defaultSessionLaunchSetti
 export function readSessionLaunchSettingsSync(path = defaultSessionLaunchSettingsPath()): SessionLaunchSettings {
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
-    return parseDocument(parsed);
+    return parseDocument(parsed, path);
   } catch (error: unknown) {
     if (isMissingFileError(error)) {
       return { defaultCliArgs: [...DEFAULT_COPILOT_CLI_ARGS] };
     }
     if (error instanceof SyntaxError) {
-      throw invalidSettingsFile("Session launch settings store is malformed.");
+      throw invalidSettingsFile(path);
     }
     throw error;
   }
