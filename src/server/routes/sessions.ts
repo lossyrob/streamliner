@@ -8,6 +8,12 @@ import type { LaunchClaimStore } from "../../launch-claim-contract";
 import { bindClaimViaTrustedSignal } from "../../session-registry/launch-claims";
 import { relaunchSession, type RelaunchDeps } from "../../session-registry/relaunch";
 import {
+  executeManagedCleanup,
+  managedCleanupSummary,
+  validateManagedCleanup,
+  type ManagedCleanupDeps,
+} from "../managed-cleanup";
+import {
   SessionRegistryArchivedError,
   SessionRegistryFileStore,
   SessionRegistryNotFoundError,
@@ -16,6 +22,7 @@ import { stopSession } from "../../session-registry/stop";
 import type {
   SessionRegistryRecord,
   SessionRegistryRuntimeEvidenceKind,
+  SessionRegistryRuntimeOwner,
 } from "../../session-registry-schema";
 import type {
   SessionRegistryRuntimeEvidenceInput,
@@ -26,6 +33,12 @@ import { isLoopbackAddress } from "../config";
 import { getApiLogger } from "../logger";
 import type { ManagedSdkInterruptResult, ManagedSdkRunner } from "../managed-sdk-runner";
 import { SessionRegistryEventStream } from "../session-events";
+import {
+  buildCopilotResumeCommand,
+  launchTerminal,
+  type TerminalLaunchOptions,
+  type TerminalLaunchResult,
+} from "../terminal-launch";
 
 function hasNonLoopbackForwardedFor(value: string | string[] | undefined): boolean {
   if (!value) {
@@ -47,6 +60,8 @@ export function createSessionsRouter(options: {
   eventStream: SessionRegistryEventStream;
   relaunchDeps?: Partial<RelaunchDeps>;
   managedSdkRunner?: ManagedSdkRunner;
+  managedCleanupDeps?: Partial<ManagedCleanupDeps>;
+  now?: () => Date;
   /**
    * Optional launch-claim store. When provided, the trusted-signal
    * intake (POST /api/sessions/signals) attempts Tier 2 launch-claim
@@ -370,6 +385,297 @@ export function createSessionsRouter(options: {
     }
   });
 
+  router.post("/:id/managed/takeover", async (req, res) => {
+    const sessionId = req.params.id;
+    if (isNonLoopbackRequest(req)) {
+      managedLogger.warn("rejected takeover: non-loopback", { sessionId });
+      res.status(403).json({ error: "Managed runtime actions must originate from loopback." });
+      return;
+    }
+    if (!requestHasJsonContent(req)) {
+      managedLogger.warn("rejected takeover: bad content-type", { sessionId });
+      res.status(415).json({ error: "Content-Type must be application/json." });
+      return;
+    }
+    const target = managedRuntimeTarget(options.store, sessionId);
+    if (!target.ok) {
+      managedLogger.warn("rejected takeover: invalid target", {
+        sessionId,
+        statusCode: target.statusCode,
+      });
+      res.status(target.statusCode).json({ error: target.message });
+      return;
+    }
+    const runtime = target.record.runtime;
+    const sdkSessionId = runtime?.sdkSessionId;
+    if (!sdkSessionId) {
+      try {
+        const failed = target.store.patchRuntimeMetadata(sessionId, {
+          lifecycleState: "failed",
+          progressEvents: [{
+            type: "error",
+            message: "Terminal takeover requires an SDK session id.",
+          }],
+        });
+        res.status(409).json({
+          error: "Terminal takeover requires an SDK session id.",
+          session: failed,
+        });
+      } catch (error: unknown) {
+        const failure = managedRuntimeErrorResponse(error);
+        res.status(failure.statusCode).json({ error: failure.message });
+      }
+      return;
+    }
+
+    const reason = "Terminal takeover requested by builder action.";
+    const interruptOutcome = await interruptManagedSdkRunner(
+      options.managedSdkRunner,
+      sessionId,
+      reason,
+    );
+    const cwd = target.record.derivedWorktreePath ?? target.record.cwd;
+    const terminalOptions: TerminalLaunchOptions = {
+      cwd,
+      command: buildCopilotResumeCommand(sdkSessionId),
+      title: target.record.title,
+      tabColor: target.record.color ?? undefined,
+    };
+    let terminal: TerminalLaunchResult;
+    try {
+      terminal = (options.relaunchDeps?.launchTerminal ?? launchTerminal)(terminalOptions);
+    } catch (error: unknown) {
+      const message = `Failed to launch terminal takeover: ${error instanceof Error ? error.message : String(error)}`;
+      try {
+        const blocked = target.store.patchRuntimeMetadata(sessionId, {
+          lifecycleState: "waiting_for_builder",
+          progressEvents: [{
+            type: "error",
+            message,
+          }],
+        });
+        res.status(500).json({ error: message, session: blocked });
+      } catch (patchError: unknown) {
+        const failure = managedRuntimeErrorResponse(patchError);
+        res.status(failure.statusCode).json({ error: failure.message });
+      }
+      return;
+    }
+
+    const timestamp = (options.now?.() ?? new Date()).toISOString();
+    try {
+      const withTakeoverRuntime = target.store.patchRuntimeMetadata(sessionId, {
+        runtimeOwner: "builder-terminal",
+        lifecycleState: "terminal_takeover",
+        evidence: [{
+          kind: "terminal_takeover",
+          source: "managed-runtime-action",
+          detectedAt: timestamp,
+          summary: "Terminal takeover opened visible Copilot CLI for the managed SDK session.",
+        }],
+        progressEvents: [{
+          type: "terminal_takeover",
+          message: interruptOutcome.ok
+            ? "Terminal takeover opened and SDK ownership was interrupted."
+            : `Terminal takeover opened; SDK interruption was inconclusive: ${interruptOutcome.message}`,
+          timestamp,
+          data: {
+            method: terminal.method,
+            hasPid: terminal.pid !== undefined,
+          },
+        }],
+      });
+      const attached = target.store.attachObservedSession(sessionId, {
+        copilotSessionId: sdkSessionId,
+        cwd,
+        repo: withTakeoverRuntime.repo,
+        branch: withTakeoverRuntime.branch,
+        lastSeenAt: timestamp,
+        lifecycleStatus: "active",
+        observedSessionKind: "interactive",
+        copilotProcessState: "live",
+        trustedSignalSource: "copilot-cli-hook",
+        trustedStartedAt: timestamp,
+        trustedEndedAt: null,
+        trustedLastSignalAt: timestamp,
+        trustedStartSource: "resume",
+        trustedEndReason: null,
+        trustedExecutionKind: "copilot_cli",
+      });
+      managedLogger.info("takeover", {
+        sessionId,
+        sdkSessionId,
+        method: terminal.method,
+        pid: terminal.pid,
+        interruptOk: interruptOutcome.ok,
+      });
+      res.json({
+        outcome: {
+          ok: true,
+          evidenceState: "terminal_takeover",
+          message: "Terminal takeover opened visible Copilot CLI.",
+          interrupt: interruptOutcome,
+        },
+        terminal: {
+          method: terminal.method,
+          pid: terminal.pid,
+          copilotResumed: true,
+        },
+        session: attached,
+      });
+    } catch (error: unknown) {
+      const failure = managedRuntimeErrorResponse(error);
+      managedLogger.warn("takeover settle failed", {
+        sessionId,
+        statusCode: failure.statusCode,
+        err: errorLogDetails(error),
+      });
+      res.status(failure.statusCode).json({ error: failure.message });
+    }
+  });
+
+  router.post("/:id/managed/cleanup", async (req, res) => {
+    const sessionId = req.params.id;
+    if (isNonLoopbackRequest(req)) {
+      managedLogger.warn("rejected cleanup: non-loopback", { sessionId });
+      res.status(403).json({ error: "Managed runtime actions must originate from loopback." });
+      return;
+    }
+    if (!requestHasJsonContent(req)) {
+      managedLogger.warn("rejected cleanup: bad content-type", { sessionId });
+      res.status(415).json({ error: "Content-Type must be application/json." });
+      return;
+    }
+    const target = managedRuntimeTarget(options.store, sessionId, {
+      allowedOwners: ["streamliner-sdk", "builder-terminal"],
+    });
+    if (!target.ok) {
+      managedLogger.warn("rejected cleanup: invalid target", {
+        sessionId,
+        statusCode: target.statusCode,
+      });
+      res.status(target.statusCode).json({ error: target.message });
+      return;
+    }
+    const validation = validateManagedCleanup(
+      target.record,
+      target.store.listSessions({ includeArchived: false }),
+      options.managedCleanupDeps,
+    );
+    if (!validation.ok) {
+      const message = validation.blockers[0]?.message ?? "Cleanup is blocked by managed runtime guardrails.";
+      try {
+        const blocked = target.store.patchRuntimeMetadata(sessionId, {
+          lifecycleState: "waiting_for_builder",
+          progressEvents: [{
+            type: "error",
+            message,
+            data: {
+              blockerCount: validation.blockers.length,
+              firstBlockerCode: validation.blockers[0]?.code,
+            },
+          }],
+        });
+        res.json({
+          outcome: {
+            ok: false,
+            evidenceState: "waiting_for_builder",
+            message,
+            blockers: validation.blockers,
+          },
+          session: blocked,
+        });
+      } catch (error: unknown) {
+        const failure = managedRuntimeErrorResponse(error);
+        res.status(failure.statusCode).json({ error: failure.message });
+      }
+      return;
+    }
+
+    try {
+      target.store.patchRuntimeMetadata(sessionId, {
+        lifecycleState: "cleaning_up",
+        progressEvents: [{
+          type: "lifecycle",
+          message: "Managed cleanup-after-merge started.",
+        }],
+      });
+      const cleanup = executeManagedCleanup(validation.plan, options.managedCleanupDeps);
+      if (!cleanup.ok) {
+        const failed = target.store.patchRuntimeMetadata(sessionId, {
+          lifecycleState: "waiting_for_builder",
+          progressEvents: [{
+            type: "error",
+            message: cleanup.message,
+            data: {
+              removedWorktree: cleanup.removedWorktree,
+              deletedBranch: cleanup.deletedBranch,
+              blockerCount: cleanup.blockers.length,
+              firstBlockerCode: cleanup.blockers[0]?.code,
+            },
+          }],
+        });
+        res.json({
+          outcome: {
+            ok: false,
+            evidenceState: "waiting_for_builder",
+            message: cleanup.message,
+            blockers: cleanup.blockers,
+            removedWorktree: cleanup.removedWorktree,
+            deletedBranch: cleanup.deletedBranch,
+          },
+          session: failed,
+        });
+        return;
+      }
+      const summary = managedCleanupSummary(validation.plan, cleanup);
+      const cleaned = target.store.patchRuntimeMetadata(sessionId, {
+        lifecycleState: "cleaned_up",
+        evidence: [{
+          kind: "cleaned_up",
+          source: "managed-cleanup",
+          repo: validation.plan.pr.repo,
+          number: validation.plan.pr.number,
+          sha: validation.plan.pr.headSha,
+          url: validation.plan.pr.url,
+          summary,
+        }],
+        progressEvents: [{
+          type: "evidence",
+          message: summary,
+          data: {
+            removedWorktree: cleanup.removedWorktree,
+            deletedBranch: cleanup.deletedBranch,
+          },
+        }],
+      });
+      managedLogger.info("cleanup", {
+        sessionId,
+        worktreePath: validation.plan.worktreePath,
+        branch: validation.plan.branch,
+        pr: validation.plan.pr.number,
+      });
+      res.json({
+        outcome: {
+          ok: true,
+          evidenceState: "cleaned_up",
+          message: summary,
+          removedWorktree: cleanup.removedWorktree,
+          deletedBranch: cleanup.deletedBranch,
+        },
+        session: cleaned,
+      });
+    } catch (error: unknown) {
+      const failure = managedRuntimeErrorResponse(error);
+      managedLogger.warn("cleanup failed", {
+        sessionId,
+        statusCode: failure.statusCode,
+        err: errorLogDetails(error),
+      });
+      res.status(failure.statusCode).json({ error: failure.message });
+    }
+  });
+
   router.post("/:id/managed/evidence", (req, res) => {
     const sessionId = req.params.id;
     if (isNonLoopbackRequest(req)) {
@@ -490,6 +796,9 @@ type ManagedRuntimeTarget =
 function managedRuntimeTarget(
   store: SessionRegistryStore,
   sessionId: string,
+  validation: {
+    allowedOwners?: readonly SessionRegistryRuntimeOwner[];
+  } = {},
 ): ManagedRuntimeTarget {
   if (!(store instanceof SessionRegistryFileStore)) {
     return {
@@ -514,7 +823,12 @@ function managedRuntimeTarget(
     };
   }
   const runtime = record.runtime;
-  if (!runtime || runtime.runtimeKind !== "managed-sdk" || runtime.runtimeOwner !== "streamliner-sdk") {
+  const allowedOwners = validation.allowedOwners ?? ["streamliner-sdk"];
+  if (
+    !runtime ||
+    runtime.runtimeKind !== "managed-sdk" ||
+    !allowedOwners.includes(runtime.runtimeOwner)
+  ) {
     return {
       ok: false,
       statusCode: 409,

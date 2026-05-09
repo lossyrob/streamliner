@@ -307,6 +307,7 @@ export function isManagedRuntimeActive(
   runtime: SessionRegistryRuntimeMetadata | null | undefined,
 ): boolean {
   return runtime?.runtimeKind === "managed-sdk" &&
+    runtime.runtimeOwner === "streamliner-sdk" &&
     runtime.lifecycleState !== null &&
     ACTIVE_MANAGED_LIFECYCLE_STATES.has(runtime.lifecycleState);
 }
@@ -345,15 +346,18 @@ export function mergeSessionRegistryRuntimeMetadata(
     const normalized = inputEvidenceToStoredEvidence(evidence, timestamp);
     evidenceById.set(normalized.id, normalized);
   }
+  const terminalLifecycleState = isTerminalLifecycleState(current);
   const lifecycleChanged =
     patch.lifecycleState !== undefined &&
-    !isTerminalLifecycleState(current?.lifecycleState) &&
+    !terminalLifecycleState &&
     patch.lifecycleState !== (current?.lifecycleState ?? null);
   const nextLifecycleState = lifecycleChanged
     ? patch.lifecycleState ?? null
     : current?.lifecycleState ?? (patch.lifecycleState !== undefined ? patch.lifecycleState : null);
   const runtimeKind = patch.runtimeKind ?? current?.runtimeKind;
-  const runtimeOwner = patch.runtimeOwner ?? current?.runtimeOwner;
+  const runtimeOwner = terminalLifecycleState
+    ? current?.runtimeOwner
+    : patch.runtimeOwner ?? current?.runtimeOwner;
   if (runtimeKind === undefined) {
     throw new Error("runtimeKind is required when creating runtime metadata.");
   }
@@ -402,8 +406,15 @@ export function mergeSessionRegistryRuntimeMetadata(
 }
 
 function isTerminalLifecycleState(
-  state: SessionRegistryManagedLifecycleState | null | undefined,
+  current: SessionRegistryRuntimeMetadata | null | undefined,
 ): boolean {
+  const state = current?.lifecycleState;
+  if (
+    current?.runtimeOwner === "builder-terminal" &&
+    state === "terminal_takeover"
+  ) {
+    return true;
+  }
   return state !== null &&
     state !== undefined &&
     TERMINAL_MANAGED_LIFECYCLE_STATES.has(state);

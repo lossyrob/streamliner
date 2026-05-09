@@ -720,8 +720,14 @@ describe("App sessions route", () => {
   );
 
   it("renders managed runtime state in My Sessions rows and details", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = requestPath(input);
+      if (path === "/api/sessions/managed-session/managed/takeover") {
+        expect(init?.method).toBe("POST");
+        return jsonResponse({
+          outcome: { message: "Terminal takeover opened visible Copilot CLI." },
+        });
+      }
       if (path.startsWith("/api/sessions")) {
         return jsonResponse([
           buildSession({
@@ -789,8 +795,19 @@ describe("App sessions route", () => {
     expect(container.textContent).toContain("sdk-session-123");
     expect(container.textContent).toContain("Terminal takeover");
     expect(container.textContent).toContain("Cleanup");
-    expect(findButton(container, "Terminal takeover").disabled).toBe(true);
+    expect(findButton(container, "Terminal takeover").disabled).toBe(false);
     expect(findButton(container, "Cleanup").disabled).toBe(true);
+
+    act(() => {
+      findButton(container, "Terminal takeover").click();
+    });
+    await settle();
+
+    expect(fetchMock.mock.calls.some(([input, init]) =>
+      requestPath(input as RequestInfo | URL) === "/api/sessions/managed-session/managed/takeover" &&
+      init?.method === "POST"
+    )).toBe(true);
+    expect(container.textContent).toContain("Terminal takeover opened visible Copilot CLI.");
   });
 
   it("shows a loading state while the workstreams registry is still fetching", async () => {

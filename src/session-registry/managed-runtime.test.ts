@@ -182,6 +182,30 @@ describe("managed runtime metadata", () => {
     expect(isManagedRuntimeActive(second)).toBe(false);
   });
 
+  it("does not treat terminal-owned takeover rows as active SDK runs", () => {
+    const sdkOwned = mergeSessionRegistryRuntimeMetadata(
+      null,
+      {
+        runtimeKind: "managed-sdk",
+        runtimeOwner: "streamliner-sdk",
+        lifecycleState: "running",
+      },
+      new Date("2026-05-07T12:00:00.000Z"),
+    );
+    const terminalOwned = mergeSessionRegistryRuntimeMetadata(
+      null,
+      {
+        runtimeKind: "managed-sdk",
+        runtimeOwner: "builder-terminal",
+        lifecycleState: "terminal_takeover",
+      },
+      new Date("2026-05-07T12:00:00.000Z"),
+    );
+
+    expect(isManagedRuntimeActive(sdkOwned)).toBe(true);
+    expect(isManagedRuntimeActive(terminalOwned)).toBe(false);
+  });
+
   it("requires runtime identity when creating managed runtime metadata", () => {
     expect(() =>
       mergeSessionRegistryRuntimeMetadata(
@@ -230,5 +254,37 @@ describe("managed runtime metadata", () => {
       expect(next.progressEvents.at(-1)?.message).toBe("Late lifecycle callback observed.");
       expect(next.lastStateChangedAt).toBe(current.lastStateChangedAt);
     }
+  });
+
+  it("keeps builder-terminal takeover ownership sticky across late SDK callbacks", () => {
+    const current = mergeSessionRegistryRuntimeMetadata(
+      null,
+      {
+        runtimeKind: "managed-sdk",
+        runtimeOwner: "builder-terminal",
+        lifecycleState: "terminal_takeover",
+        progressEvents: [{
+          type: "terminal_takeover",
+          message: "Visible terminal took over the SDK session.",
+        }],
+      },
+      new Date("2026-05-07T12:00:00.000Z"),
+    );
+    const next = mergeSessionRegistryRuntimeMetadata(
+      current,
+      {
+        runtimeOwner: "streamliner-sdk",
+        lifecycleState: "running",
+        progressEvents: [{
+          type: "assistant_status",
+          message: "Late SDK status callback observed.",
+        }],
+      },
+      new Date("2026-05-07T12:01:00.000Z"),
+    );
+
+    expect(next.runtimeOwner).toBe("builder-terminal");
+    expect(next.lifecycleState).toBe("terminal_takeover");
+    expect(next.progressEvents.at(-1)?.message).toBe("Late SDK status callback observed.");
   });
 });

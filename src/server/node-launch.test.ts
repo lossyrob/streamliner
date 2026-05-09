@@ -1260,6 +1260,348 @@ describe("managed runtime session API routes", () => {
     }));
   });
 
+  it("opens visible terminal takeover for the exact SDK session", async () => {
+    const root = createRootDir();
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const interrupts: string[] = [];
+    let launchedCommand: string | undefined;
+    const runner: ManagedSdkRunner = {
+      start: async (input) => ({
+        registryId: input.registryId,
+        sdkSessionId: "sdk-session-123",
+        sdkWorkspacePath: null,
+        sdkStateRoot: null,
+      }),
+      interrupt: async (input) => {
+        interrupts.push(input.registryId);
+        return {
+          ok: true,
+          evidenceState: "interrupted",
+          message: input.reason ?? "Interrupted.",
+        };
+      },
+    };
+    const api = createStreamlinerApiApp({
+      store: registryStore,
+      launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
+      now: () => new Date("2026-05-07T12:00:00.000Z"),
+      relaunchDeps: {
+        launchTerminal: (options) => {
+          launchedCommand = options.command;
+          return { method: "powershell", pid: 4242 };
+        },
+      },
+      nodeLaunchDeps: {
+        managedSdkRunner: runner,
+      },
+    });
+    activeApps.push(api);
+    const record = registryStore.upsertSession({
+      id: "managed-takeover-row",
+      title: "Managed takeover row",
+      description: "",
+      cwd: normalizePath(root),
+      origin: { kind: "launched", launchClaimId: "claim-takeover" },
+      graphBinding: {
+        workstreamId: "ws-1",
+        nodeId: "node-takeover",
+        launchClaimId: "claim-takeover",
+      },
+    });
+    registryStore.patchRuntimeMetadata(record.id, {
+      runtimeKind: "managed-sdk",
+      runtimeOwner: "streamliner-sdk",
+      lifecycleState: "running",
+      permissionProfile: "managed-autonomous",
+      launchClaimId: "claim-takeover",
+      launchNonce: "nonce-takeover",
+      sdkSessionId: "sdk-session-123",
+    });
+
+    const takeoverResponse = await request(api.app)
+      .post(`/api/sessions/${record.id}/managed/takeover`)
+      .send({})
+      .expect(200);
+
+    expect(interrupts).toEqual([record.id]);
+    expect(launchedCommand).toContain("sdk-session-123");
+    expect(takeoverResponse.body).toEqual(expect.objectContaining({
+      outcome: expect.objectContaining({
+        ok: true,
+        evidenceState: "terminal_takeover",
+      }),
+      terminal: expect.objectContaining({
+        copilotResumed: true,
+        pid: 4242,
+      }),
+      session: expect.objectContaining({
+        copilotSessionId: "sdk-session-123",
+        copilotProcessState: "live",
+        runtime: expect.objectContaining({
+          runtimeOwner: "builder-terminal",
+          lifecycleState: "terminal_takeover",
+        }),
+      }),
+    }));
+
+    const resumedSignalRecord = registryStore.recordTrustedSessionSignal({
+      event: "session.started",
+      source: "copilot-cli-hook",
+      sessionId: "sdk-session-123",
+      timestamp: "2026-05-07T12:00:05.000Z",
+      cwd: normalizePath(root),
+      repo: "lossyrob/streamliner",
+      branch: "feature/takeover",
+      hookSource: "resume",
+      executionKind: "copilot_cli",
+    });
+    expect(resumedSignalRecord.id).toBe(record.id);
+    expect(registryStore.listSessions({ includeArchived: false })).toHaveLength(1);
+    expect(registryStore.getSession(record.id)).toEqual(expect.objectContaining({
+      copilotSessionId: "sdk-session-123",
+      runtime: expect.objectContaining({
+        runtimeOwner: "builder-terminal",
+        lifecycleState: "terminal_takeover",
+      }),
+    }));
+  });
+
+  it("opens terminal takeover when SDK interruption is inconclusive", async () => {
+    const root = createRootDir();
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const api = createStreamlinerApiApp({
+      store: registryStore,
+      launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
+      relaunchDeps: {
+        launchTerminal: () => ({ method: "powershell", pid: 4243 }),
+      },
+      nodeLaunchDeps: {
+        managedSdkRunner: {
+          start: async (input) => ({
+            registryId: input.registryId,
+            sdkSessionId: "sdk-session-inconclusive",
+            sdkWorkspacePath: null,
+            sdkStateRoot: null,
+          }),
+          interrupt: async () => ({
+            ok: false,
+            evidenceState: "waiting_for_builder",
+            message: "SDK abort timed out.",
+          }),
+        },
+      },
+    });
+    activeApps.push(api);
+    const record = registryStore.upsertSession({
+      id: "managed-takeover-inconclusive-interrupt-row",
+      title: "Managed takeover inconclusive interrupt row",
+      description: "",
+      cwd: normalizePath(root),
+      origin: { kind: "launched", launchClaimId: "claim-takeover-inconclusive" },
+      graphBinding: {
+        workstreamId: "ws-1",
+        nodeId: "node-takeover-inconclusive",
+        launchClaimId: "claim-takeover-inconclusive",
+      },
+    });
+    registryStore.patchRuntimeMetadata(record.id, {
+      runtimeKind: "managed-sdk",
+      runtimeOwner: "streamliner-sdk",
+      lifecycleState: "running",
+      permissionProfile: "managed-autonomous",
+      launchClaimId: "claim-takeover-inconclusive",
+      launchNonce: "nonce-takeover-inconclusive",
+      sdkSessionId: "sdk-session-inconclusive",
+    });
+
+    const takeoverResponse = await request(api.app)
+      .post(`/api/sessions/${record.id}/managed/takeover`)
+      .send({})
+      .expect(200);
+
+    expect(takeoverResponse.body).toEqual(expect.objectContaining({
+      outcome: expect.objectContaining({
+        ok: true,
+        evidenceState: "terminal_takeover",
+        interrupt: expect.objectContaining({
+          ok: false,
+          message: "SDK abort timed out.",
+        }),
+      }),
+      session: expect.objectContaining({
+        copilotSessionId: "sdk-session-inconclusive",
+        runtime: expect.objectContaining({
+          runtimeOwner: "builder-terminal",
+          lifecycleState: "terminal_takeover",
+          progressEvents: expect.arrayContaining([
+            expect.objectContaining({
+              type: "terminal_takeover",
+              message: expect.stringContaining("SDK interruption was inconclusive"),
+            }),
+          ]),
+        }),
+      }),
+    }));
+  });
+
+  it("fails terminal takeover closed when no SDK session id is known", async () => {
+    const root = createRootDir();
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const api = createStreamlinerApiApp({
+      store: registryStore,
+      launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
+    });
+    activeApps.push(api);
+    const record = registryStore.upsertSession({
+      id: "managed-takeover-missing-sdk-row",
+      title: "Managed takeover missing SDK row",
+      description: "",
+      cwd: normalizePath(root),
+      origin: { kind: "launched", launchClaimId: "claim-takeover-missing-sdk" },
+      graphBinding: {
+        workstreamId: "ws-1",
+        nodeId: "node-takeover-missing-sdk",
+        launchClaimId: "claim-takeover-missing-sdk",
+      },
+    });
+    registryStore.patchRuntimeMetadata(record.id, {
+      runtimeKind: "managed-sdk",
+      runtimeOwner: "streamliner-sdk",
+      lifecycleState: "running",
+      permissionProfile: "managed-autonomous",
+      launchClaimId: "claim-takeover-missing-sdk",
+      launchNonce: "nonce-takeover-missing-sdk",
+    });
+
+    const takeoverResponse = await request(api.app)
+      .post(`/api/sessions/${record.id}/managed/takeover`)
+      .send({})
+      .expect(409);
+
+    expect(takeoverResponse.body.error).toContain("requires an SDK session id");
+    expect(takeoverResponse.body.session.runtime.lifecycleState).toBe("failed");
+  });
+
+  it("runs guarded cleanup after merged PR verification", async () => {
+    const root = createRootDir();
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const gitCalls: string[] = [];
+    const api = createStreamlinerApiApp({
+      store: registryStore,
+      launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
+      managedCleanupDeps: {
+        cwd: normalizePath(join(root, "api")),
+        existsSync: () => true,
+        runGh: () => ({
+          status: 0,
+          stdout: JSON.stringify({
+            state: "MERGED",
+            mergedAt: "2026-05-07T12:00:00Z",
+            headRefOid: "abc123",
+            url: "https://github.com/lossyrob/streamliner/pull/75",
+          }),
+          stderr: "",
+        }),
+        runGit: (cwd, args) => {
+          gitCalls.push(`${normalizePath(cwd)} git ${args.join(" ")}`);
+          if (args.join(" ") === "rev-parse --show-toplevel") {
+            return { status: 0, stdout: normalizePath(root), stderr: "" };
+          }
+          if (args.join(" ") === "worktree list --porcelain") {
+            return {
+              status: 0,
+              stdout: [
+                `worktree ${normalizePath(root)}`,
+                "HEAD abc123",
+                "branch refs/heads/feature/cleanup",
+                "",
+              ].join("\n"),
+              stderr: "",
+            };
+          }
+          if (args.join(" ") === "status --porcelain=v1 --untracked-files=normal") {
+            return { status: 0, stdout: "", stderr: "" };
+          }
+          if (args.join(" ") === "rev-parse feature/cleanup") {
+            return { status: 0, stdout: "abc123\n", stderr: "" };
+          }
+          if (args.join(" ") === "show-ref --verify --quiet refs/heads/feature/cleanup") {
+            return { status: 0, stdout: "", stderr: "" };
+          }
+          if (args.join(" ") === `worktree remove ${normalizePath(root)}`) {
+            return { status: 0, stdout: "", stderr: "" };
+          }
+          if (args.join(" ") === "branch -d feature/cleanup") {
+            return { status: 0, stdout: "", stderr: "" };
+          }
+          return { status: 1, stdout: "", stderr: `Unexpected git command: ${args.join(" ")}` };
+        },
+      },
+    });
+    activeApps.push(api);
+    const record = registryStore.upsertSession({
+      id: "managed-cleanup-row",
+      title: "Managed cleanup row",
+      description: "",
+      cwd: normalizePath(root),
+      branch: "feature/cleanup",
+      origin: { kind: "launched", launchClaimId: "claim-cleanup" },
+      graphBinding: {
+        workstreamId: "ws-1",
+        nodeId: "node-cleanup",
+        launchClaimId: "claim-cleanup",
+      },
+    });
+    registryStore.patchRuntimeMetadata(record.id, {
+      runtimeKind: "managed-sdk",
+      runtimeOwner: "builder-terminal",
+      lifecycleState: "cleanup_ready",
+      permissionProfile: "managed-autonomous",
+      launchClaimId: "claim-cleanup",
+      launchNonce: "nonce-cleanup",
+      evidence: [{
+        kind: "cleanup_ready",
+        source: "test",
+        repo: "lossyrob/streamliner",
+        number: 75,
+        sha: "abc123",
+        url: "https://github.com/lossyrob/streamliner/pull/75",
+        summary: "PR merged.",
+      }],
+    });
+
+    const cleanupResponse = await request(api.app)
+      .post(`/api/sessions/${record.id}/managed/cleanup`)
+      .send({})
+      .expect(200);
+
+    expect(cleanupResponse.body).toEqual(expect.objectContaining({
+      outcome: expect.objectContaining({
+        ok: true,
+        evidenceState: "cleaned_up",
+        removedWorktree: true,
+        deletedBranch: true,
+      }),
+      session: expect.objectContaining({
+        runtime: expect.objectContaining({
+          lifecycleState: "cleaned_up",
+          evidence: expect.arrayContaining([
+            expect.objectContaining({ kind: "cleaned_up", number: 75 }),
+          ]),
+        }),
+      }),
+    }));
+    expect(gitCalls.some((call) => call.endsWith("git branch -d feature/cleanup"))).toBe(true);
+  });
+
   it("settles managed interrupt and cancel failures to terminal states", async () => {
     const root = createRootDir();
     const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
@@ -1446,6 +1788,8 @@ describe("managed runtime session API routes", () => {
     const paths = [
       "/api/sessions/guarded-managed-row/managed/interrupt",
       "/api/sessions/guarded-managed-row/managed/cancel",
+      "/api/sessions/guarded-managed-row/managed/takeover",
+      "/api/sessions/guarded-managed-row/managed/cleanup",
       "/api/sessions/guarded-managed-row/managed/evidence",
     ];
 

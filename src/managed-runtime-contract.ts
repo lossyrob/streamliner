@@ -14,6 +14,7 @@ export const WORKSTREAM_RUNTIME_KINDS = [
 export type WorkstreamRuntimeKind = (typeof WORKSTREAM_RUNTIME_KINDS)[number];
 
 export const MANAGED_RUNTIME_OWNERS = [
+  "builder-terminal",
   "streamliner-sdk",
 ] as const;
 export type ManagedRuntimeOwner = (typeof MANAGED_RUNTIME_OWNERS)[number];
@@ -76,6 +77,8 @@ export const MANAGED_RUNTIME_LINK_KINDS = [
 export type ManagedRuntimeLinkKind = (typeof MANAGED_RUNTIME_LINK_KINDS)[number];
 
 export type ManagedRuntimeActionKind =
+  | "interrupt"
+  | "cancel"
   | "terminal-takeover"
   | "cleanup";
 
@@ -193,7 +196,10 @@ function isManagedRuntimeLinkKind(value: unknown): value is ManagedRuntimeLinkKi
 function isManagedRuntimeActionKind(
   value: unknown,
 ): value is ManagedRuntimeActionKind {
-  return value === "terminal-takeover" || value === "cleanup";
+  return value === "interrupt" ||
+    value === "cancel" ||
+    value === "terminal-takeover" ||
+    value === "cleanup";
 }
 
 function assertUnhandledManagedLifecycleState(state: never): never {
@@ -293,16 +299,28 @@ export function managedRuntimeProgressEvents(
 export function defaultManagedRuntimeActions(): ManagedRuntimeActionAvailability[] {
   return [
     {
+      action: "interrupt",
+      label: "Interrupt",
+      available: false,
+      reason: "Interrupt is unavailable for this background session state.",
+    },
+    {
+      action: "cancel",
+      label: "Cancel",
+      available: false,
+      reason: "Cancel is unavailable for this background session state.",
+    },
+    {
       action: "terminal-takeover",
       label: "Terminal takeover",
       available: false,
-      reason: "Terminal takeover is available in a future update.",
+      reason: "Terminal takeover is unavailable for this background session state.",
     },
     {
       action: "cleanup",
       label: "Cleanup",
       available: false,
-      reason: "Cleanup is available in a future update.",
+      reason: "Cleanup is unavailable until merged PR cleanup is ready.",
     },
   ];
 }
@@ -329,6 +347,98 @@ const RUNTIME_PROGRESS_KINDS_BY_EVENT_TYPE: Partial<
   error: "summary",
   usage: "usage",
 };
+
+const SDK_INTERRUPT_STATES = new Set<ManagedRuntimeLifecycleState>([
+  "running",
+  "idle",
+  "waiting_for_builder",
+]);
+
+const SDK_CANCEL_STATES = new Set<ManagedRuntimeLifecycleState>([
+  "preparing",
+  "starting",
+  "running",
+  "idle",
+  "waiting_for_builder",
+  "interrupt_requested",
+]);
+
+const SDK_TAKEOVER_STATES = new Set<ManagedRuntimeLifecycleState>([
+  "running",
+  "idle",
+  "waiting_for_builder",
+  "interrupted",
+  "pr_ready",
+  "review_ready",
+  "cleanup_ready",
+]);
+
+function managedRuntimeActionsFromMetadata(
+  runtime: SessionRegistryRuntimeMetadata,
+): ManagedRuntimeActionAvailability[] {
+  const state = runtime.lifecycleState;
+  if (!state) {
+    return defaultManagedRuntimeActions();
+  }
+  const sdkOwned = runtime.runtimeOwner === "streamliner-sdk";
+  const terminalOwnedReason = runtime.runtimeOwner === "builder-terminal"
+    ? "Terminal owns this session after takeover."
+    : "Streamliner does not own this runtime.";
+  const interruptAvailable = sdkOwned && SDK_INTERRUPT_STATES.has(state);
+  const cancelAvailable = sdkOwned && SDK_CANCEL_STATES.has(state);
+  const takeoverAvailable = sdkOwned &&
+    Boolean(runtime.sdkSessionId) &&
+    SDK_TAKEOVER_STATES.has(state);
+  const cleanupReady = state === "cleanup_ready" ||
+    runtime.evidence.some((evidence) => evidence.kind === "cleanup_ready");
+  const cleanupAvailable = cleanupReady && state !== "cleaning_up" && state !== "cleaned_up";
+  return [
+    {
+      action: "interrupt",
+      label: "Interrupt",
+      available: interruptAvailable,
+      reason: interruptAvailable
+        ? null
+        : sdkOwned
+          ? `Interrupt is unavailable while lifecycle is ${formatManagedRuntimeLabel(state)}.`
+          : terminalOwnedReason,
+    },
+    {
+      action: "cancel",
+      label: "Cancel",
+      available: cancelAvailable,
+      reason: cancelAvailable
+        ? null
+        : sdkOwned
+          ? `Cancel is unavailable while lifecycle is ${formatManagedRuntimeLabel(state)}.`
+          : terminalOwnedReason,
+    },
+    {
+      action: "terminal-takeover",
+      label: "Terminal takeover",
+      available: takeoverAvailable,
+      reason: takeoverAvailable
+        ? null
+        : !sdkOwned
+          ? terminalOwnedReason
+          : !runtime.sdkSessionId
+            ? "Terminal takeover requires an SDK session id."
+            : `Terminal takeover is unavailable while lifecycle is ${formatManagedRuntimeLabel(state)}.`,
+    },
+    {
+      action: "cleanup",
+      label: "Cleanup",
+      available: cleanupAvailable,
+      reason: cleanupAvailable
+        ? null
+        : state === "cleaned_up"
+          ? "Cleanup already completed."
+          : state === "cleaning_up"
+            ? "Cleanup is already running."
+            : "Cleanup is unavailable until merged PR cleanup is ready.",
+    },
+  ];
+}
 
 function progressStatusForRuntimeEvent(
   event: SessionRegistryRuntimeProgressEvent,
@@ -387,7 +497,7 @@ export function managedRuntimeProjectionFromMetadata(
   if (
     !runtime ||
     runtime.runtimeKind !== "managed-sdk" ||
-    runtime.runtimeOwner !== "streamliner-sdk" ||
+    !isManagedRuntimeOwner(runtime.runtimeOwner) ||
     !runtime.lifecycleState
   ) {
     return null;
@@ -410,7 +520,7 @@ export function managedRuntimeProjectionFromMetadata(
 
   return {
     runtimeKind: "managed-sdk",
-    runtimeOwner: "streamliner-sdk",
+    runtimeOwner: runtime.runtimeOwner,
     permissionProfile: "managed-autonomous",
     lifecycleState: runtime.lifecycleState,
     lifecycleUpdatedAt: runtime.lastStateChangedAt ?? runtime.startedAt,
@@ -424,7 +534,7 @@ export function managedRuntimeProjectionFromMetadata(
     },
     progress,
     links,
-    actions: defaultManagedRuntimeActions(),
+    actions: managedRuntimeActionsFromMetadata(runtime),
   };
 }
 

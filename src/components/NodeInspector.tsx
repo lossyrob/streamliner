@@ -17,6 +17,7 @@ import {
 } from "../managed-runtime-contract";
 import { trackerLabel, trackerUrl } from "../workstream-links";
 import { humanizeLaunchClaim } from "./launch-claim-display";
+import { ManagedRuntimeActionButton } from "./ManagedRuntimeActionButton";
 
 interface NodeInspectorProps {
   entry: WorkstreamDerivedNode | null;
@@ -250,14 +251,15 @@ function RuntimeDetails({ overlay }: { overlay: WorkstreamRuntimeNodeOverlay | n
             )}
             <div className="sl-managed-runtime-placeholder-actions">
               {resolveManagedRuntimeActions(managedRuntime.projection).map((action) => (
-                <button
+                <ManagedRuntimeActionButton
                   key={action.action}
-                  type="button"
-                  disabled={!action.available}
-                  title={action.reason ?? "Not available"}
-                >
-                  {action.label}
-                </button>
+                  sessionId={primarySession?.id ?? ""}
+                  action={
+                    primarySession
+                      ? action
+                      : { ...action, available: false, reason: "No bound session." }
+                  }
+                />
               ))}
             </div>
           </div>

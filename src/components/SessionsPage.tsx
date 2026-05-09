@@ -59,6 +59,7 @@ import {
 import {
   TerminalColorQuickPicker,
 } from "./SessionColorPicker";
+import { ManagedRuntimeActionButton } from "./ManagedRuntimeActionButton";
 import { sessionRegistryListUrl } from "../session-registry-client";
 
 const SESSION_POLL_INTERVAL_MS = 15_000;
@@ -2545,6 +2546,7 @@ export function SessionsPage({
                   session={selectedSession}
                   workstreamLinkage={selectedSessionLinkage}
                   onOpenWorkstream={onOpenWorkstream}
+                  onSessionActionComplete={fetchSessions}
                 />
               )}
 
@@ -2615,6 +2617,7 @@ interface SessionOverviewProps {
   session: SessionRegistryListItem;
   workstreamLinkage: SessionWorkstreamLinkageResolution | null;
   onOpenWorkstream?: (target: WorkstreamRouteTarget) => void | Promise<void>;
+  onSessionActionComplete?: () => void | Promise<void>;
 }
 
 type CopyState = "idle" | "copied" | "error";
@@ -2899,7 +2902,15 @@ function CopyableValue({ value, label }: CopyableValueProps) {
   );
 }
 
-function ManagedRuntimeOverview({ runtime }: { runtime: ManagedRuntimeProjection }) {
+function ManagedRuntimeOverview({
+  sessionId,
+  runtime,
+  onActionComplete,
+}: {
+  sessionId: string;
+  runtime: ManagedRuntimeProjection;
+  onActionComplete?: () => void | Promise<void>;
+}) {
   const progressEvents = managedRuntimeProgressEvents(runtime.progress);
   const sdk = runtime.sdk ?? null;
   const actions = resolveManagedRuntimeActions(runtime);
@@ -2952,15 +2963,12 @@ function ManagedRuntimeOverview({ runtime }: { runtime: ManagedRuntimeProjection
       </dl>
       <div className="sl-session-managed-actions">
         {actions.map((action) => (
-          <button
+          <ManagedRuntimeActionButton
             key={action.action}
-            type="button"
-            className="sl-managed-runtime-action"
-            disabled={!action.available}
-            title={action.reason ?? "Not available"}
-          >
-            {action.label}
-          </button>
+            sessionId={sessionId}
+            action={action}
+            onComplete={onActionComplete}
+          />
         ))}
       </div>
       {progressEvents.length > 0 && (
@@ -2991,6 +2999,7 @@ function SessionOverview({
   session,
   workstreamLinkage,
   onOpenWorkstream,
+  onSessionActionComplete,
 }: SessionOverviewProps) {
   const summary = getSessionSummaryDisplay(session);
   const latestDescription = getSessionLatestDescription(session, summary);
@@ -3044,7 +3053,13 @@ function SessionOverview({
         {summary.note && <div className="sl-session-overview-note">{summary.note}</div>}
       </section>
 
-      {managedRuntime && <ManagedRuntimeOverview runtime={managedRuntime} />}
+      {managedRuntime && (
+        <ManagedRuntimeOverview
+          sessionId={session.id}
+          runtime={managedRuntime}
+          onActionComplete={onSessionActionComplete}
+        />
+      )}
 
       {workstreamLinkage && workstreamLinkage.status !== "unbound" && (
         <section className="sl-session-overview-section">

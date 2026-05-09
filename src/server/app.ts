@@ -9,6 +9,7 @@ import { SESSION_REGISTRY_API_BASE_PATH } from "../session-registry/http-api";
 import { LAUNCH_CLAIMS_API_BASE_PATH } from "../session-registry/launch-claims-http-api";
 import type { RelaunchDeps } from "../session-registry/relaunch";
 import type { SessionRegistryStore } from "../session-registry-contract";
+import type { ManagedCleanupDeps } from "./managed-cleanup";
 import { getApiLogger } from "./logger";
 import { createAccessLogMiddleware } from "./middleware/access-log";
 import { NodeLaunchRecordStore } from "./node-launch-record-store";
@@ -50,6 +51,7 @@ export interface StreamlinerApiAppOptions {
   relaunchDeps?: Partial<RelaunchDeps>;
   launchContextDeps?: LaunchContextRouteDeps;
   launchPreparationDeps?: LaunchPreparationRouteDeps;
+  managedCleanupDeps?: Partial<ManagedCleanupDeps>;
   promptProfilesPath?: string;
   nodeLaunchRecordsPath?: string;
   pawWorkRoot?: string;
@@ -223,6 +225,8 @@ export function createStreamlinerApiApp(
       eventStream,
       relaunchDeps: options.relaunchDeps,
       managedSdkRunner,
+      managedCleanupDeps: options.managedCleanupDeps,
+      now: options.now,
       launchClaimStore: options.launchClaimStore,
     }),
   );
