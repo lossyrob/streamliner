@@ -324,9 +324,12 @@ export async function runLaunchClaimBindingPass(
         null,
       );
       try {
-        options.claimStore.updateClaim(claim.launchClaimId, (current) =>
-          appendEvidenceIfNew(current, attempt),
-        );
+        options.claimStore.updateClaim(claim.launchClaimId, (current) => {
+          if (current.status !== "pending") {
+            return current;
+          }
+          return appendEvidenceIfNew(current, attempt);
+        });
       } catch (error) {
         if (!(error instanceof LaunchClaimNotFoundError)) throw error;
       }
@@ -353,7 +356,11 @@ export async function runLaunchClaimBindingPass(
     if (matched.length > 1) {
       // Ambiguous. Transition the claim to ambiguous (terminal).
       try {
+        let transitionedToAmbiguous = false;
         options.claimStore.updateClaim(claim.launchClaimId, (current) => {
+          if (current.status !== "pending") {
+            return current;
+          }
           let next = current;
           for (const m of matched) {
             next = appendEvidenceIfNew(
@@ -371,6 +378,7 @@ export async function runLaunchClaimBindingPass(
             );
             next = addSeenCandidate(next, m.scan.copilotSessionId);
           }
+          transitionedToAmbiguous = true;
           return {
             ...next,
             status: "ambiguous",
@@ -379,15 +387,17 @@ export async function runLaunchClaimBindingPass(
             updatedAt: nowIso,
           };
         });
-        result.claimsTransitionedToAmbiguous += 1;
-        options.logger.warn("launch-claim.ambiguous", {
-          event: "launch-claim.launch-claim-ambiguous",
-          launchClaimId: claim.launchClaimId,
-          workstreamId: claim.workstreamId,
-          nodeId: claim.nodeId,
-          candidateCount: matched.length,
-          at: nowIso,
-        });
+        if (transitionedToAmbiguous) {
+          result.claimsTransitionedToAmbiguous += 1;
+          options.logger.warn("launch-claim.ambiguous", {
+            event: "launch-claim.launch-claim-ambiguous",
+            launchClaimId: claim.launchClaimId,
+            workstreamId: claim.workstreamId,
+            nodeId: claim.nodeId,
+            candidateCount: matched.length,
+            at: nowIso,
+          });
+        }
       } catch (error) {
         if (!(error instanceof LaunchClaimNotFoundError)) throw error;
       }
@@ -531,7 +541,11 @@ export async function runLaunchClaimBindingPass(
       }
 
       try {
+        let boundThisCycle = false;
         options.claimStore.updateClaim(claim.launchClaimId, (current) => {
+          if (current.status !== "pending") {
+            return current;
+          }
           let next = addSeenCandidate(current, candidateSessionId);
           const attempt = makeAttempt(
             nowIso,
@@ -545,6 +559,7 @@ export async function runLaunchClaimBindingPass(
           );
           next = appendEvidenceIfNew(next, attempt);
           if (bindOutcome === "bound") {
+            boundThisCycle = true;
             return {
               ...next,
               status: "bound",
@@ -555,7 +570,7 @@ export async function runLaunchClaimBindingPass(
           }
           return next;
         });
-        if (bindOutcome === "bound") {
+        if (boundThisCycle) {
           result.claimsBoundThisCycle += 1;
           options.logger.info("launch-claim.bound", {
             event: "launch-claim.bound",
@@ -577,6 +592,9 @@ export async function runLaunchClaimBindingPass(
     // evidence (no-nonce-match, events-file-unreadable, or scan-cutoff-reached).
     try {
       options.claimStore.updateClaim(claim.launchClaimId, (current) => {
+        if (current.status !== "pending") {
+          return current;
+        }
         let next = current;
         for (const m of matches) {
           next = addSeenCandidate(next, m.scan.copilotSessionId);
