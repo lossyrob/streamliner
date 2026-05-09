@@ -21,6 +21,7 @@ import type {
 } from "../session-registry-contract";
 
 export const MANAGED_RUNTIME_PROGRESS_EVENT_LIMIT = 50;
+export const MANAGED_RUNTIME_EVIDENCE_LIMIT = 100;
 export const MANAGED_RUNTIME_PROGRESS_STRING_LIMIT = 240;
 
 const SENSITIVE_DATA_KEYS = new Set([
@@ -407,9 +408,32 @@ export function mergeSessionRegistryRuntimeMetadata(
         : lifecycleChanged
           ? timestamp
           : current?.lastStateChangedAt ?? null,
-    progressEvents: [...currentProgress, ...nextProgress].slice(-MANAGED_RUNTIME_PROGRESS_EVENT_LIMIT),
-    evidence: [...evidenceById.values()],
+    progressEvents: capProgressEvents([...currentProgress, ...nextProgress]),
+    evidence: [...evidenceById.values()].slice(-MANAGED_RUNTIME_EVIDENCE_LIMIT),
   };
+}
+
+function capProgressEvents(
+  events: SessionRegistryRuntimeProgressEvent[],
+): SessionRegistryRuntimeProgressEvent[] {
+  if (events.length <= MANAGED_RUNTIME_PROGRESS_EVENT_LIMIT) {
+    return events;
+  }
+  const pinnedIds = new Set<string>();
+  if (events[0]) {
+    pinnedIds.add(events[0].id);
+  }
+  for (const pinnedType of ["error", "terminal_takeover"] as const) {
+    const pinned = events.find((event) => event.type === pinnedType);
+    if (pinned) {
+      pinnedIds.add(pinned.id);
+    }
+  }
+  const pinnedEvents = events.filter((event) => pinnedIds.has(event.id));
+  const cappedEvents = events
+    .filter((event) => !pinnedIds.has(event.id))
+    .slice(-(MANAGED_RUNTIME_PROGRESS_EVENT_LIMIT - pinnedEvents.length));
+  return [...pinnedEvents, ...cappedEvents].sort((left, right) => left.sequence - right.sequence);
 }
 
 function isTerminalLifecycleState(

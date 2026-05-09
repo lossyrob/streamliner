@@ -1,4 +1,8 @@
+import { createHash } from "node:crypto";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { createServer } from "node:http";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 import {
   ensureSessionRegistryBackgroundWorkerStarted,
@@ -18,6 +22,7 @@ loadDotEnvFile();
 
 const logger = getApiLogger().withScope("api");
 const config = readStreamlinerApiConfig();
+logger.info("copilot plugin cache", cachedStreamlinerHooksDigest());
 let releaseApiLock: () => void = () => {};
 try {
   releaseApiLock = acquireApiProcessLock({ host: config.host, port: config.port });
@@ -97,3 +102,34 @@ server.listen(config.port, config.host, () => {
     logFile: getApiLogger().currentLogFile(),
   });
 });
+
+function cachedStreamlinerHooksDigest():
+  | { status: "found"; hooksPath: string; sha256: string }
+  | { status: "not-found"; pluginCacheRoot: string }
+  | { status: "error"; pluginCacheRoot: string; error: string } {
+  const pluginCacheRoot = join(homedir(), ".copilot", "installed-plugins");
+  try {
+    if (!existsSync(pluginCacheRoot)) {
+      return { status: "not-found", pluginCacheRoot };
+    }
+    for (const marketplace of readdirSync(pluginCacheRoot)) {
+      const hooksPath = join(pluginCacheRoot, marketplace, "streamliner", "hooks.json");
+      if (!existsSync(hooksPath) || !statSync(hooksPath).isFile()) {
+        continue;
+      }
+      const contents = readFileSync(hooksPath);
+      return {
+        status: "found",
+        hooksPath,
+        sha256: createHash("sha256").update(contents).digest("hex"),
+      };
+    }
+    return { status: "not-found", pluginCacheRoot };
+  } catch (error: unknown) {
+    return {
+      status: "error",
+      pluginCacheRoot,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}

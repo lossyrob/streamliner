@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  MANAGED_RUNTIME_EVIDENCE_LIMIT,
   MANAGED_RUNTIME_PROGRESS_EVENT_LIMIT,
   MANAGED_RUNTIME_PROGRESS_STRING_LIMIT,
   isManagedRuntimeActive,
@@ -137,8 +138,60 @@ describe("managed runtime metadata", () => {
     );
 
     expect(runtime.progressEvents).toHaveLength(MANAGED_RUNTIME_PROGRESS_EVENT_LIMIT);
-    expect(runtime.progressEvents[0].sequence).toBe(6);
+    expect(runtime.progressEvents[0].sequence).toBe(1);
+    expect(runtime.progressEvents[1].sequence).toBe(7);
     expect(runtime.progressEvents.at(-1)?.sequence).toBe(55);
+  });
+
+  it("pins launch/error/takeover progress while capping retained events", () => {
+    const runtime = mergeSessionRegistryRuntimeMetadata(
+      null,
+      {
+        runtimeKind: "managed-sdk",
+        runtimeOwner: "streamliner-sdk",
+        progressEvents: [
+          { type: "lifecycle", message: "Managed SDK worker started." },
+          ...Array.from({ length: MANAGED_RUNTIME_PROGRESS_EVENT_LIMIT + 2 }, (_, index) => ({
+            type: "assistant_status" as const,
+            message: `event ${index + 1}`,
+          })),
+          { type: "error", message: "First failure." },
+          { type: "terminal_takeover", message: "Terminal takeover opened." },
+        ],
+      },
+      new Date("2026-05-07T12:00:00.000Z"),
+    );
+
+    expect(runtime.progressEvents).toHaveLength(MANAGED_RUNTIME_PROGRESS_EVENT_LIMIT);
+    expect(runtime.progressEvents.map((event) => event.message)).toEqual(
+      expect.arrayContaining([
+        "Managed SDK worker started.",
+        "First failure.",
+        "Terminal takeover opened.",
+      ]),
+    );
+  });
+
+  it("caps retained managed runtime evidence", () => {
+    const runtime = mergeSessionRegistryRuntimeMetadata(
+      null,
+      {
+        runtimeKind: "managed-sdk",
+        runtimeOwner: "streamliner-sdk",
+        evidence: Array.from({ length: MANAGED_RUNTIME_EVIDENCE_LIMIT + 5 }, (_, index) => ({
+          kind: "pr_ready" as const,
+          source: "test",
+          url: `https://github.com/lossyrob/streamliner/pull/${index + 1}`,
+          repo: "lossyrob/streamliner",
+          number: index + 1,
+        })),
+      },
+      new Date("2026-05-07T12:00:00.000Z"),
+    );
+
+    expect(runtime.evidence).toHaveLength(MANAGED_RUNTIME_EVIDENCE_LIMIT);
+    expect(runtime.evidence[0].number).toBe(6);
+    expect(runtime.evidence.at(-1)?.number).toBe(MANAGED_RUNTIME_EVIDENCE_LIMIT + 5);
   });
 
   it("deduplicates evidence and classifies active managed lifecycle states", () => {
