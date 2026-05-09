@@ -162,6 +162,16 @@ describe("managed runtime contract", () => {
     expect(actions.find((action) => action.action === "cleanup")?.available).toBe(false);
   });
 
+  it("allows terminal takeover while an SDK interrupt is in progress", () => {
+    const projection = managedRuntimeProjectionFromMetadata(managedRuntime({
+      lifecycleState: "interrupt_requested",
+    }));
+
+    expect(resolveManagedRuntimeActions(projection).find((action) =>
+      action.action === "terminal-takeover"
+    )?.available).toBe(true);
+  });
+
   it("enables cleanup when cleanup-ready evidence is present", () => {
     const projection = managedRuntimeProjectionFromMetadata(managedRuntime({
       lifecycleState: "completed",

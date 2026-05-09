@@ -1265,6 +1265,7 @@ describe("managed runtime session API routes", () => {
     const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
     const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
     const interrupts: string[] = [];
+    const transfers: string[] = [];
     let launchedCommand: string | undefined;
     const runner: ManagedSdkRunner = {
       start: async (input) => ({
@@ -1281,6 +1282,13 @@ describe("managed runtime session API routes", () => {
           message: input.reason ?? "Interrupted.",
         };
       },
+      transferToTerminal: async (input) => {
+        transfers.push(input.registryId);
+        return {
+          ok: true,
+          message: input.reason ?? "Transferred.",
+        };
+      },
     };
     const api = createStreamlinerApiApp({
       store: registryStore,
@@ -1290,6 +1298,17 @@ describe("managed runtime session API routes", () => {
       relaunchDeps: {
         launchTerminal: (options) => {
           launchedCommand = options.command;
+          registryStore.recordTrustedSessionSignal({
+            event: "session.started",
+            source: "copilot-cli-hook",
+            sessionId: "sdk-session-123",
+            timestamp: "2026-05-07T12:00:01.000Z",
+            cwd: normalizePath(root),
+            repo: "lossyrob/streamliner",
+            branch: "feature/takeover",
+            hookSource: "resume",
+            executionKind: "copilot_cli",
+          });
           return { method: "powershell", pid: 4242 };
         },
       },
@@ -1326,6 +1345,7 @@ describe("managed runtime session API routes", () => {
       .expect(200);
 
     expect(interrupts).toEqual([record.id]);
+    expect(transfers).toEqual([record.id]);
     expect(launchedCommand).toContain("sdk-session-123");
     expect(takeoverResponse.body).toEqual(expect.objectContaining({
       outcome: expect.objectContaining({
@@ -1563,7 +1583,7 @@ describe("managed runtime session API routes", () => {
     registryStore.patchRuntimeMetadata(record.id, {
       runtimeKind: "managed-sdk",
       runtimeOwner: "builder-terminal",
-      lifecycleState: "cleanup_ready",
+      lifecycleState: "terminal_takeover",
       permissionProfile: "managed-autonomous",
       launchClaimId: "claim-cleanup",
       launchNonce: "nonce-cleanup",
@@ -1592,6 +1612,7 @@ describe("managed runtime session API routes", () => {
       }),
       session: expect.objectContaining({
         runtime: expect.objectContaining({
+          runtimeOwner: "builder-terminal",
           lifecycleState: "cleaned_up",
           evidence: expect.arrayContaining([
             expect.objectContaining({ kind: "cleaned_up", number: 75 }),

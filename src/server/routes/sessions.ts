@@ -31,7 +31,11 @@ import type {
 } from "../../session-registry-contract";
 import { isLoopbackAddress } from "../config";
 import { getApiLogger } from "../logger";
-import type { ManagedSdkInterruptResult, ManagedSdkRunner } from "../managed-sdk-runner";
+import type {
+  ManagedSdkInterruptResult,
+  ManagedSdkOwnershipTransferResult,
+  ManagedSdkRunner,
+} from "../managed-sdk-runner";
 import { SessionRegistryEventStream } from "../session-events";
 import {
   buildCopilotResumeCommand,
@@ -435,11 +439,31 @@ export function createSessionsRouter(options: {
       reason,
     );
     const cwd = target.record.derivedWorktreePath ?? target.record.cwd;
+    const timestamp = (options.now?.() ?? new Date()).toISOString();
+    let prebound: SessionRegistryRecord;
+    try {
+      prebound = target.store.attachObservedSession(sessionId, {
+        copilotSessionId: sdkSessionId,
+        cwd,
+        repo: target.record.repo,
+        branch: target.record.branch,
+        lastSeenAt: timestamp,
+        lifecycleStatus: "active",
+        observedSessionKind: "interactive",
+        copilotProcessState: "none",
+        trustedStartSource: "resume",
+        trustedExecutionKind: "copilot_cli",
+      });
+    } catch (error: unknown) {
+      const failure = managedRuntimeErrorResponse(error);
+      res.status(failure.statusCode).json({ error: failure.message });
+      return;
+    }
     const terminalOptions: TerminalLaunchOptions = {
       cwd,
       command: buildCopilotResumeCommand(sdkSessionId),
-      title: target.record.title,
-      tabColor: target.record.color ?? undefined,
+      title: prebound.title,
+      tabColor: prebound.color ?? undefined,
     };
     let terminal: TerminalLaunchResult;
     try {
@@ -462,7 +486,11 @@ export function createSessionsRouter(options: {
       return;
     }
 
-    const timestamp = (options.now?.() ?? new Date()).toISOString();
+    const transferOutcome = await transferManagedSdkRunnerToTerminal(
+      options.managedSdkRunner,
+      sessionId,
+      "Visible terminal takeover opened for the managed SDK session.",
+    );
     try {
       const withTakeoverRuntime = target.store.patchRuntimeMetadata(sessionId, {
         runtimeOwner: "builder-terminal",
@@ -482,6 +510,7 @@ export function createSessionsRouter(options: {
           data: {
             method: terminal.method,
             hasPid: terminal.pid !== undefined,
+            ownershipTransferred: transferOutcome.ok,
           },
         }],
       });
@@ -515,6 +544,7 @@ export function createSessionsRouter(options: {
           evidenceState: "terminal_takeover",
           message: "Terminal takeover opened visible Copilot CLI.",
           interrupt: interruptOutcome,
+          ownershipTransfer: transferOutcome,
         },
         terminal: {
           method: terminal.method,
@@ -557,6 +587,12 @@ export function createSessionsRouter(options: {
       res.status(target.statusCode).json({ error: target.message });
       return;
     }
+    const cleanupRuntime = target.record.runtime;
+    if (!cleanupRuntime) {
+      res.status(409).json({ error: "Session is not a Streamliner-managed SDK runtime." });
+      return;
+    }
+    const cleanupRuntimeOwner = cleanupRuntime.runtimeOwner;
     const validation = validateManagedCleanup(
       target.record,
       target.store.listSessions({ includeArchived: false }),
@@ -566,6 +602,7 @@ export function createSessionsRouter(options: {
       const message = validation.blockers[0]?.message ?? "Cleanup is blocked by managed runtime guardrails.";
       try {
         const blocked = target.store.patchRuntimeMetadata(sessionId, {
+          runtimeOwner: cleanupRuntimeOwner,
           lifecycleState: "waiting_for_builder",
           progressEvents: [{
             type: "error",
@@ -594,6 +631,7 @@ export function createSessionsRouter(options: {
 
     try {
       target.store.patchRuntimeMetadata(sessionId, {
+        runtimeOwner: cleanupRuntimeOwner,
         lifecycleState: "cleaning_up",
         progressEvents: [{
           type: "lifecycle",
@@ -603,6 +641,7 @@ export function createSessionsRouter(options: {
       const cleanup = executeManagedCleanup(validation.plan, options.managedCleanupDeps);
       if (!cleanup.ok) {
         const failed = target.store.patchRuntimeMetadata(sessionId, {
+          runtimeOwner: cleanupRuntimeOwner,
           lifecycleState: "waiting_for_builder",
           progressEvents: [{
             type: "error",
@@ -630,6 +669,7 @@ export function createSessionsRouter(options: {
       }
       const summary = managedCleanupSummary(validation.plan, cleanup);
       const cleaned = target.store.patchRuntimeMetadata(sessionId, {
+        runtimeOwner: cleanupRuntimeOwner,
         lifecycleState: "cleaned_up",
         evidence: [{
           kind: "cleaned_up",
@@ -784,6 +824,27 @@ async function interruptManagedSdkRunner(
     return {
       ok: false,
       evidenceState: "failed",
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function transferManagedSdkRunnerToTerminal(
+  runner: ManagedSdkRunner | undefined,
+  registryId: string,
+  reason: string | undefined,
+): Promise<ManagedSdkOwnershipTransferResult> {
+  if (!runner?.transferToTerminal) {
+    return {
+      ok: false,
+      message: "No managed SDK runner ownership-transfer hook is attached to this API process.",
+    };
+  }
+  try {
+    return await runner.transferToTerminal({ registryId, reason });
+  } catch (error: unknown) {
+    return {
+      ok: false,
       message: error instanceof Error ? error.message : String(error),
     };
   }

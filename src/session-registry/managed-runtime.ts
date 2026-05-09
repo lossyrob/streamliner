@@ -78,6 +78,12 @@ const TERMINAL_MANAGED_LIFECYCLE_STATES = new Set<SessionRegistryManagedLifecycl
   "interrupted",
 ]);
 
+const TERMINAL_TAKEOVER_CLEANUP_TRANSITIONS = new Set<SessionRegistryManagedLifecycleState>([
+  "cleaning_up",
+  "cleaned_up",
+  "waiting_for_builder",
+]);
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -347,9 +353,10 @@ export function mergeSessionRegistryRuntimeMetadata(
     evidenceById.set(normalized.id, normalized);
   }
   const terminalLifecycleState = isTerminalLifecycleState(current);
+  const takeoverCleanupTransition = isTerminalTakeoverCleanupTransition(current, patch);
   const lifecycleChanged =
     patch.lifecycleState !== undefined &&
-    !terminalLifecycleState &&
+    (!terminalLifecycleState || takeoverCleanupTransition) &&
     patch.lifecycleState !== (current?.lifecycleState ?? null);
   const nextLifecycleState = lifecycleChanged
     ? patch.lifecycleState ?? null
@@ -418,6 +425,18 @@ function isTerminalLifecycleState(
   return state !== null &&
     state !== undefined &&
     TERMINAL_MANAGED_LIFECYCLE_STATES.has(state);
+}
+
+function isTerminalTakeoverCleanupTransition(
+  current: SessionRegistryRuntimeMetadata | null | undefined,
+  patch: SessionRegistryRuntimeMetadataPatch,
+): boolean {
+  return current?.runtimeOwner === "builder-terminal" &&
+    current.lifecycleState === "terminal_takeover" &&
+    patch.runtimeOwner === "builder-terminal" &&
+    patch.lifecycleState !== undefined &&
+    patch.lifecycleState !== null &&
+    TERMINAL_TAKEOVER_CLEANUP_TRANSITIONS.has(patch.lifecycleState);
 }
 
 function inputEvidenceToStoredEvidence(

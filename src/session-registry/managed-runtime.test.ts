@@ -287,4 +287,41 @@ describe("managed runtime metadata", () => {
     expect(next.lifecycleState).toBe("terminal_takeover");
     expect(next.progressEvents.at(-1)?.message).toBe("Late SDK status callback observed.");
   });
+
+  it("allows explicit cleanup transitions from builder-terminal takeover", () => {
+    const current = mergeSessionRegistryRuntimeMetadata(
+      null,
+      {
+        runtimeKind: "managed-sdk",
+        runtimeOwner: "builder-terminal",
+        lifecycleState: "terminal_takeover",
+      },
+      new Date("2026-05-07T12:00:00.000Z"),
+    );
+    const cleaning = mergeSessionRegistryRuntimeMetadata(
+      current,
+      {
+        runtimeOwner: "builder-terminal",
+        lifecycleState: "cleaning_up",
+        progressEvents: [{
+          type: "lifecycle",
+          message: "Managed cleanup-after-merge started.",
+        }],
+      },
+      new Date("2026-05-07T12:01:00.000Z"),
+    );
+    const cleaned = mergeSessionRegistryRuntimeMetadata(
+      cleaning,
+      {
+        runtimeOwner: "builder-terminal",
+        lifecycleState: "cleaned_up",
+      },
+      new Date("2026-05-07T12:02:00.000Z"),
+    );
+
+    expect(cleaning.runtimeOwner).toBe("builder-terminal");
+    expect(cleaning.lifecycleState).toBe("cleaning_up");
+    expect(cleaned.runtimeOwner).toBe("builder-terminal");
+    expect(cleaned.lifecycleState).toBe("cleaned_up");
+  });
 });

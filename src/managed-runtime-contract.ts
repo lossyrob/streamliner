@@ -367,6 +367,7 @@ const SDK_TAKEOVER_STATES = new Set<ManagedRuntimeLifecycleState>([
   "running",
   "idle",
   "waiting_for_builder",
+  "interrupt_requested",
   "interrupted",
   "pr_ready",
   "review_ready",

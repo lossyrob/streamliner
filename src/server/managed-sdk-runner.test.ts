@@ -251,6 +251,49 @@ describe("DefaultManagedSdkRunner", () => {
     ]);
   });
 
+  it("transfers active SDK ownership to the terminal and suppresses late callbacks", async () => {
+    sdkMock.session.sendAndWait.mockImplementationOnce(() => new Promise(() => undefined));
+    const capture = createCapture();
+    const runner = new DefaultManagedSdkRunner();
+    await runner.start(createStartInput(capture));
+
+    const config = sdkMock.sessionConfigs[0] as {
+      onEvent?: (event: { type: string; data?: Record<string, unknown> }) => unknown;
+      onUserInputRequest?: (request: { question: string; choices?: string[] }) => unknown;
+    };
+    const progressCount = capture.progress.length;
+    const stateCount = capture.states.length;
+
+    await expect(runner.transferToTerminal({
+      registryId: "registry-row-1",
+      reason: "Terminal takeover opened.",
+    })).resolves.toEqual({
+      ok: true,
+      message: "Terminal takeover opened.",
+    });
+
+    expect(sdkMock.session.disconnect).toHaveBeenCalledTimes(1);
+    config.onEvent?.({
+      type: "assistant.message",
+      data: { content: "late SDK callback" },
+    });
+    config.onUserInputRequest?.({
+      question: "Continue in SDK?",
+      choices: ["Yes"],
+    });
+
+    expect(capture.progress).toHaveLength(progressCount);
+    expect(capture.states).toHaveLength(stateCount);
+    await expect(runner.interrupt({
+      registryId: "registry-row-1",
+      reason: "Stop after transfer.",
+    })).resolves.toEqual({
+      ok: false,
+      evidenceState: "waiting_for_builder",
+      message: "No active managed SDK session is attached to this API process.",
+    });
+  });
+
   it("does not create review-ready or completion evidence from ordinary assistant prose", async () => {
     const capture = createCapture();
     sdkMock.session.sendAndWait.mockResolvedValueOnce({

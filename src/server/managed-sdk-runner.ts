@@ -56,9 +56,22 @@ export interface ManagedSdkInterruptResult {
   message: string;
 }
 
+export interface ManagedSdkOwnershipTransferInput {
+  registryId: string;
+  reason?: string;
+}
+
+export interface ManagedSdkOwnershipTransferResult {
+  ok: boolean;
+  message: string;
+}
+
 export interface ManagedSdkRunner {
   start(input: ManagedSdkRunnerStartInput): Promise<ManagedSdkRunnerStartResult>;
   interrupt?(input: ManagedSdkInterruptInput): Promise<ManagedSdkInterruptResult>;
+  transferToTerminal?(
+    input: ManagedSdkOwnershipTransferInput,
+  ): Promise<ManagedSdkOwnershipTransferResult>;
 }
 
 interface ActiveManagedRun {
@@ -71,7 +84,9 @@ interface ActiveManagedRun {
     stop: () => Promise<unknown[]>;
   };
   interrupted: boolean;
+  ownershipTransferred: boolean;
   interruptPromise?: Promise<ManagedSdkInterruptResult>;
+  cleanupPromise?: Promise<string[]>;
 }
 
 interface SafeManagedCallbacks {
@@ -295,6 +310,7 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
   async start(input: ManagedSdkRunnerStartInput): Promise<ManagedSdkRunnerStartResult> {
     const sdk = await import("@github/copilot-sdk");
     const callbacks = createSafeManagedCallbacks(input);
+    let activeRun: ActiveManagedRun | null = null;
     const client = new sdk.CopilotClient({
       cwd: input.cwd,
       cliArgs: [...input.cliArgs],
@@ -309,11 +325,13 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
       callbacks.onLifecycleState("starting", "Starting managed SDK session.");
       const permissionHandler: PermissionHandler = async (request, invocation) => {
         const decision = await sdk.approveAll(request, invocation);
-        callbacks.onProgress({
-          type: "permission_decision",
-          message: "Managed-autonomous permission approved.",
-          data: permissionRequestData(request, decision),
-        });
+        if (!activeRun?.ownershipTransferred) {
+          callbacks.onProgress({
+            type: "permission_decision",
+            message: "Managed-autonomous permission approved.",
+            data: permissionRequestData(request, decision),
+          });
+        }
         return decision;
       };
       session = await client.createSession({
@@ -323,24 +341,29 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
         streaming: true,
         onPermissionRequest: permissionHandler,
         onUserInputRequest: (request) => {
-          callbacks.onLifecycleState(
-            "waiting_for_builder",
-            "Managed SDK requested builder input; autonomous runtime did not select a provided choice.",
-          );
-          callbacks.onProgress({
-            type: "assistant_status",
-            message: "Builder input requested by managed SDK session; continuing without choosing an SDK-provided option.",
-            data: {
-              questionLength: request.question.length,
-              choiceCount: request.choices?.length ?? 0,
-            },
-          });
+          if (!activeRun?.ownershipTransferred) {
+            callbacks.onLifecycleState(
+              "waiting_for_builder",
+              "Managed SDK requested builder input; autonomous runtime did not select a provided choice.",
+            );
+            callbacks.onProgress({
+              type: "assistant_status",
+              message: "Builder input requested by managed SDK session; continuing without choosing an SDK-provided option.",
+              data: {
+                questionLength: request.question.length,
+                choiceCount: request.choices?.length ?? 0,
+              },
+            });
+          }
           return {
             answer: "Proceed autonomously using the launch context where safe; otherwise stop and report the requested builder input.",
             wasFreeform: true,
           };
         },
         onEvent: (event) => {
+          if (activeRun?.ownershipTransferred) {
+            return;
+          }
           const progress = progressForSdkEvent(event);
           if (progress) {
             callbacks.onProgress(progress);
@@ -364,7 +387,7 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
       sdkStateRoot: sdkStateRootFor(session.workspacePath, input.sessionStateRoot),
     };
     callbacks.onStarted(result);
-    const activeRun: ActiveManagedRun = { client, session, interrupted: false };
+    activeRun = { client, session, interrupted: false, ownershipTransferred: false };
     this.activeRuns.set(input.registryId, activeRun);
     void this.runTurn(input, activeRun, callbacks);
     return result;
@@ -384,6 +407,32 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
       active.interruptPromise = this.abortActiveRun(active, input.reason);
     }
     return await active.interruptPromise;
+  }
+
+  async transferToTerminal(
+    input: ManagedSdkOwnershipTransferInput,
+  ): Promise<ManagedSdkOwnershipTransferResult> {
+    const active = this.activeRuns.get(input.registryId);
+    if (!active) {
+      return {
+        ok: false,
+        message: "No active managed SDK session is attached to this API process.",
+      };
+    }
+    active.ownershipTransferred = true;
+    active.interrupted = true;
+    this.activeRuns.delete(input.registryId);
+    const cleanupErrors = await this.cleanupActiveRun(active);
+    if (cleanupErrors.length > 0) {
+      return {
+        ok: false,
+        message: `Managed SDK ownership transferred, but cleanup reported ${cleanupErrors.length} error(s).`,
+      };
+    }
+    return {
+      ok: true,
+      message: input.reason ?? "Managed SDK ownership transferred to terminal.",
+    };
   }
 
   private async abortActiveRun(
@@ -414,6 +463,9 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
     try {
       callbacks.onLifecycleState("running", "Managed SDK worker started.");
       const response = await active.session.sendAndWait({ prompt: input.prompt });
+      if (active.ownershipTransferred) {
+        return;
+      }
       const content = assistantContent(response);
       const detectedEvidence = evidenceFromAssistantContent(content);
       for (const evidence of detectedEvidence) {
@@ -427,7 +479,9 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
         callbacks.onLifecycleState("completed", "Managed SDK worker completed.");
       }
     } catch (error: unknown) {
-      if (active.interrupted) {
+      if (active.ownershipTransferred) {
+        return;
+      } else if (active.interrupted) {
         callbacks.onLifecycleState("interrupted", "Managed SDK worker interrupted.");
       } else {
         callbacks.onLifecycleState(
@@ -437,18 +491,8 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
       }
     } finally {
       this.activeRuns.delete(input.registryId);
-      const cleanupErrors: string[] = [];
-      try {
-        await active.session.disconnect();
-      } catch (error: unknown) {
-        cleanupErrors.push(error instanceof Error ? error.message : String(error));
-      }
-      try {
-        await active.client.stop();
-      } catch (error: unknown) {
-        cleanupErrors.push(error instanceof Error ? error.message : String(error));
-      }
-      if (cleanupErrors.length > 0) {
+      const cleanupErrors = await this.cleanupActiveRun(active);
+      if (cleanupErrors.length > 0 && !active.ownershipTransferred) {
         callbacks.onProgress({
           type: "error",
           message: "Managed SDK cleanup encountered an error.",
@@ -456,6 +500,26 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
         });
       }
     }
+  }
+
+  private cleanupActiveRun(active: ActiveManagedRun): Promise<string[]> {
+    active.cleanupPromise ??= this.disconnectActiveRun(active);
+    return active.cleanupPromise;
+  }
+
+  private async disconnectActiveRun(active: ActiveManagedRun): Promise<string[]> {
+    const cleanupErrors: string[] = [];
+    try {
+      await active.session.disconnect();
+    } catch (error: unknown) {
+      cleanupErrors.push(error instanceof Error ? error.message : String(error));
+    }
+    try {
+      await active.client.stop();
+    } catch (error: unknown) {
+      cleanupErrors.push(error instanceof Error ? error.message : String(error));
+    }
+    return cleanupErrors;
   }
 }
 
