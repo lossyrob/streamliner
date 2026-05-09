@@ -2795,6 +2795,221 @@ describe("App sessions route", () => {
   );
 
   it(
+    "offers to resume an interrupted background session bound to a node",
+    async () => {
+      const graph = buildLaunchGraph();
+      const launchClaim = {
+        launchClaimId: "claim-interrupted-managed",
+        status: "bound",
+        launchedAt: "2026-05-05T12:00:00.000Z",
+        updatedAt: "2026-05-05T12:00:00.000Z",
+        bindingWindowExpiresAt: "2026-05-05T12:10:00.000Z",
+        reservedRegistryId: "registry-interrupted-managed",
+        boundRegistryId: "registry-interrupted-managed",
+        boundCopilotSessionId: "sdk-interrupted-managed",
+        failureCode: null,
+        failureReason: null,
+        blocksLaunch: true,
+        retryable: false,
+      };
+      const preparedHandoff = {
+        cwd: "C:\\graphs\\api-test",
+        branch: "feature/launch-prompt-profiles",
+        runtimeKind: "managed-sdk",
+        pawWorkDir: "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles",
+        workflowContextPath:
+          "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles\\WorkflowContext.md",
+        streamlinerContextPath:
+          "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles\\streamliner\\context.md",
+        cliArgs: [],
+        terminal: {
+          launchMode: "manual",
+          preferredTerminal: "powershell",
+        },
+        environment: {},
+        sessionStateRoot: "C:\\streamliner-state",
+        kickoffPrompt: "Start PAW launch prompt profiles.",
+        launchMetadata: {
+          launchNonce: "nonce-interrupted-managed",
+          launchClaimRef: "claim-interrupted-managed",
+          projectKey: "streamliner",
+          workstreamId: "api-test",
+          nodeId: "launch-prompt-profiles",
+          targetRepoIds: ["streamliner"],
+          graphPath: "C:\\graphs\\api-test\\graph.json",
+          branch: "feature/launch-prompt-profiles",
+          workId: "launch-prompt-profiles",
+          workTitle: "Launch prompt profiles",
+          trackerUrl: "https://github.com/lossyrob/streamliner/issues/33",
+          launchPolicy: null,
+        },
+        contextPackage: {
+          contextId: "ctx",
+          contextPackagePath: "C:\\streamliner-state\\launch-contexts\\ctx",
+          contextFilePath: "C:\\streamliner-state\\launch-contexts\\ctx\\context.md",
+          metadata: {},
+          unavailableInputs: [],
+        },
+      };
+      const managedLaunch = {
+        launchClaim,
+        runtimeKind: "managed-sdk",
+        registryId: "registry-interrupted-managed",
+        sdkSessionId: "sdk-interrupted-managed",
+        sdkWorkspacePath: "C:\\state\\sdk-interrupted-managed\\workspace.yaml",
+        sdkStateRoot: "C:\\state\\sdk-interrupted-managed",
+        permissionProfile: "managed-autonomous",
+      };
+      let currentLaunchState: unknown = {
+        record: null,
+        operation: {
+          id: "interrupted-managed-operation",
+          graphPath: "C:\\graphs\\api-test\\graph.json",
+          nodeId: "launch-prompt-profiles",
+          status: "managed_running",
+          preparationRunId: null,
+          startedAt: "2026-05-05T12:00:00.000Z",
+          updatedAt: "2026-05-05T12:00:00.000Z",
+          completedAt: "2026-05-05T12:00:01.000Z",
+          handoff: preparedHandoff,
+          terminalLaunch: null,
+          managedLaunch,
+          error: null,
+          progressEvents: [],
+          latestClaim: launchClaim,
+        },
+      };
+      const interruptedSession = buildSession({
+        id: "registry-interrupted-managed",
+        title: "Interrupted background worker",
+        originKind: "launched",
+        graphBinding: {
+          workstreamId: "api-test",
+          nodeId: "launch-prompt-profiles",
+          launchClaimId: "claim-interrupted-managed",
+        },
+        runtime: {
+          runtimeKind: "managed-sdk",
+          runtimeOwner: "streamliner-sdk",
+          lifecycleState: "interrupted",
+          permissionProfile: "managed-autonomous",
+          launchClaimId: "claim-interrupted-managed",
+          launchNonce: "nonce-interrupted-managed",
+          sdkSessionId: "sdk-interrupted-managed",
+          sdkWorkspacePath: "C:\\state\\sdk-interrupted-managed\\workspace.yaml",
+          sdkStateRoot: "C:\\state\\sdk-interrupted-managed",
+          startedAt: "2026-05-05T12:00:00.000Z",
+          lastStateChangedAt: "2026-05-05T12:03:00.000Z",
+          progressEvents: [],
+          evidence: [],
+        },
+        copilotSessionId: "sdk-interrupted-managed",
+        activityStatus: "interrupted",
+        copilotProcessState: "none",
+        trustedSignalSource: "copilot-cli-hook",
+        trustedStartedAt: "2026-05-05T12:00:00.000Z",
+        trustedEndedAt: null,
+      });
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        if (path === "/api/sessions?workstreamId=api-test") {
+          return jsonResponse([interruptedSession]);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return jsonResponse(currentLaunchState);
+        }
+        if (path === "/api/paw-launch-prompt-profiles") {
+          return jsonResponse({ profiles: [] });
+        }
+        if (path === "/api/paw-workflow-context?path=C%3A%5Cgraphs%5Capi-test%5C.paw%5Cwork%5Claunch-prompt-profiles%5CWorkflowContext.md") {
+          return jsonResponse({
+            path: preparedHandoff.workflowContextPath,
+            content: "# WorkflowContext\n",
+            updatedAt: "2026-05-05T12:00:00.000Z",
+          });
+        }
+        if (path === "/api/node-launches/managed-resumes" && init?.method === "POST") {
+          const body = JSON.parse(String(init.body)) as {
+            launchClaimId: string;
+            handoff: { runtimeKind?: string; launchMetadata: { nodeId: string } };
+          };
+          expect(body.launchClaimId).toBe("claim-interrupted-managed");
+          expect(body.handoff.runtimeKind).toBe("managed-sdk");
+          expect(body.handoff.launchMetadata.nodeId).toBe("launch-prompt-profiles");
+          currentLaunchState = {
+            record: null,
+            operation: {
+              ...(currentLaunchState as { operation: Record<string, unknown> }).operation,
+              status: "managed_running",
+              managedLaunch,
+              latestClaim: launchClaim,
+              error: null,
+            },
+          };
+          return jsonResponse({
+            runtimeKind: "managed-sdk",
+            launchClaim,
+            managedSdk: {
+              registryId: managedLaunch.registryId,
+              sdkSessionId: managedLaunch.sdkSessionId,
+              sdkWorkspacePath: managedLaunch.sdkWorkspacePath,
+              sdkStateRoot: managedLaunch.sdkStateRoot,
+              permissionProfile: managedLaunch.permissionProfile,
+            },
+          }, 201);
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      act(() => {
+        findCanvasNode(container, "Launch prompt profiles").click();
+      });
+      await settle(100);
+      act(() => {
+        findButton(container, "Open PAW launch").click();
+      });
+      await settle(100);
+
+      const resumeButton = findButton(container, "Resume background session");
+      expect(resumeButton.disabled).toBe(false);
+      act(() => {
+        resumeButton.click();
+      });
+      await settle(100);
+
+      expect(container.textContent).toContain("Resume requested for the background session.");
+      expect(
+        fetchMock.mock.calls.filter(
+          ([input]) => requestPath(input as RequestInfo | URL) === "/api/node-launches/managed-resumes",
+        ),
+      ).toHaveLength(1);
+      expect(
+        fetchMock.mock.calls.filter(
+          ([input]) => requestPath(input as RequestInfo | URL) === "/api/node-launches",
+        ),
+      ).toHaveLength(0);
+    },
+    15_000,
+  );
+
+  it(
     "launches the terminal automatically when launch after init is checked",
     async () => {
       const graph = buildLaunchGraph();

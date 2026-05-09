@@ -253,6 +253,7 @@ export interface SessionRegistryRuntimeMetadataPatch {
   sdkStateRoot?: string | null;
   startedAt?: string | null;
   lastStateChangedAt?: string | null;
+  forceLifecycleState?: boolean;
   progressEvents?: SessionRegistryRuntimeProgressEventInput[];
   evidence?: SessionRegistryRuntimeEvidenceInput[];
 }

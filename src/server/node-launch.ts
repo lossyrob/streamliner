@@ -3,6 +3,7 @@ import type { LaunchClaimStore } from "../launch-claim-contract";
 import type {
   SessionRegistryManagedLifecycleState,
   SessionRegistryPawLaunch,
+  SessionRegistryRecord,
 } from "../session-registry-schema";
 import type { SessionRegistryStore } from "../session-registry-contract";
 import type { SessionRegistryFileStore } from "../session-registry/file-store";
@@ -37,7 +38,9 @@ export type NodeLaunchErrorCode =
   | "duplicate_active_launch"
   | "launch_claim_failed"
   | "terminal_spawn_failed"
-  | "managed_sdk_start_failed";
+  | "managed_sdk_start_failed"
+  | "managed_sdk_resume_unavailable"
+  | "managed_sdk_resume_failed";
 
 export class NodeLaunchError extends Error {
   readonly code: NodeLaunchErrorCode;
@@ -265,6 +268,36 @@ function lifecycleProgressMessage(state: SessionRegistryManagedLifecycleState): 
   return `Managed SDK lifecycle changed to ${state}.`;
 }
 
+function isNonResumableManagedLifecycle(
+  state: SessionRegistryManagedLifecycleState | null,
+): boolean {
+  switch (state) {
+    case "canceled":
+    case "cleaned_up":
+    case "completed":
+    case "terminal_takeover":
+      return true;
+    case null:
+    case "preparing":
+    case "starting":
+    case "running":
+    case "idle":
+    case "waiting_for_builder":
+    case "interrupt_requested":
+    case "interrupted":
+    case "failed":
+    case "pr_ready":
+    case "review_ready":
+    case "cleanup_ready":
+    case "cleaning_up":
+      return false;
+    default: {
+      const _exhaustive: never = state;
+      throw new Error(`unhandled managed lifecycle state: ${String(_exhaustive)}`);
+    }
+  }
+}
+
 function hasActiveManagedRuntime(
   registryStore: SessionRegistryStore,
   workstreamId: string,
@@ -316,6 +349,27 @@ function assertLaunchPolicyAllows(handoff: PawLaunchHandoff): void {
     null,
     details,
   );
+}
+
+function resumePromptForManagedSdkNode(
+  handoff: PawLaunchHandoff,
+  claim: LaunchClaim,
+): string {
+  return [
+    "Resume this interrupted Streamliner background session.",
+    "",
+    "Continue from the existing conversation history and repository state.",
+    "Do not restart PAW init or redo completed work unless the repository state shows it is necessary.",
+    "Proceed autonomously through the existing workflow until the node work is complete or a serious blocker appears.",
+    "",
+    "Streamliner resume metadata:",
+    `- Project: ${handoff.launchMetadata.projectKey}`,
+    `- Workstream: ${handoff.launchMetadata.workstreamId}`,
+    `- Node: ${handoff.launchMetadata.nodeId}`,
+    `- Work ID: ${handoff.launchMetadata.workId}`,
+    `- Launch claim: ${claim.launchClaimId}`,
+    `- Existing SDK session: ${claim.boundCopilotSessionId ?? "unknown"}`,
+  ].join("\n");
 }
 
 function reserveLaunchClaimForHandoff(
@@ -471,6 +525,95 @@ export async function launchPreparedNode(
       failedClaim,
     );
   }
+}
+
+function managedResumeTarget(
+  registryStore: SessionRegistryFileStore,
+  claimStore: LaunchClaimStore,
+  handoff: PawLaunchHandoff,
+  launchClaimId: string,
+): { claim: LaunchClaim; registryId: string; session: SessionRegistryRecord; sdkSessionId: string } {
+  const claim = claimStore.getClaim(launchClaimId);
+  if (!claim) {
+    throw new NodeLaunchError(
+      "managed_sdk_resume_unavailable",
+      404,
+      `Launch claim ${launchClaimId} does not exist.`,
+      null,
+    );
+  }
+  if (
+    claim.workstreamId !== handoff.launchMetadata.workstreamId ||
+    claim.nodeId !== handoff.launchMetadata.nodeId
+  ) {
+    throw new NodeLaunchError(
+      "managed_sdk_resume_unavailable",
+      409,
+      `Launch claim ${launchClaimId} is not bound to node ${handoff.launchMetadata.nodeId}.`,
+      claim,
+    );
+  }
+  if (claim.status !== "bound") {
+    throw new NodeLaunchError(
+      "managed_sdk_resume_unavailable",
+      409,
+      `Launch claim ${launchClaimId} is ${claim.status}; only bound background sessions can be resumed.`,
+      claim,
+    );
+  }
+  const registryId = claim.boundRegistryId ?? claim.reservedRegistryId;
+  if (!registryId) {
+    throw new NodeLaunchError(
+      "managed_sdk_resume_unavailable",
+      409,
+      `Launch claim ${launchClaimId} does not reference a registry row.`,
+      claim,
+    );
+  }
+  const session = registryStore.getSession(registryId);
+  if (!session) {
+    throw new NodeLaunchError(
+      "managed_sdk_resume_unavailable",
+      404,
+      `Bound registry row ${registryId} does not exist.`,
+      claim,
+    );
+  }
+  const runtime = session.runtime;
+  if (runtime?.runtimeKind !== "managed-sdk" || runtime.runtimeOwner !== "streamliner-sdk") {
+    throw new NodeLaunchError(
+      "managed_sdk_resume_unavailable",
+      409,
+      `Registry row ${registryId} is not a Streamliner-managed background session.`,
+      claim,
+    );
+  }
+  if (isNonResumableManagedLifecycle(runtime.lifecycleState)) {
+    throw new NodeLaunchError(
+      "managed_sdk_resume_unavailable",
+      409,
+      `Managed background session is ${runtime.lifecycleState} and cannot be resumed.`,
+      claim,
+    );
+  }
+  if (session.copilotProcessState === "live") {
+    throw new NodeLaunchError(
+      "managed_sdk_resume_unavailable",
+      409,
+      "Managed background session still appears live; wait for it to settle or interrupt it before resuming.",
+      claim,
+    );
+  }
+  const sdkSessionId = runtime.sdkSessionId ?? claim.boundCopilotSessionId ?? session.copilotSessionId;
+  if (!sdkSessionId) {
+    throw new NodeLaunchError(
+      "managed_sdk_resume_unavailable",
+      409,
+      `Registry row ${registryId} does not have a Copilot SDK session id to resume.`,
+      claim,
+    );
+  }
+  return { claim, registryId, session, sdkSessionId };
 }
 
 export async function launchManagedSdkNode(
@@ -637,6 +780,193 @@ export async function launchManagedSdkNode(
       "managed_sdk_start_failed",
       500,
       `Failed to start managed SDK worker: ${message}${cleanupMessage}`,
+      claim,
+    );
+  }
+
+  return {
+    runtimeKind: "managed-sdk",
+    launchClaim: summarizeLaunchClaim(claim, now),
+    managedSdk: {
+      registryId,
+      sdkSessionId: startResult.sdkSessionId,
+      sdkWorkspacePath: startResult.sdkWorkspacePath,
+      sdkStateRoot: startResult.sdkStateRoot,
+      permissionProfile: "managed-autonomous",
+    },
+    cwd: handoff.cwd,
+    branch: handoff.branch,
+    command: {
+      cliArgs: [...handoff.cliArgs],
+      promptNonceLine: kickoffNonceLine(claim.launchNonce),
+    },
+  };
+}
+
+export async function resumeManagedSdkNode(
+  registryStore: SessionRegistryFileStore,
+  claimStore: LaunchClaimStore,
+  handoff: PawLaunchHandoff,
+  launchClaimId: string,
+  deps: NodeLaunchDeps = {},
+): Promise<NodeManagedSdkLaunchResult> {
+  if (handoff.launchMetadata.launchNonce !== null) {
+    assertLaunchPromptToken(handoff.launchMetadata.launchNonce, "launch nonce");
+  }
+  assertLaunchPolicyAllows(handoff);
+  const now = deps.now?.() ?? new Date();
+  const { claim, registryId, session, sdkSessionId } = managedResumeTarget(
+    registryStore,
+    claimStore,
+    handoff,
+    launchClaimId,
+  );
+  const graphBinding = {
+    workstreamId: claim.workstreamId,
+    nodeId: claim.nodeId,
+    launchClaimId: claim.launchClaimId,
+  };
+  const bindResult = registryStore.bindClaimToRow(
+    registryId,
+    {
+      cwdAfterNormalize: session.cwd,
+      branch: claim.expectedBranch,
+      repo: claim.expectedRepo,
+      requireGraphBindingNullOrMatching: graphBinding,
+    },
+    { graphBinding },
+  );
+  if (!bindResult.ok) {
+    throw new NodeLaunchError(
+      "managed_sdk_resume_unavailable",
+      409,
+      `Cannot restore the node binding for session resume: ${bindResult.reason}${bindResult.detail ? `: ${bindResult.detail}` : ""}`,
+      claim,
+    );
+  }
+
+  const runner = deps.managedSdkRunner ?? new DefaultManagedSdkRunner();
+  if (!runner.resume) {
+    throw new NodeLaunchError(
+      "managed_sdk_resume_failed",
+      500,
+      "Managed SDK runner does not support resuming sessions.",
+      claim,
+    );
+  }
+
+  registryStore.patchRuntimeMetadata(registryId, {
+    runtimeKind: "managed-sdk",
+    runtimeOwner: "streamliner-sdk",
+    lifecycleState: "starting",
+    forceLifecycleState: true,
+    permissionProfile: "managed-autonomous",
+    launchClaimId: claim.launchClaimId,
+    launchNonce: claim.launchNonce,
+    sdkSessionId,
+    progressEvents: [{
+      type: "lifecycle",
+      message: "Resuming managed SDK background session.",
+      timestamp: now.toISOString(),
+      data: {
+        workstreamId: handoff.launchMetadata.workstreamId,
+        nodeId: handoff.launchMetadata.nodeId,
+        launchClaimId: claim.launchClaimId,
+        sdkSessionId,
+      },
+    }],
+  }, now);
+
+  const resumePrompt = resumePromptForManagedSdkNode(handoff, claim);
+  let startResult: ManagedSdkRunnerStartResult;
+  try {
+    startResult = await runner.resume({
+      registryId,
+      launchClaimId: claim.launchClaimId,
+      launchNonce: claim.launchNonce,
+      sdkSessionId,
+      cwd: handoff.cwd,
+      branch: handoff.branch,
+      prompt: resumePrompt,
+      cliArgs: [...handoff.cliArgs],
+      environment: {
+        ...handoff.environment,
+        STREAMLINER_LAUNCH_CLAIM_ID: claim.launchClaimId,
+        STREAMLINER_MANAGED_RUNTIME_KIND: "managed-sdk",
+        STREAMLINER_MANAGED_PERMISSION_PROFILE: "managed-autonomous",
+      },
+      sessionStateRoot: handoff.sessionStateRoot,
+      onLifecycleState: (state, message) => {
+        registryStore.patchRuntimeMetadata(registryId, {
+          lifecycleState: state,
+          progressEvents: [{
+            type: "lifecycle",
+            message: message || lifecycleProgressMessage(state),
+          }],
+        });
+      },
+      onProgress: (event) => {
+        registryStore.patchRuntimeMetadata(registryId, {
+          progressEvents: [event],
+        });
+      },
+      onEvidence: (evidence) => {
+        registryStore.patchRuntimeMetadata(registryId, {
+          evidence: [evidence],
+          progressEvents: [{
+            type: "evidence",
+            message: `Managed SDK evidence recorded: ${evidence.kind}.`,
+          }],
+        });
+      },
+      onStarted: (details) => {
+        registryStore.patchRuntimeMetadata(registryId, {
+          lifecycleState: "running",
+          sdkSessionId: details.sdkSessionId,
+          sdkWorkspacePath: details.sdkWorkspacePath,
+          sdkStateRoot: details.sdkStateRoot,
+          progressEvents: [{
+            type: "lifecycle",
+            message: "Managed SDK session resumed.",
+            data: {
+              sdkSessionId: details.sdkSessionId,
+              hasWorkspacePath: Boolean(details.sdkWorkspacePath),
+            },
+          }],
+        });
+      },
+    });
+  } catch (error: unknown) {
+    const message = errorMessage(error);
+    const logger = getApiLogger().withScope("node-launch");
+    try {
+      registryStore.patchRuntimeMetadata(registryId, {
+        lifecycleState: "failed",
+        progressEvents: [{
+          type: "error",
+          message,
+        }],
+      });
+    } catch (runtimePatchError: unknown) {
+      logger.error("managed SDK resume failure runtime transition failed", {
+        launchClaimId: claim.launchClaimId,
+        workstreamId: claim.workstreamId,
+        nodeId: claim.nodeId,
+        registryId,
+        err: errorLogDetails(runtimePatchError),
+      });
+    }
+    logger.error("managed SDK resume failed", {
+      launchClaimId: claim.launchClaimId,
+      workstreamId: claim.workstreamId,
+      nodeId: claim.nodeId,
+      registryId,
+      err: errorLogDetails(error),
+    });
+    throw new NodeLaunchError(
+      "managed_sdk_resume_failed",
+      500,
+      `Failed to resume managed SDK worker: ${message}`,
       claim,
     );
   }

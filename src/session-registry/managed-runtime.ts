@@ -347,7 +347,7 @@ export function mergeSessionRegistryRuntimeMetadata(
   }
   const lifecycleChanged =
     patch.lifecycleState !== undefined &&
-    !isTerminalLifecycleState(current?.lifecycleState) &&
+    (patch.forceLifecycleState === true || !isTerminalLifecycleState(current?.lifecycleState)) &&
     patch.lifecycleState !== (current?.lifecycleState ?? null);
   const nextLifecycleState = lifecycleChanged
     ? patch.lifecycleState ?? null

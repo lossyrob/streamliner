@@ -1248,6 +1248,9 @@ function GraphDashboard({
   const [launchReleasing, setLaunchReleasing] = useState(false);
   const [launchReleaseError, setLaunchReleaseError] = useState<string | null>(null);
   const [launchReleaseStatus, setLaunchReleaseStatus] = useState<string | null>(null);
+  const [launchResuming, setLaunchResuming] = useState(false);
+  const [launchResumeError, setLaunchResumeError] = useState<string | null>(null);
+  const [launchResumeStatus, setLaunchResumeStatus] = useState<string | null>(null);
   const [nodeLaunchRecords, setNodeLaunchRecords] = useState<NodeLaunchRecord[]>([]);
   const [nodeLaunchRecordLoading, setNodeLaunchRecordLoading] = useState(false);
   const [nodeLaunchRecordError, setNodeLaunchRecordError] = useState<string | null>(null);
@@ -1368,6 +1371,9 @@ function GraphDashboard({
 
   const launchDialogLatestClaim = launchDialogOperation?.latestClaim
     ?? (sameLaunchTarget(launchDialogTarget, selectedLaunchTarget) ? nodeLaunchRecord?.latestClaim ?? null : null);
+  const launchDialogRuntimeOverlay = launchDialogTarget
+    ? runtimeOverlay?.nodesById.get(launchDialogTarget.nodeId) ?? null
+    : selectedRuntimeOverlay;
 
   const configureDisabledReason = useMemo(() => {
     if (!activeWorkstreamEntry || !isBackendReadableWorkstreamEntry(activeWorkstreamEntry)) {
@@ -1431,6 +1437,43 @@ function GraphDashboard({
   }, [
     launchDialogLatestClaim,
     launchDialogOperation,
+    launchDialogTarget,
+    nodeLaunchRecord,
+    selectedLaunchOperation,
+  ]);
+
+  const canResumeBackgroundLaunch = useMemo(() => {
+    const operation = launchDialogOperation ?? selectedLaunchOperation;
+    const latestClaim = launchDialogTarget ? launchDialogLatestClaim : nodeLaunchRecord?.latestClaim;
+    const session = launchDialogRuntimeOverlay?.session.primarySession ?? null;
+    const managedLifecycle = launchDialogRuntimeOverlay?.managedRuntime?.lifecycleState ?? null;
+    const hasInterruptedSession = Boolean(
+      managedLifecycle === "interrupted" ||
+        (session &&
+          (session.activityStatus === "interrupted" ||
+            session.copilotProcessState === "stale_lock" ||
+            (session.trustedSignalSource !== null &&
+              session.trustedStartedAt !== null &&
+              session.trustedEndedAt === null &&
+              session.copilotProcessState !== "live" &&
+              session.activityStatus !== "exited"))),
+    );
+    const isManagedLaunch = Boolean(
+      operation?.managedLaunch ||
+        operation?.handoff?.runtimeKind === "managed-sdk" ||
+        launchDialogRuntimeOverlay?.managedRuntime?.projection.runtimeKind === "managed-sdk",
+    );
+    return Boolean(
+      latestClaim?.status === "bound" &&
+        latestClaim.blocksLaunch &&
+        operation?.handoff &&
+        isManagedLaunch &&
+        hasInterruptedSession,
+    );
+  }, [
+    launchDialogLatestClaim,
+    launchDialogOperation,
+    launchDialogRuntimeOverlay,
     launchDialogTarget,
     nodeLaunchRecord,
     selectedLaunchOperation,
@@ -1755,6 +1798,8 @@ function GraphDashboard({
     setLaunchDialogTarget(selectedLaunchTarget);
     setLaunchReleaseError(null);
     setLaunchReleaseStatus(null);
+    setLaunchResumeError(null);
+    setLaunchResumeStatus(null);
     setLaunchDialogOpen(true);
   };
 
@@ -1793,6 +1838,8 @@ function GraphDashboard({
     setLaunchDialogTarget(null);
     setLaunchReleaseError(null);
     setLaunchReleaseStatus(null);
+    setLaunchResumeError(null);
+    setLaunchResumeStatus(null);
   };
 
   const handleReleaseLaunch = async () => {
@@ -1833,6 +1880,97 @@ function GraphDashboard({
       setLaunchReleaseError(releaseError instanceof Error ? releaseError.message : String(releaseError));
     } finally {
       setLaunchReleasing(false);
+    }
+  };
+
+  const handleResumeBackgroundLaunch = async () => {
+    const target = launchDialogTarget ?? selectedLaunchTarget;
+    const latestClaim = launchDialogTarget ? launchDialogLatestClaim : nodeLaunchRecord?.latestClaim;
+    const currentOperation = launchDialogTarget ? launchDialogOperation : selectedLaunchOperation;
+    const handoff = currentOperation?.handoff;
+    if (!target || !latestClaim || !handoff) {
+      return;
+    }
+    const timestamp = new Date().toISOString();
+    setLaunchResuming(true);
+    setLaunchResumeError(null);
+    setLaunchResumeStatus(null);
+    setLaunchReleaseError(null);
+    setLaunchReleaseStatus(null);
+    updateLaunchOperation(target, (current) =>
+      createClientLaunchOperation(target, "managed_starting", {
+        ...(current ?? currentOperation ?? {}),
+        status: "managed_starting",
+        handoff,
+        terminalLaunch: null,
+        error: null,
+        progressEvents: appendProgressEvent(
+          (current ?? currentOperation)?.progressEvents ?? [],
+          {
+            type: "managed-runtime-resuming",
+            message: "Submitting background session resume request.",
+            timestamp,
+          },
+        ),
+        updatedAt: timestamp,
+      })
+    );
+    try {
+      const response = await fetch("/api/node-launches/managed-resumes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          launchClaimId: latestClaim.launchClaimId,
+          handoff: {
+            ...handoff,
+            runtimeKind: "managed-sdk",
+          },
+        }),
+      });
+      if (!response.ok) {
+        const parsed = await parseErrorResponse(response);
+        throw new Error(parsed.message);
+      }
+      const result = await response.json() as ManagedSdkLaunchApiResponse;
+      const managedLaunch = managedLaunchFromApiResponse(result);
+      const refreshed = await loadNodeLaunchRecord(target.graphPath, target.nodeId);
+      if (sameLaunchTarget(target, selectedLaunchTarget) && refreshed.record) {
+        setNodeLaunchRecords((current) =>
+          mergeNodeLaunchRecord(current, target, refreshed.record)
+        );
+      }
+      setLaunchOperation(
+        target,
+        refreshed.operation ??
+          createClientLaunchOperation(target, "managed_running", {
+            ...(currentOperation ?? {}),
+            status: "managed_running",
+            handoff,
+            terminalLaunch: null,
+            managedLaunch,
+            latestClaim: result.launchClaim,
+            error: null,
+            completedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          }),
+      );
+      setLaunchResumeStatus("Resume requested for the background session.");
+      setNodeLaunchRecordRefreshKey((current) => current + 1);
+    } catch (resumeError: unknown) {
+      const message = resumeError instanceof Error ? resumeError.message : String(resumeError);
+      setLaunchResumeError(message);
+      updateLaunchOperation(target, (current) =>
+        createClientLaunchOperation(target, "managed_failed", {
+          ...(current ?? currentOperation ?? {}),
+          status: "managed_failed",
+          error: operationError("managed_runtime_resume_failed", message),
+          completedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        })
+      );
+      setNodeLaunchRecordRefreshKey((current) => current + 1);
+    } finally {
+      setLaunchResuming(false);
     }
   };
 
@@ -2252,11 +2390,15 @@ function GraphDashboard({
           releasingLaunch={launchReleasing}
           releaseError={launchReleaseError}
           releaseStatus={launchReleaseStatus}
+          resumingLaunch={launchResuming}
+          resumeError={launchResumeError}
+          resumeStatus={launchResumeStatus}
           onCancel={handleCloseLaunchDialog}
           onSubmit={handleSubmitLaunch}
           onLaunchTerminal={handleLaunchTerminal}
           onPromptProfilesChanged={onPromptProfilesChanged}
           onReleaseLaunch={launchDialogLatestClaim?.blocksLaunch ? handleReleaseLaunch : undefined}
+          onResumeLaunch={canResumeBackgroundLaunch ? handleResumeBackgroundLaunch : undefined}
         />
       ) : null}
       {configurationDialogOpen && workstream ? (

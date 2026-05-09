@@ -58,11 +58,15 @@ interface PawLaunchDialogProps {
   releasingLaunch?: boolean;
   releaseError?: string | null;
   releaseStatus?: string | null;
+  resumingLaunch?: boolean;
+  resumeError?: string | null;
+  resumeStatus?: string | null;
   onCancel: () => void;
   onSubmit: (configuration: PawLaunchDialogConfiguration) => void | Promise<void>;
   onLaunchTerminal: (input: PawTerminalLaunchInput) => void;
   onPromptProfilesChanged?: (profiles: PawPromptProfile[]) => void;
   onReleaseLaunch?: () => void;
+  onResumeLaunch?: () => void;
 }
 
 interface WorkflowContextDocument {
@@ -303,11 +307,15 @@ export function PawLaunchDialog({
   releasingLaunch = false,
   releaseError,
   releaseStatus,
+  resumingLaunch = false,
+  resumeError,
+  resumeStatus,
   onCancel,
   onSubmit,
   onLaunchTerminal,
   onPromptProfilesChanged,
   onReleaseLaunch,
+  onResumeLaunch,
 }: PawLaunchDialogProps) {
   const [runtimeKind, setRuntimeKind] = useState<WorkstreamRuntimeKind>(
     defaults.runtimeKind ?? "terminal-cli",
@@ -688,16 +696,28 @@ export function PawLaunchDialog({
             </section>
           )}
 
-          {(actionDisabledReason || releaseError || releaseStatus) && (
+          {(actionDisabledReason || releaseError || releaseStatus || resumeError || resumeStatus) && (
             <div className="sl-action-warning" aria-live="polite">
               {actionDisabledReason && <p>{actionDisabledReason}</p>}
               {releaseError && <p className="sl-action-error">{releaseError}</p>}
               {releaseStatus && <p className="sl-inline-status">{releaseStatus}</p>}
+              {resumeError && <p className="sl-action-error">{resumeError}</p>}
+              {resumeStatus && <p className="sl-inline-status">{resumeStatus}</p>}
+              {actionDisabledReason && onResumeLaunch && (
+                <button
+                  type="button"
+                  className="sl-action-btn primary"
+                  disabled={resumingLaunch || releasingLaunch || preparing || launching}
+                  onClick={onResumeLaunch}
+                >
+                  {resumingLaunch ? "Resuming background session..." : "Resume background session"}
+                </button>
+              )}
               {actionDisabledReason && onReleaseLaunch && (
                 <button
                   type="button"
                   className="sl-action-btn"
-                  disabled={releasingLaunch || preparing || launching}
+                  disabled={releasingLaunch || resumingLaunch || preparing || launching}
                   onClick={onReleaseLaunch}
                 >
                   {releasingLaunch ? "Releasing launch..." : "Release stuck launch"}
@@ -1109,7 +1129,12 @@ export function PawLaunchDialog({
         </div>
 
         <div className="sl-sheet-foot sl-paw-launch-actions">
-          <button type="button" className="sl-action-btn" onClick={onCancel} disabled={releasingLaunch}>
+          <button
+            type="button"
+            className="sl-action-btn"
+            onClick={onCancel}
+            disabled={releasingLaunch || resumingLaunch}
+          >
             {preparing || launching || handoff || terminalLaunchResult || managedLaunchResult ? "Close" : "Cancel"}
           </button>
           {handoff ? (
@@ -1125,7 +1150,8 @@ export function PawLaunchDialog({
                 terminalLaunchActive ||
                 managedLaunchActive ||
                 Boolean(actionDisabledReason) ||
-                releasingLaunch
+                releasingLaunch ||
+                resumingLaunch
               }
               onClick={() =>
                 onLaunchTerminal({
@@ -1151,7 +1177,7 @@ export function PawLaunchDialog({
             <button
               type="submit"
               className="sl-action-btn primary"
-              disabled={preparing || releasingLaunch || Boolean(instructionError) || Boolean(actionDisabledReason)}
+              disabled={preparing || releasingLaunch || resumingLaunch || Boolean(instructionError) || Boolean(actionDisabledReason)}
             >
               {preparing
                 ? managedRuntimeSelected

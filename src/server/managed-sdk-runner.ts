@@ -35,6 +35,10 @@ export interface ManagedSdkRunnerStartInput {
   onStarted: (details: ManagedSdkRunnerStartResult) => void;
 }
 
+export interface ManagedSdkRunnerResumeInput extends ManagedSdkRunnerStartInput {
+  sdkSessionId: string;
+}
+
 export interface ManagedSdkRunnerStartResult {
   registryId: string;
   sdkSessionId: string | null;
@@ -58,6 +62,7 @@ export interface ManagedSdkInterruptResult {
 
 export interface ManagedSdkRunner {
   start(input: ManagedSdkRunnerStartInput): Promise<ManagedSdkRunnerStartResult>;
+  resume?(input: ManagedSdkRunnerResumeInput): Promise<ManagedSdkRunnerStartResult>;
   interrupt?(input: ManagedSdkInterruptInput): Promise<ManagedSdkInterruptResult>;
 }
 
@@ -89,6 +94,11 @@ interface SafeManagedCallbacks {
   onProgress: (event: SessionRegistryRuntimeProgressEventInput) => void;
   onEvidence: (evidence: SessionRegistryRuntimeEvidenceInput) => void;
   onStarted: (details: ManagedSdkRunnerStartResult) => void;
+}
+
+interface ManagedUserInputRequest {
+  question: string;
+  choices?: string[];
 }
 
 type RuntimeEvidenceLifecycleState = Extract<
@@ -324,6 +334,17 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
   }
 
   async start(input: ManagedSdkRunnerStartInput): Promise<ManagedSdkRunnerStartResult> {
+    return await this.startOrResume(input, null);
+  }
+
+  async resume(input: ManagedSdkRunnerResumeInput): Promise<ManagedSdkRunnerStartResult> {
+    return await this.startOrResume(input, input.sdkSessionId);
+  }
+
+  private async startOrResume(
+    input: ManagedSdkRunnerStartInput,
+    resumeSessionId: string | null,
+  ): Promise<ManagedSdkRunnerStartResult> {
     const sdk = await import("@github/copilot-sdk");
     const callbacks = createSafeManagedCallbacks(input);
     const client = new sdk.CopilotClient({
@@ -337,7 +358,6 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
     try {
       await client.start();
       clientStarted = true;
-      callbacks.onLifecycleState("starting", "Starting managed SDK session.");
       const permissionHandler: PermissionHandler = async (request, invocation) => {
         const decision = await sdk.approveAll(request, invocation);
         callbacks.onProgress({
@@ -347,13 +367,13 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
         });
         return decision;
       };
-      session = await client.createSession({
+      const sessionConfig = {
         clientName: "streamliner-managed-sdk-worker",
         workingDirectory: input.cwd,
         enableConfigDiscovery: true,
         streaming: true,
         onPermissionRequest: permissionHandler,
-        onUserInputRequest: (request) => {
+        onUserInputRequest: (request: ManagedUserInputRequest) => {
           callbacks.onLifecycleState(
             "waiting_for_builder",
             "Managed SDK requested builder input; autonomous runtime did not select a provided choice.",
@@ -371,7 +391,7 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
             wasFreeform: true,
           };
         },
-        onEvent: (event) => {
+        onEvent: (event: SessionEvent) => {
           const progress = progressForSdkEvent(event);
           if (progress) {
             callbacks.onProgress(progress);
@@ -381,7 +401,14 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
             callbacks.onLifecycleState(state, `Managed SDK lifecycle changed to ${state}.`);
           }
         },
-      });
+      };
+      if (resumeSessionId) {
+        callbacks.onLifecycleState("starting", "Resuming managed SDK session.");
+        session = await client.resumeSession(resumeSessionId, sessionConfig);
+      } else {
+        callbacks.onLifecycleState("starting", "Starting managed SDK session.");
+        session = await client.createSession(sessionConfig);
+      }
     } catch (error: unknown) {
       if (clientStarted) {
         await client.stop();
