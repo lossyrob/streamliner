@@ -27,6 +27,7 @@ import { createNodeLaunchRecordsRouter } from "./routes/node-launch-records";
 import { createPawLaunchPromptProfilesRouter } from "./routes/paw-launch-prompt-profiles";
 import { createPawWorkflowContextRouter } from "./routes/paw-workflow-context";
 import { createRecentsRouter } from "./routes/recents";
+import { createSessionLaunchSettingsRouter } from "./routes/session-launch-settings";
 import { createSessionsRouter } from "./routes/sessions";
 import { createWorkstreamsRouter } from "./routes/workstreams";
 import { SessionRegistryEventStream } from "./session-events";
@@ -51,6 +52,7 @@ export interface StreamlinerApiAppOptions {
   launchContextDeps?: LaunchContextRouteDeps;
   launchPreparationDeps?: LaunchPreparationRouteDeps;
   promptProfilesPath?: string;
+  sessionLaunchSettingsPath?: string;
   nodeLaunchRecordsPath?: string;
   pawWorkRoot?: string;
   /** Optional launch-claim store. When provided, mounts
@@ -203,6 +205,12 @@ export function createStreamlinerApiApp(
     "/api",
     createPawLaunchPromptProfilesRouter({
       profilesPath: options.promptProfilesPath,
+    }),
+  );
+  app.use(
+    "/api",
+    createSessionLaunchSettingsRouter({
+      settingsPath: options.sessionLaunchSettingsPath,
     }),
   );
   app.use(

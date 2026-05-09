@@ -55,7 +55,7 @@ settings and session command previews, and documents the precedence rules.
 
 ## Phase Status
 
-- [ ] **Phase 1: Settings store and API** - Persist and validate default launch
+- [x] **Phase 1: Settings store and API** - Persist and validate default launch
   flags with built-in `--yolo` defaults.
 - [ ] **Phase 2: Registry metadata and launch recording** - Add typed recorded
   args to launched origins and write them during terminal launches.
