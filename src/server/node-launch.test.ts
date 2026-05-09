@@ -8,19 +8,25 @@ import { afterEach, describe, expect, it } from "vitest";
 import { LaunchClaimFileStore } from "../session-registry/launch-claim-store";
 import type { LaunchClaimStore } from "../launch-claim-contract";
 import { SessionRegistryFileStore } from "../session-registry/file-store";
+import { bindClaimViaTrustedSignal } from "../session-registry/launch-claims";
 import type { PawLaunchHandoff } from "./launch-preparation";
 import {
   appendLaunchBindingPromptLines,
   launchManagedSdkNode,
   launchPreparedNode,
   NodeLaunchError,
+  resumeManagedSdkNode,
 } from "./node-launch";
 import { createStreamlinerApiApp, type StreamlinerApiApp } from "./app";
 import {
   DuplicateActiveNodeLaunchOperationError,
   NodeLaunchRecordStore,
 } from "./node-launch-record-store";
-import type { ManagedSdkRunner, ManagedSdkRunnerStartInput } from "./managed-sdk-runner";
+import type {
+  ManagedSdkRunner,
+  ManagedSdkRunnerResumeInput,
+  ManagedSdkRunnerStartInput,
+} from "./managed-sdk-runner";
 
 const createdRoots: string[] = [];
 const activeApps: StreamlinerApiApp[] = [];
@@ -163,6 +169,38 @@ function fakeHandoff(root: string, overrides: Partial<PawLaunchHandoff> = {}): P
     ...overrides,
   };
   return base;
+}
+
+function bindManagedClaimToSdkSession(
+  registryStore: SessionRegistryFileStore,
+  claimStore: LaunchClaimFileStore,
+  input: {
+    launchClaimId: string;
+    copilotSessionId: string;
+    cwd: string;
+    branch: string;
+  },
+): void {
+  registryStore.upsertSession({
+    id: `observed-${input.copilotSessionId}`,
+    title: "Observed SDK session",
+    description: "",
+    cwd: input.cwd,
+    repo: null,
+    branch: input.branch,
+    copilotSessionId: input.copilotSessionId,
+    lastSeenAt: "2026-05-07T12:00:00.000Z",
+    origin: { kind: "observed", importedFromCopilotSessionId: input.copilotSessionId },
+    lifecycleStatus: "active",
+  });
+  const bind = bindClaimViaTrustedSignal(registryStore, claimStore, {
+    launchClaimId: input.launchClaimId,
+    copilotSessionId: input.copilotSessionId,
+    cwd: input.cwd,
+    branch: input.branch,
+    at: "2026-05-07T12:00:01.000Z",
+  });
+  expect(bind.ok).toBe(true);
 }
 
 afterEach(() => {
@@ -627,6 +665,88 @@ describe("launchManagedSdkNode", () => {
   });
 });
 
+describe("resumeManagedSdkNode", () => {
+  it("resumes a bound interrupted SDK session without creating a replacement claim", async () => {
+    const root = createRootDir();
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const resumeInputs: ManagedSdkRunnerResumeInput[] = [];
+    const runner: ManagedSdkRunner = {
+      start: async (input) => {
+        const result = {
+          registryId: input.registryId,
+          sdkSessionId: "sdk-resume-source",
+          sdkWorkspacePath: normalizePath(join(root, "sdk", "workspace.yaml")),
+          sdkStateRoot: normalizePath(join(root, "sdk")),
+        };
+        input.onStarted(result);
+        return result;
+      },
+      resume: async (input) => {
+        resumeInputs.push(input);
+        const result = {
+          registryId: input.registryId,
+          sdkSessionId: input.sdkSessionId,
+          sdkWorkspacePath: normalizePath(join(root, "sdk", "workspace.yaml")),
+          sdkStateRoot: normalizePath(join(root, "sdk")),
+        };
+        input.onStarted(result);
+        return result;
+      },
+    };
+    const handoff = fakeHandoff(root, { runtimeKind: "managed-sdk" });
+    const launched = await launchManagedSdkNode(registryStore, claimStore, handoff, {
+      managedSdkRunner: runner,
+      now: () => new Date("2026-05-07T12:00:00.000Z"),
+    });
+    bindManagedClaimToSdkSession(registryStore, claimStore, {
+      launchClaimId: launched.launchClaim.launchClaimId,
+      copilotSessionId: "sdk-resume-source",
+      cwd: handoff.cwd,
+      branch: handoff.branch,
+    });
+    registryStore.patchRuntimeMetadata(launched.managedSdk.registryId, {
+      lifecycleState: "interrupted",
+      progressEvents: [{
+        type: "lifecycle",
+        message: "Managed SDK worker interrupted.",
+      }],
+    });
+
+    const resumed = await resumeManagedSdkNode(
+      registryStore,
+      claimStore,
+      handoff,
+      launched.launchClaim.launchClaimId,
+      {
+        managedSdkRunner: runner,
+        now: () => new Date("2026-05-07T12:05:00.000Z"),
+      },
+    );
+
+    expect(resumed.managedSdk.registryId).toBe(launched.managedSdk.registryId);
+    expect(resumed.managedSdk.sdkSessionId).toBe("sdk-resume-source");
+    expect(resumed.launchClaim.launchClaimId).toBe(launched.launchClaim.launchClaimId);
+    expect(resumeInputs).toHaveLength(1);
+    expect(resumeInputs[0].sdkSessionId).toBe("sdk-resume-source");
+    expect(resumeInputs[0].prompt).toContain("Resume this interrupted Streamliner background session.");
+    expect(resumeInputs[0].environment).toEqual(expect.objectContaining({
+      STREAMLINER_LAUNCH_CLAIM_ID: launched.launchClaim.launchClaimId,
+      STREAMLINER_MANAGED_RUNTIME_KIND: "managed-sdk",
+    }));
+
+    const claims = claimStore.listClaims();
+    expect(claims).toHaveLength(1);
+    expect(claimStore.getClaim(launched.launchClaim.launchClaimId)?.status).toBe("bound");
+    expect(registryStore.getSession(launched.managedSdk.registryId)?.runtime).toEqual(
+      expect.objectContaining({
+        lifecycleState: "running",
+        sdkSessionId: "sdk-resume-source",
+      }),
+    );
+  });
+});
+
 describe("node launch API route", () => {
   it("rejects non-loopback callers", async () => {
     const root = createRootDir();
@@ -767,6 +887,104 @@ describe("node launch API route", () => {
       }),
       latestClaim: expect.objectContaining({
         status: "pending",
+        blocksLaunch: true,
+      }),
+    }));
+  });
+
+  it("resumes an interrupted managed SDK handoff through POST /api/node-launches/managed-resumes", async () => {
+    const root = createRootDir();
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const resumeInputs: ManagedSdkRunnerResumeInput[] = [];
+    const runner: ManagedSdkRunner = {
+      start: async (input) => {
+        const result = {
+          registryId: input.registryId,
+          sdkSessionId: "sdk-route-resume-source",
+          sdkWorkspacePath: normalizePath(join(root, "sdk", "workspace.yaml")),
+          sdkStateRoot: normalizePath(join(root, "sdk")),
+        };
+        input.onStarted(result);
+        return result;
+      },
+      resume: async (input) => {
+        resumeInputs.push(input);
+        const result = {
+          registryId: input.registryId,
+          sdkSessionId: input.sdkSessionId,
+          sdkWorkspacePath: normalizePath(join(root, "sdk", "workspace.yaml")),
+          sdkStateRoot: normalizePath(join(root, "sdk")),
+        };
+        input.onStarted(result);
+        return result;
+      },
+    };
+    const api = createStreamlinerApiApp({
+      store: registryStore,
+      launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
+      nodeLaunchDeps: {
+        managedSdkRunner: runner,
+      },
+    });
+    activeApps.push(api);
+    const handoff = fakeHandoff(root, { runtimeKind: "managed-sdk" });
+    const launched = await request(api.app)
+      .post("/api/node-launches")
+      .send({ handoff })
+      .expect(201);
+    bindManagedClaimToSdkSession(registryStore, claimStore, {
+      launchClaimId: launched.body.launchClaim.launchClaimId,
+      copilotSessionId: "sdk-route-resume-source",
+      cwd: handoff.cwd,
+      branch: handoff.branch,
+    });
+    registryStore.patchRuntimeMetadata(launched.body.managedSdk.registryId, {
+      lifecycleState: "interrupted",
+      progressEvents: [{
+        type: "lifecycle",
+        message: "Managed SDK worker interrupted.",
+      }],
+    });
+
+    const resumed = await request(api.app)
+      .post("/api/node-launches/managed-resumes")
+      .send({
+        launchClaimId: launched.body.launchClaim.launchClaimId,
+        handoff,
+      })
+      .expect(201);
+
+    expect(resumed.body).toEqual(expect.objectContaining({
+      runtimeKind: "managed-sdk",
+      launchClaim: expect.objectContaining({
+        launchClaimId: launched.body.launchClaim.launchClaimId,
+        status: "bound",
+      }),
+      managedSdk: expect.objectContaining({
+        registryId: launched.body.managedSdk.registryId,
+        sdkSessionId: "sdk-route-resume-source",
+      }),
+    }));
+    expect(resumeInputs).toHaveLength(1);
+    expect(resumeInputs[0].prompt).toContain("Continue from the existing conversation history");
+
+    const operation = await request(api.app)
+      .get("/api/node-launch-records")
+      .query({
+        graphPath: handoff.launchMetadata.graphPath,
+        nodeId: "terminal-launch",
+      })
+      .expect(200);
+    expect(operation.body.operation).toEqual(expect.objectContaining({
+      status: "managed_running",
+      managedLaunch: expect.objectContaining({
+        registryId: launched.body.managedSdk.registryId,
+        sdkSessionId: "sdk-route-resume-source",
+      }),
+      latestClaim: expect.objectContaining({
+        status: "bound",
         blocksLaunch: true,
       }),
     }));

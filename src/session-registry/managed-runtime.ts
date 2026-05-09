@@ -356,7 +356,7 @@ export function mergeSessionRegistryRuntimeMetadata(
   const takeoverCleanupTransition = isTerminalTakeoverCleanupTransition(current, patch);
   const lifecycleChanged =
     patch.lifecycleState !== undefined &&
-    (!terminalLifecycleState || takeoverCleanupTransition) &&
+    (patch.forceLifecycleState === true || !terminalLifecycleState || takeoverCleanupTransition) &&
     patch.lifecycleState !== (current?.lifecycleState ?? null);
   const nextLifecycleState = lifecycleChanged
     ? patch.lifecycleState ?? null

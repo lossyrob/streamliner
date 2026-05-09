@@ -35,6 +35,10 @@ export interface ManagedSdkRunnerStartInput {
   onStarted: (details: ManagedSdkRunnerStartResult) => void;
 }
 
+export interface ManagedSdkRunnerResumeInput extends ManagedSdkRunnerStartInput {
+  sdkSessionId: string;
+}
+
 export interface ManagedSdkRunnerStartResult {
   registryId: string;
   sdkSessionId: string | null;
@@ -68,10 +72,21 @@ export interface ManagedSdkOwnershipTransferResult {
 
 export interface ManagedSdkRunner {
   start(input: ManagedSdkRunnerStartInput): Promise<ManagedSdkRunnerStartResult>;
+  resume?(input: ManagedSdkRunnerResumeInput): Promise<ManagedSdkRunnerStartResult>;
   interrupt?(input: ManagedSdkInterruptInput): Promise<ManagedSdkInterruptResult>;
   transferToTerminal?(
     input: ManagedSdkOwnershipTransferInput,
   ): Promise<ManagedSdkOwnershipTransferResult>;
+}
+
+export const DEFAULT_MANAGED_SDK_TURN_IDLE_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+
+export interface DefaultManagedSdkRunnerOptions {
+  /**
+   * Timeout passed to the SDK convenience wait for session.idle. This is a
+   * supervision guard only; SDK timeouts do not abort in-flight work.
+   */
+  turnIdleTimeoutMs?: number;
 }
 
 interface ActiveManagedRun {
@@ -94,6 +109,11 @@ interface SafeManagedCallbacks {
   onProgress: (event: SessionRegistryRuntimeProgressEventInput) => void;
   onEvidence: (evidence: SessionRegistryRuntimeEvidenceInput) => void;
   onStarted: (details: ManagedSdkRunnerStartResult) => void;
+}
+
+interface ManagedUserInputRequest {
+  question: string;
+  choices?: string[];
 }
 
 type RuntimeEvidenceLifecycleState = Extract<
@@ -161,6 +181,22 @@ function createSafeManagedCallbacks(input: ManagedSdkRunnerStartInput): SafeMana
 
 function sdkStateRootFor(workspacePath: string | undefined, fallback: string): string {
   return workspacePath ? dirname(workspacePath) : fallback;
+}
+
+function managedSdkTurnIdleTimeoutMs(): number {
+  const raw = process.env.STREAMLINER_MANAGED_SDK_TURN_IDLE_TIMEOUT_MS;
+  if (raw === undefined || raw.trim() === "") {
+    return DEFAULT_MANAGED_SDK_TURN_IDLE_TIMEOUT_MS;
+  }
+  const parsed = Number(raw);
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return parsed;
+  }
+  getApiLogger().withScope("managed-sdk-runner").warn(
+    "invalid STREAMLINER_MANAGED_SDK_TURN_IDLE_TIMEOUT_MS; using default",
+    { value: raw, defaultMs: DEFAULT_MANAGED_SDK_TURN_IDLE_TIMEOUT_MS },
+  );
+  return DEFAULT_MANAGED_SDK_TURN_IDLE_TIMEOUT_MS;
 }
 
 function permissionRequestData(
@@ -306,8 +342,24 @@ function lifecycleStateForEvidence(
 
 export class DefaultManagedSdkRunner implements ManagedSdkRunner {
   private readonly activeRuns = new Map<string, ActiveManagedRun>();
+  private readonly turnIdleTimeoutMs: number;
+
+  constructor(options: DefaultManagedSdkRunnerOptions = {}) {
+    this.turnIdleTimeoutMs = options.turnIdleTimeoutMs ?? managedSdkTurnIdleTimeoutMs();
+  }
 
   async start(input: ManagedSdkRunnerStartInput): Promise<ManagedSdkRunnerStartResult> {
+    return await this.startOrResume(input, null);
+  }
+
+  async resume(input: ManagedSdkRunnerResumeInput): Promise<ManagedSdkRunnerStartResult> {
+    return await this.startOrResume(input, input.sdkSessionId);
+  }
+
+  private async startOrResume(
+    input: ManagedSdkRunnerStartInput,
+    resumeSessionId: string | null,
+  ): Promise<ManagedSdkRunnerStartResult> {
     const sdk = await import("@github/copilot-sdk");
     const callbacks = createSafeManagedCallbacks(input);
     let activeRun: ActiveManagedRun | null = null;
@@ -322,7 +374,6 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
     try {
       await client.start();
       clientStarted = true;
-      callbacks.onLifecycleState("starting", "Starting managed SDK session.");
       const permissionHandler: PermissionHandler = async (request, invocation) => {
         const decision = await sdk.approveAll(request, invocation);
         if (!activeRun?.ownershipTransferred) {
@@ -334,13 +385,13 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
         }
         return decision;
       };
-      session = await client.createSession({
+      const sessionConfig = {
         clientName: "streamliner-managed-sdk-worker",
         workingDirectory: input.cwd,
         enableConfigDiscovery: true,
         streaming: true,
         onPermissionRequest: permissionHandler,
-        onUserInputRequest: (request) => {
+        onUserInputRequest: (request: ManagedUserInputRequest) => {
           if (!activeRun?.ownershipTransferred) {
             callbacks.onLifecycleState(
               "waiting_for_builder",
@@ -360,7 +411,7 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
             wasFreeform: true,
           };
         },
-        onEvent: (event) => {
+        onEvent: (event: SessionEvent) => {
           if (activeRun?.ownershipTransferred) {
             return;
           }
@@ -373,7 +424,14 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
             callbacks.onLifecycleState(state, `Managed SDK lifecycle changed to ${state}.`);
           }
         },
-      });
+      };
+      if (resumeSessionId) {
+        callbacks.onLifecycleState("starting", "Resuming managed SDK session.");
+        session = await client.resumeSession(resumeSessionId, sessionConfig);
+      } else {
+        callbacks.onLifecycleState("starting", "Starting managed SDK session.");
+        session = await client.createSession(sessionConfig);
+      }
     } catch (error: unknown) {
       if (clientStarted) {
         await client.stop();
@@ -462,7 +520,10 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
   ): Promise<void> {
     try {
       callbacks.onLifecycleState("running", "Managed SDK worker started.");
-      const response = await active.session.sendAndWait({ prompt: input.prompt });
+      const response = await active.session.sendAndWait(
+        { prompt: input.prompt },
+        this.turnIdleTimeoutMs,
+      );
       if (active.ownershipTransferred) {
         return;
       }
