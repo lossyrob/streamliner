@@ -226,6 +226,7 @@ export interface PreparePawLaunchOptions {
   pawInitRunner?: PawInitRunner;
   contextPreparer?: LaunchContextPreparer;
   existingLaunch?: NodeLaunchRecord | null;
+  defaultCliArgs?: string[];
 }
 
 export interface PawLaunchMetadata {
@@ -495,7 +496,7 @@ function normalizeTerminalPreferences(
 
 function parseConfigurationInput(
   input: PawLaunchConfigurationInput | undefined,
-  defaults: { terminal?: Partial<PawLaunchTerminalPreferences> } = {},
+  defaults: { cliArgs?: string[]; terminal?: Partial<PawLaunchTerminalPreferences> } = {},
 ): ParsedPawLaunchConfiguration {
   const rawCwd = assertOptionalString(input?.cwd, "configuration.cwd");
   const workflowInstructions = assertOptionalString(
@@ -503,7 +504,7 @@ function parseConfigurationInput(
     "configuration.workflowInstructions",
   )?.trim() || DEFAULT_WORKFLOW_INSTRUCTIONS;
   const cliArgs = assertOptionalStringArray(input?.cliArgs, "configuration.cliArgs")
-    ?? [...DEFAULT_CLI_ARGS];
+    ?? [...(defaults.cliArgs ?? DEFAULT_CLI_ARGS)];
   const environment = assertOptionalStringRecord(input?.environment, "configuration.environment")
     ?? {};
   const terminalOverrides = normalizeTerminalPreferences(input?.terminal);
@@ -1779,6 +1780,7 @@ export async function preparePawLaunch(
       }
     : undefined;
   const parsedConfiguration = parseConfigurationInput(options.configuration, {
+    cliArgs: options.defaultCliArgs,
     terminal: terminalDefaults,
   });
 

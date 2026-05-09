@@ -329,6 +329,12 @@ describe("launchPreparedNode", () => {
         }),
       }),
     ]);
+    const reservedRow = registryStore.getSession(result.launchClaim.reservedRegistryId ?? "");
+    expect(reservedRow?.origin).toEqual({
+      kind: "launched",
+      launchClaimId: result.launchClaim.launchClaimId,
+      cliArgs: ["--yolo"],
+    });
   });
 
   it("marks the claim failed when terminal spawn fails", async () => {

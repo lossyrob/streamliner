@@ -427,6 +427,7 @@ export interface ObservedSessionRegistryOrigin {
 export interface LaunchedSessionRegistryOrigin {
   kind: "launched";
   launchClaimId?: string | null;
+  cliArgs?: string[] | null;
 }
 
 export type SessionRegistryOrigin =

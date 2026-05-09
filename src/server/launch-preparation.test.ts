@@ -873,6 +873,20 @@ describe("preparePawLaunch", () => {
     expect(result.cliArgs).toEqual([]);
   });
 
+  it("uses injected default CLI args when launch configuration omits them", async () => {
+    const root = createRootDir();
+    const result = await preparePawLaunch({
+      nodeId: "launch-prompt-profiles",
+      cwd: root,
+      stateRoot: join(root, "state"),
+      defaultCliArgs: ["--model=gpt-5.5", "--yolo"],
+      pawInitRunner: createPawInitRunner(),
+      contextPreparer: createContextPreparer(root),
+    });
+
+    expect(result.cliArgs).toEqual(["--model=gpt-5.5", "--yolo"]);
+  });
+
   it("blocks PAW preparation before context work when policy requires a GitHub issue", async () => {
     const root = createRootDir();
     const graphPath = writeLaunchPolicyGraph(root, {

@@ -90,6 +90,34 @@ describe("SessionRegistryFileStore", () => {
     expect(existsSync(join(rootDir, "index.json"))).toBe(true);
   });
 
+  it("persists launched origin cliArgs without normalizing argv order or duplicates", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+
+    const record = store.upsertSession({
+      title: "Launched session",
+      description: "",
+      cwd: "C:\\repo",
+      repo: "lossyrob/streamliner",
+      branch: "feature/launch",
+      tags: [],
+      origin: {
+        kind: "launched",
+        launchClaimId: "claim-cli",
+        cliArgs: ["--yolo", "--model=gpt-5.5", "--yolo"],
+      },
+    });
+
+    expect(record.origin).toEqual({
+      kind: "launched",
+      launchClaimId: "claim-cli",
+      cliArgs: ["--yolo", "--model=gpt-5.5", "--yolo"],
+    });
+    const reloaded = new SessionRegistryFileStore({ rootDir }).getSession(record.id);
+    expect(reloaded?.origin).toEqual(record.origin);
+  });
+
   it("persists managed runtime metadata in entries, index, and list items", () => {
     const rootDir = createRootDir();
     createdRoots.push(rootDir);
