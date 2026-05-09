@@ -480,11 +480,22 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
     active.ownershipTransferred = true;
     active.interrupted = true;
     this.activeRuns.delete(input.registryId);
+    if (!active.interruptPromise) {
+      active.interruptPromise = this.abortActiveRun(active, input.reason);
+    }
+    const interruptResult = await active.interruptPromise;
     const cleanupErrors = await this.cleanupActiveRun(active);
-    if (cleanupErrors.length > 0) {
+    if (!interruptResult.ok || cleanupErrors.length > 0) {
+      const failures = [
+        ...(interruptResult.ok ? [] : [interruptResult.message]),
+        ...cleanupErrors,
+      ];
       return {
         ok: false,
-        message: `Managed SDK ownership transferred, but cleanup reported ${cleanupErrors.length} error(s).`,
+        message:
+          `Managed SDK ownership transferred, but release reported ${failures.length} error(s): ${
+            failures.join("; ")
+          }`,
       };
     }
     return {

@@ -1562,7 +1562,7 @@ describe("managed runtime session API routes", () => {
       .send({})
       .expect(200);
 
-    expect(interrupts).toEqual([record.id]);
+    expect(interrupts).toEqual([]);
     expect(transfers).toEqual([record.id]);
     expect(launchedCommand).toContain("sdk-session-123");
     expect(takeoverResponse.body).toEqual(expect.objectContaining({
@@ -1678,10 +1678,12 @@ describe("managed runtime session API routes", () => {
           progressEvents: expect.arrayContaining([
             expect.objectContaining({
               type: "terminal_takeover",
-              message: expect.stringContaining("SDK interruption was inconclusive"),
+              message: expect.stringContaining("SDK abort timed out."),
             }),
           ]),
         }),
+        copilotProcessState: "none",
+        trustedSignalSource: null,
       }),
     }));
   });
@@ -1939,7 +1941,7 @@ describe("managed runtime session API routes", () => {
       .expect(200);
     expect(cancelResponse.body).toEqual(expect.objectContaining({
       outcome: {
-        ok: false,
+        ok: true,
         evidenceState: "canceled",
         message: "No managed SDK runner is attached to this API process.; recorded cancellation.",
       },

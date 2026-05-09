@@ -302,6 +302,7 @@ describe("DefaultManagedSdkRunner", () => {
     });
 
     expect(sdkMock.session.disconnect).toHaveBeenCalledTimes(1);
+    expect(sdkMock.session.abort).toHaveBeenCalledTimes(1);
     config.onEvent?.({
       type: "assistant.message",
       data: { content: "late SDK callback" },

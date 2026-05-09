@@ -433,7 +433,7 @@ function isTerminalTakeoverCleanupTransition(
 ): boolean {
   return current?.runtimeOwner === "builder-terminal" &&
     current.lifecycleState === "terminal_takeover" &&
-    patch.runtimeOwner === "builder-terminal" &&
+    (patch.runtimeOwner === undefined || patch.runtimeOwner === "builder-terminal") &&
     patch.lifecycleState !== undefined &&
     patch.lifecycleState !== null &&
     TERMINAL_TAKEOVER_CLEANUP_TRANSITIONS.has(patch.lifecycleState);

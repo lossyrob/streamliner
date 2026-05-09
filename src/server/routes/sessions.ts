@@ -21,6 +21,7 @@ import {
 import { stopSession } from "../../session-registry/stop";
 import type {
   SessionRegistryRecord,
+  SessionRegistryManagedLifecycleState,
   SessionRegistryRuntimeEvidenceKind,
   SessionRegistryRuntimeOwner,
 } from "../../session-registry-schema";
@@ -287,6 +288,10 @@ export function createSessionsRouter(options: {
           message: outcome.message,
         }],
       });
+      assertManagedRuntimePatch(finalRecord, {
+        lifecycleState: outcome.evidenceState,
+        context: "interrupt",
+      });
       managedLogger.info("interrupt", {
         sessionId,
         requestedState: requested.runtime?.lifecycleState,
@@ -362,9 +367,14 @@ export function createSessionsRouter(options: {
             : outcome.message,
         }],
       });
+      assertManagedRuntimePatch(record, {
+        lifecycleState: finalState,
+        context: "cancel",
+      });
       const responseOutcome = finalState === "canceled"
         ? {
             ...outcome,
+            ok: true,
             evidenceState: "canceled" as const,
             message: outcome.ok
               ? "Managed SDK run canceled by builder action."
@@ -432,12 +442,6 @@ export function createSessionsRouter(options: {
       return;
     }
 
-    const reason = "Terminal takeover requested by builder action.";
-    const interruptOutcome = await interruptManagedSdkRunner(
-      options.managedSdkRunner,
-      sessionId,
-      reason,
-    );
     const cwd = target.record.derivedWorktreePath ?? target.record.cwd;
     const timestamp = (options.now?.() ?? new Date()).toISOString();
     let prebound: SessionRegistryRecord;
@@ -485,16 +489,26 @@ export function createSessionsRouter(options: {
       }
       return;
     }
-
-    const transferOutcome = await transferManagedSdkRunnerToTerminal(
-      options.managedSdkRunner,
-      sessionId,
-      "Visible terminal takeover opened for the managed SDK session.",
-    );
     try {
+      const reason = "Terminal takeover requested by builder action.";
+      const runnerSettlement = await releaseManagedSdkRunnerForTerminal(
+        options.managedSdkRunner,
+        sessionId,
+        reason,
+      );
+      const transferOutcome = runnerSettlement.ownershipTransfer;
+      const interruptOutcome = runnerSettlement.interrupt;
+      const runnerWarnings = [
+        ...(interruptOutcome.ok ? [] : [interruptOutcome.message]),
+        ...(transferOutcome.ok ? [] : [transferOutcome.message]),
+      ];
+      const progressMessage = runnerWarnings.length === 0
+        ? "Terminal takeover opened and SDK ownership was transferred."
+        : `Terminal takeover opened with SDK release warning: ${runnerWarnings.join("; ")}`;
       const withTakeoverRuntime = target.store.patchRuntimeMetadata(sessionId, {
         runtimeOwner: "builder-terminal",
         lifecycleState: "terminal_takeover",
+        forceLifecycleState: true,
         evidence: [{
           kind: "terminal_takeover",
           source: "managed-runtime-action",
@@ -503,16 +517,20 @@ export function createSessionsRouter(options: {
         }],
         progressEvents: [{
           type: "terminal_takeover",
-          message: interruptOutcome.ok
-            ? "Terminal takeover opened and SDK ownership was interrupted."
-            : `Terminal takeover opened; SDK interruption was inconclusive: ${interruptOutcome.message}`,
+          message: progressMessage,
           timestamp,
           data: {
             method: terminal.method,
             hasPid: terminal.pid !== undefined,
             ownershipTransferred: transferOutcome.ok,
+            runnerReleaseOk: interruptOutcome.ok && transferOutcome.ok,
           },
         }],
+      });
+      assertManagedRuntimePatch(withTakeoverRuntime, {
+        runtimeOwner: "builder-terminal",
+        lifecycleState: "terminal_takeover",
+        context: "takeover",
       });
       const attached = target.store.attachObservedSession(sessionId, {
         copilotSessionId: sdkSessionId,
@@ -522,13 +540,7 @@ export function createSessionsRouter(options: {
         lastSeenAt: timestamp,
         lifecycleStatus: "active",
         observedSessionKind: "interactive",
-        copilotProcessState: "live",
-        trustedSignalSource: "copilot-cli-hook",
-        trustedStartedAt: timestamp,
-        trustedEndedAt: null,
-        trustedLastSignalAt: timestamp,
         trustedStartSource: "resume",
-        trustedEndReason: null,
         trustedExecutionKind: "copilot_cli",
       });
       managedLogger.info("takeover", {
@@ -814,7 +826,7 @@ async function interruptManagedSdkRunner(
   if (!runner?.interrupt) {
     return {
       ok: false,
-      evidenceState: "failed",
+      evidenceState: "waiting_for_builder",
       message: "No managed SDK runner is attached to this API process.",
     };
   }
@@ -827,6 +839,45 @@ async function interruptManagedSdkRunner(
       message: error instanceof Error ? error.message : String(error),
     };
   }
+}
+
+async function releaseManagedSdkRunnerForTerminal(
+  runner: ManagedSdkRunner | undefined,
+  registryId: string,
+  reason: string | undefined,
+): Promise<{
+  interrupt: ManagedSdkInterruptResult;
+  ownershipTransfer: ManagedSdkOwnershipTransferResult;
+}> {
+  if (runner?.transferToTerminal) {
+    const ownershipTransfer = await transferManagedSdkRunnerToTerminal(
+      runner,
+      registryId,
+      "Visible terminal takeover opened for the managed SDK session.",
+    );
+    return {
+      ownershipTransfer,
+      interrupt: ownershipTransfer.ok
+        ? {
+            ok: true,
+            evidenceState: "interrupted",
+            message: ownershipTransfer.message,
+          }
+        : {
+            ok: false,
+            evidenceState: "waiting_for_builder",
+            message: ownershipTransfer.message,
+          },
+    };
+  }
+
+  return {
+    interrupt: await interruptManagedSdkRunner(runner, registryId, reason),
+    ownershipTransfer: {
+      ok: false,
+      message: "No managed SDK runner ownership-transfer hook is attached to this API process.",
+    },
+  };
 }
 
 async function transferManagedSdkRunnerToTerminal(
@@ -910,6 +961,25 @@ function managedRuntimeErrorResponse(
     return { statusCode: 409, message };
   }
   return { statusCode: 500, message };
+}
+
+function assertManagedRuntimePatch(
+  record: SessionRegistryRecord,
+  expected: {
+    runtimeOwner?: SessionRegistryRuntimeOwner;
+    lifecycleState?: SessionRegistryManagedLifecycleState | null;
+    context: string;
+  },
+): void {
+  const runtime = record.runtime;
+  if (
+    (expected.runtimeOwner !== undefined && runtime?.runtimeOwner !== expected.runtimeOwner) ||
+    (expected.lifecycleState !== undefined && runtime?.lifecycleState !== expected.lifecycleState)
+  ) {
+    throw new Error(
+      `Managed runtime ${expected.context} patch did not persist expected owner/lifecycle.`,
+    );
+  }
 }
 
 function errorLogDetails(error: unknown): Record<string, string> | string {
