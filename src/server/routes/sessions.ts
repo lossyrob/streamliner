@@ -42,6 +42,7 @@ import type {
 import { SessionRegistryEventStream } from "../session-events";
 import {
   buildCopilotResumeCommand,
+  isSafeCopilotResumeSessionId,
   launchTerminal,
   type TerminalLaunchOptions,
   type TerminalLaunchResult,
@@ -451,11 +452,32 @@ export function createSessionsRouter(options: {
       }
       return;
     }
+    if (!isSafeCopilotResumeSessionId(sdkSessionId)) {
+      try {
+        const failed = target.store.patchRuntimeMetadata(sessionId, {
+          lifecycleState: "failed",
+          progressEvents: [{
+            type: "error",
+            message: "Terminal takeover requires a valid SDK session id.",
+          }],
+        });
+        res.status(409).json({
+          error: "Terminal takeover requires a valid SDK session id.",
+          session: failed,
+        });
+      } catch (error: unknown) {
+        const failure = managedRuntimeErrorResponse(error);
+        res.status(failure.statusCode).json({ error: failure.message });
+      }
+      return;
+    }
 
     const cwd = target.record.derivedWorktreePath ?? target.record.cwd;
     const timestamp = (options.now?.() ?? new Date()).toISOString();
     let prebound: SessionRegistryRecord;
     try {
+      // Pre-bind before launch so a fast resume hook attaches to this managed row
+      // instead of creating a duplicate observed session.
       prebound = target.store.attachObservedSession(sessionId, {
         copilotSessionId: sdkSessionId,
         cwd,
@@ -542,6 +564,8 @@ export function createSessionsRouter(options: {
         lifecycleState: "terminal_takeover",
         context: "takeover",
       });
+      // Post-launch rebind refreshes non-trusted observation fields only; trusted
+      // hook/live-process fields are written exclusively by real hook intake.
       const attached = target.store.attachObservedSession(sessionId, {
         copilotSessionId: sdkSessionId,
         cwd,
