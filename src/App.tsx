@@ -2120,6 +2120,10 @@ function GraphDashboard({
     if (!launchDialogOperation?.handoff || !launchDialogTarget) {
       return;
     }
+    if (launchDialogOperation.handoff.runtimeKind === "managed-sdk") {
+      await launchManagedSdkFromHandoff(launchDialogOperation.handoff, launchDialogTarget);
+      return;
+    }
     await launchTerminalFromHandoff(launchDialogOperation.handoff, input, launchDialogTarget);
   };
 
@@ -2233,6 +2237,7 @@ function GraphDashboard({
           error={launchDialogOperation?.error?.error ?? null}
           handoff={launchDialogOperation?.handoff ?? null}
           terminalLaunchResult={launchDialogOperation?.terminalLaunch ?? null}
+          managedLaunchResult={launchDialogOperation?.managedLaunch ?? null}
           progressEvents={launchDialogOperation?.progressEvents ?? []}
           actionDisabledReason={launchActionDisabledReason}
           releasingLaunch={launchReleasing}

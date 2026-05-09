@@ -2325,6 +2325,9 @@ describe("App sessions route", () => {
           ([input]) => requestPath(input as RequestInfo | URL) === "/api/node-launches",
         ),
       ).toHaveLength(1);
+      expect(container.textContent).toContain("Started with managed-autonomous.");
+      expect(container.textContent).not.toContain("Review kickoff prompt");
+      expect(findButton(container, "Background session started").disabled).toBe(true);
     },
     15_000,
   );
@@ -2540,7 +2543,7 @@ describe("App sessions route", () => {
       await settle(100);
 
       expect(container.textContent).toContain("A background session is already active for this node.");
-      const disabledSubmit = findButton(container, "Start background session");
+      const disabledSubmit = findButton(container, "Background session started");
       expect(disabledSubmit.disabled).toBe(true);
       act(() => {
         disabledSubmit.click();
@@ -2551,6 +2554,195 @@ describe("App sessions route", () => {
           ([input]) => requestPath(input as RequestInfo | URL) === "/api/node-launches",
         ),
       ).toHaveLength(1);
+    },
+    15_000,
+  );
+
+  it(
+    "starts a prepared managed SDK handoff without routing it through terminal launch UI",
+    async () => {
+      const graph = buildLaunchGraph();
+      const launchClaim = {
+        launchClaimId: "claim-managed-prepared",
+        status: "pending",
+        launchedAt: "2026-05-05T12:00:00.000Z",
+        updatedAt: "2026-05-05T12:00:00.000Z",
+        bindingWindowExpiresAt: "2026-05-05T12:10:00.000Z",
+        reservedRegistryId: "registry-managed-prepared",
+        boundRegistryId: null,
+        boundCopilotSessionId: null,
+        failureCode: null,
+        failureReason: null,
+        blocksLaunch: true,
+        retryable: false,
+      };
+      const managedLaunch = {
+        launchClaim,
+        runtimeKind: "managed-sdk",
+        registryId: "registry-managed-prepared",
+        sdkSessionId: "sdk-managed-prepared",
+        sdkWorkspacePath: "C:\\state\\sdk-managed-prepared\\workspace.yaml",
+        sdkStateRoot: "C:\\state\\sdk-managed-prepared",
+        permissionProfile: "managed-autonomous",
+      };
+      const preparedHandoff = {
+        cwd: "C:\\graphs\\api-test",
+        branch: "feature/launch-prompt-profiles",
+        runtimeKind: "managed-sdk",
+        pawWorkDir: "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles",
+        workflowContextPath:
+          "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles\\WorkflowContext.md",
+        streamlinerContextPath:
+          "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles\\streamliner\\context.md",
+        cliArgs: [],
+        terminal: {
+          launchMode: "manual",
+          preferredTerminal: "powershell",
+        },
+        environment: {},
+        sessionStateRoot: "C:\\streamliner-state",
+        kickoffPrompt: "Start PAW launch prompt profiles.",
+        launchMetadata: {
+          launchNonce: "nonce-managed-prepared",
+          launchClaimRef: "claim-managed-prepared",
+          projectKey: "streamliner",
+          workstreamId: "api-test",
+          nodeId: "launch-prompt-profiles",
+          targetRepoIds: ["streamliner"],
+          graphPath: "C:\\graphs\\api-test\\graph.json",
+          branch: "feature/launch-prompt-profiles",
+          workId: "launch-prompt-profiles",
+          workTitle: "Launch prompt profiles",
+          trackerUrl: "https://github.com/lossyrob/streamliner/issues/33",
+          launchPolicy: null,
+        },
+        contextPackage: {
+          contextId: "ctx",
+          contextPackagePath: "C:\\streamliner-state\\launch-contexts\\ctx",
+          contextFilePath: "C:\\streamliner-state\\launch-contexts\\ctx\\context.md",
+          metadata: {},
+          unavailableInputs: [],
+        },
+      };
+      let currentLaunchState: unknown = {
+        record: null,
+        operation: {
+          id: "managed-prepared-operation",
+          graphPath: "C:\\graphs\\api-test\\graph.json",
+          nodeId: "launch-prompt-profiles",
+          status: "prepared",
+          preparationRunId: null,
+          startedAt: "2026-05-05T12:00:00.000Z",
+          updatedAt: "2026-05-05T12:00:00.000Z",
+          completedAt: "2026-05-05T12:00:00.000Z",
+          handoff: preparedHandoff,
+          terminalLaunch: null,
+          managedLaunch: null,
+          error: null,
+          progressEvents: [],
+          latestClaim: null,
+        },
+      };
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          if (path.includes("nodeId=")) {
+            return jsonResponse(currentLaunchState);
+          }
+          return jsonResponse({ records: [] });
+        }
+        if (path === "/api/paw-launch-prompt-profiles") {
+          return jsonResponse({ profiles: [] });
+        }
+        if (path === "/api/node-launches" && init?.method === "POST") {
+          const body = JSON.parse(String(init.body)) as {
+            handoff: { runtimeKind?: string; launchMetadata: { nodeId: string } };
+          };
+          expect(body.handoff.runtimeKind).toBe("managed-sdk");
+          expect(body.handoff.launchMetadata.nodeId).toBe("launch-prompt-profiles");
+          currentLaunchState = {
+            record: null,
+            operation: {
+              id: "managed-prepared-operation",
+              graphPath: "C:\\graphs\\api-test\\graph.json",
+              nodeId: "launch-prompt-profiles",
+              status: "managed_running",
+              preparationRunId: null,
+              startedAt: "2026-05-05T12:00:00.000Z",
+              updatedAt: "2026-05-05T12:00:01.000Z",
+              completedAt: "2026-05-05T12:00:01.000Z",
+              handoff: preparedHandoff,
+              terminalLaunch: null,
+              managedLaunch,
+              error: null,
+              progressEvents: [],
+              latestClaim: launchClaim,
+            },
+          };
+          return jsonResponse({
+            runtimeKind: "managed-sdk",
+            launchClaim,
+            managedSdk: {
+              registryId: managedLaunch.registryId,
+              sdkSessionId: managedLaunch.sdkSessionId,
+              sdkWorkspacePath: managedLaunch.sdkWorkspacePath,
+              sdkStateRoot: managedLaunch.sdkStateRoot,
+              permissionProfile: managedLaunch.permissionProfile,
+            },
+          }, 201);
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      act(() => {
+        findCanvasNode(container, "Launch prompt profiles").click();
+      });
+      await settle(100);
+      act(() => {
+        findButton(container, "Initialize PAW launch").click();
+      });
+      await settle();
+
+      expect(container.textContent).toContain("Prepared background session");
+      expect(container.textContent).not.toContain("Review kickoff prompt");
+      expect(() => findButton(container, "Launch terminal")).toThrow(
+        'Could not find button "Launch terminal".',
+      );
+
+      act(() => {
+        findButton(container, "Start background session").click();
+      });
+      await settle(100);
+
+      expect(
+        fetchMock.mock.calls.filter(
+          ([input]) => requestPath(input as RequestInfo | URL).startsWith("/api/launch-preparations/runs"),
+        ),
+      ).toHaveLength(0);
+      expect(
+        fetchMock.mock.calls.filter(
+          ([input]) => requestPath(input as RequestInfo | URL) === "/api/node-launches",
+        ),
+      ).toHaveLength(1);
+      expect(container.textContent).toContain("Started with managed-autonomous.");
+      expect(findButton(container, "Background session started").disabled).toBe(true);
     },
     15_000,
   );
