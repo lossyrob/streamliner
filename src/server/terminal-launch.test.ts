@@ -560,6 +560,11 @@ describe("terminal-launch", () => {
     it("builds the PowerShell resume command in the same adapter-owned helper", () => {
       expect(buildCopilotResumeCommand("it's-a-session")).toBe("copilot '--resume=it''s-a-session'");
     });
+
+    it("adds resume after quoted Copilot CLI args", () => {
+      expect(buildCopilotResumeCommand("session-1", ["--yolo", "--model=Rob's model"]))
+        .toBe("copilot '--yolo' '--model=Rob''s model' '--resume=session-1'");
+    });
   });
 
   describe("spawn options", () => {

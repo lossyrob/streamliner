@@ -59,7 +59,7 @@ settings and session command previews, and documents the precedence rules.
   flags with built-in `--yolo` defaults.
 - [x] **Phase 2: Registry metadata and launch recording** - Add typed recorded
   args to launched origins and write them during terminal launches.
-- [ ] **Phase 3: Relaunch command precedence** - Apply recorded/default args to
+- [x] **Phase 3: Relaunch command precedence** - Apply recorded/default args to
   relaunch and restart command previews without regressing context behavior.
 - [ ] **Phase 4: Dashboard settings integration** - Add Settings UI and replace
   the hard-coded PAW launch dialog seed with configured defaults.

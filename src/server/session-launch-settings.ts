@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -108,6 +109,21 @@ function parseDocument(parsed: unknown): SessionLaunchSettings {
 export async function readSessionLaunchSettings(path = defaultSessionLaunchSettingsPath()): Promise<SessionLaunchSettings> {
   try {
     const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
+    return parseDocument(parsed);
+  } catch (error: unknown) {
+    if (isMissingFileError(error)) {
+      return { defaultCliArgs: [...DEFAULT_COPILOT_CLI_ARGS] };
+    }
+    if (error instanceof SyntaxError) {
+      throw invalidSettingsFile("Session launch settings store is malformed.");
+    }
+    throw error;
+  }
+}
+
+export function readSessionLaunchSettingsSync(path = defaultSessionLaunchSettingsPath()): SessionLaunchSettings {
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
     return parseDocument(parsed);
   } catch (error: unknown) {
     if (isMissingFileError(error)) {

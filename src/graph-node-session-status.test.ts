@@ -24,6 +24,7 @@ function buildSession(
     branch: "feature/session-a",
     tags: [],
     originKind: "launched",
+    launchCliArgs: null,
     graphBinding: {
       workstreamId: "session-launching-and-tracking",
       nodeId: "graph-node-session-status-ui",

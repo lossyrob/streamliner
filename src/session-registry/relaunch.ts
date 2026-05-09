@@ -8,6 +8,7 @@ import {
   type TerminalLaunchResult,
   launchTerminal,
 } from "../server/terminal-launch";
+import { DEFAULT_COPILOT_CLI_ARGS } from "../server/session-launch-settings";
 
 export const RELAUNCH_ERROR_CODES = [
   "session_not_found",
@@ -15,6 +16,7 @@ export const RELAUNCH_ERROR_CODES = [
   "session_live",
   "no_cwd",
   "cwd_not_found",
+  "default_args_unavailable",
   "spawn_failed",
 ] as const;
 export type RelaunchErrorCode = (typeof RELAUNCH_ERROR_CODES)[number];
@@ -41,6 +43,7 @@ export interface RelaunchDeps {
   getSession: (id: string) => SessionRegistryRecord | null;
   existsSync: (path: string) => boolean;
   launchTerminal: (options: TerminalLaunchOptions) => TerminalLaunchResult;
+  loadDefaultCliArgs: () => string[];
 }
 
 function defaultDeps(store: SessionRegistryStore): RelaunchDeps {
@@ -48,6 +51,7 @@ function defaultDeps(store: SessionRegistryStore): RelaunchDeps {
     getSession: (id) => store.getSession(id),
     existsSync,
     launchTerminal,
+    loadDefaultCliArgs: () => [...DEFAULT_COPILOT_CLI_ARGS],
   };
 }
 
@@ -94,12 +98,33 @@ export function validateSessionForRelaunch(
   return null;
 }
 
-export function buildRelaunchParams(session: SessionRegistryRecord): TerminalLaunchOptions {
+function getRecordedCliArgs(session: SessionRegistryRecord): string[] | null {
+  if (session.origin.kind !== "launched" || !Array.isArray(session.origin.cliArgs)) {
+    return null;
+  }
+  return [...session.origin.cliArgs];
+}
+
+function resolveResumeCliArgs(
+  session: SessionRegistryRecord,
+  loadDefaultCliArgs: () => string[],
+): string[] {
+  const recordedCliArgs = getRecordedCliArgs(session);
+  if (recordedCliArgs !== null) {
+    return recordedCliArgs;
+  }
+  return [...loadDefaultCliArgs()];
+}
+
+export function buildRelaunchParams(
+  session: SessionRegistryRecord,
+  cliArgs: readonly string[] = [],
+): TerminalLaunchOptions {
   const cwd = session.derivedWorktreePath ?? session.cwd;
   const options: TerminalLaunchOptions = { cwd };
 
   if (session.copilotSessionId) {
-    options.command = buildCopilotResumeCommand(session.copilotSessionId);
+    options.command = buildCopilotResumeCommand(session.copilotSessionId, cliArgs);
   }
 
   if (session.title) {
@@ -136,7 +161,21 @@ export function relaunchSession(
     return { ok: false, error: validationError };
   }
 
-  const launchOptions = buildRelaunchParams(session);
+  let launchOptions: TerminalLaunchOptions;
+  try {
+    const cliArgs = session.copilotSessionId
+      ? resolveResumeCliArgs(session, resolved.loadDefaultCliArgs)
+      : [];
+    launchOptions = buildRelaunchParams(session, cliArgs);
+  } catch (error: unknown) {
+    return {
+      ok: false,
+      error: {
+        code: "default_args_unavailable",
+        message: `Failed to load default Copilot CLI args: ${error instanceof Error ? error.message : String(error)}`,
+      },
+    };
+  }
 
   try {
     const launchResult = resolved.launchTerminal(launchOptions);

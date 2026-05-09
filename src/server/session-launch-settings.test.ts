@@ -22,6 +22,7 @@ function createTestApp(path: string) {
   app.use(express.json());
   app.use("/api", createSessionLaunchSettingsRouter({ settingsPath: path }));
   const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
+    void _next;
     const statusCode = typeof error.statusCode === "number" ? error.statusCode : 500;
     res.status(statusCode).json({
       code: typeof error.code === "string" ? error.code : "internal_error",

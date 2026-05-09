@@ -66,6 +66,7 @@ const SESSION_EVENT_REFETCH_DEBOUNCE_MS = 150;
 const DEFAULT_STALE_SESSION_DAYS = 7;
 const SESSION_STALE_DAYS_STORAGE_KEY = "streamliner:sessionsStaleDays";
 const SESSION_GROUP_MODE_STORAGE_KEY = "streamliner:sessionsGroupMode";
+const DEFAULT_SESSION_LAUNCH_CLI_ARGS = ["--yolo"];
 
 type GroupMode = "recency" | "repo" | "folder" | "workstream" | "flat";
 type SheetTab = "overview" | "activity" | "settings";
@@ -146,6 +147,9 @@ function toListItem(record: SessionRegistryRecord): SessionRegistryListItem {
     branch: record.branch,
     tags: record.tags,
     originKind: record.origin.kind,
+    launchCliArgs: record.origin.kind === "launched" && Array.isArray(record.origin.cliArgs)
+      ? [...record.origin.cliArgs]
+      : null,
     graphBinding: record.graphBinding,
     pawLaunch: record.pawLaunch,
     runtime: record.runtime ?? null,
@@ -1163,6 +1167,7 @@ interface SessionSaveOptions {
 interface SessionsPageProps {
   registerBeforeLeave?: (handler: (() => Promise<boolean>) | null) => void;
   workstreams?: WorkstreamRegistryListEntry[];
+  defaultCliArgs?: string[];
   onOpenWorkstream?: (target: WorkstreamRouteTarget) => void | Promise<void>;
   routeWorkstreamId?: string | null;
   routeNodeId?: string | null;
@@ -1171,6 +1176,7 @@ interface SessionsPageProps {
 export function SessionsPage({
   registerBeforeLeave,
   workstreams = EMPTY_WORKSTREAMS,
+  defaultCliArgs = DEFAULT_SESSION_LAUNCH_CLI_ARGS,
   onOpenWorkstream,
   routeWorkstreamId = null,
   routeNodeId = null,
@@ -2231,7 +2237,7 @@ export function SessionsPage({
                     const rowTitle = getRowFallbackTitle(session);
                     const rowBranch = displayBranch(session);
                     const rowWorktree = displayWorktree(session);
-                    const rowRestartCommand = buildRestartCommand(session);
+                    const rowRestartCommand = buildRestartCommand(session, defaultCliArgs);
                     const activityLabel = getActivityStatusLabel(session);
                     const activityHint = activityStatusHint(session.activityStatus);
                     const signalClass = activitySignalClass(session.activityStatus);
@@ -2544,6 +2550,7 @@ export function SessionsPage({
                 <SessionOverview
                   session={selectedSession}
                   workstreamLinkage={selectedSessionLinkage}
+                  defaultCliArgs={defaultCliArgs}
                   onOpenWorkstream={onOpenWorkstream}
                 />
               )}
@@ -2614,6 +2621,7 @@ export function SessionsPage({
 interface SessionOverviewProps {
   session: SessionRegistryListItem;
   workstreamLinkage: SessionWorkstreamLinkageResolution | null;
+  defaultCliArgs: string[];
   onOpenWorkstream?: (target: WorkstreamRouteTarget) => void | Promise<void>;
 }
 
@@ -2990,6 +2998,7 @@ function ManagedRuntimeOverview({ runtime }: { runtime: ManagedRuntimeProjection
 function SessionOverview({
   session,
   workstreamLinkage,
+  defaultCliArgs,
   onOpenWorkstream,
 }: SessionOverviewProps) {
   const summary = getSessionSummaryDisplay(session);
@@ -2997,7 +3006,7 @@ function SessionOverview({
   const contextBranch = displayBranch(session);
   const contextWorktree = displayWorktree(session);
   const displaySessionId = getDisplaySessionId(session);
-  const restartCommand = buildRestartCommand(session);
+  const restartCommand = buildRestartCommand(session, defaultCliArgs);
   const pawWorkflow = visiblePawWorkflow(session);
   const managedRuntime = getManagedRuntime(session);
   return (

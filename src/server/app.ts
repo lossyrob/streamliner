@@ -33,7 +33,10 @@ import { createWorkstreamsRouter } from "./routes/workstreams";
 import { SessionRegistryEventStream } from "./session-events";
 import type { NodeLaunchDeps } from "./node-launch";
 import { DefaultManagedSdkRunner } from "./managed-sdk-runner";
-import { readSessionLaunchSettings } from "./session-launch-settings";
+import {
+  readSessionLaunchSettings,
+  readSessionLaunchSettingsSync,
+} from "./session-launch-settings";
 
 export interface StreamlinerApiApp {
   app: Express;
@@ -235,7 +238,11 @@ export function createStreamlinerApiApp(
     createSessionsRouter({
       store,
       eventStream,
-      relaunchDeps: options.relaunchDeps,
+      relaunchDeps: {
+        ...options.relaunchDeps,
+        loadDefaultCliArgs: options.relaunchDeps?.loadDefaultCliArgs
+          ?? (() => readSessionLaunchSettingsSync(options.sessionLaunchSettingsPath).defaultCliArgs),
+      },
       managedSdkRunner,
       launchClaimStore: options.launchClaimStore,
     }),

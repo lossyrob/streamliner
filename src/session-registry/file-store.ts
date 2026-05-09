@@ -1743,6 +1743,9 @@ function validateIndexEntry(
     ),
     tags: ensureStringArray(rawEntry.tags, `${fieldName}.tags`),
     originKind,
+    launchCliArgs: rawEntry.launchCliArgs === undefined || rawEntry.launchCliArgs === null
+      ? null
+      : ensureRawStringArray(rawEntry.launchCliArgs, `${fieldName}.launchCliArgs`),
     graphBinding: ensureOptionalGraphBinding(rawEntry.graphBinding, `${fieldName}.graphBinding`),
     pawLaunch: normalizePawLaunch(rawEntry.pawLaunch, `${fieldName}.pawLaunch`),
     runtime: normalizeSessionRegistryRuntimeMetadata(rawEntry.runtime, `${fieldName}.runtime`),
@@ -1896,6 +1899,9 @@ function buildIndex(records: Iterable<StoredSessionRegistryRecord>): SessionRegi
     copilotSessionId: record.copilotSessionId,
     tags: cloneValue(record.tags),
     originKind: record.origin.kind,
+    launchCliArgs: record.origin.kind === "launched" && Array.isArray(record.origin.cliArgs)
+      ? [...record.origin.cliArgs]
+      : null,
     graphBinding: record.graphBinding ? cloneValue(record.graphBinding) : null,
     pawLaunch: record.pawLaunch ? cloneValue(record.pawLaunch) : null,
     runtime: record.runtime ? cloneValue(record.runtime) : null,
