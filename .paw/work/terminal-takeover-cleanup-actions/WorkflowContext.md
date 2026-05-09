@@ -38,4 +38,4 @@ Issue URL: https://github.com/lossyrob/streamliner/issues/75
 Remote: origin
 Artifact Lifecycle: commit-and-clean
 Artifact Paths: auto-derived
-Additional Inputs: streamliner-context=.paw/work/terminal-takeover-cleanup-actions/streamliner/context.md
+Additional Inputs: streamliner-context=C:\Users\robemanuele\proj\streamliner\streamliner-terminal-takeover-cleanup-actions\.paw\work\terminal-takeover-cleanup-actions\streamliner\context.md
