@@ -7,6 +7,7 @@ import {
 } from "./paw-launch-config";
 import type {
   NodeLaunchHandoff,
+  NodeLaunchClaimState,
   NodeManagedSdkLaunchResponse,
   NodeTerminalLaunchResponse,
 } from "../node-launch-record-contract";
@@ -51,6 +52,7 @@ interface PawLaunchDialogProps {
   handoff: PawLaunchDialogHandoff | null;
   terminalLaunchResult: PawTerminalLaunchResult | null;
   managedLaunchResult: PawManagedLaunchResult | null;
+  latestLaunchClaim: NodeLaunchClaimState | null;
   progressEvents: PawLaunchProgressEvent[];
   actionDisabledReason?: string | null;
   releasingLaunch?: boolean;
@@ -295,6 +297,7 @@ export function PawLaunchDialog({
   handoff,
   terminalLaunchResult,
   managedLaunchResult,
+  latestLaunchClaim,
   progressEvents,
   actionDisabledReason,
   releasingLaunch = false,
@@ -337,16 +340,22 @@ export function PawLaunchDialog({
   const [kickoffPromptText, setKickoffPromptText] = useState("");
   const defaultProfileAppliedRef = useRef(false);
   const profileSelectionTouchedRef = useRef(false);
-  const terminalLaunchClaimDisplay = terminalLaunchResult
-    ? humanizeLaunchClaim(terminalLaunchResult.launchClaim)
+  const terminalLaunchClaim = latestLaunchClaim ?? terminalLaunchResult?.launchClaim ?? null;
+  const managedLaunchClaim = latestLaunchClaim ?? managedLaunchResult?.launchClaim ?? null;
+  const terminalLaunchActive = Boolean(terminalLaunchResult && terminalLaunchClaim?.blocksLaunch);
+  const managedLaunchActive = Boolean(managedLaunchResult && managedLaunchClaim?.blocksLaunch);
+  const terminalLaunchClaimDisplay = terminalLaunchClaim
+    ? humanizeLaunchClaim(terminalLaunchClaim)
     : null;
-  const managedLaunchClaimDisplay = managedLaunchResult
-    ? humanizeLaunchClaim(managedLaunchResult.launchClaim)
+  const managedLaunchClaimDisplay = managedLaunchClaim
+    ? humanizeLaunchClaim(managedLaunchClaim)
     : null;
-  const activeRuntimeKind = handoff?.runtimeKind ?? managedLaunchResult?.runtimeKind ?? runtimeKind;
+  const activeRuntimeKind = handoff?.runtimeKind ??
+    (managedLaunchActive ? managedLaunchResult?.runtimeKind : undefined) ??
+    runtimeKind;
   const managedRuntimeSelected = activeRuntimeKind === "managed-sdk";
   const terminalHandoffSelected = Boolean(handoff && !managedRuntimeSelected);
-  const runtimeSelectionLocked = preparing || Boolean(handoff || terminalLaunchResult || managedLaunchResult);
+  const runtimeSelectionLocked = preparing || Boolean(handoff || terminalLaunchActive || managedLaunchActive);
   const trimmedInstructions = workflowInstructions.trim();
   const instructionError = trimmedInstructions.length === 0
     ? "Launch instructions are required so paw-init can derive the workflow setup and worker prompt."
@@ -679,9 +688,7 @@ export function PawLaunchDialog({
             </section>
           )}
 
-          {(actionDisabledReason || releaseError || releaseStatus) &&
-            !terminalLaunchResult &&
-            !(managedLaunchResult && handoff) && (
+          {(actionDisabledReason || releaseError || releaseStatus) && (
             <div className="sl-action-warning" aria-live="polite">
               {actionDisabledReason && <p>{actionDisabledReason}</p>}
               {releaseError && <p className="sl-action-error">{releaseError}</p>}
@@ -989,11 +996,13 @@ export function PawLaunchDialog({
                   <div>
                     <span className="sl-section-label">Background session</span>
                     <p>
-                      {managedLaunchResult
+                      {managedLaunchActive && managedLaunchResult
                         ? `Started with ${managedLaunchResult.permissionProfile}.`
                         : preparing
                           ? "Streamliner is starting the background session for this prepared handoff."
-                          : "Ready to start this prepared handoff as a background session. No terminal will open."}
+                          : managedLaunchResult
+                            ? "The previous background session launch is no longer active. Ready to start this prepared handoff again."
+                            : "Ready to start this prepared handoff as a background session. No terminal will open."}
                     </p>
                     {managedLaunchResult?.sdkSessionId && (
                       <p className="sl-field-note">SDK session {managedLaunchResult.sdkSessionId}</p>
@@ -1113,8 +1122,8 @@ export function PawLaunchDialog({
                 workflowContextSaving ||
                 (terminalHandoffSelected && Boolean(kickoffPromptError)) ||
                 (terminalHandoffSelected && Boolean(terminalTitleError)) ||
-                Boolean(terminalLaunchResult?.launchClaim.blocksLaunch) ||
-                Boolean(managedLaunchResult?.launchClaim.blocksLaunch) ||
+                terminalLaunchActive ||
+                managedLaunchActive ||
                 Boolean(actionDisabledReason) ||
                 releasingLaunch
               }
@@ -1129,12 +1138,12 @@ export function PawLaunchDialog({
               {managedRuntimeSelected
                 ? preparing || launching
                   ? "Starting background session..."
-                  : managedLaunchResult
+                  : managedLaunchActive
                     ? "Background session started"
                     : "Start background session"
                 : launching
                   ? "Launching terminal..."
-                  : terminalLaunchResult
+                  : terminalLaunchActive
                     ? "Terminal launched"
                     : "Launch terminal"}
             </button>
@@ -1148,7 +1157,7 @@ export function PawLaunchDialog({
                 ? managedRuntimeSelected
                   ? "Starting background session..."
                   : "Running PAW init..."
-                : managedLaunchResult
+                : managedLaunchActive
                   ? "Background session started"
                   : managedRuntimeSelected
                     ? "Start background session"

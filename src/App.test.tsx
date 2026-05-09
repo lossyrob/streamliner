@@ -2576,6 +2576,15 @@ describe("App sessions route", () => {
         blocksLaunch: true,
         retryable: false,
       };
+      const releasedLaunchClaim = {
+        ...launchClaim,
+        status: "failed",
+        updatedAt: "2026-05-05T12:00:02.000Z",
+        failureCode: "user-cancelled",
+        failureReason: "Released.",
+        blocksLaunch: false,
+        retryable: true,
+      };
       const managedLaunch = {
         launchClaim,
         runtimeKind: "managed-sdk",
@@ -2664,6 +2673,34 @@ describe("App sessions route", () => {
         if (path === "/api/paw-launch-prompt-profiles") {
           return jsonResponse({ profiles: [] });
         }
+        if (
+          path === "/api/node-launch-records/launch-claims/claim-managed-prepared/release" &&
+          init?.method === "POST"
+        ) {
+          currentLaunchState = {
+            record: null,
+            operation: {
+              id: "managed-prepared-operation",
+              graphPath: "C:\\graphs\\api-test\\graph.json",
+              nodeId: "launch-prompt-profiles",
+              status: "managed_running",
+              preparationRunId: null,
+              startedAt: "2026-05-05T12:00:00.000Z",
+              updatedAt: "2026-05-05T12:00:02.000Z",
+              completedAt: "2026-05-05T12:00:01.000Z",
+              handoff: preparedHandoff,
+              terminalLaunch: null,
+              managedLaunch,
+              error: null,
+              progressEvents: [],
+              latestClaim: releasedLaunchClaim,
+            },
+          };
+          return jsonResponse({
+            launchClaim: releasedLaunchClaim,
+            detachedRegistryIds: ["registry-managed-prepared"],
+          });
+        }
         if (path === "/api/node-launches" && init?.method === "POST") {
           const body = JSON.parse(String(init.body)) as {
             handoff: { runtimeKind?: string; launchMetadata: { nodeId: string } };
@@ -2743,6 +2780,16 @@ describe("App sessions route", () => {
       ).toHaveLength(1);
       expect(container.textContent).toContain("Started with managed-autonomous.");
       expect(findButton(container, "Background session started").disabled).toBe(true);
+
+      await act(async () => {
+        findButton(container, "Release stuck launch").click();
+      });
+      await settle(100);
+
+      expect(container.textContent).toContain("Released the launch claim and detached the linked session.");
+      expect(container.textContent).toContain("Failed - retry available");
+      expect(container.textContent).toContain("Ready to start this prepared handoff again.");
+      expect(findButton(container, "Start background session").disabled).toBe(false);
     },
     15_000,
   );

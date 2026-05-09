@@ -1798,6 +1798,7 @@ function GraphDashboard({
   const handleReleaseLaunch = async () => {
     const target = launchDialogTarget ?? selectedLaunchTarget;
     const latestClaim = launchDialogTarget ? launchDialogLatestClaim : nodeLaunchRecord?.latestClaim;
+    const currentOperation = launchDialogTarget ? launchDialogOperation : selectedLaunchOperation;
     if (!target || !latestClaim) {
       return;
     }
@@ -1811,6 +1812,13 @@ function GraphDashboard({
           ? "Released the launch claim and detached the linked session."
           : "Released the launch claim.",
       );
+      if (currentOperation) {
+        setLaunchOperation(target, {
+          ...currentOperation,
+          latestClaim: release.launchClaim,
+          updatedAt: release.launchClaim.updatedAt,
+        });
+      }
       const refreshed = await loadNodeLaunchRecord(target.graphPath, target.nodeId);
       if (sameLaunchTarget(target, selectedLaunchTarget)) {
         setNodeLaunchRecords((current) =>
@@ -2238,6 +2246,7 @@ function GraphDashboard({
           handoff={launchDialogOperation?.handoff ?? null}
           terminalLaunchResult={launchDialogOperation?.terminalLaunch ?? null}
           managedLaunchResult={launchDialogOperation?.managedLaunch ?? null}
+          latestLaunchClaim={launchDialogLatestClaim}
           progressEvents={launchDialogOperation?.progressEvents ?? []}
           actionDisabledReason={launchActionDisabledReason}
           releasingLaunch={launchReleasing}
