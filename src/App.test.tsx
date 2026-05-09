@@ -30,6 +30,7 @@ function buildSession(
     branch: "feature/manual-session-registry",
     tags: ["wave-2", "registry"],
     originKind: "manual",
+    launchCliArgs: null,
     graphBinding: null,
     pawLaunch: null,
     copilotSessionId: null,
@@ -582,18 +583,18 @@ describe("App sessions route", () => {
       expect(sessionsLink.getAttribute("href")).toBe("/sessions");
       const settingsLink = container.querySelector<HTMLAnchorElement>('a[aria-label="Streamliner settings"]');
       expect(settingsLink).toBeInstanceOf(HTMLAnchorElement);
-      expect(settingsLink?.getAttribute("href")).toBe("/settings/profiles");
+      expect(settingsLink?.getAttribute("href")).toBe("/settings/session-launch");
 
       act(() => {
         settingsLink?.click();
       });
       await settle(100);
 
-      expect(window.location.pathname).toBe("/settings/profiles");
+      expect(window.location.pathname).toBe("/settings/session-launch");
       expect(container.querySelector(".sl-settings-sidebar-head")?.textContent?.trim()).toBe("Settings");
-      expect(container.querySelector(".sl-profiles-header")?.textContent).toContain("PAW profiles");
+      expect(container.querySelector(".sl-profiles-header")?.textContent).toContain("Session launch");
       expect(container.querySelector(".sl-profiles-header")?.textContent).not.toContain("Launch prompt profiles");
-      expect(container.textContent).toContain("No launch prompt profiles yet");
+      expect(findTextareaByLabel(container, "Default Copilot CLI args").value).toBe("--yolo");
     },
     15_000,
   );

@@ -61,7 +61,7 @@ settings and session command previews, and documents the precedence rules.
   args to launched origins and write them during terminal launches.
 - [x] **Phase 3: Relaunch command precedence** - Apply recorded/default args to
   relaunch and restart command previews without regressing context behavior.
-- [ ] **Phase 4: Dashboard settings integration** - Add Settings UI and replace
+- [x] **Phase 4: Dashboard settings integration** - Add Settings UI and replace
   the hard-coded PAW launch dialog seed with configured defaults.
 - [ ] **Phase 5: Documentation and screenshots** - Document behavior and capture
   representative UI screenshots.
