@@ -1,6 +1,24 @@
+---
+kind: design-doc
+status: current
+last_updated: 2026-05-10
+update_semantics: rewrite-in-place
+authoritative_for: "Project design layer and documentation-family authority model"
+scope_tags:
+  - design-docs
+  - documentation-system
+  - context-package
+code_paths: []
+references_decisions:
+  - 11
+---
+
 # Design Layer
 
-The design layer is Streamliner's project-level design authority. It sits above execution artifacts (briefs, graphs, node specs) and describes the intended system so any human or agent can align to current design without re-deriving it from code or excavating chat history.
+The design layer is Streamliner's project-level design authority. It sits above
+execution artifacts (briefs, graphs, node specs) and describes the intended
+system so any human or agent can align to current design without re-deriving it
+from code or excavating chat history.
 
 ## Why the design layer exists
 
@@ -12,6 +30,77 @@ Streamliner's execution artifacts answer **what should happen now** inside a sin
 4. **Decision duplication** — briefs and node specs restate product decisions badly, then drift from the original source.
 
 The design layer fills that gap.
+
+## Project documentation families
+
+Streamliner recognizes three project documentation families. They are peers in
+the published documentation system, but they do not have the same authority.
+
+| Family | Default source root | Required? | Owns |
+|---|---|---|---|
+| Design | `docs/design/` | Streamliner-native required context | Intended system behavior, invariants, constraints, accepted project direction, and significant rationale references |
+| Architecture | `docs/architecture/` | Optional but recommended | Current-codebase orientation: module maps, runtime and data flow, storage surfaces, extension points, operational sharp edges, and where to look |
+| User Guide | `docs/guide/` | Optional but recommended | User-facing tasks, setup, workflows, commands, visible behavior, and troubleshooting |
+
+Design is the normative project context Streamliner expects every managed project
+to provide or reference. Architecture and User Guide are discoverable
+capabilities: Streamliner can surface, hint, and help maintain them when present,
+but their absence does not block workstream launch or make agents invent them.
+
+### Design
+
+Design answers: **What is the intended system, and what constraints or decisions
+should future work obey?**
+
+Design includes implemented and not-yet-implemented intended state. It is written
+for future work, not only for present code reading. Design owns normative rules,
+project-level invariants, accepted constraints, cross-workstream contracts, and
+links to decision records that explain why important choices were made.
+
+### Architecture
+
+Architecture answers: **How is the current codebase organized, and where should a
+human or agent look to understand it?**
+
+Architecture is descriptive and current-state oriented. It should avoid
+restating all intended behavior from Design. Instead, it orients contributors and
+agents to the implementation: major modules, runtime processes, data flow,
+storage locations, integration boundaries, extension points, and sharp edges that
+are expensive to rediscover from raw code.
+
+### User Guide
+
+User Guide answers: **How does a user install, configure, operate, and
+troubleshoot Streamliner?**
+
+User Guide is task-oriented and user-facing. It describes observable workflows,
+commands, UI behavior, setup, operational procedures, and troubleshooting paths.
+It is not a design authority and should not carry project rationale that future
+work must obey.
+
+### Implemented design handling
+
+Design and Architecture are peers with different authority, not a graduation
+pipeline. When intended design becomes implemented:
+
+1. Keep normative intent, invariants, accepted constraints, and decision links in
+   Design.
+2. Move or rewrite implementation-detail orientation into Architecture when the
+   project maintains Architecture docs.
+3. Remove obsolete speculation from living Design docs rather than preserving it
+   as active guidance.
+4. Record major rationale in decision records, not Architecture.
+
+For example, "workers treat Layer 0 as navigation hints rather than copied
+design-document bodies" remains a Design rule after implementation. The modules,
+functions, and storage paths that implement that rule belong in Architecture if
+the project maintains it.
+
+### Unpublished planning material
+
+`.streamliner/shaping/` remains unpublished planning material. Shaping notes can
+inform workstream formation, but they are not part of the published docs site and
+are not authoritative project documentation.
 
 ## Core model
 
@@ -41,9 +130,9 @@ Design docs describe the project in its entirety. Workstreams **reference**, **a
 
 Orchestrators and workers draft design-doc changes. The builder is the final authority on intended design. The cognitive load is review, not blank-page authoring, but the authority is explicit: design docs reflect builder intent.
 
-## Document families
+## Design section artifacts
 
-The design layer has three document families.
+The Design section has three artifact types.
 
 ### 1. Design index — "Where do I start?"
 

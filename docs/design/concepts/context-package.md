@@ -1,7 +1,7 @@
 ---
 kind: design-doc
 status: current
-last_updated: 2026-05-02
+last_updated: 2026-05-10
 update_semantics: rewrite-in-place
 authoritative_for: "Layered context package concept and progressive-disclosure model"
 scope_tags:
@@ -11,6 +11,7 @@ code_paths:
   - src/server/launch-context.ts
 references_decisions:
   - 2
+  - 11
 ---
 
 # Context Package
@@ -29,6 +30,27 @@ The context package is designed to be:
 The project's intended design: direct navigation into the design docs and decision records that describe the system being built, with the design index as the cold-reader entry point. Layer 0 reminds the worker to read authoritative docs from the repo and may include non-binding path hints; it does not copy design bodies into the generated package or define a required reading list.
 
 Answers: What system are we building? What constraints are in force? What rationale must be honored?
+
+Layer 0 remains Design-first. Architecture and User Guide hints may appear near
+Layer 0 when the repo's documentation catalog or workstream `docRefs` identify
+them, but they do not replace Design as normative context.
+
+## Documentation hints
+
+The context package may include a short documentation-hints section that points
+to relevant docs without copying full document bodies into the generated package.
+Hints are progressive-disclosure links with purpose statements:
+
+| Hint family | Authority | Worker use |
+|---|---|---|
+| Design | Normative intended-system authority | Read when alignment, constraints, or intended behavior matter |
+| Architecture | Descriptive current-codebase orientation | Read when subsystem boundaries, runtime flow, storage, or where-to-look guidance matters |
+| User Guide | User-facing behavior and operations | Read or update when setup, workflows, UI behavior, commands, or troubleshooting change |
+
+Missing Architecture or User Guide docs are surfaced as unavailable optional
+hints, not launch blockers. The worker records any resulting documentation impact
+in its final summary so the orchestrator or reconciler can decide whether a
+follow-up docs task is needed.
 
 ## Layer 1 — Worker Mission
 
@@ -54,4 +76,12 @@ The workstream brief's optional `## Additional Context` section (see [workstream
 
 ## Progressive Disclosure
 
-Workers retain access to the full design set through the repo. Generated Layer 0 guidance points them at the design index and may include a short list of possible starting points. Those hints bias discovery, but they are not required reading, an exhaustive design scope, or another agent's final judgment about what matters. Each successive section in `context.md` narrows context further — from the entire project down to one node's mission — without requiring separate file reads.
+Workers retain access to the full design set through the repo. Generated Layer 0
+guidance points them at the design index and may include a short list of possible
+starting points. Those hints bias discovery, but they are not required reading,
+an exhaustive design scope, or another agent's final judgment about what matters.
+Optional Architecture and User Guide hints follow the same progressive-disclosure
+principle: provide links, family labels, and purpose statements; avoid copying
+complete docs into every launch. Each successive section in `context.md` narrows
+context further — from the entire project down to one node's mission — without
+requiring separate file reads.

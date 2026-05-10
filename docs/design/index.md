@@ -1,7 +1,7 @@
 ---
 kind: design-doc
 status: current
-last_updated: 2026-05-02
+last_updated: 2026-05-10
 update_semantics: rewrite-in-place
 authoritative_for: "Design documentation entry point, reading order, and decision log"
 scope_tags:
@@ -19,6 +19,7 @@ references_decisions:
   - 8
   - 9
   - 10
+  - 11
 ---
 
 # Streamliner — Design
@@ -66,6 +67,7 @@ Streamliner helps a single builder direct many concurrent AI coding agent workst
 | 008 | [PAW artifacts for workflow status](decisions/008-paw-artifacts-for-workflow-status.md) | accepted | 2026-05-02 |
 | 009 | [SDK-managed graph-node worker runtime](decisions/009-sdk-managed-worker-runtime.md) | accepted | 2026-05-07 |
 | 010 | [Terminal takeover and managed cleanup actions](decisions/010-terminal-takeover-and-cleanup.md) | accepted | 2026-05-09 |
+| 011 | [Documentation family foundation](decisions/011-documentation-family-foundation.md) | accepted | 2026-05-10 |
 
 ## Open questions
 
