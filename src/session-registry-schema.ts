@@ -427,6 +427,7 @@ export interface ObservedSessionRegistryOrigin {
 export interface LaunchedSessionRegistryOrigin {
   kind: "launched";
   launchClaimId?: string | null;
+  cliArgs?: string[] | null;
 }
 
 export type SessionRegistryOrigin =
@@ -502,6 +503,7 @@ export interface SessionRegistryIndexEntry {
   copilotSessionId: string | null;
   tags: string[];
   originKind: SessionRegistryOriginKind;
+  launchCliArgs: string[] | null;
   graphBinding: SessionRegistryGraphBinding | null;
   pawLaunch: SessionRegistryPawLaunch | null;
   runtime?: SessionRegistryRuntimeMetadata | null;

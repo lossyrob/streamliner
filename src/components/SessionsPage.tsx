@@ -147,6 +147,9 @@ function toListItem(record: SessionRegistryRecord): SessionRegistryListItem {
     branch: record.branch,
     tags: record.tags,
     originKind: record.origin.kind,
+    launchCliArgs: record.origin.kind === "launched" && Array.isArray(record.origin.cliArgs)
+      ? [...record.origin.cliArgs]
+      : null,
     graphBinding: record.graphBinding,
     pawLaunch: record.pawLaunch,
     runtime: record.runtime ?? null,
@@ -1164,14 +1167,42 @@ interface SessionSaveOptions {
 interface SessionsPageProps {
   registerBeforeLeave?: (handler: (() => Promise<boolean>) | null) => void;
   workstreams?: WorkstreamRegistryListEntry[];
+  defaultCliArgs?: readonly string[] | null;
   onOpenWorkstream?: (target: WorkstreamRouteTarget) => void | Promise<void>;
   routeWorkstreamId?: string | null;
   routeNodeId?: string | null;
 }
 
+function buildVisibleRestartCommand(
+  session: SessionRegistryListItem,
+  defaultCliArgs: readonly string[] | null,
+): string | null {
+  if (!session.copilotSessionId) {
+    return null;
+  }
+  if (session.launchCliArgs === null && defaultCliArgs === null) {
+    return null;
+  }
+  return buildRestartCommand(session, defaultCliArgs ?? []);
+}
+
+function restartUnavailableMessage(
+  session: SessionRegistryListItem,
+  defaultCliArgs: readonly string[] | null,
+): string {
+  if (!session.copilotSessionId) {
+    return "Restart unavailable; no Copilot session ID";
+  }
+  if (session.launchCliArgs === null && defaultCliArgs === null) {
+    return "Restart unavailable; session launch settings are still loading";
+  }
+  return "Restart unavailable";
+}
+
 export function SessionsPage({
   registerBeforeLeave,
   workstreams = EMPTY_WORKSTREAMS,
+  defaultCliArgs = null,
   onOpenWorkstream,
   routeWorkstreamId = null,
   routeNodeId = null,
@@ -2232,7 +2263,7 @@ export function SessionsPage({
                     const rowTitle = getRowFallbackTitle(session);
                     const rowBranch = displayBranch(session);
                     const rowWorktree = displayWorktree(session);
-                    const rowRestartCommand = buildRestartCommand(session);
+                    const rowRestartCommand = buildVisibleRestartCommand(session, defaultCliArgs);
                     const activityLabel = getActivityStatusLabel(session);
                     const activityHint = activityStatusHint(session.activityStatus);
                     const signalClass = activitySignalClass(session.activityStatus);
@@ -2375,7 +2406,7 @@ export function SessionsPage({
                                 label={
                                   rowRestartCommand
                                     ? "Copy restart command"
-                                    : "Restart unavailable; no Copilot session ID"
+                                    : restartUnavailableMessage(session, defaultCliArgs)
                                 }
                                 copiedLabel="Copied restart command"
                                 iconOnly
@@ -2545,6 +2576,7 @@ export function SessionsPage({
                 <SessionOverview
                   session={selectedSession}
                   workstreamLinkage={selectedSessionLinkage}
+                  defaultCliArgs={defaultCliArgs}
                   onOpenWorkstream={onOpenWorkstream}
                   onSessionActionComplete={fetchSessions}
                 />
@@ -2616,6 +2648,7 @@ export function SessionsPage({
 interface SessionOverviewProps {
   session: SessionRegistryListItem;
   workstreamLinkage: SessionWorkstreamLinkageResolution | null;
+  defaultCliArgs: readonly string[] | null;
   onOpenWorkstream?: (target: WorkstreamRouteTarget) => void | Promise<void>;
   onSessionActionComplete?: () => void | Promise<void>;
 }
@@ -2998,6 +3031,7 @@ function ManagedRuntimeOverview({
 function SessionOverview({
   session,
   workstreamLinkage,
+  defaultCliArgs,
   onOpenWorkstream,
   onSessionActionComplete,
 }: SessionOverviewProps) {
@@ -3006,7 +3040,7 @@ function SessionOverview({
   const contextBranch = displayBranch(session);
   const contextWorktree = displayWorktree(session);
   const displaySessionId = getDisplaySessionId(session);
-  const restartCommand = buildRestartCommand(session);
+  const restartCommand = buildVisibleRestartCommand(session, defaultCliArgs);
   const pawWorkflow = visiblePawWorkflow(session);
   const managedRuntime = getManagedRuntime(session);
   return (
@@ -3021,7 +3055,7 @@ function SessionOverview({
             label={
               restartCommand
                 ? "Copy restart command"
-                : "Restart unavailable; no Copilot session ID"
+                : restartUnavailableMessage(session, defaultCliArgs)
             }
             copiedLabel="Copied restart command"
           >
@@ -3036,7 +3070,10 @@ function SessionOverview({
           </CopyButton>
         </div>
         <code className="sl-session-command-preview">
-          {restartCommand ?? "No Copilot session ID recorded. Copy the registry ID instead."}
+          {restartCommand ??
+            (session.copilotSessionId
+              ? "Session launch settings are still loading. Restart command preview will appear when defaults load."
+              : "No Copilot session ID recorded. Copy the registry ID instead.")}
         </code>
       </section>
 

@@ -78,6 +78,7 @@ function buildSession(
     branch: "feature/runtime-overlay",
     tags: [],
     originKind: "launched",
+    launchCliArgs: null,
     graphBinding: {
       workstreamId: "runtime-overlay-ui",
       nodeId: "runtime-overlay-node",

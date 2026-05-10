@@ -28,6 +28,7 @@ function buildSession(
     branch: "main",
     tags: [],
     originKind: "manual",
+    launchCliArgs: null,
     graphBinding: null,
     pawLaunch: null,
     copilotSessionId: null,
@@ -77,6 +78,28 @@ describe("session policies", () => {
     expect(buildRestartCommand(manual)).toBeNull();
     expect(buildRestartCommand(trusted)).toBe(
       "Set-Location -LiteralPath 'C:\\repo\\worktree'; copilot '--resume=copilot-session-id'",
+    );
+  });
+
+  it("builds restart commands with recorded launch args before defaults", () => {
+    const session = buildSession({
+      copilotSessionId: "copilot-session-id",
+      launchCliArgs: ["--model=gpt-5.5"],
+    });
+
+    expect(buildRestartCommand(session, ["--yolo"])).toBe(
+      "Set-Location -LiteralPath 'C:\\repo'; copilot '--model=gpt-5.5' '--resume=copilot-session-id'",
+    );
+  });
+
+  it("builds restart commands with configured defaults when recorded args are missing", () => {
+    const session = buildSession({
+      copilotSessionId: "copilot-session-id",
+      launchCliArgs: null,
+    });
+
+    expect(buildRestartCommand(session, ["--yolo"])).toBe(
+      "Set-Location -LiteralPath 'C:\\repo'; copilot '--yolo' '--resume=copilot-session-id'",
     );
   });
 

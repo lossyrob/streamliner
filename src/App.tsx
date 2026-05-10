@@ -38,11 +38,19 @@ import {
   type PawLaunchProgressEvent,
 } from "./components/PawLaunchDialog";
 import { PawProfilesPage } from "./components/PawProfilesPage";
+import { SessionLaunchSettingsPage } from "./components/SessionLaunchSettingsPage";
 import {
   loadPromptProfiles,
   mergePromptProfiles,
   type PawPromptProfile,
 } from "./components/paw-prompt-profiles";
+import {
+  FALLBACK_SESSION_LAUNCH_DEFAULT_CLI_ARGS,
+  formatSessionLaunchCliArgsText,
+  loadSessionLaunchSettings,
+  SessionLaunchSettingsRequestError,
+  type SessionLaunchSettings,
+} from "./components/session-launch-settings";
 import {
   WorkstreamConfigurationDialog,
   type WorkstreamConfigurationValues,
@@ -166,6 +174,9 @@ function readDashboardRoute(): DashboardRoute {
       workstreamId: workstreamId && isKebabCaseId(workstreamId) ? workstreamId : null,
       nodeId: nodeId && isKebabCaseId(nodeId) ? nodeId : null,
     };
+  }
+  if (window.location.pathname === "/settings/session-launch") {
+    return { view: "settings", section: "session-launch" };
   }
   if (
     window.location.pathname === "/settings" ||
@@ -1208,6 +1219,91 @@ function usePromptProfilesState() {
   };
 }
 
+function useSessionLaunchSettingsState() {
+  const [settings, setSettings] = useState<SessionLaunchSettings>({
+    defaultCliArgs: [...FALLBACK_SESSION_LAUNCH_DEFAULT_CLI_ARGS],
+  });
+  const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [responseError, setResponseError] = useState(false);
+  const requestRef = useRef<Promise<void> | null>(null);
+  const mountedRef = useRef(true);
+  const mutationVersionRef = useRef(0);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const noteSettingsChanged = useCallback((changedSettings: SessionLaunchSettings) => {
+    mutationVersionRef.current += 1;
+    setSettings(changedSettings);
+    setLoaded(true);
+    setResponseError(false);
+    setError(null);
+  }, []);
+
+  const refresh = useCallback(() => {
+    if (requestRef.current) {
+      return requestRef.current;
+    }
+    setLoading(true);
+    setError(null);
+    setResponseError(false);
+    const requestMutationVersion = mutationVersionRef.current;
+    const request = loadSessionLaunchSettings()
+      .then((loadedSettings) => {
+        if (mountedRef.current && mutationVersionRef.current === requestMutationVersion) {
+          setSettings(loadedSettings);
+          setLoaded(true);
+        }
+      })
+      .catch((loadError: unknown) => {
+        if (mountedRef.current) {
+          setSettings({
+            defaultCliArgs: [...FALLBACK_SESSION_LAUNCH_DEFAULT_CLI_ARGS],
+          });
+          setLoaded(true);
+          setResponseError(loadError instanceof SessionLaunchSettingsRequestError);
+          setError(loadError instanceof Error ? loadError.message : String(loadError));
+        }
+      })
+      .finally(() => {
+        requestRef.current = null;
+        if (mountedRef.current) {
+          setLoading(false);
+        }
+      });
+    requestRef.current = request;
+    return request;
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.resolve().then(() => {
+      if (!cancelled) {
+        void refresh();
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [refresh]);
+
+  return {
+    settings,
+    loading,
+    loaded,
+    error,
+    responseError,
+    refresh,
+    noteSettingsChanged,
+  };
+}
+
 function GraphDashboard({
   workstream,
   error,
@@ -1226,6 +1322,7 @@ function GraphDashboard({
   promptProfilesError,
   onRefreshPromptProfiles,
   onPromptProfilesChanged,
+  sessionLaunchSettings,
 }: ReturnType<typeof useGraphLoader> & {
   onOpenWorkstream: (entry: WorkstreamRegistryListEntry) => void | Promise<void>;
   onOpenSessions: (target?: { workstreamId?: string | null; nodeId?: string | null }) => void | Promise<void>;
@@ -1237,6 +1334,7 @@ function GraphDashboard({
   promptProfilesError: string | null;
   onRefreshPromptProfiles: () => Promise<void> | void;
   onPromptProfilesChanged: (profiles: PawPromptProfile[]) => void;
+  sessionLaunchSettings: SessionLaunchSettings;
 }) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(
     selectedNodeIdFromRoute ?? null,
@@ -1491,7 +1589,7 @@ function GraphDashboard({
     return {
       workflowInstructions: DEFAULT_PAW_WORKFLOW_INSTRUCTIONS,
       runtimeKind: "terminal-cli",
-      cliArgsText: "--yolo",
+      cliArgsText: formatSessionLaunchCliArgsText(sessionLaunchSettings.defaultCliArgs),
       cwd: savedCwd ?? inferredCwd,
       inferredCwd,
       cwdPreferenceKey,
@@ -1514,7 +1612,14 @@ function GraphDashboard({
         tabColor: workstream?.launchDefaults?.terminal?.tabColor ?? null,
       },
     };
-  }, [activeWorkstreamEntry?.path, launchDialogEntry, launchDialogTarget, selectedEntry, workstream]);
+  }, [
+    activeWorkstreamEntry?.path,
+    launchDialogEntry,
+    launchDialogTarget,
+    selectedEntry,
+    sessionLaunchSettings?.defaultCliArgs,
+    workstream,
+  ]);
 
   useEffect(() => {
     if (!activeWorkstreamEntry || !isBackendReadableWorkstreamEntry(activeWorkstreamEntry)) {
@@ -2439,20 +2544,53 @@ function MigrationWarningsBanner({
 }
 
 function SettingsPage({
+  section,
+  onRouteChange,
   profiles,
   profilesLoading,
   profilesError,
   onRefreshProfiles,
   onProfilesChanged,
   onProfileDeleted,
+  sessionLaunchSettings,
+  sessionLaunchSettingsLoading,
+  sessionLaunchSettingsError,
+  onRefreshSessionLaunchSettings,
+  onSessionLaunchSettingsChanged,
 }: {
+  section: "profiles" | "session-launch";
+  onRouteChange: (route: DashboardRoute) => void | Promise<void>;
   profiles: PawPromptProfile[];
   profilesLoading: boolean;
   profilesError: string | null;
   onRefreshProfiles: () => Promise<void>;
   onProfilesChanged: (profiles: PawPromptProfile[]) => void;
   onProfileDeleted: (profileId: string) => void;
+  sessionLaunchSettings: SessionLaunchSettings | null;
+  sessionLaunchSettingsLoading: boolean;
+  sessionLaunchSettingsError: string | null;
+  onRefreshSessionLaunchSettings: () => Promise<void> | void;
+  onSessionLaunchSettingsChanged: (settings: SessionLaunchSettings) => void;
 }) {
+  const renderNavItem = (
+    itemSection: "profiles" | "session-launch",
+    label: string,
+    description: string,
+  ) => {
+    const active = section === itemSection;
+    return (
+      <a
+        className={`sl-settings-nav-item${active ? " active" : ""}`}
+        href={routePath({ view: "settings", section: itemSection })}
+        aria-current={active ? "page" : undefined}
+        onClick={(event) => handleInAppLinkClick(event, () => onRouteChange({ view: "settings", section: itemSection }))}
+      >
+        <span>{label}</span>
+        <small>{description}</small>
+      </a>
+    );
+  };
+
   return (
     <div className="sl-shell-panel">
       <div className="sl-settings-page">
@@ -2461,26 +2599,29 @@ function SettingsPage({
             <span className="sl-eyebrow">Settings</span>
           </div>
           <nav className="sl-settings-nav" aria-label="Streamliner settings">
-            <a
-              className="sl-settings-nav-item active"
-              href={routePath({ view: "settings", section: "profiles" })}
-              aria-current="page"
-              onClick={(event) => event.preventDefault()}
-            >
-              <span>PAW profiles</span>
-              <small>Launch prompt defaults</small>
-            </a>
+            {renderNavItem("session-launch", "Session launch", "Copilot CLI defaults")}
+            {renderNavItem("profiles", "PAW profiles", "Launch prompt defaults")}
           </nav>
         </aside>
         <main className="sl-settings-content">
-          <PawProfilesPage
-            profiles={profiles}
-            loading={profilesLoading}
-            error={profilesError}
-            onRefresh={onRefreshProfiles}
-            onProfilesChanged={onProfilesChanged}
-            onProfileDeleted={onProfileDeleted}
-          />
+          {section === "profiles" ? (
+            <PawProfilesPage
+              profiles={profiles}
+              loading={profilesLoading}
+              error={profilesError}
+              onRefresh={onRefreshProfiles}
+              onProfilesChanged={onProfilesChanged}
+              onProfileDeleted={onProfileDeleted}
+            />
+          ) : (
+            <SessionLaunchSettingsPage
+              settings={sessionLaunchSettings}
+              loading={sessionLaunchSettingsLoading}
+              error={sessionLaunchSettingsError}
+              onRefresh={onRefreshSessionLaunchSettings}
+              onSettingsChanged={onSessionLaunchSettingsChanged}
+            />
+          )}
         </main>
       </div>
     </div>
@@ -2535,11 +2676,13 @@ function DashboardNav({
         </a>
         <a
           className={`sl-action-btn sl-icon-action${settingsActive ? " active" : ""}`}
-          href={routePath({ view: "settings", section: "profiles" })}
+          href={routePath({ view: "settings", section: "session-launch" })}
           aria-label="Streamliner settings"
           title="Streamliner settings"
           aria-current={settingsActive ? "page" : undefined}
-          onClick={(event) => handleInAppLinkClick(event, () => onRouteChange({ view: "settings", section: "profiles" }))}
+          onClick={(event) =>
+            handleInAppLinkClick(event, () => onRouteChange({ view: "settings", section: "session-launch" }))
+          }
         >
           <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
             <path
@@ -2558,6 +2701,7 @@ export default function App() {
   const { route, setRoute } = useDashboardRoute();
   const graphLoader = useGraphLoader(route, true);
   const promptProfileState = usePromptProfilesState();
+  const sessionLaunchSettingsState = useSessionLaunchSettingsState();
   const beforeLeaveRef = useRef<(() => Promise<boolean>) | null>(null);
 
   const handleRouteChange = useCallback(
@@ -2621,17 +2765,29 @@ export default function App() {
       <MigrationWarningsBanner warnings={graphLoader.migrationWarnings} />
       {route.view === "settings" ? (
         <SettingsPage
+          section={route.section ?? "session-launch"}
+          onRouteChange={handleRouteChange}
           profiles={promptProfileState.profiles}
           profilesLoading={promptProfileState.loading}
           profilesError={promptProfileState.error}
           onRefreshProfiles={promptProfileState.refresh}
           onProfilesChanged={promptProfileState.noteProfilesChanged}
           onProfileDeleted={promptProfileState.noteProfileDeleted}
+          sessionLaunchSettings={sessionLaunchSettingsState.responseError ? null : sessionLaunchSettingsState.settings}
+          sessionLaunchSettingsLoading={sessionLaunchSettingsState.loading}
+          sessionLaunchSettingsError={sessionLaunchSettingsState.error}
+          onRefreshSessionLaunchSettings={sessionLaunchSettingsState.refresh}
+          onSessionLaunchSettingsChanged={sessionLaunchSettingsState.noteSettingsChanged}
         />
       ) : route.view === "sessions" ? (
         <SessionsPage
           registerBeforeLeave={registerBeforeLeave}
           workstreams={graphLoader.workstreams}
+          defaultCliArgs={
+            sessionLaunchSettingsState.loaded
+              ? sessionLaunchSettingsState.settings.defaultCliArgs
+              : null
+          }
           onOpenWorkstream={openWorkstream}
           routeWorkstreamId={route.workstreamId ?? null}
           routeNodeId={route.nodeId ?? null}
@@ -2649,6 +2805,7 @@ export default function App() {
           promptProfilesError={promptProfileState.error}
           onRefreshPromptProfiles={promptProfileState.refresh}
           onPromptProfilesChanged={promptProfileState.noteProfilesChanged}
+          sessionLaunchSettings={sessionLaunchSettingsState.settings}
         />
       ) : route.view === "workstreams" ? (
         <WorkstreamHome

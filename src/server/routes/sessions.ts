@@ -184,7 +184,7 @@ export function createSessionsRouter(options: {
     } else {
       const statusCode =
         outcome.error.code === "session_not_found" ? 404
-          : outcome.error.code === "spawn_failed" ? 500
+          : outcome.error.code === "spawn_failed" || outcome.error.code === "default_args_unavailable" ? 500
             : 400;
       relaunchLogger.warn("failed", {
         sessionId,

@@ -61,6 +61,7 @@ export interface SessionRegistryListItem {
   branch: string | null;
   tags: string[];
   originKind: SessionRegistryOriginKind;
+  launchCliArgs: string[] | null;
   graphBinding: SessionRegistryGraphBinding | null;
   pawLaunch: SessionRegistryPawLaunch | null;
   runtime?: SessionRegistryRuntimeMetadata | null;

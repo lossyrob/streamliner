@@ -377,6 +377,7 @@ function reserveLaunchClaimForHandoff(
   claimStore: LaunchClaimStore,
   handoff: PawLaunchHandoff,
   deps: NodeLaunchDeps,
+  options: { recordCliArgs?: boolean } = {},
 ): { claim: LaunchClaim; now: Date } {
   // Launch claim reservation/failure cleanup intentionally still uses the
   // concrete file store because createLaunchClaim/markClaimFailed need
@@ -421,6 +422,7 @@ function reserveLaunchClaimForHandoff(
     reservedRowColor: handoff.terminal.tabColor ?? null,
     reservedRowDescription: `Graph launch for workstream ${handoff.launchMetadata.workstreamId}, node ${handoff.launchMetadata.nodeId}.`,
     pawLaunch: pawLaunchFor(handoff),
+    ...(options.recordCliArgs ? { cliArgs: [...handoff.cliArgs] } : {}),
     lineageMetadata: lineageMetadataFor(handoff),
   });
   if (!claimOutcome.ok) {
@@ -444,6 +446,7 @@ export async function launchPreparedNode(
     claimStore,
     handoff,
     deps,
+    { recordCliArgs: true },
   );
   const terminalTitle = terminalTitleFor(handoff);
   const kickoffPrompt = appendLaunchBindingPromptLines(
