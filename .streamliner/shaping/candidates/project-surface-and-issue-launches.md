@@ -42,6 +42,7 @@ Project issue launches make Streamliner useful for daily scoped repo work while 
 
 ### In Scope
 
+- Define project registration and config initialization as the first project-surface deliverable: choose a source-repo-local or planning/orchestration root layout, create `.streamliner\config.json` or `streamliner.json`, configure `workstreamsDir`, and map repo IDs to local repo roots.
 - Define Project as a first-class UI/runtime surface above workstreams and sessions.
 - Show a registered project's repositories, design docs or design catalog entry point, active workstreams, active/recent sessions, and configured GitHub issue list.
 - Let the builder configure one or more GitHub issue queries for a project, such as label-based, assignee-based, or open-follow-up filters.
@@ -111,6 +112,23 @@ A project issue launch has:
 - no checkpoint or gate.
 
 The issue remains the task-level source of truth. Streamliner owns the execution support around it.
+
+## Project Registration and Config Initialization
+
+The Project surface depends on an explicit project boundary. Today Streamliner can register source directories and discover workstream graphs, but that is not the same as helping a builder initialize a project, decide where artifacts live, or configure the repo IDs that launches should target.
+
+The first implementation slice should make that boundary visible and durable:
+
+- let the builder initialize either a source-repo-local layout or a planning/orchestration root layout;
+- create the committed project config file: `.streamliner\config.json` for source-repo-local projects, or `streamliner.json` / `.streamliner\config.json` for planning roots;
+- configure `workstreamsDir` and create the directory when needed;
+- detect the current Git repo and remote, then propose a repo ID and local path mapping;
+- support additional repo mappings for multi-repo planning roots;
+- register the initialized project root as a Streamliner source;
+- show where new `graph.json` artifacts will be created before the first workstream is created;
+- validate that graph repo IDs and node `repoIds` resolve through the project config before launches.
+
+The local source registry should remember which project roots this machine tracks. The project config should describe the shareable project/planning boundary: artifact layout, repo mappings, design-doc entry points, and eventually issue-view defaults.
 
 ## Project Surface
 
@@ -230,7 +248,19 @@ Project issue launches are the missing middle rung.
 
 A future formed workstream might use this shape:
 
-### Wave 1 — Project surface model
+### Wave 1 — Project registration and config initialization
+
+Define the project boundary and make onboarding explicit before building higher-level project operations:
+
+- initialize a source-repo-local or planning/orchestration root layout;
+- create `.streamliner\config.json` or `streamliner.json`;
+- configure `workstreamsDir` and graph artifact placement;
+- detect/propose repo IDs from local Git remotes;
+- allow additional local repo path mappings;
+- register the project root as a Streamliner source;
+- surface config health and missing repo mapping diagnostics.
+
+### Wave 2 — Project surface model
 
 Define Project as a first-class Streamliner surface and data/runtime concept:
 
@@ -241,7 +271,7 @@ Define Project as a first-class Streamliner surface and data/runtime concept:
 - attached sessions summary;
 - issue-view configuration shape.
 
-### Wave 2 — GitHub issue list and status
+### Wave 3 — GitHub issue list and status
 
 Add the configured issue list for a project:
 
@@ -251,7 +281,7 @@ Add the configured issue list for a project:
 - session/PR linkage when known;
 - lightweight refresh behavior that does not become a full tracker clone.
 
-### Wave 3 — Project issue launch
+### Wave 4 — Project issue launch
 
 Add `Launch PAW` from a project issue:
 
@@ -263,7 +293,7 @@ Add `Launch PAW` from a project issue:
 - session registry binding to project + issue;
 - runtime tracking and PR linkage.
 
-### Wave 4 — Promotion and attachment paths
+### Wave 5 — Promotion and attachment paths
 
 Support explicit builder actions for issue-scoped work that grows:
 
@@ -282,7 +312,6 @@ Validate that the builder can use Streamliner for scoped GitHub issue work witho
 
 - Session launching/tracking substrate, because project issue launch should reuse the existing launch pipeline, worktree/branch setup, PAW launch preparation, registry binding, and runtime state rather than inventing a second path.
 - GitHub issue/PR status work, or an equivalent lightweight issue/PR enrichment seam, because the Project issue list and issue launch state need live tracker context.
-- Project registration/config model from current workstream/artifact support, because the surface needs to know repos, design-doc paths, and projectKey.
 
 ### Enables
 
@@ -303,8 +332,9 @@ Validate that the builder can use Streamliner for scoped GitHub issue work witho
 
 ## Open Questions
 
-- Is Project primarily a UI/runtime concept, or does it need a committed artifact of its own?
+- Is Project fully derived from committed project config, or does it need a separate committed artifact beyond `.streamliner\config.json` / `streamliner.json`?
 - Where should project issue query configuration live: app config, planning repo config, project config, or local user state?
+- What should the onboarding flow do when a graph already exists under a root that lacks repo mappings?
 - Should a project support multiple issue views in the first cut, or only one configured issue query?
 - How should Streamliner detect that a GitHub issue is already associated with a workstream node?
 - Should issue launch support terminal-first only at first, or also SDK-managed when the runtime is ready?
@@ -319,7 +349,7 @@ Validate that the builder can use Streamliner for scoped GitHub issue work witho
 
 Create a Project Surface and Issue Launches workstream.
 
-The workstream should define and implement the missing Project surface in Streamliner: a project-scoped operating page that groups registered repositories, design docs, active workstreams, project sessions, and a configured GitHub issue list. From that issue list, the builder should be able to launch PAW sessions directly from project issues without creating a workstream.
+The workstream should first define and implement project registration/config initialization so a builder can create or repair the project boundary Streamliner depends on: artifact location, repo ID mappings, design-doc entry points, and source registration. It should then define and implement the missing Project surface in Streamliner: a project-scoped operating page that groups registered repositories, design docs, active workstreams, project sessions, and a configured GitHub issue list. From that issue list, the builder should be able to launch PAW sessions directly from project issues without creating a workstream.
 
 The issue remains the task-level source of truth. Streamliner should own the execution support around it: project issue context assembly, prompt profile reuse, worktree/branch setup, terminal or managed launch path, session registry binding, runtime tracking, and PR/session linkage. Sessions launched this way should attach to project + repo + issue rather than workstream + node, and should show up as project-attached sessions rather than ad-hoc sessions.
 
