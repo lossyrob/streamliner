@@ -31,6 +31,10 @@ import {
   bindClaimViaTrustedSignal,
   reconcileOrphanReservedRows,
 } from "./launch-claims";
+import {
+  reconcileManagedRuntimeStartupRows,
+  type ManagedRuntimeOwnerVerifier,
+} from "./managed-runtime-startup-reconciliation";
 import type {
   LaunchClaimStore,
 } from "../launch-claim-contract";
@@ -90,6 +94,10 @@ export interface SessionRegistryBackgroundWorkerOptions {
    * when `claimStore` is provided so binding-pass and sweep events can
    * be emitted under `withScope("launch-claim")`. */
   claimLogger?: ApiLogger;
+  /** Optional live-owner verifier for managed SDK startup reconciliation.
+   * Production currently has no cross-process SDK owner proof, so omitted
+   * means active Streamliner-owned rows are treated as unverifiable. */
+  managedRuntimeOwnerVerifier?: ManagedRuntimeOwnerVerifier;
 }
 
 function isLockedError(error: unknown): boolean {
@@ -153,6 +161,7 @@ export class SessionRegistryBackgroundWorker {
   private readonly summarizer: SummarizerDependencies;
   private readonly claimStore: LaunchClaimStore | null;
   private readonly claimLogger: ApiLogger | null;
+  private readonly managedRuntimeOwnerVerifier: ManagedRuntimeOwnerVerifier | undefined;
 
   private timer: ReturnType<typeof setInterval> | null = null;
   private initialTimer: ReturnType<typeof setTimeout> | null = null;
@@ -177,6 +186,7 @@ export class SessionRegistryBackgroundWorker {
     this.logger = options.logger ?? console;
     this.claimStore = options.claimStore ?? null;
     this.claimLogger = options.claimLogger ?? null;
+    this.managedRuntimeOwnerVerifier = options.managedRuntimeOwnerVerifier;
     this.summarizer = {
       computeEventsFingerprint:
         options.summarizer?.computeEventsFingerprint ?? computeEventsFingerprint,
@@ -195,19 +205,38 @@ export class SessionRegistryBackgroundWorker {
     if (this.timer) {
       return;
     }
-    // Startup recovery for orphan reserved rows. Runs synchronously before
-    // the first poll cycle so a crash between row reservation and claim
-    // file write is recovered before anything else happens.
-    if (this.claimStore && !this.hasReconciledOnStartup) {
+    // Startup recovery runs synchronously before the first poll cycle so
+    // stale managed runtime rows and orphan launch reservations cannot
+    // masquerade as active work during the first projection pass.
+    if (!this.hasReconciledOnStartup) {
       try {
-        const result = reconcileOrphanReservedRows(this.store, this.claimStore);
-        if (result.rowsDeleted > 0 || result.rowsGraphBindingCleared > 0) {
+        const result = reconcileManagedRuntimeStartupRows(this.store, {
+          now: this.now,
+          isOwnerLive: this.managedRuntimeOwnerVerifier,
+        });
+        if (
+          result.rowsReconciled > 0 ||
+          result.rowsSkippedLiveOwner > 0 ||
+          result.rowsSkippedTerminalTakeover > 0
+        ) {
           this.logger.info(
-            `[session-worker] launch-claim startup reconciliation: deleted=${result.rowsDeleted} graphBindingCleared=${result.rowsGraphBindingCleared}`,
+            `[session-worker] managed-runtime startup reconciliation: examined=${result.rowsExamined} active=${result.activeRowsFound} reconciled=${result.rowsReconciled} liveSkipped=${result.rowsSkippedLiveOwner} takeoverSkipped=${result.rowsSkippedTerminalTakeover}`,
           );
         }
       } catch (error) {
-        this.logger.warn("[session-worker] launch-claim startup reconciliation failed", error);
+        this.logger.warn("[session-worker] managed-runtime startup reconciliation failed", error);
+      }
+      if (this.claimStore) {
+        try {
+          const result = reconcileOrphanReservedRows(this.store, this.claimStore);
+          if (result.rowsDeleted > 0 || result.rowsGraphBindingCleared > 0) {
+            this.logger.info(
+              `[session-worker] launch-claim startup reconciliation: deleted=${result.rowsDeleted} graphBindingCleared=${result.rowsGraphBindingCleared}`,
+            );
+          }
+        } catch (error) {
+          this.logger.warn("[session-worker] launch-claim startup reconciliation failed", error);
+        }
       }
       this.hasReconciledOnStartup = true;
     }

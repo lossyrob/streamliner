@@ -866,6 +866,49 @@ describe("buildWorkstreamRuntimeOverlay", () => {
     );
   });
 
+  it("surfaces startup-reconciled managed runtime rows as interrupted diagnostics, not active work", () => {
+    const entry = buildDerivedNode({
+      node: { id: "managed-reconciled-node", status: "ready" },
+      operationalStatus: "ready",
+    });
+    const diagnosticMessage =
+      "Managed SDK startup reconciliation marked this background session interrupted because no live SDK owner could be verified.";
+    const session = buildSession({
+      graphBinding: {
+        workstreamId: "runtime-overlay-ui",
+        nodeId: "managed-reconciled-node",
+        launchClaimId: "claim-managed",
+      },
+      runtime: buildManagedRuntime({
+        lifecycleState: "interrupted",
+        lastStateChangedAt: TEST_TIMESTAMP,
+        progressEvents: [{
+          id: "progress-startup-reconciliation",
+          sequence: 1,
+          type: "lifecycle",
+          message: diagnosticMessage,
+          timestamp: TEST_TIMESTAMP,
+          data: {
+            reason: "startup-reconciliation-sdk-owner-unverified",
+            action: "marked-interrupted-for-builder-recovery",
+            previousLifecycleState: "running",
+          },
+        }],
+      }),
+    });
+
+    const overlay = buildOverlay([entry], {
+      sessions: new Map([[entry.node.id, buildSessionSummary(entry.node.id, [session])]]),
+    });
+    const node = overlay.nodesById.get("managed-reconciled-node");
+
+    expect(node?.runtimeStatus).toBe("interrupted");
+    expect(node?.managedRuntime?.lifecycleState).toBe("interrupted");
+    expect(node?.managedRuntime?.projection.summary).toBe(diagnosticMessage);
+    expect(node?.managedRuntime?.progress.at(-1)?.summary).toBe(diagnosticMessage);
+    expect(overlay.summary.counts.byStatus.active).toBe(0);
+  });
+
   it("reports registry loading as degraded and registry errors as not-usable", () => {
     const entry = buildDerivedNode();
 
