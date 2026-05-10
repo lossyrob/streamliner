@@ -2772,7 +2772,7 @@ describe("App sessions route", () => {
       });
       await settle(100);
       act(() => {
-        findButton(container, "Initialize PAW launch").click();
+        findButton(container, "Open PAW launch").click();
       });
       await settle();
 
@@ -3461,6 +3461,192 @@ describe("App sessions route", () => {
       expect(container.textContent).toContain("Initial SDK status replayed from start.");
       expect((container.textContent?.match(/Snapshot progress before reopen\./g) ?? [])).toHaveLength(1);
       expect(container.textContent).toContain("Live progress after reattach.");
+    },
+    15_000,
+  );
+
+  it(
+    "continues a reattached managed preparation into background launch",
+    async () => {
+      const graph = buildLaunchGraph();
+      const graphPath = "C:\\graphs\\api-test\\graph.json";
+      const preparedHandoff = {
+        cwd: "C:\\graphs\\api-test",
+        branch: "feature/launch-prompt-profiles",
+        runtimeKind: "managed-sdk",
+        pawWorkDir: "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles",
+        workflowContextPath:
+          "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles\\WorkflowContext.md",
+        streamlinerContextPath:
+          "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles\\streamliner\\context.md",
+        cliArgs: [],
+        terminal: {
+          launchMode: "manual",
+          preferredTerminal: "powershell",
+        },
+        environment: {},
+        sessionStateRoot: "C:\\streamliner-state",
+        kickoffPrompt: "Start PAW launch prompt profiles.",
+        launchMetadata: {
+          launchNonce: "nonce-reattach-managed",
+          launchClaimRef: null,
+          projectKey: "streamliner",
+          workstreamId: "api-test",
+          nodeId: "launch-prompt-profiles",
+          targetRepoIds: ["streamliner"],
+          graphPath,
+          branch: "feature/launch-prompt-profiles",
+          workId: "launch-prompt-profiles",
+          workTitle: "Launch prompt profiles",
+          trackerUrl: "https://github.com/lossyrob/streamliner/issues/33",
+          launchPolicy: null,
+        },
+        contextPackage: {
+          contextId: "ctx",
+          contextPackagePath: "C:\\streamliner-state\\launch-contexts\\ctx",
+          contextFilePath: "C:\\streamliner-state\\launch-contexts\\ctx\\context.md",
+          metadata: {},
+          unavailableInputs: [],
+        },
+      };
+      const launchClaim = {
+        launchClaimId: "claim-reattach-managed",
+        status: "pending",
+        launchedAt: "2026-05-05T12:00:00.000Z",
+        updatedAt: "2026-05-05T12:00:01.000Z",
+        bindingWindowExpiresAt: "2026-05-05T12:10:00.000Z",
+        reservedRegistryId: "registry-reattach-managed",
+        boundRegistryId: null,
+        boundCopilotSessionId: null,
+        failureCode: null,
+        failureReason: null,
+        blocksLaunch: true,
+        retryable: false,
+      };
+      const managedLaunch = {
+        launchClaim,
+        runtimeKind: "managed-sdk",
+        registryId: "registry-reattach-managed",
+        sdkSessionId: "sdk-reattach-managed",
+        sdkWorkspacePath: "C:\\state\\sdk-reattach-managed\\workspace.yaml",
+        sdkStateRoot: "C:\\state\\sdk-reattach-managed",
+        permissionProfile: "managed-autonomous",
+      };
+      let currentLaunchState: unknown = {
+        record: null,
+        operation: {
+          id: "launch-prompt-profiles-operation",
+          graphPath,
+          nodeId: "launch-prompt-profiles",
+          status: "preparing",
+          preparationRunId: "run-managed-reattach",
+          startedAt: "2026-05-03T18:00:00.000Z",
+          updatedAt: "2026-05-03T18:00:00.000Z",
+          completedAt: null,
+          handoff: null,
+          terminalLaunch: null,
+          managedLaunch: null,
+          error: null,
+          progressEvents: [],
+        },
+      };
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return jsonResponse(currentLaunchState);
+        }
+        if (path === "/api/paw-launch-prompt-profiles") {
+          return jsonResponse({ profiles: [] });
+        }
+        if (path === "/api/node-launches" && init?.method === "POST") {
+          const body = JSON.parse(String(init.body)) as {
+            handoff: { runtimeKind?: string; launchMetadata: { nodeId: string } };
+          };
+          expect(body.handoff.runtimeKind).toBe("managed-sdk");
+          expect(body.handoff.launchMetadata.nodeId).toBe("launch-prompt-profiles");
+          currentLaunchState = {
+            record: null,
+            operation: {
+              id: "launch-prompt-profiles-operation",
+              graphPath,
+              nodeId: "launch-prompt-profiles",
+              status: "managed_running",
+              preparationRunId: "run-managed-reattach",
+              startedAt: "2026-05-03T18:00:00.000Z",
+              updatedAt: "2026-05-03T18:00:02.000Z",
+              completedAt: "2026-05-03T18:00:02.000Z",
+              handoff: preparedHandoff,
+              terminalLaunch: null,
+              managedLaunch,
+              error: null,
+              progressEvents: [],
+              latestClaim: launchClaim,
+            },
+          };
+          return jsonResponse({
+            runtimeKind: "managed-sdk",
+            launchClaim,
+            managedSdk: {
+              registryId: managedLaunch.registryId,
+              sdkSessionId: managedLaunch.sdkSessionId,
+              sdkWorkspacePath: managedLaunch.sdkWorkspacePath,
+              sdkStateRoot: managedLaunch.sdkStateRoot,
+              permissionProfile: managedLaunch.permissionProfile,
+            },
+          }, 201);
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      MockEventSource.instances = [];
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      act(() => {
+        findCanvasNode(container, "Launch prompt profiles").click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Open PAW launch").click();
+      });
+      await settle();
+
+      const source = MockEventSource.instances.find((candidate) =>
+        candidate.url.includes("run-managed-reattach")
+      );
+      expect(source?.url).toBe("/api/launch-preparations/runs/run-managed-reattach/events");
+
+      act(() => {
+        source?.emit("completed", {
+          status: "succeeded",
+          result: preparedHandoff,
+          timestamp: "2026-05-03T18:00:01.000Z",
+        });
+      });
+      await settle(100);
+
+      expect(
+        fetchMock.mock.calls.filter(
+          ([input]) => requestPath(input as RequestInfo | URL) === "/api/node-launches",
+        ),
+      ).toHaveLength(1);
+      expect(container.textContent).toContain("Started with managed-autonomous.");
+      expect(findButton(container, "Background session started").disabled).toBe(true);
     },
     15_000,
   );

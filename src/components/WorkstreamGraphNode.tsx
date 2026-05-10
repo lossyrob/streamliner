@@ -62,6 +62,54 @@ function runtimeStatusClassName(value: string) {
   }
 }
 
+function launchOperationClassName(status: string) {
+  switch (status) {
+    case "managed_running":
+    case "launched_pending_binding":
+      return "status-green";
+    case "preparation_failed":
+    case "managed_failed":
+    case "terminal_failed":
+      return "status-red";
+    case "preparing":
+    case "launching":
+    case "managed_starting":
+      return "status-amber";
+    default:
+      return "status-accent";
+  }
+}
+
+function launchOperationLabel(data: WorkstreamGraphNodeData): string | null {
+  const operation = data.launchOperation;
+  if (!operation) {
+    return null;
+  }
+  const managed = operation.handoff?.runtimeKind === "managed-sdk" || Boolean(operation.managedLaunch);
+  switch (operation.status) {
+    case "preparing":
+      return "PAW init running";
+    case "prepared":
+      return managed ? "background prepared" : "handoff prepared";
+    case "launching":
+      return "terminal launching";
+    case "launched_pending_binding":
+      return "terminal launched";
+    case "managed_starting":
+      return "background starting";
+    case "managed_running":
+      return "background launched";
+    case "preparation_failed":
+      return "PAW init failed";
+    case "managed_failed":
+      return "background failed";
+    case "terminal_failed":
+      return "terminal failed";
+    default:
+      return null;
+  }
+}
+
 function NodeBadges({
   data,
   gate,
@@ -77,6 +125,7 @@ function NodeBadges({
     overlay &&
     (overlay.runtimeStatus !== data.entry.operationalStatus ||
       overlay.hasRuntimeEvidence);
+  const launchLabel = launchOperationLabel(data);
 
   return (
     <div className="sl-node-badges">
@@ -103,6 +152,11 @@ function NodeBadges({
           className={`sl-node-pill ${runtimeStatusClassName(overlay.runtimeStatus)}`}
         >
           runtime {formatLabel(overlay.runtimeStatus)}
+        </span>
+      ) : null}
+      {launchLabel && data.launchOperation ? (
+        <span className={`sl-node-pill ${launchOperationClassName(data.launchOperation.status)}`}>
+          {launchLabel}
         </span>
       ) : null}
     </div>
