@@ -47,6 +47,7 @@ import {
   activitySignalClass,
   activityStatusClass,
   activityStatusHint,
+  getEffectiveActivityStatus,
   getActivityStatusDescription,
   getActivityStatusLabel,
   getActivityTimestamp,
@@ -2265,8 +2266,9 @@ export function SessionsPage({
                     const rowWorktree = displayWorktree(session);
                     const rowRestartCommand = buildVisibleRestartCommand(session, defaultCliArgs);
                     const activityLabel = getActivityStatusLabel(session);
-                    const activityHint = activityStatusHint(session.activityStatus);
-                    const signalClass = activitySignalClass(session.activityStatus);
+                    const effectiveActivityStatus = getEffectiveActivityStatus(session);
+                    const activityHint = activityStatusHint(effectiveActivityStatus);
+                    const signalClass = activitySignalClass(effectiveActivityStatus);
                     const signalDetail = trustedStatus ?? observedStatus ?? session.originKind;
                     const rowFolderLeaf = leafName(rowWorktree ?? session.cwd);
                     const rowManagedRuntime = getManagedRuntime(session);
@@ -2446,7 +2448,7 @@ export function SessionsPage({
                   {selectedSession && (
                     <>
                       <span
-                        className={`sl-pill ${activityStatusClass(selectedSession.activityStatus)}`}
+                        className={`sl-pill ${activityStatusClass(getEffectiveActivityStatus(selectedSession))}`}
                       >
                         {getActivityStatusLabel(selectedSession)}
                       </span>

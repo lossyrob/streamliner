@@ -718,6 +718,16 @@ describe("resumeManagedSdkNode", () => {
         message: "Managed SDK worker interrupted.",
       }],
     });
+    registryStore.recordTrustedSessionSignal({
+      event: "session.ended",
+      source: "copilot-cli-hook",
+      sessionId: "sdk-resume-source",
+      timestamp: "2026-05-07T12:03:00.000Z",
+      cwd: handoff.cwd,
+      branch: handoff.branch,
+      endReason: "user_exit",
+      executionKind: "agency",
+    });
 
     const resumed = await resumeManagedSdkNode(
       registryStore,
@@ -744,7 +754,16 @@ describe("resumeManagedSdkNode", () => {
     const claims = claimStore.listClaims();
     expect(claims).toHaveLength(1);
     expect(claimStore.getClaim(launched.launchClaim.launchClaimId)?.status).toBe("bound");
-    expect(registryStore.getSession(launched.managedSdk.registryId)?.runtime).toEqual(
+    const resumedRecord = registryStore.getSession(launched.managedSdk.registryId);
+    expect(resumedRecord).toEqual(expect.objectContaining({
+      lifecycleStatus: "active",
+      activityStatus: "working",
+      copilotProcessState: "live",
+      trustedEndedAt: null,
+      trustedStartSource: "resume",
+      trustedEndReason: null,
+    }));
+    expect(resumedRecord?.runtime).toEqual(
       expect.objectContaining({
         lifecycleState: "running",
         sdkSessionId: "sdk-resume-source",

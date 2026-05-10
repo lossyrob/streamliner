@@ -1,4 +1,5 @@
 import type { SessionRegistryListItem } from "../session-registry-contract";
+import { managedRuntimeActivityStatusForLifecycle } from "../managed-runtime-contract";
 import { isCopilotCliSubagentSessionId } from "../session-registry/copilot-helper-sessions";
 import {
   isTrustedActiveSession,
@@ -107,8 +108,17 @@ export function getTrustedStatusLabel(
   return `${runner} trusted`;
 }
 
+export function getEffectiveActivityStatus(
+  session: SessionRegistryListItem,
+): SessionRegistryListItem["activityStatus"] {
+  const managedActivityStatus = session.runtime?.runtimeKind === "managed-sdk"
+    ? managedRuntimeActivityStatusForLifecycle(session.runtime.lifecycleState)
+    : null;
+  return managedActivityStatus ?? session.activityStatus;
+}
+
 export function getActivityStatusLabel(session: SessionRegistryListItem): string {
-  switch (session.activityStatus) {
+  switch (getEffectiveActivityStatus(session)) {
     case "working":
       return "working";
     case "waiting_for_input":
@@ -182,7 +192,7 @@ export function activityStatusHint(
 export function getActivityStatusDescription(
   session: SessionRegistryListItem,
 ): string {
-  switch (session.activityStatus) {
+  switch (getEffectiveActivityStatus(session)) {
     case "working":
       return "The latest Copilot event indicates the assistant turn is still in progress.";
     case "waiting_for_input":
