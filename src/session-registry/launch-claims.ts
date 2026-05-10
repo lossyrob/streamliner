@@ -394,11 +394,13 @@ export function applyReservedRowCleanup(
  * whose `origin.launchClaimId` does not appear in the launch-claim
  * store and conditionally cleans them up:
  *
- *   - If `copilotSessionId === null`: delete the row (orphan reserved
- *     row, no real session ever attached). Deletion is conditional on
- *     the predicate evaluated under the lock.
- *   - Else: clear `graphBinding` (the row had a real session attach,
- *     but the owning claim is gone — preserve session history).
+ *   - If `copilotSessionId === null` and the row has no managed runtime:
+ *     delete the row (orphan reserved row, no real session ever
+ *     attached). Deletion is conditional on the predicate evaluated
+ *     under the lock.
+ *   - Else: clear `graphBinding` (the row had a real terminal session
+ *     attach or is a managed runtime row whose history should be
+ *     preserved, but the owning claim is gone).
  *
  * Also handles the inverse case: claims whose `reservedRegistryId`
  * points at a missing row are left intact (the binding pass and sweep
@@ -426,10 +428,15 @@ export function reconcileOrphanReservedRows(
     const claim = claimStore.getClaim(launchClaimId);
     if (claim) continue; // claim still exists; not orphan
     // Orphan row.
-    if (fullRecord.copilotSessionId === null) {
+    if (
+      fullRecord.copilotSessionId === null &&
+      fullRecord.runtime?.runtimeKind !== "managed-sdk"
+    ) {
       const deleteResult = registryStore.deleteSessionIf(
         fullRecord.id,
-        (current) => current.copilotSessionId === null,
+        (current) =>
+          current.copilotSessionId === null &&
+          current.runtime?.runtimeKind !== "managed-sdk",
       );
       if (deleteResult.deleted) {
         rowsDeleted += 1;
@@ -454,7 +461,7 @@ export function reconcileOrphanReservedRows(
         }
       }
     } else {
-      // Has copilotSessionId — preserve row, clear graphBinding.
+      // Preserve observed terminal sessions and managed runtime rows, but sever the stale claim binding.
       const cleared = registryStore.bindClaimToRow(
         fullRecord.id,
         {

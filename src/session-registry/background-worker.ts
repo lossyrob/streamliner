@@ -213,14 +213,17 @@ export class SessionRegistryBackgroundWorker {
         const result = reconcileManagedRuntimeStartupRows(this.store, {
           now: this.now,
           isOwnerLive: this.managedRuntimeOwnerVerifier,
+          logger: this.logger,
         });
         if (
           result.rowsReconciled > 0 ||
           result.rowsSkippedLiveOwner > 0 ||
-          result.rowsSkippedTerminalTakeover > 0
+          result.rowsSkippedTerminalTakeover > 0 ||
+          result.rowsSkippedTerminalTakeoverSdkOwnedAnomaly > 0 ||
+          result.rowsFailed > 0
         ) {
           this.logger.info(
-            `[session-worker] managed-runtime startup reconciliation: examined=${result.rowsExamined} active=${result.activeRowsFound} reconciled=${result.rowsReconciled} liveSkipped=${result.rowsSkippedLiveOwner} takeoverSkipped=${result.rowsSkippedTerminalTakeover}`,
+            `[session-worker] managed-runtime startup reconciliation: examined=${result.rowsExamined} active=${result.activeRowsFound} reconciled=${result.rowsReconciled} liveSkipped=${result.rowsSkippedLiveOwner} takeoverSkipped=${result.rowsSkippedTerminalTakeover} takeoverAnomalySkipped=${result.rowsSkippedTerminalTakeoverSdkOwnedAnomaly} failed=${result.rowsFailed}`,
           );
         }
       } catch (error) {

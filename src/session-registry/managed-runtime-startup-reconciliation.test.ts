@@ -13,6 +13,7 @@ import { SessionRegistryBackgroundWorker } from "./background-worker";
 import { SessionRegistryFileStore } from "./file-store";
 import {
   MANAGED_RUNTIME_STARTUP_RECONCILIATION_ACTION_INTERRUPTED,
+  MANAGED_RUNTIME_STARTUP_RECONCILIATION_ACTION_PRESERVED_TAKEOVER,
   MANAGED_RUNTIME_STARTUP_RECONCILIATION_REASON,
   reconcileManagedRuntimeStartupRows,
 } from "./managed-runtime-startup-reconciliation";
@@ -48,6 +49,7 @@ function createRoot(prefix: string): string {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const root of createdRoots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
   }
@@ -173,7 +175,8 @@ describe("reconcileManagedRuntimeStartupRows", () => {
     });
 
     expect(result.rowsReconciled).toBe(0);
-    expect(result.rowsSkippedTerminalTakeover).toBe(2);
+    expect(result.rowsSkippedTerminalTakeover).toBe(1);
+    expect(result.rowsSkippedTerminalTakeoverSdkOwnedAnomaly).toBe(1);
     for (const state of PRESERVED_TERMINAL_STATES) {
       expect(store.getSession(`terminal-${state}`)?.runtime?.lifecycleState).toBe(state);
     }
@@ -183,7 +186,50 @@ describe("reconcileManagedRuntimeStartupRows", () => {
     expect(store.getSession("takeover-sdk-owned")?.runtime?.lifecycleState).toBe(
       "terminal_takeover",
     );
+    expect(store.getSession("takeover-sdk-owned")?.runtime?.progressEvents.at(-1)).toEqual(
+      expect.objectContaining({
+        type: "lifecycle",
+        timestamp: TEST_TIMESTAMP,
+        data: expect.objectContaining({
+          reason: MANAGED_RUNTIME_STARTUP_RECONCILIATION_REASON,
+          action: MANAGED_RUNTIME_STARTUP_RECONCILIATION_ACTION_PRESERVED_TAKEOVER,
+          previousLifecycleState: "terminal_takeover",
+          runtimeOwner: "streamliner-sdk",
+        }),
+      }),
+    );
     expect(store.getSession("archived-running")?.runtime?.lifecycleState).toBe("running");
+  });
+
+  it("isolates per-row patch failures and continues reconciling remaining rows", () => {
+    const registryRoot = createRoot("managed-runtime-startup-registry-");
+    const store = new SessionRegistryFileStore({ rootDir: registryRoot });
+    upsertManagedSession(store, "failing-running", "running");
+    upsertManagedSession(store, "passing-running", "running");
+    const originalPatch = store.patchRuntimeMetadata.bind(store);
+    vi.spyOn(store, "patchRuntimeMetadata").mockImplementation((id, patch, now) => {
+      if (id === "failing-running") {
+        throw new Error("simulated write failure");
+      }
+      return originalPatch(id, patch, now);
+    });
+    const logger = { warn: vi.fn() };
+
+    const result = reconcileManagedRuntimeStartupRows(store, {
+      now: () => new Date(TEST_TIMESTAMP),
+      logger,
+    });
+
+    expect(result.rowsFailed).toBe(1);
+    expect(result.rowsReconciled).toBe(1);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("failing-running"),
+      expect.any(Error),
+    );
+    expect(store.getSession("failing-running")?.runtime?.lifecycleState).toBe("running");
+    expect(store.getSession("passing-running")?.runtime?.lifecycleState).toBe(
+      "interrupted",
+    );
   });
 
   it("runs synchronously once from background worker startup before poll cycles", async () => {
