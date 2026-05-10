@@ -200,10 +200,9 @@ describe("buildRelaunchParams", () => {
     expect(params.cwd).toBe("C:\\worktree");
   });
 
-  it("escapes single quotes in copilotSessionId", () => {
+  it("rejects unsupported characters in copilotSessionId", () => {
     const session = buildRecord({ copilotSessionId: "it's-a-session" });
-    const params = buildRelaunchParams(session);
-    expect(params.command).toBe("copilot '--resume=it''s-a-session'");
+    expect(() => buildRelaunchParams(session)).toThrow(/unsupported characters/);
   });
 });
 
@@ -224,6 +223,16 @@ describe("relaunchSession", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.code).toBe("session_archived");
+    }
+  });
+
+  it("returns validation error for invalid Copilot session IDs", () => {
+    const session = buildRecord({ copilotSessionId: "it's-a-session" });
+    const { store, deps } = fakeDeps({ [session.id]: session });
+    const result = relaunchSession(store, session.id, deps);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("invalid_copilot_session_id");
     }
   });
 

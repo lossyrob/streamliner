@@ -4,6 +4,7 @@ import type { SessionRegistryRecord } from "../session-registry-schema";
 import type { SessionRegistryStore } from "../session-registry-contract";
 import {
   buildCopilotResumeCommand,
+  isSafeCopilotResumeSessionId,
   type TerminalLaunchOptions,
   type TerminalLaunchResult,
   launchTerminal,
@@ -16,6 +17,7 @@ export const RELAUNCH_ERROR_CODES = [
   "session_live",
   "no_cwd",
   "cwd_not_found",
+  "invalid_copilot_session_id",
   "default_args_unavailable",
   "spawn_failed",
 ] as const;
@@ -77,6 +79,13 @@ export function validateSessionForRelaunch(
     return {
       code: "session_live",
       message: `Session "${session.title}" appears to have a live Copilot process. Stop the existing session before relaunching.`,
+    };
+  }
+
+  if (session.copilotSessionId && !isSafeCopilotResumeSessionId(session.copilotSessionId)) {
+    return {
+      code: "invalid_copilot_session_id",
+      message: `Session "${session.title}" has an invalid Copilot session ID and cannot be resumed.`,
     };
   }
 

@@ -2,14 +2,39 @@ import { describe, expect, it } from "vitest";
 
 import {
   MANAGED_RUNTIME_LIFECYCLE_STATES,
+  MANAGED_RUNTIME_ACTION_ROUTE_SUFFIXES,
   MANAGED_RUNTIME_PROGRESS_EVENT_INPUT_CAP,
   MANAGED_RUNTIME_PROGRESS_SUMMARY_MAX_LENGTH,
   defaultManagedRuntimeActions,
+  isManagedRuntimeCleanupAvailable,
   managedLifecycleStatusClass,
+  managedRuntimeProjectionFromMetadata,
   managedRuntimeProgressEvents,
   resolveManagedRuntimeActions,
   sanitizeManagedRuntimeProjection,
 } from "./managed-runtime-contract";
+import type { SessionRegistryRuntimeMetadata } from "./session-registry-schema";
+
+function managedRuntime(
+  overrides: Partial<SessionRegistryRuntimeMetadata> = {},
+): SessionRegistryRuntimeMetadata {
+  return {
+    runtimeKind: "managed-sdk",
+    runtimeOwner: "streamliner-sdk",
+    lifecycleState: "running",
+    permissionProfile: "managed-autonomous",
+    launchClaimId: "claim-1",
+    launchNonce: "nonce-1",
+    sdkSessionId: "sdk-session",
+    sdkWorkspacePath: "C:\\repo\\worktree",
+    sdkStateRoot: "C:\\state",
+    startedAt: "2026-05-05T12:00:00.000Z",
+    lastStateChangedAt: "2026-05-05T12:01:00.000Z",
+    progressEvents: [],
+    evidence: [],
+    ...overrides,
+  };
+}
 
 function hasLoneSurrogate(value: string): boolean {
   for (let index = 0; index < value.length; index += 1) {
@@ -121,14 +146,96 @@ describe("managed runtime contract", () => {
       actions: [],
     })).toEqual(actions);
     expect(actions.every((action) => action.available === false)).toBe(true);
+    expect(actions.map((action) => action.action)).toEqual([
+      "interrupt",
+      "cancel",
+      "terminal-takeover",
+      "cleanup",
+    ]);
+  });
+
+  it("centralizes managed action route suffixes", () => {
+    expect(MANAGED_RUNTIME_ACTION_ROUTE_SUFFIXES).toEqual({
+      interrupt: "interrupt",
+      cancel: "cancel",
+      "terminal-takeover": "takeover",
+      cleanup: "cleanup",
+    });
+  });
+
+  it("projects state-aware actions for SDK-owned managed sessions", () => {
+    const projection = managedRuntimeProjectionFromMetadata(managedRuntime());
+
+    const actions = resolveManagedRuntimeActions(projection);
+    expect(actions.find((action) => action.action === "interrupt")?.available).toBe(true);
+    expect(actions.find((action) => action.action === "cancel")?.available).toBe(true);
+    expect(actions.find((action) => action.action === "terminal-takeover")?.available).toBe(true);
+    expect(actions.find((action) => action.action === "cleanup")?.available).toBe(false);
+  });
+
+  it("allows terminal takeover while an SDK interrupt is in progress", () => {
+    const projection = managedRuntimeProjectionFromMetadata(managedRuntime({
+      lifecycleState: "interrupt_requested",
+    }));
+
+    expect(resolveManagedRuntimeActions(projection).find((action) =>
+      action.action === "terminal-takeover"
+    )?.available).toBe(true);
+  });
+
+  it("enables cleanup when cleanup-ready evidence is present", () => {
+    const projection = managedRuntimeProjectionFromMetadata(managedRuntime({
+      lifecycleState: "completed",
+      evidence: [{
+        id: "evidence-1",
+        kind: "cleanup_ready",
+        source: "managed-sdk",
+        detectedAt: "2026-05-05T12:02:00.000Z",
+        url: "https://github.com/lossyrob/streamliner/pull/75",
+        repo: "lossyrob/streamliner",
+        number: 75,
+        sha: "abc123",
+        summary: "PR merged and cleanup is ready.",
+      }],
+    }));
+
+    expect(resolveManagedRuntimeActions(projection).find((action) =>
+      action.action === "cleanup"
+    )?.available).toBe(true);
+    expect(isManagedRuntimeCleanupAvailable(managedRuntime({
+      lifecycleState: "completed",
+      evidence: [{
+        id: "evidence-1",
+        kind: "cleanup_ready",
+        source: "managed-sdk",
+        detectedAt: "2026-05-05T12:02:00.000Z",
+        url: "https://github.com/lossyrob/streamliner/pull/75",
+        repo: "lossyrob/streamliner",
+        number: 75,
+        sha: "abc123",
+        summary: "PR merged and cleanup is ready.",
+      }],
+    }))).toBe(true);
+  });
+
+  it("projects terminal-owned takeover sessions with SDK actions disabled", () => {
+    const projection = managedRuntimeProjectionFromMetadata(managedRuntime({
+      runtimeOwner: "builder-terminal",
+      lifecycleState: "terminal_takeover",
+    }));
+
+    expect(projection?.runtimeOwner).toBe("builder-terminal");
+    expect(resolveManagedRuntimeActions(projection).filter((action) =>
+      action.action !== "cleanup"
+    ).every((action) => action.available === false)).toBe(true);
   });
 
   it("sanitizes managed runtime projection fields before API projection", () => {
     const projection = sanitizeManagedRuntimeProjection({
       runtimeKind: "managed-sdk",
-      runtimeOwner: "streamliner-sdk",
+      runtimeOwner: "builder-terminal",
       permissionProfile: "managed-autonomous",
-      lifecycleState: "running",
+      lifecycleState: "terminal_takeover",
       rawPrompt: "do not expose",
       sdk: {
         sdkSessionId: "sdk-session",
@@ -142,11 +249,26 @@ describe("managed runtime contract", () => {
           stdout: "do not expose",
         },
       ],
+      actions: [
+        {
+          action: "interrupt",
+          label: "Interrupt",
+          available: false,
+          reason: "Terminal owns this session after takeover.",
+        },
+        {
+          action: "cancel",
+          label: "Cancel",
+          available: false,
+        },
+      ],
     });
 
     expect(projection).not.toBeNull();
+    expect(projection?.runtimeOwner).toBe("builder-terminal");
     expect(projection).not.toHaveProperty("rawPrompt");
     expect(projection?.sdk).not.toHaveProperty("rawState");
     expect(projection?.progress?.[0]).not.toHaveProperty("stdout");
+    expect(projection?.actions?.map((action) => action.action)).toEqual(["interrupt", "cancel"]);
   });
 });

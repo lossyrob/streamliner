@@ -3168,6 +3168,33 @@ a.sl-session-context-ref {
   padding: 6px 9px;
 }
 
+.sl-managed-runtime-action:not(:disabled) {
+  background: rgba(38, 132, 92, 0.1);
+  border-color: rgba(38, 132, 92, 0.24);
+  color: var(--sl-accent-strong);
+  cursor: pointer;
+}
+
+.sl-managed-runtime-action:not(:disabled):hover {
+  background: rgba(38, 132, 92, 0.18);
+}
+
+.sl-managed-runtime-action.running {
+  cursor: wait;
+}
+
+.sl-managed-runtime-action.success {
+  background: rgba(38, 132, 92, 0.14);
+  border-color: rgba(38, 132, 92, 0.3);
+  color: var(--sl-accent-strong);
+}
+
+.sl-managed-runtime-action.error {
+  background: rgba(194, 65, 12, 0.1);
+  border-color: rgba(194, 65, 12, 0.26);
+  color: #9a3412;
+}
+
 .sl-session-managed-progress,
 .sl-managed-runtime-inspector ol {
   display: grid;

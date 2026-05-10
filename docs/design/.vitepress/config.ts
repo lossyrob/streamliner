@@ -50,6 +50,7 @@ export default defineConfig({
           { text: '007 — Tracked Workstream Registry', link: '/decisions/007-tracked-workstream-registry' },
           { text: '008 — PAW Artifacts for Workflow Status', link: '/decisions/008-paw-artifacts-for-workflow-status' },
           { text: '009 — SDK-Managed Graph-Node Worker Runtime', link: '/decisions/009-sdk-managed-worker-runtime' },
+          { text: '010 — Terminal Takeover and Managed Cleanup Actions', link: '/decisions/010-terminal-takeover-and-cleanup' },
         ]
       }
     ],
