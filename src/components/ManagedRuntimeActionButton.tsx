@@ -66,10 +66,13 @@ export function ManagedRuntimeActionButton({
       });
       const body = await response.json().catch(() => ({})) as {
         error?: string;
-        outcome?: { message?: string };
+        outcome?: { ok?: boolean; message?: string };
       };
       if (!response.ok) {
         throw new Error(body.error ?? `Managed action failed (${response.status})`);
+      }
+      if (body.outcome?.ok === false) {
+        throw new Error(body.outcome.message ?? `${action.label} failed.`);
       }
       if (!mountedRef.current) {
         return;

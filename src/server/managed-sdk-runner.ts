@@ -461,10 +461,18 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
       };
     }
     if (!active.interruptPromise) {
-      active.interrupted = true;
       active.interruptPromise = this.abortActiveRun(active, input.reason);
     }
-    return await active.interruptPromise;
+    const interruptPromise = active.interruptPromise;
+    const result = await interruptPromise;
+    if (
+      !result.ok
+      && this.activeRuns.get(input.registryId) === active
+      && active.interruptPromise === interruptPromise
+    ) {
+      active.interruptPromise = undefined;
+    }
+    return result;
   }
 
   async transferToTerminal(
@@ -508,6 +516,7 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
     active: ActiveManagedRun,
     reason: string | undefined,
   ): Promise<ManagedSdkInterruptResult> {
+    active.interrupted = true;
     try {
       await active.session.abort();
       return {
@@ -516,6 +525,7 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
         message: reason ?? "Managed SDK session abort acknowledged.",
       };
     } catch (error: unknown) {
+      active.interrupted = false;
       return {
         ok: false,
         evidenceState: "failed",

@@ -268,6 +268,7 @@ export function createSessionsRouter(options: {
     try {
       requested = target.store.patchRuntimeMetadata(sessionId, {
         lifecycleState: "interrupt_requested",
+        forceLifecycleState: true,
         progressEvents: [{
           type: "lifecycle",
           message: "Managed SDK interruption requested.",
@@ -285,25 +286,38 @@ export function createSessionsRouter(options: {
       return;
     }
     const outcome = await interruptManagedSdkRunner(options.managedSdkRunner, sessionId, reason);
+    const finalState = outcome.ok ? outcome.evidenceState : "interrupt_requested";
     try {
       const finalRecord = target.store.patchRuntimeMetadata(sessionId, {
-        lifecycleState: outcome.evidenceState,
+        lifecycleState: finalState,
+        forceLifecycleState: true,
         progressEvents: [{
           type: outcome.ok ? "lifecycle" : "error",
-          message: outcome.message,
+          message: outcome.ok
+            ? outcome.message
+            : `Managed SDK interruption failed; runtime remains active for retry: ${outcome.message}`,
         }],
       });
       assertManagedRuntimePatch(finalRecord, {
-        lifecycleState: outcome.evidenceState,
+        lifecycleState: finalState,
         context: "interrupt",
       });
       managedLogger.info("interrupt", {
         sessionId,
         requestedState: requested.runtime?.lifecycleState,
-        outcome: outcome.evidenceState,
+        outcome: finalState,
         ok: outcome.ok,
       });
-      res.json({ outcome, session: finalRecord });
+      res.json({
+        outcome: outcome.ok
+          ? outcome
+          : {
+              ...outcome,
+              evidenceState: finalState,
+              message: `Managed SDK interruption failed; runtime remains active for retry: ${outcome.message}`,
+            },
+        session: finalRecord,
+      });
     } catch (error: unknown) {
       const failure = managedRuntimeErrorResponse(error);
       managedLogger.warn("interrupt settle failed", {
@@ -343,6 +357,7 @@ export function createSessionsRouter(options: {
     try {
       requested = target.store.patchRuntimeMetadata(sessionId, {
         lifecycleState: "interrupt_requested",
+        forceLifecycleState: true,
         progressEvents: [{
           type: "lifecycle",
           message: "Managed SDK cancellation requested.",
@@ -364,15 +379,18 @@ export function createSessionsRouter(options: {
       sessionId,
       "Managed SDK run canceled by builder action.",
     );
-    const finalState = outcome.ok || !hasRunner ? "canceled" : "failed";
+    const finalState = outcome.ok || !hasRunner || outcome.evidenceState === "waiting_for_builder"
+      ? "canceled"
+      : "interrupt_requested";
     try {
       const record = target.store.patchRuntimeMetadata(sessionId, {
         lifecycleState: finalState,
+        forceLifecycleState: true,
         progressEvents: [{
           type: finalState === "canceled" ? "lifecycle" : "error",
           message: finalState === "canceled"
             ? "Managed SDK run canceled by builder action."
-            : outcome.message,
+            : `Managed SDK cancellation failed; runtime remains active for retry: ${outcome.message}`,
         }],
       });
       assertManagedRuntimePatch(record, {
@@ -388,7 +406,11 @@ export function createSessionsRouter(options: {
               ? "Managed SDK run canceled by builder action."
               : `${outcome.message}; recorded cancellation.`,
           }
-        : outcome;
+        : {
+            ...outcome,
+            evidenceState: finalState,
+            message: `Managed SDK cancellation failed; runtime remains active for retry: ${outcome.message}`,
+          };
       managedLogger.info("cancel", {
         sessionId,
         requestedState: requested.runtime?.lifecycleState,

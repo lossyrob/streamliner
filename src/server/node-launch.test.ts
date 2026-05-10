@@ -1849,7 +1849,7 @@ describe("managed runtime session API routes", () => {
     expect(gitCalls.some((call) => call.endsWith("git branch -D -- feature/cleanup"))).toBe(true);
   });
 
-  it("settles managed interrupt and cancel failures to terminal states", async () => {
+  it("keeps managed abort failures retryable while allowing absent-runner cancellation", async () => {
     const root = createRootDir();
     const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
     const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
@@ -1886,6 +1886,18 @@ describe("managed runtime session API routes", () => {
       },
     });
     const cancelRecord = registryStore.upsertSession({
+      id: "managed-cancel-failure-row",
+      title: "Managed cancel failure row",
+      description: "",
+      cwd: normalizePath(root),
+      origin: { kind: "launched", launchClaimId: "claim-cancel-failure" },
+      graphBinding: {
+        workstreamId: "ws-1",
+        nodeId: "node-cancel-failure",
+        launchClaimId: "claim-cancel-failure",
+      },
+    });
+    const absentRunnerCancelRecord = registryStore.upsertSession({
       id: "managed-cancel-absent-runner-row",
       title: "Managed cancel absent runner row",
       description: "",
@@ -1897,7 +1909,7 @@ describe("managed runtime session API routes", () => {
         launchClaimId: "claim-cancel-absent-runner",
       },
     });
-    for (const record of [interruptRecord, cancelRecord]) {
+    for (const record of [interruptRecord, cancelRecord, absentRunnerCancelRecord]) {
       registryStore.patchRuntimeMetadata(record.id, {
         runtimeKind: "managed-sdk",
         runtimeOwner: "streamliner-sdk",
@@ -1915,12 +1927,29 @@ describe("managed runtime session API routes", () => {
     expect(interruptResponse.body).toEqual(expect.objectContaining({
       outcome: expect.objectContaining({
         ok: false,
-        evidenceState: "failed",
-        message: "SDK abort failed.",
+        evidenceState: "interrupt_requested",
+        message: "Managed SDK interruption failed; runtime remains active for retry: SDK abort failed.",
       }),
       session: expect.objectContaining({
         runtime: expect.objectContaining({
-          lifecycleState: "failed",
+          lifecycleState: "interrupt_requested",
+        }),
+      }),
+    }));
+
+    const cancelFailureResponse = await request(api.app)
+      .post(`/api/sessions/${cancelRecord.id}/managed/cancel`)
+      .send({})
+      .expect(200);
+    expect(cancelFailureResponse.body).toEqual(expect.objectContaining({
+      outcome: expect.objectContaining({
+        ok: false,
+        evidenceState: "interrupt_requested",
+        message: "Managed SDK cancellation failed; runtime remains active for retry: SDK abort failed.",
+      }),
+      session: expect.objectContaining({
+        runtime: expect.objectContaining({
+          lifecycleState: "interrupt_requested",
         }),
       }),
     }));
@@ -1942,7 +1971,7 @@ describe("managed runtime session API routes", () => {
     });
     activeApps.push(noInterruptRunnerApi);
     const cancelResponse = await request(noInterruptRunnerApi.app)
-      .post(`/api/sessions/${cancelRecord.id}/managed/cancel`)
+      .post(`/api/sessions/${absentRunnerCancelRecord.id}/managed/cancel`)
       .send({})
       .expect(200);
     expect(cancelResponse.body).toEqual(expect.objectContaining({
