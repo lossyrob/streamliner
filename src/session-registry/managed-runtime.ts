@@ -21,6 +21,7 @@ import type {
 } from "../session-registry-contract";
 
 export const MANAGED_RUNTIME_PROGRESS_EVENT_LIMIT = 50;
+export const MANAGED_RUNTIME_EVIDENCE_LIMIT = 100;
 export const MANAGED_RUNTIME_PROGRESS_STRING_LIMIT = 240;
 
 const SENSITIVE_DATA_KEYS = new Set([
@@ -76,6 +77,12 @@ const TERMINAL_MANAGED_LIFECYCLE_STATES = new Set<SessionRegistryManagedLifecycl
   "completed",
   "failed",
   "interrupted",
+]);
+
+const TERMINAL_TAKEOVER_CLEANUP_TRANSITIONS = new Set<SessionRegistryManagedLifecycleState>([
+  "cleaning_up",
+  "cleaned_up",
+  "waiting_for_builder",
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -307,6 +314,7 @@ export function isManagedRuntimeActive(
   runtime: SessionRegistryRuntimeMetadata | null | undefined,
 ): boolean {
   return runtime?.runtimeKind === "managed-sdk" &&
+    runtime.runtimeOwner === "streamliner-sdk" &&
     runtime.lifecycleState !== null &&
     ACTIVE_MANAGED_LIFECYCLE_STATES.has(runtime.lifecycleState);
 }
@@ -345,15 +353,19 @@ export function mergeSessionRegistryRuntimeMetadata(
     const normalized = inputEvidenceToStoredEvidence(evidence, timestamp);
     evidenceById.set(normalized.id, normalized);
   }
+  const terminalLifecycleState = isTerminalLifecycleState(current);
+  const takeoverCleanupTransition = isTerminalTakeoverCleanupTransition(current, patch);
   const lifecycleChanged =
     patch.lifecycleState !== undefined &&
-    (patch.forceLifecycleState === true || !isTerminalLifecycleState(current?.lifecycleState)) &&
+    (patch.forceLifecycleState === true || !terminalLifecycleState || takeoverCleanupTransition) &&
     patch.lifecycleState !== (current?.lifecycleState ?? null);
   const nextLifecycleState = lifecycleChanged
     ? patch.lifecycleState ?? null
     : current?.lifecycleState ?? (patch.lifecycleState !== undefined ? patch.lifecycleState : null);
   const runtimeKind = patch.runtimeKind ?? current?.runtimeKind;
-  const runtimeOwner = patch.runtimeOwner ?? current?.runtimeOwner;
+  const runtimeOwner = terminalLifecycleState
+    ? current?.runtimeOwner
+    : patch.runtimeOwner ?? current?.runtimeOwner;
   if (runtimeKind === undefined) {
     throw new Error("runtimeKind is required when creating runtime metadata.");
   }
@@ -396,17 +408,59 @@ export function mergeSessionRegistryRuntimeMetadata(
         : lifecycleChanged
           ? timestamp
           : current?.lastStateChangedAt ?? null,
-    progressEvents: [...currentProgress, ...nextProgress].slice(-MANAGED_RUNTIME_PROGRESS_EVENT_LIMIT),
-    evidence: [...evidenceById.values()],
+    progressEvents: capProgressEvents([...currentProgress, ...nextProgress]),
+    evidence: [...evidenceById.values()].slice(-MANAGED_RUNTIME_EVIDENCE_LIMIT),
   };
 }
 
+function capProgressEvents(
+  events: SessionRegistryRuntimeProgressEvent[],
+): SessionRegistryRuntimeProgressEvent[] {
+  if (events.length <= MANAGED_RUNTIME_PROGRESS_EVENT_LIMIT) {
+    return events;
+  }
+  const pinnedIds = new Set<string>();
+  if (events[0]) {
+    pinnedIds.add(events[0].id);
+  }
+  for (const pinnedType of ["error", "terminal_takeover"] as const) {
+    const pinned = events.find((event) => event.type === pinnedType);
+    if (pinned) {
+      pinnedIds.add(pinned.id);
+    }
+  }
+  const pinnedEvents = events.filter((event) => pinnedIds.has(event.id));
+  const cappedEvents = events
+    .filter((event) => !pinnedIds.has(event.id))
+    .slice(-(MANAGED_RUNTIME_PROGRESS_EVENT_LIMIT - pinnedEvents.length));
+  return [...pinnedEvents, ...cappedEvents].sort((left, right) => left.sequence - right.sequence);
+}
+
 function isTerminalLifecycleState(
-  state: SessionRegistryManagedLifecycleState | null | undefined,
+  current: SessionRegistryRuntimeMetadata | null | undefined,
 ): boolean {
+  const state = current?.lifecycleState;
+  if (
+    current?.runtimeOwner === "builder-terminal" &&
+    state === "terminal_takeover"
+  ) {
+    return true;
+  }
   return state !== null &&
     state !== undefined &&
     TERMINAL_MANAGED_LIFECYCLE_STATES.has(state);
+}
+
+function isTerminalTakeoverCleanupTransition(
+  current: SessionRegistryRuntimeMetadata | null | undefined,
+  patch: SessionRegistryRuntimeMetadataPatch,
+): boolean {
+  return current?.runtimeOwner === "builder-terminal" &&
+    current.lifecycleState === "terminal_takeover" &&
+    (patch.runtimeOwner === undefined || patch.runtimeOwner === "builder-terminal") &&
+    patch.lifecycleState !== undefined &&
+    patch.lifecycleState !== null &&
+    TERMINAL_TAKEOVER_CLEANUP_TRANSITIONS.has(patch.lifecycleState);
 }
 
 function inputEvidenceToStoredEvidence(

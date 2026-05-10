@@ -13,6 +13,7 @@ import {
   isWindowsTerminalAvailable,
   clearWindowsTerminalCache,
   launchTerminal,
+  quotePowerShellLiteral,
   type TerminalLaunchAdapter,
 } from "./terminal-launch";
 
@@ -558,7 +559,9 @@ describe("terminal-launch", () => {
     });
 
     it("builds the PowerShell resume command in the same adapter-owned helper", () => {
-      expect(buildCopilotResumeCommand("it's-a-session")).toBe("copilot '--resume=it''s-a-session'");
+      expect(buildCopilotResumeCommand("sdk-session-123")).toBe("copilot '--resume=sdk-session-123'");
+      expect(() => buildCopilotResumeCommand("-sdk-session-123")).toThrow(/unsupported/);
+      expect(quotePowerShellLiteral("it's-a-session")).toBe("'it''s-a-session'");
     });
   });
 

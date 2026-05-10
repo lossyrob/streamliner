@@ -7,6 +7,7 @@ import { join, resolve } from "node:path";
 import { quotePowerShellLiteral } from "../terminal-command";
 export {
   buildCopilotResumeCommand,
+  isSafeCopilotResumeSessionId,
   quotePowerShellLiteral,
 } from "../terminal-command";
 
