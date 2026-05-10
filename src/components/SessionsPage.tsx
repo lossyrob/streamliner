@@ -15,8 +15,7 @@ import type { ManagedRuntimeProjection } from "../managed-runtime-contract";
 import {
   formatManagedRuntimeLabel,
   managedLifecycleStatusClass,
-  managedRuntimeProjectionFromMetadata,
-  managedRuntimeProgressEvents,
+  managedRuntimeProjectionFromSession,
   resolveManagedRuntimeActions,
 } from "../managed-runtime-contract";
 import {
@@ -60,6 +59,13 @@ import {
   TerminalColorQuickPicker,
 } from "./SessionColorPicker";
 import { ManagedRuntimeActionButton } from "./ManagedRuntimeActionButton";
+import {
+  ManagedSessionConsole,
+} from "./ManagedSessionConsole";
+import {
+  managedRuntimeConsoleEvents,
+  managedRuntimeStateTone,
+} from "./ManagedSessionConsoleEvents";
 import { sessionRegistryListUrl } from "../session-registry-client";
 
 const SESSION_POLL_INTERVAL_MS = 15_000;
@@ -891,7 +897,7 @@ function SessionWorkstreamContextChips({
 function getManagedRuntime(
   session: SessionRegistryListItem,
 ): ManagedRuntimeProjection | null {
-  return managedRuntimeProjectionFromMetadata(session.runtime);
+  return managedRuntimeProjectionFromSession(session);
 }
 
 function managedRuntimeLifecycleText(runtime: ManagedRuntimeProjection): string {
@@ -2944,7 +2950,6 @@ function ManagedRuntimeOverview({
   runtime: ManagedRuntimeProjection;
   onActionComplete?: () => void | Promise<void>;
 }) {
-  const progressEvents = managedRuntimeProgressEvents(runtime.progress);
   const sdk = runtime.sdk ?? null;
   const actions = resolveManagedRuntimeActions(runtime);
 
@@ -2994,36 +2999,30 @@ function ManagedRuntimeOverview({
           </>
         )}
       </dl>
-      <div className="sl-session-managed-actions">
-        {actions.map((action) => (
-          <ManagedRuntimeActionButton
-            key={action.action}
-            sessionId={sessionId}
-            action={action}
-            onComplete={onActionComplete}
-          />
-        ))}
-      </div>
-      {progressEvents.length > 0 && (
-        <ol className="sl-session-managed-progress">
-          {progressEvents.map((event) => (
-            <li key={`${event.timestamp}-${event.phase}-${event.summary}`}>
-              <span className="sl-session-managed-progress-time">
-                {formatTimestamp(event.timestamp)}
-              </span>
-              <span className="sl-session-managed-progress-phase">
-                {formatManagedRuntimeLabel(event.phase)}
-              </span>
-              <span>{event.summary}</span>
-            </li>
-          ))}
-        </ol>
-      )}
-      {(runtime.blockerSummary || runtime.errorSummary) && (
-        <div className="sl-session-overview-note">
-          {runtime.blockerSummary ?? runtime.errorSummary}
-        </div>
-      )}
+      <ManagedSessionConsole
+        title="Managed session console"
+        subtitle="Replayed from bounded sanitized Streamliner runtime activity; open terminal takeover for interactive control."
+        stateLabel={managedRuntimeLifecycleText(runtime)}
+        stateTone={managedRuntimeStateTone(runtime)}
+        currentMessage={managedRuntimeSummaryText(runtime)}
+        events={managedRuntimeConsoleEvents(runtime)}
+        emptyMessage="No retained managed runtime activity yet."
+        waitingReason={runtime.waitingReason}
+        prReady={runtime.prReady}
+        replay={runtime.replay}
+        footer={
+          <div className="sl-session-managed-actions">
+            {actions.map((action) => (
+              <ManagedRuntimeActionButton
+                key={action.action}
+                sessionId={sessionId}
+                action={action}
+                onComplete={onActionComplete}
+              />
+            ))}
+          </div>
+        }
+      />
     </section>
   );
 }

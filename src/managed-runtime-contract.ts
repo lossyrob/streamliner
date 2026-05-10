@@ -1,4 +1,5 @@
 import type {
+  SessionRegistryGithubRef,
   SessionRegistryRuntimeEvidence,
   SessionRegistryRuntimeMetadata,
   SessionRegistryRuntimeProgressEvent,
@@ -49,6 +50,7 @@ export type ManagedRuntimeLifecycleState =
 export const MANAGED_RUNTIME_PROGRESS_EVENT_LIMIT = 8;
 export const MANAGED_RUNTIME_PROGRESS_EVENT_INPUT_CAP = 1000;
 export const MANAGED_RUNTIME_PROGRESS_SUMMARY_MAX_LENGTH = 240;
+export const MANAGED_RUNTIME_REPLAY_RETAINED_EVENT_LIMIT = 50;
 
 export const MANAGED_RUNTIME_PROGRESS_KINDS = [
   "lifecycle",
@@ -111,6 +113,52 @@ export interface ManagedRuntimeLink {
   summary?: string | null;
 }
 
+export type ManagedRuntimeWaitingReasonCode =
+  | "cleanup_blocked"
+  | "cancellation_timeout"
+  | "sdk_process_loss"
+  | "permission_failure"
+  | "manual_takeover_required"
+  | "builder_input_required"
+  | "unknown";
+
+export interface ManagedRuntimeWaitingReason {
+  code: ManagedRuntimeWaitingReasonCode;
+  label: string;
+  suggestedAction: string;
+  detail?: string | null;
+  blockerCode?: string | null;
+}
+
+export type ManagedRuntimeTrustCheckStatus = "pass" | "fail" | "unknown";
+
+export interface ManagedRuntimeTrustCheck {
+  label: string;
+  status: ManagedRuntimeTrustCheckStatus;
+  summary: string;
+}
+
+export interface ManagedRuntimePrReadyTrustContext {
+  url?: string | null;
+  repo?: string | null;
+  number?: number | null;
+  branchName?: string | null;
+  baseBranch?: string | null;
+  branchToBaseDiffUrl?: string | null;
+  worktreePath?: string | null;
+  worktreeClean?: boolean | null;
+  headSha?: string | null;
+  prHeadSha?: string | null;
+  prHeadMatchesBranch?: boolean | null;
+  checks: ManagedRuntimeTrustCheck[];
+}
+
+export interface ManagedRuntimeReplayWindow {
+  retainedEventCount: number;
+  retainedEventLimit: number;
+  truncated: boolean;
+}
+
 export interface ManagedRuntimeActionAvailability {
   action: ManagedRuntimeActionKind;
   label: string;
@@ -137,6 +185,22 @@ export interface ManagedRuntimeProjection {
   progress?: ManagedRuntimeProgressEvent[];
   links?: ManagedRuntimeLink[];
   actions?: ManagedRuntimeActionAvailability[];
+  waitingReason?: ManagedRuntimeWaitingReason | null;
+  prReady?: ManagedRuntimePrReadyTrustContext | null;
+  replay?: ManagedRuntimeReplayWindow | null;
+}
+
+export interface ManagedRuntimeProjectionContext {
+  repo?: string | null;
+  branch?: string | null;
+  cwd?: string | null;
+  derivedBranch?: string | null;
+  derivedWorktreePath?: string | null;
+  derivedGithubRefs?: readonly SessionRegistryGithubRef[];
+}
+
+export interface ManagedRuntimeProjectionSession extends ManagedRuntimeProjectionContext {
+  runtime?: SessionRegistryRuntimeMetadata | null;
 }
 
 const MANAGED_RUNTIME_PROGRESS_STATUSES = [
@@ -152,6 +216,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function optionalString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
+}
+
+function optionalBoolean(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
+}
+
+function optionalSafeNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : null;
 }
 
 function isManagedRuntimeOwner(value: unknown): value is ManagedRuntimeOwner {
@@ -207,6 +281,24 @@ function isManagedRuntimeActionKind(
     value === "cancel" ||
     value === "terminal-takeover" ||
     value === "cleanup";
+}
+
+function isManagedRuntimeWaitingReasonCode(
+  value: unknown,
+): value is ManagedRuntimeWaitingReasonCode {
+  return value === "cleanup_blocked" ||
+    value === "cancellation_timeout" ||
+    value === "sdk_process_loss" ||
+    value === "permission_failure" ||
+    value === "manual_takeover_required" ||
+    value === "builder_input_required" ||
+    value === "unknown";
+}
+
+function isManagedRuntimeTrustCheckStatus(
+  value: unknown,
+): value is ManagedRuntimeTrustCheckStatus {
+  return value === "pass" || value === "fail" || value === "unknown";
 }
 
 function assertUnhandledManagedLifecycleState(state: never): never {
@@ -507,8 +599,336 @@ function latestRuntimeSummary(
   return progressSummary ?? null;
 }
 
+function latestProgressDataString(
+  runtime: SessionRegistryRuntimeMetadata,
+  keys: readonly string[],
+): string | null {
+  for (const event of [...runtime.progressEvents].reverse()) {
+    const data = event.data;
+    if (!data) {
+      continue;
+    }
+    for (const key of keys) {
+      const value = data[key];
+      if (typeof value === "string" && value.trim().length > 0) {
+        return value;
+      }
+    }
+  }
+  return null;
+}
+
+function latestProgressDataBoolean(
+  runtime: SessionRegistryRuntimeMetadata,
+  keys: readonly string[],
+): boolean | null {
+  for (const event of [...runtime.progressEvents].reverse()) {
+    const data = event.data;
+    if (!data) {
+      continue;
+    }
+    for (const key of keys) {
+      const value = data[key];
+      if (typeof value === "boolean") {
+        return value;
+      }
+    }
+  }
+  return null;
+}
+
+function latestRuntimeProgressEvent(
+  runtime: SessionRegistryRuntimeMetadata,
+): SessionRegistryRuntimeProgressEvent | null {
+  return runtime.progressEvents.at(-1) ?? null;
+}
+
+function latestRuntimeEvidence(
+  runtime: SessionRegistryRuntimeMetadata,
+  kind: SessionRegistryRuntimeEvidence["kind"],
+): SessionRegistryRuntimeEvidence | null {
+  return [...runtime.evidence].reverse().find((evidence) => evidence.kind === kind) ?? null;
+}
+
+function latestDerivedPullRequest(
+  context: ManagedRuntimeProjectionContext,
+): SessionRegistryGithubRef | null {
+  return [...(context.derivedGithubRefs ?? [])]
+    .reverse()
+    .find((ref) => ref.type === "pr") ?? null;
+}
+
+function isSafeGithubRepoSlug(value: string): boolean {
+  return /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value);
+}
+
+function safeGithubUrl(value: string | null, pathPattern: RegExp): string | null {
+  if (!value) {
+    return null;
+  }
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol === "https:" &&
+      parsed.hostname.toLowerCase() === "github.com" &&
+      pathPattern.test(parsed.pathname)) {
+      return `https://github.com${parsed.pathname}`;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function safeGithubPullRequestUrl(value: string | null): string | null {
+  return safeGithubUrl(value, /^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9]\d*\/?$/);
+}
+
+function safeGithubCompareUrl(value: string | null): string | null {
+  return safeGithubUrl(value, /^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/compare\/[^/?#]+$/);
+}
+
+function githubPullRequestUrl(repo: string | null, number: number | null): string | null {
+  if (!repo || number === null || number < 1 || !isSafeGithubRepoSlug(repo)) {
+    return null;
+  }
+  return `https://github.com/${repo}/pull/${number}`;
+}
+
+function isSafeCompareRef(value: string): boolean {
+  return value.length > 0 && value.length <= 200 && !/[\s~^:?*[\\\]]/.test(value);
+}
+
+function branchToBaseDiffUrl(
+  repo: string | null,
+  baseBranch: string | null,
+  branchName: string | null,
+): string | null {
+  if (
+    !repo ||
+    !baseBranch ||
+    !branchName ||
+    !isSafeGithubRepoSlug(repo) ||
+    !isSafeCompareRef(baseBranch) ||
+    !isSafeCompareRef(branchName)
+  ) {
+    return null;
+  }
+  return `https://github.com/${repo}/compare/${
+    encodeURIComponent(baseBranch)
+  }...${encodeURIComponent(branchName)}`;
+}
+
+function trustCheck(
+  label: string,
+  status: ManagedRuntimeTrustCheckStatus,
+  summary: string,
+): ManagedRuntimeTrustCheck {
+  return { label, status, summary };
+}
+
+function prReadyTrustContext(
+  runtime: SessionRegistryRuntimeMetadata,
+  context: ManagedRuntimeProjectionContext,
+): ManagedRuntimePrReadyTrustContext | null {
+  const evidence = latestRuntimeEvidence(runtime, "pr_ready");
+  const derivedPullRequest = latestDerivedPullRequest(context);
+  const repo = evidence?.repo ?? derivedPullRequest?.repo ?? context.repo ?? null;
+  const number = evidence?.number ?? derivedPullRequest?.number ?? null;
+  const url = safeGithubPullRequestUrl(evidence?.url ?? derivedPullRequest?.url ?? null) ??
+    githubPullRequestUrl(repo, number);
+  if (!url && !repo && number === null) {
+    return null;
+  }
+
+  const branchName = latestProgressDataString(runtime, ["branchName", "branch"]) ??
+    context.derivedBranch ??
+    context.branch ??
+    null;
+  const baseBranch = latestProgressDataString(runtime, [
+    "baseBranch",
+    "baseRef",
+    "targetBranch",
+  ]);
+  const explicitDiffUrl = latestProgressDataString(runtime, [
+    "branchToBaseDiffUrl",
+    "diffUrl",
+    "compareUrl",
+  ]);
+  const diffUrl = safeGithubCompareUrl(explicitDiffUrl) ??
+    branchToBaseDiffUrl(repo, baseBranch, branchName);
+  const worktreePath = latestProgressDataString(runtime, ["worktreePath"]) ??
+    context.derivedWorktreePath ??
+    context.cwd ??
+    null;
+  const worktreeClean = latestProgressDataBoolean(runtime, [
+    "worktreeClean",
+    "cleanWorktree",
+  ]);
+  const headSha = latestProgressDataString(runtime, [
+    "headSha",
+    "branchHeadSha",
+    "currentHeadSha",
+  ]) ?? evidence?.sha ?? null;
+  const prHeadSha = latestProgressDataString(runtime, [
+    "prHeadSha",
+    "headRefOid",
+  ]) ?? evidence?.sha ?? null;
+  const explicitHeadMatch = latestProgressDataBoolean(runtime, [
+    "prHeadMatchesBranch",
+    "headMatchesBranch",
+  ]);
+  const prHeadMatchesBranch = explicitHeadMatch ??
+    (headSha && prHeadSha ? headSha === prHeadSha : null);
+  const checks: ManagedRuntimeTrustCheck[] = [];
+  if (diffUrl) {
+    checks.push(trustCheck(
+      "Branch-to-base diff",
+      "pass",
+      "A branch-to-base diff link is available.",
+    ));
+  }
+  if (worktreeClean !== null) {
+    checks.push(trustCheck(
+      "Worktree cleanliness",
+      worktreeClean ? "pass" : "fail",
+      worktreeClean ? "Worktree is clean." : "Worktree has uncommitted changes.",
+    ));
+  }
+  if (prHeadSha) {
+    checks.push(trustCheck(
+      "PR head recorded",
+      "pass",
+      "PR head SHA is available for deterministic comparison.",
+    ));
+  }
+  if (prHeadMatchesBranch !== null) {
+    checks.push(trustCheck(
+      "PR/head-state check",
+      prHeadMatchesBranch ? "pass" : "fail",
+      prHeadMatchesBranch
+        ? "Recorded PR head matches the branch head."
+        : "Recorded PR head does not match the branch head.",
+    ));
+  }
+
+  return {
+    url,
+    repo,
+    number,
+    branchName,
+    baseBranch,
+    branchToBaseDiffUrl: diffUrl,
+    worktreePath,
+    worktreeClean,
+    headSha,
+    prHeadSha,
+    prHeadMatchesBranch,
+    checks,
+  };
+}
+
+function waitingReasonDetails(
+  code: ManagedRuntimeWaitingReasonCode,
+): Pick<ManagedRuntimeWaitingReason, "label" | "suggestedAction"> {
+  switch (code) {
+    case "cleanup_blocked":
+      return {
+        label: "Cleanup blocked",
+        suggestedAction: "Review the cleanup blocker, fix the local or GitHub state, then retry cleanup.",
+      };
+    case "cancellation_timeout":
+      return {
+        label: "Cancellation timeout",
+        suggestedAction: "Wait for the SDK session to settle, retry interrupt/cancel, or use terminal takeover if control is needed.",
+      };
+    case "sdk_process_loss":
+      return {
+        label: "SDK process lost",
+        suggestedAction: "Resume the background session or take over in a terminal before continuing.",
+      };
+    case "permission_failure":
+      return {
+        label: "Permission failure",
+        suggestedAction: "Check the managed-autonomous permission setup and relaunch or take over in a terminal.",
+      };
+    case "manual_takeover_required":
+      return {
+        label: "Manual takeover required",
+        suggestedAction: "Open terminal takeover to continue in Copilot CLI.",
+      };
+    case "builder_input_required":
+      return {
+        label: "Builder input requested",
+        suggestedAction: "Take over in a terminal or relaunch with enough context for autonomous completion.",
+      };
+    case "unknown":
+      return {
+        label: "Waiting for builder",
+        suggestedAction: "Inspect the latest sanitized progress and choose an available managed runtime action.",
+      };
+    default: {
+      const _exhaustive: never = code;
+      return _exhaustive;
+    }
+  }
+}
+
+function classifyWaitingReason(
+  runtime: SessionRegistryRuntimeMetadata,
+): ManagedRuntimeWaitingReason | null {
+  if (runtime.lifecycleState !== "waiting_for_builder") {
+    return null;
+  }
+  const latest = latestRuntimeProgressEvent(runtime);
+  const message = latest?.message ?? latestRuntimeSummary(runtime) ?? "";
+  const lower = message.toLowerCase();
+  const blockerCode = latestProgressDataString(runtime, [
+    "firstBlockerCode",
+    "blockerCode",
+  ]);
+  let code: ManagedRuntimeWaitingReasonCode = "unknown";
+  if (blockerCode) {
+    code = "cleanup_blocked";
+  } else if (
+    lower.includes("no active managed sdk session") ||
+    lower.includes("sdk process") ||
+    lower.includes("process loss") ||
+    lower.includes("attached to this api process")
+  ) {
+    code = "sdk_process_loss";
+  } else if (
+    lower.includes("timed out") ||
+    lower.includes("timeout") ||
+    lower.includes("inconclusive")
+  ) {
+    code = "cancellation_timeout";
+  } else if (lower.includes("permission")) {
+    code = "permission_failure";
+  } else if (lower.includes("takeover") || lower.includes("terminal")) {
+    code = "manual_takeover_required";
+  } else if (lower.includes("builder input") || lower.includes("input requested")) {
+    code = "builder_input_required";
+  }
+  const details = waitingReasonDetails(code);
+  return {
+    code,
+    ...details,
+    detail: message || null,
+    blockerCode,
+  };
+}
+
+function replayWindow(runtime: SessionRegistryRuntimeMetadata): ManagedRuntimeReplayWindow {
+  return {
+    retainedEventCount: runtime.progressEvents.length,
+    retainedEventLimit: MANAGED_RUNTIME_REPLAY_RETAINED_EVENT_LIMIT,
+    truncated: runtime.progressEvents.length >= MANAGED_RUNTIME_REPLAY_RETAINED_EVENT_LIMIT,
+  };
+}
+
 export function managedRuntimeProjectionFromMetadata(
   runtime: SessionRegistryRuntimeMetadata | null | undefined,
+  context: ManagedRuntimeProjectionContext = {},
 ): ManagedRuntimeProjection | null {
   if (
     !runtime ||
@@ -551,6 +971,90 @@ export function managedRuntimeProjectionFromMetadata(
     progress,
     links,
     actions: managedRuntimeActionsFromMetadata(runtime),
+    waitingReason: classifyWaitingReason(runtime),
+    prReady: prReadyTrustContext(runtime, context),
+    replay: replayWindow(runtime),
+  };
+}
+
+export function managedRuntimeProjectionFromSession(
+  session: ManagedRuntimeProjectionSession | null | undefined,
+): ManagedRuntimeProjection | null {
+  return managedRuntimeProjectionFromMetadata(session?.runtime, session ?? {});
+}
+
+function sanitizeWaitingReason(value: unknown): ManagedRuntimeWaitingReason | null {
+  if (
+    !isRecord(value) ||
+    !isManagedRuntimeWaitingReasonCode(value.code) ||
+    typeof value.label !== "string" ||
+    typeof value.suggestedAction !== "string"
+  ) {
+    return null;
+  }
+  return {
+    code: value.code,
+    label: value.label,
+    suggestedAction: value.suggestedAction,
+    detail: optionalString(value.detail),
+    blockerCode: optionalString(value.blockerCode),
+  };
+}
+
+function sanitizeTrustChecks(value: unknown): ManagedRuntimeTrustCheck[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((check): ManagedRuntimeTrustCheck[] => {
+    if (
+      !isRecord(check) ||
+      typeof check.label !== "string" ||
+      !isManagedRuntimeTrustCheckStatus(check.status) ||
+      typeof check.summary !== "string"
+    ) {
+      return [];
+    }
+    return [{
+      label: check.label,
+      status: check.status,
+      summary: check.summary,
+    }];
+  });
+}
+
+function sanitizePrReadyTrustContext(value: unknown): ManagedRuntimePrReadyTrustContext | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  return {
+    url: safeGithubPullRequestUrl(optionalString(value.url)),
+    repo: optionalString(value.repo),
+    number: optionalSafeNumber(value.number),
+    branchName: optionalString(value.branchName),
+    baseBranch: optionalString(value.baseBranch),
+    branchToBaseDiffUrl: safeGithubCompareUrl(optionalString(value.branchToBaseDiffUrl)),
+    worktreePath: optionalString(value.worktreePath),
+    worktreeClean: optionalBoolean(value.worktreeClean),
+    headSha: optionalString(value.headSha),
+    prHeadSha: optionalString(value.prHeadSha),
+    prHeadMatchesBranch: optionalBoolean(value.prHeadMatchesBranch),
+    checks: sanitizeTrustChecks(value.checks),
+  };
+}
+
+function sanitizeReplayWindow(value: unknown): ManagedRuntimeReplayWindow | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const retainedEventCount = optionalSafeNumber(value.retainedEventCount);
+  const retainedEventLimit = optionalSafeNumber(value.retainedEventLimit);
+  if (retainedEventCount === null || retainedEventLimit === null) {
+    return null;
+  }
+  return {
+    retainedEventCount,
+    retainedEventLimit,
+    truncated: optionalBoolean(value.truncated) ?? false,
   };
 }
 
@@ -625,5 +1129,8 @@ export function sanitizeManagedRuntimeProjection(
     ),
     links,
     actions,
+    waitingReason: sanitizeWaitingReason(value.waitingReason),
+    prReady: sanitizePrReadyTrustContext(value.prReady),
+    replay: sanitizeReplayWindow(value.replay),
   };
 }

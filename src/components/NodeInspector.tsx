@@ -18,6 +18,13 @@ import {
 import { trackerLabel, trackerUrl } from "../workstream-links";
 import { humanizeLaunchClaim } from "./launch-claim-display";
 import { ManagedRuntimeActionButton } from "./ManagedRuntimeActionButton";
+import {
+  ManagedSessionConsole,
+} from "./ManagedSessionConsole";
+import {
+  managedRuntimeConsoleEvents,
+  managedRuntimeStateTone,
+} from "./ManagedSessionConsoleEvents";
 
 interface NodeInspectorProps {
   entry: WorkstreamDerivedNode | null;
@@ -276,40 +283,41 @@ function RuntimeDetails({ overlay }: { overlay: WorkstreamRuntimeNodeOverlay | n
         </dl>
         {managedRuntime && (
           <div className="sl-managed-runtime-inspector">
-            <div className="sl-runtime-issue muted">
-              <span className="sl-runtime-issue-code">
-                {formatManagedRuntimeLabel(managedRuntime.projection.permissionProfile)}
-              </span>
-              <span>
-                {managedRuntime.projection.summary ??
-                  managedRuntime.projection.blockerSummary ??
-                  managedRuntime.projection.errorSummary ??
-                  "Background session progress is summarized from sanitized lifecycle events."}
-              </span>
-            </div>
-            {managedRuntime.progress.length > 0 && (
-              <ol>
-                {managedRuntime.progress.slice(-3).map((event) => (
-                  <li key={`${event.timestamp}-${event.phase}-${event.summary}`}>
-                    <span>{formatManagedRuntimeLabel(event.phase)}</span>
-                    <span>{event.summary}</span>
-                  </li>
-                ))}
-              </ol>
-            )}
-            <div className="sl-managed-runtime-placeholder-actions">
-              {resolveManagedRuntimeActions(managedRuntime.projection).map((action) => (
-                <ManagedRuntimeActionButton
-                  key={action.action}
-                  sessionId={primarySession?.id ?? ""}
-                  action={
-                    primarySession
-                      ? action
-                      : { ...action, available: false, reason: "No bound session." }
-                  }
-                />
-              ))}
-            </div>
+            <ManagedSessionConsole
+              title="Background session console"
+              subtitle={`${formatManagedRuntimeLabel(
+                managedRuntime.projection.permissionProfile,
+              )}; sanitized Streamliner activity only.`}
+              stateLabel={managedRuntime.lifecycleLabel}
+              stateTone={managedRuntimeStateTone(managedRuntime.projection)}
+              currentMessage={
+                managedRuntime.projection.summary ??
+                managedRuntime.projection.blockerSummary ??
+                managedRuntime.projection.errorSummary ??
+                undefined
+              }
+              events={managedRuntimeConsoleEvents(managedRuntime.projection)}
+              emptyMessage="No retained managed runtime activity yet."
+              waitingReason={managedRuntime.projection.waitingReason}
+              prReady={managedRuntime.projection.prReady}
+              replay={managedRuntime.projection.replay}
+              compact
+              footer={
+                <div className="sl-managed-runtime-placeholder-actions">
+                  {resolveManagedRuntimeActions(managedRuntime.projection).map((action) => (
+                    <ManagedRuntimeActionButton
+                      key={action.action}
+                      sessionId={primarySession?.id ?? ""}
+                      action={
+                        primarySession
+                          ? action
+                          : { ...action, available: false, reason: "No bound session." }
+                      }
+                    />
+                  ))}
+                </div>
+              }
+            />
           </div>
         )}
         <RuntimeIssueList issues={overlay.degradationReasons} />
