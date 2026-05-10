@@ -405,7 +405,7 @@ describe("DefaultManagedSdkRunner", () => {
     expect(capture.states).not.toContain("pr_ready");
   });
 
-  it("emits assistant and usage summary telemetry that survives runtime sanitization", async () => {
+  it("emits concise SDK console telemetry that survives runtime sanitization", async () => {
     const capture = createCapture();
     const runner = new DefaultManagedSdkRunner();
     await runner.start(createStartInput(capture));
@@ -415,8 +415,64 @@ describe("DefaultManagedSdkRunner", () => {
       onEvent?: (event: { type: string; data?: Record<string, unknown> }) => unknown;
     };
     config.onEvent?.({
+      type: "assistant.intent",
+      data: { intent: "Inspecting files before editing." },
+    });
+    config.onEvent?.({
+      type: "assistant.reasoning",
+      data: { content: "private reasoning text that must not persist", reasoningId: "r1" },
+    });
+    config.onEvent?.({
       type: "assistant.message",
-      data: { content: "raw assistant text that must not persist" },
+      data: { content: "Implemented the console update.", outputTokens: 42 },
+    });
+    config.onEvent?.({
+      type: "tool.execution_start",
+      data: {
+        toolName: "functions.powershell",
+        toolCallId: "tool-1",
+        arguments: {
+          description: "Run ESLint",
+          command: "npm run lint",
+        },
+      },
+    });
+    config.onEvent?.({
+      type: "tool.execution_partial_result",
+      data: {
+        toolCallId: "tool-1",
+        partialOutput: "line one\nline two",
+      },
+    });
+    config.onEvent?.({
+      type: "tool.execution_complete",
+      data: {
+        toolCallId: "tool-1",
+        success: true,
+        result: {
+          content: "summary",
+          detailedContent: "line one\nline two\nline three",
+        },
+      },
+    });
+    config.onEvent?.({
+      type: "subagent.started",
+      data: {
+        agentDisplayName: "Rubber Duck",
+        agentName: "rubber-duck",
+        agentDescription: "Reviews the implementation.",
+        toolCallId: "agent-tool-1",
+      },
+    });
+    config.onEvent?.({
+      type: "subagent.completed",
+      data: {
+        agentDisplayName: "Rubber Duck",
+        agentName: "rubber-duck",
+        model: "test-model",
+        toolCallId: "agent-tool-1",
+        totalToolCalls: 3,
+      },
     });
     config.onEvent?.({
       type: "session.usage_info",
@@ -428,20 +484,89 @@ describe("DefaultManagedSdkRunner", () => {
       {
         runtimeKind: "managed-sdk",
         runtimeOwner: "streamliner-sdk",
-        progressEvents: capture.progress.slice(-2),
+        progressEvents: capture.progress,
       },
       new Date("2026-05-07T12:00:00.000Z"),
     );
 
+    expect(runtime.progressEvents.map((event) => event.type)).toEqual([
+      "assistant_status",
+      "assistant_status",
+      "assistant_status",
+      "tool_started",
+      "tool_completed",
+      "subagent_status",
+      "subagent_status",
+    ]);
     expect(runtime.progressEvents).toEqual([
       expect.objectContaining({
         type: "assistant_status",
-        data: { contentLength: 40 },
+        data: expect.objectContaining({
+          assistantEventKind: "intent",
+          intent: "Inspecting files before editing.",
+        }),
       }),
       expect.objectContaining({
-        type: "usage",
-        data: { inputTokens: 12, outputTokens: 34 },
+        type: "assistant_status",
+        data: {
+          assistantEventKind: "reasoning",
+          contentLength: expect.any(Number),
+          reasoningId: "r1",
+        },
+      }),
+      expect.objectContaining({
+        type: "assistant_status",
+        data: {
+          assistantEventKind: "message",
+          contentLength: 31,
+          outputTokens: 42,
+        },
+      }),
+      expect.objectContaining({
+        type: "tool_started",
+        message: "Run ESLint (powershell)",
+        data: expect.objectContaining({
+          argumentCount: 2,
+          displayDetail: "npm run lint",
+          displayTitle: "Run ESLint (powershell)",
+          toolCallId: "tool-1",
+          toolName: "functions.powershell",
+        }),
+      }),
+      expect.objectContaining({
+        type: "tool_completed",
+        message: "Ran ESLint (powershell)",
+        data: expect.objectContaining({
+          displayDetail: "npm run lint",
+          displayTitle: "Ran ESLint (powershell)",
+          outputLineCount: 3,
+          success: true,
+          toolCallId: "tool-1",
+        }),
+      }),
+      expect.objectContaining({
+        type: "subagent_status",
+        message: "Started Rubber Duck.",
+        data: expect.objectContaining({
+          agentName: "rubber-duck",
+          displayDetail: "Reviews the implementation.",
+          displayTitle: "Started Rubber Duck.",
+        }),
+      }),
+      expect.objectContaining({
+        type: "subagent_status",
+        message: "Finished Rubber Duck.",
+        data: expect.objectContaining({
+          displayDetail: "test-model",
+          displayTitle: "Finished Rubber Duck.",
+          success: true,
+          totalToolCalls: 3,
+        }),
       }),
     ]);
+    expect(runtime.progressEvents.some((event) => event.type === "usage")).toBe(false);
+    expect(JSON.stringify(runtime.progressEvents)).not.toContain("private reasoning text");
+    expect(JSON.stringify(runtime.progressEvents)).not.toContain("arguments");
+    expect(JSON.stringify(runtime.progressEvents)).not.toContain("detailedContent");
   });
 });

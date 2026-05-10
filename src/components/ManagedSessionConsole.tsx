@@ -14,6 +14,7 @@ interface ManagedSessionConsoleProps {
   stateLabel?: string;
   stateTone?: "green" | "amber" | "red" | "muted" | "accent";
   currentMessage?: string;
+  showCurrentMessage?: boolean;
   events: readonly ManagedSessionConsoleEvent[];
   emptyMessage: string;
   live?: boolean;
@@ -30,6 +31,7 @@ export function ManagedSessionConsole({
   stateLabel,
   stateTone = "accent",
   currentMessage,
+  showCurrentMessage = true,
   events,
   emptyMessage,
   live = false,
@@ -56,10 +58,12 @@ export function ManagedSessionConsole({
         </div>
       </div>
 
-      <div className="sl-managed-console-current">
-        <span aria-hidden="true">streamliner $</span>
-        <strong>{latest}</strong>
-      </div>
+      {showCurrentMessage && (
+        <div className="sl-managed-console-current">
+          <span className="sl-managed-console-activity-dot" aria-hidden="true">•</span>
+          <em>{latest}</em>
+        </div>
+      )}
 
       <ol
         className="sl-managed-console-transcript"
@@ -69,32 +73,43 @@ export function ManagedSessionConsole({
       >
         {events.length === 0 ? (
           <li className="empty">
-            <span className="sl-managed-console-phase">waiting</span>
-            <span>{emptyMessage}</span>
+            <span className="sl-managed-console-entry-mark" aria-hidden="true">•</span>
+            <div className="sl-managed-console-entry-body">
+              <div className="sl-managed-console-entry-head">
+                <span className="sl-managed-console-phase">waiting</span>
+              </div>
+              <span className="sl-managed-console-summary">{emptyMessage}</span>
+            </div>
           </li>
         ) : (
           events.map((event, index) => (
             <li
-              className={event.status ?? "info"}
+              className={`${event.status ?? "info"} ${event.kind ? `kind-${event.kind}` : ""}`}
               key={`${event.timestamp}-${event.phase}-${index}`}
             >
-              <span className="sl-managed-console-time">
-                {formatConsoleTimestamp(event.timestamp)}
-              </span>
-              <span className="sl-managed-console-phase">
-                {formatManagedRuntimeLabel(event.phase)}
-              </span>
-              <span className="sl-managed-console-summary">
-                {event.summary}
-                {event.link?.url ? (
-                  <>
-                    {" "}
-                    <a href={event.link.url} target="_blank" rel="noopener noreferrer">
-                      {event.link.label}
-                    </a>
-                  </>
-                ) : null}
-              </span>
+              <span
+                className={consoleEventMarkClass(event)}
+                aria-hidden="true"
+              />
+              <div className="sl-managed-console-entry-body">
+                <div className="sl-managed-console-entry-head">
+                  <span className="sl-managed-console-entry-title">
+                    {event.summary}
+                    {event.link?.url ? (
+                      <>
+                        {" "}
+                        <a href={event.link.url} target="_blank" rel="noopener noreferrer">
+                          {event.link.label}
+                        </a>
+                      </>
+                    ) : null}
+                  </span>
+                  <span className="sl-managed-console-time">
+                    {formatConsoleTimestamp(event.timestamp)}
+                  </span>
+                </div>
+                <ConsoleEventDetails event={event} />
+              </div>
             </li>
           ))
         )}
@@ -102,11 +117,9 @@ export function ManagedSessionConsole({
 
       {replay && (
         <p className="sl-managed-console-replay-note">
-          Replaying {replay.retainedEventCount} retained sanitized event
-          {replay.retainedEventCount === 1 ? "" : "s"}
-          {replay.truncated
-            ? `; older activity was truncated at ${replay.retainedEventLimit} events.`
-            : "."}
+          Latest {replay.retainedEventCount} sanitized event
+          {replay.retainedEventCount === 1 ? "" : "s"} shown
+          {replay.truncated ? `; older activity is outside this preview.` : "."}
         </p>
       )}
 
@@ -115,6 +128,61 @@ export function ManagedSessionConsole({
       {footer && <div className="sl-managed-console-footer">{footer}</div>}
     </section>
   );
+}
+
+function ConsoleEventDetails({ event }: { event: ManagedSessionConsoleEvent }) {
+  const detailLines = event.detail?.split(/\r?\n/).filter((line) => line.length > 0) ?? [];
+  const outputSummary = event.count !== null && event.count !== undefined
+    ? formatOutputSummary(event.count)
+    : null;
+  if (detailLines.length === 0 && !outputSummary) {
+    return null;
+  }
+
+  const [firstDetail, ...remainingDetails] = detailLines;
+  return (
+    <details className="sl-managed-console-step-details" open>
+      <summary>
+        <span className="sl-managed-console-step-rail" aria-hidden="true">
+          {firstDetail ? "│" : "└"}
+        </span>
+        <span>{firstDetail ?? outputSummary}</span>
+      </summary>
+      {remainingDetails.map((line, index) => (
+        <div className="sl-managed-console-step-line" key={`${line}-${index}`}>
+          <span className="sl-managed-console-step-rail" aria-hidden="true">│</span>
+          <span>{line}</span>
+        </div>
+      ))}
+      {firstDetail && outputSummary ? (
+        <div className="sl-managed-console-step-line">
+          <span className="sl-managed-console-step-rail" aria-hidden="true">└</span>
+          <span>{outputSummary}</span>
+        </div>
+      ) : null}
+    </details>
+  );
+}
+
+function consoleEventMarkClass(event: ManagedSessionConsoleEvent): string {
+  const base = "sl-managed-console-entry-mark";
+  if (event.status === "error") {
+    return `${base} error`;
+  }
+  if (event.kind === "assistant-status") {
+    return `${base} agent`;
+  }
+  if (event.kind === "tool") {
+    return `${base} tool`;
+  }
+  if (event.phase === "lifecycle") {
+    return `${base} background`;
+  }
+  return `${base} background`;
+}
+
+function formatOutputSummary(count: number): string {
+  return count === 1 ? "1 line..." : `${count} lines...`;
 }
 
 function WaitingReasonPanel({

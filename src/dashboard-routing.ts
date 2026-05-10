@@ -4,10 +4,12 @@ export type DashboardRoute =
   | { view: "landing"; message?: string }
   | { view: "workstreams"; message?: string }
   | { view: "settings"; section?: "profiles" | "session-launch" }
+  | { view: "prototype"; prototype: "managed-consoles" }
   | {
       view: "sessions";
       workstreamId?: string | null;
       nodeId?: string | null;
+      tab?: "list" | "consoles" | null;
     }
   | {
       view: "workstream";
@@ -39,6 +41,9 @@ function sessionsRoutePath(route: Extract<DashboardRoute, { view: "sessions" }>)
   if (route.nodeId) {
     search.set("nodeId", route.nodeId);
   }
+  if (route.tab === "consoles") {
+    search.set("tab", "consoles");
+  }
   const suffix = search.toString();
   return suffix.length > 0 ? `/sessions?${suffix}` : "/sessions";
 }
@@ -49,6 +54,8 @@ export function routePath(route: DashboardRoute): string {
       return sessionsRoutePath(route);
     case "settings":
       return route.section === "profiles" ? "/settings/profiles" : "/settings/session-launch";
+    case "prototype":
+      return "/__prototype/managed-consoles";
     case "workstream":
       return workstreamRoutePath(route);
     case "workstreams":

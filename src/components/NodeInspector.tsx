@@ -13,19 +13,12 @@ import type {
 import {
   formatManagedRuntimeLabel,
   managedLifecycleStatusClass,
-  resolveManagedRuntimeActions,
 } from "../managed-runtime-contract";
 import { trackerLabel, trackerUrl } from "../workstream-links";
 import { humanizeLaunchClaim } from "./launch-claim-display";
-import { ManagedRuntimeActionButton } from "./ManagedRuntimeActionButton";
 import {
-  ManagedSessionConsole,
-} from "./ManagedSessionConsole";
-import {
-  isManagedRuntimeConsoleLive,
-  managedRuntimeConsoleEvents,
-  managedRuntimeStateTone,
-} from "./ManagedSessionConsoleEvents";
+  ManagedRuntimeConsolePanel,
+} from "./ManagedRuntimeConsolePanel";
 
 interface NodeInspectorProps {
   entry: WorkstreamDerivedNode | null;
@@ -39,6 +32,9 @@ interface NodeInspectorProps {
   launchRecordError?: string | null;
   runtimeOverlay?: WorkstreamRuntimeNodeOverlay | null;
   onLaunch?: () => void;
+  onOpenConsole?: () => void;
+  onOpenConsoleInSessions?: () => void | Promise<void>;
+  onManagedRuntimeActionComplete?: () => void | Promise<void>;
 }
 
 function formatStatus(status: string): string {
@@ -197,7 +193,17 @@ function RuntimeIssueList({
   );
 }
 
-function RuntimeDetails({ overlay }: { overlay: WorkstreamRuntimeNodeOverlay | null }) {
+function RuntimeDetails({
+  overlay,
+  onOpenConsole,
+  onOpenConsoleInSessions,
+  onManagedRuntimeActionComplete,
+}: {
+  overlay: WorkstreamRuntimeNodeOverlay | null;
+  onOpenConsole?: () => void;
+  onOpenConsoleInSessions?: () => void | Promise<void>;
+  onManagedRuntimeActionComplete?: () => void | Promise<void>;
+}) {
   if (!overlay) {
     return null;
   }
@@ -284,41 +290,33 @@ function RuntimeDetails({ overlay }: { overlay: WorkstreamRuntimeNodeOverlay | n
         </dl>
         {managedRuntime && (
           <div className="sl-managed-runtime-inspector">
-            <ManagedSessionConsole
+            <div className="sl-managed-runtime-inspector-actions">
+              <button
+                className="sl-action-btn primary"
+                type="button"
+                disabled={!onOpenConsole}
+                onClick={onOpenConsole}
+              >
+                Open console
+              </button>
+              <button
+                className="sl-action-btn"
+                type="button"
+                disabled={!onOpenConsoleInSessions}
+                onClick={() => void onOpenConsoleInSessions?.()}
+              >
+                Open in Sessions
+              </button>
+            </div>
+            <ManagedRuntimeConsolePanel
+              runtime={managedRuntime.projection}
+              sessionId={primarySession?.id ?? null}
               title="Background session console"
               subtitle={`${formatManagedRuntimeLabel(
                 managedRuntime.projection.permissionProfile,
               )}; sanitized Streamliner activity only.`}
-              stateLabel={managedRuntime.lifecycleLabel}
-              stateTone={managedRuntimeStateTone(managedRuntime.projection)}
-              currentMessage={
-                managedRuntime.projection.summary ??
-                managedRuntime.projection.blockerSummary ??
-                managedRuntime.projection.errorSummary ??
-                undefined
-              }
-              events={managedRuntimeConsoleEvents(managedRuntime.projection)}
-              emptyMessage="No retained managed runtime activity yet."
-              waitingReason={managedRuntime.projection.waitingReason}
-              prReady={managedRuntime.projection.prReady}
-              replay={managedRuntime.projection.replay}
-              live={isManagedRuntimeConsoleLive(managedRuntime.projection)}
               compact
-              footer={
-                <div className="sl-managed-runtime-placeholder-actions">
-                  {resolveManagedRuntimeActions(managedRuntime.projection).map((action) => (
-                    <ManagedRuntimeActionButton
-                      key={action.action}
-                      sessionId={primarySession?.id ?? ""}
-                      action={
-                        primarySession
-                          ? action
-                          : { ...action, available: false, reason: "No bound session." }
-                      }
-                    />
-                  ))}
-                </div>
-              }
+              onActionComplete={onManagedRuntimeActionComplete}
             />
           </div>
         )}
@@ -362,6 +360,9 @@ export function NodeInspector({
   launchRecordError,
   runtimeOverlay = null,
   onLaunch,
+  onOpenConsole,
+  onOpenConsoleInSessions,
+  onManagedRuntimeActionComplete,
 }: NodeInspectorProps) {
   if (!entry) {
     return (
@@ -454,7 +455,12 @@ export function NodeInspector({
         </div>
       </div>
 
-      <RuntimeDetails overlay={runtimeOverlay} />
+      <RuntimeDetails
+        overlay={runtimeOverlay}
+        onOpenConsole={onOpenConsole}
+        onOpenConsoleInSessions={onOpenConsoleInSessions}
+        onManagedRuntimeActionComplete={onManagedRuntimeActionComplete}
+      />
 
       {(launchRecordLoading || launchRecordError || launchRecord || launchOperation) && (
         <div className="sl-sidebar-section">

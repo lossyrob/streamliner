@@ -2059,7 +2059,7 @@ describe("App sessions route", () => {
       });
       await settle();
       expect(container.textContent).toContain("Creating WorkflowContext.md");
-      expect(container.textContent).toContain("streamliner $");
+      expect(container.textContent).toContain("Agent Message");
       expect(container.textContent).toContain("read-only");
       act(() => {
         nodeLaunchRecord = {

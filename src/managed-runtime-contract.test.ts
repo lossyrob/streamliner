@@ -322,6 +322,25 @@ describe("managed runtime contract", () => {
     ]));
   });
 
+  it("does not show PR trust context for ordinary running sessions", () => {
+    const projection = managedRuntimeProjectionFromSession({
+      runtime: managedRuntime({
+        lifecycleState: "running",
+        progressEvents: [{
+          id: "progress-running",
+          sequence: 1,
+          timestamp: "2026-05-05T12:03:00.000Z",
+          type: "assistant_status",
+          message: "Assistant status updated.",
+        }],
+      }),
+      repo: "lossyrob/streamliner",
+      branch: "feature/managed-session-console",
+    });
+
+    expect(projection?.prReady).toBeNull();
+  });
+
   it("drops unsafe PR-ready URLs while preserving derived GitHub links", () => {
     const projection = managedRuntimeProjectionFromSession({
       runtime: managedRuntime({

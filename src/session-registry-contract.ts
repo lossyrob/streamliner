@@ -97,6 +97,63 @@ export interface SessionRegistryListItem {
   derivedContextEventsMtimeMs: number | null;
 }
 
+export function sessionRegistryRecordToListItem(
+  record: SessionRegistryRecord,
+): SessionRegistryListItem {
+  return {
+    id: record.id,
+    version: record.version,
+    title: record.title,
+    titleSource: record.titleSource,
+    description: record.description,
+    lifecycleStatus: record.lifecycleStatus,
+    lastSeenAt: record.lastSeenAt,
+    updatedAt: record.updatedAt,
+    color: record.color,
+    cwd: record.cwd,
+    repo: record.repo,
+    branch: record.branch,
+    tags: record.tags,
+    originKind: record.origin.kind,
+    launchCliArgs: record.origin.kind === "launched" && Array.isArray(record.origin.cliArgs)
+      ? [...record.origin.cliArgs]
+      : null,
+    graphBinding: record.graphBinding,
+    pawLaunch: record.pawLaunch,
+    runtime: record.runtime ?? null,
+    copilotSessionId: record.copilotSessionId,
+    aiSummary: record.aiSummary,
+    aiSummaryModel: record.aiSummaryModel,
+    aiSummaryUpdatedAt: record.aiSummaryUpdatedAt,
+    aiSummaryEventsFingerprint: record.aiSummaryEventsFingerprint,
+    aiSummaryStatus: record.aiSummaryStatus,
+    aiSummaryError: record.aiSummaryError,
+    observedSessionKind: record.observedSessionKind,
+    copilotProcessState: record.copilotProcessState,
+    copilotProcessId: record.copilotProcessId,
+    activityStatus: record.activityStatus,
+    activityStatusUpdatedAt: record.activityStatusUpdatedAt,
+    activityEvidence: record.activityEvidence,
+    pawWorkflow: record.pawWorkflow,
+    trustedSignalSource: record.trustedSignalSource,
+    trustedStartedAt: record.trustedStartedAt,
+    trustedEndedAt: record.trustedEndedAt,
+    trustedLastSignalAt: record.trustedLastSignalAt,
+    trustedStartSource: record.trustedStartSource,
+    trustedEndReason: record.trustedEndReason,
+    trustedExecutionKind: record.trustedExecutionKind,
+    trustedInitialPromptLength: record.trustedInitialPromptLength,
+    trustedLastPromptLength: record.trustedLastPromptLength,
+    derivedWorktreePath: record.derivedWorktreePath,
+    derivedBranch: record.derivedBranch,
+    derivedGithubRefs: record.derivedGithubRefs,
+    derivedContextUpdatedAt: record.derivedContextUpdatedAt,
+    derivedContextEventsOffset: record.derivedContextEventsOffset,
+    derivedContextEventsSize: record.derivedContextEventsSize,
+    derivedContextEventsMtimeMs: record.derivedContextEventsMtimeMs,
+  };
+}
+
 interface SessionRegistryUpsertInputBase {
   id?: string;
   title: string;

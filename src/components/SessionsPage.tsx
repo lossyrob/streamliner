@@ -9,14 +9,17 @@ import {
   useState,
 } from "react";
 
-import type { SessionRegistryListItem, SessionRegistryPatch } from "../session-registry-contract";
+import {
+  sessionRegistryRecordToListItem,
+  type SessionRegistryListItem,
+  type SessionRegistryPatch,
+} from "../session-registry-contract";
 import type { SessionRegistryRecord } from "../session-registry-schema";
 import type { ManagedRuntimeProjection } from "../managed-runtime-contract";
 import {
   formatManagedRuntimeLabel,
   managedLifecycleStatusClass,
   managedRuntimeProjectionFromSession,
-  resolveManagedRuntimeActions,
 } from "../managed-runtime-contract";
 import {
   handleInAppLinkClick,
@@ -58,15 +61,10 @@ import {
 import {
   TerminalColorQuickPicker,
 } from "./SessionColorPicker";
-import { ManagedRuntimeActionButton } from "./ManagedRuntimeActionButton";
 import {
-  ManagedSessionConsole,
-} from "./ManagedSessionConsole";
-import {
-  isManagedRuntimeConsoleLive,
-  managedRuntimeConsoleEvents,
-  managedRuntimeStateTone,
-} from "./ManagedSessionConsoleEvents";
+  ManagedRuntimeConsolePanel,
+} from "./ManagedRuntimeConsolePanel";
+import { isManagedRuntimeConsoleLive } from "./ManagedSessionConsoleEvents";
 import { sessionRegistryListUrl } from "../session-registry-client";
 
 const SESSION_POLL_INTERVAL_MS = 15_000;
@@ -76,6 +74,7 @@ const SESSION_STALE_DAYS_STORAGE_KEY = "streamliner:sessionsStaleDays";
 const SESSION_GROUP_MODE_STORAGE_KEY = "streamliner:sessionsGroupMode";
 
 type GroupMode = "recency" | "repo" | "folder" | "workstream" | "flat";
+type SessionsViewTab = "list" | "consoles";
 type SheetTab = "overview" | "activity" | "settings";
 
 const GROUP_MODES: Array<{ mode: GroupMode; label: string }> = [
@@ -138,60 +137,7 @@ function createEmptyDraft(): SessionDraft {
   };
 }
 
-function toListItem(record: SessionRegistryRecord): SessionRegistryListItem {
-  return {
-    id: record.id,
-    version: record.version,
-    title: record.title,
-    titleSource: record.titleSource,
-    description: record.description,
-    lifecycleStatus: record.lifecycleStatus,
-    lastSeenAt: record.lastSeenAt,
-    updatedAt: record.updatedAt,
-    color: record.color,
-    cwd: record.cwd,
-    repo: record.repo,
-    branch: record.branch,
-    tags: record.tags,
-    originKind: record.origin.kind,
-    launchCliArgs: record.origin.kind === "launched" && Array.isArray(record.origin.cliArgs)
-      ? [...record.origin.cliArgs]
-      : null,
-    graphBinding: record.graphBinding,
-    pawLaunch: record.pawLaunch,
-    runtime: record.runtime ?? null,
-    copilotSessionId: record.copilotSessionId,
-    aiSummary: record.aiSummary,
-    aiSummaryModel: record.aiSummaryModel,
-    aiSummaryUpdatedAt: record.aiSummaryUpdatedAt,
-    aiSummaryEventsFingerprint: record.aiSummaryEventsFingerprint,
-    aiSummaryStatus: record.aiSummaryStatus,
-    aiSummaryError: record.aiSummaryError,
-    observedSessionKind: record.observedSessionKind,
-    copilotProcessState: record.copilotProcessState,
-    copilotProcessId: record.copilotProcessId,
-    activityStatus: record.activityStatus,
-    activityStatusUpdatedAt: record.activityStatusUpdatedAt,
-    activityEvidence: record.activityEvidence,
-    pawWorkflow: record.pawWorkflow,
-    trustedSignalSource: record.trustedSignalSource,
-    trustedStartedAt: record.trustedStartedAt,
-    trustedEndedAt: record.trustedEndedAt,
-    trustedLastSignalAt: record.trustedLastSignalAt,
-    trustedStartSource: record.trustedStartSource,
-    trustedEndReason: record.trustedEndReason,
-    trustedExecutionKind: record.trustedExecutionKind,
-    trustedInitialPromptLength: record.trustedInitialPromptLength,
-    trustedLastPromptLength: record.trustedLastPromptLength,
-    derivedWorktreePath: record.derivedWorktreePath,
-    derivedBranch: record.derivedBranch,
-    derivedGithubRefs: record.derivedGithubRefs,
-    derivedContextUpdatedAt: record.derivedContextUpdatedAt,
-    derivedContextEventsOffset: record.derivedContextEventsOffset,
-    derivedContextEventsSize: record.derivedContextEventsSize,
-    derivedContextEventsMtimeMs: record.derivedContextEventsMtimeMs,
-  };
-}
+const toListItem = sessionRegistryRecordToListItem;
 
 function normalizeTags(tagsText: string): string[] {
   const seen = new Set<string>();
@@ -914,6 +860,35 @@ function managedRuntimeSummaryText(runtime: ManagedRuntimeProjection): string {
   );
 }
 
+function managedRuntimeUpdatedTimestamp(session: SessionRegistryListItem): number {
+  const runtime = getManagedRuntime(session);
+  return Date.parse(
+    runtime?.lifecycleUpdatedAt ??
+      session.lastSeenAt ??
+      session.updatedAt,
+  );
+}
+
+function sortManagedConsoleSessions(
+  sessions: readonly SessionRegistryListItem[],
+): SessionRegistryListItem[] {
+  return sessions
+    .filter((session) => getManagedRuntime(session))
+    .sort((a, b) => {
+      const aRuntime = getManagedRuntime(a);
+      const bRuntime = getManagedRuntime(b);
+      if (!aRuntime || !bRuntime) {
+        return 0;
+      }
+      const activeDelta = Number(isManagedRuntimeConsoleLive(bRuntime)) -
+        Number(isManagedRuntimeConsoleLive(aRuntime));
+      if (activeDelta !== 0) {
+        return activeDelta;
+      }
+      return managedRuntimeUpdatedTimestamp(b) - managedRuntimeUpdatedTimestamp(a);
+    });
+}
+
 type RecencyBucketKey =
   | "trusted-active"
   | "trusted-interrupted"
@@ -1178,6 +1153,7 @@ interface SessionsPageProps {
   onOpenWorkstream?: (target: WorkstreamRouteTarget) => void | Promise<void>;
   routeWorkstreamId?: string | null;
   routeNodeId?: string | null;
+  routeTab?: SessionsViewTab | null;
 }
 
 function buildVisibleRestartCommand(
@@ -1213,6 +1189,7 @@ export function SessionsPage({
   onOpenWorkstream,
   routeWorkstreamId = null,
   routeNodeId = null,
+  routeTab = null,
 }: SessionsPageProps) {
   const [sessions, setSessions] = useState<SessionRegistryListItem[]>([]);
   const [workstreamGraphs, setWorkstreamGraphs] = useState<
@@ -1222,9 +1199,13 @@ export function SessionsPage({
   const [showArchived, setShowArchived] = useState(false);
   const [showEnded, setShowEnded] = useState(false);
   const [showAllObserved, setShowAllObserved] = useState(false);
+  const [viewTab, setViewTab] = useState<SessionsViewTab>(
+    routeTab === "consoles" ? "consoles" : "list",
+  );
   const [staleSessionDays, setStaleSessionDays] = useState(readStaleSessionDays);
   const [groupMode, setGroupMode] = useState<GroupMode>(readGroupMode);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedConsoleId, setSelectedConsoleId] = useState<string | null>(null);
   const [draft, setDraft] = useState<SessionDraft>(createEmptyDraft);
   const [selectedSnapshot, setSelectedSnapshot] = useState<SessionRegistryListItem | null>(
     null,
@@ -1494,6 +1475,17 @@ export function SessionsPage({
       ),
     [endedFilteredSessions, staleSessionDays],
   );
+  const consoleSessions = useMemo(
+    () => sortManagedConsoleSessions(visibleSessions),
+    [visibleSessions],
+  );
+  const selectedConsoleSession = useMemo(
+    () =>
+      consoleSessions.find((session) => session.id === selectedConsoleId) ??
+      consoleSessions[0] ??
+      null,
+    [consoleSessions, selectedConsoleId],
+  );
   const hiddenGraphScopedManualCount = sessions.length - graphScopedSessions.length;
   const hiddenObservedSessionCount =
     graphScopedSessions.length - relevanceFilteredSessions.length;
@@ -1508,6 +1500,17 @@ export function SessionsPage({
       mountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    setViewTab(routeTab === "consoles" ? "consoles" : "list");
+  }, [routeTab]);
+
+  useEffect(() => {
+    if (routeTab === "consoles" && (routeWorkstreamId || routeNodeId)) {
+      setShowArchived(true);
+      setShowEnded(true);
+    }
+  }, [routeNodeId, routeTab, routeWorkstreamId]);
 
   useEffect(() => {
     const entriesToLoad = new Map<string, WorkstreamRegistryListEntry>();
@@ -2108,11 +2111,35 @@ export function SessionsPage({
           </button>
           <button
             className="sl-action-btn primary"
-            onClick={() => void startCreating()}
+            onClick={() => {
+              setViewTab("list");
+              void startCreating();
+            }}
           >
             + New session
           </button>
         </div>
+      </div>
+
+      <div className="sl-sessions-view-tabs" role="tablist" aria-label="Sessions views">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={viewTab === "list"}
+          className={`sl-sheet-tab${viewTab === "list" ? " active" : ""}`}
+          onClick={() => setViewTab("list")}
+        >
+          Session list
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={viewTab === "consoles"}
+          className={`sl-sheet-tab${viewTab === "consoles" ? " active" : ""}`}
+          onClick={() => setViewTab("consoles")}
+        >
+          Background consoles
+        </button>
       </div>
 
       <div className="sl-sessions-filters">
@@ -2145,31 +2172,33 @@ export function SessionsPage({
         </label>
       </div>
 
-      <div className="sl-sessions-group-bar">
-        <span className="sl-seg-label">Group by</span>
-        <div className="sl-seg" role="tablist">
-          {GROUP_MODES.map(({ mode, label }) => (
-            <button
-              key={mode}
-              role="tab"
-              aria-selected={mode === groupMode}
-              className={`sl-seg-btn${mode === groupMode ? " active" : ""}`}
-              onClick={() => setGroupMode(mode)}
-            >
-              {label}
-            </button>
-          ))}
+      {viewTab === "list" && (
+        <div className="sl-sessions-group-bar">
+          <span className="sl-seg-label">Group by</span>
+          <div className="sl-seg" role="tablist">
+            {GROUP_MODES.map(({ mode, label }) => (
+              <button
+                key={mode}
+                role="tab"
+                aria-selected={mode === groupMode}
+                className={`sl-seg-btn${mode === groupMode ? " active" : ""}`}
+                onClick={() => setGroupMode(mode)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <button
+            className="sl-seg-resort"
+            disabled={groupMode === "recency" || groupMode === "flat" || groupMode === "workstream"}
+            onClick={handleResort}
+            title="Re-sort groups by most recent activity"
+          >
+            ↻ Resort
+          </button>
+          <span className="sl-seg-note">{freezeNote}</span>
         </div>
-        <button
-          className="sl-seg-resort"
-          disabled={groupMode === "recency" || groupMode === "flat" || groupMode === "workstream"}
-          onClick={handleResort}
-          title="Re-sort groups by most recent activity"
-        >
-          ↻ Resort
-        </button>
-        <span className="sl-seg-note">{freezeNote}</span>
-      </div>
+      )}
 
       {(routeWorkstreamId || routeNodeId) && (
         <div className="sl-sessions-filter-note">
@@ -2224,6 +2253,16 @@ export function SessionsPage({
 
       {error && <div className="sl-action-error">{error}</div>}
 
+      {viewTab === "consoles" ? (
+        <BackgroundConsolesView
+          sessions={consoleSessions}
+          selectedSession={selectedConsoleSession}
+          loading={loading}
+          onSelect={setSelectedConsoleId}
+          onActionComplete={fetchSessions}
+        />
+      ) : (
+        <>
       <div className="sl-sessions-groups">
         {loading ? (
           <div className="sl-empty-state">Loading sessions…</div>
@@ -2648,6 +2687,8 @@ export function SessionsPage({
           </div>
         </>
       )}
+        </>
+      )}
     </div>
   );
 }
@@ -2658,6 +2699,91 @@ interface SessionOverviewProps {
   defaultCliArgs: readonly string[] | null;
   onOpenWorkstream?: (target: WorkstreamRouteTarget) => void | Promise<void>;
   onSessionActionComplete?: () => void | Promise<void>;
+}
+
+function BackgroundConsolesView({
+  sessions,
+  selectedSession,
+  loading,
+  onSelect,
+  onActionComplete,
+}: {
+  sessions: readonly SessionRegistryListItem[];
+  selectedSession: SessionRegistryListItem | null;
+  loading: boolean;
+  onSelect: (id: string) => void;
+  onActionComplete?: () => void | Promise<void>;
+}) {
+  const selectedRuntime = selectedSession ? getManagedRuntime(selectedSession) : null;
+  return (
+    <section className="sl-managed-console-monitor">
+      <aside className="sl-managed-console-monitor-rail" aria-label="Background session consoles">
+        <div className="sl-managed-console-monitor-rail-head">
+          <span className="sl-eyebrow">Background consoles</span>
+          <strong>{sessions.length}</strong>
+        </div>
+        {loading ? (
+          <div className="sl-empty-state">Loading background consoles...</div>
+        ) : sessions.length === 0 ? (
+          <div className="sl-empty-state">
+            No background session consoles match the current filters.
+          </div>
+        ) : (
+          sessions.map((session) => {
+            const runtime = getManagedRuntime(session);
+            if (!runtime) {
+              return null;
+            }
+            const active = selectedSession?.id === session.id;
+            return (
+              <button
+                className={active ? "active" : ""}
+                key={session.id}
+                type="button"
+                onClick={() => onSelect(session.id)}
+              >
+                <strong>{getRowFallbackTitle(session)}</strong>
+                <span>{managedRuntimeLifecycleText(runtime)}</span>
+                <small>{managedRuntimeSummaryText(runtime)}</small>
+              </button>
+            );
+          })
+        )}
+      </aside>
+      <div className="sl-managed-console-monitor-main">
+        {selectedSession && selectedRuntime ? (
+          <>
+            <div className="sl-managed-console-monitor-toolbar">
+              <div>
+                <span className="sl-eyebrow">Focused console</span>
+                <h2>{getRowFallbackTitle(selectedSession)}</h2>
+                <p>
+                  {selectedSession.repo ?? "(no repo)"}
+                  {selectedSession.branch ? ` / ${selectedSession.branch}` : ""}
+                </p>
+              </div>
+              <span className={`sl-managed-runtime-state ${managedLifecycleStatusClass(selectedRuntime.lifecycleState)}`}>
+                {managedRuntimeLifecycleText(selectedRuntime)}
+              </span>
+            </div>
+            <ManagedRuntimeConsolePanel
+              runtime={selectedRuntime}
+              sessionId={selectedSession.id}
+              title="Runtime transcript"
+              subtitle="Sanitized Streamliner activity."
+              showCurrentMessage={false}
+              eventLimit={50}
+              onActionComplete={onActionComplete}
+            />
+          </>
+        ) : (
+          <div className="sl-empty-state">
+            Select a background session console to inspect retained activity.
+          </div>
+        )}
+      </div>
+    </section>
+  );
 }
 
 type CopyState = "idle" | "copied" | "error";
@@ -2952,7 +3078,6 @@ function ManagedRuntimeOverview({
   onActionComplete?: () => void | Promise<void>;
 }) {
   const sdk = runtime.sdk ?? null;
-  const actions = resolveManagedRuntimeActions(runtime);
 
   return (
     <section className="sl-session-overview-section managed-runtime">
@@ -3000,30 +3125,12 @@ function ManagedRuntimeOverview({
           </>
         )}
       </dl>
-      <ManagedSessionConsole
+      <ManagedRuntimeConsolePanel
+        runtime={runtime}
+        sessionId={sessionId}
         title="Managed session console"
         subtitle="Replayed from bounded sanitized Streamliner runtime activity; open terminal takeover for interactive control."
-        stateLabel={managedRuntimeLifecycleText(runtime)}
-        stateTone={managedRuntimeStateTone(runtime)}
-        currentMessage={managedRuntimeSummaryText(runtime)}
-        events={managedRuntimeConsoleEvents(runtime)}
-        emptyMessage="No retained managed runtime activity yet."
-        waitingReason={runtime.waitingReason}
-        prReady={runtime.prReady}
-        replay={runtime.replay}
-        live={isManagedRuntimeConsoleLive(runtime)}
-        footer={
-          <div className="sl-session-managed-actions">
-            {actions.map((action) => (
-              <ManagedRuntimeActionButton
-                key={action.action}
-                sessionId={sessionId}
-                action={action}
-                onComplete={onActionComplete}
-              />
-            ))}
-          </div>
-        }
+        onActionComplete={onActionComplete}
       />
     </section>
   );

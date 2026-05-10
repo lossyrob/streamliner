@@ -56,6 +56,7 @@ export const MANAGED_RUNTIME_PROGRESS_KINDS = [
   "lifecycle",
   "assistant-status",
   "tool",
+  "background",
   "permission",
   "mcp",
   "skill",
@@ -103,7 +104,9 @@ export interface ManagedRuntimeProgressEvent {
   kind?: ManagedRuntimeProgressKind;
   status?: "info" | "success" | "warning" | "error";
   link?: ManagedRuntimeSafeLink | null;
+  detail?: string | null;
   count?: number | null;
+  correlationId?: string | null;
 }
 
 export interface ManagedRuntimeLink {
@@ -388,6 +391,9 @@ export function managedRuntimeProgressEvents(
           url: optionalString(event.link.url),
         };
       }
+      if (typeof event.detail === "string") {
+        progressEvent.detail = progressEventSummary(event.detail);
+      }
       if (typeof event.count === "number") {
         progressEvent.count = event.count;
       }
@@ -438,6 +444,7 @@ const RUNTIME_PROGRESS_KINDS_BY_EVENT_TYPE: Partial<
   assistant_status: "assistant-status",
   tool_started: "tool",
   tool_completed: "tool",
+  subagent_status: "background",
   permission_decision: "permission",
   mcp_status: "mcp",
   skill_status: "skill",
@@ -554,6 +561,15 @@ function progressStatusForRuntimeEvent(
   if (event.type === "error") {
     return "error";
   }
+  if (event.type === "subagent_status" && runtimeProgressDataBoolean(event, "success") === false) {
+    return "error";
+  }
+  if (event.type === "subagent_status" && runtimeProgressDataBoolean(event, "success") === true) {
+    return "success";
+  }
+  if (event.type === "tool_completed" && runtimeProgressDataBoolean(event, "success") === false) {
+    return "error";
+  }
   if (event.type === "tool_completed" || event.type === "evidence") {
     return "success";
   }
@@ -561,6 +577,128 @@ function progressStatusForRuntimeEvent(
     return "warning";
   }
   return "info";
+}
+
+function runtimeProgressDataString(
+  event: SessionRegistryRuntimeProgressEvent,
+  key: string,
+): string | null {
+  const value = event.data?.[key];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function runtimeProgressDataBoolean(
+  event: SessionRegistryRuntimeProgressEvent,
+  key: string,
+): boolean | null {
+  const value = event.data?.[key];
+  return typeof value === "boolean" ? value : null;
+}
+
+function runtimeProgressDataNumber(
+  event: SessionRegistryRuntimeProgressEvent,
+  key: string,
+): number | null {
+  const value = event.data?.[key];
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+function runtimeProgressKind(
+  event: SessionRegistryRuntimeProgressEvent,
+): ManagedRuntimeProgressKind {
+  if (
+    event.type === "assistant_status" &&
+    runtimeProgressDataString(event, "assistantEventKind") !== "message"
+  ) {
+    return "summary";
+  }
+  return RUNTIME_PROGRESS_KINDS_BY_EVENT_TYPE[event.type] ?? "summary";
+}
+
+function runtimeToolLabel(event: SessionRegistryRuntimeProgressEvent): string | null {
+  const toolName = runtimeProgressDataString(event, "toolName") ??
+    runtimeProgressDataString(event, "name");
+  if (!toolName) {
+    return null;
+  }
+  return toolName.replace(/^functions\./, "");
+}
+
+function runtimeProgressDetail(
+  event: SessionRegistryRuntimeProgressEvent,
+): string | null {
+  switch (event.type) {
+    case "tool_started":
+    case "tool_completed":
+      return runtimeProgressDataString(event, "displayDetail") ??
+        runtimeProgressDataString(event, "displayPath") ??
+        runtimeToolLabel(event);
+    case "subagent_status":
+      return runtimeProgressDataString(event, "displayDetail") ??
+        runtimeProgressDataString(event, "agentName") ??
+        runtimeProgressDataString(event, "model");
+    case "skill_status":
+      return runtimeProgressDataString(event, "skillName") ??
+        runtimeProgressDataString(event, "name");
+    default:
+      return null;
+  }
+}
+
+function runtimeProgressCount(
+  event: SessionRegistryRuntimeProgressEvent,
+): number | null {
+  return runtimeProgressDataNumber(event, "outputLineCount") ??
+    runtimeProgressDataNumber(event, "lineCount");
+}
+
+function runtimeProgressSummary(
+  event: SessionRegistryRuntimeProgressEvent,
+): string {
+  const toolLabel = runtimeToolLabel(event);
+  switch (event.type) {
+    case "assistant_status": {
+      const intent = runtimeProgressDataString(event, "intent");
+      const content = runtimeProgressDataString(event, "content");
+      if (content) {
+        return progressEventSummary(content);
+      }
+      if (intent) {
+        return progressEventSummary(intent);
+      }
+      if (event.message === "Assistant status updated.") {
+        return "Thinking...";
+      }
+      if (event.message === "Assistant message received.") {
+        return "Assistant responded.";
+      }
+      return progressEventSummary(event.message);
+    }
+    case "tool_started":
+      return runtimeProgressDataString(event, "displayTitle") ??
+        (toolLabel
+          ? `Running ${toolLabel}.`
+          : progressEventSummary(event.message));
+    case "tool_completed": {
+      const success = runtimeProgressDataBoolean(event, "success");
+      return runtimeProgressDataString(event, "displayTitle") ??
+        (toolLabel
+          ? `${success === false ? "Failed" : "Ran"} ${toolLabel}.`
+           : progressEventSummary(event.message));
+    }
+    case "subagent_status":
+      return runtimeProgressDataString(event, "displayTitle") ??
+        progressEventSummary(event.message);
+    case "skill_status": {
+      const skillName = runtimeProgressDataString(event, "skillName") ??
+        runtimeProgressDataString(event, "name");
+      return skillName
+        ? `Invoked ${skillName}.`
+        : progressEventSummary(event.message);
+    }
+    default:
+      return progressEventSummary(event.message);
+  }
 }
 
 function evidenceLinkKind(
@@ -732,6 +870,15 @@ function prReadyTrustContext(
 ): ManagedRuntimePrReadyTrustContext | null {
   const evidence = latestRuntimeEvidence(runtime, "pr_ready");
   const derivedPullRequest = latestDerivedPullRequest(context);
+  const prLifecycleActive =
+    runtime.lifecycleState === "pr_ready" ||
+    runtime.lifecycleState === "review_ready" ||
+    runtime.lifecycleState === "cleanup_ready" ||
+    runtime.lifecycleState === "cleaning_up" ||
+    runtime.lifecycleState === "cleaned_up";
+  if (!prLifecycleActive && !evidence && !derivedPullRequest) {
+    return null;
+  }
   const repo = evidence?.repo ?? derivedPullRequest?.repo ?? context.repo ?? null;
   const number = evidence?.number ?? derivedPullRequest?.number ?? null;
   const url = safeGithubPullRequestUrl(evidence?.url ?? derivedPullRequest?.url ?? null) ??
@@ -945,9 +1092,13 @@ export function managedRuntimeProjectionFromMetadata(
   const progress: ManagedRuntimeProgressEvent[] = runtime.progressEvents.map((event) => ({
     timestamp: event.timestamp,
     phase: event.type,
-    summary: progressEventSummary(event.message),
-    kind: RUNTIME_PROGRESS_KINDS_BY_EVENT_TYPE[event.type] ?? "summary",
+    summary: runtimeProgressSummary(event),
+    kind: runtimeProgressKind(event),
     status: progressStatusForRuntimeEvent(event),
+    detail: runtimeProgressDetail(event),
+    count: runtimeProgressCount(event),
+    correlationId: runtimeProgressDataString(event, "toolCallId") ??
+      runtimeProgressDataString(event, "agentId"),
   }));
   const links: ManagedRuntimeLink[] = runtime.evidence.map((evidence) => ({
     kind: evidenceLinkKind(evidence),
