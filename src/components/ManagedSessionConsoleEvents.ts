@@ -1,5 +1,6 @@
 import {
   managedLifecycleStatusClass,
+  type ManagedRuntimeLifecycleState,
   type ManagedRuntimeProgressEvent,
   type ManagedRuntimeProjection,
 } from "../managed-runtime-contract";
@@ -47,4 +48,15 @@ export function launchProgressConsoleEvents(
 
 export function managedRuntimeStateTone(runtime: ManagedRuntimeProjection) {
   return managedLifecycleStatusClass(runtime.lifecycleState);
+}
+
+const TERMINAL_CONSOLE_STATES = new Set<ManagedRuntimeLifecycleState>([
+  "completed",
+  "cleaned_up",
+  "terminal_takeover",
+  "canceled",
+]);
+
+export function isManagedRuntimeConsoleLive(runtime: ManagedRuntimeProjection): boolean {
+  return !TERMINAL_CONSOLE_STATES.has(runtime.lifecycleState);
 }

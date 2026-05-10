@@ -66,14 +66,15 @@ describe("ManagedSessionConsole", () => {
               summary: "Recorded PR head matches the branch head.",
             }],
           }}
-          replay={{
-            retainedEventCount: 1,
-            retainedEventLimit: 50,
-            truncated: false,
-          }}
-        />,
-      );
-    });
+           replay={{
+             retainedEventCount: 1,
+             retainedEventLimit: 50,
+             truncated: false,
+           }}
+           live
+         />,
+       );
+     });
 
     expect(container.textContent).toContain("read-only");
     expect(container.textContent).toContain("streamliner $");
@@ -82,6 +83,68 @@ describe("ManagedSessionConsole", () => {
     expect(container.textContent).toContain("PR ready trust context");
     expect(container.textContent).toContain("feature/managed-session-console");
     expect(container.textContent).toContain("PR/head-state check");
-    expect(container.querySelector("[role='log']")).not.toBeNull();
+    expect(container.querySelector("[role='log']")?.getAttribute("aria-live")).toBe(
+      "polite",
+    );
+  });
+
+  it("renders an empty waiting row when no events are retained", () => {
+    act(() => {
+      root.render(
+        <ManagedSessionConsole
+          title="Managed session console"
+          events={[]}
+          emptyMessage="No retained managed runtime activity yet."
+        />,
+      );
+    });
+
+    expect(container.textContent).toContain("waiting");
+    expect(container.textContent).toContain("No retained managed runtime activity yet.");
+    expect(container.querySelector("[role='log']")?.getAttribute("aria-live")).toBe("off");
+  });
+
+  it("describes replay truncation when older retained events were dropped", () => {
+    act(() => {
+      root.render(
+        <ManagedSessionConsole
+          title="Managed session console"
+          events={[]}
+          emptyMessage="No activity yet."
+          replay={{
+            retainedEventCount: 50,
+            retainedEventLimit: 50,
+            truncated: true,
+          }}
+        />,
+      );
+    });
+
+    expect(container.textContent).toContain("Replaying 50 retained sanitized events");
+    expect(container.textContent).toContain("older activity was truncated at 50 events");
+  });
+
+  it("omits optional callouts when waiting, trust, replay, and footer fields are absent", () => {
+    act(() => {
+      root.render(
+        <ManagedSessionConsole
+          title="Managed session console"
+          currentMessage="Background session is running."
+          events={[{
+            timestamp: "2026-05-05T12:03:00.000Z",
+            phase: "assistant_status",
+            summary: "Background session is running.",
+            status: "info",
+          }]}
+          emptyMessage="No activity yet."
+        />,
+      );
+    });
+
+    expect(container.textContent).toContain("Background session is running.");
+    expect(container.querySelector(".sl-managed-console-callout")).toBeNull();
+    expect(container.querySelector(".sl-managed-console-trust-grid")).toBeNull();
+    expect(container.querySelector(".sl-managed-console-replay-note")).toBeNull();
+    expect(container.querySelector(".sl-managed-console-footer")).toBeNull();
   });
 });

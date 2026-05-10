@@ -764,15 +764,17 @@ function prReadyTrustContext(
     "worktreeClean",
     "cleanWorktree",
   ]);
-  const headSha = latestProgressDataString(runtime, [
+  const progressHeadSha = latestProgressDataString(runtime, [
     "headSha",
     "branchHeadSha",
     "currentHeadSha",
-  ]) ?? evidence?.sha ?? null;
-  const prHeadSha = latestProgressDataString(runtime, [
+  ]);
+  const progressPrHeadSha = latestProgressDataString(runtime, [
     "prHeadSha",
     "headRefOid",
-  ]) ?? evidence?.sha ?? null;
+  ]);
+  const headSha = progressHeadSha;
+  const prHeadSha = progressPrHeadSha ?? evidence?.sha ?? null;
   const explicitHeadMatch = latestProgressDataBoolean(runtime, [
     "prHeadMatchesBranch",
     "headMatchesBranch",

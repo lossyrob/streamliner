@@ -358,6 +358,12 @@ describe("managed runtime contract", () => {
     expect(projection?.prReady?.branchToBaseDiffUrl).toBe(
       "https://github.com/lossyrob/streamliner/compare/main...feature%2Fmanaged-session-console",
     );
+    expect(projection?.prReady?.headSha).toBeNull();
+    expect(projection?.prReady?.prHeadSha).toBe("abc123");
+    expect(projection?.prReady?.prHeadMatchesBranch).toBeNull();
+    expect(projection?.prReady?.checks.some((check) =>
+      check.label === "PR/head-state check"
+    )).toBe(false);
 
     const sanitized = sanitizeManagedRuntimeProjection({
       runtimeKind: "managed-sdk",

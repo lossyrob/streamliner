@@ -22,6 +22,7 @@ import {
   ManagedSessionConsole,
 } from "./ManagedSessionConsole";
 import {
+  isManagedRuntimeConsoleLive,
   managedRuntimeConsoleEvents,
   managedRuntimeStateTone,
 } from "./ManagedSessionConsoleEvents";
@@ -301,6 +302,7 @@ function RuntimeDetails({ overlay }: { overlay: WorkstreamRuntimeNodeOverlay | n
               waitingReason={managedRuntime.projection.waitingReason}
               prReady={managedRuntime.projection.prReady}
               replay={managedRuntime.projection.replay}
+              live={isManagedRuntimeConsoleLive(managedRuntime.projection)}
               compact
               footer={
                 <div className="sl-managed-runtime-placeholder-actions">

@@ -63,6 +63,7 @@ import {
   ManagedSessionConsole,
 } from "./ManagedSessionConsole";
 import {
+  isManagedRuntimeConsoleLive,
   managedRuntimeConsoleEvents,
   managedRuntimeStateTone,
 } from "./ManagedSessionConsoleEvents";
@@ -3010,6 +3011,7 @@ function ManagedRuntimeOverview({
         waitingReason={runtime.waitingReason}
         prReady={runtime.prReady}
         replay={runtime.replay}
+        live={isManagedRuntimeConsoleLive(runtime)}
         footer={
           <div className="sl-session-managed-actions">
             {actions.map((action) => (
