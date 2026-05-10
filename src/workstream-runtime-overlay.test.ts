@@ -10,6 +10,10 @@ import {
   buildSessionRegistryActivityEvidence,
   DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
 } from "./session-registry-schema";
+import {
+  MANAGED_RUNTIME_LIFECYCLE_STATES,
+  managedLifecycleStatusClass,
+} from "./managed-runtime-contract";
 import type {
   WorkstreamGithubIssueSnapshot,
   WorkstreamNode,
@@ -18,7 +22,10 @@ import type {
   WorkstreamDerivedNode,
   WorkstreamOperationalStatus,
 } from "./workstream-view-model";
-import { buildWorkstreamRuntimeOverlay } from "./workstream-runtime-overlay";
+import {
+  buildWorkstreamRuntimeOverlay,
+  MANAGED_RUNTIME_LIFECYCLE_OVERLAY_STATUSES,
+} from "./workstream-runtime-overlay";
 
 const TEST_TIMESTAMP = "2026-05-05T12:00:00.000Z";
 
@@ -71,6 +78,7 @@ function buildSession(
     branch: "feature/runtime-overlay",
     tags: [],
     originKind: "launched",
+    launchCliArgs: null,
     graphBinding: {
       workstreamId: "runtime-overlay-ui",
       nodeId: "runtime-overlay-node",
@@ -107,6 +115,27 @@ function buildSession(
     derivedContextEventsOffset: 0,
     derivedContextEventsSize: 0,
     derivedContextEventsMtimeMs: null,
+    ...overrides,
+  };
+}
+
+function buildManagedRuntime(
+  overrides: Partial<NonNullable<SessionRegistryListItem["runtime"]>> = {},
+): NonNullable<SessionRegistryListItem["runtime"]> {
+  return {
+    runtimeKind: "managed-sdk",
+    runtimeOwner: "streamliner-sdk",
+    lifecycleState: "running",
+    permissionProfile: "managed-autonomous",
+    launchClaimId: "claim-managed",
+    launchNonce: "nonce-managed",
+    sdkSessionId: null,
+    sdkWorkspacePath: null,
+    sdkStateRoot: null,
+    startedAt: TEST_TIMESTAMP,
+    lastStateChangedAt: TEST_TIMESTAMP,
+    progressEvents: [],
+    evidence: [],
     ...overrides,
   };
 }
@@ -639,6 +668,239 @@ describe("buildWorkstreamRuntimeOverlay", () => {
     expect(overlay.summary.counts.ambiguousNodes).toBe(1);
     expect(overlay.gateReadiness.reasons.map((reason) => reason.code)).toContain(
       "ambiguous-bound-sessions",
+    );
+  });
+
+  it("projects managed runtime lifecycle without promoting committed graph status", () => {
+    const entry = buildDerivedNode({
+      node: { id: "managed-node", status: "ready" },
+      operationalStatus: "ready",
+    });
+    const session = buildSession({
+      id: "managed-session",
+      graphBinding: {
+        workstreamId: "runtime-overlay-ui",
+        nodeId: "managed-node",
+        launchClaimId: "claim-managed",
+      },
+      runtime: buildManagedRuntime({
+        lifecycleState: "completed",
+        evidence: [{
+          id: "evidence-completed",
+          kind: "completed",
+          source: "test",
+          detectedAt: TEST_TIMESTAMP,
+          url: null,
+          repo: null,
+          number: null,
+          sha: null,
+          summary: "Managed worker finished and opened a PR.",
+        }],
+        progressEvents: Array.from({ length: 12 }, (_, index) => ({
+          id: `progress-${index}`,
+          sequence: index,
+          timestamp: `2026-05-05T12:${String(index).padStart(2, "0")}:00.000Z`,
+          type: "lifecycle",
+          message: `Safe progress ${index}`,
+        })),
+      }),
+    });
+
+    const overlay = buildOverlay([entry], {
+      sessions: new Map([
+        [entry.node.id, buildSessionSummary(entry.node.id, [session])],
+      ]),
+    });
+    const node = overlay.nodesById.get("managed-node");
+
+    expect(node?.committedStatus).toBe("ready");
+    expect(node?.runtimeStatus).toBe("active");
+    expect(node?.managedRuntime?.lifecycleState).toBe("completed");
+    expect(node?.managedRuntime?.progress).toHaveLength(8);
+    expect(node?.managedRuntime?.progress.at(-1)?.summary).toBe("Safe progress 11");
+  });
+
+  it("uses canonical session runtime metadata for managed lifecycle state", () => {
+    const entry = buildDerivedNode({
+      node: { id: "managed-latest-node", status: "ready" },
+      operationalStatus: "ready",
+    });
+    const session = buildSession({
+      graphBinding: {
+        workstreamId: "runtime-overlay-ui",
+        nodeId: "managed-latest-node",
+        launchClaimId: "claim-managed",
+      },
+      runtime: buildManagedRuntime({
+        lifecycleState: "failed",
+        lastStateChangedAt: "2026-05-05T12:01:00.000Z",
+        progressEvents: [{
+          id: "progress-failed",
+          sequence: 1,
+          type: "error",
+          message: "Managed worker failed after the session poll.",
+          timestamp: "2026-05-05T12:01:00.000Z",
+        }],
+      }),
+    });
+    const record = buildLaunchRecord("managed-latest-node", null);
+
+    const overlay = buildOverlay([entry], {
+      sessions: new Map([[entry.node.id, buildSessionSummary(entry.node.id, [session])]]),
+      launchRecords: new Map([[entry.node.id, record]]),
+    });
+    const node = overlay.nodesById.get("managed-latest-node");
+
+    expect(node?.managedRuntime?.source).toBe("session");
+    expect(node?.managedRuntime?.lifecycleState).toBe("failed");
+    expect(node?.degradationReasons.map((reason) => reason.code)).toContain(
+      "managed-runtime-failed",
+    );
+  });
+
+  it("lets primary runtime evidence win over terminal managed lifecycle states", () => {
+    const entry = buildDerivedNode({
+      node: { id: "managed-terminal-node", status: "ready" },
+      operationalStatus: "ready",
+    });
+    const session = buildSession({
+      graphBinding: {
+        workstreamId: "runtime-overlay-ui",
+        nodeId: "managed-terminal-node",
+        launchClaimId: "claim-managed",
+      },
+      activityStatus: "waiting_for_input",
+      runtime: buildManagedRuntime({
+        lifecycleState: "terminal_takeover",
+      }),
+    });
+
+    const overlay = buildOverlay([entry], {
+      sessions: new Map([[entry.node.id, buildSessionSummary(entry.node.id, [session])]]),
+    });
+    const node = overlay.nodesById.get("managed-terminal-node");
+
+    expect(node?.managedRuntime?.lifecycleState).toBe("terminal_takeover");
+    expect(node?.runtimeStatus).toBe("needs-input");
+    expect(node?.degradationReasons.map((reason) => reason.code)).not.toContain(
+      "managed-runtime-failed",
+    );
+  });
+
+  it("surfaces failed managed runtime lifecycle when no primary runtime supersedes it", () => {
+    const entry = buildDerivedNode({
+      node: { id: "managed-failed-node", status: "ready" },
+      operationalStatus: "ready",
+    });
+    const session = buildSession({
+      graphBinding: {
+        workstreamId: "runtime-overlay-ui",
+        nodeId: "managed-failed-node",
+        launchClaimId: "claim-managed",
+      },
+      runtime: buildManagedRuntime({
+        lifecycleState: "failed",
+        progressEvents: [{
+          id: "progress-failed",
+          sequence: 1,
+          type: "error",
+          message: "Managed worker exited with review errors.",
+          timestamp: TEST_TIMESTAMP,
+        }],
+      }),
+    });
+
+    const overlay = buildOverlay([entry], {
+      sessions: new Map([[entry.node.id, buildSessionSummary(entry.node.id, [session])]]),
+    });
+    const node = overlay.nodesById.get("managed-failed-node");
+
+    expect(node?.runtimeStatus).toBe("interrupted");
+    expect(node?.degradationReasons).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "managed-runtime-failed",
+          message: "Managed worker exited with review errors.",
+        }),
+      ]),
+    );
+  });
+
+  it("surfaces terminal takeover without a managed failure issue", () => {
+    const entry = buildDerivedNode({
+      node: { id: "managed-takeover-node", status: "ready" },
+      operationalStatus: "ready",
+    });
+    const session = buildSession({
+      graphBinding: {
+        workstreamId: "runtime-overlay-ui",
+        nodeId: "managed-takeover-node",
+        launchClaimId: "claim-managed",
+      },
+      activityStatus: "exited",
+      runtime: buildManagedRuntime({
+        lifecycleState: "terminal_takeover",
+      }),
+    });
+
+    const overlay = buildOverlay([entry], {
+      sessions: new Map([[entry.node.id, buildSessionSummary(entry.node.id, [session])]]),
+    });
+    const node = overlay.nodesById.get("managed-takeover-node");
+
+    expect(node?.runtimeStatus).toBe("ended");
+    expect(node?.degradationReasons.map((reason) => reason.code)).not.toContain(
+      "managed-runtime-failed",
+    );
+  });
+
+  it("keeps lifecycle pill and overlay status families compatible for every managed state", () => {
+    for (const state of MANAGED_RUNTIME_LIFECYCLE_STATES) {
+      const statusClass = managedLifecycleStatusClass(state);
+      const overlayStatus = MANAGED_RUNTIME_LIFECYCLE_OVERLAY_STATUSES[state];
+      expect(overlayStatus).toBeDefined();
+      if (overlayStatus === "ended") {
+        expect(statusClass).not.toBe("green");
+      }
+      if (overlayStatus === "active") {
+        expect(statusClass).not.toBe("muted");
+      }
+    }
+  });
+
+  it("surfaces waiting managed runtime lifecycle as builder input without changing graph status", () => {
+    const entry = buildDerivedNode({
+      node: { id: "managed-waiting-node", status: "ready" },
+      operationalStatus: "ready",
+    });
+    const session = buildSession({
+      graphBinding: {
+        workstreamId: "runtime-overlay-ui",
+        nodeId: "managed-waiting-node",
+        launchClaimId: "claim-managed",
+      },
+      runtime: buildManagedRuntime({
+        lifecycleState: "waiting_for_builder",
+        progressEvents: [{
+          id: "progress-waiting",
+          sequence: 1,
+          type: "permission_decision",
+          message: "Needs builder confirmation for PR cleanup.",
+          timestamp: TEST_TIMESTAMP,
+        }],
+      }),
+    });
+
+    const overlay = buildOverlay([entry], {
+      sessions: new Map([[entry.node.id, buildSessionSummary(entry.node.id, [session])]]),
+    });
+    const node = overlay.nodesById.get("managed-waiting-node");
+
+    expect(node?.committedStatus).toBe("ready");
+    expect(node?.runtimeStatus).toBe("needs-input");
+    expect(node?.hasRuntimeEvidence).toBe(true);
+    expect(node?.degradationReasons.map((reason) => reason.code)).toContain(
+      "managed-runtime-waiting-for-builder",
     );
   });
 

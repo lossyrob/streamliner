@@ -17,7 +17,10 @@ code_paths:
   - src/server/**
   - src/components/NodeInspector.tsx
   - src/components/PawLaunchDialog.tsx
+  - src/components/PawProfilesPage.tsx
   - src/components/SessionsPage.tsx
+  - src/components/WorkstreamConfigurationDialog.tsx
+  - src/components/paw-prompt-profiles.ts
   - src/server/session/**
   - src/server/context/**
   - src/components/session/**
@@ -50,7 +53,7 @@ The Wave 3 launch MVP is **PAW-only graph launch**. The contract is the interfac
 | Backend-readable graph path | Workstream registry entry | Local `graph.json` path the backend can read |
 | Launch policy | Graph `launchPolicy` | Optional durable preconditions, such as requiring a GitHub issue tracker before launch |
 | Launch instructions | Builder edit + default text | Natural-language guidance for the graph-launched PAW session. PAW init may use it to derive work title, work ID, target branch, review policy, and model settings, but general operating guidance belongs in the kickoff prompt rather than verbatim `Custom Workflow Instructions`. |
-| PAW prompt profile | Local Streamliner state | Optional reusable text snippet that can populate or update the launch instructions field |
+| PAW prompt profile | Local Streamliner state + graph `launchDefaults.promptProfileId` | Optional reusable text snippet that can populate or update the launch instructions field. A workstream may store a local profile id as a best-effort default selection. |
 | CLI arguments | Default + builder override | Copilot CLI flags for the later worker launch; an explicit empty list is valid |
 | Terminal preference | Graph `launchDefaults` + builder edit | Preferred visible terminal host for the worker launch |
 | Terminal presentation | Graph `launchDefaults` + builder edit | Optional default tab title template and tab/session color for the worker launch |
@@ -140,6 +143,9 @@ The API projects the following operation states:
 | `preparation_failed` | PAW init or context preparation failed | Retry is intentional; progress/error details remain visible |
 | `launching` | The terminal-launch request is creating a claim and spawning Copilot CLI | Same-node duplicate terminal launch is blocked |
 | `launched_pending_binding` | Terminal spawn returned and the launch claim is pending within its binding window | Duplicate launch remains blocked by claim state |
+| `managed_starting` | The managed-launch request has reserved the canonical row/claim and is creating the SDK session | Same-node duplicate terminal or managed launch is blocked |
+| `managed_running` | The managed SDK session started and Streamliner owns the worker runtime | Duplicate launch remains blocked while the managed lifecycle remains active |
+| `managed_failed` | Managed SDK startup failed after launch operation creation | Retry is intentional after the failed claim/runtime state is non-blocking |
 | `bound` | Observation bound the launch claim to a registry row/session | Duplicate launch remains blocked while that bound session is active |
 | `terminal_failed` | Claim creation or terminal spawn failed | Retry is intentional after the failed claim is non-blocking |
 
@@ -147,7 +153,7 @@ The API projects the following operation states:
 
 Launch preparation run events are replayable through the existing run SSE endpoint while the API process still has the run buffer. The operation snapshot is the source of truth on dialog reopen: it carries the preparation run id, bounded progress history, last error, prepared handoff, terminal launch result, and claim projection. If the run id is unknown, the SSE buffer has rotated, or the API restarted, the UI falls back to the operation snapshot and presents the appropriate retry, review, or launch action instead of resetting to a blank dialog.
 
-The terminal-launch route remains a synchronous POST. To make that phase reattachable enough for the graph UI, the backend writes `launching` before claim creation/spawn and writes either `launched_pending_binding` with the terminal result or `terminal_failed` with diagnostic details before returning. The in-flight terminal-spawn window is bounded by the request, while the post-return binding state is represented by the operation snapshot plus launch-claim projection.
+The terminal-launch route remains a synchronous POST. To make that phase reattachable enough for the graph UI, the backend writes `launching` before claim creation/spawn and writes either `launched_pending_binding` with the terminal result or `terminal_failed` with diagnostic details before returning. The managed-launch route uses the same operation store: it writes `managed_starting` before SDK startup and then `managed_running` with the managed session facts or `managed_failed` with diagnostic details. The in-flight terminal-spawn and managed-start windows are bounded by the request, while post-return binding/managed lifecycle state is represented by the operation snapshot plus launch-claim and session-registry runtime projections.
 
 The launch dialog is non-modal with respect to operation ownership. Closing the dialog or selecting another node only hides/unsubscribes the current view; it does not cancel the server-side preparation run or clear the node's operation. Reopening a prepared operation restores the handoff, kickoff prompt editor, and `WorkflowContext.md` review access. Starting a second node launch uses a separate operation key so progress, errors, terminal results, and claims cannot bleed between nodes.
 
@@ -162,7 +168,9 @@ The implemented launch surface is a text-guided PAW init dialog, not the full PA
 - CLI args default to `--yolo`; an explicit empty override remains empty.
 - Terminal launch mode is `manual` with a default terminal preference; `default` means "use Windows Terminal when available, otherwise PowerShell," not an alias for PowerShell. After PAW init completes, Streamliner uses those values to open the visible worker terminal.
 
-The dialog supports lightweight PAW prompt profiles: named reusable text snippets stored at the local Streamliner server state level. Profiles are not PAW-owned metadata and do not encode structured constraints; selecting one only replaces the free-text launch instructions, and the builder can edit the text before running PAW init. The dialog can save the current text as a new profile or update the selected profile.
+The dialog supports lightweight PAW prompt profiles: named reusable text snippets stored at the local Streamliner server state level. Profiles are not PAW-owned metadata and do not encode structured constraints; selecting one only replaces the free-text launch instructions, and the builder can edit the text before running PAW init. The dialog can save the current text as a new profile or update the selected profile. If the workstream's `launchDefaults.promptProfileId` matches a local profile, the dialog preselects it once while opening; if the profile is missing or later deleted, launch falls back to custom instructions without blocking the node.
+
+The Streamliner settings page at `/settings/profiles` is the primary management surface for these local PAW prompt profiles. The top-level dashboard navigation keeps Workstreams and Sessions as the main application areas, with profile management behind the settings gear and a settings sidebar section. The profile manager shares the same application-level profile state as the launch dialog, refreshes from the local API without browser caching, and supports create, edit, duplicate, copy-instructions, and delete actions. Mutations update shared in-memory state immediately, so a profile changed in settings is visible the next time the launch dialog opens in the same browser session.
 
 After PAW init succeeds, the dialog loads the generated `WorkflowContext.md` so the builder can review or make last-minute manual edits before terminal launch. The edit surface is intentionally bounded to the prepared PAW work directory. It is a debugging and correction affordance for the launch MVP, not a replacement for PAW init's normal workflow generation. The dialog then calls the same backend node-launch route as non-UI callers to create the claim and open the worker terminal.
 
@@ -324,9 +332,9 @@ The dialog uses the run route. `POST /api/launch-preparations/runs` returns a `r
 
 Internal SDK launch sessions persist under Streamliner's local state rather than the normal Copilot session-state root. The default root is `~/.streamliner/state/copilot-sdk/paw-launch/<context-id>/`, with `STREAMLINER_COPILOT_SDK_STATE_ROOT` available for override. Run progress and API logs surface the SDK `sessionId` and workspace path for debugging, but these internal sessions are not intended to appear in Streamliner's observed Sessions view.
 
-The PAW launch dialog is intentionally text-guided for this MVP. It exposes launch instructions, lightweight reusable text profiles, CLI args, terminal preference, graph source, a GitHub issue link when the selected node has one, and the prepared handoff after backend PAW init. Workstream `launchDefaults.terminal` pre-fills preferred terminal host, tab title, and tab color, but builders can still override those values per launch. The tab title can be derived from `titleTemplate` with `{githubIssue}`, `{nodeId}`, and `{nodeTitle}` variables; `{githubIssue}` renders as `#number` for GitHub-tracked nodes, and the configuration dialog surfaces those variables in inline help. The builder's launch instructions are trusted local intent and appear near the top of the SDK launch-preparation session's first prompt so context assembly and PAW init both weight them heavily. Once preparation completes, the prepared kickoff prompt is editable before terminal launch so the builder can inspect or refine the exact initial prompt sent to the visible worker. The primary action is labeled as running PAW init because the SDK session may read repository files, inspect git/GitHub context, execute shell tools, and write the PAW work artifacts before returning the structured handoff. PAW-owned metadata, structured presets, specialists, and dependent WorkflowContext constraints are deferred to issue #43 so Streamliner does not duplicate PAW's configuration rules.
+The PAW launch dialog is intentionally text-guided for this MVP. It exposes launch instructions, lightweight reusable text profiles, CLI args, terminal preference, graph source, a GitHub issue link when the selected node has one, and the prepared handoff after backend PAW init. Workstream `launchDefaults.promptProfileId` can preselect a local profile, and `launchDefaults.terminal` pre-fills preferred terminal host, tab title, and tab color; builders can still override those values per launch. The tab title can be derived from `titleTemplate` with `{githubIssue}`, `{nodeId}`, and `{nodeTitle}` variables; `{githubIssue}` renders as `#number` for GitHub-tracked nodes, and the configuration dialog surfaces those variables in inline help. The builder's launch instructions are trusted local intent and appear near the top of the SDK launch-preparation session's first prompt so context assembly and PAW init both weight them heavily. Once preparation completes, the prepared kickoff prompt is editable before terminal launch so the builder can inspect or refine the exact initial prompt sent to the visible worker. The primary action is labeled as running PAW init because the SDK session may read repository files, inspect git/GitHub context, execute shell tools, and write the PAW work artifacts before returning the structured handoff. PAW-owned metadata, structured presets, specialists, and dependent WorkflowContext constraints are deferred to issue #43 so Streamliner does not duplicate PAW's configuration rules.
 
-The workstream header exposes a configuration dialog for backend-readable graph files. It edits durable graph launch settings, including `launchPolicy.requiredTracker` and `launchDefaults.terminal`, through:
+The workstream header exposes a configuration dialog for backend-readable graph files. It edits durable graph launch settings, including `launchPolicy.requiredTracker`, `launchDefaults.promptProfileId`, and `launchDefaults.terminal`, through:
 
 ```http
 PATCH /api/workstreams/:projectKey/:workstreamId/configuration
@@ -340,9 +348,10 @@ Reusable text prompt profiles are exposed as:
 GET /api/paw-launch-prompt-profiles
 POST /api/paw-launch-prompt-profiles
 PUT /api/paw-launch-prompt-profiles/:id
+DELETE /api/paw-launch-prompt-profiles/:id
 ```
 
-Profiles are stored in local Streamliner state as `paw-launch-prompt-profiles.json`. Each record contains an id, name, instructions, created timestamp, and updated timestamp. `POST` creates a new profile from the current workflow text; `PUT` updates the selected profile. The server validates non-empty names and instruction text but does not interpret PAW semantics.
+Profiles are stored in local Streamliner state as `paw-launch-prompt-profiles.json`. Each record contains an id, name, instructions, created timestamp, and updated timestamp. `GET` is non-cacheable from the browser, `POST` creates a new profile from workflow text, `PUT` updates the selected profile, and `DELETE` removes a profile by id with a `204` response. The server validates non-empty names and instruction text but does not interpret PAW semantics. Deleting a profile does not scan or cascade workstream `launchDefaults.promptProfileId` references; dangling ids remain harmless local hints and fall back to custom launch instructions.
 
 The post-init review/edit surface for PAW WorkflowContext is exposed as:
 
@@ -481,14 +490,14 @@ The session registry remains the canonical row for a managed worker. The registr
 
 | Field | Meaning |
 |-------|---------|
-| `runtimeKind` | `terminal-cli` for visible terminal sessions, `managed-sdk` for SDK-managed workers. Legacy observed/manual rows default to `terminal-cli` unless a future migration records a more precise value. |
-| `runtimeOwner` | `terminal` when a human-visible Copilot CLI owns interaction, `streamliner-sdk` while Streamliner's SDK runtime owns the worker, or `null` for manual/unresolved rows. |
-| `sdkSessionId` | Resumable Copilot SDK session id for managed workers. It remains separate from `copilotSessionId` even if the underlying Copilot runtime uses the same string as a resumable session identity. |
-| `sdkWorkspacePath` / `sdkStateRoot` | Local paths needed for SDK resume, diagnostics, and terminal takeover. They are registry/runtime metadata, not graph artifacts. |
+| `runtime.runtimeKind` | `terminal-cli` for visible terminal sessions, `managed-sdk` for SDK-managed workers. Legacy observed/manual rows omit the runtime object unless a future migration records a more precise value. |
+| `runtime.runtimeOwner` | `builder-terminal` when a human-visible Copilot CLI owns interaction, `streamliner-sdk` while Streamliner's SDK runtime owns the worker, or absent for manual/unresolved rows. |
+| `runtime.sdkSessionId` | Resumable Copilot SDK session id for managed workers. It remains separate from `copilotSessionId` even if the underlying Copilot runtime uses the same string as a resumable session identity. |
+| `runtime.sdkWorkspacePath` / `runtime.sdkStateRoot` | Local paths needed for SDK resume, diagnostics, and terminal takeover. They are registry/runtime metadata, not graph artifacts. |
 | `copilotSessionId` | Populated by terminal observation when a visible Copilot CLI/Agency session is trusted or when terminal takeover binds. It stays `null` for purely SDK-managed rows. |
-| `managedLifecycle` | Managed-runtime lifecycle state and evidence. It is separate from `lifecycleStatus`, `activityStatus`, and `pawWorkflow`. |
-| `managedProgress` | Pointer to the sanitized progress stream and latest summary in local runtime state. Raw prompts, reasoning, tool payloads, and terminal output are not stored here. |
-| `managedCompletion` | Optional PR/review/completion metadata such as PR URL, branch/head sha, completion signal, cleanup readiness, and cleanup result. |
+| `runtime.lifecycleState` | Managed-runtime lifecycle state. It is separate from `lifecycleStatus`, `activityStatus`, and `pawWorkflow`. |
+| `runtime.progressEvents` | Bounded sanitized progress stream in local registry/runtime state. Raw prompts, reasoning, tool payloads, and terminal output are not stored here. |
+| `runtime.evidence` | Optional PR/review/completion/cleanup/takeover metadata such as PR URL, PR number, commit SHA, completion signal, cleanup readiness, and cleanup result. |
 
 Managed runtime details live in local runtime state, for example under a managed-session subtree keyed by the registry id. The exact file layout can evolve, but it must follow the same runtime-state rules as the registry: schema versioning, single logical writer, write-then-rename for materialized state, and quarantine or typed failure on incompatible data. Managed lifecycle/progress telemetry must never be written to committed `graph.json`; graph cards and My Sessions read it as a projection through the registry/API.
 
@@ -542,11 +551,11 @@ Allowed browser-facing event classes:
 | Class | Safe fields |
 |-------|-------------|
 | `lifecycle` | Managed lifecycle state, timestamp, registry id, workstream/node, coarse reason code, confidence/evidence level. |
-| `agent.message` | Short status-oriented assistant text after truncation/redaction; no hidden reasoning or prompt reconstruction. |
-| `tool.started` / `tool.completed` | Tool name or MCP server/tool label, opaque call id, success/failure boolean, coarse error category. |
-| `permission.requested` / `permission.completed` | Permission category, decision (`approved`, `rejected`, `requires_builder`), and redacted reason code. |
-| `mcp.status` / `skill.invoked` | MCP server or skill name/version/status when useful for diagnostics. |
-| `pr` / `review` / `cleanup` | PR URL or number when public to the repo, review-ready marker, cleanup state/result, and safety-check outcome. |
+| `assistant_status` | Short status-oriented assistant metadata after truncation/redaction; no hidden reasoning or prompt reconstruction. |
+| `tool_started` / `tool_completed` | Tool name or MCP server/tool label, opaque call id, success/failure boolean, coarse error category. |
+| `permission_decision` | Permission category, decision (`approved`, `rejected`, `requires_builder`), and redacted reason code. |
+| `mcp_status` / `skill_status` | MCP server or skill name/version/status when useful for diagnostics. |
+| `evidence` / `terminal_takeover` | PR URL or number when public to the repo, review-ready marker, cleanup state/result, takeover marker, and safety-check outcome. |
 | `usage` | Token or duration counters only when the UI opts into showing them. |
 
 Always exclude raw user prompts, transformed prompts, assistant reasoning, reasoning deltas, tool arguments, tool results, terminal stdout/stderr, hook payload bodies, full paths when not already part of the launch surface, secrets, tokens, credential-manager data, and provider telemetry that would expose more than the builder-visible node context.

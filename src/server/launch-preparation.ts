@@ -34,11 +34,11 @@ import {
   type PreparedLaunchContextPackage,
 } from "./launch-context";
 
-const DEFAULT_CLI_ARGS = ["--yolo"];
 const DEFAULT_PAW_INIT_MODEL = "gpt-5.5";
 const DEFAULT_PAW_INIT_TIMEOUT_MS = 120_000;
 const TERMINAL_LAUNCH_MODES = ["manual"] as const;
 const TERMINAL_PREFERENCES = ["default", "windows-terminal", "powershell"] as const;
+const RUNTIME_KINDS = ["terminal-cli", "managed-sdk"] as const;
 const DEFAULT_WORKFLOW_INSTRUCTIONS = [
   "Use PAW with a local final-pr-only review policy.",
   "Do not pause for intermediate review unless there is a serious blocker, unsafe ambiguity, missing credentials/infrastructure, or material scope mismatch.",
@@ -97,12 +97,15 @@ export interface PawLaunchTerminalPreferences {
   tabColor: string | null;
 }
 
+export type PawLaunchRuntimeKind = "terminal-cli" | "managed-sdk";
+
 export interface PawLaunchConfigurationInput {
   cwd?: string;
   cliArgs?: string[];
   environment?: Record<string, string>;
   workflowInstructions?: string | null;
   terminal?: Partial<PawLaunchTerminalPreferences>;
+  runtimeKind?: PawLaunchRuntimeKind;
 }
 
 export interface ResolvedPawLaunchConfiguration {
@@ -111,6 +114,7 @@ export interface ResolvedPawLaunchConfiguration {
   environment: Record<string, string>;
   workflowInstructions: string;
   terminal: PawLaunchTerminalPreferences;
+  runtimeKind?: PawLaunchRuntimeKind;
 }
 
 interface ParsedPawLaunchConfiguration {
@@ -119,6 +123,7 @@ interface ParsedPawLaunchConfiguration {
   environment: Record<string, string>;
   workflowInstructions: string;
   terminal: PawLaunchTerminalPreferences;
+  runtimeKind: PawLaunchRuntimeKind;
 }
 
 export interface PawInitRunnerInput {
@@ -220,6 +225,7 @@ export interface PreparePawLaunchOptions {
   pawInitRunner?: PawInitRunner;
   contextPreparer?: LaunchContextPreparer;
   existingLaunch?: NodeLaunchRecord | null;
+  defaultCliArgs?: string[];
 }
 
 export interface PawLaunchMetadata {
@@ -247,6 +253,7 @@ export interface PawLaunchHandoff {
   kickoffAdditionalInstructions?: string;
   cliArgs: string[];
   terminal: PawLaunchTerminalPreferences;
+  runtimeKind?: PawLaunchRuntimeKind;
   environment: Record<string, string>;
   sessionStateRoot: string;
   launchMetadata: PawLaunchMetadata;
@@ -488,7 +495,7 @@ function normalizeTerminalPreferences(
 
 function parseConfigurationInput(
   input: PawLaunchConfigurationInput | undefined,
-  defaults: { terminal?: Partial<PawLaunchTerminalPreferences> } = {},
+  defaults: { cliArgs?: string[]; terminal?: Partial<PawLaunchTerminalPreferences> } = {},
 ): ParsedPawLaunchConfiguration {
   const rawCwd = assertOptionalString(input?.cwd, "configuration.cwd");
   const workflowInstructions = assertOptionalString(
@@ -496,10 +503,15 @@ function parseConfigurationInput(
     "configuration.workflowInstructions",
   )?.trim() || DEFAULT_WORKFLOW_INSTRUCTIONS;
   const cliArgs = assertOptionalStringArray(input?.cliArgs, "configuration.cliArgs")
-    ?? [...DEFAULT_CLI_ARGS];
+    ?? [...(defaults.cliArgs ?? [])];
   const environment = assertOptionalStringRecord(input?.environment, "configuration.environment")
     ?? {};
   const terminalOverrides = normalizeTerminalPreferences(input?.terminal);
+  const runtimeKind = assertOptionalEnum(
+    input?.runtimeKind,
+    RUNTIME_KINDS,
+    "configuration.runtimeKind",
+  ) ?? "terminal-cli";
 
   return {
     cwd: rawCwd === undefined
@@ -513,6 +525,7 @@ function parseConfigurationInput(
       ...defaults.terminal,
       ...terminalOverrides,
     },
+    runtimeKind,
   };
 }
 
@@ -732,6 +745,15 @@ async function checkoutRemoteRepoSlug(checkoutRoot: string): Promise<string | nu
   }
 }
 
+async function launchCheckoutMatchesSelectedTarget(input: PawLaunchSessionRunnerInput): Promise<boolean> {
+  const targetRepoSlugs = selectedTargetRepoSlugs(input);
+  if (targetRepoSlugs.length === 0) {
+    return true;
+  }
+  const launchRepoSlug = await checkoutRemoteRepoSlug(input.cwd);
+  return !launchRepoSlug || targetRepoSlugs.includes(launchRepoSlug);
+}
+
 export async function resolvePawWorkDirForLaunch(
   input: PawLaunchSessionRunnerInput,
   workId: string,
@@ -739,7 +761,10 @@ export async function resolvePawWorkDirForLaunch(
 ): Promise<string> {
   const pawWorkDir = resolveProvidedPawWorkDir(input.cwd, workId, provided);
   if (isLaunchCheckoutPawWorkDir(input.cwd, pawWorkDir)) {
-    return pawWorkDir;
+    if (await launchCheckoutMatchesSelectedTarget(input)) {
+      return pawWorkDir;
+    }
+    throw new Error("pawWorkDir must be in a checkout for the selected node target repo when the launch cwd belongs to a different repository.");
   }
 
   const targetRepoSlugs = selectedTargetRepoSlugs(input);
@@ -1754,6 +1779,7 @@ export async function preparePawLaunch(
       }
     : undefined;
   const parsedConfiguration = parseConfigurationInput(options.configuration, {
+    cliArgs: options.defaultCliArgs,
     terminal: terminalDefaults,
   });
 
@@ -1916,6 +1942,7 @@ export async function preparePawLaunch(
     kickoffAdditionalInstructions: pawInit.kickoffAdditionalInstructions,
     cliArgs: [...configuration.cliArgs],
     terminal,
+    runtimeKind: configuration.runtimeKind,
     environment: {
       ...configuration.environment,
       ...(pawInit.environment ?? {}),

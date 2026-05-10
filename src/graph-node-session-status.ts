@@ -1,4 +1,5 @@
 import type { SessionRegistryListItem } from "./session-registry-contract";
+import type { SessionRegistryManagedLifecycleState } from "./session-registry-schema";
 
 const SESSION_ACTIVITY_ATTENTION_RANK: Record<
   SessionRegistryListItem["activityStatus"],
@@ -11,6 +12,25 @@ const SESSION_ACTIVITY_ATTENTION_RANK: Record<
   unknown: 1,
 };
 
+const MANAGED_LIFECYCLE_ATTENTION_RANK: Record<SessionRegistryManagedLifecycleState, number> = {
+  waiting_for_builder: 6,
+  interrupt_requested: 5,
+  failed: 5,
+  running: 4,
+  starting: 4,
+  preparing: 3,
+  pr_ready: 3,
+  review_ready: 3,
+  cleanup_ready: 3,
+  terminal_takeover: 3,
+  cleaning_up: 3,
+  idle: 2,
+  interrupted: 2,
+  canceled: 1,
+  completed: 1,
+  cleaned_up: 1,
+};
+
 export interface GraphNodeSessionStatusSummary {
   nodeId: string;
   sessions: SessionRegistryListItem[];
@@ -21,12 +41,17 @@ export interface GraphNodeSessionStatusSummary {
 export type GraphNodeSessionStatusState = "loading" | "ready" | "error";
 
 function activityAttentionRank(session: SessionRegistryListItem): number {
+  const managedState = session.runtime?.lifecycleState;
+  if (managedState) {
+    return MANAGED_LIFECYCLE_ATTENTION_RANK[managedState];
+  }
   return SESSION_ACTIVITY_ATTENTION_RANK[session.activityStatus] ?? 1;
 }
 
 function freshnessTimestamp(session: SessionRegistryListItem): number {
   const candidates = [
     session.trustedLastSignalAt,
+    session.runtime?.lastStateChangedAt,
     session.activityStatusUpdatedAt,
     session.lastSeenAt,
     session.updatedAt,

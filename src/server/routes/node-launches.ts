@@ -9,12 +9,15 @@ import {
 } from "../launch-preparation";
 import {
   isLaunchPromptToken,
+  launchManagedSdkNode,
   launchPreparedNode,
   NodeLaunchError,
+  resumeManagedSdkNode,
   summarizeLaunchClaim,
   type NodeLaunchDeps,
 } from "../node-launch";
 import type { NodeLaunchRecordStore } from "../node-launch-record-store";
+import { isActiveNodeLaunchOperationStatus } from "../../node-launch-record-contract";
 import { SessionRegistryFileStore } from "../../session-registry/file-store";
 import {
   WORKSTREAM_LAUNCH_REQUIRED_TRACKERS,
@@ -26,6 +29,10 @@ import { getApiLogger } from "../logger";
 
 interface ParsedBody {
   handoff: PawLaunchHandoff;
+}
+
+interface ParsedResumeBody extends ParsedBody {
+  launchClaimId: string;
 }
 
 function hasNonLoopbackForwardedFor(value: string | string[] | undefined): boolean {
@@ -218,6 +225,19 @@ function parseTerminal(value: unknown): PawLaunchTerminalPreferences {
   };
 }
 
+function parseRuntimeKind(value: unknown): PawLaunchHandoff["runtimeKind"] {
+  if (value === undefined || value === null) {
+    return "terminal-cli";
+  }
+  if (value === "terminal-cli" || value === "managed-sdk") {
+    return value;
+  }
+  throw badRequest(
+    "handoff.runtimeKind must be \"terminal-cli\" or \"managed-sdk\".",
+    "handoff.runtimeKind",
+  );
+}
+
 function parseLaunchMetadata(value: unknown): PawLaunchMetadata {
   const record = isRecord(value)
     ? value
@@ -275,12 +295,22 @@ function parseBody(body: unknown): ParsedBody {
       kickoffAdditionalInstructions: optionalStringField(handoffRecord, "kickoffAdditionalInstructions"),
       cliArgs: stringArrayField(handoffRecord, "cliArgs", "handoff.cliArgs"),
       terminal: parseTerminal(handoffRecord.terminal),
+      runtimeKind: parseRuntimeKind(handoffRecord.runtimeKind ?? bodyRecord.runtimeKind),
       environment: stringRecordField(handoffRecord, "environment", "handoff.environment"),
       sessionStateRoot: stringField(handoffRecord, "sessionStateRoot", "handoff.sessionStateRoot"),
       launchMetadata,
       contextPackage: parseContextPackage(handoffRecord.contextPackage),
       sdkSession: undefined,
     },
+  };
+}
+
+function parseResumeBody(body: unknown): ParsedResumeBody {
+  const bodyRecord = isRecord(body) ? body : {};
+  const launchClaimId = stringField(bodyRecord, "launchClaimId", "launchClaimId");
+  return {
+    ...parseBody(body),
+    launchClaimId,
   };
 }
 
@@ -310,7 +340,7 @@ export function createNodeLaunchesRouter(options: {
         handoff.launchMetadata.graphPath,
         handoff.launchMetadata.nodeId,
       );
-      if (existingOperation && isActiveOperation(existingOperation.status)) {
+      if (existingOperation && isActiveNodeLaunchOperationStatus(existingOperation.status)) {
         res.status(409).json({
           code: "duplicate_active_launch_operation",
           error: `Node ${handoff.launchMetadata.nodeId} already has an active launch operation.`,
@@ -318,19 +348,135 @@ export function createNodeLaunchesRouter(options: {
         });
         return;
       }
-      await options.nodeLaunchRecordStore?.markTerminalLaunching(handoff);
-      const result = launchPreparedNode(
-        options.registryStore,
-        options.claimStore,
-        handoff,
-        options.deps,
-      );
-      await options.nodeLaunchRecordStore?.markTerminalLaunched(handoff, result);
-      res.status(201).json(result);
+      if (handoff.runtimeKind === "managed-sdk") {
+        await options.nodeLaunchRecordStore?.markManagedStarting(handoff);
+        const result = await launchManagedSdkNode(
+          options.registryStore,
+          options.claimStore,
+          handoff,
+          options.deps,
+        );
+        await options.nodeLaunchRecordStore?.markManagedRunning(handoff, {
+          launchClaim: result.launchClaim,
+          runtimeKind: "managed-sdk",
+          registryId: result.managedSdk.registryId,
+          sdkSessionId: result.managedSdk.sdkSessionId,
+          sdkWorkspacePath: result.managedSdk.sdkWorkspacePath,
+          sdkStateRoot: result.managedSdk.sdkStateRoot,
+          permissionProfile: result.managedSdk.permissionProfile,
+        });
+        res.status(201).json(result);
+      } else {
+        await options.nodeLaunchRecordStore?.markTerminalLaunching(handoff);
+        const result = await launchPreparedNode(
+          options.registryStore,
+          options.claimStore,
+          handoff,
+          options.deps,
+        );
+        await options.nodeLaunchRecordStore?.markTerminalLaunched(handoff, result);
+        res.status(201).json(result);
+      }
     } catch (error: unknown) {
       if (error instanceof NodeLaunchError) {
         if (handoff && error.code !== "duplicate_active_launch") {
-          await options.nodeLaunchRecordStore?.markTerminalFailed({
+          if (handoff.runtimeKind === "managed-sdk") {
+            await options.nodeLaunchRecordStore?.markManagedFailed({
+              handoff,
+              error: {
+                code: error.code,
+                error: error.message,
+              },
+            });
+          } else {
+            await options.nodeLaunchRecordStore?.markTerminalFailed({
+              handoff,
+              error: {
+                code: error.code,
+                error: error.message,
+              },
+            });
+          }
+        }
+        const body: Record<string, unknown> = {
+          code: error.code,
+          error: error.message,
+        };
+        if (error.claim) {
+          body.launchClaim = summarizeLaunchClaim(error.claim);
+        }
+        if (error.details) {
+          body.details = error.details;
+        }
+        res.status(error.statusCode).json(body);
+        return;
+      }
+      if (error instanceof Error && "statusCode" in error) {
+        const statusCode = (error as { statusCode?: unknown }).statusCode;
+        const body: Record<string, unknown> = {
+          code: (error as { code?: unknown }).code ?? "invalid_node_launch_handoff",
+          error: error.message,
+          input: (error as { input?: unknown }).input,
+        };
+        const operation = (error as { operation?: unknown }).operation;
+        if (operation !== undefined) {
+          body.operation = operation;
+        }
+        res.status(typeof statusCode === "number" ? statusCode : 400).json(body);
+        return;
+      }
+      next(error);
+    }
+  });
+
+  router.post("/node-launches/managed-resumes", async (req, res, next) => {
+    // Same local trust boundary as a fresh node launch: this reconnects a
+    // local SDK client to an existing Copilot session and submits a prompt.
+    if (isNonLoopbackRequest(req)) {
+      logger.warn("resume rejected: non-loopback", {
+        path: req.originalUrl ?? req.url,
+      });
+      res.status(403).json({ error: "Managed session resume must originate from loopback." });
+      return;
+    }
+    let handoff: PawLaunchHandoff | null = null;
+    try {
+      const parsed = parseResumeBody(req.body);
+      handoff = { ...parsed.handoff, runtimeKind: "managed-sdk" };
+      const existingOperation = await options.nodeLaunchRecordStore?.getOperation(
+        handoff.launchMetadata.graphPath,
+        handoff.launchMetadata.nodeId,
+      );
+      if (existingOperation && isActiveNodeLaunchOperationStatus(existingOperation.status)) {
+        res.status(409).json({
+          code: "duplicate_active_launch_operation",
+          error: `Node ${handoff.launchMetadata.nodeId} already has an active launch operation.`,
+          operation: existingOperation,
+        });
+        return;
+      }
+      await options.nodeLaunchRecordStore?.markManagedStarting(handoff);
+      const result = await resumeManagedSdkNode(
+        options.registryStore,
+        options.claimStore,
+        handoff,
+        parsed.launchClaimId,
+        options.deps,
+      );
+      await options.nodeLaunchRecordStore?.markManagedRunning(handoff, {
+        launchClaim: result.launchClaim,
+        runtimeKind: "managed-sdk",
+        registryId: result.managedSdk.registryId,
+        sdkSessionId: result.managedSdk.sdkSessionId,
+        sdkWorkspacePath: result.managedSdk.sdkWorkspacePath,
+        sdkStateRoot: result.managedSdk.sdkStateRoot,
+        permissionProfile: result.managedSdk.permissionProfile,
+      });
+      res.status(201).json(result);
+    } catch (error: unknown) {
+      if (error instanceof NodeLaunchError) {
+        if (handoff) {
+          await options.nodeLaunchRecordStore?.markManagedFailed({
             handoff,
             error: {
               code: error.code,
@@ -365,8 +511,4 @@ export function createNodeLaunchesRouter(options: {
   });
 
   return router;
-}
-
-function isActiveOperation(status: string): boolean {
-  return status === "preparing" || status === "launching";
 }

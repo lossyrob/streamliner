@@ -290,6 +290,7 @@ describe("session registry schema", () => {
       branch: record.branch,
       tags: record.tags,
       originKind: record.origin.kind,
+      launchCliArgs: null,
       graphBinding: record.graphBinding,
       pawLaunch: record.pawLaunch,
       copilotSessionId: record.copilotSessionId,
@@ -430,6 +431,10 @@ describe("session registry schema", () => {
         lifecycleStatus:
           nextPatch.lifecycleStatus ?? record.lifecycleStatus,
         tags: nextPatch.tags ?? record.tags,
+      }),
+      patchRuntimeMetadata: (id) => ({
+        ...record,
+        id,
       }),
       archiveSession: (id) => ({
         ...record,

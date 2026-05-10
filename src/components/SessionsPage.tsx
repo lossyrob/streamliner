@@ -11,6 +11,14 @@ import {
 
 import type { SessionRegistryListItem, SessionRegistryPatch } from "../session-registry-contract";
 import type { SessionRegistryRecord } from "../session-registry-schema";
+import type { ManagedRuntimeProjection } from "../managed-runtime-contract";
+import {
+  formatManagedRuntimeLabel,
+  managedLifecycleStatusClass,
+  managedRuntimeProjectionFromMetadata,
+  managedRuntimeProgressEvents,
+  resolveManagedRuntimeActions,
+} from "../managed-runtime-contract";
 import {
   handleInAppLinkClick,
   workstreamRoutePath,
@@ -51,6 +59,7 @@ import {
 import {
   TerminalColorQuickPicker,
 } from "./SessionColorPicker";
+import { ManagedRuntimeActionButton } from "./ManagedRuntimeActionButton";
 import { sessionRegistryListUrl } from "../session-registry-client";
 import {
   githubStatusForRef,
@@ -147,8 +156,12 @@ function toListItem(record: SessionRegistryRecord): SessionRegistryListItem {
     branch: record.branch,
     tags: record.tags,
     originKind: record.origin.kind,
+    launchCliArgs: record.origin.kind === "launched" && Array.isArray(record.origin.cliArgs)
+      ? [...record.origin.cliArgs]
+      : null,
     graphBinding: record.graphBinding,
     pawLaunch: record.pawLaunch,
+    runtime: record.runtime ?? null,
     copilotSessionId: record.copilotSessionId,
     aiSummary: record.aiSummary,
     aiSummaryModel: record.aiSummaryModel,
@@ -955,6 +968,25 @@ function SessionWorkstreamContextChips({
   );
 }
 
+function getManagedRuntime(
+  session: SessionRegistryListItem,
+): ManagedRuntimeProjection | null {
+  return managedRuntimeProjectionFromMetadata(session.runtime);
+}
+
+function managedRuntimeLifecycleText(runtime: ManagedRuntimeProjection): string {
+  return formatManagedRuntimeLabel(runtime.lifecycleState);
+}
+
+function managedRuntimeSummaryText(runtime: ManagedRuntimeProjection): string {
+  return (
+    runtime.summary ??
+    runtime.blockerSummary ??
+    runtime.errorSummary ??
+    `Background session is ${managedRuntimeLifecycleText(runtime)}.`
+  );
+}
+
 type RecencyBucketKey =
   | "trusted-active"
   | "trusted-interrupted"
@@ -1215,14 +1247,42 @@ interface SessionSaveOptions {
 interface SessionsPageProps {
   registerBeforeLeave?: (handler: (() => Promise<boolean>) | null) => void;
   workstreams?: WorkstreamRegistryListEntry[];
+  defaultCliArgs?: readonly string[] | null;
   onOpenWorkstream?: (target: WorkstreamRouteTarget) => void | Promise<void>;
   routeWorkstreamId?: string | null;
   routeNodeId?: string | null;
 }
 
+function buildVisibleRestartCommand(
+  session: SessionRegistryListItem,
+  defaultCliArgs: readonly string[] | null,
+): string | null {
+  if (!session.copilotSessionId) {
+    return null;
+  }
+  if (session.launchCliArgs === null && defaultCliArgs === null) {
+    return null;
+  }
+  return buildRestartCommand(session, defaultCliArgs ?? []);
+}
+
+function restartUnavailableMessage(
+  session: SessionRegistryListItem,
+  defaultCliArgs: readonly string[] | null,
+): string {
+  if (!session.copilotSessionId) {
+    return "Restart unavailable; no Copilot session ID";
+  }
+  if (session.launchCliArgs === null && defaultCliArgs === null) {
+    return "Restart unavailable; session launch settings are still loading";
+  }
+  return "Restart unavailable";
+}
+
 export function SessionsPage({
   registerBeforeLeave,
   workstreams = EMPTY_WORKSTREAMS,
+  defaultCliArgs = null,
   onOpenWorkstream,
   routeWorkstreamId = null,
   routeNodeId = null,
@@ -2293,12 +2353,13 @@ export function SessionsPage({
                     const rowTitle = getRowFallbackTitle(session);
                     const rowBranch = displayBranch(session);
                     const rowWorktree = displayWorktree(session);
-                    const rowRestartCommand = buildRestartCommand(session);
+                    const rowRestartCommand = buildVisibleRestartCommand(session, defaultCliArgs);
                     const activityLabel = getActivityStatusLabel(session);
                     const activityHint = activityStatusHint(session.activityStatus);
                     const signalClass = activitySignalClass(session.activityStatus);
                     const signalDetail = trustedStatus ?? observedStatus ?? session.originKind;
                     const rowFolderLeaf = leafName(rowWorktree ?? session.cwd);
+                    const rowManagedRuntime = getManagedRuntime(session);
                     const rowPawWorkflow = visiblePawWorkflow(session);
                     const rowLinkage =
                       sessionLinkages.get(session.id) ??
@@ -2310,7 +2371,9 @@ export function SessionsPage({
                     const rowDetail =
                       summary.text && summary.status !== "missing"
                         ? summary.text
-                        : session.description || null;
+                        : rowManagedRuntime
+                          ? managedRuntimeSummaryText(rowManagedRuntime)
+                          : session.description || null;
                     return (
                       <div
                         key={session.id}
@@ -2376,6 +2439,19 @@ export function SessionsPage({
                                 linkage={rowLinkage}
                                 onOpenWorkstream={onOpenWorkstream}
                               />
+                              {rowManagedRuntime && (
+                                <>
+                                  <span className="sl-session-row-context-chip managed-runtime">
+                                    background session
+                                  </span>
+                                  <span
+                                    className={`sl-session-row-context-chip managed-runtime ${managedLifecycleStatusClass(rowManagedRuntime.lifecycleState)}`}
+                                    title={managedRuntimeSummaryText(rowManagedRuntime)}
+                                  >
+                                    {managedRuntimeLifecycleText(rowManagedRuntime)}
+                                  </span>
+                                </>
+                              )}
                               {rowPawWorkflow && (
                                 <span
                                   className="sl-session-row-context-chip paw-workflow recognized"
@@ -2424,7 +2500,7 @@ export function SessionsPage({
                                 label={
                                   rowRestartCommand
                                     ? "Copy restart command"
-                                    : "Restart unavailable; no Copilot session ID"
+                                    : restartUnavailableMessage(session, defaultCliArgs)
                                 }
                                 copiedLabel="Copied restart command"
                                 iconOnly
@@ -2595,7 +2671,9 @@ export function SessionsPage({
                   session={selectedSession}
                   workstreamLinkage={selectedSessionLinkage}
                   githubStatuses={githubStatuses.statuses}
+                  defaultCliArgs={defaultCliArgs}
                   onOpenWorkstream={onOpenWorkstream}
+                  onSessionActionComplete={fetchSessions}
                 />
               )}
 
@@ -2666,7 +2744,9 @@ interface SessionOverviewProps {
   session: SessionRegistryListItem;
   workstreamLinkage: SessionWorkstreamLinkageResolution | null;
   githubStatuses: ReadonlyMap<string, GithubStatusResult>;
+  defaultCliArgs: readonly string[] | null;
   onOpenWorkstream?: (target: WorkstreamRouteTarget) => void | Promise<void>;
+  onSessionActionComplete?: () => void | Promise<void>;
 }
 
 type CopyState = "idle" | "copied" | "error";
@@ -2951,19 +3031,115 @@ function CopyableValue({ value, label }: CopyableValueProps) {
   );
 }
 
+function ManagedRuntimeOverview({
+  sessionId,
+  runtime,
+  onActionComplete,
+}: {
+  sessionId: string;
+  runtime: ManagedRuntimeProjection;
+  onActionComplete?: () => void | Promise<void>;
+}) {
+  const progressEvents = managedRuntimeProgressEvents(runtime.progress);
+  const sdk = runtime.sdk ?? null;
+  const actions = resolveManagedRuntimeActions(runtime);
+
+  return (
+    <section className="sl-session-overview-section managed-runtime">
+      <h3 className="sl-session-overview-heading">Background session</h3>
+      <div className="sl-session-managed-runtime-banner">
+        <span
+          className={`sl-managed-runtime-state ${managedLifecycleStatusClass(runtime.lifecycleState)}`}
+        >
+          {managedRuntimeLifecycleText(runtime)}
+        </span>
+        <span>{managedRuntimeSummaryText(runtime)}</span>
+      </div>
+      <dl className="sl-session-kv">
+        <dt>Runtime</dt>
+        <dd>background session</dd>
+        <dt>Owner</dt>
+        <dd>{formatManagedRuntimeLabel(runtime.runtimeOwner)}</dd>
+        <dt>Permission profile</dt>
+        <dd>{formatManagedRuntimeLabel(runtime.permissionProfile)}</dd>
+        <dt>Lifecycle</dt>
+        <dd>{managedRuntimeLifecycleText(runtime)}</dd>
+        <dt>Updated</dt>
+        <dd>{formatTimestamp(runtime.lifecycleUpdatedAt ?? null)}</dd>
+        {sdk?.sdkSessionId && (
+          <>
+            <dt>SDK session</dt>
+            <dd>
+              <CopyableValue
+                value={sdk.sdkSessionId}
+                label={`Copy SDK session ID ${sdk.sdkSessionId}`}
+              />
+            </dd>
+          </>
+        )}
+        {sdk?.sdkWorkspacePath && (
+          <>
+            <dt>SDK workspace</dt>
+            <dd>{sdk.sdkWorkspacePath}</dd>
+          </>
+        )}
+        {sdk?.sdkStateRoot && (
+          <>
+            <dt>SDK state</dt>
+            <dd>{sdk.sdkStateRoot}</dd>
+          </>
+        )}
+      </dl>
+      <div className="sl-session-managed-actions">
+        {actions.map((action) => (
+          <ManagedRuntimeActionButton
+            key={action.action}
+            sessionId={sessionId}
+            action={action}
+            onComplete={onActionComplete}
+          />
+        ))}
+      </div>
+      {progressEvents.length > 0 && (
+        <ol className="sl-session-managed-progress">
+          {progressEvents.map((event) => (
+            <li key={`${event.timestamp}-${event.phase}-${event.summary}`}>
+              <span className="sl-session-managed-progress-time">
+                {formatTimestamp(event.timestamp)}
+              </span>
+              <span className="sl-session-managed-progress-phase">
+                {formatManagedRuntimeLabel(event.phase)}
+              </span>
+              <span>{event.summary}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+      {(runtime.blockerSummary || runtime.errorSummary) && (
+        <div className="sl-session-overview-note">
+          {runtime.blockerSummary ?? runtime.errorSummary}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function SessionOverview({
   session,
   workstreamLinkage,
   githubStatuses,
+  defaultCliArgs,
   onOpenWorkstream,
+  onSessionActionComplete,
 }: SessionOverviewProps) {
   const summary = getSessionSummaryDisplay(session);
   const latestDescription = getSessionLatestDescription(session, summary);
   const contextBranch = displayBranch(session);
   const contextWorktree = displayWorktree(session);
   const displaySessionId = getDisplaySessionId(session);
-  const restartCommand = buildRestartCommand(session);
+  const restartCommand = buildVisibleRestartCommand(session, defaultCliArgs);
   const pawWorkflow = visiblePawWorkflow(session);
+  const managedRuntime = getManagedRuntime(session);
   return (
     <div className="sl-session-overview">
       <section className="sl-session-overview-section">
@@ -2976,7 +3152,7 @@ function SessionOverview({
             label={
               restartCommand
                 ? "Copy restart command"
-                : "Restart unavailable; no Copilot session ID"
+                : restartUnavailableMessage(session, defaultCliArgs)
             }
             copiedLabel="Copied restart command"
           >
@@ -2991,7 +3167,10 @@ function SessionOverview({
           </CopyButton>
         </div>
         <code className="sl-session-command-preview">
-          {restartCommand ?? "No Copilot session ID recorded. Copy the registry ID instead."}
+          {restartCommand ??
+            (session.copilotSessionId
+              ? "Session launch settings are still loading. Restart command preview will appear when defaults load."
+              : "No Copilot session ID recorded. Copy the registry ID instead.")}
         </code>
       </section>
 
@@ -3007,6 +3186,14 @@ function SessionOverview({
         </div>
         {summary.note && <div className="sl-session-overview-note">{summary.note}</div>}
       </section>
+
+      {managedRuntime && (
+        <ManagedRuntimeOverview
+          sessionId={session.id}
+          runtime={managedRuntime}
+          onActionComplete={onSessionActionComplete}
+        />
+      )}
 
       {workstreamLinkage && workstreamLinkage.status !== "unbound" && (
         <section className="sl-session-overview-section">

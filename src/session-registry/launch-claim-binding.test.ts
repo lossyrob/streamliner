@@ -5,11 +5,12 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { ApiLogger, resetApiLoggerForTests, getApiLogger } from "../server/logger";
+import type { LaunchClaimStore } from "../launch-claim-contract";
 import type { DiscoveredCopilotSession } from "./copilot-session-discovery";
 import { SessionRegistryFileStore } from "./file-store";
 import { LaunchClaimFileStore } from "./launch-claim-store";
 import { runLaunchClaimBindingPass } from "./launch-claim-binding";
-import { createLaunchClaim, kickoffNonceLine } from "./launch-claims";
+import { bindClaimViaTrustedSignal, createLaunchClaim, kickoffNonceLine } from "./launch-claims";
 
 function makeTmp(prefix: string): string {
   return mkdtempSync(join(tmpdir(), `streamliner-binding-${prefix}-`));
@@ -296,6 +297,80 @@ describe("runLaunchClaimBindingPass — degraded paths", () => {
     const claim = claimStore.getClaim("claim-AMB");
     expect(claim?.status).toBe("ambiguous");
     expect(claim?.failureCode).toBe("ambiguous-candidates");
+  });
+
+  it("does not downgrade a claim bound by a trusted signal during ambiguity resolution", async () => {
+    const launchClaimId = "claim-RACE";
+    const launchNonce = "RACEnonce1234567890";
+    const outcome = createLaunchClaim(
+      registryStore,
+      claimStore,
+      { workstreamId: "ws", nodeId: "n", expectedCwd: "C:/repo/work" },
+      { mintLaunchClaimId: () => launchClaimId, mintNonce: () => launchNonce },
+    );
+    expect(outcome.ok).toBe(true);
+    registryStore.upsertSession({
+      id: "observed-RACE1",
+      title: "race candidate",
+      description: "",
+      cwd: "C:/repo/work",
+      repo: null,
+      branch: null,
+      copilotSessionId: "copilot-RACE1",
+      lastSeenAt: "2026-05-02T01:30:00.000Z",
+      origin: { kind: "observed", importedFromCopilotSessionId: "copilot-RACE1" },
+      lifecycleStatus: "active",
+    });
+    writeEventsFile(
+      sessionStateRoot,
+      "copilot-RACE1",
+      makeUserMessageEventLine(kickoffNonceLine(launchNonce)) + "\n",
+    );
+    writeEventsFile(
+      sessionStateRoot,
+      "copilot-RACE2",
+      makeUserMessageEventLine(kickoffNonceLine(launchNonce)) + "\n",
+    );
+    let trustedSignalBound = false;
+    const racingClaimStore: LaunchClaimStore = {
+      createClaim: (input) => claimStore.createClaim(input),
+      getClaim: (id) => claimStore.getClaim(id),
+      listClaims: (options) => claimStore.listClaims(options),
+      updateClaim: (id, mutator) => {
+        if (id === launchClaimId && !trustedSignalBound) {
+          trustedSignalBound = true;
+          const bind = bindClaimViaTrustedSignal(registryStore, claimStore, {
+            launchClaimId,
+            copilotSessionId: "copilot-RACE1",
+            cwd: "C:/repo/work",
+            at: "2026-05-02T01:30:29.000Z",
+            now: () => new Date("2026-05-02T01:30:29.000Z"),
+          });
+          expect(bind.ok).toBe(true);
+        }
+        return claimStore.updateClaim(id, mutator);
+      },
+      deleteClaim: (id) => claimStore.deleteClaim(id),
+      subscribe: (listener) => claimStore.subscribe(listener),
+    };
+
+    const result = await runLaunchClaimBindingPass({
+      registryStore,
+      claimStore: racingClaimStore,
+      discoveredSessions: [
+        discoveredSessionRecord({ sessionId: "copilot-RACE1", cwd: "C:/repo/work" }),
+        discoveredSessionRecord({ sessionId: "copilot-RACE2", cwd: "C:/repo/work" }),
+      ],
+      sessionStateRoot,
+      now: () => new Date("2026-05-02T01:30:30.000Z"),
+      logger: getApiLogger().withScope("launch-claim.binding"),
+    });
+
+    expect(result.claimsTransitionedToAmbiguous).toBe(0);
+    const claim = claimStore.getClaim(launchClaimId);
+    expect(claim?.status).toBe("bound");
+    expect(claim?.boundCopilotSessionId).toBe("copilot-RACE1");
+    expect(claim?.failureCode).toBeNull();
   });
 
   it("idempotency: rerunning on unchanged inputs produces no new evidence entries", async () => {

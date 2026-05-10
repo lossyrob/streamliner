@@ -17,8 +17,14 @@ import {
   githubPullRequestSnapshotTone,
   githubStatusPillClass,
 } from "../github-status-view";
+import {
+  formatManagedRuntimeLabel,
+  managedLifecycleStatusClass,
+  resolveManagedRuntimeActions,
+} from "../managed-runtime-contract";
 import { trackerLabel, trackerUrl } from "../workstream-links";
 import { humanizeLaunchClaim } from "./launch-claim-display";
+import { ManagedRuntimeActionButton } from "./ManagedRuntimeActionButton";
 
 interface NodeInspectorProps {
   entry: WorkstreamDerivedNode | null;
@@ -149,6 +155,7 @@ function RuntimeDetails({ overlay }: { overlay: WorkstreamRuntimeNodeOverlay | n
 
   const primarySession = overlay.session.primarySession;
   const latestClaim = overlay.launch.latestClaim;
+  const managedRuntime = overlay.managedRuntime;
   const trackerSnapshotSummary = [
     overlay.tracker.githubIssue
       ? `issue #${overlay.tracker.githubIssue.number} ${overlay.tracker.githubIssue.state}`
@@ -203,6 +210,20 @@ function RuntimeDetails({ overlay }: { overlay: WorkstreamRuntimeNodeOverlay | n
             </dd>
           </div>
           <div>
+            <dt>Runtime</dt>
+            <dd>
+              {managedRuntime ? (
+                <span
+                  className={`sl-runtime-inline-state ${managedLifecycleStatusClass(managedRuntime.lifecycleState)}`}
+                >
+                  background session / {managedRuntime.lifecycleLabel}
+                </span>
+              ) : (
+                "terminal cli"
+              )}
+            </dd>
+          </div>
+          <div>
             <dt>PAW</dt>
             <dd>
               {overlay.paw.status === "recognized"
@@ -217,6 +238,44 @@ function RuntimeDetails({ overlay }: { overlay: WorkstreamRuntimeNodeOverlay | n
             <dd>{trackerSummary}</dd>
           </div>
         </dl>
+        {managedRuntime && (
+          <div className="sl-managed-runtime-inspector">
+            <div className="sl-runtime-issue muted">
+              <span className="sl-runtime-issue-code">
+                {formatManagedRuntimeLabel(managedRuntime.projection.permissionProfile)}
+              </span>
+              <span>
+                {managedRuntime.projection.summary ??
+                  managedRuntime.projection.blockerSummary ??
+                  managedRuntime.projection.errorSummary ??
+                  "Background session progress is summarized from sanitized lifecycle events."}
+              </span>
+            </div>
+            {managedRuntime.progress.length > 0 && (
+              <ol>
+                {managedRuntime.progress.slice(-3).map((event) => (
+                  <li key={`${event.timestamp}-${event.phase}-${event.summary}`}>
+                    <span>{formatManagedRuntimeLabel(event.phase)}</span>
+                    <span>{event.summary}</span>
+                  </li>
+                ))}
+              </ol>
+            )}
+            <div className="sl-managed-runtime-placeholder-actions">
+              {resolveManagedRuntimeActions(managedRuntime.projection).map((action) => (
+                <ManagedRuntimeActionButton
+                  key={action.action}
+                  sessionId={primarySession?.id ?? ""}
+                  action={
+                    primarySession
+                      ? action
+                      : { ...action, available: false, reason: "No bound session." }
+                  }
+                />
+              ))}
+            </div>
+          </div>
+        )}
         <RuntimeIssueList issues={overlay.degradationReasons} />
       </div>
     </div>

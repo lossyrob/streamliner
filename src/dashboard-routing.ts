@@ -3,6 +3,7 @@ import type { MouseEvent } from "react";
 export type DashboardRoute =
   | { view: "landing"; message?: string }
   | { view: "workstreams"; message?: string }
+  | { view: "settings"; section?: "profiles" | "session-launch" }
   | {
       view: "sessions";
       workstreamId?: string | null;
@@ -46,6 +47,8 @@ export function routePath(route: DashboardRoute): string {
   switch (route.view) {
     case "sessions":
       return sessionsRoutePath(route);
+    case "settings":
+      return route.section === "profiles" ? "/settings/profiles" : "/settings/session-launch";
     case "workstream":
       return workstreamRoutePath(route);
     case "workstreams":

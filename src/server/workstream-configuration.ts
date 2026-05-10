@@ -109,24 +109,46 @@ function normalizeTitleTemplate(value: unknown): string | undefined {
   return template.length > 0 ? template : undefined;
 }
 
+function normalizePromptProfileId(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw badConfiguration("launchDefaults.promptProfileId must be a kebab-case profile id.");
+  }
+  const profileId = value.trim();
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(profileId)) {
+    throw badConfiguration("launchDefaults.promptProfileId must be a kebab-case profile id.");
+  }
+  return profileId;
+}
+
 function normalizeLaunchDefaults(value: unknown): WorkstreamLaunchDefaults | undefined {
   const record = optionalRecord(value, "launchDefaults");
   if (!record) {
     return undefined;
   }
+  const promptProfileId = normalizePromptProfileId(record.promptProfileId);
   const terminalRecord = optionalRecord(record.terminal, "launchDefaults.terminal");
-  if (!terminalRecord) {
-    return undefined;
-  }
-  const preferredTerminal = normalizeTerminalPreference(terminalRecord.preferredTerminal);
-  const titleTemplate = normalizeTitleTemplate(terminalRecord.titleTemplate);
-  const tabColor = normalizeOptionalHexColor(terminalRecord.tabColor);
+  const preferredTerminal = terminalRecord
+    ? normalizeTerminalPreference(terminalRecord.preferredTerminal)
+    : undefined;
+  const titleTemplate = terminalRecord
+    ? normalizeTitleTemplate(terminalRecord.titleTemplate)
+    : undefined;
+  const tabColor = terminalRecord
+    ? normalizeOptionalHexColor(terminalRecord.tabColor)
+    : undefined;
   const terminal = {
     ...(preferredTerminal ? { preferredTerminal } : {}),
     ...(titleTemplate ? { titleTemplate } : {}),
     ...(tabColor ? { tabColor } : {}),
   };
-  return Object.keys(terminal).length > 0 ? { terminal } : undefined;
+  const launchDefaults = {
+    ...(promptProfileId ? { promptProfileId } : {}),
+    ...(Object.keys(terminal).length > 0 ? { terminal } : {}),
+  };
+  return Object.keys(launchDefaults).length > 0 ? launchDefaults : undefined;
 }
 
 function assertConfigurableGraphContent(

@@ -16,12 +16,16 @@ function normalizePathForPowerShell(value: string): string {
   return trimmed;
 }
 
-export function buildRestartCommand(session: SessionRegistryListItem): string | null {
+export function buildRestartCommand(
+  session: SessionRegistryListItem,
+  defaultCliArgs: readonly string[] = [],
+): string | null {
   if (!session.copilotSessionId) {
     return null;
   }
   const worktree = normalizePathForPowerShell(session.derivedWorktreePath ?? session.cwd);
-  const resumeCommand = buildCopilotResumeCommand(session.copilotSessionId);
+  const cliArgs = session.launchCliArgs ?? defaultCliArgs;
+  const resumeCommand = buildCopilotResumeCommand(session.copilotSessionId, cliArgs);
   if (worktree.length === 0) {
     return resumeCommand;
   }

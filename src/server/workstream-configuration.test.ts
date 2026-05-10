@@ -83,6 +83,7 @@ describe("updateWorkstreamConfigurationFile", () => {
     const result = await updateConfiguration(graphPath, {
       launchPolicy: { requiredTracker: "github-issue" },
       launchDefaults: {
+        promptProfileId: "final-pr-only",
         terminal: {
           preferredTerminal: "windows-terminal",
           titleTemplate: "{githubIssue} - {nodeTitle}",
@@ -93,6 +94,7 @@ describe("updateWorkstreamConfigurationFile", () => {
 
     expect(result.workstream.launchPolicy).toEqual({ requiredTracker: "github-issue" });
     expect(result.workstream.launchDefaults).toEqual({
+      promptProfileId: "final-pr-only",
       terminal: {
         preferredTerminal: "windows-terminal",
         titleTemplate: "{githubIssue} - {nodeTitle}",
@@ -103,11 +105,12 @@ describe("updateWorkstreamConfigurationFile", () => {
       updatedAt: "2026-05-07T18:22:44.000Z",
       launchPolicy: { requiredTracker: "github-issue" },
       launchDefaults: {
-      terminal: {
-        preferredTerminal: "windows-terminal",
-        titleTemplate: "{githubIssue} - {nodeTitle}",
-        tabColor: "#ff8c0a",
-      },
+        promptProfileId: "final-pr-only",
+        terminal: {
+          preferredTerminal: "windows-terminal",
+          titleTemplate: "{githubIssue} - {nodeTitle}",
+          tabColor: "#ff8c0a",
+        },
       },
     }));
 
@@ -147,6 +150,10 @@ describe("updateWorkstreamConfigurationFile", () => {
       {
         label: "title template",
         configuration: { launchDefaults: { terminal: { titleTemplate: 42 } } },
+      },
+      {
+        label: "prompt profile id",
+        configuration: { launchDefaults: { promptProfileId: "Final PR" } },
       },
     ];
 

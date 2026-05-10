@@ -116,6 +116,9 @@ export type LaunchContextPreparationErrorCode =
   | "invalid_graph"
   | "invalid_node_id"
   | "unknown_node"
+  | "invalid_repo_config"
+  | "target_repo_not_configured"
+  | "target_repo_unavailable"
   | "invalid_output_dir"
   | "context_generation_failed"
   | "output_dir_exists"
@@ -201,6 +204,13 @@ function sourceDisplayPath(absPath: string, repoRoot: string): string {
   return normalizeManifestPath(absPath);
 }
 
+function isPathInside(parent: string, child: string): boolean {
+  const normalizedParent = resolve(parent).toLowerCase();
+  const normalizedChild = resolve(child).toLowerCase();
+  const relativePath = relative(normalizedParent, normalizedChild);
+  return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
+}
+
 function safeRelativeInputPath(path: string): string | null {
   const normalized = normalizeManifestPath(path).trim();
   if (!normalized || normalized.startsWith("/") || /^[A-Za-z]:/.test(path) || normalized.includes("\0")) {
@@ -223,6 +233,10 @@ function isErrno(error: unknown, code: string): boolean {
     "code" in error &&
     (error as NodeJS.ErrnoException).code === code
   );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function createDefaultContextId(now: Date): string {
@@ -256,6 +270,178 @@ function inferRepoRoot(graphPath: string): { path: string; found: boolean } {
   return { path: dirname(graphPath), found: false };
 }
 
+interface WorkstreamProjectConfigRepo {
+  repoRoot: string;
+}
+
+interface WorkstreamProjectConfig {
+  configPath: string;
+  repos: Map<string, WorkstreamProjectConfigRepo>;
+}
+
+interface LaunchTargetResolution {
+  repoRoot: string;
+  repoRootInfo: { path: string; found: boolean };
+  projectConfig: WorkstreamProjectConfig | null;
+  repoRootsById: Map<string, string>;
+  targetRepoId: string | null;
+}
+
+function selectedLaunchRepoId(workstream: WorkstreamDocument, node: WorkstreamNode): string | null {
+  const nodeRepoId = node.repoIds.find((repoId) => repoId.trim());
+  if (nodeRepoId) {
+    return nodeRepoId;
+  }
+  return workstream.repos.find((repo) => repo.role === "primary")?.id
+    ?? workstream.repos[0]?.id
+    ?? null;
+}
+
+function findWorkstreamProjectConfigPath(graphPath: string): string | null {
+  let current = dirname(graphPath);
+  while (dirname(current) !== current) {
+    const rootConfigPath = join(current, "streamliner.json");
+    if (existsSync(rootConfigPath)) {
+      return rootConfigPath;
+    }
+    const streamlinerConfigPath = join(current, "config.json");
+    if (basename(current) === ".streamliner" && existsSync(streamlinerConfigPath)) {
+      return streamlinerConfigPath;
+    }
+    current = dirname(current);
+  }
+  return null;
+}
+
+function parseWorkstreamProjectConfig(configPath: string, rawConfig: string): WorkstreamProjectConfig {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawConfig);
+  } catch (error: unknown) {
+    throw new LaunchContextPreparationError(
+      "invalid_repo_config",
+      400,
+      `Invalid Streamliner repo config at ${configPath}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (!isRecord(parsed) || parsed.version !== 1 || !isRecord(parsed.repos)) {
+    throw new LaunchContextPreparationError(
+      "invalid_repo_config",
+      400,
+      `Invalid Streamliner repo config at ${configPath}: expected version 1 with a repos object.`,
+    );
+  }
+
+  const configDir = dirname(configPath);
+  const repos = new Map<string, WorkstreamProjectConfigRepo>();
+  for (const [id, value] of Object.entries(parsed.repos)) {
+    if (!isRecord(value) || typeof value.path !== "string" || value.path.trim().length === 0) {
+      throw new LaunchContextPreparationError(
+        "invalid_repo_config",
+        400,
+        `Invalid Streamliner repo config at ${configPath}: repos.${id}.path must be a non-empty string.`,
+      );
+    }
+    repos.set(id, {
+      repoRoot: resolve(configDir, value.path),
+    });
+  }
+  return {
+    configPath,
+    repos,
+  };
+}
+
+async function readWorkstreamProjectConfig(graphPath: string): Promise<WorkstreamProjectConfig | null> {
+  const configPath = findWorkstreamProjectConfigPath(graphPath);
+  if (!configPath) {
+    return null;
+  }
+  try {
+    return parseWorkstreamProjectConfig(configPath, await readFile(configPath, "utf8"));
+  } catch (error: unknown) {
+    if (error instanceof LaunchContextPreparationError) {
+      throw error;
+    }
+    throw new LaunchContextPreparationError(
+      "invalid_repo_config",
+      400,
+      `Could not read Streamliner repo config at ${configPath}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+async function assertDirectory(path: string, repoId: string): Promise<void> {
+  try {
+    const result = await stat(path);
+    if (result.isDirectory()) {
+      return;
+    }
+    throw new LaunchContextPreparationError(
+      "target_repo_unavailable",
+      409,
+      `Selected node target repo "${repoId}" resolves to ${path}, but that path is not a directory.`,
+    );
+  } catch (error: unknown) {
+    if (error instanceof LaunchContextPreparationError) {
+      throw error;
+    }
+    throw new LaunchContextPreparationError(
+      "target_repo_unavailable",
+      isErrno(error, "ENOENT") ? 404 : 409,
+      `Selected node target repo "${repoId}" resolves to ${path}, but Streamliner could not access it: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+async function resolveLaunchTarget(options: {
+  graphPath: string;
+  workstream: WorkstreamDocument;
+  node: WorkstreamNode;
+}): Promise<LaunchTargetResolution> {
+  const repoRootInfo = inferRepoRoot(options.graphPath);
+  const projectConfig = await readWorkstreamProjectConfig(options.graphPath);
+  const repoRootsById = new Map<string, string>();
+  for (const [repoId, repoConfig] of projectConfig?.repos ?? []) {
+    repoRootsById.set(repoId, repoConfig.repoRoot);
+  }
+
+  const targetRepoId = selectedLaunchRepoId(options.workstream, options.node);
+  const primaryRepoId = options.workstream.repos.find((repo) => repo.role === "primary")?.id
+    ?? options.workstream.repos[0]?.id
+    ?? null;
+  if (primaryRepoId && !repoRootsById.has(primaryRepoId) && repoRootInfo.found) {
+    repoRootsById.set(primaryRepoId, repoRootInfo.path);
+  }
+
+  if (projectConfig && targetRepoId) {
+    const configuredTargetRepo = projectConfig.repos.get(targetRepoId);
+    if (!configuredTargetRepo) {
+      throw new LaunchContextPreparationError(
+        "target_repo_not_configured",
+        400,
+        `Selected node target repo "${targetRepoId}" is not configured in ${projectConfig.configPath}. Add repos.${targetRepoId}.path to the Streamliner config or select a configured repo.`,
+      );
+    }
+    await assertDirectory(configuredTargetRepo.repoRoot, targetRepoId);
+    return {
+      repoRoot: configuredTargetRepo.repoRoot,
+      repoRootInfo,
+      projectConfig,
+      repoRootsById,
+      targetRepoId,
+    };
+  }
+
+  return {
+    repoRoot: repoRootInfo.path,
+    repoRootInfo,
+    projectConfig,
+    repoRootsById,
+    targetRepoId,
+  };
+}
+
 function gitRootFor(repoRoot: string): string | null {
   if (existsSync(join(repoRoot, ".git"))) {
     return repoRoot;
@@ -270,7 +456,7 @@ async function computeFreshness(
   unavailableInputs: LaunchContextUnavailableInput[],
 ): Promise<LaunchContextSourceFreshness> {
   const gitRoot = gitRootFor(repoRoot);
-  if (gitRoot) {
+  if (gitRoot && isPathInside(gitRoot, absPath)) {
     const relPath = normalizeManifestPath(relative(gitRoot, absPath));
     try {
       await execFileAsync("git", ["-C", gitRoot, "ls-files", "--error-unmatch", relPath]);
@@ -358,9 +544,9 @@ function designReferenceKey(reference: Pick<WorkstreamDesignReference, "repoId" 
 function collectDesignReferences(
   workstream: WorkstreamDocument,
   briefContent: string | undefined,
+  fallbackRepoId: string,
 ): Array<WorkstreamDesignReference & { rationale: string }> {
   const references = new Map<string, WorkstreamDesignReference & { rationale: string }>();
-  const primaryRepoId = workstream.repos[0]?.id ?? "streamliner";
   const add = (repoId: string, path: string, rationale: string) => {
     const reference = {
       repoId,
@@ -373,11 +559,11 @@ function collectDesignReferences(
     }
   };
 
-  add(primaryRepoId, "docs/design/index.md", "design index entry point");
+  add(fallbackRepoId, "docs/design/index.md", "design index entry point");
   for (const reference of workstream.designRefs) {
     add(reference.repoId, reference.path, "workstream designRefs");
   }
-  for (const reference of parseBriefDesignReferences(briefContent, primaryRepoId)) {
+  for (const reference of parseBriefDesignReferences(briefContent, fallbackRepoId)) {
     add(reference.repoId, reference.path, "brief Design References section");
   }
 
@@ -999,8 +1185,9 @@ export async function prepareLaunchContextPackageInput(
     );
   }
 
-  const repoRootInfo = inferRepoRoot(graphPath);
-  const repoRoot = repoRootInfo.path;
+  const launchTarget = await resolveLaunchTarget({ graphPath, workstream, node });
+  const repoRootInfo = launchTarget.repoRootInfo;
+  const repoRoot = launchTarget.repoRoot;
   const workstreamDir = dirname(graphPath);
   const projectKey = workstream.projectKey ?? workstream.id;
   const stateRoot = resolve(options.stateRoot ?? defaultStateRoot());
@@ -1015,7 +1202,7 @@ export async function prepareLaunchContextPackageInput(
   const contextFilePath = join(packagePath, CONTEXT_FILE_NAME);
   const unavailableInputs: LaunchContextUnavailableInput[] = [];
   const sourceReferences: LaunchContextSourceReference[] = [];
-  if (!repoRootInfo.found) {
+  if (!repoRootInfo.found && !launchTarget.projectConfig) {
     unavailableInputs.push({
       kind: "graph",
       source: normalizeManifestPath(graphPath),
@@ -1046,8 +1233,8 @@ export async function prepareLaunchContextPackageInput(
   });
   sourceReferences.push(briefSource.reference);
 
-  const designReferences = collectDesignReferences(workstream, briefSource.content);
-  const primaryRepoId = workstream.repos[0]?.id ?? "streamliner";
+  const primaryRepoId = launchTarget.targetRepoId ?? workstream.repos[0]?.id ?? "streamliner";
+  const designReferences = collectDesignReferences(workstream, briefSource.content, primaryRepoId);
   const layer0Selection: LaunchContextLayer0Selection[] = [];
   const designSources: LaunchContextLoadedSource[] = [];
   for (const designReference of designReferences) {
@@ -1077,7 +1264,8 @@ export async function prepareLaunchContextPackageInput(
       continue;
     }
 
-    if (designReference.repoId !== primaryRepoId) {
+    const designRepoRoot = launchTarget.repoRootsById.get(designReference.repoId);
+    if (!designRepoRoot) {
       const reference: LaunchContextSourceReference = {
         kind: "design",
         role: "layer-0-design",
@@ -1090,7 +1278,7 @@ export async function prepareLaunchContextPackageInput(
         kind: "design",
         source: `${designReference.repoId}:${designPath}`,
         reason: "cross_repo_unavailable",
-        detail: "Context assembly currently reads design docs from the primary checkout only.",
+        detail: "Context assembly reads design docs from configured repo roots; this repo is not configured for the workstream graph.",
       });
       layer0Selection.push({
         repoId: designReference.repoId,
@@ -1101,8 +1289,8 @@ export async function prepareLaunchContextPackageInput(
       continue;
     }
     const source = await readSourceFile({
-      absPath: join(repoRoot, ...designPath.split("/")),
-      repoRoot,
+      absPath: join(designRepoRoot, ...designPath.split("/")),
+      repoRoot: designRepoRoot,
       kind: "design",
       role: "layer-0-design",
       unavailableKind: "design",

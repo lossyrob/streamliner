@@ -1,5 +1,5 @@
 import type { FormEvent } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   type PawLaunchDialogConfiguration,
   type PawLaunchDialogDefaults,
@@ -7,11 +7,16 @@ import {
 } from "./paw-launch-config";
 import type {
   NodeLaunchHandoff,
+  NodeLaunchClaimState,
+  NodeManagedSdkLaunchResponse,
   NodeTerminalLaunchResponse,
 } from "../node-launch-record-contract";
+import type { WorkstreamRuntimeKind } from "../managed-runtime-contract";
 import { humanizeLaunchClaim } from "./launch-claim-display";
 import {
   mergePromptProfiles,
+  responseErrorMessage,
+  savePromptProfile,
   type PawPromptProfile,
 } from "./paw-prompt-profiles";
 import { TerminalColorQuickPicker } from "./SessionColorPicker";
@@ -19,6 +24,7 @@ import { TerminalColorQuickPicker } from "./SessionColorPicker";
 export type PawLaunchDialogHandoff = NodeLaunchHandoff;
 
 export type PawTerminalLaunchResult = NodeTerminalLaunchResponse;
+export type PawManagedLaunchResult = NodeManagedSdkLaunchResponse;
 
 export interface PawTerminalLaunchInput {
   kickoffPrompt: string;
@@ -36,6 +42,7 @@ export interface PawLaunchProgressEvent {
 interface PawLaunchDialogProps {
   nodeTitle: string;
   defaults: PawLaunchDialogDefaults;
+  defaultPromptProfileId?: string | null;
   promptProfiles?: PawPromptProfile[];
   promptProfilesLoading?: boolean;
   promptProfilesError?: string | null;
@@ -44,16 +51,22 @@ interface PawLaunchDialogProps {
   error: string | null;
   handoff: PawLaunchDialogHandoff | null;
   terminalLaunchResult: PawTerminalLaunchResult | null;
+  managedLaunchResult: PawManagedLaunchResult | null;
+  latestLaunchClaim: NodeLaunchClaimState | null;
   progressEvents: PawLaunchProgressEvent[];
   actionDisabledReason?: string | null;
   releasingLaunch?: boolean;
   releaseError?: string | null;
   releaseStatus?: string | null;
+  resumingLaunch?: boolean;
+  resumeError?: string | null;
+  resumeStatus?: string | null;
   onCancel: () => void;
-  onSubmit: (configuration: PawLaunchDialogConfiguration) => void;
+  onSubmit: (configuration: PawLaunchDialogConfiguration) => void | Promise<void>;
   onLaunchTerminal: (input: PawTerminalLaunchInput) => void;
   onPromptProfilesChanged?: (profiles: PawPromptProfile[]) => void;
   onReleaseLaunch?: () => void;
+  onResumeLaunch?: () => void;
 }
 
 interface WorkflowContextDocument {
@@ -78,15 +91,31 @@ const TERMINAL_OPTIONS: Option<PreferredTerminal>[] = [
   { value: "powershell", label: "PowerShell" },
 ];
 
+const RUNTIME_OPTIONS: Array<{
+  value: WorkstreamRuntimeKind;
+  label: string;
+  description: string;
+  note: string;
+}> = [
+  {
+    value: "terminal-cli",
+    label: "Terminal CLI",
+    description: "Prepare PAW context, then start a visible Copilot CLI worker terminal.",
+    note: "Existing terminal-first behavior.",
+  },
+  {
+    value: "managed-sdk",
+    label: "Background Session",
+    description: "Run this node as an autonomous Streamliner session without opening a terminal.",
+    note: "Runs through Streamliner's managed runtime; no per-tool approval UI.",
+  },
+];
+
 function parseCliArgs(value: string): string[] {
   return value
     .split(/\s+/g)
     .map((part) => part.trim())
     .filter(Boolean);
-}
-
-function responseErrorMessage(response: Response, fallback: string): string {
-  return `${fallback} (${response.status})`;
 }
 
 function progressLabel(type: string): string {
@@ -150,34 +179,6 @@ function PawLaunchDebugPaths({ paths }: { paths: DebugPath[] }) {
 
 function profileNameKey(value: string): string {
   return value.toLocaleLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-}
-
-async function savePromptProfile(input: {
-  id?: string;
-  name: string;
-  instructions: string;
-}): Promise<PawPromptProfile> {
-  const response = await fetch(
-    input.id
-      ? `/api/paw-launch-prompt-profiles/${encodeURIComponent(input.id)}`
-      : "/api/paw-launch-prompt-profiles",
-    {
-      method: input.id ? "PUT" : "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: input.name,
-        instructions: input.instructions,
-      }),
-    },
-  );
-  if (!response.ok) {
-    throw new Error(responseErrorMessage(response, "Could not save prompt profile."));
-  }
-  const body = await response.json() as { profile?: PawPromptProfile };
-  if (!body.profile) {
-    throw new Error("Prompt profile response was missing the saved profile.");
-  }
-  return body.profile;
 }
 
 async function loadWorkflowContext(path: string): Promise<WorkflowContextDocument> {
@@ -290,6 +291,7 @@ function SelectField<T extends string>({
 export function PawLaunchDialog({
   nodeTitle,
   defaults,
+  defaultPromptProfileId = null,
   promptProfiles = [],
   promptProfilesLoading = false,
   promptProfilesError = null,
@@ -298,17 +300,26 @@ export function PawLaunchDialog({
   error,
   handoff,
   terminalLaunchResult,
+  managedLaunchResult,
+  latestLaunchClaim,
   progressEvents,
   actionDisabledReason,
   releasingLaunch = false,
   releaseError,
   releaseStatus,
+  resumingLaunch = false,
+  resumeError,
+  resumeStatus,
   onCancel,
   onSubmit,
   onLaunchTerminal,
   onPromptProfilesChanged,
   onReleaseLaunch,
+  onResumeLaunch,
 }: PawLaunchDialogProps) {
+  const [runtimeKind, setRuntimeKind] = useState<WorkstreamRuntimeKind>(
+    defaults.runtimeKind ?? "terminal-cli",
+  );
   const [workflowInstructions, setWorkflowInstructions] = useState(defaults.workflowInstructions);
   const [cliArgsText, setCliArgsText] = useState(defaults.cliArgsText);
   const [cwd, setCwd] = useState(defaults.cwd);
@@ -318,6 +329,8 @@ export function PawLaunchDialog({
   const [terminalTitleEdited, setTerminalTitleEdited] = useState(false);
   const [terminalColorEdited, setTerminalColorEdited] = useState(false);
   const [launchAfterInit, setLaunchAfterInit] = useState(false);
+  const [terminalLaunchAfterInitPreference, setTerminalLaunchAfterInitPreference] = useState(false);
+  const submittingRef = useRef(false);
   const [profiles, setProfiles] = useState<PawPromptProfile[]>(() =>
     mergePromptProfiles([], promptProfiles)
   );
@@ -333,19 +346,34 @@ export function PawLaunchDialog({
   const [workflowContextStatus, setWorkflowContextStatus] = useState<string | null>(null);
   const [workflowContextError, setWorkflowContextError] = useState<string | null>(null);
   const [kickoffPromptText, setKickoffPromptText] = useState("");
-  const terminalLaunchClaimDisplay = terminalLaunchResult
-    ? humanizeLaunchClaim(terminalLaunchResult.launchClaim)
+  const defaultProfileAppliedRef = useRef(false);
+  const profileSelectionTouchedRef = useRef(false);
+  const terminalLaunchClaim = latestLaunchClaim ?? terminalLaunchResult?.launchClaim ?? null;
+  const managedLaunchClaim = latestLaunchClaim ?? managedLaunchResult?.launchClaim ?? null;
+  const terminalLaunchActive = Boolean(terminalLaunchResult && terminalLaunchClaim?.blocksLaunch);
+  const managedLaunchActive = Boolean(managedLaunchResult && managedLaunchClaim?.blocksLaunch);
+  const terminalLaunchClaimDisplay = terminalLaunchClaim
+    ? humanizeLaunchClaim(terminalLaunchClaim)
     : null;
+  const managedLaunchClaimDisplay = managedLaunchClaim
+    ? humanizeLaunchClaim(managedLaunchClaim)
+    : null;
+  const activeRuntimeKind = handoff?.runtimeKind ??
+    (managedLaunchActive ? managedLaunchResult?.runtimeKind : undefined) ??
+    runtimeKind;
+  const managedRuntimeSelected = activeRuntimeKind === "managed-sdk";
+  const terminalHandoffSelected = Boolean(handoff && !managedRuntimeSelected);
+  const runtimeSelectionLocked = preparing || Boolean(handoff || terminalLaunchActive || managedLaunchActive);
   const trimmedInstructions = workflowInstructions.trim();
   const instructionError = trimmedInstructions.length === 0
     ? "Launch instructions are required so paw-init can derive the workflow setup and worker prompt."
     : null;
   const trimmedKickoffPrompt = kickoffPromptText.trim();
-  const kickoffPromptError = handoff && trimmedKickoffPrompt.length === 0
+  const kickoffPromptError = terminalHandoffSelected && trimmedKickoffPrompt.length === 0
     ? "Kickoff prompt is required before launching the terminal."
     : null;
   const trimmedTerminalTitle = terminalTitle.trim();
-  const terminalTitleError = handoff && trimmedTerminalTitle.length === 0
+  const terminalTitleError = terminalHandoffSelected && trimmedTerminalTitle.length === 0
     ? "Terminal tab title is required before launching the terminal."
     : null;
   const terminalColorValue = terminalColor.trim();
@@ -357,6 +385,24 @@ export function PawLaunchDialog({
   useEffect(() => {
     setProfiles((current) => mergePromptProfiles(current, promptProfiles));
   }, [promptProfiles]);
+
+  useEffect(() => {
+    if (
+      defaultProfileAppliedRef.current ||
+      profileSelectionTouchedRef.current ||
+      !defaultPromptProfileId
+    ) {
+      return;
+    }
+    const defaultProfile = profiles.find((profile) => profile.id === defaultPromptProfileId);
+    if (!defaultProfile) {
+      return;
+    }
+    defaultProfileAppliedRef.current = true;
+    setSelectedProfileId(defaultProfile.id);
+    setProfileName(defaultProfile.name);
+    setWorkflowInstructions(defaultProfile.instructions);
+  }, [defaultPromptProfileId, profiles]);
 
   useEffect(() => {
     if (!handoff) {
@@ -432,6 +478,7 @@ export function PawLaunchDialog({
     : "Choose a saved profile to update it, or enter a save name for a new profile.";
 
   const applyProfile = (profileId: string) => {
+    profileSelectionTouchedRef.current = true;
     setSelectedProfileId(profileId);
     setProfileStatus(null);
     setProfileError(null);
@@ -440,6 +487,16 @@ export function PawLaunchDialog({
       setWorkflowInstructions(profile.instructions);
       setProfileName(profile.name);
     }
+  };
+
+  const handleProfileNameChange = (value: string) => {
+    profileSelectionTouchedRef.current = true;
+    setProfileName(value);
+  };
+
+  const handleWorkflowInstructionsChange = (value: string) => {
+    profileSelectionTouchedRef.current = true;
+    setWorkflowInstructions(value);
   };
 
   const handleSaveProfile = async () => {
@@ -495,22 +552,51 @@ export function PawLaunchDialog({
     }
   };
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (instructionError || actionDisabledReason) {
+    if (preparing || launching || instructionError || actionDisabledReason) {
       return;
     }
-    onSubmit({
-      cwd,
-      workflowInstructions: trimmedInstructions,
-      cliArgs: parseCliArgs(cliArgsText),
-      terminal: {
-        ...terminal,
-        title: trimmedTerminalTitle,
-        tabColor: terminalTabColor,
-      },
-      launchAfterInit,
-    });
+    if (submittingRef.current) {
+      return;
+    }
+    submittingRef.current = true;
+    try {
+      await onSubmit({
+        runtimeKind,
+        cwd,
+        workflowInstructions: trimmedInstructions,
+        cliArgs: parseCliArgs(cliArgsText),
+        terminal: {
+          ...terminal,
+          title: trimmedTerminalTitle,
+          tabColor: terminalTabColor,
+        },
+        launchAfterInit: managedRuntimeSelected ? false : launchAfterInit,
+      });
+    } finally {
+      submittingRef.current = false;
+    }
+  };
+
+  const handleRuntimeKindChange = (nextRuntimeKind: WorkstreamRuntimeKind) => {
+    if (nextRuntimeKind === runtimeKind) {
+      return;
+    }
+    setRuntimeKind(nextRuntimeKind);
+    if (nextRuntimeKind === "managed-sdk") {
+      setTerminalLaunchAfterInitPreference(launchAfterInit);
+      setLaunchAfterInit(false);
+    } else {
+      setLaunchAfterInit(terminalLaunchAfterInitPreference);
+    }
+  };
+
+  const handleLaunchAfterInitChange = (checked: boolean) => {
+    setLaunchAfterInit(checked);
+    if (!managedRuntimeSelected) {
+      setTerminalLaunchAfterInitPreference(checked);
+    }
   };
 
   const handleTerminalTitleChange = (value: string) => {
@@ -531,14 +617,16 @@ export function PawLaunchDialog({
           <div>
             <div className="sl-sheet-head-pills">
               <span className="sl-pill accent">PAW init</span>
-              <span className="sl-pill muted">Text-guided workflow</span>
+              <span className="sl-pill muted">
+                {managedRuntimeSelected ? "Background Session" : "Terminal CLI"}
+              </span>
             </div>
             <h2 className="sl-sheet-title">Launch PAW session</h2>
             <p className="sl-paw-launch-subtitle">
-              Selected node: <strong>{nodeTitle}</strong>. Streamliner runs one
-              fully capable SDK session to assemble launch context, run the PAW
-              init skill, install that context into the PAW work directory, and
-              then starts a visible Copilot CLI worker terminal.
+              Selected node: <strong>{nodeTitle}</strong>. Streamliner assembles
+              launch context and then either starts the existing visible Copilot CLI
+              worker terminal path or runs the node as a background session without
+              opening a terminal.
             </p>
             {defaults.githubIssueLabel && (
               <p className="sl-paw-launch-tracker">
@@ -575,8 +663,9 @@ export function PawLaunchDialog({
                 <div>
                   <span className="sl-section-label">PAW init progress</span>
                   <p>
-                    Streamliner is running one internal Copilot SDK session for
-                    context assembly and PAW init.
+                    {managedRuntimeSelected
+                      ? "Streamliner is starting a background session for this node."
+                      : "Streamliner is running one internal Copilot SDK session for context assembly and PAW init."}
                   </p>
                 </div>
                 <span className="sl-pill accent">
@@ -607,16 +696,28 @@ export function PawLaunchDialog({
             </section>
           )}
 
-          {(actionDisabledReason || releaseError || releaseStatus) && !terminalLaunchResult && (
+          {(actionDisabledReason || releaseError || releaseStatus || resumeError || resumeStatus) && (
             <div className="sl-action-warning" aria-live="polite">
               {actionDisabledReason && <p>{actionDisabledReason}</p>}
               {releaseError && <p className="sl-action-error">{releaseError}</p>}
               {releaseStatus && <p className="sl-inline-status">{releaseStatus}</p>}
+              {resumeError && <p className="sl-action-error">{resumeError}</p>}
+              {resumeStatus && <p className="sl-inline-status">{resumeStatus}</p>}
+              {actionDisabledReason && onResumeLaunch && (
+                <button
+                  type="button"
+                  className="sl-action-btn primary"
+                  disabled={resumingLaunch || releasingLaunch || preparing || launching}
+                  onClick={onResumeLaunch}
+                >
+                  {resumingLaunch ? "Resuming background session..." : "Resume background session"}
+                </button>
+              )}
               {actionDisabledReason && onReleaseLaunch && (
                 <button
                   type="button"
                   className="sl-action-btn"
-                  disabled={releasingLaunch || preparing || launching}
+                  disabled={releasingLaunch || resumingLaunch || preparing || launching}
                   onClick={onReleaseLaunch}
                 >
                   {releasingLaunch ? "Releasing launch..." : "Release stuck launch"}
@@ -624,6 +725,43 @@ export function PawLaunchDialog({
               )}
             </div>
           )}
+
+          <section className="sl-paw-config-section">
+            <div className="sl-paw-config-section-head">
+              <div>
+                <span className="sl-section-label">Worker runtime</span>
+                <p>
+                  Choose how Streamliner should run the node after launch context
+                  is prepared. Background Session runs as an autonomous Streamliner
+                  session and does not add per-tool approval prompts.
+                </p>
+              </div>
+            </div>
+            <div className="sl-paw-runtime-options" role="radiogroup" aria-label="Worker runtime">
+              {RUNTIME_OPTIONS.map((option) => (
+                <label
+                  key={option.value}
+                  className={`sl-paw-runtime-option${
+                    activeRuntimeKind === option.value ? " selected" : ""
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="paw-runtime-kind"
+                    value={option.value}
+                    checked={activeRuntimeKind === option.value}
+                    disabled={runtimeSelectionLocked}
+                    onChange={() => handleRuntimeKindChange(option.value)}
+                  />
+                  <span>
+                    <strong>{option.label}</strong>
+                    <small>{option.description}</small>
+                    <em>{option.note}</em>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </section>
 
           <section className="sl-paw-config-section sl-paw-instructions-section">
             <div className="sl-paw-config-section-head">
@@ -661,7 +799,7 @@ export function PawLaunchDialog({
                 label="Save name"
                 ariaLabel="Save name"
                 value={profileName}
-                onChange={setProfileName}
+                onChange={handleProfileNameChange}
                 placeholder="Name this reusable launch text"
               />
               <div className="sl-paw-profile-actions">
@@ -685,7 +823,7 @@ export function PawLaunchDialog({
               label="Launch instructions"
               ariaLabel="Launch instructions"
               value={workflowInstructions}
-              onChange={setWorkflowInstructions}
+              onChange={handleWorkflowInstructionsChange}
               rows={8}
               placeholder="Example: Use paw-lite, final-pr-only, no intermediate pauses unless blocked..."
             />
@@ -699,8 +837,14 @@ export function PawLaunchDialog({
           <section className="sl-paw-config-section">
             <div className="sl-paw-config-section-head">
               <div>
-                <span className="sl-section-label">Launch shell</span>
-                <p>These values are used when Streamliner starts the visible Copilot CLI worker terminal.</p>
+                  <span className="sl-section-label">
+                    {managedRuntimeSelected ? "Worker defaults" : "Launch shell"}
+                  </span>
+                  <p>
+                    {managedRuntimeSelected
+                      ? "These values are retained for future terminal takeover and CLI-compatible worker metadata."
+                      : "These values are used when Streamliner starts the visible Copilot CLI worker terminal."}
+                  </p>
               </div>
             </div>
             <div className="sl-paw-launch-grid">
@@ -710,11 +854,11 @@ export function PawLaunchDialog({
                   type="text"
                   value={cwd}
                   aria-label="Working directory"
-                  placeholder={defaults.inferredCwd || "Use backend-inferred graph repo root"}
+                  placeholder={defaults.inferredCwd || "Resolve from selected repo config"}
                   onChange={(event) => setCwd(event.target.value)}
                 />
                 <p className="sl-field-note">
-                  Defaults to the selected graph repo root. Changes are saved for{" "}
+                  Leave blank to resolve from the selected node's repo config. Changes are saved for{" "}
                   {defaults.cwdPreferenceKey ?? "this repo"}.
                 </p>
               </label>
@@ -754,14 +898,16 @@ export function PawLaunchDialog({
               <input
                 type="checkbox"
                 checked={launchAfterInit}
-                disabled={preparing || Boolean(handoff)}
+                disabled={managedRuntimeSelected || preparing || Boolean(handoff)}
                 aria-label="Launch after init"
-                onChange={(event) => setLaunchAfterInit(event.target.checked)}
+                onChange={(event) => handleLaunchAfterInitChange(event.target.checked)}
               />
               <span>
                 <strong>Launch after init</strong>
                 <small>
-                  Start the terminal immediately when PAW init finishes instead of stopping for prompt and WorkflowContext review.
+                  {managedRuntimeSelected
+                    ? "Background Session starts in the background and does not hand off to a visible terminal."
+                    : "Start the terminal immediately when PAW init finishes instead of stopping for prompt and WorkflowContext review."}
                 </small>
               </span>
             </label>
@@ -796,11 +942,15 @@ export function PawLaunchDialog({
             )}
             <div>
               <span className="sl-section-label">Working directory</span>
-              <p>{cwd.trim() || defaults.inferredCwd || "Backend inferred"}</p>
+              <p>{cwd.trim() || defaults.inferredCwd || "Backend resolves selected repo"}</p>
             </div>
             <div>
-              <span className="sl-section-label">Terminal</span>
-              <p>{defaults.terminalPreference} ({terminal.preferredTerminal})</p>
+              <span className="sl-section-label">Runtime</span>
+              <p>
+                {managedRuntimeSelected
+                  ? "Background Session / managed-autonomous"
+                  : `Terminal CLI / ${defaults.terminalPreference} (${terminal.preferredTerminal})`}
+              </p>
             </div>
             <div>
               <span className="sl-section-label">Session display</span>
@@ -808,7 +958,13 @@ export function PawLaunchDialog({
             </div>
             <div>
               <span className="sl-section-label">Launch mode</span>
-              <p>{launchAfterInit ? "Launch terminal after PAW init" : "Review before terminal launch"}</p>
+              <p>
+                {managedRuntimeSelected
+                  ? "Start background session when submitted"
+                  : launchAfterInit
+                    ? "Launch terminal after PAW init"
+                    : "Review before terminal launch"}
+              </p>
             </div>
           </section>
 
@@ -818,7 +974,9 @@ export function PawLaunchDialog({
 
           {handoff && (
             <section className="sl-paw-launch-result">
-              <span className="sl-section-label">Prepared handoff</span>
+              <span className="sl-section-label">
+                {managedRuntimeSelected ? "Prepared background session" : "Prepared handoff"}
+              </span>
               <dl>
                 <div>
                   <dt>CWD</dt>
@@ -845,105 +1003,139 @@ export function PawLaunchDialog({
                   <dd>{handoff.cliArgs.length > 0 ? handoff.cliArgs.join(" ") : "(none)"}</dd>
                 </div>
                 <div>
-                  <dt>Terminal title</dt>
+                  <dt>Session title</dt>
                   <dd>{trimmedTerminalTitle}</dd>
                 </div>
                 <div>
-                  <dt>Terminal color</dt>
+                  <dt>Session color</dt>
                   <dd>{terminalTabColor ?? "(default)"}</dd>
                 </div>
               </dl>
-              <div className="sl-paw-workflow-context-editor">
-                <div className="sl-paw-config-section-head">
-                  <div>
-                    <span className="sl-section-label">Review kickoff prompt</span>
-                    <p>
-                      This is the prompt Streamliner will send to the visible
-                      Copilot CLI worker. Edit it here before launching the
-                      terminal.
-                    </p>
-                  </div>
-                </div>
-                <textarea
-                  value={kickoffPromptText}
-                  aria-label="Kickoff prompt"
-                  rows={14}
-                  spellCheck={false}
-                  disabled={Boolean(terminalLaunchResult)}
-                  onChange={(event) => setKickoffPromptText(event.target.value)}
-                />
-                {kickoffPromptError && (
-                  <p className="sl-action-error">{kickoffPromptError}</p>
-                )}
-              </div>
-              <div className="sl-paw-workflow-context-editor">
-                <div className="sl-paw-config-section-head">
-                  <div>
-                    <span className="sl-section-label">Review WorkflowContext.md</span>
-                    <p>
-                      PAW init has created the workflow context. Review or make
-                      last-minute edits before launching the terminal session.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    className="sl-action-btn"
-                    disabled={workflowContextLoading || workflowContextSaving || !workflowContextText}
-                    onClick={handleSaveWorkflowContext}
-                  >
-                    {workflowContextSaving ? "Saving..." : "Save WorkflowContext"}
-                  </button>
-                </div>
-                {workflowContextLoading ? (
-                  <p className="sl-field-note">Loading WorkflowContext.md...</p>
-                ) : (
-                  <textarea
-                    value={workflowContextText}
-                    aria-label="WorkflowContext content"
-                    rows={14}
-                    spellCheck={false}
-                    onChange={(event) => {
-                      setWorkflowContextText(event.target.value);
-                      setWorkflowContextStatus(null);
-                    }}
-                  />
-                )}
-                {workflowContext && (
-                  <p className="sl-field-note">
-                    Loaded from {workflowContext.path}. Last saved {new Date(workflowContext.updatedAt).toLocaleString()}.
-                  </p>
-                )}
-                {(workflowContextStatus || workflowContextError) && (
-                  <p className={workflowContextError ? "sl-action-error" : "sl-inline-status"}>
-                    {workflowContextError ?? workflowContextStatus}
-                  </p>
-                )}
-              </div>
-              {terminalLaunchResult && (
+              {managedRuntimeSelected ? (
                 <div className="sl-paw-launch-summary">
                   <div>
-                    <span className="sl-section-label">Terminal launch</span>
+                    <span className="sl-section-label">Background session</span>
                     <p>
-                      Started with {terminalLaunchResult.terminal.method}
-                      {terminalLaunchResult.terminal.pid ? ` (PID ${terminalLaunchResult.terminal.pid})` : ""}.
+                      {managedLaunchActive && managedLaunchResult
+                        ? `Started with ${managedLaunchResult.permissionProfile}.`
+                        : preparing
+                          ? "Streamliner is starting the background session for this prepared handoff."
+                          : managedLaunchResult
+                            ? "The previous background session launch is no longer active. Ready to start this prepared handoff again."
+                            : "Ready to start this prepared handoff as a background session. No terminal will open."}
                     </p>
+                    {managedLaunchResult?.sdkSessionId && (
+                      <p className="sl-field-note">SDK session {managedLaunchResult.sdkSessionId}</p>
+                    )}
                   </div>
                   <div>
                     <span className="sl-section-label">Launch claim</span>
-                    <p>{terminalLaunchClaimDisplay?.label}</p>
-                    {terminalLaunchClaimDisplay?.detail && (
-                      <p className="sl-field-note">{terminalLaunchClaimDisplay.detail}</p>
+                    <p>{managedLaunchClaimDisplay?.label ?? "No launch claim yet"}</p>
+                    {managedLaunchClaimDisplay?.detail && (
+                      <p className="sl-field-note">{managedLaunchClaimDisplay.detail}</p>
                     )}
                   </div>
                 </div>
+              ) : (
+                <>
+                  <div className="sl-paw-workflow-context-editor">
+                    <div className="sl-paw-config-section-head">
+                      <div>
+                        <span className="sl-section-label">Review kickoff prompt</span>
+                        <p>
+                          This is the prompt Streamliner will send to the visible
+                          Copilot CLI worker. Edit it here before launching the
+                          terminal.
+                        </p>
+                      </div>
+                    </div>
+                    <textarea
+                      value={kickoffPromptText}
+                      aria-label="Kickoff prompt"
+                      rows={14}
+                      spellCheck={false}
+                      disabled={Boolean(terminalLaunchResult)}
+                      onChange={(event) => setKickoffPromptText(event.target.value)}
+                    />
+                    {kickoffPromptError && (
+                      <p className="sl-action-error">{kickoffPromptError}</p>
+                    )}
+                  </div>
+                  <div className="sl-paw-workflow-context-editor">
+                    <div className="sl-paw-config-section-head">
+                      <div>
+                        <span className="sl-section-label">Review WorkflowContext.md</span>
+                        <p>
+                          PAW init has created the workflow context. Review or make
+                          last-minute edits before launching the terminal session.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        className="sl-action-btn"
+                        disabled={workflowContextLoading || workflowContextSaving || !workflowContextText}
+                        onClick={handleSaveWorkflowContext}
+                      >
+                        {workflowContextSaving ? "Saving..." : "Save WorkflowContext"}
+                      </button>
+                    </div>
+                    {workflowContextLoading ? (
+                      <p className="sl-field-note">Loading WorkflowContext.md...</p>
+                    ) : (
+                      <textarea
+                        value={workflowContextText}
+                        aria-label="WorkflowContext content"
+                        rows={14}
+                        spellCheck={false}
+                        onChange={(event) => {
+                          setWorkflowContextText(event.target.value);
+                          setWorkflowContextStatus(null);
+                        }}
+                      />
+                    )}
+                    {workflowContext && (
+                      <p className="sl-field-note">
+                        Loaded from {workflowContext.path}. Last saved {new Date(workflowContext.updatedAt).toLocaleString()}.
+                      </p>
+                    )}
+                    {(workflowContextStatus || workflowContextError) && (
+                      <p className={workflowContextError ? "sl-action-error" : "sl-inline-status"}>
+                        {workflowContextError ?? workflowContextStatus}
+                      </p>
+                    )}
+                  </div>
+                  {terminalLaunchResult && (
+                    <div className="sl-paw-launch-summary">
+                      <div>
+                        <span className="sl-section-label">Terminal launch</span>
+                        <p>
+                          Started with {terminalLaunchResult.terminal.method}
+                          {terminalLaunchResult.terminal.pid ? ` (PID ${terminalLaunchResult.terminal.pid})` : ""}.
+                        </p>
+                      </div>
+                      <div>
+                        <span className="sl-section-label">Launch claim</span>
+                        <p>{terminalLaunchClaimDisplay?.label}</p>
+                        {terminalLaunchClaimDisplay?.detail && (
+                          <p className="sl-field-note">{terminalLaunchClaimDisplay.detail}</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </section>
           )}
         </div>
 
         <div className="sl-sheet-foot sl-paw-launch-actions">
-          <button type="button" className="sl-action-btn" onClick={onCancel} disabled={releasingLaunch}>
-            {preparing || launching || handoff || terminalLaunchResult ? "Close" : "Cancel"}
+          <button
+            type="button"
+            className="sl-action-btn"
+            onClick={onCancel}
+            disabled={releasingLaunch || resumingLaunch}
+          >
+            {preparing || launching || handoff || terminalLaunchResult || managedLaunchResult ? "Close" : "Cancel"}
           </button>
           {handoff ? (
             <button
@@ -951,12 +1143,15 @@ export function PawLaunchDialog({
               className="sl-action-btn primary"
               disabled={
                 launching ||
+                preparing ||
                 workflowContextSaving ||
-                Boolean(kickoffPromptError) ||
-                Boolean(terminalTitleError) ||
-                Boolean(terminalLaunchResult?.launchClaim.blocksLaunch) ||
+                (terminalHandoffSelected && Boolean(kickoffPromptError)) ||
+                (terminalHandoffSelected && Boolean(terminalTitleError)) ||
+                terminalLaunchActive ||
+                managedLaunchActive ||
                 Boolean(actionDisabledReason) ||
-                releasingLaunch
+                releasingLaunch ||
+                resumingLaunch
               }
               onClick={() =>
                 onLaunchTerminal({
@@ -966,19 +1161,35 @@ export function PawLaunchDialog({
                 })
               }
             >
-              {launching ? "Launching terminal..." : terminalLaunchResult ? "Terminal launched" : "Launch terminal"}
+              {managedRuntimeSelected
+                ? preparing || launching
+                  ? "Starting background session..."
+                  : managedLaunchActive
+                    ? "Background session started"
+                    : "Start background session"
+                : launching
+                  ? "Launching terminal..."
+                  : terminalLaunchActive
+                    ? "Terminal launched"
+                    : "Launch terminal"}
             </button>
           ) : (
             <button
               type="submit"
               className="sl-action-btn primary"
-              disabled={preparing || releasingLaunch || Boolean(instructionError) || Boolean(actionDisabledReason)}
+              disabled={preparing || releasingLaunch || resumingLaunch || Boolean(instructionError) || Boolean(actionDisabledReason)}
             >
               {preparing
-                ? "Running PAW init..."
-                : launchAfterInit
-                  ? "Run PAW init and launch"
-                  : "Run PAW init"}
+                ? managedRuntimeSelected
+                  ? "Starting background session..."
+                  : "Running PAW init..."
+                : managedLaunchActive
+                  ? "Background session started"
+                  : managedRuntimeSelected
+                    ? "Start background session"
+                  : launchAfterInit
+                    ? "Run PAW init and launch"
+                    : "Run PAW init"}
             </button>
           )}
         </div>

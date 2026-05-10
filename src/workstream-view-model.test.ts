@@ -69,6 +69,7 @@ describe("parseWorkstreamDocument launchDefaults", () => {
   it("parses terminal launch defaults", () => {
     const parsed = parseWorkstreamDocument(graph({
       launchDefaults: {
+        promptProfileId: "final-pr-only",
         terminal: {
           preferredTerminal: "windows-terminal",
           titleTemplate: "{githubIssue} - {nodeTitle}",
@@ -78,6 +79,7 @@ describe("parseWorkstreamDocument launchDefaults", () => {
     }));
 
     expect(parsed.launchDefaults).toEqual({
+      promptProfileId: "final-pr-only",
       terminal: {
         preferredTerminal: "windows-terminal",
         titleTemplate: "{githubIssue} - {nodeTitle}",
@@ -98,6 +100,18 @@ describe("parseWorkstreamDocument launchDefaults", () => {
       }))
     ).toThrow(
       "Expected workstream.launchDefaults.terminal.preferredTerminal to be one of: default, windows-terminal, powershell.",
+    );
+  });
+
+  it("rejects invalid prompt profile defaults", () => {
+    expect(() =>
+      parseWorkstreamDocument(graph({
+        launchDefaults: {
+          promptProfileId: "Final PR",
+        },
+      }))
+    ).toThrow(
+      "Expected workstream.launchDefaults.promptProfileId to be a kebab-case id.",
     );
   });
 });

@@ -231,6 +231,13 @@ function NodeRuntimeOverlayIndicator({
       className: "status-amber",
     });
   }
+  if (overlay.managedRuntime) {
+    chips.push({
+      key: "managed-runtime",
+      label: `background ${overlay.managedRuntime.lifecycleLabel}`,
+      className: runtimeStatusClassName(overlay.runtimeStatus),
+    });
+  }
   if (overlay.session.ambiguous) {
     chips.push({
       key: "ambiguous",

@@ -222,5 +222,23 @@ export function createPawLaunchPromptProfilesRouter(options: {
     }
   });
 
+  router.delete("/paw-launch-prompt-profiles/:id", async (req, res, next) => {
+    try {
+      const document = await readDocument(profilesPath);
+      const nextProfiles = document.profiles.filter((profile) => profile.id !== req.params.id);
+      if (nextProfiles.length === document.profiles.length) {
+        res.status(404).json({ code: "prompt_profile_not_found", error: "Prompt profile not found." });
+        return;
+      }
+      await writeDocument(profilesPath, {
+        ...document,
+        profiles: nextProfiles,
+      });
+      res.status(204).end();
+    } catch (error: unknown) {
+      next(error);
+    }
+  });
+
   return router;
 }

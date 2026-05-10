@@ -5,7 +5,7 @@ export interface PawPromptProfile {
   updatedAt: string;
 }
 
-function responseErrorMessage(response: Response, fallback: string): string {
+export function responseErrorMessage(response: Response, fallback: string): string {
   return `${fallback} (${response.status})`;
 }
 
@@ -39,4 +39,41 @@ export async function loadPromptProfiles(): Promise<PawPromptProfile[]> {
   }
   const body = await response.json() as { profiles?: PawPromptProfile[] };
   return Array.isArray(body.profiles) ? body.profiles : [];
+}
+
+export async function savePromptProfile(input: {
+  id?: string;
+  name: string;
+  instructions: string;
+}): Promise<PawPromptProfile> {
+  const response = await fetch(
+    input.id
+      ? `/api/paw-launch-prompt-profiles/${encodeURIComponent(input.id)}`
+      : "/api/paw-launch-prompt-profiles",
+    {
+      method: input.id ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: input.name,
+        instructions: input.instructions,
+      }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(responseErrorMessage(response, "Could not save prompt profile."));
+  }
+  const body = await response.json() as { profile?: PawPromptProfile };
+  if (!body.profile) {
+    throw new Error("Prompt profile response was missing the saved profile.");
+  }
+  return body.profile;
+}
+
+export async function deletePromptProfile(id: string): Promise<void> {
+  const response = await fetch(`/api/paw-launch-prompt-profiles/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    throw new Error(responseErrorMessage(response, "Could not delete prompt profile."));
+  }
 }
