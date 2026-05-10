@@ -66,6 +66,8 @@ export interface CreateLaunchClaimInput {
   reservedRowDescription?: string | null;
   /** Durable PAW launch metadata retained on the session row after launch-claim cleanup. */
   pawLaunch?: SessionRegistryPawLaunch | null;
+  /** Resolved Copilot CLI args used for terminal launches. */
+  cliArgs?: string[] | null;
   /** Wave-5 lineage extensibility slot (≤4 KB JSON object). */
   lineageMetadata?: Record<string, unknown> | null;
 }
@@ -204,7 +206,11 @@ export function createLaunchClaim(
         repo: input.expectedRepo ?? null,
         branch: input.expectedBranch ?? null,
         tags: [],
-        origin: { kind: "launched", launchClaimId },
+        origin: {
+          kind: "launched",
+          launchClaimId,
+          ...(input.cliArgs === undefined ? {} : { cliArgs: input.cliArgs }),
+        },
         lifecycleStatus: "active",
         graphBinding: {
           workstreamId: input.workstreamId,

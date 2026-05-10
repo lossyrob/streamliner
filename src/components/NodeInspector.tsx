@@ -96,6 +96,54 @@ function runtimePillClass(status: string): string {
   }
 }
 
+function launchOperationPillClass(status: string): string {
+  switch (status) {
+    case "managed_running":
+    case "launched_pending_binding":
+      return "status-green";
+    case "preparation_failed":
+    case "managed_failed":
+    case "terminal_failed":
+      return "status-red";
+    case "preparing":
+    case "launching":
+    case "managed_starting":
+      return "status-amber";
+    default:
+      return "status-accent";
+  }
+}
+
+function launchOperationSummary(operation: NodeLaunchOperation): string {
+  const managed = operation.handoff?.runtimeKind === "managed-sdk" || Boolean(operation.managedLaunch);
+  switch (operation.status) {
+    case "preparing":
+      return managed
+        ? "PAW init is running; Streamliner will start the background session when the handoff is ready."
+        : "PAW init is running and assembling the handoff.";
+    case "prepared":
+      return managed
+        ? "PAW init is complete. This node has a prepared background-session handoff ready to start."
+        : "PAW init is complete. This node has a prepared terminal handoff.";
+    case "managed_starting":
+      return "PAW init is complete. Streamliner is creating the background SDK session now.";
+    case "managed_running":
+      return "Background session launch completed; ongoing lifecycle appears in Runtime Details.";
+    case "launching":
+      return "Streamliner is launching the terminal handoff.";
+    case "launched_pending_binding":
+      return "Terminal launch completed and Streamliner is waiting for the session to bind.";
+    case "preparation_failed":
+      return "PAW init failed before a launch handoff was ready.";
+    case "managed_failed":
+      return "Background session launch failed.";
+    case "terminal_failed":
+      return "Terminal launch failed.";
+    default:
+      return `Launch operation is ${formatStatus(operation.status)}.`;
+  }
+}
+
 function runtimeIssueClass(issue: WorkstreamRuntimeOverlayIssue): string {
   switch (issue.severity) {
     case "error":
@@ -332,7 +380,7 @@ export function NodeInspector({
   const trackerLabelText = node.tracker?.type === "github" ? "Issue" : "Tracker";
   const latestClaim = launchRecord?.latestClaim ?? launchOperation?.latestClaim ?? null;
   const latestClaimDisplay = latestClaim ? humanizeLaunchClaim(latestClaim) : null;
-  const launchButtonLabel = latestClaim?.blocksLaunch || launchOperation?.status === "preparing" || launchOperation?.status === "launching"
+  const launchButtonLabel = latestClaim?.blocksLaunch || launchOperation || launchRecord
     ? "Open PAW launch"
     : "Initialize PAW launch";
 
@@ -410,7 +458,7 @@ export function NodeInspector({
               <>
                 <div className="sl-inspector-meta">
                   {launchOperation && (
-                    <span className={`sl-pill ${launchOperation.status.endsWith("failed") ? "status-red" : "status-accent"}`}>
+                    <span className={`sl-pill ${launchOperationPillClass(launchOperation.status)}`}>
                       {formatStatus(launchOperation.status)}
                     </span>
                   )}
@@ -430,6 +478,9 @@ export function NodeInspector({
                     </span>
                   )}
                 </div>
+                {launchOperation && (
+                  <p className="sl-sidebar-note">{launchOperationSummary(launchOperation)}</p>
+                )}
                 <dl className="sl-node-launch-fields">
                   {launchRecord && (
                     <>

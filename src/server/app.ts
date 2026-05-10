@@ -28,16 +28,37 @@ import { createNodeLaunchRecordsRouter } from "./routes/node-launch-records";
 import { createPawLaunchPromptProfilesRouter } from "./routes/paw-launch-prompt-profiles";
 import { createPawWorkflowContextRouter } from "./routes/paw-workflow-context";
 import { createRecentsRouter } from "./routes/recents";
+import { createSessionLaunchSettingsRouter } from "./routes/session-launch-settings";
 import { createSessionsRouter } from "./routes/sessions";
 import { createWorkstreamsRouter } from "./routes/workstreams";
 import { SessionRegistryEventStream } from "./session-events";
 import type { NodeLaunchDeps } from "./node-launch";
 import { DefaultManagedSdkRunner } from "./managed-sdk-runner";
+import {
+  DEFAULT_COPILOT_CLI_ARGS,
+  readSessionLaunchSettings,
+  readSessionLaunchSettingsSync,
+  SessionLaunchSettingsError,
+} from "./session-launch-settings";
 
 export interface StreamlinerApiApp {
   app: Express;
   eventStream: SessionRegistryEventStream;
   close: () => void;
+}
+
+function loadRelaunchDefaultCliArgs(settingsPath?: string): string[] {
+  try {
+    return readSessionLaunchSettingsSync(settingsPath).defaultCliArgs;
+  } catch (error: unknown) {
+    if (
+      error instanceof SessionLaunchSettingsError &&
+      error.code === "session_launch_settings_malformed"
+    ) {
+      return [...DEFAULT_COPILOT_CLI_ARGS];
+    }
+    throw error;
+  }
 }
 
 export interface StreamlinerApiAppOptions {
@@ -53,6 +74,7 @@ export interface StreamlinerApiAppOptions {
   launchPreparationDeps?: LaunchPreparationRouteDeps;
   managedCleanupDeps?: Partial<ManagedCleanupDeps>;
   promptProfilesPath?: string;
+  sessionLaunchSettingsPath?: string;
   nodeLaunchRecordsPath?: string;
   pawWorkRoot?: string;
   /** Optional launch-claim store. When provided, mounts
@@ -190,6 +212,11 @@ export function createStreamlinerApiApp(
       deps: {
         ...options.launchPreparationDeps,
         nodeLaunchRecordStore,
+        loadDefaultCliArgs: options.launchPreparationDeps?.loadDefaultCliArgs
+          ?? (async () => {
+            const settings = await readSessionLaunchSettings(options.sessionLaunchSettingsPath);
+            return settings.defaultCliArgs;
+          }),
       },
     }),
   );
@@ -209,6 +236,12 @@ export function createStreamlinerApiApp(
   );
   app.use(
     "/api",
+    createSessionLaunchSettingsRouter({
+      settingsPath: options.sessionLaunchSettingsPath,
+    }),
+  );
+  app.use(
+    "/api",
     createPawWorkflowContextRouter({
       pawWorkRoot: options.pawWorkRoot ?? (
         options.launchPreparationDeps?.cwd
@@ -223,7 +256,11 @@ export function createStreamlinerApiApp(
     createSessionsRouter({
       store,
       eventStream,
-      relaunchDeps: options.relaunchDeps,
+      relaunchDeps: {
+        ...options.relaunchDeps,
+        loadDefaultCliArgs: options.relaunchDeps?.loadDefaultCliArgs
+          ?? (() => loadRelaunchDefaultCliArgs(options.sessionLaunchSettingsPath)),
+      },
       managedSdkRunner,
       managedCleanupDeps: options.managedCleanupDeps,
       now: options.now,

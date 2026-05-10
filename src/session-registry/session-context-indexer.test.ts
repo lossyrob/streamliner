@@ -60,6 +60,7 @@ function buildSession(overrides: Partial<SessionRegistryListItem> = {}): Session
     branch: "main",
     tags: [],
     originKind: "observed",
+    launchCliArgs: null,
     graphBinding: null,
     pawLaunch: null,
     copilotSessionId: "context-session",

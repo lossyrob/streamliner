@@ -135,6 +135,33 @@ describe("createLaunchClaim", () => {
     expect(persistedClaim?.reservedRegistryId).toBe("reg-1");
   });
 
+  it("records resolved terminal cliArgs on the reserved row", () => {
+    const outcome = createLaunchClaim(
+      registryStore,
+      claimStore,
+      {
+        workstreamId: "ws-1",
+        nodeId: "node-A",
+        expectedCwd: "C:/repo/work",
+        cliArgs: ["--yolo", "--model=gpt-5.5"],
+      },
+      {
+        mintNonce: () => "deterministic-nonce-12345",
+        mintLaunchClaimId: () => "claim-cli",
+        mintRegistryRowId: () => "reg-cli",
+        now: () => new Date("2026-05-02T01:00:00.000Z"),
+      },
+    );
+
+    expect(outcome.ok).toBe(true);
+    const reservedRow = registryStore.getSession("reg-cli");
+    expect(reservedRow?.origin).toEqual({
+      kind: "launched",
+      launchClaimId: "claim-cli",
+      cliArgs: ["--yolo", "--model=gpt-5.5"],
+    });
+  });
+
   it("stores durable PAW launch metadata on the reserved row", () => {
     const outcome = createLaunchClaim(
       registryStore,

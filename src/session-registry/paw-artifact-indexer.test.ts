@@ -45,6 +45,7 @@ function buildSession(overrides: Partial<SessionRegistryListItem> = {}): Session
     copilotSessionId: "copilot-session-1",
     tags: [],
     originKind: "observed",
+    launchCliArgs: null,
     graphBinding: null,
     aiSummary: null,
     aiSummaryModel: null,

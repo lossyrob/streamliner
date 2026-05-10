@@ -280,6 +280,34 @@ describe("DefaultManagedSdkRunner", () => {
     ]);
   });
 
+  it("retries SDK abort after an earlier abort attempt fails", async () => {
+    sdkMock.session.sendAndWait.mockImplementationOnce(() => new Promise(() => undefined));
+    sdkMock.session.abort
+      .mockRejectedValueOnce(new Error("SDK abort failed."))
+      .mockResolvedValueOnce(undefined);
+
+    const runner = new DefaultManagedSdkRunner();
+    await runner.start(createStartInput(createCapture()));
+
+    await expect(runner.interrupt({
+      registryId: "registry-row-1",
+      reason: "Stop once.",
+    })).resolves.toEqual({
+      ok: false,
+      evidenceState: "failed",
+      message: "SDK abort failed.",
+    });
+    await expect(runner.interrupt({
+      registryId: "registry-row-1",
+      reason: "Stop again.",
+    })).resolves.toEqual({
+      ok: true,
+      evidenceState: "interrupted",
+      message: "Stop again.",
+    });
+    expect(sdkMock.session.abort).toHaveBeenCalledTimes(2);
+  });
+
   it("transfers active SDK ownership to the terminal and suppresses late callbacks", async () => {
     sdkMock.session.sendAndWait.mockImplementationOnce(() => new Promise(() => undefined));
     const capture = createCapture();

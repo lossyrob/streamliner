@@ -290,6 +290,7 @@ describe("session registry schema", () => {
       branch: record.branch,
       tags: record.tags,
       originKind: record.origin.kind,
+      launchCliArgs: null,
       graphBinding: record.graphBinding,
       pawLaunch: record.pawLaunch,
       copilotSessionId: record.copilotSessionId,

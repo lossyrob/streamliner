@@ -3,11 +3,11 @@
   "id": "sdk-managed-worker-runtime",
   "projectKey": "streamliner",
   "title": "SDK-Managed Worker Runtime",
-  "summary": "Wave 1 passed the foundation contract gate with a constrained-go SDK-managed runtime contract. Wave 2 can proceed against the explicit managed-autonomous permission profile, registry/lifecycle/progress contract, one-way takeover, and cleanup guardrails; first implementation nodes are ready.",
+  "summary": "Wave 2 backend substrate and builder-facing UI are complete through PRs #79 and #78. Terminal takeover/cleanup remains ready, startup reconciliation is promoted as a Wave 2 safety node, managed-session console captures the read-only Copilot-CLI-like monitoring surface, and a Wave 2 punch-list node collects closeout tweaks before the usability gate.",
   "status": "active",
   "attention": "focus",
   "createdAt": "2026-05-06T03:50:15.082Z",
-  "updatedAt": "2026-05-08T04:51:36.386Z",
+  "updatedAt": "2026-05-09T17:49:29.028Z",
   "trackingIssue": {
     "owner": "lossyrob",
     "repo": "streamliner",
@@ -91,7 +91,9 @@
       "summary": "Completed via PR #63: reported constrained-go SDK/CLI parity findings, reusable smoke/spike harnesses, progress redaction guidance, cancellation and permission-policy evidence, terminal takeover verification, Streamliner plugin claim-binding evidence, and local PR-production dogfood.",
       "status": "completed",
       "attention": "focus",
-      "repoIds": ["streamliner"],
+      "repoIds": [
+        "streamliner"
+      ],
       "tracker": {
         "type": "github",
         "owner": "lossyrob",
@@ -107,14 +109,18 @@
       "summary": "Completed via PR #67 plus #62 gate amendment: accepted the product/runtime contract for managed node execution, including lifecycle states, registry identity, redacted progress, managed-autonomous permission posture, node launch selection, one-way terminal takeover, cleanup, and review-loop exports.",
       "status": "completed",
       "attention": "focus",
-      "repoIds": ["streamliner"],
+      "repoIds": [
+        "streamliner"
+      ],
       "tracker": {
         "type": "github",
         "owner": "lossyrob",
         "repo": "streamliner",
         "number": 61
       },
-      "dependsOn": ["sdk-capability-parity-research"]
+      "dependsOn": [
+        "sdk-capability-parity-research"
+      ]
     },
     {
       "id": "foundation-contract-gate",
@@ -123,88 +129,174 @@
       "summary": "Passed with constraints: SDK capability evidence and runtime contract support a constrained-go path, and Wave 2 must implement builder-selected managed-autonomous execution with no per-tool approval flow during SDK-owned runs.",
       "status": "completed",
       "attention": "focus",
-      "repoIds": ["streamliner"],
+      "repoIds": [
+        "streamliner"
+      ],
       "tracker": {
         "type": "github",
         "owner": "lossyrob",
         "repo": "streamliner",
         "number": 62
       },
-      "dependsOn": ["managed-worker-runtime-contract"]
+      "dependsOn": [
+        "managed-worker-runtime-contract"
+      ]
     },
     {
       "id": "managed-execution-substrate",
       "type": "task",
       "title": "Managed execution substrate",
-      "summary": "Implement the SDK-managed node execution path behind the accepted contract, including launch context consumption, managed-autonomous permission profile, worker lifecycle state, progress emission, interruption semantics, PR/completion detection, and managed-session registry metadata.",
-      "status": "ready",
+      "summary": "Completed via PR #79: added the backend/API substrate for explicit managed-sdk graph-node execution, canonical registry runtime metadata, managed-autonomous SDK permission handling, lifecycle/progress/evidence projection, interruption/cancel routes, conservative PR evidence detection, and graph/session projections without mutating graph.json.",
+      "status": "completed",
       "attention": "focus",
-      "repoIds": ["streamliner"],
+      "repoIds": [
+        "streamliner"
+      ],
       "tracker": {
         "type": "github",
         "owner": "lossyrob",
         "repo": "streamliner",
         "number": 73
       },
-      "dependsOn": ["foundation-contract-gate"]
+      "dependsOn": [
+        "foundation-contract-gate"
+      ]
     },
     {
       "id": "builder-managed-runtime-ui",
       "type": "task",
       "title": "Builder-facing managed runtime UI",
-      "summary": "Expose SDK-managed execution in the node launch and monitoring surfaces: per-node runtime selection, managed-autonomous consent/profile display, read-only terminal-like progress, managed-session identity, status/PR links, and lifecycle actions shaped by the runtime contract.",
-      "status": "ready",
+      "summary": "Completed via PR #78: added the builder-facing Background Session UI for managed-sdk launch selection, managed-autonomous consent/profile display, My Sessions and graph/node-inspector runtime rendering, sanitized progress display, and disabled placeholders for takeover and cleanup follow-on actions.",
+      "status": "completed",
       "attention": "focus",
-      "repoIds": ["streamliner"],
+      "repoIds": [
+        "streamliner"
+      ],
       "tracker": {
         "type": "github",
         "owner": "lossyrob",
         "repo": "streamliner",
         "number": 74
       },
-      "dependsOn": ["foundation-contract-gate"]
+      "dependsOn": [
+        "foundation-contract-gate"
+      ]
     },
     {
       "id": "terminal-takeover-cleanup-actions",
       "type": "task",
       "title": "Terminal takeover and cleanup actions",
       "summary": "Ship the operational lifecycle actions that make managed SDK sessions usable: interrupt and open one-way Copilot CLI takeover, plus cleanup-after-merge for linked worktrees/local branches without requiring terminal interaction for simple autonomous runs.",
-      "status": "planned",
+      "status": "ready",
       "attention": "focus",
-      "repoIds": ["streamliner"],
+      "repoIds": [
+        "streamliner"
+      ],
       "tracker": {
         "type": "github",
         "owner": "lossyrob",
         "repo": "streamliner",
         "number": 75
       },
-      "dependsOn": ["managed-execution-substrate", "builder-managed-runtime-ui"]
+      "dependsOn": [
+        "managed-execution-substrate",
+        "builder-managed-runtime-ui"
+      ]
+    },
+    {
+      "id": "managed-runtime-startup-reconciliation",
+      "type": "task",
+      "title": "Managed runtime startup reconciliation",
+      "summary": "Reconcile stale active managed SDK runtime rows on API startup so Streamliner does not show phantom running background sessions after API/process restart. Active rows that cannot be verified as live should move to a safe diagnostic state with a typed reason and builder action.",
+      "status": "ready",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "tracker": {
+        "type": "github",
+        "owner": "lossyrob",
+        "repo": "streamliner",
+        "number": 89
+      },
+      "dependsOn": [
+        "managed-execution-substrate"
+      ]
+    },
+    {
+      "id": "managed-session-console",
+      "type": "task",
+      "title": "Managed session console",
+      "summary": "Implement the missing read-only, terminal-looking console for Streamliner-managed work: live/replayed sanitized activity for PAW launch preparation and SDK-managed background sessions, typed waiting-for-builder reasons, PR-ready trust markers, and entry points from launch, graph/node, and My Sessions surfaces without becoming an interactive terminal or raw event stream.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "tracker": {
+        "type": "github",
+        "owner": "lossyrob",
+        "repo": "streamliner",
+        "number": 85
+      },
+      "dependsOn": [
+        "terminal-takeover-cleanup-actions"
+      ]
+    },
+    {
+      "id": "managed-runtime-wave-2-punch-list",
+      "type": "task",
+      "title": "Managed runtime Wave 2 punch list",
+      "summary": "Collect and resolve small Wave 2 usability and closeout fixes before the managed-runtime usability gate. Initial item: make Sessions show active session-specific filter criteria when Open in Sessions routes to a managed/ended session hidden until Show ended is enabled.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "tracker": {
+        "type": "github",
+        "owner": "lossyrob",
+        "repo": "streamliner",
+        "number": 87
+      },
+      "dependsOn": [
+        "managed-session-console"
+      ]
     },
     {
       "id": "managed-runtime-usability-gate",
       "type": "gate",
       "title": "Managed runtime usability gate",
-      "summary": "Builder validates that the SDK-managed launch, monitoring, takeover, and cleanup experience is usable and safe enough to proceed into dogfood hardening and downstream export work.",
+      "summary": "Builder validates that the SDK-managed launch, terminal-like read-only monitoring, takeover, and cleanup experience is usable and safe enough to proceed into dogfood hardening and downstream export work.",
       "status": "planned",
       "attention": "focus",
-      "repoIds": ["streamliner"],
+      "repoIds": [
+        "streamliner"
+      ],
       "tracker": {
         "type": "github",
         "owner": "lossyrob",
         "repo": "streamliner",
         "number": 76
       },
-      "dependsOn": ["terminal-takeover-cleanup-actions"]
+      "dependsOn": [
+        "managed-runtime-startup-reconciliation",
+        "managed-runtime-wave-2-punch-list"
+      ]
     },
     {
       "id": "managed-runtime-dogfood-hardening",
       "type": "task",
       "title": "Managed runtime dogfood and hardening",
-      "summary": "Dogfood SDK-managed execution on real node work, harden failure/status/cleanup paths, reconcile docs and graph assumptions, and prepare the managed-worker runtime export for Automated PAW Review Loop.",
+      "summary": "Dogfood SDK-managed execution on real node work, verify sdkSessionId resumability after pr_ready, exercise crash/restart reconciliation, prototype operational signals, evaluate whether managed-review profile semantics are needed, reconcile docs and graph assumptions, and prepare the managed-worker runtime export for Automated PAW Review Loop.",
       "status": "planned",
       "attention": "focus",
-      "repoIds": ["streamliner"],
-      "dependsOn": ["managed-runtime-usability-gate"]
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "managed-runtime-usability-gate"
+      ]
     },
     {
       "id": "managed-worker-runtime-export-gate",
@@ -213,8 +305,12 @@
       "summary": "Builder validates that SDK-managed node execution is usable, documented, and stable enough for Automated PAW Review Loop to consume.",
       "status": "planned",
       "attention": "focus",
-      "repoIds": ["streamliner"],
-      "dependsOn": ["managed-runtime-dogfood-hardening"]
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "managed-runtime-dogfood-hardening"
+      ]
     }
   ],
   "checkpoints": [
@@ -238,6 +334,9 @@
         "managed-execution-substrate",
         "builder-managed-runtime-ui",
         "terminal-takeover-cleanup-actions",
+        "managed-runtime-startup-reconciliation",
+        "managed-session-console",
+        "managed-runtime-wave-2-punch-list",
         "managed-runtime-usability-gate"
       ]
     },
@@ -251,5 +350,14 @@
         "managed-worker-runtime-export-gate"
       ]
     }
-  ]
+  ],
+  "launchPolicy": {
+    "requiredTracker": "github-issue"
+  },
+  "launchDefaults": {
+    "terminal": {
+      "titleTemplate": "SLR-A {githubIssue}",
+      "tabColor": "#41b878"
+    }
+  }
 }

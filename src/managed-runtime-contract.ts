@@ -368,6 +368,7 @@ const SDK_CANCEL_STATES = new Set<ManagedRuntimeLifecycleState>([
   "idle",
   "waiting_for_builder",
   "interrupt_requested",
+  "failed",
 ]);
 
 const SDK_TAKEOVER_STATES = new Set<ManagedRuntimeLifecycleState>([

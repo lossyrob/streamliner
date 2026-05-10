@@ -484,6 +484,20 @@ function ensureStringArray(value: unknown, fieldName: string): string[] {
   return normalizeTags(value);
 }
 
+function ensureRawStringArray(value: unknown, fieldName: string): string[] {
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    throw new Error(`Expected ${fieldName} to be an array of strings.`);
+  }
+  return [...value];
+}
+
+function ensureOptionalRawStringArray(value: unknown, fieldName: string): string[] | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  return ensureRawStringArray(value, fieldName);
+}
+
 function parseStoredOrigin(value: unknown, fieldName: string): SessionRegistryOrigin {
   if (!isJsonObject(value)) {
     throw new Error(`Expected ${fieldName} to be an object.`);
@@ -514,6 +528,14 @@ function parseStoredOrigin(value: unknown, fieldName: string): SessionRegistryOr
       value.launchClaimId,
       `${fieldName}.launchClaimId`,
     ),
+    ...(hasOwn(value, "cliArgs")
+      ? {
+          cliArgs: ensureOptionalRawStringArray(
+            value.cliArgs,
+            `${fieldName}.cliArgs`,
+          ),
+        }
+      : {}),
   };
 }
 
@@ -559,7 +581,7 @@ function parseInputOrigin(value: unknown, fieldName: string): SessionRegistryOri
     };
   }
 
-  ensureAllowedKeys(value, fieldName, ["kind", "launchClaimId"]);
+  ensureAllowedKeys(value, fieldName, ["kind", "launchClaimId", "cliArgs"]);
   return {
     kind: "launched",
     ...(hasOwn(value, "launchClaimId")
@@ -567,6 +589,14 @@ function parseInputOrigin(value: unknown, fieldName: string): SessionRegistryOri
           launchClaimId: ensureOptionalString(
             value.launchClaimId,
             `${fieldName}.launchClaimId`,
+          ),
+        }
+      : {}),
+    ...(hasOwn(value, "cliArgs")
+      ? {
+          cliArgs: ensureOptionalRawStringArray(
+            value.cliArgs,
+            `${fieldName}.cliArgs`,
           ),
         }
       : {}),
@@ -1713,6 +1743,9 @@ function validateIndexEntry(
     ),
     tags: ensureStringArray(rawEntry.tags, `${fieldName}.tags`),
     originKind,
+    launchCliArgs: rawEntry.launchCliArgs === undefined || rawEntry.launchCliArgs === null
+      ? null
+      : ensureRawStringArray(rawEntry.launchCliArgs, `${fieldName}.launchCliArgs`),
     graphBinding: ensureOptionalGraphBinding(rawEntry.graphBinding, `${fieldName}.graphBinding`),
     pawLaunch: normalizePawLaunch(rawEntry.pawLaunch, `${fieldName}.pawLaunch`),
     runtime: normalizeSessionRegistryRuntimeMetadata(rawEntry.runtime, `${fieldName}.runtime`),
@@ -1866,6 +1899,9 @@ function buildIndex(records: Iterable<StoredSessionRegistryRecord>): SessionRegi
     copilotSessionId: record.copilotSessionId,
     tags: cloneValue(record.tags),
     originKind: record.origin.kind,
+    launchCliArgs: record.origin.kind === "launched" && Array.isArray(record.origin.cliArgs)
+      ? [...record.origin.cliArgs]
+      : null,
     graphBinding: record.graphBinding ? cloneValue(record.graphBinding) : null,
     pawLaunch: record.pawLaunch ? cloneValue(record.pawLaunch) : null,
     runtime: record.runtime ? cloneValue(record.runtime) : null,

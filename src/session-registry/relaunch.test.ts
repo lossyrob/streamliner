@@ -179,6 +179,12 @@ describe("buildRelaunchParams", () => {
     expect(params.command).toBe("copilot '--resume=abc-123'");
   });
 
+  it("includes Copilot CLI args before the resume argument", () => {
+    const session = buildRecord({ copilotSessionId: "abc-123" });
+    const params = buildRelaunchParams(session, ["--yolo", "--model=gpt-5.5"]);
+    expect(params.command).toBe("copilot '--yolo' '--model=gpt-5.5' '--resume=abc-123'");
+  });
+
   it("includes tabColor when session has color", () => {
     const session = buildRecord({ color: "#FF0000" });
     const params = buildRelaunchParams(session);
@@ -194,10 +200,9 @@ describe("buildRelaunchParams", () => {
     expect(params.cwd).toBe("C:\\worktree");
   });
 
-  it("escapes single quotes in copilotSessionId", () => {
+  it("rejects unsupported characters in copilotSessionId", () => {
     const session = buildRecord({ copilotSessionId: "it's-a-session" });
-    const params = buildRelaunchParams(session);
-    expect(params.command).toBe("copilot '--resume=it''s-a-session'");
+    expect(() => buildRelaunchParams(session)).toThrow(/unsupported characters/);
   });
 });
 
@@ -221,6 +226,16 @@ describe("relaunchSession", () => {
     }
   });
 
+  it("returns validation error for invalid Copilot session IDs", () => {
+    const session = buildRecord({ copilotSessionId: "it's-a-session" });
+    const { store, deps } = fakeDeps({ [session.id]: session });
+    const result = relaunchSession(store, session.id, deps);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("invalid_copilot_session_id");
+    }
+  });
+
   it("returns success with launch details for valid session", () => {
     const session = buildRecord({ copilotSessionId: "sess-42", color: "#00FF00" });
     const { store, deps } = fakeDeps({ [session.id]: session });
@@ -233,6 +248,98 @@ describe("relaunchSession", () => {
       expect(result.result.copilotResumed).toBe(true);
       expect(result.result.colorApplied).toBe(true);
       expect(result.result.pid).toBe(12345);
+    }
+  });
+
+  it("uses recorded launch args without loading configured defaults", () => {
+    const session = buildRecord({
+      copilotSessionId: "sess-42",
+      origin: {
+        kind: "launched",
+        launchClaimId: "claim-1",
+        cliArgs: ["--yolo", "--model=gpt-5.5"],
+      },
+    });
+    const launchCalls: TerminalLaunchOptions[] = [];
+    const { store, deps } = fakeDeps({ [session.id]: session }, {
+      loadDefaultCliArgs: () => {
+        throw new Error("settings should not load");
+      },
+      launchTerminal: (options) => {
+        launchCalls.push(options);
+        return fakeLaunchTerminal(options);
+      },
+    });
+
+    const result = relaunchSession(store, session.id, deps);
+
+    expect(result.ok).toBe(true);
+    expect(launchCalls[0]?.command).toBe("copilot '--yolo' '--model=gpt-5.5' '--resume=sess-42'");
+  });
+
+  it("honors recorded empty launch args without loading configured defaults", () => {
+    const session = buildRecord({
+      copilotSessionId: "sess-42",
+      origin: {
+        kind: "launched",
+        launchClaimId: "claim-1",
+        cliArgs: [],
+      },
+    });
+    const launchCalls: TerminalLaunchOptions[] = [];
+    const { store, deps } = fakeDeps({ [session.id]: session }, {
+      loadDefaultCliArgs: () => {
+        throw new Error("settings should not load");
+      },
+      launchTerminal: (options) => {
+        launchCalls.push(options);
+        return fakeLaunchTerminal(options);
+      },
+    });
+
+    const result = relaunchSession(store, session.id, deps);
+
+    expect(result.ok).toBe(true);
+    expect(launchCalls[0]?.command).toBe("copilot '--resume=sess-42'");
+  });
+
+  it("uses configured defaults when recorded launch args are missing", () => {
+    const session = buildRecord({
+      copilotSessionId: "sess-42",
+      origin: { kind: "launched", launchClaimId: "claim-1" },
+    });
+    const launchCalls: TerminalLaunchOptions[] = [];
+    const { store, deps } = fakeDeps({ [session.id]: session }, {
+      loadDefaultCliArgs: () => ["--yolo"],
+      launchTerminal: (options) => {
+        launchCalls.push(options);
+        return fakeLaunchTerminal(options);
+      },
+    });
+
+    const result = relaunchSession(store, session.id, deps);
+
+    expect(result.ok).toBe(true);
+    expect(launchCalls[0]?.command).toBe("copilot '--yolo' '--resume=sess-42'");
+  });
+
+  it("returns default_args_unavailable when defaults are required but cannot be loaded", () => {
+    const session = buildRecord({
+      copilotSessionId: "sess-42",
+      origin: { kind: "launched", launchClaimId: "claim-1" },
+    });
+    const { store, deps } = fakeDeps({ [session.id]: session }, {
+      loadDefaultCliArgs: () => {
+        throw new Error("settings malformed");
+      },
+    });
+
+    const result = relaunchSession(store, session.id, deps);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("default_args_unavailable");
+      expect(result.error.message).toContain("settings malformed");
     }
   });
 

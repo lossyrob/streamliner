@@ -6,9 +6,16 @@ export function isSafeCopilotResumeSessionId(copilotSessionId: string): boolean 
   return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/.test(copilotSessionId);
 }
 
-export function buildCopilotResumeCommand(copilotSessionId: string): string {
+export function buildCopilotResumeCommand(
+  copilotSessionId: string,
+  cliArgs: readonly string[] = [],
+): string {
   if (!isSafeCopilotResumeSessionId(copilotSessionId)) {
     throw new Error("Copilot resume session id contains unsupported characters.");
   }
-  return `copilot ${quotePowerShellLiteral(`--resume=${copilotSessionId}`)}`;
+  const args = [
+    ...cliArgs,
+    `--resume=${copilotSessionId}`,
+  ];
+  return `copilot ${args.map(quotePowerShellLiteral).join(" ")}`;
 }

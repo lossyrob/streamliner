@@ -38,11 +38,19 @@ import {
   type PawLaunchProgressEvent,
 } from "./components/PawLaunchDialog";
 import { PawProfilesPage } from "./components/PawProfilesPage";
+import { SessionLaunchSettingsPage } from "./components/SessionLaunchSettingsPage";
 import {
   loadPromptProfiles,
   mergePromptProfiles,
   type PawPromptProfile,
 } from "./components/paw-prompt-profiles";
+import {
+  FALLBACK_SESSION_LAUNCH_DEFAULT_CLI_ARGS,
+  formatSessionLaunchCliArgsText,
+  loadSessionLaunchSettings,
+  SessionLaunchSettingsRequestError,
+  type SessionLaunchSettings,
+} from "./components/session-launch-settings";
 import {
   WorkstreamConfigurationDialog,
   type WorkstreamConfigurationValues,
@@ -59,14 +67,15 @@ import {
   listBrowserWorkstreamEntries,
   readBrowserWorkstreamGraph,
 } from "./browser-workstream-files";
-import type {
-  NodeLaunchHandoff,
-  NodeLaunchClaimState,
-  NodeLaunchOperation,
-  NodeLaunchRecord,
-  NodeLaunchRecordResponse,
-  NodeManagedSdkLaunchResponse,
-  NodeTerminalLaunchResponse,
+import {
+  isActiveNodeLaunchOperationStatus,
+  type NodeLaunchHandoff,
+  type NodeLaunchClaimState,
+  type NodeLaunchOperation,
+  type NodeLaunchRecord,
+  type NodeLaunchRecordResponse,
+  type NodeManagedSdkLaunchResponse,
+  type NodeTerminalLaunchResponse,
 } from "./node-launch-record-contract";
 import { loadGraphNodeLaunchRecords } from "./node-launch-record-client";
 import {
@@ -166,6 +175,9 @@ function readDashboardRoute(): DashboardRoute {
       workstreamId: workstreamId && isKebabCaseId(workstreamId) ? workstreamId : null,
       nodeId: nodeId && isKebabCaseId(nodeId) ? nodeId : null,
     };
+  }
+  if (window.location.pathname === "/settings/session-launch") {
+    return { view: "settings", section: "session-launch" };
   }
   if (
     window.location.pathname === "/settings" ||
@@ -459,6 +471,32 @@ function mergeNodeLaunchRecord(
       candidate.graphPath !== target.graphPath || candidate.nodeId !== target.nodeId,
   );
   return record ? [...nextRecords, record] : nextRecords;
+}
+
+function shouldKeepActiveLaunchOperation(
+  existing: NodeLaunchOperation | undefined,
+  incoming: NodeLaunchOperation,
+): boolean {
+  if (!existing || !isActiveNodeLaunchOperationStatus(existing.status)) {
+    return false;
+  }
+  if (incoming.status !== "prepared" && incoming.status !== "launchable") {
+    return false;
+  }
+  if (
+    existing.graphPath !== incoming.graphPath ||
+    existing.nodeId !== incoming.nodeId
+  ) {
+    return false;
+  }
+  const existingNonce = existing.handoff?.launchMetadata.launchNonce ?? null;
+  const incomingNonce = incoming.handoff?.launchMetadata.launchNonce ?? null;
+  return (
+    existing.preparationRunId === incoming.preparationRunId ||
+    (existingNonce !== null && existingNonce === incomingNonce) ||
+    existing.status === "managed_starting" ||
+    existing.status === "launching"
+  );
 }
 
 function mergeWorkstreamEntries(
@@ -1208,6 +1246,91 @@ function usePromptProfilesState() {
   };
 }
 
+function useSessionLaunchSettingsState() {
+  const [settings, setSettings] = useState<SessionLaunchSettings>({
+    defaultCliArgs: [...FALLBACK_SESSION_LAUNCH_DEFAULT_CLI_ARGS],
+  });
+  const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [responseError, setResponseError] = useState(false);
+  const requestRef = useRef<Promise<void> | null>(null);
+  const mountedRef = useRef(true);
+  const mutationVersionRef = useRef(0);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const noteSettingsChanged = useCallback((changedSettings: SessionLaunchSettings) => {
+    mutationVersionRef.current += 1;
+    setSettings(changedSettings);
+    setLoaded(true);
+    setResponseError(false);
+    setError(null);
+  }, []);
+
+  const refresh = useCallback(() => {
+    if (requestRef.current) {
+      return requestRef.current;
+    }
+    setLoading(true);
+    setError(null);
+    setResponseError(false);
+    const requestMutationVersion = mutationVersionRef.current;
+    const request = loadSessionLaunchSettings()
+      .then((loadedSettings) => {
+        if (mountedRef.current && mutationVersionRef.current === requestMutationVersion) {
+          setSettings(loadedSettings);
+          setLoaded(true);
+        }
+      })
+      .catch((loadError: unknown) => {
+        if (mountedRef.current) {
+          setSettings({
+            defaultCliArgs: [...FALLBACK_SESSION_LAUNCH_DEFAULT_CLI_ARGS],
+          });
+          setLoaded(true);
+          setResponseError(loadError instanceof SessionLaunchSettingsRequestError);
+          setError(loadError instanceof Error ? loadError.message : String(loadError));
+        }
+      })
+      .finally(() => {
+        requestRef.current = null;
+        if (mountedRef.current) {
+          setLoading(false);
+        }
+      });
+    requestRef.current = request;
+    return request;
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.resolve().then(() => {
+      if (!cancelled) {
+        void refresh();
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [refresh]);
+
+  return {
+    settings,
+    loading,
+    loaded,
+    error,
+    responseError,
+    refresh,
+    noteSettingsChanged,
+  };
+}
+
 function GraphDashboard({
   workstream,
   error,
@@ -1226,6 +1349,7 @@ function GraphDashboard({
   promptProfilesError,
   onRefreshPromptProfiles,
   onPromptProfilesChanged,
+  sessionLaunchSettings,
 }: ReturnType<typeof useGraphLoader> & {
   onOpenWorkstream: (entry: WorkstreamRegistryListEntry) => void | Promise<void>;
   onOpenSessions: (target?: { workstreamId?: string | null; nodeId?: string | null }) => void | Promise<void>;
@@ -1237,6 +1361,7 @@ function GraphDashboard({
   promptProfilesError: string | null;
   onRefreshPromptProfiles: () => Promise<void> | void;
   onPromptProfilesChanged: (profiles: PawPromptProfile[]) => void;
+  sessionLaunchSettings: SessionLaunchSettings;
 }) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(
     selectedNodeIdFromRoute ?? null,
@@ -1375,6 +1500,20 @@ function GraphDashboard({
     ? runtimeOverlay?.nodesById.get(launchDialogTarget.nodeId) ?? null
     : selectedRuntimeOverlay;
 
+  const launchOperationsByNodeId = useMemo(() => {
+    const operations = new Map<string, NodeLaunchOperation>();
+    if (!activeWorkstreamEntry) {
+      return operations;
+    }
+    const graphPath = activeWorkstreamEntry.path.toLowerCase();
+    for (const operation of Object.values(launchOperationByKey)) {
+      if (operation.graphPath.toLowerCase() === graphPath) {
+        operations.set(operation.nodeId, operation);
+      }
+    }
+    return operations;
+  }, [activeWorkstreamEntry, launchOperationByKey]);
+
   const configureDisabledReason = useMemo(() => {
     if (!activeWorkstreamEntry || !isBackendReadableWorkstreamEntry(activeWorkstreamEntry)) {
       return "Only backend-readable workstream graph files can be configured.";
@@ -1491,7 +1630,7 @@ function GraphDashboard({
     return {
       workflowInstructions: DEFAULT_PAW_WORKFLOW_INSTRUCTIONS,
       runtimeKind: "terminal-cli",
-      cliArgsText: "--yolo",
+      cliArgsText: formatSessionLaunchCliArgsText(sessionLaunchSettings.defaultCliArgs),
       cwd: savedCwd ?? inferredCwd,
       inferredCwd,
       cwdPreferenceKey,
@@ -1514,7 +1653,14 @@ function GraphDashboard({
         tabColor: workstream?.launchDefaults?.terminal?.tabColor ?? null,
       },
     };
-  }, [activeWorkstreamEntry?.path, launchDialogEntry, launchDialogTarget, selectedEntry, workstream]);
+  }, [
+    activeWorkstreamEntry?.path,
+    launchDialogEntry,
+    launchDialogTarget,
+    selectedEntry,
+    sessionLaunchSettings?.defaultCliArgs,
+    workstream,
+  ]);
 
   useEffect(() => {
     if (!activeWorkstreamEntry || !isBackendReadableWorkstreamEntry(activeWorkstreamEntry)) {
@@ -1580,6 +1726,9 @@ function GraphDashboard({
             return current;
           }
           const existing = current[key];
+          if (shouldKeepActiveLaunchOperation(existing, state.operation)) {
+            return current;
+          }
           const progressEvents = existing &&
               existing.preparationRunId === state.operation.preparationRunId &&
               existing.progressEvents.length > state.operation.progressEvents.length
@@ -1684,98 +1833,6 @@ function GraphDashboard({
     );
     return message;
   }, [updateLaunchOperation]);
-
-  useEffect(() => {
-    if (
-      !launchDialogOpen ||
-      !launchDialogTarget ||
-      !launchDialogOperation?.preparationRunId ||
-      launchDialogOperation.status !== "preparing"
-    ) {
-      return;
-    }
-    const runId = launchDialogOperation.preparationRunId;
-    if (localRunStreamsRef.current.has(runId) || failedRunReattachRef.current.has(runId)) {
-      return;
-    }
-    let closed = false;
-    const source = new EventSource(
-      `/api/launch-preparations/runs/${encodeURIComponent(runId)}/events`,
-    );
-    source.addEventListener("progress", (event) => {
-      if (closed) {
-        return;
-      }
-      const progress = parseMessageEventData<PawLaunchProgressEvent>(event);
-      updateLaunchOperation(launchDialogTarget, (current) => {
-        const operation = current ?? createClientLaunchOperation(launchDialogTarget, "preparing");
-        return {
-          ...operation,
-          status: "preparing",
-          error: null,
-          updatedAt: progress.timestamp,
-          progressEvents: appendProgressEvent(operation.progressEvents, progress),
-        };
-      });
-    });
-    source.addEventListener("completed", (event) => {
-      if (closed) {
-        return;
-      }
-      const payload = parseMessageEventData<PawLaunchRunFinishedPayload>(event);
-      if (payload.result) {
-        applyPreparedLaunchHandoff(launchDialogTarget, payload.result);
-      }
-      source.close();
-    });
-    source.addEventListener("failed", (event) => {
-      if (closed) {
-        return;
-      }
-      applyPreparationFailure(launchDialogTarget, parseMessageEventData<PawLaunchRunFinishedPayload>(event));
-      source.close();
-    });
-    source.onerror = () => {
-      if (closed) {
-        return;
-      }
-      failedRunReattachRef.current.add(runId);
-      source.close();
-      void loadNodeLaunchRecord(launchDialogTarget.graphPath, launchDialogTarget.nodeId)
-        .then((state) => {
-          if (closed) {
-            return;
-          }
-          if (sameLaunchTarget(launchDialogTarget, selectedLaunchTarget)) {
-            setNodeLaunchRecords((current) =>
-              mergeNodeLaunchRecord(current, launchDialogTarget, state.record)
-            );
-          }
-          if (state.operation) {
-            setLaunchOperation(launchDialogTarget, state.operation);
-          }
-        })
-        .catch((recordError: unknown) => {
-          if (!closed) {
-            setNodeLaunchRecordError(recordError instanceof Error ? recordError.message : String(recordError));
-          }
-        });
-    };
-    return () => {
-      closed = true;
-      source.close();
-    };
-  }, [
-    applyPreparationFailure,
-    applyPreparedLaunchHandoff,
-    launchDialogOpen,
-    launchDialogOperation?.preparationRunId,
-    launchDialogOperation?.status,
-    launchDialogTarget,
-    selectedLaunchTarget,
-    setLaunchOperation,
-    updateLaunchOperation,
-  ]);
 
   const handleArchiveCurrent = async () => {
     if (!activeWorkstream) {
@@ -1974,7 +2031,7 @@ function GraphDashboard({
     }
   };
 
-  const launchTerminalFromHandoff = async (
+  const launchTerminalFromHandoff = useCallback(async (
     handoff: PawLaunchPreparationResponse,
     input: PawTerminalLaunchInput,
     target: LaunchOperationTarget,
@@ -2039,9 +2096,9 @@ function GraphDashboard({
       );
       setNodeLaunchRecordRefreshKey((current) => current + 1);
     }
-  };
+  }, [updateLaunchOperation]);
 
-  const launchManagedSdkFromHandoff = async (
+  const launchManagedSdkFromHandoff = useCallback(async (
     handoff: PawLaunchPreparationResponse,
     target: LaunchOperationTarget,
   ) => {
@@ -2121,7 +2178,7 @@ function GraphDashboard({
       );
       setNodeLaunchRecordRefreshKey((current) => current + 1);
     }
-  };
+  }, [setLaunchOperation, updateLaunchOperation]);
 
   const handleSubmitLaunch = async (configuration: PawLaunchDialogConfiguration) => {
     const target = launchDialogTarget ?? selectedLaunchTarget;
@@ -2273,6 +2330,103 @@ function GraphDashboard({
     await launchTerminalFromHandoff(launchDialogOperation.handoff, input, launchDialogTarget);
   };
 
+  useEffect(() => {
+    if (
+      !launchDialogOpen ||
+      !launchDialogTarget ||
+      !launchDialogOperation?.preparationRunId ||
+      launchDialogOperation.status !== "preparing"
+    ) {
+      return;
+    }
+    const runId = launchDialogOperation.preparationRunId;
+    if (localRunStreamsRef.current.has(runId) || failedRunReattachRef.current.has(runId)) {
+      return;
+    }
+    let closed = false;
+    const target = launchDialogTarget;
+    const source = new EventSource(
+      `/api/launch-preparations/runs/${encodeURIComponent(runId)}/events`,
+    );
+    source.addEventListener("progress", (event) => {
+      if (closed) {
+        return;
+      }
+      const progress = parseMessageEventData<PawLaunchProgressEvent>(event);
+      updateLaunchOperation(target, (current) => {
+        const operation = current ?? createClientLaunchOperation(target, "preparing");
+        return {
+          ...operation,
+          status: "preparing",
+          error: null,
+          updatedAt: progress.timestamp,
+          progressEvents: appendProgressEvent(operation.progressEvents, progress),
+        };
+      });
+    });
+    source.addEventListener("completed", (event) => {
+      if (closed) {
+        return;
+      }
+      const payload = parseMessageEventData<PawLaunchRunFinishedPayload>(event);
+      if (payload.result) {
+        const nextHandoff = applyPreparedLaunchHandoff(target, payload.result);
+        if (nextHandoff.runtimeKind === "managed-sdk") {
+          void launchManagedSdkFromHandoff(nextHandoff, target);
+        }
+      }
+      source.close();
+    });
+    source.addEventListener("failed", (event) => {
+      if (closed) {
+        return;
+      }
+      applyPreparationFailure(target, parseMessageEventData<PawLaunchRunFinishedPayload>(event));
+      source.close();
+    });
+    source.onerror = () => {
+      if (closed) {
+        return;
+      }
+      failedRunReattachRef.current.add(runId);
+      source.close();
+      void loadNodeLaunchRecord(target.graphPath, target.nodeId)
+        .then((state) => {
+          if (closed) {
+            return;
+          }
+          if (sameLaunchTarget(target, selectedLaunchTarget)) {
+            setNodeLaunchRecords((current) =>
+              mergeNodeLaunchRecord(current, target, state.record)
+            );
+          }
+          if (state.operation) {
+            setLaunchOperation(target, state.operation);
+          }
+        })
+        .catch((recordError: unknown) => {
+          if (!closed) {
+            setNodeLaunchRecordError(recordError instanceof Error ? recordError.message : String(recordError));
+          }
+        });
+    };
+    return () => {
+      closed = true;
+      source.close();
+    };
+  }, [
+    applyPreparationFailure,
+    applyPreparedLaunchHandoff,
+    launchDialogOpen,
+    launchDialogOperation?.preparationRunId,
+    launchDialogOperation?.status,
+    launchDialogTarget,
+    launchManagedSdkFromHandoff,
+    selectedLaunchTarget,
+    setLaunchOperation,
+    updateLaunchOperation,
+  ]);
+
   if (error) {
     return (
       <div className="sl-shell-panel">
@@ -2347,6 +2501,7 @@ function GraphDashboard({
             nodeSessionStatuses={nodeSessionStatuses}
             nodeSessionStatusState={nodeSessionStatusState}
             runtimeOverlay={runtimeOverlay}
+            launchOperations={launchOperationsByNodeId}
             sessionRouteForNode={sessionRouteForNode}
           />
         </ReactFlowProvider>
@@ -2376,10 +2531,10 @@ function GraphDashboard({
           promptProfilesLoading={promptProfilesLoading}
           promptProfilesError={promptProfilesError}
           preparing={
-            launchDialogOperation?.status === "preparing" ||
-            launchDialogOperation?.status === "managed_starting"
+            launchDialogOperation?.status === "preparing"
           }
           launching={launchDialogOperation?.status === "launching"}
+          launchStatus={launchDialogOperation?.status ?? null}
           error={launchDialogOperation?.error?.error ?? null}
           handoff={launchDialogOperation?.handoff ?? null}
           terminalLaunchResult={launchDialogOperation?.terminalLaunch ?? null}
@@ -2439,20 +2594,53 @@ function MigrationWarningsBanner({
 }
 
 function SettingsPage({
+  section,
+  onRouteChange,
   profiles,
   profilesLoading,
   profilesError,
   onRefreshProfiles,
   onProfilesChanged,
   onProfileDeleted,
+  sessionLaunchSettings,
+  sessionLaunchSettingsLoading,
+  sessionLaunchSettingsError,
+  onRefreshSessionLaunchSettings,
+  onSessionLaunchSettingsChanged,
 }: {
+  section: "profiles" | "session-launch";
+  onRouteChange: (route: DashboardRoute) => void | Promise<void>;
   profiles: PawPromptProfile[];
   profilesLoading: boolean;
   profilesError: string | null;
   onRefreshProfiles: () => Promise<void>;
   onProfilesChanged: (profiles: PawPromptProfile[]) => void;
   onProfileDeleted: (profileId: string) => void;
+  sessionLaunchSettings: SessionLaunchSettings | null;
+  sessionLaunchSettingsLoading: boolean;
+  sessionLaunchSettingsError: string | null;
+  onRefreshSessionLaunchSettings: () => Promise<void> | void;
+  onSessionLaunchSettingsChanged: (settings: SessionLaunchSettings) => void;
 }) {
+  const renderNavItem = (
+    itemSection: "profiles" | "session-launch",
+    label: string,
+    description: string,
+  ) => {
+    const active = section === itemSection;
+    return (
+      <a
+        className={`sl-settings-nav-item${active ? " active" : ""}`}
+        href={routePath({ view: "settings", section: itemSection })}
+        aria-current={active ? "page" : undefined}
+        onClick={(event) => handleInAppLinkClick(event, () => onRouteChange({ view: "settings", section: itemSection }))}
+      >
+        <span>{label}</span>
+        <small>{description}</small>
+      </a>
+    );
+  };
+
   return (
     <div className="sl-shell-panel">
       <div className="sl-settings-page">
@@ -2461,26 +2649,29 @@ function SettingsPage({
             <span className="sl-eyebrow">Settings</span>
           </div>
           <nav className="sl-settings-nav" aria-label="Streamliner settings">
-            <a
-              className="sl-settings-nav-item active"
-              href={routePath({ view: "settings", section: "profiles" })}
-              aria-current="page"
-              onClick={(event) => event.preventDefault()}
-            >
-              <span>PAW profiles</span>
-              <small>Launch prompt defaults</small>
-            </a>
+            {renderNavItem("session-launch", "Session launch", "Copilot CLI defaults")}
+            {renderNavItem("profiles", "PAW profiles", "Launch prompt defaults")}
           </nav>
         </aside>
         <main className="sl-settings-content">
-          <PawProfilesPage
-            profiles={profiles}
-            loading={profilesLoading}
-            error={profilesError}
-            onRefresh={onRefreshProfiles}
-            onProfilesChanged={onProfilesChanged}
-            onProfileDeleted={onProfileDeleted}
-          />
+          {section === "profiles" ? (
+            <PawProfilesPage
+              profiles={profiles}
+              loading={profilesLoading}
+              error={profilesError}
+              onRefresh={onRefreshProfiles}
+              onProfilesChanged={onProfilesChanged}
+              onProfileDeleted={onProfileDeleted}
+            />
+          ) : (
+            <SessionLaunchSettingsPage
+              settings={sessionLaunchSettings}
+              loading={sessionLaunchSettingsLoading}
+              error={sessionLaunchSettingsError}
+              onRefresh={onRefreshSessionLaunchSettings}
+              onSettingsChanged={onSessionLaunchSettingsChanged}
+            />
+          )}
         </main>
       </div>
     </div>
@@ -2535,11 +2726,13 @@ function DashboardNav({
         </a>
         <a
           className={`sl-action-btn sl-icon-action${settingsActive ? " active" : ""}`}
-          href={routePath({ view: "settings", section: "profiles" })}
+          href={routePath({ view: "settings", section: "session-launch" })}
           aria-label="Streamliner settings"
           title="Streamliner settings"
           aria-current={settingsActive ? "page" : undefined}
-          onClick={(event) => handleInAppLinkClick(event, () => onRouteChange({ view: "settings", section: "profiles" }))}
+          onClick={(event) =>
+            handleInAppLinkClick(event, () => onRouteChange({ view: "settings", section: "session-launch" }))
+          }
         >
           <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
             <path
@@ -2558,6 +2751,7 @@ export default function App() {
   const { route, setRoute } = useDashboardRoute();
   const graphLoader = useGraphLoader(route, true);
   const promptProfileState = usePromptProfilesState();
+  const sessionLaunchSettingsState = useSessionLaunchSettingsState();
   const beforeLeaveRef = useRef<(() => Promise<boolean>) | null>(null);
 
   const handleRouteChange = useCallback(
@@ -2621,17 +2815,29 @@ export default function App() {
       <MigrationWarningsBanner warnings={graphLoader.migrationWarnings} />
       {route.view === "settings" ? (
         <SettingsPage
+          section={route.section ?? "session-launch"}
+          onRouteChange={handleRouteChange}
           profiles={promptProfileState.profiles}
           profilesLoading={promptProfileState.loading}
           profilesError={promptProfileState.error}
           onRefreshProfiles={promptProfileState.refresh}
           onProfilesChanged={promptProfileState.noteProfilesChanged}
           onProfileDeleted={promptProfileState.noteProfileDeleted}
+          sessionLaunchSettings={sessionLaunchSettingsState.responseError ? null : sessionLaunchSettingsState.settings}
+          sessionLaunchSettingsLoading={sessionLaunchSettingsState.loading}
+          sessionLaunchSettingsError={sessionLaunchSettingsState.error}
+          onRefreshSessionLaunchSettings={sessionLaunchSettingsState.refresh}
+          onSessionLaunchSettingsChanged={sessionLaunchSettingsState.noteSettingsChanged}
         />
       ) : route.view === "sessions" ? (
         <SessionsPage
           registerBeforeLeave={registerBeforeLeave}
           workstreams={graphLoader.workstreams}
+          defaultCliArgs={
+            sessionLaunchSettingsState.loaded
+              ? sessionLaunchSettingsState.settings.defaultCliArgs
+              : null
+          }
           onOpenWorkstream={openWorkstream}
           routeWorkstreamId={route.workstreamId ?? null}
           routeNodeId={route.nodeId ?? null}
@@ -2649,6 +2855,7 @@ export default function App() {
           promptProfilesError={promptProfileState.error}
           onRefreshPromptProfiles={promptProfileState.refresh}
           onPromptProfilesChanged={promptProfileState.noteProfilesChanged}
+          sessionLaunchSettings={sessionLaunchSettingsState.settings}
         />
       ) : route.view === "workstreams" ? (
         <WorkstreamHome

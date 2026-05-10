@@ -32,6 +32,7 @@ function buildSession(overrides: Partial<SessionRegistryListItem> = {}): Session
     branch: "feature/manual-session-registry",
     tags: [],
     originKind: "observed",
+    launchCliArgs: null,
     graphBinding: null,
     pawLaunch: null,
     copilotSessionId: "activity-session",

@@ -183,6 +183,16 @@ describe("managed runtime contract", () => {
     )?.available).toBe(true);
   });
 
+  it("keeps cancel available for failed SDK-owned sessions", () => {
+    const projection = managedRuntimeProjectionFromMetadata(managedRuntime({
+      lifecycleState: "failed",
+    }));
+
+    const actions = resolveManagedRuntimeActions(projection);
+    expect(actions.find((action) => action.action === "interrupt")?.available).toBe(false);
+    expect(actions.find((action) => action.action === "cancel")?.available).toBe(true);
+  });
+
   it("enables cleanup when cleanup-ready evidence is present", () => {
     const projection = managedRuntimeProjectionFromMetadata(managedRuntime({
       lifecycleState: "completed",

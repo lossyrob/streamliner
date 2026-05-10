@@ -22,6 +22,7 @@ import type {
 import type { NodeLaunchRecordStore } from "../node-launch-record-store";
 import { isActiveNodeLaunchOperationStatus } from "../../node-launch-record-contract";
 import { getApiLogger } from "../logger";
+import { readSessionLaunchSettings } from "../session-launch-settings";
 
 export interface LaunchPreparationRouteDeps {
   cwd?: string;
@@ -35,6 +36,7 @@ export interface LaunchPreparationRouteDeps {
   contextPreparer?: LaunchContextPreparer;
   runManager?: LaunchPreparationRunManager;
   nodeLaunchRecordStore?: NodeLaunchRecordStore;
+  loadDefaultCliArgs?: () => Promise<string[]> | string[];
 }
 
 function requestBodyRecord(body: unknown): Record<string, unknown> {
@@ -57,6 +59,10 @@ function requestConfiguration(value: unknown): PawLaunchConfigurationInput | und
     );
   }
   return value as PawLaunchConfigurationInput;
+}
+
+function hasExplicitCliArgs(configuration: PawLaunchConfigurationInput | undefined): boolean {
+  return Boolean(configuration && Object.prototype.hasOwnProperty.call(configuration, "cliArgs"));
 }
 
 export function createLaunchPreparationsRouter(options: {
@@ -83,12 +89,16 @@ export function createLaunchPreparationsRouter(options: {
     const existingLaunch = nodeId.trim() && lookupGraphPath
       ? await options.deps?.nodeLaunchRecordStore?.get(lookupGraphPath, nodeId)
       : null;
+    const configuration = requestConfiguration(body.configuration);
+    const defaultCliArgs = hasExplicitCliArgs(configuration)
+      ? undefined
+      : [...(await (options.deps?.loadDefaultCliArgs?.() ?? readSessionLaunchSettings().then((settings) => settings.defaultCliArgs)))];
     return {
       nodeId,
       graphPath,
       defaultGraphPath: options.defaultGraphPath,
       launchNonce,
-      configuration: requestConfiguration(body.configuration),
+      configuration,
       cwd: options.deps?.cwd,
       stateRoot: options.deps?.stateRoot,
       now: options.deps?.now,
@@ -99,6 +109,7 @@ export function createLaunchPreparationsRouter(options: {
       pawInitRunner: options.deps?.pawInitRunner,
       contextPreparer: options.deps?.contextPreparer,
       existingLaunch,
+      defaultCliArgs,
       onProgress,
     };
   };

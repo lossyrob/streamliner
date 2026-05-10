@@ -8,6 +8,7 @@ import {
 import type {
   NodeLaunchHandoff,
   NodeLaunchClaimState,
+  NodeLaunchOperationStatus,
   NodeManagedSdkLaunchResponse,
   NodeTerminalLaunchResponse,
 } from "../node-launch-record-contract";
@@ -48,6 +49,7 @@ interface PawLaunchDialogProps {
   promptProfilesError?: string | null;
   preparing: boolean;
   launching: boolean;
+  launchStatus: NodeLaunchOperationStatus | null;
   error: string | null;
   handoff: PawLaunchDialogHandoff | null;
   terminalLaunchResult: PawTerminalLaunchResult | null;
@@ -297,6 +299,7 @@ export function PawLaunchDialog({
   promptProfilesError = null,
   preparing,
   launching,
+  launchStatus,
   error,
   handoff,
   terminalLaunchResult,
@@ -363,7 +366,9 @@ export function PawLaunchDialog({
     runtimeKind;
   const managedRuntimeSelected = activeRuntimeKind === "managed-sdk";
   const terminalHandoffSelected = Boolean(handoff && !managedRuntimeSelected);
-  const runtimeSelectionLocked = preparing || Boolean(handoff || terminalLaunchActive || managedLaunchActive);
+  const managedStarting = launchStatus === "managed_starting";
+  const busy = preparing || launching || managedStarting;
+  const runtimeSelectionLocked = busy || Boolean(handoff || terminalLaunchActive || managedLaunchActive);
   const trimmedInstructions = workflowInstructions.trim();
   const instructionError = trimmedInstructions.length === 0
     ? "Launch instructions are required so paw-init can derive the workflow setup and worker prompt."
@@ -554,7 +559,7 @@ export function PawLaunchDialog({
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (preparing || launching || instructionError || actionDisabledReason) {
+    if (busy || instructionError || actionDisabledReason) {
       return;
     }
     if (submittingRef.current) {
@@ -657,13 +662,17 @@ export function PawLaunchDialog({
         </div>
 
         <div className="sl-sheet-body sl-paw-launch-body">
-          {(preparing || progressEvents.length > 0) && !handoff && (
+          {(busy || progressEvents.length > 0) && (!handoff || managedStarting) && (
             <section className="sl-paw-launch-progress" aria-live="polite">
               <div className="sl-paw-config-section-head">
                 <div>
-                  <span className="sl-section-label">PAW init progress</span>
+                  <span className="sl-section-label">
+                    {managedStarting ? "Background session launch" : "PAW init progress"}
+                  </span>
                   <p>
-                    {managedRuntimeSelected
+                    {managedStarting
+                      ? "PAW init is complete. Streamliner is creating the background SDK session and waiting for its session id."
+                      : managedRuntimeSelected
                       ? "Streamliner is starting a background session for this node."
                       : "Streamliner is running one internal Copilot SDK session for context assembly and PAW init."}
                   </p>
@@ -673,7 +682,10 @@ export function PawLaunchDialog({
                 </span>
               </div>
               <div className="sl-paw-progress-current">
-                {latestProgress?.message ?? "Starting Streamliner PAW launch preparation..."}
+                {latestProgress?.message ??
+                  (managedStarting
+                    ? "Submitting background session launch request..."
+                    : "Starting Streamliner PAW launch preparation...")}
               </div>
               {recentProgress.length > 0 && (
                 <ol className="sl-paw-progress-list">
@@ -707,7 +719,7 @@ export function PawLaunchDialog({
                 <button
                   type="button"
                   className="sl-action-btn primary"
-                  disabled={resumingLaunch || releasingLaunch || preparing || launching}
+                  disabled={resumingLaunch || releasingLaunch || busy}
                   onClick={onResumeLaunch}
                 >
                   {resumingLaunch ? "Resuming background session..." : "Resume background session"}
@@ -717,7 +729,7 @@ export function PawLaunchDialog({
                 <button
                   type="button"
                   className="sl-action-btn"
-                  disabled={releasingLaunch || resumingLaunch || preparing || launching}
+                  disabled={releasingLaunch || resumingLaunch || busy}
                   onClick={onReleaseLaunch}
                 >
                   {releasingLaunch ? "Releasing launch..." : "Release stuck launch"}
@@ -895,11 +907,11 @@ export function PawLaunchDialog({
               </div>
             </div>
             <label className="sl-checkbox-row sl-paw-launch-after-init">
-              <input
-                type="checkbox"
-                checked={launchAfterInit}
-                disabled={managedRuntimeSelected || preparing || Boolean(handoff)}
-                aria-label="Launch after init"
+                  <input
+                    type="checkbox"
+                    checked={launchAfterInit}
+                    disabled={managedRuntimeSelected || busy || Boolean(handoff)}
+                    aria-label="Launch after init"
                 onChange={(event) => handleLaunchAfterInitChange(event.target.checked)}
               />
               <span>
@@ -1018,8 +1030,10 @@ export function PawLaunchDialog({
                     <p>
                       {managedLaunchActive && managedLaunchResult
                         ? `Started with ${managedLaunchResult.permissionProfile}.`
-                        : preparing
-                          ? "Streamliner is starting the background session for this prepared handoff."
+                        : managedStarting
+                          ? "PAW init is complete. Streamliner is creating the background SDK session now."
+                          : preparing
+                            ? "Streamliner is running PAW init before it starts this background session."
                           : managedLaunchResult
                             ? "The previous background session launch is no longer active. Ready to start this prepared handoff again."
                             : "Ready to start this prepared handoff as a background session. No terminal will open."}
@@ -1135,15 +1149,14 @@ export function PawLaunchDialog({
             onClick={onCancel}
             disabled={releasingLaunch || resumingLaunch}
           >
-            {preparing || launching || handoff || terminalLaunchResult || managedLaunchResult ? "Close" : "Cancel"}
+            {busy || handoff || terminalLaunchResult || managedLaunchResult ? "Close" : "Cancel"}
           </button>
           {handoff ? (
             <button
               type="button"
               className="sl-action-btn primary"
               disabled={
-                launching ||
-                preparing ||
+                busy ||
                 workflowContextSaving ||
                 (terminalHandoffSelected && Boolean(kickoffPromptError)) ||
                 (terminalHandoffSelected && Boolean(terminalTitleError)) ||
@@ -1162,7 +1175,7 @@ export function PawLaunchDialog({
               }
             >
               {managedRuntimeSelected
-                ? preparing || launching
+                ? busy
                   ? "Starting background session..."
                   : managedLaunchActive
                     ? "Background session started"
@@ -1179,7 +1192,7 @@ export function PawLaunchDialog({
               className="sl-action-btn primary"
               disabled={preparing || releasingLaunch || resumingLaunch || Boolean(instructionError) || Boolean(actionDisabledReason)}
             >
-              {preparing
+              {busy
                 ? managedRuntimeSelected
                   ? "Starting background session..."
                   : "Running PAW init..."
