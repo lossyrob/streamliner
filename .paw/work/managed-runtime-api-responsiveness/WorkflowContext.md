@@ -38,4 +38,4 @@ Issue URL: https://github.com/lossyrob/streamliner/issues/94
 Remote: origin
 Artifact Lifecycle: commit-and-clean
 Artifact Paths: auto-derived
-Additional Inputs: none
+Additional Inputs: streamliner-context=C:/Users/robemanuele/proj/streamliner/streamliner-managed-runtime-api-responsiveness/.paw/work/managed-runtime-api-responsiveness/streamliner/context.md
