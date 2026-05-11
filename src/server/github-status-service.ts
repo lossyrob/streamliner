@@ -1,3 +1,6 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
 import {
   type GithubIssueStatusResult,
   type GithubPullRequestStatusResult,
@@ -7,6 +10,11 @@ import {
   githubStatusRefKey,
 } from "../github-status";
 import type { WorkstreamPullRequestValidationState } from "../workstream-schema";
+import {
+  type GithubAuthProfile,
+  readGithubAuthSettings,
+  resolveGithubAuthProfile,
+} from "./github-auth-settings";
 import { getApiLogger, type ScopedLogger } from "./logger";
 
 export interface GithubStatusResponseHeaders {
@@ -27,6 +35,15 @@ export type GithubStatusFetch = (
   },
 ) => Promise<GithubStatusHttpResponse>;
 
+export type GithubStatusAuthTokenProvider = (
+  ref: GithubStatusRef,
+) => Promise<string | null> | string | null;
+
+export type GithubStatusGhAuthTokenProvider = (
+  profile: GithubAuthProfile,
+  ref: GithubStatusRef,
+) => Promise<string | null> | string | null;
+
 export interface GithubStatusService {
   getStatuses(refs: readonly GithubStatusRef[]): Promise<GithubStatusResult[]>;
 }
@@ -35,6 +52,9 @@ export interface GithubStatusServiceOptions {
   fetch?: GithubStatusFetch;
   now?: () => Date;
   authToken?: string | null;
+  authTokenProvider?: GithubStatusAuthTokenProvider;
+  authSettingsPath?: string;
+  ghAuthTokenProvider?: GithubStatusGhAuthTokenProvider;
   positiveTtlMs?: number;
   negativeTtlMs?: number;
   rateLimitTtlMs?: number;
@@ -50,14 +70,53 @@ const DEFAULT_POSITIVE_TTL_MS = 60_000;
 const DEFAULT_NEGATIVE_TTL_MS = 15_000;
 const DEFAULT_RATE_LIMIT_TTL_MS = 30_000;
 const GITHUB_API_BASE_URL = "https://api.github.com";
+const GH_AUTH_TOKEN_TIMEOUT_MS = 2_000;
+const execFileAsync = promisify(execFile);
 
 function defaultFetch(): GithubStatusFetch {
   return (url, init) => globalThis.fetch(url, init) as Promise<GithubStatusHttpResponse>;
 }
 
+function normalizeAuthToken(token: string | null | undefined): string | null {
+  const normalized = token?.trim();
+  return normalized && normalized.length > 0 ? normalized : null;
+}
+
 function authTokenFromEnv(): string | null {
-  const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
-  return token && token.trim().length > 0 ? token.trim() : null;
+  return normalizeAuthToken(process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN);
+}
+
+async function authTokenFromGhCli(
+  profile: GithubAuthProfile,
+  logger: ScopedLogger,
+): Promise<string | null> {
+  const hostname = profile.hostname ?? "github.com";
+  const args = ["auth", "token", "--hostname", hostname];
+  if (profile.user) {
+    args.push("--user", profile.user);
+  }
+  const env = profile.ghConfigDir
+    ? { ...process.env, GH_CONFIG_DIR: profile.ghConfigDir }
+    : process.env;
+  try {
+    const { stdout } = await execFileAsync("gh", args, {
+      env,
+      timeout: GH_AUTH_TOKEN_TIMEOUT_MS,
+      windowsHide: true,
+    });
+    const token = normalizeAuthToken(stdout);
+    if (token) {
+      logger.debug("using-gh-cli-auth", {
+        hostname,
+        user: profile.user ?? null,
+        ghConfigDir: profile.ghConfigDir ? "configured" : "default",
+      });
+    }
+    return token;
+  } catch (error) {
+    logger.debug("gh-cli-auth-unavailable", { err: error });
+    return null;
+  }
 }
 
 function dedupeRefs(refs: readonly GithubStatusRef[]): GithubStatusRef[] {
@@ -389,12 +448,59 @@ export function createGithubStatusService(
 ): GithubStatusService {
   const fetchImpl = options.fetch ?? defaultFetch();
   const now = options.now ?? (() => new Date());
-  const authToken = options.authToken ?? authTokenFromEnv();
   const positiveTtlMs = options.positiveTtlMs ?? DEFAULT_POSITIVE_TTL_MS;
   const negativeTtlMs = options.negativeTtlMs ?? DEFAULT_NEGATIVE_TTL_MS;
   const rateLimitTtlMs = options.rateLimitTtlMs ?? DEFAULT_RATE_LIMIT_TTL_MS;
   const logger = options.logger ?? getApiLogger().withScope("github-status");
   const cache = new Map<string, CachedGithubStatusResult>();
+  let authSettingsPromise: ReturnType<typeof readGithubAuthSettings> | null = null;
+  const ghAuthTokenProvider: GithubStatusGhAuthTokenProvider =
+    options.ghAuthTokenProvider ??
+    ((profile) => authTokenFromGhCli(profile, logger));
+  const authTokenProvider: GithubStatusAuthTokenProvider =
+    options.authTokenProvider ??
+    (async (ref) => {
+      const envToken = authTokenFromEnv();
+      if (envToken) {
+        return envToken;
+      }
+      authSettingsPromise ??= readGithubAuthSettings(options.authSettingsPath).catch(
+        (error: unknown) => {
+          logger.warn("github-auth-settings-unavailable", { err: error });
+          return { profiles: {}, repositories: {} };
+        },
+      );
+      const settings = await authSettingsPromise;
+      const profile = resolveGithubAuthProfile(ref, settings) ?? {};
+      return ghAuthTokenProvider(profile, ref);
+    });
+  const authTokenPromises = new Map<string, Promise<string | null>>();
+
+  async function getAuthToken(ref: GithubStatusRef): Promise<string | null> {
+    if (options.authToken === null) {
+      return null;
+    }
+    const explicitToken = normalizeAuthToken(options.authToken);
+    if (explicitToken) {
+      return explicitToken;
+    }
+    const cacheKey = `${ref.owner}/${ref.repo}`.toLowerCase();
+    const cached = authTokenPromises.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+    const next = Promise.resolve(authTokenProvider(ref))
+      .then(normalizeAuthToken)
+      .catch((error: unknown) => {
+        logger.debug("github-auth-provider-failed", {
+          ref: githubStatusRefKey(ref),
+          err: error,
+        });
+        return null;
+      });
+    authTokenPromises.set(cacheKey, next);
+    return next;
+  }
 
   async function fetchStatus(ref: GithubStatusRef): Promise<GithubStatusResult> {
     const fetchedAt = now().toISOString();
@@ -403,6 +509,7 @@ export function createGithubStatusService(
       "User-Agent": "streamliner-local-api",
       "X-GitHub-Api-Version": "2022-11-28",
     };
+    const authToken = await getAuthToken(ref);
     if (authToken) {
       headers.Authorization = `Bearer ${authToken}`;
     }

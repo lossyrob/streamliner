@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,6 +10,7 @@ import { createStreamlinerApiApp, type StreamlinerApiApp } from "./app";
 import type {
   GithubStatusFetch,
   GithubStatusHttpResponse,
+  GithubStatusServiceOptions,
 } from "./github-status-service";
 
 const TEST_NOW = new Date("2026-05-08T12:00:00.000Z");
@@ -43,7 +44,10 @@ function githubResponse(
   };
 }
 
-function createApi(fetch: GithubStatusFetch): StreamlinerApiApp {
+function createApi(
+  fetch: GithubStatusFetch,
+  githubStatusDeps: Partial<GithubStatusServiceOptions> = { authToken: null },
+): StreamlinerApiApp {
   const root = createRoot();
   const api = createStreamlinerApiApp({
     store: new SessionRegistryFileStore({ rootDir: join(root, "registry") }),
@@ -54,7 +58,7 @@ function createApi(fetch: GithubStatusFetch): StreamlinerApiApp {
     githubStatusDeps: {
       fetch,
       now: () => TEST_NOW,
-      authToken: null,
+      ...githubStatusDeps,
     },
   });
   apps.push(api);
@@ -137,6 +141,87 @@ describe("GitHub status API", () => {
       .query({ ref: "issue:lossyrob/streamliner#69" })
       .expect(200);
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("uses a resolved auth token for GitHub requests", async () => {
+    const authTokenProvider = vi.fn(async () => "gh-cli-token");
+    const fetchMock = vi.fn<GithubStatusFetch>(async (url, init) => {
+      expect(init?.headers?.Authorization).toBe("Bearer gh-cli-token");
+      if (url.endsWith("/pulls/70")) {
+        return githubResponse({
+          title: "Implement live status",
+          html_url: "https://github.com/lossyrob/streamliner/pull/70",
+          state: "open",
+          draft: false,
+          merged: false,
+          mergeable_state: "clean",
+        });
+      }
+      throw new Error(`Unexpected GitHub URL: ${url}`);
+    });
+    const api = createApi(fetchMock, { authTokenProvider });
+
+    await request(api.app)
+      .get("/api/github/status")
+      .query({ ref: "pr:lossyrob/streamliner#70" })
+      .expect(200);
+
+    expect(authTokenProvider).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("selects a configured gh auth profile for the requested repository", async () => {
+    const authSettingsPath = join(createRoot(), "github-auth.json");
+    writeFileSync(
+      authSettingsPath,
+      JSON.stringify({
+        profiles: {
+          personal: {
+            ghConfigDir: "C:\\Users\\robemanuele\\AppData\\Roaming\\gh-pub",
+            user: "lossyrob",
+          },
+        },
+        repositories: {
+          "github.com/lossyrob/streamliner": "personal",
+        },
+      }),
+      "utf8",
+    );
+    const ghAuthTokenProvider = vi.fn(async () => "profile-token");
+    const fetchMock = vi.fn<GithubStatusFetch>(async (url, init) => {
+      expect(init?.headers?.Authorization).toBe("Bearer profile-token");
+      if (url.endsWith("/pulls/70")) {
+        return githubResponse({
+          title: "Implement live status",
+          html_url: "https://github.com/lossyrob/streamliner/pull/70",
+          state: "open",
+          draft: false,
+          merged: false,
+          mergeable_state: "clean",
+        });
+      }
+      throw new Error(`Unexpected GitHub URL: ${url}`);
+    });
+    const api = createApi(fetchMock, {
+      authSettingsPath,
+      ghAuthTokenProvider,
+    });
+
+    await request(api.app)
+      .get("/api/github/status")
+      .query({ ref: "pr:lossyrob/streamliner#70" })
+      .expect(200);
+
+    expect(ghAuthTokenProvider).toHaveBeenCalledWith(
+      {
+        ghConfigDir: "C:\\Users\\robemanuele\\AppData\\Roaming\\gh-pub",
+        user: "lossyrob",
+      },
+      expect.objectContaining({
+        owner: "lossyrob",
+        repo: "streamliner",
+      }),
+    );
   });
 
   it("includes linked PR status from issue timeline events", async () => {
