@@ -197,13 +197,18 @@ export class SessionRegistryBackgroundWorker {
     }
     // Startup recovery for orphan reserved rows. Runs synchronously before
     // the first poll cycle so a crash between row reservation and claim
-    // file write is recovered before anything else happens.
+    // file write is recovered before anything else happens, while preserving
+    // node bindings for real sessions whose short-lived claims were pruned.
     if (this.claimStore && !this.hasReconciledOnStartup) {
       try {
         const result = reconcileOrphanReservedRows(this.store, this.claimStore);
-        if (result.rowsDeleted > 0 || result.rowsGraphBindingCleared > 0) {
+        if (
+          result.rowsDeleted > 0 ||
+          result.rowsGraphBindingCleared > 0 ||
+          result.rowsGraphBindingRestored > 0
+        ) {
           this.logger.info(
-            `[session-worker] launch-claim startup reconciliation: deleted=${result.rowsDeleted} graphBindingCleared=${result.rowsGraphBindingCleared}`,
+            `[session-worker] launch-claim startup reconciliation: deleted=${result.rowsDeleted} graphBindingCleared=${result.rowsGraphBindingCleared} graphBindingRestored=${result.rowsGraphBindingRestored}`,
           );
         }
       } catch (error) {

@@ -9,7 +9,11 @@ import { SessionRegistryFileStore } from "./file-store";
 import { LaunchClaimFileStore } from "./launch-claim-store";
 import { runLaunchClaimBindingPass } from "./launch-claim-binding";
 import { runLaunchClaimSweep } from "./launch-claim-sweep";
-import { createLaunchClaim, kickoffNonceLine } from "./launch-claims";
+import {
+  createLaunchClaim,
+  kickoffNonceLine,
+  reconcileOrphanReservedRows,
+} from "./launch-claims";
 import {
   type DiscoveredCopilotSession,
 } from "./copilot-session-discovery";
@@ -224,7 +228,22 @@ describe("Launch Claim Binding — end-to-end integration", () => {
     expect(prune.claimsPruned).toBe(1);
     expect(claimStore.getClaim("claim-INTEGRATION")).toBeNull();
     // The bound registry row is preserved (only the claim file is pruned).
-    expect(registryStore.getSession("reg-INTEGRATION")).not.toBeNull();
+    expect(registryStore.getSession("reg-INTEGRATION")?.graphBinding).toEqual({
+      workstreamId: "session-launching-and-tracking",
+      nodeId: "launch-claim-binding",
+      launchClaimId: "claim-INTEGRATION",
+    });
+
+    // Startup reconciliation after claim pruning must not detach the
+    // historical session from its graph node.
+    const startupReconcile = reconcileOrphanReservedRows(registryStore, claimStore);
+    expect(startupReconcile.rowsDeleted).toBe(0);
+    expect(startupReconcile.rowsGraphBindingCleared).toBe(0);
+    expect(registryStore.getSession("reg-INTEGRATION")?.graphBinding).toEqual({
+      workstreamId: "session-launching-and-tracking",
+      nodeId: "launch-claim-binding",
+      launchClaimId: "claim-INTEGRATION",
+    });
   });
 
   it("end-to-end nonce-missing scenario: claim transitions, reserved row deleted, no graphBinding leaks", async () => {
