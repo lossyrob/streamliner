@@ -1,27 +1,3 @@
----
-kind: design-doc
-status: current
-last_updated: 2026-05-10
-update_semantics: rewrite-in-place
-authoritative_for: "Decision record conventions and catalog"
-scope_tags:
-  - decisions
-  - architecture
-code_paths: []
-references_decisions:
-  - 1
-  - 2
-  - 3
-  - 4
-  - 5
-  - 6
-  - 7
-  - 8
-  - 9
-  - 10
-  - 11
----
-
 # Decision Records
 
 This directory holds architecturally significant decisions for Streamliner.
@@ -31,6 +7,7 @@ This directory holds architecturally significant decisions for Streamliner.
 - **Numbering**: Sequential, zero-padded to three digits (e.g., `001-use-react-flow.md`)
 - **File naming**: `{number}-{slug}.md` where slug is a short kebab-case description
 - **Append-only**: Once accepted, a decision record is not edited. If the decision changes, a new record supersedes the old one.
+- **No frontmatter**: Decision metadata lives in the filename, `# H1`, and the decision tables in this README and the design index.
 
 ## Status values
 

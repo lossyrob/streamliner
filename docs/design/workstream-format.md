@@ -1,22 +1,3 @@
----
-kind: design-doc
-status: current
-last_updated: 2026-05-10
-update_semantics: rewrite-in-place
-authoritative_for: "Workstream artifact format, documentation references, and runtime-state boundaries"
-scope_tags:
-  - workstreams
-  - runtime-state
-  - artifacts
-code_paths:
-  - src/workstream-schema.ts
-  - src/workstream-view-model.ts
-  - src/session-registry*.ts
-references_decisions:
-  - 5
-  - 11
----
-
 # Workstream Artifact Format
 
 A workstream consists of two committed artifacts — a **brief** (`brief.md`) and a **dependency graph** (`graph.json`) — stored together in a workstream directory. These artifacts describe durable plan and progress. Fast-moving operational state lives separately in a local runtime store.

@@ -1,18 +1,3 @@
----
-kind: design-doc
-status: current
-last_updated: 2026-05-10
-update_semantics: rewrite-in-place
-authoritative_for: "Project design layer and documentation-family authority model"
-scope_tags:
-  - design-docs
-  - documentation-system
-  - context-package
-code_paths: []
-references_decisions:
-  - 11
----
-
 # Design Layer
 
 The design layer is Streamliner's project-level design authority. It sits above
@@ -153,6 +138,25 @@ The current intended design for coherent domains or concerns (architecture, sess
 ### 3. Decision records — "Why did we choose this?"
 
 Architecturally significant choices and their rationale. Append-only once accepted. If a decision changes, a new record supersedes the old one.
+
+## Document metadata
+
+Design documents do not require YAML frontmatter. Required metadata lives in
+places humans already maintain:
+
+- The document title is the `# H1`.
+- Design-doc status, authority, and reading order live in the design index and
+  satellite documents table.
+- Decision number, title, status, and date live in the decision filename,
+  decision `# H1`, and decision log tables.
+- Last-updated and changelog information come from git history.
+- Relationships between documents come from inline Markdown links and index or
+  decision tables.
+
+If Streamliner later needs a machine-readable design catalog, that is future
+product work. It should derive from the design index, decision tables, links,
+git, and explicit workstream references rather than requiring authors to maintain
+manual frontmatter on every document.
 
 ## Repository layout
 

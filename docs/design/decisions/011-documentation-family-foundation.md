@@ -1,13 +1,3 @@
----
-kind: decision
-number: 11
-status: accepted
-date: 2026-05-10
-update_semantics: append-only
-superseded_by: null
-supersedes: null
----
-
 # 011. Documentation family foundation
 
 ## Context
@@ -48,6 +38,18 @@ planning artifacts regardless of their current repository path. Their storage
 location can move without changing this decision. Wherever those notes live,
 they can inform workstream formation but are not part of the docs site and are
 not authoritative project documentation.
+
+Design docs and decision records should not require YAML frontmatter. Documents
+start with `# Title`. Living-doc status, authority, reading order, and document
+ownership live in the design index and satellite-documents table. Decision
+number, title, status, and date live in decision filenames, decision headings,
+and decision log tables. Last-updated and changelog information come from git.
+Relationships come from inline Markdown links, index tables, decision tables,
+and workstream references.
+
+If Streamliner later needs a machine-readable design catalog, that catalog is
+future product work. It should derive from these maintained sources rather than
+requiring authors to maintain manual frontmatter on every design document.
 
 ### Wave 2 unified-site contract
 
@@ -182,6 +184,12 @@ the durable source of intended-system rules whether or not they are implemented.
 Architecture orients readers to the current implementation; it does not replace
 normative Design.
 
+**Require YAML frontmatter for every design document.** Rejected. Streamliner has
+no implemented catalog that consumes frontmatter today, and the metadata
+duplicates better sources: headings, design index tables, decision logs, git
+history, links, and workstream references. Keeping it required would place
+ongoing authoring burden on humans and agents before a product need exists.
+
 ## Consequences
 
 - `design-layer.md` owns the documentation-family authority model.
@@ -189,6 +197,8 @@ normative Design.
   impact, reconciliation, and the unified-site implementation contract.
 - `concepts/context-package.md` owns how optional documentation hints appear in
   generated worker context.
+- `DESIGN-DOCS.md`, decision conventions, and the design-docs agent skill align
+  on no required YAML frontmatter.
 - Wave 2 implementers can migrate VitePress and create starter docs without
   rediscovering information architecture.
 - Wave 3 implementers can add docs-family discovery and context-package support

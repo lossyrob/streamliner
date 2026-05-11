@@ -1,18 +1,3 @@
----
-kind: design-doc
-status: current
-last_updated: 2026-05-10
-update_semantics: rewrite-in-place
-authoritative_for: "Product scope, core concepts, and architecture direction"
-scope_tags:
-  - product
-  - workstreams
-  - documentation-system
-code_paths: []
-references_decisions:
-  - 11
----
-
 # Streamliner — Product Design
 
 When AI coding agents compress execution time, the bottleneck moves from implementation to the design of the work itself — the boundaries, contracts, sequencing, and cross-workstream geometry of the workstreams that build a system. Streamliner exists for builders who have crossed that threshold.

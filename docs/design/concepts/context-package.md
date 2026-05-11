@@ -1,19 +1,3 @@
----
-kind: design-doc
-status: current
-last_updated: 2026-05-10
-update_semantics: rewrite-in-place
-authoritative_for: "Layered context package concept and progressive-disclosure model"
-scope_tags:
-  - context-package
-  - launch-context
-code_paths:
-  - src/server/launch-context.ts
-references_decisions:
-  - 2
-  - 11
----
-
 # Context Package
 
 AI agents start every session as blank slates. Human teams carry shared context in memory and habit. The context package replaces that with one SDK-synthesized orientation file containing layered sections and references.
