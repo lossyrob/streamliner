@@ -77,6 +77,7 @@ import {
 const SESSION_POLL_INTERVAL_MS = 15_000;
 const SESSION_EVENT_REFETCH_DEBOUNCE_MS = 150;
 const SESSION_EVENT_STALE_MS = 35_000;
+const SESSION_QUERY_DEBOUNCE_MS = 250;
 const DEFAULT_STALE_SESSION_DAYS = 7;
 const SESSION_STALE_DAYS_STORAGE_KEY = "streamliner:sessionsStaleDays";
 const SESSION_GROUP_MODE_STORAGE_KEY = "streamliner:sessionsGroupMode";
@@ -328,7 +329,6 @@ function builderSnapshotKey(session: SessionRegistryListItem | null): string | n
   }
   return JSON.stringify({
     id: session.id,
-    version: session.version,
     title: session.title,
     description: session.description,
     lifecycleStatus: session.lifecycleStatus,
@@ -336,6 +336,15 @@ function builderSnapshotKey(session: SessionRegistryListItem | null): string | n
     tags: session.tags,
     graphBinding: session.graphBinding,
   });
+}
+
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedValue(value), delayMs);
+    return () => clearTimeout(timer);
+  }, [delayMs, value]);
+  return debouncedValue;
 }
 
 function statusClass(status: SessionRegistryListItem["lifecycleStatus"]): string {
@@ -1263,24 +1272,25 @@ export function SessionsPage({
   const workstreamGraphsRef = useLatestValue(workstreamGraphs);
   const mountedRef = useRef(false);
   const loadingWorkstreamGraphKeysRef = useRef(new Set<string>());
+  const debouncedQuery = useDebouncedValue(query, SESSION_QUERY_DEBOUNCE_MS);
 
   const sessionListQuery = useMemo(
     () => ({
       includeArchived: showArchived,
-      text: query,
+      text: debouncedQuery,
       workstreamId: routeWorkstreamId,
       nodeId: routeNodeId,
     }),
-    [query, routeNodeId, routeWorkstreamId, showArchived],
+    [debouncedQuery, routeNodeId, routeWorkstreamId, showArchived],
   );
   const sessionMatchOptions = useMemo<SessionRegistryListOptions>(
     () => ({
       includeArchived: showArchived,
-      text: query,
+      text: debouncedQuery,
       workstreamId: routeWorkstreamId?.trim() ? routeWorkstreamId : undefined,
       nodeId: routeNodeId?.trim() ? routeNodeId : undefined,
     }),
-    [query, routeNodeId, routeWorkstreamId, showArchived],
+    [debouncedQuery, routeNodeId, routeWorkstreamId, showArchived],
   );
   const sessionEventsUrl = useMemo(
     () => sessionRegistryEventsUrl(sessionListQuery),
@@ -1550,6 +1560,12 @@ export function SessionsPage({
         return;
       }
       const existing = currentSessions[existingIndex];
+      if (
+        payload.version !== undefined &&
+        payload.version <= existing.version
+      ) {
+        return;
+      }
       const updatedSession: SessionRegistryListItem = {
         ...existing,
         runtime: payload.runtime,
