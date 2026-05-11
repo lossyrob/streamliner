@@ -3,9 +3,11 @@ import type {
   SessionRegistryListItem,
   SessionRegistryListOptions,
 } from "./session-registry-contract";
+import type { SessionRegistryRuntimeMetadata } from "./session-registry-schema";
 
 const SESSION_POLL_INTERVAL_MS = 15_000;
 const SESSION_EVENT_REFETCH_DEBOUNCE_MS = 150;
+const SESSION_EVENT_STALE_MS = 35_000;
 
 export type SessionRegistrySyncState =
   | "connecting"
@@ -47,7 +49,7 @@ export function sessionRegistryListUrl(query: SessionRegistryListQuery = {}): st
   return suffix.length > 0 ? `/api/sessions?${suffix}` : "/api/sessions";
 }
 
-function sessionRegistryEventsUrl(query: SessionRegistryListQuery = {}): string {
+export function sessionRegistryEventsUrl(query: SessionRegistryListQuery = {}): string {
   const listUrl = sessionRegistryListUrl(query);
   const queryStart = listUrl.indexOf("?");
   return queryStart >= 0
@@ -59,25 +61,32 @@ function isJsonObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function sessionFromEventPayload(value: unknown): SessionRegistryListItem | null {
+export function sessionFromEventPayload(value: unknown): SessionRegistryListItem | null {
   if (!isJsonObject(value) || typeof value.id !== "string") {
     return null;
   }
+  const origin = isJsonObject(value.origin) ? value.origin : null;
   const originKind = typeof value.originKind === "string"
     ? value.originKind
-    : isJsonObject(value.origin) && typeof value.origin.kind === "string"
-      ? value.origin.kind
+    : origin && typeof origin.kind === "string"
+      ? origin.kind
       : null;
   if (!originKind) {
     return null;
   }
+  const launchCliArgs = Array.isArray(value.launchCliArgs)
+    ? value.launchCliArgs
+    : originKind === "launched" && origin && Array.isArray(origin.cliArgs)
+      ? origin.cliArgs
+      : null;
   return {
     ...value,
     originKind,
+    launchCliArgs,
   } as unknown as SessionRegistryListItem;
 }
 
-function sessionsFromSnapshotPayload(value: unknown): SessionRegistryListItem[] | null {
+export function sessionsFromSnapshotPayload(value: unknown): SessionRegistryListItem[] | null {
   if (!isJsonObject(value) || !Array.isArray(value.sessions)) {
     return null;
   }
@@ -87,10 +96,54 @@ function sessionsFromSnapshotPayload(value: unknown): SessionRegistryListItem[] 
     : null;
 }
 
-function eventRegistryId(value: unknown): string | null {
+export function eventRegistryId(value: unknown): string | null {
   return isJsonObject(value) && typeof value.registryId === "string"
     ? value.registryId
     : null;
+}
+
+export interface RuntimeUpdatedPayload {
+  registryId: string;
+  runtime: SessionRegistryRuntimeMetadata | null;
+  updatedAt?: string;
+  version?: number;
+}
+
+export function runtimeUpdatedPayload(value: unknown): RuntimeUpdatedPayload | null {
+  if (!isJsonObject(value) || typeof value.registryId !== "string") {
+    return null;
+  }
+  const runtime = runtimeMetadataFromPayload(value.runtime);
+  if (runtime === undefined) {
+    return null;
+  }
+  const payload: RuntimeUpdatedPayload = {
+    registryId: value.registryId,
+    runtime,
+  };
+  if (typeof value.updatedAt === "string") {
+    payload.updatedAt = value.updatedAt;
+  }
+  if (typeof value.version === "number" && Number.isInteger(value.version)) {
+    payload.version = value.version;
+  }
+  return payload;
+}
+
+function runtimeMetadataFromPayload(
+  value: unknown,
+): SessionRegistryRuntimeMetadata | null | undefined {
+  if (value === null) {
+    return null;
+  }
+  if (
+    isJsonObject(value) &&
+    typeof value.runtimeKind === "string" &&
+    typeof value.runtimeOwner === "string"
+  ) {
+    return value as unknown as SessionRegistryRuntimeMetadata;
+  }
+  return undefined;
 }
 
 function sessionTextMatches(session: SessionRegistryListItem, text: string): boolean {
@@ -134,7 +187,7 @@ function sessionTextMatches(session: SessionRegistryListItem, text: string): boo
   ].some((candidate) => candidate.toLowerCase().includes(text));
 }
 
-function sessionMatchesQuery(
+export function sessionMatchesQuery(
   session: SessionRegistryListItem,
   query: SessionRegistryListOptions,
 ): boolean {
@@ -177,7 +230,10 @@ export function useSessionRegistryList(
   const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
   const [syncState, setSyncState] = useState<SessionRegistrySyncState>("connecting");
+  const sessionsRef = useRef<SessionRegistryListItem[]>([]);
   const eventRefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const eventStreamLiveRef = useRef(false);
+  const lastStreamEventAtRef = useRef(0);
   const url = useMemo(
     () =>
       sessionRegistryListUrl({
@@ -213,6 +269,10 @@ export function useSessionRegistryList(
     return nextOptions;
   }, [includeArchived, nodeId, repo, text, workstreamId]);
 
+  useEffect(() => {
+    sessionsRef.current = sessions;
+  }, [sessions]);
+
   const fetchSessions = useCallback(async () => {
     if (!enabled) {
       return;
@@ -230,6 +290,18 @@ export function useSessionRegistryList(
       setLoading(false);
     }
   }, [enabled, url]);
+
+  const shouldPoll = useCallback(() => {
+    if (!eventStreamLiveRef.current) {
+      return true;
+    }
+    return Date.now() - lastStreamEventAtRef.current > SESSION_EVENT_STALE_MS;
+  }, []);
+
+  const markStreamEvent = useCallback(() => {
+    eventStreamLiveRef.current = true;
+    lastStreamEventAtRef.current = Date.now();
+  }, []);
 
   const scheduleEventRefetch = useCallback(
     (delayMs = SESSION_EVENT_REFETCH_DEBOUNCE_MS) => {
@@ -249,16 +321,19 @@ export function useSessionRegistryList(
       setSessions([]);
       setLoading(false);
       setError(null);
+      eventStreamLiveRef.current = false;
       return;
     }
 
     setLoading(true);
     void fetchSessions();
     const timer = setInterval(() => {
-      void fetchSessions();
+      if (shouldPoll()) {
+        void fetchSessions();
+      }
     }, pollIntervalMs);
     const refreshWhenVisible = () => {
-      if (document.visibilityState !== "hidden") {
+      if (document.visibilityState !== "hidden" && shouldPoll()) {
         void fetchSessions();
       }
     };
@@ -269,13 +344,14 @@ export function useSessionRegistryList(
       window.removeEventListener("focus", refreshWhenVisible);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
-  }, [enabled, fetchSessions, pollIntervalMs]);
+  }, [enabled, fetchSessions, pollIntervalMs, shouldPoll]);
 
   useEffect(() => {
     if (!enabled) {
       return;
     }
     if (typeof EventSource === "undefined") {
+      eventStreamLiveRef.current = false;
       setSyncState("polling");
       return;
     }
@@ -286,18 +362,27 @@ export function useSessionRegistryList(
 
     const handleOpen = () => {
       if (!closed) {
+        markStreamEvent();
         setSyncState("live");
       }
     };
     const handleError = () => {
       if (!closed) {
+        eventStreamLiveRef.current = false;
         setSyncState("reconnecting");
+        void fetchSessions();
       }
     };
     const handleRefetchChange = () => {
+      markStreamEvent();
       scheduleEventRefetch();
     };
+    const handleHeartbeat = () => {
+      markStreamEvent();
+      setSyncState("live");
+    };
     const handleSnapshot = (event: MessageEvent) => {
+      markStreamEvent();
       let nextSessions: SessionRegistryListItem[] | null = null;
       try {
         nextSessions = sessionsFromSnapshotPayload(JSON.parse(event.data) as unknown);
@@ -313,6 +398,7 @@ export function useSessionRegistryList(
       setLoading(false);
     };
     const handleUpsert = (event: MessageEvent) => {
+      markStreamEvent();
       let payload: unknown;
       try {
         payload = JSON.parse(event.data) as unknown;
@@ -345,7 +431,47 @@ export function useSessionRegistryList(
       setError(null);
       setLoading(false);
     };
+    const handleRuntimeUpdate = (event: MessageEvent) => {
+      markStreamEvent();
+      let payload: RuntimeUpdatedPayload | null = null;
+      try {
+        payload = runtimeUpdatedPayload(JSON.parse(event.data) as unknown);
+      } catch {
+        scheduleEventRefetch();
+        return;
+      }
+      if (!payload) {
+        scheduleEventRefetch();
+        return;
+      }
+      const knownSession = sessionsRef.current.some(
+        (session) => session.id === payload.registryId,
+      );
+      setSessions((currentSessions) => {
+        const existingIndex = currentSessions.findIndex(
+          (session) => session.id === payload.registryId,
+        );
+        if (existingIndex === -1) {
+          return currentSessions;
+        }
+        const existing = currentSessions[existingIndex];
+        const nextSessions = [...currentSessions];
+        nextSessions[existingIndex] = {
+          ...existing,
+          runtime: payload.runtime,
+          updatedAt: payload.updatedAt ?? existing.updatedAt,
+          version: payload.version ?? existing.version,
+        };
+        return nextSessions;
+      });
+      if (!knownSession) {
+        scheduleEventRefetch();
+      }
+      setError(null);
+      setLoading(false);
+    };
     const handleDelete = (event: MessageEvent) => {
+      markStreamEvent();
       let registryId: string | null = null;
       try {
         registryId = eventRegistryId(JSON.parse(event.data) as unknown);
@@ -366,20 +492,23 @@ export function useSessionRegistryList(
 
     source.addEventListener("open", handleOpen);
     source.addEventListener("error", handleError);
+    source.addEventListener("heartbeat", handleHeartbeat);
     source.addEventListener("snapshot", handleSnapshot);
     source.addEventListener("session.upserted", handleUpsert);
+    source.addEventListener("session.runtime.updated", handleRuntimeUpdate);
     source.addEventListener("session.deleted", handleDelete);
     source.addEventListener("session.rebuilt", handleRefetchChange);
 
     return () => {
       closed = true;
+      eventStreamLiveRef.current = false;
       source.close();
       if (eventRefetchTimerRef.current) {
         clearTimeout(eventRefetchTimerRef.current);
         eventRefetchTimerRef.current = null;
       }
     };
-  }, [enabled, eventsUrl, listOptions, scheduleEventRefetch]);
+  }, [enabled, eventsUrl, fetchSessions, listOptions, markStreamEvent, scheduleEventRefetch]);
 
   return { sessions, loading, error, syncState, refresh: fetchSessions };
 }

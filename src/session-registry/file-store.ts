@@ -3067,6 +3067,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       this.emitChange({
         kind: SESSION_REGISTRY_CHANGE_EVENT_KINDS[0],
         registryId: id,
+        changeScope: "runtime",
         snapshot: cloneValue(storedRecord),
       });
       return cloneValue(storedRecord);

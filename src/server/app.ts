@@ -34,6 +34,7 @@ import { createWorkstreamsRouter } from "./routes/workstreams";
 import { SessionRegistryEventStream } from "./session-events";
 import type { NodeLaunchDeps } from "./node-launch";
 import { DefaultManagedSdkRunner } from "./managed-sdk-runner";
+import { ManagedRuntimePatchCoalescer } from "./managed-runtime-patch-coalescer";
 import {
   DEFAULT_COPILOT_CLI_ARGS,
   readSessionLaunchSettings,
@@ -125,9 +126,16 @@ export function createStreamlinerApiApp(
     });
   const managedSdkRunner =
     options.nodeLaunchDeps?.managedSdkRunner ?? new DefaultManagedSdkRunner();
+  const runtimePatchCoalescer = store instanceof SessionRegistryFileStore
+    ? options.nodeLaunchDeps?.runtimePatchCoalescer ??
+      new ManagedRuntimePatchCoalescer({
+        patchRuntimeMetadata: store.patchRuntimeMetadata.bind(store),
+      })
+    : options.nodeLaunchDeps?.runtimePatchCoalescer;
   const nodeLaunchDeps: NodeLaunchDeps = {
     ...options.nodeLaunchDeps,
     managedSdkRunner,
+    runtimePatchCoalescer,
   };
 
   app.disable("x-powered-by");
@@ -262,6 +270,7 @@ export function createStreamlinerApiApp(
           ?? (() => loadRelaunchDefaultCliArgs(options.sessionLaunchSettingsPath)),
       },
       managedSdkRunner,
+      runtimePatchCoalescer,
       managedCleanupDeps: options.managedCleanupDeps,
       now: options.now,
       launchClaimStore: options.launchClaimStore,

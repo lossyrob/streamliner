@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import request from "supertest";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { LaunchClaimFileStore } from "../session-registry/launch-claim-store";
 import type { LaunchClaimStore } from "../launch-claim-contract";
@@ -204,6 +204,7 @@ function bindManagedClaimToSdkSession(
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   for (const app of activeApps.splice(0)) {
     app.close();
   }
@@ -668,6 +669,60 @@ describe("launchManagedSdkNode", () => {
         number: 73,
       }),
     ]);
+  });
+
+  it("coalesces same-event managed progress and lifecycle callbacks into one registry patch", async () => {
+    vi.useFakeTimers();
+    const root = createRootDir();
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const patchSpy = vi.spyOn(registryStore, "patchRuntimeMetadata");
+    const runner: ManagedSdkRunner = {
+      start: async (input) => {
+        const result = {
+          registryId: input.registryId,
+          sdkSessionId: "sdk-session-coalesced",
+          sdkWorkspacePath: normalizePath(join(root, "sdk", "workspace.yaml")),
+          sdkStateRoot: normalizePath(join(root, "sdk")),
+        };
+        input.onStarted(result);
+        input.onProgress({
+          type: "tool_started",
+          message: "Tool execution started.",
+          data: { toolName: "powershell" },
+        });
+        input.onLifecycleState("running", "Managed SDK lifecycle changed to running.");
+        return result;
+      },
+    };
+
+    const result = await launchManagedSdkNode(
+      registryStore,
+      claimStore,
+      fakeHandoff(root, { runtimeKind: "managed-sdk" }),
+      {
+        now: () => new Date("2026-05-07T12:00:00.000Z"),
+        managedSdkRunner: runner,
+      },
+    );
+    const callsBeforeRoutineFlush = patchSpy.mock.calls.length;
+
+    await vi.advanceTimersByTimeAsync(250);
+    await Promise.resolve();
+
+    expect(patchSpy).toHaveBeenCalledTimes(callsBeforeRoutineFlush + 1);
+    const routinePatch = patchSpy.mock.calls.at(-1)?.[1];
+    expect(routinePatch).toEqual(expect.objectContaining({
+      lifecycleState: "running",
+      progressEvents: [
+        expect.objectContaining({ type: "tool_started" }),
+        expect.objectContaining({ type: "lifecycle" }),
+      ],
+    }));
+    const record = registryStore.getSession(result.managedSdk.registryId);
+    expect(record?.runtime?.progressEvents.some((event) =>
+      event.type === "tool_started" && event.data?.toolName === "powershell"
+    )).toBe(true);
   });
 });
 

@@ -4716,7 +4716,7 @@ describe("App sessions route", () => {
   );
 
   it(
-    "refreshes the session list when the live event stream reports a change",
+    "applies live session events and pauses polling while SSE remains live",
     async () => {
       vi.useFakeTimers();
       MockEventSource.instances = [];
@@ -4729,7 +4729,7 @@ describe("App sessions route", () => {
           sessionsRequests += 1;
           return jsonResponse([
             buildSession({
-              title: sessionsRequests === 1 ? "Initial session" : "Live refreshed session",
+              title: sessionsRequests === 1 ? "Initial session" : "Fallback refreshed session",
               version: sessionsRequests === 1 ? 0 : 1,
             }),
           ]);
@@ -4749,16 +4749,98 @@ describe("App sessions route", () => {
       expect(MockEventSource.instances).toHaveLength(1);
       expect(MockEventSource.instances[0]?.url).toBe("/api/sessions/events");
 
+      const liveSession = buildSession({
+        title: "Live pushed session",
+        version: 1,
+      });
       act(() => {
-        MockEventSource.instances[0]?.emit("session.upserted");
+        MockEventSource.instances[0]?.emit("open");
+        MockEventSource.instances[0]?.emit("session.upserted", {
+          registryId: liveSession.id,
+          session: liveSession,
+        });
+      });
+      await flushReact();
+
+      expect(container.textContent).toContain("Live pushed session");
+      expect(sessionsRequests).toBe(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+      await flushReact();
+      expect(sessionsRequests).toBe(1);
+
+      act(() => {
+        MockEventSource.instances[0]?.emit("error");
+      });
+      await flushReact();
+      expect(sessionsRequests).toBe(2);
+    },
+    15_000,
+  );
+
+  it(
+    "falls back to a session fetch for compact runtime updates to unknown sessions",
+    async () => {
+      vi.useFakeTimers();
+      MockEventSource.instances = [];
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+      let sessionsRequests = 0;
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path.startsWith("/api/sessions")) {
+          sessionsRequests += 1;
+          return jsonResponse([
+            buildSession({
+              title: sessionsRequests === 1 ? "Initial session" : "Runtime refreshed session",
+              version: sessionsRequests === 1 ? 0 : 1,
+            }),
+          ]);
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      window.history.pushState({}, "", "/?view=sessions");
+
+      act(() => {
+        root.render(<App />);
+      });
+
+      await flushReact();
+      expect(container.textContent).toContain("Initial session");
+      act(() => {
+        MockEventSource.instances[0]?.emit("open");
+        MockEventSource.instances[0]?.emit("session.runtime.updated", {
+          registryId: "unknown-managed-session",
+          runtime: {
+            runtimeKind: "managed-sdk",
+            runtimeOwner: "streamliner-sdk",
+            lifecycleState: "running",
+            permissionProfile: "managed-autonomous",
+            launchClaimId: "claim-unknown",
+            launchNonce: "nonce-unknown",
+            sdkSessionId: "sdk-unknown",
+            sdkWorkspacePath: null,
+            sdkStateRoot: null,
+            startedAt: null,
+            lastStateChangedAt: "2026-05-07T12:00:00.000Z",
+            progressEvents: [],
+            evidence: [],
+          },
+          updatedAt: "2026-05-07T12:00:00.000Z",
+          version: 0,
+        });
       });
       await act(async () => {
         await vi.advanceTimersByTimeAsync(150);
       });
       await flushReact();
 
-      expect(container.textContent).toContain("Live refreshed session");
-      expect(sessionsRequests).toBeGreaterThanOrEqual(2);
+      expect(sessionsRequests).toBe(2);
+      expect(container.textContent).toContain("Runtime refreshed session");
     },
     15_000,
   );

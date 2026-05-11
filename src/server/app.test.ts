@@ -1249,6 +1249,69 @@ describe("createStreamlinerApiApp", () => {
     }
   });
 
+  it("sends compact runtime updates only to matching session event queries", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") });
+    const matching = store.upsertSession({
+      id: "managed-matching",
+      title: "Managed Matching",
+      description: "",
+      cwd: "C:\\repo",
+      origin: { kind: "launched", launchClaimId: "claim-matching" },
+      graphBinding: {
+        workstreamId: "sdk-managed-worker-runtime",
+        nodeId: "managed-runtime-api-responsiveness",
+        launchClaimId: "claim-matching",
+      },
+    });
+    const other = store.upsertSession({
+      id: "managed-other",
+      title: "Managed Other",
+      description: "",
+      cwd: "C:\\repo",
+      origin: { kind: "launched", launchClaimId: "claim-other" },
+      graphBinding: {
+        workstreamId: "sdk-managed-worker-runtime",
+        nodeId: "other-node",
+        launchClaimId: "claim-other",
+      },
+    });
+    const eventStream = new SessionRegistryEventStream(store);
+    try {
+      const stream = openEventStream(
+        eventStream,
+        undefined,
+        "/api/sessions/events?workstreamId=sdk-managed-worker-runtime&nodeId=managed-runtime-api-responsiveness",
+      );
+      expect(stream.res.body()).toContain("Managed Matching");
+      expect(stream.res.body()).not.toContain("Managed Other");
+
+      store.patchRuntimeMetadata(other.id, {
+        runtimeKind: "managed-sdk",
+        runtimeOwner: "streamliner-sdk",
+        lifecycleState: "running",
+        sdkSessionId: "sdk-other",
+      });
+      expect(stream.res.body()).not.toContain("sdk-other");
+
+      store.patchRuntimeMetadata(matching.id, {
+        runtimeKind: "managed-sdk",
+        runtimeOwner: "streamliner-sdk",
+        lifecycleState: "running",
+        sdkSessionId: "sdk-matching",
+      });
+      const body = stream.res.body();
+      const runtimeUpdate = body.slice(body.lastIndexOf("event: session.runtime.updated"));
+      expect(runtimeUpdate).toContain("sdk-matching");
+      expect(runtimeUpdate).toContain("managed-matching");
+      expect(runtimeUpdate).not.toContain("Managed Matching");
+      stream.req.emit("close");
+    } finally {
+      eventStream.close();
+    }
+  });
+
   it("writes id-less SSE heartbeats", () => {
     vi.useFakeTimers();
     const { store } = createEventStreamStore();
