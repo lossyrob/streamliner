@@ -31,6 +31,7 @@ import {
   type ManagedSdkRunner,
   type ManagedSdkRunnerStartResult,
 } from "./managed-sdk-runner";
+import { ManagedRuntimePatchCoalescer } from "./managed-runtime-patch-coalescer";
 
 export type NodeLaunchErrorCode =
   | "launch_policy_blocked"
@@ -114,6 +115,7 @@ export interface NodeManagedSdkLaunchResult {
 export interface NodeLaunchDeps {
   launchTerminal?: (options: TerminalLaunchOptions) => TerminalLaunchResult;
   managedSdkRunner?: ManagedSdkRunner;
+  runtimePatchCoalescer?: ManagedRuntimePatchCoalescer;
   now?: () => Date;
 }
 
@@ -266,6 +268,15 @@ function errorMessage(error: unknown): string {
 
 function lifecycleProgressMessage(state: SessionRegistryManagedLifecycleState): string {
   return `Managed SDK lifecycle changed to ${state}.`;
+}
+
+function runtimePatchCoalescerFor(
+  deps: NodeLaunchDeps,
+): ManagedRuntimePatchCoalescer {
+  if (!deps.runtimePatchCoalescer) {
+    throw new Error("Managed runtime patch coalescer dependency is required.");
+  }
+  return deps.runtimePatchCoalescer;
 }
 
 function isNonResumableManagedLifecycle(
@@ -664,6 +675,8 @@ export async function launchManagedSdkNode(
       },
     }],
   }, now);
+  const runtimePatches = runtimePatchCoalescerFor(deps);
+  runtimePatches.begin(registryId, "preparing");
   const runner = deps.managedSdkRunner ?? new DefaultManagedSdkRunner();
   let startResult: ManagedSdkRunnerStartResult;
   try {
@@ -683,7 +696,7 @@ export async function launchManagedSdkNode(
       },
       sessionStateRoot: handoff.sessionStateRoot,
       onLifecycleState: (state, message) => {
-        registryStore.patchRuntimeMetadata(registryId, {
+        runtimePatches.enqueue(registryId, {
           lifecycleState: state,
           progressEvents: [{
             type: "lifecycle",
@@ -692,12 +705,12 @@ export async function launchManagedSdkNode(
         });
       },
       onProgress: (event) => {
-        registryStore.patchRuntimeMetadata(registryId, {
+        runtimePatches.enqueue(registryId, {
           progressEvents: [event],
         });
       },
       onEvidence: (evidence) => {
-        registryStore.patchRuntimeMetadata(registryId, {
+        runtimePatches.enqueue(registryId, {
           evidence: [evidence],
           progressEvents: [{
             type: "evidence",
@@ -706,7 +719,7 @@ export async function launchManagedSdkNode(
         });
       },
       onStarted: (details) => {
-        registryStore.patchRuntimeMetadata(registryId, {
+        runtimePatches.patchNow(registryId, {
           lifecycleState: "running",
           sdkSessionId: details.sdkSessionId,
           sdkWorkspacePath: details.sdkWorkspacePath,
@@ -727,7 +740,7 @@ export async function launchManagedSdkNode(
     const logger = getApiLogger().withScope("node-launch");
     const cleanupFailures: string[] = [];
     try {
-      registryStore.patchRuntimeMetadata(registryId, {
+      runtimePatches.patchNow(registryId, {
         lifecycleState: "failed",
         progressEvents: [{
           type: "error",
@@ -879,6 +892,8 @@ export async function resumeManagedSdkNode(
       },
     }],
   }, now);
+  const runtimePatches = runtimePatchCoalescerFor(deps);
+  runtimePatches.begin(registryId, "starting");
 
   const resumePrompt = resumePromptForManagedSdkNode(handoff, claim);
   let startResult: ManagedSdkRunnerStartResult;
@@ -900,7 +915,7 @@ export async function resumeManagedSdkNode(
       },
       sessionStateRoot: handoff.sessionStateRoot,
       onLifecycleState: (state, message) => {
-        registryStore.patchRuntimeMetadata(registryId, {
+        runtimePatches.enqueue(registryId, {
           lifecycleState: state,
           progressEvents: [{
             type: "lifecycle",
@@ -909,12 +924,12 @@ export async function resumeManagedSdkNode(
         });
       },
       onProgress: (event) => {
-        registryStore.patchRuntimeMetadata(registryId, {
+        runtimePatches.enqueue(registryId, {
           progressEvents: [event],
         });
       },
       onEvidence: (evidence) => {
-        registryStore.patchRuntimeMetadata(registryId, {
+        runtimePatches.enqueue(registryId, {
           evidence: [evidence],
           progressEvents: [{
             type: "evidence",
@@ -923,7 +938,7 @@ export async function resumeManagedSdkNode(
         });
       },
       onStarted: (details) => {
-        registryStore.patchRuntimeMetadata(registryId, {
+        runtimePatches.patchNow(registryId, {
           lifecycleState: "running",
           sdkSessionId: details.sdkSessionId,
           sdkWorkspacePath: details.sdkWorkspacePath,
@@ -943,7 +958,7 @@ export async function resumeManagedSdkNode(
     const message = errorMessage(error);
     const logger = getApiLogger().withScope("node-launch");
     try {
-      registryStore.patchRuntimeMetadata(registryId, {
+      runtimePatches.patchNow(registryId, {
         lifecycleState: "failed",
         progressEvents: [{
           type: "error",

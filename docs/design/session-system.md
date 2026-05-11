@@ -1,7 +1,7 @@
 ---
 kind: design-doc
 status: draft
-last_updated: 2026-05-08
+last_updated: 2026-05-11
 update_semantics: rewrite-in-place
 authoritative_for: "Session launching, lifecycle, registry contract, tracking, and runtime overlay"
 scope_tags:
@@ -562,6 +562,25 @@ Always exclude raw user prompts, transformed prompts, assistant reasoning, reaso
 
 Retention is bounded and summary-oriented. The first managed runtime should persist the most recent sanitized events per managed run in local runtime state, cap by both event count and byte size, and retain a latest human-readable summary for list/detail views after older events roll off. SSE clients can receive a replay window on reconnect, then live events. API/runtime restart rehydrates the replay window and latest summary from that persisted sanitized runtime state when available; if the bounded event store is unavailable or pruned, the UI shows the latest summary plus a degraded replay diagnostic rather than fabricating a transcript. After terminal states, retain the bounded sanitized history long enough for review and cleanup diagnostics, then allow normal runtime-state retention policy to prune it. Raw excluded content is never retained for "debugging by default"; any future raw diagnostic capture needs an explicit content policy and builder opt-in.
 
+### Managed Runtime Write Coalescing and Compact Live Sync
+
+Managed SDK callbacks can emit multiple safe projection changes for one provider event; for example, `tool.execution_start` records both a `tool_started` progress item and a `running` lifecycle signal. The local API must merge same-tick row-local runtime patches before writing the session registry so routine SDK chatter does not produce one file write and one SSE event per callback. Routine progress and repeated active lifecycle states may be throttled briefly; prompt-driving transitions (`waiting_for_builder`, interrupts, failures, PR/review/completion/cleanup evidence, terminal takeover, cancellation, and cleanup terminal states), evidence-bearing patches, and forced lifecycle writes flush promptly.
+
+Deterministic route-owned transitions such as cancel, terminal takeover, cleanup, and explicit evidence recording quiesce the row-local coalescer before writing directly through the registry. That prevents late SDK callbacks or a pending throttle from resurrecting `running` over builder-owned states like `cleaning_up`, `canceled`, `terminal_takeover`, or `cleaned_up`. Terminal outcomes close the coalescer row and retain a short late-callback suppression window; late callbacks during that window are warn-logged and counted as cosmetic or evidence-bearing drops. After the retention window expires, callbacks are still ignored until a subsequent managed launch or resume explicitly reopens the row with `begin()`.
+
+`patchRuntimeMetadata` emits an upsert change event with `changeScope: "runtime"`. The SSE layer translates managed runtime-only changes into a compact `session.runtime.updated` event:
+
+```json
+{
+  "registryId": "session-row-id",
+  "runtime": { "runtimeKind": "managed-sdk" },
+  "updatedAt": "2026-05-11T00:00:00.000Z",
+  "version": 3
+}
+```
+
+The compact event is filtered with the same `includeArchived`, `repo`, `workstreamId`, `nodeId`, and text options as `GET /api/sessions`. Filtered live events that no longer match a client are converted to `session.deleted` so clients evict rows consistently across full upserts and compact runtime updates. `patchRuntimeMetadata` is constrained to runtime, `updatedAt`, and version fields, so compact runtime updates cannot silently change non-runtime filter dimensions. Browser clients apply compact runtime updates to known rows in memory, ignore stale versions, and fetch `/api/sessions` when the compact event references an unknown row.
+
 ### Permission Policy
 
 Launch preparation may use broad internal SDK permissions because it is a short, supervised setup operation. SDK-managed workers must make the autonomous posture explicit instead of accidentally inheriting that internal setup behavior.
@@ -853,7 +872,7 @@ The local HTTP surface includes:
 | `POST /api/sessions/signals` | Loopback-only trusted Copilot CLI hook signal intake. |
 | `GET /api/sessions/events` | Server-sent event stream for live registry changes. |
 
-The initial live sync protocol uses `EventSource` over `GET /api/sessions/events`. New clients receive a `snapshot` event unless they reconnect with a replayable `Last-Event-ID`. Subsequent buffered changes are emitted as `session.upserted`, `session.deleted`, or `session.rebuilt` with monotonic event ids; id-less `heartbeat` events keep intermediaries from treating the stream as idle without consuming replay ids. The API keeps a bounded replay buffer, and the browser also refreshes on window focus/visibility changes so reconnect gaps degrade to a normal reload rather than stale UI.
+The initial live sync protocol uses `EventSource` over `GET /api/sessions/events`. New clients receive a query-filtered `snapshot` event unless they reconnect with a replayable `Last-Event-ID`. Subsequent buffered changes are emitted as `session.upserted`, `session.runtime.updated`, `session.deleted`, or `session.rebuilt` with monotonic event ids; id-less named `heartbeat` events keep intermediaries from treating the stream as idle without consuming replay ids. The API keeps a bounded replay buffer and re-filters replayed events for each reconnecting client's query. Browser clients may suspend interval and focus/visibility polling while the SSE connection is open and fresh; if the stream errors, is unavailable, or stops delivering heartbeat/live events past the stale threshold, clients resume normal `/api/sessions` fetches so reconnect gaps degrade to a normal reload rather than stale UI.
 
 In development, `npm run dev` starts both long-lived processes: `npm run dev:api` for the API and `npm run dev:web` for Vite. Vite dev and preview are loopback-bound by default so trusted signal intake cannot be exposed to the LAN through the frontend proxy. Frontend HMR or a Vite restart does not restart the registry worker, and API restarts do not require rebuilding the frontend. For direct API debugging, run `npm run api` or `npm run dev:api` and call `http://127.0.0.1:4319/api/...` directly.
 
@@ -863,7 +882,7 @@ The dashboard and future relaunch flows consume the registry through the local A
 
 | Operation | Contract |
 |-----------|----------|
-| `listSessions(options?)` | Returns list items sorted by `lastSeenAt` then `updatedAt`; excludes archived rows by default; `options.text` matches `title`, `description`, and `tags`. |
+| `listSessions(options?)` | Returns list items sorted by `lastSeenAt` then `updatedAt`; excludes archived rows by default; `options.text` matches the shared session-search haystack (title, description, tags, origin kind, repo/branch/worktree, GitHub refs, and PAW launch/workflow metadata). |
 | `getSession(id)` | Returns the full registry record or `null`. |
 | `upsertSession(input)` | Creates or replaces a row for manual, observed, or launched sources using the identity/merge rules above. Lifecycle input is source-sensitive: observation may create newly discovered active rows and may also upsert rows that are already `ended`; caller-driven manual/launch upserts may not create `ended` or `archived` rows directly. |
 | `attachObservedSession(id, observation)` | Links a discovered Copilot session onto an existing manual or launched row without rewriting its original `origin.kind`. Observation-owned fields (`copilotSessionId`, `lastSeenAt`, `cwd`, `repo`, `branch`, observation-driven `ended`) flow through this operation. This operation does not let observation write builder-owned `paused` or `active` lifecycle transitions onto an existing row. |

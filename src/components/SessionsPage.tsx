@@ -9,7 +9,11 @@ import {
   useState,
 } from "react";
 
-import type { SessionRegistryListItem, SessionRegistryPatch } from "../session-registry-contract";
+import type {
+  SessionRegistryListItem,
+  SessionRegistryListOptions,
+  SessionRegistryPatch,
+} from "../session-registry-contract";
 import type { SessionRegistryRecord } from "../session-registry-schema";
 import type { ManagedRuntimeProjection } from "../managed-runtime-contract";
 import {
@@ -60,10 +64,20 @@ import {
   TerminalColorQuickPicker,
 } from "./SessionColorPicker";
 import { ManagedRuntimeActionButton } from "./ManagedRuntimeActionButton";
-import { sessionRegistryListUrl } from "../session-registry-client";
+import {
+  eventRegistryId,
+  runtimeUpdatedPayload,
+  sessionFromEventPayload,
+  sessionMatchesQuery,
+  sessionRegistryEventsUrl,
+  sessionRegistryListUrl,
+  sessionsFromSnapshotPayload,
+} from "../session-registry-client";
 
 const SESSION_POLL_INTERVAL_MS = 15_000;
 const SESSION_EVENT_REFETCH_DEBOUNCE_MS = 150;
+const SESSION_EVENT_STALE_MS = 35_000;
+const SESSION_QUERY_DEBOUNCE_MS = 250;
 const DEFAULT_STALE_SESSION_DAYS = 7;
 const SESSION_STALE_DAYS_STORAGE_KEY = "streamliner:sessionsStaleDays";
 const SESSION_GROUP_MODE_STORAGE_KEY = "streamliner:sessionsGroupMode";
@@ -315,7 +329,6 @@ function builderSnapshotKey(session: SessionRegistryListItem | null): string | n
   }
   return JSON.stringify({
     id: session.id,
-    version: session.version,
     title: session.title,
     description: session.description,
     lifecycleStatus: session.lifecycleStatus,
@@ -323,6 +336,15 @@ function builderSnapshotKey(session: SessionRegistryListItem | null): string | n
     tags: session.tags,
     graphBinding: session.graphBinding,
   });
+}
+
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedValue(value), delayMs);
+    return () => clearTimeout(timer);
+  }, [delayMs, value]);
+  return debouncedValue;
 }
 
 function statusClass(status: SessionRegistryListItem["lifecycleStatus"]): string {
@@ -1234,11 +1256,14 @@ export function SessionsPage({
   const [conflictPending, setConflictPending] = useState<SessionConflictState | null>(null);
   const [creatingState, setCreatingState] = useState<SaveState>("idle");
   const eventRefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const eventStreamLiveRef = useRef(false);
+  const lastStreamEventAtRef = useRef(0);
   const skipUnmountFlushRef = useRef(false);
   const saveRequestIdRef = useRef(0);
   // Frozen group order per mode. Filled lazily on first render for a mode; cleared by Resort.
   const frozenOrderRef = useRef<Partial<Record<GroupMode, string[]>>>({});
   const creatingRef = useLatestValue(creating);
+  const sessionsRef = useLatestValue(sessions);
   const selectedIdRef = useLatestValue(selectedId);
   const draftRef = useLatestValue(draft);
   const selectedSnapshotRef = useLatestValue(selectedSnapshot);
@@ -1247,91 +1272,116 @@ export function SessionsPage({
   const workstreamGraphsRef = useLatestValue(workstreamGraphs);
   const mountedRef = useRef(false);
   const loadingWorkstreamGraphKeysRef = useRef(new Set<string>());
+  const debouncedQuery = useDebouncedValue(query, SESSION_QUERY_DEBOUNCE_MS);
+
+  const sessionListQuery = useMemo(
+    () => ({
+      includeArchived: showArchived,
+      text: debouncedQuery,
+      workstreamId: routeWorkstreamId,
+      nodeId: routeNodeId,
+    }),
+    [debouncedQuery, routeNodeId, routeWorkstreamId, showArchived],
+  );
+  const sessionMatchOptions = useMemo<SessionRegistryListOptions>(
+    () => ({
+      includeArchived: showArchived,
+      text: debouncedQuery,
+      workstreamId: routeWorkstreamId?.trim() ? routeWorkstreamId : undefined,
+      nodeId: routeNodeId?.trim() ? routeNodeId : undefined,
+    }),
+    [debouncedQuery, routeNodeId, routeWorkstreamId, showArchived],
+  );
+  const sessionEventsUrl = useMemo(
+    () => sessionRegistryEventsUrl(sessionListQuery),
+    [sessionListQuery],
+  );
 
   const applySessionList = useCallback(
     (nextSessions: SessionRegistryListItem[], keepSelection = true) => {
+      sessionsRef.current = nextSessions;
       setSessions(nextSessions);
       setError(null);
-        const currentCreating = creatingRef.current;
-        const currentSelectedId = selectedIdRef.current;
-        const currentSelectedSnapshot = selectedSnapshotRef.current;
-        const currentDraft = draftRef.current;
-        const currentSaveState = saveStateRef.current;
-        if (!keepSelection) {
-          return;
-        }
-        if (currentCreating) {
+      const currentCreating = creatingRef.current;
+      const currentSelectedId = selectedIdRef.current;
+      const currentSelectedSnapshot = selectedSnapshotRef.current;
+      const currentDraft = draftRef.current;
+      const currentSaveState = saveStateRef.current;
+      if (!keepSelection) {
+        return;
+      }
+      if (currentCreating) {
+        return;
+      }
+
+      if (currentSelectedId) {
+        const matching =
+          nextSessions.find((session) => session.id === currentSelectedId) ?? null;
+        if (!matching) {
+          setSelectedId(null);
+          setSelectedSnapshot(null);
+          setDraft(createEmptyDraft());
+          setSaveState("idle");
+          setConflictPending(null);
+          setSheetOpen(false);
           return;
         }
 
-        if (currentSelectedId) {
-          const matching =
-            nextSessions.find((session) => session.id === currentSelectedId) ?? null;
-          if (!matching) {
-            setSelectedId(null);
-            setSelectedSnapshot(null);
-            setDraft(createEmptyDraft());
-            setSaveState("idle");
-            setConflictPending(null);
-            setSheetOpen(false);
-            return;
+        const currentDraftKey = draftKey(currentDraft);
+        const snapshotDraftKey = currentSelectedSnapshot
+          ? draftKey(draftFromSession(currentSelectedSnapshot))
+          : null;
+        const nextSnapshotKey = sessionSnapshotKey(matching);
+        const currentSnapshotKey = sessionSnapshotKey(currentSelectedSnapshot);
+        const nextBuilderKey = builderSnapshotKey(matching);
+        const currentBuilderKey = builderSnapshotKey(currentSelectedSnapshot);
+        if (
+          currentSaveState !== "saving" &&
+          currentSelectedSnapshot &&
+          currentDraftKey === snapshotDraftKey
+        ) {
+          const nextDraft = draftFromSession(matching);
+          if (currentSnapshotKey !== nextSnapshotKey) {
+            setSelectedSnapshot(matching);
+            setSaveError(null);
           }
-
-          const currentDraftKey = draftKey(currentDraft);
-          const snapshotDraftKey = currentSelectedSnapshot
-            ? draftKey(draftFromSession(currentSelectedSnapshot))
-            : null;
-          const nextSnapshotKey = sessionSnapshotKey(matching);
-          const currentSnapshotKey = sessionSnapshotKey(currentSelectedSnapshot);
-          const nextBuilderKey = builderSnapshotKey(matching);
-          const currentBuilderKey = builderSnapshotKey(currentSelectedSnapshot);
-          if (
-            currentSaveState !== "saving" &&
-            currentSelectedSnapshot &&
-            currentDraftKey === snapshotDraftKey
-          ) {
-            const nextDraft = draftFromSession(matching);
-            if (currentSnapshotKey !== nextSnapshotKey) {
-              setSelectedSnapshot(matching);
-              setSaveError(null);
-            }
-            if (currentDraftKey !== draftKey(nextDraft)) {
-              setDraft(nextDraft);
-            }
-            setConflictPending((current) =>
-              current?.sessionId === matching.id ? null : current,
-            );
-          } else if (
-            currentSaveState !== "saving" &&
-            currentSelectedSnapshot &&
-            currentBuilderKey !== nextBuilderKey
-          ) {
-            const message =
-              "This session changed elsewhere. Your unsaved edits are preserved; edit a field to re-apply them after reviewing the latest row.";
-            setConflictPending({
-              sessionId: matching.id,
-              latest: matching,
-              fields: ["builder-owned fields"],
-              message,
-            });
-            setSaveError(message);
+          if (currentDraftKey !== draftKey(nextDraft)) {
+            setDraft(nextDraft);
           }
+          setConflictPending((current) =>
+            current?.sessionId === matching.id ? null : current,
+          );
+        } else if (
+          currentSaveState !== "saving" &&
+          currentSelectedSnapshot &&
+          currentBuilderKey !== nextBuilderKey
+        ) {
+          const message =
+            "This session changed elsewhere. Your unsaved edits are preserved; edit a field to re-apply them after reviewing the latest row.";
+          setConflictPending({
+            sessionId: matching.id,
+            latest: matching,
+            fields: ["builder-owned fields"],
+            message,
+          });
+          setSaveError(message);
         }
+      }
     },
-    [creatingRef, draftRef, saveStateRef, selectedIdRef, selectedSnapshotRef],
+    [
+      creatingRef,
+      draftRef,
+      saveStateRef,
+      selectedIdRef,
+      selectedSnapshotRef,
+      sessionsRef,
+    ],
   );
 
   const fetchSessions = useCallback(
     async (keepSelection = true) => {
       try {
-        const response = await fetch(
-          sessionRegistryListUrl({
-            includeArchived: showArchived,
-            text: query,
-            workstreamId: routeWorkstreamId,
-            nodeId: routeNodeId,
-          }),
-        );
+        const response = await fetch(sessionRegistryListUrl(sessionListQuery));
         if (!response.ok) {
           throw new Error(`Failed to load sessions (${response.status})`);
         }
@@ -1343,8 +1393,20 @@ export function SessionsPage({
         setLoading(false);
       }
     },
-    [applySessionList, query, routeNodeId, routeWorkstreamId, showArchived],
+    [applySessionList, sessionListQuery],
   );
+
+  const shouldPoll = useCallback(() => {
+    if (!eventStreamLiveRef.current) {
+      return true;
+    }
+    return Date.now() - lastStreamEventAtRef.current > SESSION_EVENT_STALE_MS;
+  }, []);
+
+  const markStreamEvent = useCallback(() => {
+    eventStreamLiveRef.current = true;
+    lastStreamEventAtRef.current = Date.now();
+  }, []);
 
   const scheduleEventRefetch = useCallback(
     (delayMs = SESSION_EVENT_REFETCH_DEBOUNCE_MS) => {
@@ -1375,10 +1437,12 @@ export function SessionsPage({
   useEffect(() => {
     void fetchSessions();
     const timer = setInterval(() => {
-      void fetchSessions();
+      if (shouldPoll()) {
+        void fetchSessions();
+      }
     }, SESSION_POLL_INTERVAL_MS);
     const refreshWhenVisible = () => {
-      if (document.visibilityState !== "hidden") {
+      if (document.visibilityState !== "hidden" && shouldPoll()) {
         void fetchSessions();
       }
     };
@@ -1389,33 +1453,36 @@ export function SessionsPage({
       window.removeEventListener("focus", refreshWhenVisible);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
-  }, [fetchSessions]);
+  }, [fetchSessions, shouldPoll]);
 
   useEffect(() => {
     if (typeof EventSource === "undefined") {
+      eventStreamLiveRef.current = false;
       setSyncState("polling");
       return;
     }
 
     let closed = false;
-    const source = new EventSource("/api/sessions/events");
+    const source = new EventSource(sessionEventsUrl);
     setSyncState("connecting");
 
-    const handleChange = () => {
+    const handleRefetchChange = () => {
+      markStreamEvent();
       scheduleEventRefetch();
     };
+    const handleHeartbeat = () => {
+      markStreamEvent();
+      setSyncState("live");
+    };
     const handleSnapshot = (event: MessageEvent) => {
-      if (query.trim().length > 0 || showArchived || routeWorkstreamId || routeNodeId) {
-        scheduleEventRefetch(0);
-        return;
-      }
+      markStreamEvent();
       try {
-        const payload = JSON.parse(event.data) as { sessions?: unknown };
-        if (!Array.isArray(payload.sessions)) {
+        const nextSessions = sessionsFromSnapshotPayload(JSON.parse(event.data) as unknown);
+        if (!nextSessions) {
           scheduleEventRefetch(0);
           return;
         }
-        applySessionList(payload.sessions as SessionRegistryListItem[]);
+        applySessionList(nextSessions);
         setLoading(false);
       } catch {
         scheduleEventRefetch(0);
@@ -1423,24 +1490,128 @@ export function SessionsPage({
     };
     const handleOpen = () => {
       if (!closed) {
+        markStreamEvent();
         setSyncState("live");
       }
     };
     const handleError = () => {
       if (!closed) {
+        eventStreamLiveRef.current = false;
         setSyncState("reconnecting");
+        void fetchSessions();
       }
+    };
+    const handleUpsert = (event: MessageEvent) => {
+      markStreamEvent();
+      let payload: unknown;
+      try {
+        payload = JSON.parse(event.data) as unknown;
+      } catch {
+        scheduleEventRefetch();
+        return;
+      }
+      const nextSession =
+        typeof payload === "object" && payload !== null && !Array.isArray(payload)
+          ? sessionFromEventPayload((payload as { session?: unknown }).session)
+          : null;
+      if (!nextSession) {
+        scheduleEventRefetch();
+        return;
+      }
+      const currentSessions = sessionsRef.current;
+      const existingIndex = currentSessions.findIndex(
+        (session) => session.id === nextSession.id,
+      );
+      const matches = sessionMatchesQuery(nextSession, sessionMatchOptions);
+      if (existingIndex === -1) {
+        if (matches) {
+          applySessionList([nextSession, ...currentSessions]);
+        }
+      } else if (matches) {
+        const nextSessions = [...currentSessions];
+        nextSessions[existingIndex] = nextSession;
+        applySessionList(nextSessions);
+      } else {
+        applySessionList(
+          currentSessions.filter((session) => session.id !== nextSession.id),
+        );
+      }
+      setLoading(false);
+    };
+    const handleRuntimeUpdate = (event: MessageEvent) => {
+      markStreamEvent();
+      let payload: ReturnType<typeof runtimeUpdatedPayload> = null;
+      try {
+        payload = runtimeUpdatedPayload(JSON.parse(event.data) as unknown);
+      } catch {
+        scheduleEventRefetch();
+        return;
+      }
+      if (!payload) {
+        scheduleEventRefetch();
+        return;
+      }
+      const currentSessions = sessionsRef.current;
+      const existingIndex = currentSessions.findIndex(
+        (session) => session.id === payload.registryId,
+      );
+      if (existingIndex === -1) {
+        scheduleEventRefetch();
+        return;
+      }
+      const existing = currentSessions[existingIndex];
+      if (
+        payload.version !== undefined &&
+        payload.version <= existing.version
+      ) {
+        return;
+      }
+      const updatedSession: SessionRegistryListItem = {
+        ...existing,
+        runtime: payload.runtime,
+        updatedAt: payload.updatedAt ?? existing.updatedAt,
+        version: payload.version ?? existing.version,
+      };
+      const nextSessions = [...currentSessions];
+      if (sessionMatchesQuery(updatedSession, sessionMatchOptions)) {
+        nextSessions[existingIndex] = updatedSession;
+      } else {
+        nextSessions.splice(existingIndex, 1);
+      }
+      applySessionList(nextSessions);
+      setLoading(false);
+    };
+    const handleDelete = (event: MessageEvent) => {
+      markStreamEvent();
+      let registryId: string | null = null;
+      try {
+        registryId = eventRegistryId(JSON.parse(event.data) as unknown);
+      } catch {
+        scheduleEventRefetch();
+        return;
+      }
+      if (!registryId) {
+        scheduleEventRefetch();
+        return;
+      }
+      applySessionList(
+        sessionsRef.current.filter((session) => session.id !== registryId),
+      );
+      setLoading(false);
     };
 
     source.addEventListener("open", handleOpen);
     source.addEventListener("error", handleError);
+    source.addEventListener("heartbeat", handleHeartbeat);
     source.addEventListener("snapshot", handleSnapshot);
-    source.addEventListener("session.upserted", handleChange);
-    source.addEventListener("session.deleted", handleChange);
-    source.addEventListener("session.rebuilt", handleChange);
+    source.addEventListener("session.upserted", handleUpsert);
+    source.addEventListener("session.runtime.updated", handleRuntimeUpdate);
+    source.addEventListener("session.deleted", handleDelete);
+    source.addEventListener("session.rebuilt", handleRefetchChange);
 
     return () => {
       closed = true;
+      eventStreamLiveRef.current = false;
       source.close();
       if (eventRefetchTimerRef.current) {
         clearTimeout(eventRefetchTimerRef.current);
@@ -1449,11 +1620,12 @@ export function SessionsPage({
     };
   }, [
     applySessionList,
-    query,
-    routeNodeId,
-    routeWorkstreamId,
+    fetchSessions,
+    markStreamEvent,
     scheduleEventRefetch,
-    showArchived,
+    sessionEventsUrl,
+    sessionMatchOptions,
+    sessionsRef,
   ]);
 
   const selectedSession = useMemo(

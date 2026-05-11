@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import request from "supertest";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { LaunchClaimFileStore } from "../session-registry/launch-claim-store";
 import type { LaunchClaimStore } from "../launch-claim-contract";
@@ -27,6 +27,7 @@ import type {
   ManagedSdkRunnerResumeInput,
   ManagedSdkRunnerStartInput,
 } from "./managed-sdk-runner";
+import { ManagedRuntimePatchCoalescer } from "./managed-runtime-patch-coalescer";
 
 const createdRoots: string[] = [];
 const activeApps: StreamlinerApiApp[] = [];
@@ -37,6 +38,14 @@ function createRootDir(): string {
   mkdirSync(root, { recursive: true });
   createdRoots.push(root);
   return root;
+}
+
+function managedRuntimePatchCoalescer(
+  registryStore: SessionRegistryFileStore,
+): ManagedRuntimePatchCoalescer {
+  return new ManagedRuntimePatchCoalescer({
+    patchRuntimeMetadata: registryStore.patchRuntimeMetadata.bind(registryStore),
+  });
 }
 
 function normalizePath(path: string): string {
@@ -204,6 +213,7 @@ function bindManagedClaimToSdkSession(
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   for (const app of activeApps.splice(0)) {
     app.close();
   }
@@ -466,7 +476,10 @@ describe("launchPreparedNode", () => {
       registryStore,
       claimStore,
       fakeHandoff(root, { runtimeKind: "managed-sdk" }),
-      { managedSdkRunner: runner },
+      {
+        managedSdkRunner: runner,
+        runtimePatchCoalescer: managedRuntimePatchCoalescer(registryStore),
+      },
     )).rejects.toThrow(/sdk exploded; also failed to record managed runtime failure/);
 
     const [claimEntry] = claimStore.listClaims();
@@ -626,6 +639,7 @@ describe("launchManagedSdkNode", () => {
       {
         now: () => new Date("2026-05-07T12:00:00.000Z"),
         managedSdkRunner: runner,
+        runtimePatchCoalescer: managedRuntimePatchCoalescer(registryStore),
       },
     );
 
@@ -669,6 +683,61 @@ describe("launchManagedSdkNode", () => {
       }),
     ]);
   });
+
+  it("coalesces same-event managed progress and lifecycle callbacks into one registry patch", async () => {
+    vi.useFakeTimers();
+    const root = createRootDir();
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const patchSpy = vi.spyOn(registryStore, "patchRuntimeMetadata");
+    const runner: ManagedSdkRunner = {
+      start: async (input) => {
+        const result = {
+          registryId: input.registryId,
+          sdkSessionId: "sdk-session-coalesced",
+          sdkWorkspacePath: normalizePath(join(root, "sdk", "workspace.yaml")),
+          sdkStateRoot: normalizePath(join(root, "sdk")),
+        };
+        input.onStarted(result);
+        input.onProgress({
+          type: "tool_started",
+          message: "Tool execution started.",
+          data: { toolName: "powershell" },
+        });
+        input.onLifecycleState("running", "Managed SDK lifecycle changed to running.");
+        return result;
+      },
+    };
+
+    const result = await launchManagedSdkNode(
+      registryStore,
+      claimStore,
+      fakeHandoff(root, { runtimeKind: "managed-sdk" }),
+      {
+        now: () => new Date("2026-05-07T12:00:00.000Z"),
+        managedSdkRunner: runner,
+        runtimePatchCoalescer: managedRuntimePatchCoalescer(registryStore),
+      },
+    );
+    const callsBeforeRoutineFlush = patchSpy.mock.calls.length;
+
+    await vi.advanceTimersByTimeAsync(250);
+    await Promise.resolve();
+
+    expect(patchSpy).toHaveBeenCalledTimes(callsBeforeRoutineFlush + 1);
+    const routinePatch = patchSpy.mock.calls.at(-1)?.[1];
+    expect(routinePatch).toEqual(expect.objectContaining({
+      lifecycleState: "running",
+      progressEvents: [
+        expect.objectContaining({ type: "tool_started" }),
+        expect.objectContaining({ type: "lifecycle" }),
+      ],
+    }));
+    const record = registryStore.getSession(result.managedSdk.registryId);
+    expect(record?.runtime?.progressEvents.some((event) =>
+      event.type === "tool_started" && event.data?.toolName === "powershell"
+    )).toBe(true);
+  });
 });
 
 describe("resumeManagedSdkNode", () => {
@@ -701,8 +770,10 @@ describe("resumeManagedSdkNode", () => {
       },
     };
     const handoff = fakeHandoff(root, { runtimeKind: "managed-sdk" });
+    const runtimePatchCoalescer = managedRuntimePatchCoalescer(registryStore);
     const launched = await launchManagedSdkNode(registryStore, claimStore, handoff, {
       managedSdkRunner: runner,
+      runtimePatchCoalescer,
       now: () => new Date("2026-05-07T12:00:00.000Z"),
     });
     bindManagedClaimToSdkSession(registryStore, claimStore, {
@@ -726,6 +797,7 @@ describe("resumeManagedSdkNode", () => {
       launched.launchClaim.launchClaimId,
       {
         managedSdkRunner: runner,
+        runtimePatchCoalescer,
         now: () => new Date("2026-05-07T12:05:00.000Z"),
       },
     );

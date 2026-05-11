@@ -31,6 +31,7 @@ import {
   type SessionRegistryTrustedSignalInput,
   type SessionRegistryUpsertInput,
 } from "../session-registry-contract";
+import { sessionRegistryRecordTextMatches } from "../session-registry-filter";
 import {
   mergeSessionRegistryRuntimeMetadata,
   normalizeSessionRegistryRuntimeMetadata,
@@ -1982,50 +1983,13 @@ function matchesText(
     | "derivedBranch"
     | "derivedWorktreePath"
     | "derivedGithubRefs"
+    | "originKind"
     | "pawLaunch"
     | "pawWorkflow"
   >,
   text: string,
 ): boolean {
-  const refs = record.derivedGithubRefs.map((ref) =>
-    [ref.repo, ref.type, `#${ref.number}`, `${ref.type} #${ref.number}`]
-      .filter(Boolean)
-      .join(" "),
-  );
-  const pawWorkflowHaystacks = record.pawWorkflow
-    ? [
-        record.pawWorkflow.status,
-        record.pawWorkflow.stage ?? "",
-        record.pawWorkflow.workflowKind,
-        record.pawWorkflow.workId ?? "",
-        record.pawWorkflow.workTitle ?? "",
-        record.pawWorkflow.workDir ?? "",
-        ...record.pawWorkflow.diagnostics,
-      ]
-    : [];
-  const pawLaunchHaystacks = record.pawLaunch
-    ? [
-        record.pawLaunch.workId,
-        record.pawLaunch.workTitle,
-        record.pawLaunch.workflowKind,
-        record.pawLaunch.pawWorkDir,
-      ]
-    : [];
-  const haystacks = [
-    record.title,
-    record.description,
-    record.aiSummary ?? "",
-    record.cwd,
-    record.repo ?? "",
-    record.branch ?? "",
-    record.derivedBranch ?? "",
-    record.derivedWorktreePath ?? "",
-    ...refs,
-    ...pawWorkflowHaystacks,
-    ...pawLaunchHaystacks,
-    ...record.tags,
-  ];
-  return haystacks.some((value) => value.toLowerCase().includes(text));
+  return sessionRegistryRecordTextMatches(record, text);
 }
 
 function mergeStoredRecord(
@@ -2050,6 +2014,32 @@ function mergeStoredRecord(
     origin: nextOrigin,
     graphBinding: nextGraphBinding,
   };
+}
+
+const RUNTIME_METADATA_PATCH_TOP_LEVEL_FIELDS = new Set<keyof SessionRegistryRecord>([
+  "runtime",
+  "updatedAt",
+  "version",
+]);
+
+function assertRuntimeMetadataPatchScope(
+  before: SessionRegistryRecord,
+  after: SessionRegistryRecord,
+): void {
+  const keys = new Set([
+    ...Object.keys(before),
+    ...Object.keys(after),
+  ] as Array<keyof SessionRegistryRecord>);
+  for (const key of keys) {
+    if (RUNTIME_METADATA_PATCH_TOP_LEVEL_FIELDS.has(key)) {
+      continue;
+    }
+    if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) {
+      throw new Error(
+        `patchRuntimeMetadata changed non-runtime top-level field "${String(key)}".`,
+      );
+    }
+  }
 }
 
 function activityEvidenceForTrustedSignal(
@@ -3059,6 +3049,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
 
       const storedRecord = mergeStoredRecord(existingRecord, nextRecord);
       storedRecord.runtime = nextRuntime;
+      assertRuntimeMetadataPatchScope(existingRecord, storedRecord);
       records.set(id, storedRecord);
       const nextIndex = buildIndex(records.values());
       this.persistEntry(storedRecord);
@@ -3067,6 +3058,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       this.emitChange({
         kind: SESSION_REGISTRY_CHANGE_EVENT_KINDS[0],
         registryId: id,
+        changeScope: "runtime",
         snapshot: cloneValue(storedRecord),
       });
       return cloneValue(storedRecord);

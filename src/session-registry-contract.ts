@@ -271,6 +271,7 @@ export interface SessionRegistryUpsertChangeEvent {
   kind: "upsert";
   registryId: string;
   snapshot: SessionRegistryRecord;
+  changeScope?: "runtime";
 }
 
 export interface SessionRegistryDeleteChangeEvent {
