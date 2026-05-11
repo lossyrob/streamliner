@@ -199,6 +199,8 @@ ongoing authoring burden on humans and agents before a product need exists.
   generated worker context.
 - `DESIGN-DOCS.md`, decision conventions, and the design-docs agent skill align
   on no required YAML frontmatter.
+- Existing frontmatter in legacy design docs or accepted decision records is not
+  authoritative and may be removed later as metadata-only cleanup.
 - Wave 2 implementers can migrate VitePress and create starter docs without
   rediscovering information architecture.
 - Wave 3 implementers can add docs-family discovery and context-package support

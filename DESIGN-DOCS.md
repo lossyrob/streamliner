@@ -176,6 +176,9 @@ product work and should derive from the maintained markdown surfaces, git, and
 workstream references rather than making authors maintain duplicate metadata on
 every file.
 
+Existing frontmatter in older design docs is not authoritative and can be removed
+later as metadata-only cleanup. New or revised design docs should not add it.
+
 ### Design index template
 
 ```markdown
