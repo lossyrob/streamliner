@@ -124,7 +124,9 @@ should make the three audience sections visible at the top level:
 
 Design content should remain source-compatible under `docs/design/`; Wave 2 may
 update VitePress links and sidebar paths, but should not weaken Design authority
-or publish `.streamliner/shaping/` material.
+or publish shaping/candidate-workstream planning material. The storage location
+for that planning material is not part of the docs-site contract and may move
+independently.
 
 Minimum starter content means the unified site is inspectable and honest, not
 complete:

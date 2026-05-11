@@ -43,9 +43,11 @@ normative. Implementation-detail orientation can move or be rewritten into
 Architecture when that family exists. Obsolete speculation is removed from
 living Design docs instead of being preserved as active guidance.
 
-`.streamliner/shaping/` remains unpublished planning material. It can inform
-workstream formation but is not part of the docs site and is not authoritative
-project documentation.
+Shaping notes and candidate-workstream planning material remain unpublished
+planning artifacts regardless of their current repository path. Their storage
+location can move without changing this decision. Wherever those notes live,
+they can inform workstream formation but are not part of the docs site and are
+not authoritative project documentation.
 
 ### Wave 2 unified-site contract
 

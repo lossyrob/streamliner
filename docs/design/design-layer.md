@@ -98,9 +98,11 @@ the project maintains it.
 
 ### Unpublished planning material
 
-`.streamliner/shaping/` remains unpublished planning material. Shaping notes can
-inform workstream formation, but they are not part of the published docs site and
-are not authoritative project documentation.
+Shaping notes and candidate-workstream planning material remain unpublished
+planning artifacts regardless of their current repository path. Their storage
+location is not part of the documentation-family model and can move. Wherever
+those notes live, they can inform workstream formation, but they are not part of
+the published docs site and are not authoritative project documentation.
 
 ## Core model
 
