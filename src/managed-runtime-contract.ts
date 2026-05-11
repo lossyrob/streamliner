@@ -145,6 +145,7 @@ export interface ManagedRuntimePrReadyTrustContext {
   url?: string | null;
   repo?: string | null;
   number?: number | null;
+  summary?: string | null;
   branchName?: string | null;
   baseBranch?: string | null;
   branchToBaseDiffUrl?: string | null;
@@ -659,7 +660,8 @@ function runtimeProgressSummary(
   switch (event.type) {
     case "assistant_status": {
       const intent = runtimeProgressDataString(event, "intent");
-      const content = runtimeProgressDataString(event, "content");
+      const content = runtimeProgressDataString(event, "displayMessage") ??
+        runtimeProgressDataString(event, "content");
       if (content) {
         return progressEventSummary(content);
       }
@@ -731,10 +733,18 @@ function latestRuntimeSummary(
   if (evidenceSummary) {
     return evidenceSummary;
   }
-  const progressSummary = [...runtime.progressEvents]
-    .reverse()
-    .find((event) => event.message.trim())?.message;
-  return progressSummary ?? null;
+  for (const event of [...runtime.progressEvents].reverse()) {
+    if (!event.message.trim() || isNoisyRuntimeProgressEvent(event)) {
+      continue;
+    }
+    return runtimeProgressSummary(event);
+  }
+  return null;
+}
+
+function isNoisyRuntimeProgressEvent(event: SessionRegistryRuntimeProgressEvent): boolean {
+  return event.type === "lifecycle" &&
+    event.message === "Managed SDK lifecycle changed to running.";
 }
 
 function latestProgressDataString(
@@ -876,7 +886,7 @@ function prReadyTrustContext(
     runtime.lifecycleState === "cleanup_ready" ||
     runtime.lifecycleState === "cleaning_up" ||
     runtime.lifecycleState === "cleaned_up";
-  if (!prLifecycleActive && !evidence && !derivedPullRequest) {
+  if (!prLifecycleActive && !evidence) {
     return null;
   }
   const repo = evidence?.repo ?? derivedPullRequest?.repo ?? context.repo ?? null;
@@ -964,6 +974,7 @@ function prReadyTrustContext(
     url,
     repo,
     number,
+    summary: evidence?.summary ?? null,
     branchName,
     baseBranch,
     branchToBaseDiffUrl: diffUrl,
@@ -1183,6 +1194,7 @@ function sanitizePrReadyTrustContext(value: unknown): ManagedRuntimePrReadyTrust
     url: safeGithubPullRequestUrl(optionalString(value.url)),
     repo: optionalString(value.repo),
     number: optionalSafeNumber(value.number),
+    summary: optionalString(value.summary),
     branchName: optionalString(value.branchName),
     baseBranch: optionalString(value.baseBranch),
     branchToBaseDiffUrl: safeGithubCompareUrl(optionalString(value.branchToBaseDiffUrl)),

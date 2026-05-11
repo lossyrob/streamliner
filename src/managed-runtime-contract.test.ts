@@ -308,6 +308,7 @@ describe("managed runtime contract", () => {
       url: "https://github.com/lossyrob/streamliner/pull/85",
       repo: "lossyrob/streamliner",
       number: 85,
+      summary: "PR ready.",
       branchName: "feature/managed-session-console",
       baseBranch: "main",
       branchToBaseDiffUrl:
@@ -336,9 +337,46 @@ describe("managed runtime contract", () => {
       }),
       repo: "lossyrob/streamliner",
       branch: "feature/managed-session-console",
+      derivedGithubRefs: [{
+        type: "pr",
+        repo: "lossyrob/streamliner",
+        number: 73,
+        url: "https://github.com/lossyrob/streamliner/pull/73",
+        firstSeenAt: "2026-05-05T12:03:00.000Z",
+        lastSeenAt: "2026-05-05T12:03:00.000Z",
+        source: "gh",
+      }],
     });
 
     expect(projection?.prReady).toBeNull();
+  });
+
+  it("uses display-safe assistant messages and skips noisy lifecycle summaries", () => {
+    const projection = managedRuntimeProjectionFromMetadata(managedRuntime({
+      progressEvents: [
+        {
+          id: "progress-running",
+          sequence: 1,
+          timestamp: "2026-05-05T12:02:00.000Z",
+          type: "lifecycle",
+          message: "Managed SDK lifecycle changed to running.",
+        },
+        {
+          id: "progress-assistant",
+          sequence: 2,
+          timestamp: "2026-05-05T12:03:00.000Z",
+          type: "assistant_status",
+          message: "Assistant responded.",
+          data: {
+            assistantEventKind: "message",
+            displayMessage: "The implementation is complete.",
+          },
+        },
+      ],
+    }));
+
+    expect(projection?.summary).toBe("The implementation is complete.");
+    expect(projection?.progress?.at(-1)?.summary).toBe("The implementation is complete.");
   });
 
   it("drops unsafe PR-ready URLs while preserving derived GitHub links", () => {
@@ -443,6 +481,7 @@ describe("managed runtime contract", () => {
         url: "https://github.com/lossyrob/streamliner/pull/85",
         repo: "lossyrob/streamliner",
         number: 85,
+        summary: "PR ready.",
         branchName: "feature/managed-session-console",
         baseBranch: "main",
         branchToBaseDiffUrl:

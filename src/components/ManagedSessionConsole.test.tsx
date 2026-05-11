@@ -28,7 +28,7 @@ describe("ManagedSessionConsole", () => {
     document.body.innerHTML = "";
   });
 
-  it("renders a read-only transcript with typed waiting guidance and PR trust context", () => {
+  it("renders a read-only transcript with typed waiting guidance and a PR created card", () => {
     act(() => {
       root.render(
         <ManagedSessionConsole
@@ -84,9 +84,14 @@ describe("ManagedSessionConsole", () => {
     );
     expect(container.textContent).toContain("Cleanup blocked");
     expect(container.textContent).toContain("dirty worktree");
-    expect(container.textContent).toContain("PR ready trust context");
+    expect(container.textContent).toContain("PR Created");
+    expect(container.textContent).toContain("Pull request #85");
+    expect(container.textContent).toContain("lossyrob/streamliner #85");
     expect(container.textContent).toContain("feature/managed-session-console");
-    expect(container.textContent).toContain("PR/head-state check");
+    expect(container.textContent).not.toContain("PR/head-state check");
+    expect(container.querySelector(".sl-managed-console-pr-card a")?.getAttribute("href")).toBe(
+      "https://github.com/lossyrob/streamliner/pull/85",
+    );
     expect(container.querySelector("[role='log']")?.getAttribute("aria-live")).toBe(
       "polite",
     );
@@ -130,6 +135,50 @@ describe("ManagedSessionConsole", () => {
 
     expect(container.querySelector(".sl-managed-console-current")).toBeNull();
     expect(container.textContent).toContain("Latest status is duplicated by the transcript.");
+  });
+
+  it("keeps the transcript pinned only while the user is following the bottom", () => {
+    const renderConsole = (count: number) => {
+      root.render(
+        <ManagedSessionConsole
+          title="Managed session console"
+          events={Array.from({ length: count }, (_, index) => ({
+            timestamp: `2026-05-05T12:0${index}:00.000Z`,
+            phase: "assistant_status",
+            label: "Assistant",
+            summary: `Message ${index}`,
+            kind: "assistant-status" as const,
+            status: "info" as const,
+          }))}
+          emptyMessage="No activity yet."
+          live
+        />,
+      );
+    };
+
+    act(() => renderConsole(1));
+    const log = container.querySelector("[role='log']") as HTMLOListElement;
+    Object.defineProperty(log, "clientHeight", { value: 100, configurable: true });
+    Object.defineProperty(log, "scrollHeight", { value: 400, configurable: true });
+
+    act(() => renderConsole(2));
+    expect(log.scrollTop).toBe(400);
+
+    log.scrollTop = 100;
+    act(() => {
+      log.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    Object.defineProperty(log, "scrollHeight", { value: 500, configurable: true });
+    act(() => renderConsole(3));
+    expect(log.scrollTop).toBe(100);
+
+    log.scrollTop = 400;
+    act(() => {
+      log.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    Object.defineProperty(log, "scrollHeight", { value: 600, configurable: true });
+    act(() => renderConsole(4));
+    expect(log.scrollTop).toBe(600);
   });
 
   it("summarizes retained replay metadata without emphasizing truncation internals", () => {
@@ -186,6 +235,13 @@ describe("ManagedSessionConsole", () => {
       lifecycleState: "running",
       progress: [
         {
+          timestamp: "2026-05-05T11:59:00.000Z",
+          phase: "lifecycle",
+          summary: "Managed SDK lifecycle changed to running.",
+          kind: "lifecycle",
+          status: "info",
+        },
+        {
           timestamp: "2026-05-05T12:00:00.000Z",
           phase: "mcp_status",
           summary: "MCP status updated.",
@@ -220,6 +276,13 @@ describe("ManagedSessionConsole", () => {
           detail: "npm test -- --run src\\components\\ManagedSessionConsole.test.tsx",
           kind: "tool",
           status: "info",
+        },
+        {
+          timestamp: "2026-05-05T12:04:30.000Z",
+          phase: "tool_completed",
+          summary: "Tool completed.",
+          kind: "tool",
+          status: "success",
         },
         {
           timestamp: "2026-05-05T12:04:00.000Z",

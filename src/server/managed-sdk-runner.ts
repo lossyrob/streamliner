@@ -127,8 +127,11 @@ type RuntimeEvidenceLifecycleState = Extract<
   SessionRegistryRuntimeEvidenceKind
 >;
 
-const PR_URL_PATTERN =
-  /https:\/\/(?<host>[^/\s<>)]+)\/(?<repo>[^/\s<>)]+\/[^/\s<>)]+)\/(?:pull|pulls|pull-requests)\/(?<number>\d+)/i;
+const GITHUB_REPO_SEGMENT_PATTERN = String.raw`[A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?`;
+const PR_URL_PATTERN = new RegExp(
+  String.raw`https:\/\/github\.com\/(?<repo>${GITHUB_REPO_SEGMENT_PATTERN}\/${GITHUB_REPO_SEGMENT_PATTERN})\/pull\/(?<number>[1-9]\d*)\b`,
+  "i",
+);
 
 const MANAGED_LIFECYCLE_STATE_SET = new Set<string>(SESSION_REGISTRY_MANAGED_LIFECYCLE_STATES);
 for (const kind of SESSION_REGISTRY_RUNTIME_EVIDENCE_KINDS) {
@@ -211,8 +214,6 @@ function managedSdkTurnIdleTimeoutMs(): number {
 
 function lifecycleForSdkEvent(event: SessionEvent): SessionRegistryManagedLifecycleState | null {
   switch (event.type) {
-    case "tool.execution_start":
-      return "running";
     case "session.idle":
       return "idle";
     case "session.error":
@@ -248,6 +249,12 @@ function optionalDisplayNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
     ? value
     : undefined;
+}
+
+function assistantDisplayContent(data: Record<string, unknown>): string | undefined {
+  return optionalDisplayString(data.content) ??
+    optionalDisplayString(data.message) ??
+    optionalDisplayString(data.text);
 }
 
 function outputLineCount(value: unknown): number | undefined {
@@ -297,7 +304,45 @@ function toolDisplayTitle(
     const suffix = toolDisplayName(toolName);
     return suffix === "tool" ? description : `${description} (${suffix})`;
   }
+  const defaultTitle = defaultToolDisplayTitle(toolName, fallbackVerb);
+  if (defaultTitle) {
+    return defaultTitle;
+  }
   return `${fallbackVerb} ${toolDisplayName(toolName)}`;
+}
+
+function defaultToolDisplayTitle(
+  toolName: unknown,
+  fallbackVerb: "Run" | "Ran" | "Failed",
+): string | undefined {
+  const name = toolDisplayName(toolName);
+  const prefix = fallbackVerb === "Ran"
+    ? "Read"
+    : fallbackVerb === "Failed"
+      ? "Failed"
+      : "Read";
+  switch (name) {
+    case "view":
+      return fallbackVerb === "Failed" ? "Failed reading file" : `${prefix} file`;
+    case "rg":
+      return fallbackVerb === "Failed" ? "Failed code search" : "Search code";
+    case "glob":
+      return fallbackVerb === "Failed" ? "Failed file search" : "Find files";
+    case "apply_patch":
+      return fallbackVerb === "Ran"
+        ? "Edited files"
+        : fallbackVerb === "Failed"
+          ? "Failed editing files"
+          : "Edit files";
+    case "powershell":
+      return fallbackVerb === "Ran"
+        ? "Ran shell command"
+        : fallbackVerb === "Failed"
+          ? "Failed shell command"
+          : "Run shell command";
+    default:
+      return undefined;
+  }
 }
 
 function toolDisplayDetail(data: Record<string, unknown>): string | undefined {
@@ -339,17 +384,20 @@ function progressForSdkEvent(
       };
     case "assistant.reasoning_delta":
       return null;
-    case "assistant.message":
+    case "assistant.message": {
+      const displayMessage = assistantDisplayContent(data);
       return {
         type: "assistant_status",
-        message: eventText(data.content, "Assistant responded."),
+        message: eventText(displayMessage, "Assistant responded."),
         data: {
           assistantEventKind: "message",
-          contentLength: typeof data.content === "string" ? data.content.length : undefined,
+          displayMessage,
+          contentLength: displayMessage?.length,
           outputTokens: optionalDisplayNumber(data.outputTokens),
           agentId: event.agentId,
         },
       };
+    }
     case "tool.execution_start": {
       const toolName = data.toolName ?? data.name;
       const toolCallId = optionalDisplayString(data.toolCallId);
@@ -541,6 +589,7 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
     const sdk = await import("@github/copilot-sdk");
     const callbacks = createSafeManagedCallbacks(input);
     let activeRun: ActiveManagedRun | null = null;
+    const lastAssistantMessage = { value: null as string | null };
     const toolCalls = new Map<string, ToolCallDisplayState>();
     const client = new sdk.CopilotClient({
       cwd: input.cwd,
@@ -587,6 +636,10 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
           if (activeRun?.ownershipTransferred) {
             return;
           }
+          if (event.type === "assistant.message" && isRecord(event.data)) {
+            lastAssistantMessage.value = assistantDisplayContent(event.data) ??
+              lastAssistantMessage.value;
+          }
           const progress = progressForSdkEvent(event, toolCalls);
           if (progress) {
             callbacks.onProgress(progress);
@@ -619,7 +672,7 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
     callbacks.onStarted(result);
     activeRun = { client, session, interrupted: false, ownershipTransferred: false };
     this.activeRuns.set(input.registryId, activeRun);
-    void this.runTurn(input, activeRun, callbacks);
+    void this.runTurn(input, activeRun, callbacks, lastAssistantMessage);
     return result;
   }
 
@@ -710,6 +763,7 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
     input: ManagedSdkRunnerStartInput,
     active: ActiveManagedRun,
     callbacks: SafeManagedCallbacks,
+    lastAssistantMessage: { value: string | null },
   ): Promise<void> {
     try {
       callbacks.onLifecycleState("running", "Managed SDK worker started.");
@@ -721,6 +775,18 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
         return;
       }
       const content = assistantContent(response);
+      if (content && content !== lastAssistantMessage.value) {
+        callbacks.onProgress({
+          type: "assistant_status",
+          message: content,
+          data: {
+            assistantEventKind: "message",
+            displayMessage: content,
+            contentLength: content.length,
+          },
+        });
+        lastAssistantMessage.value = content;
+      }
       const detectedEvidence = evidenceFromAssistantContent(content);
       for (const evidence of detectedEvidence) {
         callbacks.onEvidence(evidence);

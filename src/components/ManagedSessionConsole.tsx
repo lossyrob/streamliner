@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useCallback, useLayoutEffect, useRef, type ReactNode } from "react";
 
 import {
   formatManagedRuntimeLabel,
@@ -42,6 +42,28 @@ export function ManagedSessionConsole({
   footer,
 }: ManagedSessionConsoleProps) {
   const latest = currentMessage ?? events.at(-1)?.summary ?? emptyMessage;
+  const transcriptRef = useRef<HTMLOListElement | null>(null);
+  const followScrollRef = useRef(true);
+  const scrollTranscriptToBottom = useCallback(() => {
+    const transcript = transcriptRef.current;
+    if (!transcript) {
+      return;
+    }
+    transcript.scrollTop = transcript.scrollHeight;
+  }, []);
+  const handleTranscriptScroll = useCallback(() => {
+    const transcript = transcriptRef.current;
+    if (!transcript) {
+      return;
+    }
+    followScrollRef.current = isScrolledNearBottom(transcript);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (followScrollRef.current) {
+      scrollTranscriptToBottom();
+    }
+  }, [events, emptyMessage, currentMessage, scrollTranscriptToBottom]);
 
   return (
     <section className={`sl-managed-console${compact ? " compact" : ""}`}>
@@ -66,10 +88,12 @@ export function ManagedSessionConsole({
       )}
 
       <ol
+        ref={transcriptRef}
         className="sl-managed-console-transcript"
         role="log"
         aria-live={live ? "polite" : "off"}
         aria-label={`${title} transcript`}
+        onScroll={handleTranscriptScroll}
       >
         {events.length === 0 ? (
           <li className="empty">
@@ -164,6 +188,10 @@ function ConsoleEventDetails({ event }: { event: ManagedSessionConsoleEvent }) {
   );
 }
 
+function isScrolledNearBottom(element: HTMLElement): boolean {
+  return element.scrollHeight - element.scrollTop - element.clientHeight <= 8;
+}
+
 function consoleEventMarkClass(event: ManagedSessionConsoleEvent): string {
   const base = "sl-managed-console-entry-mark";
   if (event.status === "error") {
@@ -209,56 +237,40 @@ function PrReadyPanel({
 }: {
   prReady: ManagedRuntimePrReadyTrustContext;
 }) {
+  const prTitle = prReady.summary && !prReady.summary.toLowerCase().includes("detected")
+    ? prReady.summary
+    : prReady.number
+      ? `Pull request #${prReady.number}`
+      : "Pull request created";
+  const prMeta = [prReady.repo, prReady.number ? `#${prReady.number}` : null]
+    .filter(Boolean)
+    .join(" ");
   return (
     <div className="sl-managed-console-callout success">
-      <span className="sl-managed-console-callout-label">PR ready trust context</span>
-      <dl className="sl-managed-console-trust-grid">
-        <TrustRow label="PR" value={prReady.url} href={prReady.url} />
-        <TrustRow label="Repo" value={prReady.repo} />
-        <TrustRow label="Number" value={prReady.number ? `#${prReady.number}` : null} />
-        <TrustRow label="Branch" value={prReady.branchName} />
-        <TrustRow label="Base" value={prReady.baseBranch} />
-        <TrustRow
-          label="Branch diff"
-          value={prReady.branchToBaseDiffUrl ? "Open diff" : null}
-          href={prReady.branchToBaseDiffUrl}
-        />
-        <TrustRow label="Worktree" value={worktreeCleanLabel(prReady.worktreeClean)} />
-        <TrustRow label="PR/head" value={headCheckLabel(prReady.prHeadMatchesBranch)} />
-      </dl>
-      {prReady.checks.length > 0 && (
-        <ul className="sl-managed-console-checks">
-          {prReady.checks.map((check) => (
-            <li className={check.status} key={`${check.label}:${check.summary}`}>
-              <strong>{check.label}</strong>
-              <span>{check.summary}</span>
-            </li>
-          ))}
-        </ul>
+      <span className="sl-managed-console-callout-label">PR Created</span>
+      <div className="sl-managed-console-pr-card">
+        {prReady.url ? (
+          <a href={prReady.url} target="_blank" rel="noopener noreferrer">
+            {prTitle}
+          </a>
+        ) : (
+          <strong>{prTitle}</strong>
+        )}
+        {prMeta && <span>{prMeta}</span>}
+      </div>
+      {(prReady.branchName || prReady.baseBranch || prReady.branchToBaseDiffUrl) && (
+        <p className="sl-managed-console-pr-meta">
+          {branchSummary(prReady)}
+          {prReady.branchToBaseDiffUrl ? (
+            <>
+              {" "}
+              <a href={prReady.branchToBaseDiffUrl} target="_blank" rel="noopener noreferrer">
+                View diff
+              </a>
+            </>
+          ) : null}
+        </p>
       )}
-    </div>
-  );
-}
-
-function TrustRow({
-  label,
-  value,
-  href,
-}: {
-  label: string;
-  value?: string | null;
-  href?: string | null;
-}) {
-  return (
-    <div>
-      <dt>{label}</dt>
-      <dd>
-        {value
-          ? href
-            ? <a href={href} target="_blank" rel="noopener noreferrer">{value}</a>
-            : value
-          : "Not reported"}
-      </dd>
     </div>
   );
 }
@@ -275,22 +287,15 @@ function formatConsoleTimestamp(timestamp: string): string {
   });
 }
 
-function worktreeCleanLabel(value: boolean | null | undefined): string | null {
-  if (value === true) {
-    return "Clean";
+function branchSummary(prReady: ManagedRuntimePrReadyTrustContext): string {
+  if (prReady.branchName && prReady.baseBranch) {
+    return `${prReady.branchName} into ${prReady.baseBranch}.`;
   }
-  if (value === false) {
-    return "Dirty";
+  if (prReady.branchName) {
+    return `${prReady.branchName}.`;
   }
-  return null;
-}
-
-function headCheckLabel(value: boolean | null | undefined): string | null {
-  if (value === true) {
-    return "Matches";
+  if (prReady.baseBranch) {
+    return `Target ${prReady.baseBranch}.`;
   }
-  if (value === false) {
-    return "Mismatch";
-  }
-  return null;
+  return "";
 }

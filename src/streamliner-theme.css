@@ -3478,6 +3478,34 @@ a.sl-session-context-ref {
   margin: 0;
 }
 
+.sl-managed-console-pr-card {
+  border: 1px solid rgba(74, 222, 128, 0.22);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.32);
+  display: grid;
+  gap: 3px;
+  padding: 8px 10px;
+}
+
+.sl-managed-console-pr-card a,
+.sl-managed-console-pr-card strong {
+  color: rgba(248, 250, 252, 0.96);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.35;
+  text-decoration: none;
+}
+
+.sl-managed-console-pr-card a:hover {
+  text-decoration: underline;
+}
+
+.sl-managed-console-pr-card span,
+.sl-managed-console-pr-meta {
+  color: rgba(187, 247, 208, 0.76);
+  font-size: 11px;
+}
+
 .sl-managed-console-trust-grid {
   display: grid;
   gap: 8px;

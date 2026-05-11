@@ -77,6 +77,15 @@ function isVisibleRuntimeEvent(event: ManagedRuntimeProgressEvent): boolean {
   if (HIDDEN_RUNTIME_PHASES.has(event.phase)) {
     return false;
   }
+  if (
+    event.phase === "lifecycle" &&
+    event.summary === "Managed SDK lifecycle changed to running."
+  ) {
+    return false;
+  }
+  if (isGenericToolCompletedEvent(event)) {
+    return false;
+  }
   if (event.phase === "evidence" && event.summary === "Hook event observed.") {
     return false;
   }
@@ -84,6 +93,16 @@ function isVisibleRuntimeEvent(event: ManagedRuntimeProgressEvent): boolean {
     return false;
   }
   return true;
+}
+
+function isGenericToolCompletedEvent(event: ManagedRuntimeProgressEvent): boolean {
+  if (event.phase !== "tool_completed" || event.status === "error") {
+    return false;
+  }
+  if (event.detail || event.count) {
+    return false;
+  }
+  return /^(Tool completed\.?|Ran tool\.?)$/i.test(event.summary.trim());
 }
 
 function runtimeEventToConsoleEvent(
