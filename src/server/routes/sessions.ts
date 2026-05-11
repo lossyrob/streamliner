@@ -69,7 +69,7 @@ export function createSessionsRouter(options: {
   eventStream: SessionRegistryEventStream;
   relaunchDeps?: Partial<RelaunchDeps>;
   managedSdkRunner?: ManagedSdkRunner;
-  runtimePatchCoalescer?: ManagedRuntimePatchCoalescer;
+  runtimePatchCoalescer: ManagedRuntimePatchCoalescer;
   managedCleanupDeps?: Partial<ManagedCleanupDeps>;
   now?: () => Date;
   /**
@@ -89,8 +89,8 @@ export function createSessionsRouter(options: {
     ? getApiLogger().withScope("launch-claim.binding")
     : null;
   const quiesceRuntimePatchQueue = (sessionId: string): void => {
-    options.runtimePatchCoalescer?.flush(sessionId);
-    options.runtimePatchCoalescer?.close(sessionId);
+    options.runtimePatchCoalescer.flush(sessionId);
+    options.runtimePatchCoalescer.close(sessionId);
   };
 
   const onTrustedSignalApplied:
@@ -404,7 +404,7 @@ export function createSessionsRouter(options: {
         }],
       });
       if (finalState === "canceled") {
-        options.runtimePatchCoalescer?.drop(sessionId);
+        options.runtimePatchCoalescer.close(sessionId);
       }
       assertManagedRuntimePatch(record, {
         lifecycleState: finalState,
@@ -598,7 +598,7 @@ export function createSessionsRouter(options: {
           },
         }],
       });
-      options.runtimePatchCoalescer?.drop(sessionId);
+      options.runtimePatchCoalescer.close(sessionId);
       assertManagedRuntimePatch(withTakeoverRuntime, {
         runtimeOwner: "builder-terminal",
         lifecycleState: "terminal_takeover",
@@ -667,7 +667,7 @@ export function createSessionsRouter(options: {
     }
     try {
       await withManagedCleanupLock(sessionId, async () => {
-        options.runtimePatchCoalescer?.flush(sessionId);
+        options.runtimePatchCoalescer.flush(sessionId);
         const target = managedRuntimeTarget(options.store, sessionId, {
           allowedOwners: ["streamliner-sdk", "builder-terminal"],
         });
@@ -777,7 +777,7 @@ export function createSessionsRouter(options: {
             },
           }],
         });
-        options.runtimePatchCoalescer?.drop(sessionId);
+        options.runtimePatchCoalescer.close(sessionId);
         assertManagedRuntimePatch(cleaned, {
           lifecycleState: "cleaned_up",
           context: "cleanup finish",

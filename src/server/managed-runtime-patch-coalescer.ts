@@ -29,7 +29,32 @@ interface PendingRuntimePatchState {
   seenLifecycleStates: Set<SessionRegistryManagedLifecycleState>;
 }
 
-const PROMPT_FLUSH_LIFECYCLE_STATES = new Set<SessionRegistryManagedLifecycleState>([
+interface ClosedRuntimePatchState {
+  timer: ReturnType<typeof setTimeout> | null;
+  lifecycleStateAtClose: SessionRegistryManagedLifecycleState | null;
+}
+
+export interface ManagedRuntimePatchCoalescerDiagnostics {
+  droppedAfterClose: {
+    cosmetic: number;
+    withEvidence: number;
+  };
+  droppedInactive: {
+    cosmetic: number;
+    withEvidence: number;
+  };
+  flushFailures: {
+    cosmetic: number;
+    withEvidence: number;
+  };
+}
+
+// Flush policy is split across three sets:
+// - PROMPT_FLUSH states are user-visible boundaries and bypass the routine throttle.
+// - CLOSE_AFTER_FLUSH states are terminal PROMPT_FLUSH states that release row state.
+// - ACTIVE states gate lifecycle phase transitions; terminal_takeover remains active
+//   until the terminal handoff flush closes the row.
+export const PROMPT_FLUSH_LIFECYCLE_STATES = new Set<SessionRegistryManagedLifecycleState>([
   "waiting_for_builder",
   "interrupt_requested",
   "interrupted",
@@ -44,7 +69,7 @@ const PROMPT_FLUSH_LIFECYCLE_STATES = new Set<SessionRegistryManagedLifecycleSta
   "canceled",
 ]);
 
-const CLOSE_AFTER_FLUSH_LIFECYCLE_STATES = new Set<SessionRegistryManagedLifecycleState>([
+export const CLOSE_AFTER_FLUSH_LIFECYCLE_STATES = new Set<SessionRegistryManagedLifecycleState>([
   "interrupted",
   "failed",
   "terminal_takeover",
@@ -53,7 +78,7 @@ const CLOSE_AFTER_FLUSH_LIFECYCLE_STATES = new Set<SessionRegistryManagedLifecyc
   "cleaned_up",
 ]);
 
-const ACTIVE_LIFECYCLE_STATES = new Set<SessionRegistryManagedLifecycleState>([
+export const ACTIVE_LIFECYCLE_STATES = new Set<SessionRegistryManagedLifecycleState>([
   "preparing",
   "starting",
   "running",
@@ -72,7 +97,12 @@ export class ManagedRuntimePatchCoalescer {
   private readonly throttleMs: number;
   private readonly closedRowRetentionMs: number;
   private readonly rows = new Map<string, PendingRuntimePatchState>();
-  private readonly closedRows = new Map<string, ReturnType<typeof setTimeout> | null>();
+  private readonly closedRows = new Map<string, ClosedRuntimePatchState>();
+  private readonly diagnostics: ManagedRuntimePatchCoalescerDiagnostics = {
+    droppedAfterClose: { cosmetic: 0, withEvidence: 0 },
+    droppedInactive: { cosmetic: 0, withEvidence: 0 },
+    flushFailures: { cosmetic: 0, withEvidence: 0 },
+  };
   private readonly logger = getApiLogger().withScope("managed-runtime.coalescer");
 
   constructor(options: ManagedRuntimePatchCoalescerOptions) {
@@ -98,10 +128,16 @@ export class ManagedRuntimePatchCoalescer {
     id: string,
     patch: SessionRegistryRuntimeMetadataPatch,
   ): void {
-    if (this.closedRows.has(id)) {
+    const closedRow = this.closedRows.get(id);
+    if (closedRow) {
+      this.recordDroppedPatch("after-close", id, patch, closedRow.lifecycleStateAtClose);
       return;
     }
-    const row = this.rowFor(id);
+    const row = this.rows.get(id);
+    if (!row) {
+      this.recordDroppedPatch("inactive", id, patch, null);
+      return;
+    }
     const shouldFlushSoon = this.shouldFlushPromptly(row, patch);
     row.patch = mergeRuntimePatches(row.patch, patch);
     if (shouldFlushSoon) {
@@ -118,9 +154,18 @@ export class ManagedRuntimePatchCoalescer {
     this.reopen(id);
     const row = this.rowFor(id);
     row.patch = mergeRuntimePatches(row.patch, patch);
-    return this.flush(id) ?? this.patchRuntimeMetadata(id, patch);
+    const record = this.flush(id);
+    if (!record) {
+      throw new Error("Managed runtime patch invariant violated: patchNow did not flush.");
+    }
+    return record;
   }
 
+  /**
+   * Drain the pending patch for a row. The patch is consumed before the store
+   * write; flushSafely records diagnostic counters if that write then fails.
+   * Terminal lifecycle states also release the row after the write succeeds.
+   */
   flush(id: string): SessionRegistryRecord | null {
     const row = this.rows.get(id);
     if (!row?.patch) {
@@ -140,26 +185,22 @@ export class ManagedRuntimePatchCoalescer {
     return record;
   }
 
-  flushAndClose(id: string): SessionRegistryRecord | null {
-    const record = this.flush(id);
-    this.close(id);
-    return record;
-  }
-
-  drop(id: string): void {
-    this.close(id);
-  }
-
+  /** Release row state without draining pending patches. */
   close(id: string): void {
     const row = this.rows.get(id);
+    const existingClosedRow = this.closedRows.get(id);
+    const lifecycleStateAtClose =
+      row?.patch?.lifecycleState ??
+      row?.lastLifecycleState ??
+      existingClosedRow?.lifecycleStateAtClose ??
+      null;
     if (row) {
       this.clearThrottle(row);
       row.patch = null;
       this.rows.delete(id);
     }
-    const existingTimer = this.closedRows.get(id);
-    if (existingTimer) {
-      clearTimeout(existingTimer);
+    if (existingClosedRow?.timer) {
+      clearTimeout(existingClosedRow.timer);
     }
     if (this.closedRowRetentionMs <= 0) {
       this.closedRows.delete(id);
@@ -169,7 +210,18 @@ export class ManagedRuntimePatchCoalescer {
       this.closedRows.delete(id);
     }, this.closedRowRetentionMs);
     unrefTimer(timer);
-    this.closedRows.set(id, timer);
+    this.closedRows.set(id, {
+      timer,
+      lifecycleStateAtClose,
+    });
+  }
+
+  getDiagnostics(): ManagedRuntimePatchCoalescerDiagnostics {
+    return {
+      droppedAfterClose: { ...this.diagnostics.droppedAfterClose },
+      droppedInactive: { ...this.diagnostics.droppedInactive },
+      flushFailures: { ...this.diagnostics.flushFailures },
+    };
   }
 
   private rowFor(id: string): PendingRuntimePatchState {
@@ -188,9 +240,9 @@ export class ManagedRuntimePatchCoalescer {
   }
 
   private reopen(id: string): void {
-    const existingTimer = this.closedRows.get(id);
-    if (existingTimer) {
-      clearTimeout(existingTimer);
+    const existingClosedRow = this.closedRows.get(id);
+    if (existingClosedRow?.timer) {
+      clearTimeout(existingClosedRow.timer);
     }
     this.closedRows.delete(id);
   }
@@ -243,16 +295,42 @@ export class ManagedRuntimePatchCoalescer {
   }
 
   private flushSafely(id: string): void {
+    const row = this.rows.get(id);
+    const droppedWithEvidence = patchHasEvidence(row?.patch ?? null);
     try {
       this.flush(id);
     } catch (error: unknown) {
+      incrementDroppedCounter(this.diagnostics.flushFailures, droppedWithEvidence);
       this.logger.warn("managed runtime patch flush failed", {
         registryId: id,
+        droppedWithEvidence,
         err: error instanceof Error
           ? { name: error.name, message: error.message }
           : String(error),
       });
     }
+  }
+
+  private recordDroppedPatch(
+    reason: "after-close" | "inactive",
+    id: string,
+    patch: SessionRegistryRuntimeMetadataPatch,
+    lifecycleStateAtClose: SessionRegistryManagedLifecycleState | null,
+  ): void {
+    const droppedWithEvidence = patchHasEvidence(patch);
+    incrementDroppedCounter(
+      reason === "after-close"
+        ? this.diagnostics.droppedAfterClose
+        : this.diagnostics.droppedInactive,
+      droppedWithEvidence,
+    );
+    this.logger.warn("managed runtime patch dropped", {
+      registryId: id,
+      reason,
+      lifecycleStateAtClose,
+      droppedLifecycleState: patch.lifecycleState ?? null,
+      droppedWithEvidence,
+    });
   }
 
   private clearThrottle(row: PendingRuntimePatchState): void {
@@ -281,28 +359,29 @@ function mergeRuntimePatches(
   if (!current) {
     return clonePatch(next);
   }
-  const merged: SessionRegistryRuntimeMetadataPatch = {
-    ...current,
-    ...next,
-    ...(current.forceLifecycleState === true || next.forceLifecycleState === true
-      ? { forceLifecycleState: true }
-      : {}),
-  };
-  const progressEvents = [
-    ...(current.progressEvents ?? []),
-    ...(next.progressEvents ?? []),
-  ];
-  if (progressEvents.length > 0) {
-    merged.progressEvents = progressEvents;
+  const existingProgressEvents = current.progressEvents;
+  const existingEvidence = current.evidence;
+  const forceLifecycleState =
+    current.forceLifecycleState === true || next.forceLifecycleState === true;
+  Object.assign(current, next);
+  if (forceLifecycleState) {
+    current.forceLifecycleState = true;
   }
-  const evidence = [
-    ...(current.evidence ?? []),
-    ...(next.evidence ?? []),
-  ];
-  if (evidence.length > 0) {
-    merged.evidence = evidence;
+  if (existingProgressEvents || next.progressEvents) {
+    const progressEvents = existingProgressEvents ?? [];
+    if (next.progressEvents?.length) {
+      progressEvents.push(...next.progressEvents);
+    }
+    current.progressEvents = progressEvents;
   }
-  return merged;
+  if (existingEvidence || next.evidence) {
+    const evidence = existingEvidence ?? [];
+    if (next.evidence?.length) {
+      evidence.push(...next.evidence);
+    }
+    current.evidence = evidence;
+  }
+  return current;
 }
 
 function clonePatch(
@@ -322,6 +401,21 @@ function lifecycleClassification(
     return "none";
   }
   return ACTIVE_LIFECYCLE_STATES.has(state) ? "active" : "terminal";
+}
+
+function patchHasEvidence(patch: SessionRegistryRuntimeMetadataPatch | null): boolean {
+  return (patch?.evidence?.length ?? 0) > 0;
+}
+
+function incrementDroppedCounter(
+  counter: { cosmetic: number; withEvidence: number },
+  withEvidence: boolean,
+): void {
+  if (withEvidence) {
+    counter.withEvidence += 1;
+  } else {
+    counter.cosmetic += 1;
+  }
 }
 
 function unrefTimer(timer: ReturnType<typeof setTimeout>): void {

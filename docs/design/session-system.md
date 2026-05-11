@@ -566,7 +566,7 @@ Retention is bounded and summary-oriented. The first managed runtime should pers
 
 Managed SDK callbacks can emit multiple safe projection changes for one provider event; for example, `tool.execution_start` records both a `tool_started` progress item and a `running` lifecycle signal. The local API must merge same-tick row-local runtime patches before writing the session registry so routine SDK chatter does not produce one file write and one SSE event per callback. Routine progress and repeated active lifecycle states may be throttled briefly; prompt-driving transitions (`waiting_for_builder`, interrupts, failures, PR/review/completion/cleanup evidence, terminal takeover, cancellation, and cleanup terminal states), evidence-bearing patches, and forced lifecycle writes flush promptly.
 
-Deterministic route-owned transitions such as cancel, terminal takeover, cleanup, and explicit evidence recording quiesce the row-local coalescer before writing directly through the registry. That prevents late SDK callbacks or a pending throttle from resurrecting `running` over builder-owned states like `cleaning_up`, `canceled`, `terminal_takeover`, or `cleaned_up`. Terminal outcomes close the coalescer row and retain a short late-callback suppression window; a subsequent managed launch or resume explicitly reopens the row.
+Deterministic route-owned transitions such as cancel, terminal takeover, cleanup, and explicit evidence recording quiesce the row-local coalescer before writing directly through the registry. That prevents late SDK callbacks or a pending throttle from resurrecting `running` over builder-owned states like `cleaning_up`, `canceled`, `terminal_takeover`, or `cleaned_up`. Terminal outcomes close the coalescer row and retain a short late-callback suppression window; late callbacks during that window are warn-logged and counted as cosmetic or evidence-bearing drops. After the retention window expires, callbacks are still ignored until a subsequent managed launch or resume explicitly reopens the row with `begin()`.
 
 `patchRuntimeMetadata` emits an upsert change event with `changeScope: "runtime"`. The SSE layer translates managed runtime-only changes into a compact `session.runtime.updated` event:
 
@@ -579,7 +579,7 @@ Deterministic route-owned transitions such as cancel, terminal takeover, cleanup
 }
 ```
 
-The compact event is filtered with the same `includeArchived`, `repo`, `workstreamId`, `nodeId`, and text options as `GET /api/sessions`. Runtime updates that do not match a client's filter are dropped; full non-runtime upserts still carry the complete row and may be converted to `session.deleted` when the row no longer matches a filtered client. Browser clients apply compact runtime updates to known rows in memory and fetch `/api/sessions` when the compact event references an unknown row.
+The compact event is filtered with the same `includeArchived`, `repo`, `workstreamId`, `nodeId`, and text options as `GET /api/sessions`. Filtered live events that no longer match a client are converted to `session.deleted` so clients evict rows consistently across full upserts and compact runtime updates. `patchRuntimeMetadata` is constrained to runtime, `updatedAt`, and version fields, so compact runtime updates cannot silently change non-runtime filter dimensions. Browser clients apply compact runtime updates to known rows in memory, ignore stale versions, and fetch `/api/sessions` when the compact event references an unknown row.
 
 ### Permission Policy
 
@@ -882,7 +882,7 @@ The dashboard and future relaunch flows consume the registry through the local A
 
 | Operation | Contract |
 |-----------|----------|
-| `listSessions(options?)` | Returns list items sorted by `lastSeenAt` then `updatedAt`; excludes archived rows by default; `options.text` matches `title`, `description`, and `tags`. |
+| `listSessions(options?)` | Returns list items sorted by `lastSeenAt` then `updatedAt`; excludes archived rows by default; `options.text` matches the shared session-search haystack (title, description, tags, origin kind, repo/branch/worktree, GitHub refs, and PAW launch/workflow metadata). |
 | `getSession(id)` | Returns the full registry record or `null`. |
 | `upsertSession(input)` | Creates or replaces a row for manual, observed, or launched sources using the identity/merge rules above. Lifecycle input is source-sensitive: observation may create newly discovered active rows and may also upsert rows that are already `ended`; caller-driven manual/launch upserts may not create `ended` or `archived` rows directly. |
 | `attachObservedSession(id, observation)` | Links a discovered Copilot session onto an existing manual or launched row without rewriting its original `origin.kind`. Observation-owned fields (`copilotSessionId`, `lastSeenAt`, `cwd`, `repo`, `branch`, observation-driven `ended`) flow through this operation. This operation does not let observation write builder-owned `paused` or `active` lifecycle transitions onto an existing row. |

@@ -27,6 +27,7 @@ import type {
   ManagedSdkRunnerResumeInput,
   ManagedSdkRunnerStartInput,
 } from "./managed-sdk-runner";
+import { ManagedRuntimePatchCoalescer } from "./managed-runtime-patch-coalescer";
 
 const createdRoots: string[] = [];
 const activeApps: StreamlinerApiApp[] = [];
@@ -37,6 +38,14 @@ function createRootDir(): string {
   mkdirSync(root, { recursive: true });
   createdRoots.push(root);
   return root;
+}
+
+function managedRuntimePatchCoalescer(
+  registryStore: SessionRegistryFileStore,
+): ManagedRuntimePatchCoalescer {
+  return new ManagedRuntimePatchCoalescer({
+    patchRuntimeMetadata: registryStore.patchRuntimeMetadata.bind(registryStore),
+  });
 }
 
 function normalizePath(path: string): string {
@@ -467,7 +476,10 @@ describe("launchPreparedNode", () => {
       registryStore,
       claimStore,
       fakeHandoff(root, { runtimeKind: "managed-sdk" }),
-      { managedSdkRunner: runner },
+      {
+        managedSdkRunner: runner,
+        runtimePatchCoalescer: managedRuntimePatchCoalescer(registryStore),
+      },
     )).rejects.toThrow(/sdk exploded; also failed to record managed runtime failure/);
 
     const [claimEntry] = claimStore.listClaims();
@@ -627,6 +639,7 @@ describe("launchManagedSdkNode", () => {
       {
         now: () => new Date("2026-05-07T12:00:00.000Z"),
         managedSdkRunner: runner,
+        runtimePatchCoalescer: managedRuntimePatchCoalescer(registryStore),
       },
     );
 
@@ -703,6 +716,7 @@ describe("launchManagedSdkNode", () => {
       {
         now: () => new Date("2026-05-07T12:00:00.000Z"),
         managedSdkRunner: runner,
+        runtimePatchCoalescer: managedRuntimePatchCoalescer(registryStore),
       },
     );
     const callsBeforeRoutineFlush = patchSpy.mock.calls.length;
@@ -756,8 +770,10 @@ describe("resumeManagedSdkNode", () => {
       },
     };
     const handoff = fakeHandoff(root, { runtimeKind: "managed-sdk" });
+    const runtimePatchCoalescer = managedRuntimePatchCoalescer(registryStore);
     const launched = await launchManagedSdkNode(registryStore, claimStore, handoff, {
       managedSdkRunner: runner,
+      runtimePatchCoalescer,
       now: () => new Date("2026-05-07T12:00:00.000Z"),
     });
     bindManagedClaimToSdkSession(registryStore, claimStore, {
@@ -781,6 +797,7 @@ describe("resumeManagedSdkNode", () => {
       launched.launchClaim.launchClaimId,
       {
         managedSdkRunner: runner,
+        runtimePatchCoalescer,
         now: () => new Date("2026-05-07T12:05:00.000Z"),
       },
     );

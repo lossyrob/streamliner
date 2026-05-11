@@ -271,12 +271,12 @@ function lifecycleProgressMessage(state: SessionRegistryManagedLifecycleState): 
 }
 
 function runtimePatchCoalescerFor(
-  registryStore: SessionRegistryFileStore,
   deps: NodeLaunchDeps,
 ): ManagedRuntimePatchCoalescer {
-  return deps.runtimePatchCoalescer ?? new ManagedRuntimePatchCoalescer({
-    patchRuntimeMetadata: registryStore.patchRuntimeMetadata.bind(registryStore),
-  });
+  if (!deps.runtimePatchCoalescer) {
+    throw new Error("Managed runtime patch coalescer dependency is required.");
+  }
+  return deps.runtimePatchCoalescer;
 }
 
 function isNonResumableManagedLifecycle(
@@ -675,7 +675,7 @@ export async function launchManagedSdkNode(
       },
     }],
   }, now);
-  const runtimePatches = runtimePatchCoalescerFor(registryStore, deps);
+  const runtimePatches = runtimePatchCoalescerFor(deps);
   runtimePatches.begin(registryId, "preparing");
   const runner = deps.managedSdkRunner ?? new DefaultManagedSdkRunner();
   let startResult: ManagedSdkRunnerStartResult;
@@ -747,7 +747,6 @@ export async function launchManagedSdkNode(
           message,
         }],
       });
-      runtimePatches.close(registryId);
     } catch (runtimePatchError: unknown) {
       const patchMessage = errorMessage(runtimePatchError);
       cleanupFailures.push(`record managed runtime failure: ${patchMessage}`);
@@ -893,7 +892,7 @@ export async function resumeManagedSdkNode(
       },
     }],
   }, now);
-  const runtimePatches = runtimePatchCoalescerFor(registryStore, deps);
+  const runtimePatches = runtimePatchCoalescerFor(deps);
   runtimePatches.begin(registryId, "starting");
 
   const resumePrompt = resumePromptForManagedSdkNode(handoff, claim);
@@ -966,7 +965,6 @@ export async function resumeManagedSdkNode(
           message,
         }],
       });
-      runtimePatches.close(registryId);
     } catch (runtimePatchError: unknown) {
       logger.error("managed SDK resume failure runtime transition failed", {
         launchClaimId: claim.launchClaimId,

@@ -126,12 +126,11 @@ export function createStreamlinerApiApp(
     });
   const managedSdkRunner =
     options.nodeLaunchDeps?.managedSdkRunner ?? new DefaultManagedSdkRunner();
-  const runtimePatchCoalescer = store instanceof SessionRegistryFileStore
-    ? options.nodeLaunchDeps?.runtimePatchCoalescer ??
-      new ManagedRuntimePatchCoalescer({
-        patchRuntimeMetadata: store.patchRuntimeMetadata.bind(store),
-      })
-    : options.nodeLaunchDeps?.runtimePatchCoalescer;
+  const runtimePatchCoalescer =
+    options.nodeLaunchDeps?.runtimePatchCoalescer ??
+    new ManagedRuntimePatchCoalescer({
+      patchRuntimeMetadata: store.patchRuntimeMetadata.bind(store),
+    });
   const nodeLaunchDeps: NodeLaunchDeps = {
     ...options.nodeLaunchDeps,
     managedSdkRunner,
