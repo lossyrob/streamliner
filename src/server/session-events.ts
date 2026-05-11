@@ -3,10 +3,10 @@ import type { Request, Response } from "express";
 import type {
   SessionRegistryListOptions,
   SessionRegistryChangeEvent,
-  SessionRegistryListItem,
   SessionRegistryStore,
 } from "../session-registry-contract";
 import type { SessionRegistryRecord } from "../session-registry-schema";
+import { sessionRegistryRecordMatchesOptions } from "../session-registry-filter";
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const REPLAY_BUFFER_SIZE = 100;
@@ -117,78 +117,6 @@ function parseSnapshotOptions(req: Request): SessionRegistryListOptions {
     workstreamId: url.searchParams.get("workstreamId") ?? undefined,
     nodeId: url.searchParams.get("nodeId") ?? undefined,
   };
-}
-
-function recordMatchesOptions(
-  record: SessionRegistryRecord | SessionRegistryListItem,
-  options: SessionRegistryListOptions,
-): boolean {
-  if (!options.includeArchived && record.lifecycleStatus === "archived") {
-    return false;
-  }
-  if (
-    Object.prototype.hasOwnProperty.call(options, "repo") &&
-    record.repo !== options.repo
-  ) {
-    return false;
-  }
-  if (
-    options.workstreamId &&
-    record.graphBinding?.workstreamId !== options.workstreamId
-  ) {
-    return false;
-  }
-  if (options.nodeId && record.graphBinding?.nodeId !== options.nodeId) {
-    return false;
-  }
-  const text = options.text?.trim().toLowerCase();
-  return text ? recordTextMatches(record, text) : true;
-}
-
-function recordTextMatches(
-  record: SessionRegistryRecord | SessionRegistryListItem,
-  text: string,
-): boolean {
-  const originKind = "originKind" in record ? record.originKind : record.origin.kind;
-  const refs = record.derivedGithubRefs.map((ref) =>
-    [ref.repo, ref.type, `#${ref.number}`, `${ref.type} #${ref.number}`]
-      .filter(Boolean)
-      .join(" "),
-  );
-  const pawWorkflowHaystacks = record.pawWorkflow
-    ? [
-        record.pawWorkflow.status,
-        record.pawWorkflow.stage ?? "",
-        record.pawWorkflow.workflowKind,
-        record.pawWorkflow.workId ?? "",
-        record.pawWorkflow.workTitle ?? "",
-        record.pawWorkflow.workDir ?? "",
-        ...record.pawWorkflow.diagnostics,
-      ]
-    : [];
-  const pawLaunchHaystacks = record.pawLaunch
-    ? [
-        record.pawLaunch.workId,
-        record.pawLaunch.workTitle,
-        record.pawLaunch.workflowKind,
-        record.pawLaunch.pawWorkDir,
-      ]
-    : [];
-  return [
-    record.title,
-    record.description,
-    record.aiSummary ?? "",
-    record.cwd,
-    record.repo ?? "",
-    record.branch ?? "",
-    record.derivedBranch ?? "",
-    record.derivedWorktreePath ?? "",
-    originKind,
-    ...refs,
-    ...pawWorkflowHaystacks,
-    ...pawLaunchHaystacks,
-    ...record.tags,
-  ].some((candidate) => candidate.toLowerCase().includes(text));
 }
 
 export class SessionRegistryEventStream {
@@ -315,10 +243,13 @@ function eventForClient(
   if (!event.filterRecord) {
     return event;
   }
-  if (recordMatchesOptions(event.filterRecord, options)) {
+  if (sessionRegistryRecordMatchesOptions(event.filterRecord, options)) {
     return event;
   }
-  if (event.name === "session.upserted" && event.registryId) {
+  if (
+    (event.name === "session.upserted" || event.name === "session.runtime.updated") &&
+    event.registryId
+  ) {
     return {
       id: event.id,
       name: "session.deleted",

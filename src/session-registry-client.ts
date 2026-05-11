@@ -3,7 +3,18 @@ import type {
   SessionRegistryListItem,
   SessionRegistryListOptions,
 } from "./session-registry-contract";
-import type { SessionRegistryRuntimeMetadata } from "./session-registry-schema";
+import { sessionRegistryRecordMatchesOptions } from "./session-registry-filter";
+import {
+  SESSION_REGISTRY_MANAGED_LIFECYCLE_STATES,
+  SESSION_REGISTRY_RUNTIME_EVIDENCE_KINDS,
+  SESSION_REGISTRY_RUNTIME_KINDS,
+  SESSION_REGISTRY_RUNTIME_OWNERS,
+  SESSION_REGISTRY_RUNTIME_PERMISSION_PROFILES,
+  SESSION_REGISTRY_RUNTIME_PROGRESS_EVENT_TYPES,
+  type SessionRegistryRuntimeEvidence,
+  type SessionRegistryRuntimeMetadata,
+  type SessionRegistryRuntimeProgressEvent,
+} from "./session-registry-schema";
 
 const SESSION_POLL_INTERVAL_MS = 15_000;
 const SESSION_EVENT_REFETCH_DEBOUNCE_MS = 150;
@@ -136,55 +147,65 @@ function runtimeMetadataFromPayload(
   if (value === null) {
     return null;
   }
-  if (
-    isJsonObject(value) &&
-    typeof value.runtimeKind === "string" &&
-    typeof value.runtimeOwner === "string"
-  ) {
-    return value as unknown as SessionRegistryRuntimeMetadata;
+  if (!isJsonObject(value)) {
+    return undefined;
   }
-  return undefined;
+  if (
+    !isKnownValue(value.runtimeKind, SESSION_REGISTRY_RUNTIME_KINDS) ||
+    !isKnownValue(value.runtimeOwner, SESSION_REGISTRY_RUNTIME_OWNERS) ||
+    !isNullableKnownValue(
+      value.lifecycleState,
+      SESSION_REGISTRY_MANAGED_LIFECYCLE_STATES,
+    ) ||
+    !isNullableKnownValue(
+      value.permissionProfile,
+      SESSION_REGISTRY_RUNTIME_PERMISSION_PROFILES,
+    ) ||
+    !runtimeProgressEventsFromPayload(value.progressEvents) ||
+    !runtimeEvidenceFromPayload(value.evidence)
+  ) {
+    return undefined;
+  }
+  return value as unknown as SessionRegistryRuntimeMetadata;
 }
 
-function sessionTextMatches(session: SessionRegistryListItem, text: string): boolean {
-  const refs = session.derivedGithubRefs.map((ref) =>
-    [ref.repo, ref.type, `#${ref.number}`, `${ref.type} #${ref.number}`]
-      .filter(Boolean)
-      .join(" "),
+function isKnownValue<const T extends readonly string[]>(
+  value: unknown,
+  allowed: T,
+): value is T[number] {
+  return typeof value === "string" && allowed.includes(value as T[number]);
+}
+
+function isNullableKnownValue<const T extends readonly string[]>(
+  value: unknown,
+  allowed: T,
+): value is T[number] | null {
+  return value === null || isKnownValue(value, allowed);
+}
+
+function runtimeProgressEventsFromPayload(
+  value: unknown,
+): value is SessionRegistryRuntimeProgressEvent[] {
+  return Array.isArray(value) && value.every((event) =>
+    isJsonObject(event) &&
+    typeof event.id === "string" &&
+    typeof event.sequence === "number" &&
+    isKnownValue(event.type, SESSION_REGISTRY_RUNTIME_PROGRESS_EVENT_TYPES) &&
+    typeof event.message === "string" &&
+    typeof event.timestamp === "string"
   );
-  const pawWorkflowHaystacks = session.pawWorkflow
-    ? [
-        session.pawWorkflow.status,
-        session.pawWorkflow.stage ?? "",
-        session.pawWorkflow.workflowKind,
-        session.pawWorkflow.workId ?? "",
-        session.pawWorkflow.workTitle ?? "",
-        session.pawWorkflow.workDir ?? "",
-        ...session.pawWorkflow.diagnostics,
-      ]
-    : [];
-  const pawLaunchHaystacks = session.pawLaunch
-    ? [
-        session.pawLaunch.workId,
-        session.pawLaunch.workTitle,
-        session.pawLaunch.workflowKind,
-        session.pawLaunch.pawWorkDir,
-      ]
-    : [];
-  return [
-    session.title,
-    session.description,
-    session.aiSummary ?? "",
-    session.cwd,
-    session.repo ?? "",
-    session.branch ?? "",
-    session.derivedBranch ?? "",
-    session.derivedWorktreePath ?? "",
-    ...refs,
-    ...pawWorkflowHaystacks,
-    ...pawLaunchHaystacks,
-    ...session.tags,
-  ].some((candidate) => candidate.toLowerCase().includes(text));
+}
+
+function runtimeEvidenceFromPayload(
+  value: unknown,
+): value is SessionRegistryRuntimeEvidence[] {
+  return Array.isArray(value) && value.every((evidence) =>
+    isJsonObject(evidence) &&
+    typeof evidence.id === "string" &&
+    isKnownValue(evidence.kind, SESSION_REGISTRY_RUNTIME_EVIDENCE_KINDS) &&
+    typeof evidence.source === "string" &&
+    typeof evidence.detectedAt === "string"
+  );
 }
 
 export function sessionMatchesQuery(
@@ -209,8 +230,7 @@ export function sessionMatchesQuery(
   if (query.nodeId && session.graphBinding?.nodeId !== query.nodeId) {
     return false;
   }
-  const text = query.text?.trim().toLowerCase();
-  return text ? sessionTextMatches(session, text) : true;
+  return sessionRegistryRecordMatchesOptions(session, query);
 }
 
 export function useSessionRegistryList(
@@ -455,6 +475,12 @@ export function useSessionRegistryList(
           return currentSessions;
         }
         const existing = currentSessions[existingIndex];
+        if (
+          payload.version !== undefined &&
+          payload.version <= existing.version
+        ) {
+          return currentSessions;
+        }
         const nextSessions = [...currentSessions];
         nextSessions[existingIndex] = {
           ...existing,

@@ -1312,6 +1312,78 @@ describe("createStreamlinerApiApp", () => {
     }
   });
 
+  it("uses the same origin-kind text matching for session event snapshots as list results", () => {
+    const rootDir = createRootDir();
+    const store = new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") });
+    store.upsertSession({
+      id: "launched-origin-event",
+      title: "Origin event",
+      description: "",
+      cwd: "C:\\repo",
+      origin: { kind: "launched", launchClaimId: "claim-origin-event" },
+    });
+    store.upsertSession({
+      id: "manual-origin-event",
+      title: "Origin event",
+      description: "",
+      cwd: "C:\\repo",
+      origin: { kind: "manual" },
+    });
+    const eventStream = new SessionRegistryEventStream(store);
+    try {
+      const stream = openEventStream(
+        eventStream,
+        undefined,
+        "/api/sessions/events?text=launched",
+      );
+
+      expect(store.listSessions({ text: "launched" }).map((session) => session.id))
+        .toEqual(["launched-origin-event"]);
+      expect(stream.res.body()).toContain("launched-origin-event");
+      expect(stream.res.body()).not.toContain("manual-origin-event");
+      stream.req.emit("close");
+    } finally {
+      eventStream.close();
+    }
+  });
+
+  it("synthesizes deletes when upserts stop matching a session event query", () => {
+    const rootDir = createRootDir();
+    const store = new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") });
+    store.upsertSession({
+      id: "matching-to-removed",
+      title: "Alpha row",
+      description: "",
+      cwd: "C:\\repo",
+      origin: { kind: "manual" },
+    });
+    const eventStream = new SessionRegistryEventStream(store);
+    try {
+      const stream = openEventStream(
+        eventStream,
+        undefined,
+        "/api/sessions/events?text=alpha",
+      );
+      expect(stream.res.body()).toContain("Alpha row");
+
+      store.upsertSession({
+        id: "matching-to-removed",
+        title: "Beta row",
+        description: "",
+        cwd: "C:\\repo",
+        origin: { kind: "manual" },
+      });
+
+      const body = stream.res.body();
+      const deletion = body.slice(body.lastIndexOf("event: session.deleted"));
+      expect(deletion).toContain("matching-to-removed");
+      expect(deletion).not.toContain("Beta row");
+      stream.req.emit("close");
+    } finally {
+      eventStream.close();
+    }
+  });
+
   it("writes id-less SSE heartbeats", () => {
     vi.useFakeTimers();
     const { store } = createEventStreamStore();
