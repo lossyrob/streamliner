@@ -45,6 +45,9 @@ while Streamliner owns the SDK session.
   SDK owner/session is verifiably still attached; otherwise Streamliner records a
   typed diagnostic reason and moves the row to a safe non-running or
   builder-action state.
+- Managed progress writes must be coalesced into bounded projections. Routine SDK
+  event bursts must not produce one registry file/index write or one full session
+  snapshot broadcast per raw SDK event.
 
 SDK helper sessions used only for launch preparation remain hidden. SDK-managed
 workers are user-visible node sessions with `graphBinding`, `pawLaunch`, runtime
@@ -133,6 +136,26 @@ link, worktree cleanliness, and deterministic PR/head-state checks. If existing
 backend projections are too thin, the console node may add small sanitized
 projection fields rather than exposing raw tool output.
 
+## API responsiveness and supervision
+
+The local API is the builder-facing control plane. It must remain responsive while
+multiple managed SDK sessions are active. Noisy SDK event streams should be
+converted into compact lifecycle/progress/evidence projections before they reach
+registry persistence or session-event delivery.
+
+Same-process hardening should be attempted first: coalesce routine progress,
+flush important lifecycle/evidence transitions promptly, avoid duplicate
+progress/lifecycle writes for the same SDK event, and reduce redundant UI polling
+while live event streams are connected.
+
+If measured same-process hardening is not sufficient for Wave 2, Streamliner
+should introduce a local managed-runtime supervisor process. The supervisor owns
+Copilot SDK clients/sessions and sends compact updates back to the API; the API
+continues to own builder-facing HTTP routes, graph/session projections, and
+control-plane authorization. Interrupt, cancel, one-way terminal takeover,
+cleanup, and startup/crash reconciliation must continue to work across the
+boundary.
+
 ## Interruption and takeover
 
 Cancellation is evidence-based:
@@ -163,10 +186,10 @@ worktree, expected branch, PR/head/merge state, clean working tree, unpushed
 commits, and whether another worktree/process still depends on the path or
 branch. Guardrail failures move to `waiting_for_builder` with typed reasons.
 
-Managed worktree cleanup should record and use a base commit/ref anchor where
-practical. The exact field location can follow the implementation's launch or
-registry metadata shape, but cleanup diagnostics should include the base commit
-when cleanup is blocked or branch/merge state is ambiguous.
+Managed worktree cleanup should have deterministic branch/PR/head-state
+guardrails. PR #86 ships branch-tip revalidation and merge-base checks; the Wave
+2 punch list should verify whether any remaining base commit/ref anchoring
+diagnostic is needed for ambiguous squash-merge or branch-drift cases.
 
 ## Downstream worker responsibilities
 
@@ -187,9 +210,9 @@ cleanup affordances without exposing raw SDK events.
 
 Implement one-way resume into visible Copilot CLI, registry rebinding, SDK
 teardown/closeout, takeover failure behavior, and deterministic
-cleanup-after-merge. Capture base commit/ref context for managed worktrees where
-practical and use it with branch, PR/head, clean-worktree, and unpushed-commit
-checks before cleanup.
+cleanup-after-merge. Use branch, PR/head, merge-base, clean-worktree, and
+unpushed-commit checks before cleanup; defer any extra base commit/ref diagnostic
+only if the Wave 2 punch-list validation finds remaining ambiguity.
 
 ### Managed runtime startup reconciliation
 
@@ -198,6 +221,20 @@ a prior API process. Rows in active states such as `starting`, `running`, or
 `interrupt_requested` must move to a safe diagnostic state unless the SDK
 owner/session is verifiably live. My Sessions and graph overlays must not show
 stale rows as actively running workers.
+
+### Managed runtime API responsiveness
+
+Bound the same-process managed runtime hot path before adding the terminal-like
+console. Routine SDK progress should be batched, registry writes should be
+coalesced, important terminal/evidence transitions should flush immediately, and
+SSE/UI polling should not amplify every raw SDK event into full API work.
+
+### Managed runtime supervisor isolation
+
+Use responsiveness evidence to decide whether same-process coalescing is
+sufficient. If not, split managed SDK session ownership into a local supervisor
+process that projects compact lifecycle/progress/evidence updates to the API
+while preserving managed actions and safe recovery semantics.
 
 ### Managed session console
 

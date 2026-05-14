@@ -7,7 +7,15 @@
 - Type: task
 - Wave: 2 / `managed-runtime-usable`
 - Tracker: #75
-- Status: ready
+- Status: completed
+
+## Completion
+
+Completed by PR #86. The shipped implementation added managed interrupt/cancel,
+one-way visible Copilot CLI takeover through `copilot --resume <sdkSessionId>`,
+trusted observation rebinding to the same registry row, cleanup-after-merge
+guardrails for linked worktrees/local branches, state-aware UI actions, and
+Decision 010 for durable takeover/cleanup semantics.
 
 ## Outcome
 
@@ -30,15 +38,11 @@ after merge without requiring terminal interaction for simple autonomous runs.
 
 ## Research-Informed Cleanup Anchor
 
-Record base commit/ref context when the managed worktree is created or first
-bound to the node. Use that anchor as cleanup and diff context alongside
-`sdkWorkspacePath`, branch, PR/head state, clean working tree, and
-unpushed-commit checks.
-
-The exact field location can follow the implementation's launch/registry
-metadata shape, but cleanup diagnostics should include the base commit when
-cleanup is blocked or ambiguous. This guards against squash-merge ambiguity,
-rewritten branches, and branch-state drift.
+PR #86 shipped branch-tip revalidation and deterministic PR/head-state cleanup
+checks. The research-inspired base commit/ref anchoring concern remains useful
+as validation input for the Wave 2 punch list: verify whether the shipped
+merge-base and branch-tip checks are sufficient, and add a small diagnostic
+follow-up only if ambiguity remains.
 
 ## Boundaries
 
@@ -58,4 +62,5 @@ Out of scope:
   SDK-owned prompts.
 - Cleanup-after-merge safely removes eligible linked worktrees/local branches and
   blocks unsafe cases with clear reasons.
-- Cleanup/diff diagnostics include base commit/ref context when relevant.
+- Cleanup/diff guardrails are validated by PR #86 behavior and any remaining
+  base-anchor concern is handled by the Wave 2 punch list.
