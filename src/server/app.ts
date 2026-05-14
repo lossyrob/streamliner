@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { join, resolve as resolvePath } from "node:path";
 
 import express, { type ErrorRequestHandler, type Express } from "express";
 
@@ -27,6 +27,7 @@ import { createNodeLaunchesRouter } from "./routes/node-launches";
 import { createNodeLaunchRecordsRouter } from "./routes/node-launch-records";
 import { createPawLaunchPromptProfilesRouter } from "./routes/paw-launch-prompt-profiles";
 import { createPawWorkflowContextRouter } from "./routes/paw-workflow-context";
+import { createProtoCanvasRouter } from "./routes/proto-canvas";
 import { createRecentsRouter } from "./routes/recents";
 import { createSessionLaunchSettingsRouter } from "./routes/session-launch-settings";
 import { createSessionsRouter } from "./routes/sessions";
@@ -275,6 +276,26 @@ export function createStreamlinerApiApp(
       launchClaimStore: options.launchClaimStore,
     }),
   );
+  app.use(
+    "/api/_proto/canvas",
+    createProtoCanvasRouter(),
+  );
+
+  // Static prototype page. Visit http://<api-host>:<api-port>/_proto/canvas/
+  // for the DBAgent portfolio canvas. Hard-coded to read from the planning
+  // repo via the /api/_proto/canvas/* routes above.
+  app.use(
+    "/_proto/canvas",
+    express.static(resolvePath(process.cwd(), "_proto", "canvas"), {
+      etag: false,
+      lastModified: false,
+      setHeaders: (res) => {
+        // Aggressive no-cache so prototype iteration is immediate.
+        res.setHeader("Cache-Control", "no-store");
+      },
+    }),
+  );
+
   app.use(malformedJsonHandler);
   app.use(jsonErrorHandler);
 
