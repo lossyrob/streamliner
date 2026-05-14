@@ -3224,11 +3224,14 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       const desiredBinding = desired.graphBinding;
       const isChange =
         JSON.stringify(current.graphBinding) !== JSON.stringify(desiredBinding);
+      if (!isChange) {
+        return { ok: true as const, record: cloneValue(current) };
+      }
       const nextRecord: SessionRegistryRecord = {
         ...cloneValue(current),
         graphBinding: desiredBinding,
-        version: isChange ? current.version + 1 : current.version,
-        updatedAt: isChange ? isoNow() : current.updatedAt,
+        version: current.version + 1,
+        updatedAt: isoNow(),
       };
       const storedRecord = mergeStoredRecord(current, nextRecord);
       // Force graphBinding to the desired value, defeating the merge's
@@ -3239,13 +3242,11 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       this.persistEntry(storedRecord);
       this.persistIndex(records, nextIndex);
       this.commitSnapshot(records, nextIndex);
-      if (isChange) {
-        this.emitChange({
-          kind: SESSION_REGISTRY_CHANGE_EVENT_KINDS[0],
-          registryId: id,
-          snapshot: cloneValue(storedRecord),
-        });
-      }
+      this.emitChange({
+        kind: SESSION_REGISTRY_CHANGE_EVENT_KINDS[0],
+        registryId: id,
+        snapshot: cloneValue(storedRecord),
+      });
       return { ok: true as const, record: cloneValue(storedRecord) };
     });
   }

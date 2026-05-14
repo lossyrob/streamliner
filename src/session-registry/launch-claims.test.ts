@@ -528,6 +528,10 @@ describe("reconcileOrphanReservedRows", () => {
     const row = registryStore.getSession("orphan-with-session");
     expect(row?.copilotSessionId).toBe("real-session");
     expect(row?.graphBinding).toBeNull();
+
+    const second = reconcileOrphanReservedRows(registryStore, claimStore);
+    expect(second.rowsDeleted).toBe(0);
+    expect(second.rowsGraphBindingCleared).toBe(0);
   });
 
   it("leaves rows alone when their claim still exists", () => {
