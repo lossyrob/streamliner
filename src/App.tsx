@@ -45,6 +45,11 @@ import {
   type PawPromptProfile,
 } from "./components/paw-prompt-profiles";
 import {
+  loadReviewPromptTemplates,
+  mergeReviewPromptTemplates,
+  type PawReviewPromptTemplate,
+} from "./components/paw-review-prompt-templates";
+import {
   FALLBACK_SESSION_LAUNCH_DEFAULT_CLI_ARGS,
   formatSessionLaunchCliArgsText,
   loadSessionLaunchSettings,
@@ -108,6 +113,23 @@ interface GraphLoadError {
 }
 
 type PawLaunchPreparationResponse = NodeLaunchHandoff;
+
+interface CompanionTerminalLaunchResponse {
+  terminal: {
+    method: string;
+    pid?: number;
+  };
+  cwd: string;
+  command: {
+    cliArgs: string[];
+  };
+}
+
+interface CompanionLaunchState {
+  launching: boolean;
+  result: CompanionTerminalLaunchResponse | null;
+  error: string | null;
+}
 
 interface PawLaunchRunStartResponse {
   runId?: string;
@@ -1246,6 +1268,67 @@ function usePromptProfilesState() {
   };
 }
 
+function useReviewPromptTemplatesState() {
+  const [templates, setTemplates] = useState<PawReviewPromptTemplate[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const requestRef = useRef<Promise<void> | null>(null);
+  const mountedRef = useRef(true);
+  const mutationVersionRef = useRef(0);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const noteTemplatesChanged = useCallback((changedTemplates: PawReviewPromptTemplate[]) => {
+    mutationVersionRef.current += 1;
+    setTemplates((current) => mergeReviewPromptTemplates(current, changedTemplates));
+  }, []);
+
+  const refresh = useCallback(() => {
+    if (requestRef.current) {
+      return requestRef.current;
+    }
+    setLoading(true);
+    setError(null);
+    const requestMutationVersion = mutationVersionRef.current;
+    const request = loadReviewPromptTemplates()
+      .then((loadedTemplates) => {
+        if (mountedRef.current) {
+          if (mutationVersionRef.current === requestMutationVersion) {
+            setTemplates(() => mergeReviewPromptTemplates([], loadedTemplates));
+          } else {
+            setTemplates((current) => mergeReviewPromptTemplates(current, loadedTemplates));
+          }
+        }
+      })
+      .catch((loadError: unknown) => {
+        if (mountedRef.current) {
+          setError(loadError instanceof Error ? loadError.message : String(loadError));
+        }
+      })
+      .finally(() => {
+        requestRef.current = null;
+        if (mountedRef.current) {
+          setLoading(false);
+        }
+      });
+    requestRef.current = request;
+    return request;
+  }, []);
+
+  return {
+    templates,
+    loading,
+    error,
+    refresh,
+    noteTemplatesChanged,
+  };
+}
+
 function useSessionLaunchSettingsState() {
   const [settings, setSettings] = useState<SessionLaunchSettings>({
     defaultCliArgs: [...FALLBACK_SESSION_LAUNCH_DEFAULT_CLI_ARGS],
@@ -1349,6 +1432,11 @@ function GraphDashboard({
   promptProfilesError,
   onRefreshPromptProfiles,
   onPromptProfilesChanged,
+  reviewPromptTemplates,
+  reviewPromptTemplatesLoading,
+  reviewPromptTemplatesError,
+  onRefreshReviewPromptTemplates,
+  onReviewPromptTemplatesChanged,
   sessionLaunchSettings,
 }: ReturnType<typeof useGraphLoader> & {
   onOpenWorkstream: (entry: WorkstreamRegistryListEntry) => void | Promise<void>;
@@ -1361,6 +1449,11 @@ function GraphDashboard({
   promptProfilesError: string | null;
   onRefreshPromptProfiles: () => Promise<void> | void;
   onPromptProfilesChanged: (profiles: PawPromptProfile[]) => void;
+  reviewPromptTemplates: PawReviewPromptTemplate[];
+  reviewPromptTemplatesLoading: boolean;
+  reviewPromptTemplatesError: string | null;
+  onRefreshReviewPromptTemplates: () => Promise<void> | void;
+  onReviewPromptTemplatesChanged: (templates: PawReviewPromptTemplate[]) => void;
   sessionLaunchSettings: SessionLaunchSettings;
 }) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(
@@ -1370,6 +1463,7 @@ function GraphDashboard({
   const [launchDialogOpen, setLaunchDialogOpen] = useState(false);
   const [launchDialogTarget, setLaunchDialogTarget] = useState<LaunchOperationTarget | null>(null);
   const [launchOperationByKey, setLaunchOperationByKey] = useState<Record<string, NodeLaunchOperation>>({});
+  const [companionLaunchByKey, setCompanionLaunchByKey] = useState<Record<string, CompanionLaunchState>>({});
   const [launchReleasing, setLaunchReleasing] = useState(false);
   const [launchReleaseError, setLaunchReleaseError] = useState<string | null>(null);
   const [launchReleaseStatus, setLaunchReleaseStatus] = useState<string | null>(null);
@@ -1492,6 +1586,9 @@ function GraphDashboard({
 
   const launchDialogOperation = launchDialogTarget
     ? launchOperationByKey[launchOperationKey(launchDialogTarget)] ?? null
+    : null;
+  const launchDialogCompanion = launchDialogTarget
+    ? companionLaunchByKey[launchOperationKey(launchDialogTarget)] ?? null
     : null;
 
   const launchDialogLatestClaim = launchDialogOperation?.latestClaim
@@ -1636,6 +1733,9 @@ function GraphDashboard({
       cwdPreferenceKey,
       graphPath,
       terminalPreference: "Manual terminal launch after preparation",
+      githubIssueNumber: defaultsEntry.node.tracker?.type === "github"
+        ? defaultsEntry.node.tracker.number
+        : null,
       githubIssueLabel: defaultsEntry.node.tracker?.type === "github"
         ? workstreamTrackerLabel(defaultsEntry.node.tracker)
         : null,
@@ -1810,8 +1910,9 @@ function GraphDashboard({
   );
 
   const prefetchPromptProfiles = useCallback(() => {
-    return onRefreshPromptProfiles();
-  }, [onRefreshPromptProfiles]);
+    void onRefreshPromptProfiles();
+    return onRefreshReviewPromptTemplates();
+  }, [onRefreshPromptProfiles, onRefreshReviewPromptTemplates]);
 
   useEffect(() => {
     if (!selectedLaunchTarget || !canLaunchSelectedNode) {
@@ -2060,6 +2161,11 @@ function GraphDashboard({
     input: PawTerminalLaunchInput,
     target: LaunchOperationTarget,
   ) => {
+    const operationKey = launchOperationKey(target);
+    setCompanionLaunchByKey((current) => ({
+      ...current,
+      [operationKey]: { launching: false, result: null, error: null },
+    }));
     updateLaunchOperation(target, (current) =>
       createClientLaunchOperation(target, "launching", {
         ...(current ?? {}),
@@ -2103,6 +2209,44 @@ function GraphDashboard({
         })
       );
       setNodeLaunchRecordRefreshKey((current) => current + 1);
+      if (input.reviewCompanion) {
+        setCompanionLaunchByKey((current) => ({
+          ...current,
+          [operationKey]: { launching: true, result: null, error: null },
+        }));
+        try {
+          const companionResponse = await fetch("/api/companion-terminal-launches", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              cwd: handoff.cwd,
+              kickoffPrompt: input.reviewCompanion.kickoffPrompt,
+              cliArgs: handoff.cliArgs,
+              preferredTerminal: handoff.terminal.preferredTerminal,
+              title: `${input.terminalTitle} REVIEW`,
+              tabColor: input.terminalColor,
+            }),
+          });
+          if (!companionResponse.ok) {
+            const parsed = await parseErrorResponse(companionResponse);
+            throw new Error(parsed.message);
+          }
+          const companionResult = await companionResponse.json() as CompanionTerminalLaunchResponse;
+          setCompanionLaunchByKey((current) => ({
+            ...current,
+            [operationKey]: { launching: false, result: companionResult, error: null },
+          }));
+        } catch (companionError: unknown) {
+          setCompanionLaunchByKey((current) => ({
+            ...current,
+            [operationKey]: {
+              launching: false,
+              result: null,
+              error: companionError instanceof Error ? companionError.message : String(companionError),
+            },
+          }));
+        }
+      }
     } catch (nextError) {
       updateLaunchOperation(target, (current) =>
         createClientLaunchOperation(target, "terminal_failed", {
@@ -2316,6 +2460,7 @@ function GraphDashboard({
           kickoffPrompt: preparedHandoff.kickoffPrompt,
           terminalTitle: preparedHandoff.terminal.title ?? preparedHandoff.launchMetadata.workTitle,
           terminalColor: preparedHandoff.terminal.tabColor ?? null,
+          reviewCompanion: configuration.reviewCompanion,
         }, target);
       }
     } catch (nextError) {
@@ -2559,6 +2704,9 @@ function GraphDashboard({
           promptProfiles={promptProfiles}
           promptProfilesLoading={promptProfilesLoading}
           promptProfilesError={promptProfilesError}
+          reviewPromptTemplates={reviewPromptTemplates}
+          reviewPromptTemplatesLoading={reviewPromptTemplatesLoading}
+          reviewPromptTemplatesError={reviewPromptTemplatesError}
           preparing={
             launchDialogOperation?.status === "preparing"
           }
@@ -2577,10 +2725,14 @@ function GraphDashboard({
           resumingLaunch={launchResuming}
           resumeError={launchResumeError}
           resumeStatus={launchResumeStatus}
+          companionLaunching={launchDialogCompanion?.launching ?? false}
+          companionLaunchError={launchDialogCompanion?.error ?? null}
+          companionLaunchResult={launchDialogCompanion?.result ?? null}
           onCancel={handleCloseLaunchDialog}
           onSubmit={handleSubmitLaunch}
           onLaunchTerminal={handleLaunchTerminal}
           onPromptProfilesChanged={onPromptProfilesChanged}
+          onReviewPromptTemplatesChanged={onReviewPromptTemplatesChanged}
           onReleaseLaunch={launchDialogLatestClaim?.blocksLaunch ? handleReleaseLaunch : undefined}
           onResumeLaunch={canResumeBackgroundLaunch ? handleResumeBackgroundLaunch : undefined}
         />
@@ -2780,6 +2932,7 @@ export default function App() {
   const { route, setRoute } = useDashboardRoute();
   const graphLoader = useGraphLoader(route, true);
   const promptProfileState = usePromptProfilesState();
+  const reviewPromptTemplateState = useReviewPromptTemplatesState();
   const sessionLaunchSettingsState = useSessionLaunchSettingsState();
   const beforeLeaveRef = useRef<(() => Promise<boolean>) | null>(null);
 
@@ -2923,6 +3076,11 @@ export default function App() {
           promptProfilesError={promptProfileState.error}
           onRefreshPromptProfiles={promptProfileState.refresh}
           onPromptProfilesChanged={promptProfileState.noteProfilesChanged}
+          reviewPromptTemplates={reviewPromptTemplateState.templates}
+          reviewPromptTemplatesLoading={reviewPromptTemplateState.loading}
+          reviewPromptTemplatesError={reviewPromptTemplateState.error}
+          onRefreshReviewPromptTemplates={reviewPromptTemplateState.refresh}
+          onReviewPromptTemplatesChanged={reviewPromptTemplateState.noteTemplatesChanged}
           sessionLaunchSettings={sessionLaunchSettingsState.settings}
         />
       ) : route.view === "workstreams" ? (

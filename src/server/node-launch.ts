@@ -954,6 +954,48 @@ export async function resumeManagedSdkNode(
         });
       },
     });
+    try {
+      const resumedSdkSessionId = startResult.sdkSessionId ?? sdkSessionId;
+      registryStore.attachObservedSession(registryId, {
+        copilotSessionId: resumedSdkSessionId,
+        cwd: session.cwd,
+        repo: claim.expectedRepo ?? session.repo,
+        branch: claim.expectedBranch ?? session.branch,
+        lastSeenAt: now.toISOString(),
+        lifecycleStatus: "active",
+        observedSessionKind: "interactive",
+        copilotProcessState: "live",
+        trustedSignalSource: "copilot-cli-hook",
+        trustedStartedAt: now.toISOString(),
+        trustedEndedAt: null,
+        trustedLastSignalAt: now.toISOString(),
+        trustedStartSource: "resume",
+        trustedEndReason: null,
+        trustedExecutionKind: session.trustedExecutionKind ?? "agency",
+        trustedInitialPromptLength: resumePrompt.length,
+      });
+      registryStore.recordTrustedSessionSignal({
+        event: "session.started",
+        source: "copilot-cli-hook",
+        sessionId: resumedSdkSessionId,
+        timestamp: now.toISOString(),
+        cwd: session.cwd,
+        repo: claim.expectedRepo ?? session.repo,
+        branch: claim.expectedBranch ?? session.branch,
+        hookSource: "resume",
+        executionKind: session.trustedExecutionKind ?? "agency",
+        initialPromptLength: resumePrompt.length,
+      });
+    } catch (signalError: unknown) {
+      getApiLogger().withScope("node-launch").warn("managed SDK resume signal synthesis failed", {
+        launchClaimId: claim.launchClaimId,
+        workstreamId: claim.workstreamId,
+        nodeId: claim.nodeId,
+        registryId,
+        sdkSessionId: startResult.sdkSessionId ?? sdkSessionId,
+        err: errorLogDetails(signalError),
+      });
+    }
   } catch (error: unknown) {
     const message = errorMessage(error);
     const logger = getApiLogger().withScope("node-launch");

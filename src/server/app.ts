@@ -26,7 +26,9 @@ import { createLaunchClaimsRouter } from "./routes/launch-claims";
 import { createNodeLaunchesRouter } from "./routes/node-launches";
 import { createNodeLaunchRecordsRouter } from "./routes/node-launch-records";
 import { createPawLaunchPromptProfilesRouter } from "./routes/paw-launch-prompt-profiles";
+import { createPawReviewPromptTemplatesRouter } from "./routes/paw-review-prompt-templates";
 import { createPawWorkflowContextRouter } from "./routes/paw-workflow-context";
+import { createCompanionTerminalLaunchesRouter } from "./routes/companion-terminal-launches";
 import { createProtoCanvasRouter } from "./routes/proto-canvas";
 import { createRecentsRouter } from "./routes/recents";
 import { createSessionLaunchSettingsRouter } from "./routes/session-launch-settings";
@@ -76,6 +78,7 @@ export interface StreamlinerApiAppOptions {
   launchPreparationDeps?: LaunchPreparationRouteDeps;
   managedCleanupDeps?: Partial<ManagedCleanupDeps>;
   promptProfilesPath?: string;
+  reviewPromptTemplatesPath?: string;
   sessionLaunchSettingsPath?: string;
   nodeLaunchRecordsPath?: string;
   pawWorkRoot?: string;
@@ -271,6 +274,18 @@ export function createStreamlinerApiApp(
     "/api",
     createPawLaunchPromptProfilesRouter({
       profilesPath: options.promptProfilesPath,
+    }),
+  );
+  app.use(
+    "/api",
+    createPawReviewPromptTemplatesRouter({
+      templatesPath: options.reviewPromptTemplatesPath,
+    }),
+  );
+  app.use(
+    "/api",
+    createCompanionTerminalLaunchesRouter({
+      launchTerminal: options.nodeLaunchDeps?.launchTerminal,
     }),
   );
   app.use(
