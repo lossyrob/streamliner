@@ -10,6 +10,20 @@ import {
   type TerminalLaunchResult,
 } from "../terminal-launch";
 
+/**
+ * The companion terminal launch always runs the PAW Review workflow agent.
+ * Hard-coded here (rather than passed by the caller) because:
+ *   1. The endpoint is purpose-built for PAW Review companions; there is no
+ *      use case for a different agent on this route today.
+ *   2. The original PR shipped without enforcing the agent flag, so
+ *      handoff.cliArgs from the parent node launch (e.g. ["--yolo"]) would
+ *      be the only thing the companion received -- the companion would
+ *      then start with the default agent instead of PAW-Review.
+ * If a future use case requires a different agent, lift this into a request
+ * field with PAW-Review as the default.
+ */
+const COMPANION_AGENT_FLAG = "--agent=PAW-Review";
+
 export interface CompanionTerminalLaunchResponse {
   terminal: TerminalLaunchResult;
   cwd: string;
@@ -71,6 +85,31 @@ function optionalCliArgs(value: unknown): string[] {
   return value.map((entry) => entry.trim()).filter(Boolean);
 }
 
+/**
+ * Strip any caller-supplied --agent or --agent=... and prepend the
+ * companion's required agent flag. Prepending (rather than appending) makes
+ * the agent decision visible at the start of the rendered command for
+ * operators reading logs.
+ */
+function applyCompanionAgent(cliArgs: string[]): string[] {
+  const filtered: string[] = [];
+  for (let i = 0; i < cliArgs.length; i++) {
+    const arg = cliArgs[i];
+    if (arg === "--agent") {
+      // Drop the flag and its separate-token value (defensive — Streamliner's
+      // own buildCopilotInteractiveCommand only emits the joined form, but a
+      // caller may not).
+      i += 1;
+      continue;
+    }
+    if (arg.startsWith("--agent=")) {
+      continue;
+    }
+    filtered.push(arg);
+  }
+  return [COMPANION_AGENT_FLAG, ...filtered];
+}
+
 function terminalHostPreference(value: unknown): TerminalHostPreference {
   if (value === undefined || value === null || value === "") {
     return "default";
@@ -98,7 +137,8 @@ export function createCompanionTerminalLaunchesRouter(
       const body = isRecord(req.body) ? req.body : {};
       const cwd = stringField(body.cwd, "cwd");
       const kickoffPrompt = stringField(body.kickoffPrompt, "kickoffPrompt");
-      const cliArgs = optionalCliArgs(body.cliArgs);
+      const callerCliArgs = optionalCliArgs(body.cliArgs);
+      const cliArgs = applyCompanionAgent(callerCliArgs);
       const title = optionalStringField(body.title, "title");
       const tabColor = optionalStringField(body.tabColor, "tabColor");
       const preferredTerminal = terminalHostPreference(body.preferredTerminal);
