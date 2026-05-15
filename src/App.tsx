@@ -102,6 +102,7 @@ import {
 } from "./github-status-client";
 
 const POLL_INTERVAL_MS = 2000;
+const GITHUB_STATUS_REFRESH_INTERVAL_MS = 60_000;
 const LAST_GRAPH_KEY = "streamliner:lastGraphPath";
 const PAW_LAUNCH_CWD_OVERRIDES_KEY = "streamliner:pawLaunchCwdByRepo";
 const STREAMLINER_LOGO_URL = "/streamliner-logo.png";
@@ -629,7 +630,6 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
             options.quiet ? lastModifiedRef.current : null,
           );
           if (graph.notModified) {
-            setGithubStatusRefreshKey((current) => current + 1);
             return;
           }
           const doc = parseWorkstreamDocument(graph.content ?? "");
@@ -660,7 +660,6 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
             : undefined,
       });
       if (res.status === 304) {
-        setGithubStatusRefreshKey((current) => current + 1);
         return;
       }
       if (!res.ok) {
@@ -720,6 +719,20 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
       }
     };
   }, [activeWorkstream, enabled, error, loadRegistered]);
+
+  useEffect(() => {
+    if (!enabled || !activeWorkstream || error) {
+      return;
+    }
+
+    const timer = setInterval(() => {
+      setGithubStatusRefreshKey((current) => current + 1);
+    }, GITHUB_STATUS_REFRESH_INTERVAL_MS);
+
+    return () => {
+      clearInterval(timer);
+    };
+  }, [activeWorkstream, enabled, error]);
 
   const addSource = useCallback(
     async (type: WorkstreamSourceType, path: string) => {

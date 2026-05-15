@@ -7,10 +7,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SessionRegistryFileStore } from "../session-registry/file-store";
 import { createStreamlinerApiApp, type StreamlinerApiApp } from "./app";
-import type {
-  GithubStatusFetch,
-  GithubStatusHttpResponse,
-  GithubStatusServiceOptions,
+import {
+  createGithubStatusService,
+  type GithubStatusFetch,
+  type GithubStatusHttpResponse,
+  type GithubStatusServiceOptions,
 } from "./github-status-service";
 
 const TEST_NOW = new Date("2026-05-08T12:00:00.000Z");
@@ -42,6 +43,10 @@ function githubResponse(
     headers: headers(headerValues),
     json: async () => body,
   };
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function createApi(
@@ -284,6 +289,129 @@ describe("GitHub status API", () => {
       ],
     });
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("bounds GitHub fetch concurrency and coalesces concurrent status misses", async () => {
+    const refs = [69, 70, 71, 72].map((number) => ({
+      type: "issue" as const,
+      owner: "lossyrob",
+      repo: "streamliner",
+      number,
+    }));
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const fetchMock = vi.fn<GithubStatusFetch>(async (url) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await wait(5);
+      inFlight -= 1;
+
+      if (url.includes("/timeline")) {
+        return githubResponse([]);
+      }
+      const match = url.match(/\/issues\/(\d+)$/);
+      if (match) {
+        return githubResponse({
+          title: `Issue ${match[1]}`,
+          html_url: `https://github.com/lossyrob/streamliner/issues/${match[1]}`,
+          state: "open",
+          state_reason: null,
+        });
+      }
+      throw new Error(`Unexpected GitHub URL: ${url}`);
+    });
+    const service = createGithubStatusService({
+      fetch: fetchMock,
+      authToken: null,
+      now: () => TEST_NOW,
+      fetchConcurrency: 2,
+    });
+
+    await Promise.all([
+      service.getStatuses(refs),
+      service.getStatuses(refs),
+    ]);
+
+    expect(maxInFlight).toBeLessThanOrEqual(2);
+    expect(fetchMock).toHaveBeenCalledTimes(refs.length * 2);
+    expect(
+      fetchMock.mock.calls.filter(([url]) => url.endsWith("/issues/69")),
+    ).toHaveLength(1);
+  });
+
+  it("fetches linked PR statuses concurrently under the shared fetch limit", async () => {
+    let pullRequestsInFlight = 0;
+    let maxPullRequestsInFlight = 0;
+    const fetchMock = vi.fn<GithubStatusFetch>(async (url) => {
+      if (url.endsWith("/issues/69")) {
+        return githubResponse({
+          title: "Show live GitHub status",
+          html_url: "https://github.com/lossyrob/streamliner/issues/69",
+          state: "open",
+          state_reason: null,
+        });
+      }
+      if (url.endsWith("/issues/69/timeline?per_page=100")) {
+        return githubResponse(
+          [70, 71, 72].map((number) => ({
+            event: "cross-referenced",
+            source: {
+              issue: {
+                number,
+                repository_url: "https://api.github.com/repos/lossyrob/streamliner",
+                pull_request: {
+                  url: `https://api.github.com/repos/lossyrob/streamliner/pulls/${number}`,
+                },
+              },
+            },
+          })),
+        );
+      }
+      const match = url.match(/\/pulls\/(\d+)$/);
+      if (match) {
+        pullRequestsInFlight += 1;
+        maxPullRequestsInFlight = Math.max(
+          maxPullRequestsInFlight,
+          pullRequestsInFlight,
+        );
+        await wait(5);
+        pullRequestsInFlight -= 1;
+        return githubResponse({
+          title: `PR ${match[1]}`,
+          html_url: `https://github.com/lossyrob/streamliner/pull/${match[1]}`,
+          state: "open",
+          draft: false,
+          merged: false,
+          mergeable_state: "clean",
+        });
+      }
+      throw new Error(`Unexpected GitHub URL: ${url}`);
+    });
+    const service = createGithubStatusService({
+      fetch: fetchMock,
+      authToken: null,
+      now: () => TEST_NOW,
+      fetchConcurrency: 2,
+    });
+
+    const [status] = await service.getStatuses([
+      {
+        type: "issue",
+        owner: "lossyrob",
+        repo: "streamliner",
+        number: 69,
+      },
+    ]);
+
+    expect(status).toMatchObject({
+      type: "issue",
+      linkedPullRequests: [
+        { key: "pr:lossyrob/streamliner#70" },
+        { key: "pr:lossyrob/streamliner#71" },
+        { key: "pr:lossyrob/streamliner#72" },
+      ],
+    });
+    expect(maxPullRequestsInFlight).toBe(2);
   });
 
   it("returns per-ref degraded status for rate limits", async () => {

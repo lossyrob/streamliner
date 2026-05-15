@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   type GithubStatusBatchResponse,
   type GithubStatusRef,
   type GithubStatusResult,
   githubStatusRefKey,
-  githubStatusUrl,
 } from "./github-status";
 import type {
   WorkstreamDocument,
@@ -21,6 +20,18 @@ export interface GithubStatusLookupState {
 }
 
 const EMPTY_STATUS_LOOKUP = new Map<string, GithubStatusResult>();
+interface GithubStatusLookupInternalState extends GithubStatusLookupState {
+  refSetKey: string;
+  snapshotKey: string;
+}
+
+const EMPTY_STATUS_STATE: GithubStatusLookupInternalState = {
+  statuses: EMPTY_STATUS_LOOKUP,
+  loading: false,
+  error: null,
+  refSetKey: "",
+  snapshotKey: "",
+};
 
 function normalizeRepoParts(owner: string, repo: string): { owner: string; repo: string } | null {
   const normalizedOwner = owner.trim();
@@ -66,6 +77,26 @@ function stableRefSetKey(refs: readonly GithubStatusRef[]): string {
     .map((ref) => githubStatusRefKey(ref))
     .sort()
     .join("|");
+}
+
+function githubStatusUrlFromStableKey(refSetKey: string): string {
+  if (refSetKey.length === 0) {
+    return "/api/github/status";
+  }
+  const params = new URLSearchParams();
+  for (const ref of refSetKey.split("|")) {
+    params.append("ref", ref);
+  }
+  return `/api/github/status?${params.toString()}`;
+}
+
+function githubStatusSnapshotKey(statuses: Iterable<GithubStatusResult>): string {
+  const sortedStatuses = Array.from(statuses).sort((left, right) =>
+    left.key.localeCompare(right.key),
+  );
+  return JSON.stringify(sortedStatuses, (key, value) =>
+    key === "fetchedAt" ? undefined : value,
+  );
 }
 
 export function githubStatusRefsForWorkstream(
@@ -123,21 +154,44 @@ export function useGithubStatusLookup(
   refreshKey: string | number | null = null,
 ): GithubStatusLookupState {
   const refSetKey = useMemo(() => stableRefSetKey(refs), [refs]);
-  const [state, setState] = useState<GithubStatusLookupState>({
-    statuses: EMPTY_STATUS_LOOKUP,
-    loading: false,
-    error: null,
-  });
+  const [state, setState] =
+    useState<GithubStatusLookupInternalState>(EMPTY_STATUS_STATE);
+  const activeRequestRef = useRef<{
+    key: string;
+    requestId: number;
+    controller: AbortController;
+  } | null>(null);
+  const requestIdRef = useRef(0);
 
   useEffect(() => {
-    const uniqueRefs = dedupeRefs(refs);
-    if (uniqueRefs.length === 0) {
+    return () => {
+      activeRequestRef.current?.controller.abort();
+      activeRequestRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (refSetKey.length === 0) {
+      activeRequestRef.current?.controller.abort();
+      activeRequestRef.current = null;
       return;
     }
 
-    const controller = new AbortController();
+    if (activeRequestRef.current?.key === refSetKey) {
+      return;
+    }
 
-    fetch(githubStatusUrl(uniqueRefs), { signal: controller.signal })
+    activeRequestRef.current?.controller.abort();
+    const controller = new AbortController();
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    activeRequestRef.current = {
+      key: refSetKey,
+      requestId,
+      controller,
+    };
+
+    fetch(githubStatusUrlFromStableKey(refSetKey), { signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) {
           throw new Error(`Failed to load GitHub status (${response.status})`);
@@ -145,35 +199,78 @@ export function useGithubStatusLookup(
         return (await response.json()) as GithubStatusBatchResponse;
       })
       .then((body) => {
-        if (controller.signal.aborted) {
+        if (
+          controller.signal.aborted ||
+          activeRequestRef.current?.requestId !== requestId
+        ) {
           return;
         }
-        setState({
-          statuses: new Map(body.statuses.map((status) => [status.key, status])),
-          loading: false,
-          error: null,
+        const statuses = new Map(body.statuses.map((status) => [status.key, status]));
+        const nextSnapshotKey = githubStatusSnapshotKey(statuses.values());
+        setState((current) => {
+          if (
+            current.refSetKey === refSetKey &&
+            current.snapshotKey === nextSnapshotKey
+          ) {
+            if (current.loading === false && current.error === null) {
+              return current;
+            }
+            return {
+              statuses: current.statuses,
+              loading: false,
+              error: null,
+              refSetKey,
+              snapshotKey: current.snapshotKey,
+            };
+          }
+          return {
+            statuses,
+            loading: false,
+            error: null,
+            refSetKey,
+            snapshotKey: nextSnapshotKey,
+          };
         });
       })
       .catch((error: unknown) => {
-        if (controller.signal.aborted) {
+        if (
+          controller.signal.aborted ||
+          activeRequestRef.current?.requestId !== requestId
+        ) {
           return;
         }
-        setState((current) => ({
-          statuses: current.statuses,
-          loading: false,
-          error: error instanceof Error ? error.message : String(error),
-        }));
+        const message = error instanceof Error ? error.message : String(error);
+        setState((current) =>
+          current.refSetKey === refSetKey &&
+          current.error === message &&
+          current.loading === false
+            ? current
+            : {
+                statuses:
+                  current.refSetKey === refSetKey
+                    ? current.statuses
+                    : EMPTY_STATUS_LOOKUP,
+                loading: false,
+                error: message,
+                refSetKey,
+                snapshotKey:
+                  current.refSetKey === refSetKey ? current.snapshotKey : "",
+              },
+        );
+      })
+      .finally(() => {
+        if (activeRequestRef.current?.requestId === requestId) {
+          activeRequestRef.current = null;
+        }
       });
-
-    return () => controller.abort();
-  }, [refSetKey, refreshKey, refs]);
+  }, [refSetKey, refreshKey]);
 
   if (refSetKey.length === 0) {
-    return {
-      statuses: EMPTY_STATUS_LOOKUP,
-      loading: false,
-      error: null,
-    };
+    return EMPTY_STATUS_STATE;
+  }
+
+  if (state.refSetKey !== refSetKey) {
+    return EMPTY_STATUS_STATE;
   }
 
   return state;

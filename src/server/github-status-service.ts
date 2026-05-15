@@ -58,6 +58,9 @@ export interface GithubStatusServiceOptions {
   positiveTtlMs?: number;
   negativeTtlMs?: number;
   rateLimitTtlMs?: number;
+  fetchConcurrency?: number;
+  maxCacheEntries?: number;
+  maxAuthTokenCacheEntries?: number;
   logger?: ScopedLogger;
 }
 
@@ -69,12 +72,57 @@ interface CachedGithubStatusResult {
 const DEFAULT_POSITIVE_TTL_MS = 60_000;
 const DEFAULT_NEGATIVE_TTL_MS = 15_000;
 const DEFAULT_RATE_LIMIT_TTL_MS = 30_000;
+const DEFAULT_FETCH_CONCURRENCY = 6;
+const DEFAULT_MAX_CACHE_ENTRIES = 1_000;
+const DEFAULT_MAX_AUTH_TOKEN_CACHE_ENTRIES = 256;
 const GITHUB_API_BASE_URL = "https://api.github.com";
 const GH_AUTH_TOKEN_TIMEOUT_MS = 2_000;
 const execFileAsync = promisify(execFile);
 
 function defaultFetch(): GithubStatusFetch {
   return (url, init) => globalThis.fetch(url, init) as Promise<GithubStatusHttpResponse>;
+}
+
+function positiveIntegerOption(value: number | undefined, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return fallback;
+  }
+  return Math.floor(value);
+}
+
+function createConcurrencyLimiter(concurrency: number) {
+  let active = 0;
+  const queue: Array<() => void> = [];
+
+  function runNext(): void {
+    const next = queue.shift();
+    if (next) {
+      next();
+    }
+  }
+
+  return async function limit<T>(task: () => Promise<T>): Promise<T> {
+    if (active >= concurrency) {
+      await new Promise<void>((resolve) => queue.push(resolve));
+    }
+    active += 1;
+    try {
+      return await task();
+    } finally {
+      active -= 1;
+      runNext();
+    }
+  };
+}
+
+function enforceMapSizeLimit<K, V>(map: Map<K, V>, maxEntries: number): void {
+  while (map.size > maxEntries) {
+    const first = map.keys().next();
+    if (first.done) {
+      return;
+    }
+    map.delete(first.value);
+  }
 }
 
 function normalizeAuthToken(token: string | null | undefined): string | null {
@@ -451,8 +499,24 @@ export function createGithubStatusService(
   const positiveTtlMs = options.positiveTtlMs ?? DEFAULT_POSITIVE_TTL_MS;
   const negativeTtlMs = options.negativeTtlMs ?? DEFAULT_NEGATIVE_TTL_MS;
   const rateLimitTtlMs = options.rateLimitTtlMs ?? DEFAULT_RATE_LIMIT_TTL_MS;
+  const fetchConcurrency = positiveIntegerOption(
+    options.fetchConcurrency,
+    DEFAULT_FETCH_CONCURRENCY,
+  );
+  const maxCacheEntries = positiveIntegerOption(
+    options.maxCacheEntries,
+    DEFAULT_MAX_CACHE_ENTRIES,
+  );
+  const maxAuthTokenCacheEntries = positiveIntegerOption(
+    options.maxAuthTokenCacheEntries,
+    DEFAULT_MAX_AUTH_TOKEN_CACHE_ENTRIES,
+  );
   const logger = options.logger ?? getApiLogger().withScope("github-status");
+  const limitGithubFetch = createConcurrencyLimiter(fetchConcurrency);
+  const fetchGithub: GithubStatusFetch = (url, init) =>
+    limitGithubFetch(() => fetchImpl(url, init));
   const cache = new Map<string, CachedGithubStatusResult>();
+  const inFlightStatuses = new Map<string, Promise<GithubStatusResult>>();
   let authSettingsPromise: ReturnType<typeof readGithubAuthSettings> | null = null;
   const ghAuthTokenProvider: GithubStatusGhAuthTokenProvider =
     options.ghAuthTokenProvider ??
@@ -487,19 +551,26 @@ export function createGithubStatusService(
     const cacheKey = `${ref.owner}/${ref.repo}`.toLowerCase();
     const cached = authTokenPromises.get(cacheKey);
     if (cached) {
+      authTokenPromises.delete(cacheKey);
+      authTokenPromises.set(cacheKey, cached);
       return cached;
     }
-    const next = Promise.resolve(authTokenProvider(ref))
-      .then(normalizeAuthToken)
-      .catch((error: unknown) => {
+    const next = Promise.resolve()
+      .then(() => authTokenProvider(ref))
+      .then(normalizeAuthToken);
+    const cachedNext = next.catch((error: unknown) => {
+        if (authTokenPromises.get(cacheKey) === cachedNext) {
+          authTokenPromises.delete(cacheKey);
+        }
         logger.debug("github-auth-provider-failed", {
           ref: githubStatusRefKey(ref),
           err: error,
         });
         return null;
       });
-    authTokenPromises.set(cacheKey, next);
-    return next;
+    authTokenPromises.set(cacheKey, cachedNext);
+    enforceMapSizeLimit(authTokenPromises, maxAuthTokenCacheEntries);
+    return cachedNext;
   }
 
   async function fetchStatus(ref: GithubStatusRef): Promise<GithubStatusResult> {
@@ -515,7 +586,7 @@ export function createGithubStatusService(
     }
 
     try {
-      const response = await fetchImpl(githubUrl(ref), { headers });
+      const response = await fetchGithub(githubUrl(ref), { headers });
       if (!response.ok) {
         const error: GithubStatusError = {
           code: errorCodeForStatus(response),
@@ -531,46 +602,39 @@ export function createGithubStatusService(
         return normalizePullRequest(ref, payload, fetchedAt);
       }
 
-      const linkedPullRequests: GithubPullRequestStatusResult[] = [];
+      let linkedPullRequests: GithubPullRequestStatusResult[] = [];
       try {
-        const timelineResponse = await fetchImpl(timelineUrl(ref), { headers });
+        const timelineResponse = await fetchGithub(timelineUrl(ref), { headers });
         if (timelineResponse.ok) {
           const linkedRefs = linkedPullRequestRefsFromTimeline(
             ref,
             await timelineResponse.json(),
           );
-          for (const linkedRef of linkedRefs) {
+          linkedPullRequests = await Promise.all(linkedRefs.map(async (linkedRef) => {
             try {
-              const pullRequestResponse = await fetchImpl(githubUrl(linkedRef), {
+              const pullRequestResponse = await fetchGithub(githubUrl(linkedRef), {
                 headers,
               });
               if (!pullRequestResponse.ok) {
-                linkedPullRequests.push(
-                  errorStatus(linkedRef, fetchedAt, {
-                    code: errorCodeForStatus(pullRequestResponse),
-                    message: errorMessageForStatus(linkedRef, pullRequestResponse),
-                    status: pullRequestResponse.status,
-                    retryAfterSeconds: parseRetryAfter(pullRequestResponse.headers),
-                  }) as GithubPullRequestStatusResult,
-                );
-                continue;
+                return errorStatus(linkedRef, fetchedAt, {
+                  code: errorCodeForStatus(pullRequestResponse),
+                  message: errorMessageForStatus(linkedRef, pullRequestResponse),
+                  status: pullRequestResponse.status,
+                  retryAfterSeconds: parseRetryAfter(pullRequestResponse.headers),
+                }) as GithubPullRequestStatusResult;
               }
-              linkedPullRequests.push(
-                normalizePullRequest(
-                  linkedRef,
-                  await pullRequestResponse.json(),
-                  fetchedAt,
-                ),
+              return normalizePullRequest(
+                linkedRef,
+                await pullRequestResponse.json(),
+                fetchedAt,
               );
             } catch (error) {
-              linkedPullRequests.push(
-                errorStatus(linkedRef, fetchedAt, {
-                  code: "github_fetch_failed",
-                  message: error instanceof Error ? error.message : String(error),
-                }) as GithubPullRequestStatusResult,
-              );
+              return errorStatus(linkedRef, fetchedAt, {
+                code: "github_fetch_failed",
+                message: error instanceof Error ? error.message : String(error),
+              }) as GithubPullRequestStatusResult;
             }
-          }
+          }));
         } else {
           logger.warn("linked-pr-discovery-degraded", {
             ref: githubStatusRefKey(ref),
@@ -602,6 +666,29 @@ export function createGithubStatusService(
     return positiveTtlMs;
   }
 
+  function pruneExpiredCacheEntries(nowMs: number): void {
+    for (const [key, cached] of cache) {
+      if (cached.expiresAt <= nowMs) {
+        cache.delete(key);
+      }
+    }
+  }
+
+  function fetchMissingStatus(ref: GithubStatusRef): Promise<GithubStatusResult> {
+    const key = githubStatusRefKey(ref);
+    const inFlight = inFlightStatuses.get(key);
+    if (inFlight) {
+      return inFlight;
+    }
+    const next = fetchStatus(ref).finally(() => {
+      if (inFlightStatuses.get(key) === next) {
+        inFlightStatuses.delete(key);
+      }
+    });
+    inFlightStatuses.set(key, next);
+    return next;
+  }
+
   return {
     async getStatuses(refs: readonly GithubStatusRef[]): Promise<GithubStatusResult[]> {
       const uniqueRefs = dedupeRefs(refs);
@@ -610,18 +697,21 @@ export function createGithubStatusService(
       const resultByKey = new Map<string, GithubStatusResult>();
       const misses: GithubStatusRef[] = [];
 
+      pruneExpiredCacheEntries(nowMs);
       for (const ref of uniqueRefs) {
         const key = githubStatusRefKey(ref);
         const cached = cache.get(key);
-        if (cached && cached.expiresAt > nowMs) {
+        if (cached) {
           cacheHits += 1;
+          cache.delete(key);
+          cache.set(key, cached);
           resultByKey.set(key, cached.result);
         } else {
           misses.push(ref);
         }
       }
 
-      const fetched = await Promise.all(misses.map((ref) => fetchStatus(ref)));
+      const fetched = await Promise.all(misses.map((ref) => fetchMissingStatus(ref)));
       const cacheNowMs = now().getTime();
       for (const result of fetched) {
         const ttl = cacheTtl(result);
@@ -631,6 +721,7 @@ export function createGithubStatusService(
         });
         resultByKey.set(result.key, result);
       }
+      enforceMapSizeLimit(cache, maxCacheEntries);
 
       const statuses = uniqueRefs
         .map((ref) => resultByKey.get(githubStatusRefKey(ref)))
