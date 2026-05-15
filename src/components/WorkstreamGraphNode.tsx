@@ -2,6 +2,7 @@ import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import {
   activitySignalClass,
   activityStatusHint,
+  getEffectiveActivityStatus,
   getActivityStatusLabel,
 } from "./session-activity-status";
 import { handleInAppLinkClick } from "../dashboard-routing";
@@ -47,6 +48,8 @@ function statusClassName(value: string) {
       return "status-accent";
     case "blocked":
       return "status-red";
+    case "retired":
+      return "status-retired";
     default:
       return "status-amber";
   }
@@ -69,6 +72,54 @@ function runtimeStatusClassName(value: string) {
   }
 }
 
+function launchOperationClassName(status: string) {
+  switch (status) {
+    case "managed_running":
+    case "launched_pending_binding":
+      return "status-green";
+    case "preparation_failed":
+    case "managed_failed":
+    case "terminal_failed":
+      return "status-red";
+    case "preparing":
+    case "launching":
+    case "managed_starting":
+      return "status-amber";
+    default:
+      return "status-accent";
+  }
+}
+
+function launchOperationLabel(data: WorkstreamGraphNodeData): string | null {
+  const operation = data.launchOperation;
+  if (!operation) {
+    return null;
+  }
+  const managed = operation.handoff?.runtimeKind === "managed-sdk" || Boolean(operation.managedLaunch);
+  switch (operation.status) {
+    case "preparing":
+      return "PAW init running";
+    case "prepared":
+      return managed ? "background prepared" : "handoff prepared";
+    case "launching":
+      return "terminal launching";
+    case "launched_pending_binding":
+      return "terminal launched";
+    case "managed_starting":
+      return "background starting";
+    case "managed_running":
+      return "background launched";
+    case "preparation_failed":
+      return "PAW init failed";
+    case "managed_failed":
+      return "background failed";
+    case "terminal_failed":
+      return "terminal failed";
+    default:
+      return null;
+  }
+}
+
 function NodeBadges({
   data,
   gate,
@@ -84,6 +135,7 @@ function NodeBadges({
     overlay &&
     (overlay.runtimeStatus !== data.entry.operationalStatus ||
       overlay.hasRuntimeEvidence);
+  const launchLabel = launchOperationLabel(data);
 
   return (
     <div className="sl-node-badges">
@@ -132,6 +184,11 @@ function NodeBadges({
           runtime {formatLabel(overlay.runtimeStatus)}
         </span>
       ) : null}
+      {launchLabel && data.launchOperation ? (
+        <span className={`sl-node-pill ${launchOperationClassName(data.launchOperation.status)}`}>
+          {launchLabel}
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -153,9 +210,10 @@ function NodeSessionIndicator({
   }
 
   const primarySession = status.primarySession;
-  const signalClass = activitySignalClass(primarySession.activityStatus);
+  const effectiveActivityStatus = getEffectiveActivityStatus(primarySession);
+  const signalClass = activitySignalClass(effectiveActivityStatus);
   const activityLabel = getActivityStatusLabel(primarySession);
-  const activityHint = activityStatusHint(primarySession.activityStatus);
+  const activityHint = activityStatusHint(effectiveActivityStatus);
   const countLabel =
     status.count === 1 ? "1 session" : `${status.count} sessions`;
   const detail =

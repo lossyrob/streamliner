@@ -13,7 +13,11 @@ import { spawn } from "node:child_process";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { SessionRegistryPatch, SessionRegistryUpsertInput } from "../session-registry-contract";
+import type {
+  SessionRegistryChangeEvent,
+  SessionRegistryPatch,
+  SessionRegistryUpsertInput,
+} from "../session-registry-contract";
 import {
   DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
   SESSION_REGISTRY_SCHEMA_VERSION,
@@ -194,6 +198,103 @@ describe("SessionRegistryFileStore", () => {
       lifecycleState: "running",
       sdkSessionId: "sdk-session-1",
     }));
+  });
+
+  it("marks only runtime metadata patches as runtime-scoped change events", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+    const events: SessionRegistryChangeEvent[] = [];
+    store.subscribe((event) => events.push(event));
+
+    const record = store.upsertSession({
+      id: "runtime-scope-row",
+      title: "Runtime scope row",
+      description: "",
+      cwd: "C:\\repo",
+      origin: { kind: "launched", launchClaimId: "claim-runtime-scope" },
+    });
+    store.patchRuntimeMetadata(record.id, {
+      runtimeKind: "managed-sdk",
+      runtimeOwner: "streamliner-sdk",
+      lifecycleState: "running",
+    });
+    store.attachObservedSession(record.id, {
+      copilotSessionId: "copilot-runtime-scope",
+      cwd: "C:\\repo",
+      lastSeenAt: "2026-05-07T12:00:00.000Z",
+      lifecycleStatus: "active",
+    });
+
+    expect(events.map((event) => event.kind)).toEqual(["upsert", "upsert", "upsert"]);
+    expect(events.map((event) =>
+      event.kind === "rebuild" ? null : event.registryId,
+    )).toEqual([
+      record.id,
+      record.id,
+      record.id,
+    ]);
+    expect(events.map((event) =>
+      event.kind === "upsert" ? event.changeScope : undefined,
+    )).toEqual([undefined, "runtime", undefined]);
+  });
+
+  it("matches origin kind consistently in session list text filters", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+
+    store.upsertSession({
+      id: "launched-origin-row",
+      title: "Origin row",
+      description: "",
+      cwd: "C:\\repo",
+      origin: { kind: "launched", launchClaimId: "claim-origin" },
+    });
+    store.upsertSession({
+      id: "manual-origin-row",
+      title: "Origin row",
+      description: "",
+      cwd: "C:\\repo",
+      origin: { kind: "manual" },
+    });
+
+    expect(store.listSessions({ text: "launched" }).map((session) => session.id))
+      .toEqual(["launched-origin-row"]);
+    expect(store.listSessions({ text: "manual" }).map((session) => session.id))
+      .toEqual(["manual-origin-row"]);
+  });
+
+  it("keeps runtime-scoped metadata patches to runtime-only top-level fields", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+
+    const record = store.upsertSession({
+      id: "runtime-only-row",
+      title: "Runtime only row",
+      description: "Description must not change",
+      cwd: "C:\\repo",
+      repo: "lossyrob/streamliner",
+      branch: "feature/runtime-only",
+      tags: ["stable"],
+      origin: { kind: "launched", launchClaimId: "claim-runtime-only" },
+    });
+    const updated = store.patchRuntimeMetadata(
+      record.id,
+      {
+        runtimeKind: "managed-sdk",
+        runtimeOwner: "streamliner-sdk",
+        lifecycleState: "running",
+      },
+      new Date("2026-05-07T12:00:01.000Z"),
+    );
+    const changedKeys = Object.keys(updated).filter((key) =>
+      JSON.stringify(updated[key as keyof SessionRegistryRecord]) !==
+      JSON.stringify(record[key as keyof SessionRegistryRecord])
+    );
+
+    expect(changedKeys.sort()).toEqual(["runtime", "updatedAt"]);
   });
 
   it("preserves additive runtime metadata when older-style upserts omit the field", () => {

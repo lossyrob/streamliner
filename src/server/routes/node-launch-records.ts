@@ -170,6 +170,53 @@ export function createNodeLaunchRecordsRouter(options: {
     }
   });
 
+  router.post("/node-launch-records/operations/release", async (req, res, next) => {
+    try {
+      if (isNonLoopbackRequest(req)) {
+        res.status(403).json({ error: "Operation release must originate from loopback." });
+        return;
+      }
+      const contentType = req.headers["content-type"] ?? "";
+      if (!contentType.startsWith("application/json")) {
+        res.status(415).json({ error: "Content-Type must be application/json." });
+        return;
+      }
+      const body = (typeof req.body === "object" && req.body !== null
+        ? (req.body as Record<string, unknown>)
+        : {}) as Record<string, unknown>;
+      const graphPath = typeof body.graphPath === "string" ? body.graphPath.trim() : "";
+      const nodeId = typeof body.nodeId === "string" ? body.nodeId.trim() : "";
+      const reason = typeof body.reason === "string" ? body.reason : undefined;
+      if (!graphPath || !nodeId) {
+        res.status(400).json({
+          error: "Body must include non-empty 'graphPath' and 'nodeId'.",
+        });
+        return;
+      }
+
+      const released = await store.releaseActiveOperation({ graphPath, nodeId, reason });
+      if (!released) {
+        const current = await store.getOperation(graphPath, nodeId);
+        if (!current) {
+          res.status(404).json({
+            code: "operation_not_found",
+            error: `No launch operation exists for node '${nodeId}' on this graph.`,
+          });
+          return;
+        }
+        res.status(409).json({
+          code: "operation_not_active",
+          error: `Operation status '${current.status}' is not eligible for release; only preparing/launching/managed_starting can be released.`,
+          operation: current,
+        });
+        return;
+      }
+      res.json({ operation: released });
+    } catch (error: unknown) {
+      next(error);
+    }
+  });
+
   return router;
 }
 

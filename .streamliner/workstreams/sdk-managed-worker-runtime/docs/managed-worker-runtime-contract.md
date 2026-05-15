@@ -40,6 +40,14 @@ while Streamliner owns the SDK session.
 - Managed lifecycle/progress details live in local runtime state and are exposed
   through registry/API projections.
 - Runtime telemetry must not be written to committed `graph.json`.
+- Active managed SDK rows must be reconciled on API startup. A row left in an
+  active state by a prior API process must not continue to look live unless the
+  SDK owner/session is verifiably still attached; otherwise Streamliner records a
+  typed diagnostic reason and moves the row to a safe non-running or
+  builder-action state.
+- Managed progress writes must be coalesced into bounded projections. Routine SDK
+  event bursts must not produce one registry file/index write or one full session
+  snapshot broadcast per raw SDK event.
 
 SDK helper sessions used only for launch preparation remain hidden. SDK-managed
 workers are user-visible node sessions with `graphBinding`, `pawLaunch`, runtime
@@ -89,7 +97,7 @@ Managed launch should:
 5. Fuse or hide any filesystem-only observation of the SDK session behind the
    managed row, rather than creating a duplicate visible observed row.
 
-## Progress projection
+## Progress projection and console
 
 Browser progress is terminal-like, read-only, allowlisted, and bounded.
 
@@ -104,6 +112,49 @@ and provider telemetry beyond the node context.
 Retention must be bounded by count and byte size, support a replay window on
 reconnect, preserve a latest summary for list/detail views, and allow normal
 runtime-state pruning after terminal outcomes.
+
+The builder-facing monitoring surface should include a read-only managed session
+console. This is a browser transcript of sanitized Streamliner activity, not raw
+Copilot CLI mirroring and not an interactive terminal. It should look familiar
+to Copilot CLI users: chronological rows, current activity emphasis, phase/status
+labels, timing, and explicit lifecycle markers. It should be reusable for PAW
+launch preparation and SDK-managed background-session progress so the builder can
+open a Streamliner dialog/surface and understand the work without taking over.
+
+Terminal takeover remains the interactive boundary. Once takeover occurs, managed
+console streaming should close with a takeover marker and point at the
+terminal-owned session instead of accepting input in the browser.
+
+The console must render typed `waiting_for_builder` reasons and suggested
+builder actions. Cleanup blockers, cancellation timeouts, SDK process loss,
+permission failures, and manual takeover requirements must not collapse into a
+generic waiting label.
+
+When a managed session reaches `pr_ready`, the console should show the PR URL and
+available trust context such as branch name, base branch, branch-to-base diff
+link, worktree cleanliness, and deterministic PR/head-state checks. If existing
+backend projections are too thin, the console node may add small sanitized
+projection fields rather than exposing raw tool output.
+
+## API responsiveness and supervision
+
+The local API is the builder-facing control plane. It must remain responsive while
+multiple managed SDK sessions are active. Noisy SDK event streams should be
+converted into compact lifecycle/progress/evidence projections before they reach
+registry persistence or session-event delivery.
+
+Same-process hardening should be attempted first: coalesce routine progress,
+flush important lifecycle/evidence transitions promptly, avoid duplicate
+progress/lifecycle writes for the same SDK event, and reduce redundant UI polling
+while live event streams are connected.
+
+If measured same-process hardening is not sufficient for Wave 2, Streamliner
+should introduce a local managed-runtime supervisor process. The supervisor owns
+Copilot SDK clients/sessions and sends compact updates back to the API; the API
+continues to own builder-facing HTTP routes, graph/session projections, and
+control-plane authorization. Interrupt, cancel, one-way terminal takeover,
+cleanup, and startup/crash reconciliation must continue to work across the
+boundary.
 
 ## Interruption and takeover
 
@@ -135,6 +186,11 @@ worktree, expected branch, PR/head/merge state, clean working tree, unpushed
 commits, and whether another worktree/process still depends on the path or
 branch. Guardrail failures move to `waiting_for_builder` with typed reasons.
 
+Managed worktree cleanup should have deterministic branch/PR/head-state
+guardrails. PR #86 ships branch-tip revalidation and merge-base checks; the Wave
+2 punch list should verify whether any remaining base commit/ref anchoring
+diagnostic is needed for ambiguous squash-merge or branch-drift cases.
+
 ## Downstream worker responsibilities
 
 ### Managed execution substrate
@@ -154,7 +210,48 @@ cleanup affordances without exposing raw SDK events.
 
 Implement one-way resume into visible Copilot CLI, registry rebinding, SDK
 teardown/closeout, takeover failure behavior, and deterministic
-cleanup-after-merge.
+cleanup-after-merge. Use branch, PR/head, merge-base, clean-worktree, and
+unpushed-commit checks before cleanup; defer any extra base commit/ref diagnostic
+only if the Wave 2 punch-list validation finds remaining ambiguity.
+
+### Managed runtime startup reconciliation
+
+Implement API-startup reconciliation for active SDK-managed runtime rows left by
+a prior API process. Rows in active states such as `starting`, `running`, or
+`interrupt_requested` must move to a safe diagnostic state unless the SDK
+owner/session is verifiably live. My Sessions and graph overlays must not show
+stale rows as actively running workers.
+
+### Managed runtime API responsiveness
+
+Bound the same-process managed runtime hot path before adding the terminal-like
+console. Routine SDK progress should be batched, registry writes should be
+coalesced, important terminal/evidence transitions should flush immediately, and
+SSE/UI polling should not amplify every raw SDK event into full API work.
+
+### Managed runtime supervisor isolation
+
+Use responsiveness evidence to decide whether same-process coalescing is
+sufficient. If not, split managed SDK session ownership into a local supervisor
+process that projects compact lifecycle/progress/evidence updates to the API
+while preserving managed actions and safe recovery semantics.
+
+### Managed session console
+
+Implement the missing read-only, terminal-looking browser console for PAW launch
+preparation and SDK-managed background sessions. The console should live on top
+of the sanitized progress projection, support replay of bounded recent events on
+reopen, stream live updates while connected, and render failure, interruption,
+takeover, PR/completion, cleanup, typed waiting reasons, PR-ready trust markers,
+and stale/reconnect states in the same console vocabulary.
+
+### Managed runtime dogfood and hardening
+
+Dogfood hardening should verify `sdkSessionId` resumability after `pr_ready`,
+exercise crash/restart reconciliation on a real active managed node, prototype
+session-registry-level operational signals such as `managed_session_stalled` and
+`sdk_row_orphaned_on_restart`, and evaluate whether Automated PAW Review Loop
+needs a distinct `managed-review` permission profile.
 
 ### Foundation contract gate
 

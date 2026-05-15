@@ -45,6 +45,11 @@ import {
   type PawPromptProfile,
 } from "./components/paw-prompt-profiles";
 import {
+  loadReviewPromptTemplates,
+  mergeReviewPromptTemplates,
+  type PawReviewPromptTemplate,
+} from "./components/paw-review-prompt-templates";
+import {
   FALLBACK_SESSION_LAUNCH_DEFAULT_CLI_ARGS,
   formatSessionLaunchCliArgsText,
   loadSessionLaunchSettings,
@@ -67,14 +72,15 @@ import {
   listBrowserWorkstreamEntries,
   readBrowserWorkstreamGraph,
 } from "./browser-workstream-files";
-import type {
-  NodeLaunchHandoff,
-  NodeLaunchClaimState,
-  NodeLaunchOperation,
-  NodeLaunchRecord,
-  NodeLaunchRecordResponse,
-  NodeManagedSdkLaunchResponse,
-  NodeTerminalLaunchResponse,
+import {
+  isActiveNodeLaunchOperationStatus,
+  type NodeLaunchHandoff,
+  type NodeLaunchClaimState,
+  type NodeLaunchOperation,
+  type NodeLaunchRecord,
+  type NodeLaunchRecordResponse,
+  type NodeManagedSdkLaunchResponse,
+  type NodeTerminalLaunchResponse,
 } from "./node-launch-record-contract";
 import { loadGraphNodeLaunchRecords } from "./node-launch-record-client";
 import {
@@ -113,6 +119,23 @@ interface GraphLoadError {
 }
 
 type PawLaunchPreparationResponse = NodeLaunchHandoff;
+
+interface CompanionTerminalLaunchResponse {
+  terminal: {
+    method: string;
+    pid?: number;
+  };
+  cwd: string;
+  command: {
+    cliArgs: string[];
+  };
+}
+
+interface CompanionLaunchState {
+  launching: boolean;
+  result: CompanionTerminalLaunchResponse | null;
+  error: string | null;
+}
 
 interface PawLaunchRunStartResponse {
   runId?: string;
@@ -476,6 +499,32 @@ function mergeNodeLaunchRecord(
       candidate.graphPath !== target.graphPath || candidate.nodeId !== target.nodeId,
   );
   return record ? [...nextRecords, record] : nextRecords;
+}
+
+function shouldKeepActiveLaunchOperation(
+  existing: NodeLaunchOperation | undefined,
+  incoming: NodeLaunchOperation,
+): boolean {
+  if (!existing || !isActiveNodeLaunchOperationStatus(existing.status)) {
+    return false;
+  }
+  if (incoming.status !== "prepared" && incoming.status !== "launchable") {
+    return false;
+  }
+  if (
+    existing.graphPath !== incoming.graphPath ||
+    existing.nodeId !== incoming.nodeId
+  ) {
+    return false;
+  }
+  const existingNonce = existing.handoff?.launchMetadata.launchNonce ?? null;
+  const incomingNonce = incoming.handoff?.launchMetadata.launchNonce ?? null;
+  return (
+    existing.preparationRunId === incoming.preparationRunId ||
+    (existingNonce !== null && existingNonce === incomingNonce) ||
+    existing.status === "managed_starting" ||
+    existing.status === "launching"
+  );
 }
 
 function mergeWorkstreamEntries(
@@ -1251,6 +1300,67 @@ function usePromptProfilesState() {
   };
 }
 
+function useReviewPromptTemplatesState() {
+  const [templates, setTemplates] = useState<PawReviewPromptTemplate[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const requestRef = useRef<Promise<void> | null>(null);
+  const mountedRef = useRef(true);
+  const mutationVersionRef = useRef(0);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const noteTemplatesChanged = useCallback((changedTemplates: PawReviewPromptTemplate[]) => {
+    mutationVersionRef.current += 1;
+    setTemplates((current) => mergeReviewPromptTemplates(current, changedTemplates));
+  }, []);
+
+  const refresh = useCallback(() => {
+    if (requestRef.current) {
+      return requestRef.current;
+    }
+    setLoading(true);
+    setError(null);
+    const requestMutationVersion = mutationVersionRef.current;
+    const request = loadReviewPromptTemplates()
+      .then((loadedTemplates) => {
+        if (mountedRef.current) {
+          if (mutationVersionRef.current === requestMutationVersion) {
+            setTemplates(() => mergeReviewPromptTemplates([], loadedTemplates));
+          } else {
+            setTemplates((current) => mergeReviewPromptTemplates(current, loadedTemplates));
+          }
+        }
+      })
+      .catch((loadError: unknown) => {
+        if (mountedRef.current) {
+          setError(loadError instanceof Error ? loadError.message : String(loadError));
+        }
+      })
+      .finally(() => {
+        requestRef.current = null;
+        if (mountedRef.current) {
+          setLoading(false);
+        }
+      });
+    requestRef.current = request;
+    return request;
+  }, []);
+
+  return {
+    templates,
+    loading,
+    error,
+    refresh,
+    noteTemplatesChanged,
+  };
+}
+
 function useSessionLaunchSettingsState() {
   const [settings, setSettings] = useState<SessionLaunchSettings>({
     defaultCliArgs: [...FALLBACK_SESSION_LAUNCH_DEFAULT_CLI_ARGS],
@@ -1355,6 +1465,11 @@ function GraphDashboard({
   promptProfilesError,
   onRefreshPromptProfiles,
   onPromptProfilesChanged,
+  reviewPromptTemplates,
+  reviewPromptTemplatesLoading,
+  reviewPromptTemplatesError,
+  onRefreshReviewPromptTemplates,
+  onReviewPromptTemplatesChanged,
   sessionLaunchSettings,
 }: ReturnType<typeof useGraphLoader> & {
   onOpenWorkstream: (entry: WorkstreamRegistryListEntry) => void | Promise<void>;
@@ -1367,6 +1482,11 @@ function GraphDashboard({
   promptProfilesError: string | null;
   onRefreshPromptProfiles: () => Promise<void> | void;
   onPromptProfilesChanged: (profiles: PawPromptProfile[]) => void;
+  reviewPromptTemplates: PawReviewPromptTemplate[];
+  reviewPromptTemplatesLoading: boolean;
+  reviewPromptTemplatesError: string | null;
+  onRefreshReviewPromptTemplates: () => Promise<void> | void;
+  onReviewPromptTemplatesChanged: (templates: PawReviewPromptTemplate[]) => void;
   sessionLaunchSettings: SessionLaunchSettings;
 }) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(
@@ -1376,6 +1496,7 @@ function GraphDashboard({
   const [launchDialogOpen, setLaunchDialogOpen] = useState(false);
   const [launchDialogTarget, setLaunchDialogTarget] = useState<LaunchOperationTarget | null>(null);
   const [launchOperationByKey, setLaunchOperationByKey] = useState<Record<string, NodeLaunchOperation>>({});
+  const [companionLaunchByKey, setCompanionLaunchByKey] = useState<Record<string, CompanionLaunchState>>({});
   const [launchReleasing, setLaunchReleasing] = useState(false);
   const [launchReleaseError, setLaunchReleaseError] = useState<string | null>(null);
   const [launchReleaseStatus, setLaunchReleaseStatus] = useState<string | null>(null);
@@ -1511,12 +1632,29 @@ function GraphDashboard({
   const launchDialogOperation = launchDialogTarget
     ? launchOperationByKey[launchOperationKey(launchDialogTarget)] ?? null
     : null;
+  const launchDialogCompanion = launchDialogTarget
+    ? companionLaunchByKey[launchOperationKey(launchDialogTarget)] ?? null
+    : null;
 
   const launchDialogLatestClaim = launchDialogOperation?.latestClaim
     ?? (sameLaunchTarget(launchDialogTarget, selectedLaunchTarget) ? nodeLaunchRecord?.latestClaim ?? null : null);
   const launchDialogRuntimeOverlay = launchDialogTarget
     ? runtimeOverlay?.nodesById.get(launchDialogTarget.nodeId) ?? null
     : selectedRuntimeOverlay;
+
+  const launchOperationsByNodeId = useMemo(() => {
+    const operations = new Map<string, NodeLaunchOperation>();
+    if (!activeWorkstreamEntry) {
+      return operations;
+    }
+    const graphPath = activeWorkstreamEntry.path.toLowerCase();
+    for (const operation of Object.values(launchOperationByKey)) {
+      if (operation.graphPath.toLowerCase() === graphPath) {
+        operations.set(operation.nodeId, operation);
+      }
+    }
+    return operations;
+  }, [activeWorkstreamEntry, launchOperationByKey]);
 
   const configureDisabledReason = useMemo(() => {
     if (!activeWorkstreamEntry || !isBackendReadableWorkstreamEntry(activeWorkstreamEntry)) {
@@ -1640,6 +1778,9 @@ function GraphDashboard({
       cwdPreferenceKey,
       graphPath,
       terminalPreference: "Manual terminal launch after preparation",
+      githubIssueNumber: defaultsEntry.node.tracker?.type === "github"
+        ? defaultsEntry.node.tracker.number
+        : null,
       githubIssueLabel: defaultsEntry.node.tracker?.type === "github"
         ? workstreamTrackerLabel(defaultsEntry.node.tracker)
         : null,
@@ -1730,6 +1871,9 @@ function GraphDashboard({
             return current;
           }
           const existing = current[key];
+          if (shouldKeepActiveLaunchOperation(existing, state.operation)) {
+            return current;
+          }
           const progressEvents = existing &&
               existing.preparationRunId === state.operation.preparationRunId &&
               existing.progressEvents.length > state.operation.progressEvents.length
@@ -1786,9 +1930,34 @@ function GraphDashboard({
     }));
   }, []);
 
+  const releaseStuckLaunchOperation = useCallback(
+    async (target: LaunchOperationTarget): Promise<void> => {
+      const response = await fetch("/api/node-launch-records/operations/release", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          graphPath: target.graphPath,
+          nodeId: target.nodeId,
+          reason: "Manually released from the node inspector.",
+        }),
+      });
+      if (!response.ok) {
+        const parsed = await parseErrorResponse(response);
+        throw new Error(parsed.message);
+      }
+      const body = (await response.json()) as { operation: NodeLaunchOperation };
+      setLaunchOperationByKey((current) => ({
+        ...current,
+        [launchOperationKey(target)]: body.operation,
+      }));
+    },
+    [],
+  );
+
   const prefetchPromptProfiles = useCallback(() => {
-    return onRefreshPromptProfiles();
-  }, [onRefreshPromptProfiles]);
+    void onRefreshPromptProfiles();
+    return onRefreshReviewPromptTemplates();
+  }, [onRefreshPromptProfiles, onRefreshReviewPromptTemplates]);
 
   useEffect(() => {
     if (!selectedLaunchTarget || !canLaunchSelectedNode) {
@@ -1834,98 +2003,6 @@ function GraphDashboard({
     );
     return message;
   }, [updateLaunchOperation]);
-
-  useEffect(() => {
-    if (
-      !launchDialogOpen ||
-      !launchDialogTarget ||
-      !launchDialogOperation?.preparationRunId ||
-      launchDialogOperation.status !== "preparing"
-    ) {
-      return;
-    }
-    const runId = launchDialogOperation.preparationRunId;
-    if (localRunStreamsRef.current.has(runId) || failedRunReattachRef.current.has(runId)) {
-      return;
-    }
-    let closed = false;
-    const source = new EventSource(
-      `/api/launch-preparations/runs/${encodeURIComponent(runId)}/events`,
-    );
-    source.addEventListener("progress", (event) => {
-      if (closed) {
-        return;
-      }
-      const progress = parseMessageEventData<PawLaunchProgressEvent>(event);
-      updateLaunchOperation(launchDialogTarget, (current) => {
-        const operation = current ?? createClientLaunchOperation(launchDialogTarget, "preparing");
-        return {
-          ...operation,
-          status: "preparing",
-          error: null,
-          updatedAt: progress.timestamp,
-          progressEvents: appendProgressEvent(operation.progressEvents, progress),
-        };
-      });
-    });
-    source.addEventListener("completed", (event) => {
-      if (closed) {
-        return;
-      }
-      const payload = parseMessageEventData<PawLaunchRunFinishedPayload>(event);
-      if (payload.result) {
-        applyPreparedLaunchHandoff(launchDialogTarget, payload.result);
-      }
-      source.close();
-    });
-    source.addEventListener("failed", (event) => {
-      if (closed) {
-        return;
-      }
-      applyPreparationFailure(launchDialogTarget, parseMessageEventData<PawLaunchRunFinishedPayload>(event));
-      source.close();
-    });
-    source.onerror = () => {
-      if (closed) {
-        return;
-      }
-      failedRunReattachRef.current.add(runId);
-      source.close();
-      void loadNodeLaunchRecord(launchDialogTarget.graphPath, launchDialogTarget.nodeId)
-        .then((state) => {
-          if (closed) {
-            return;
-          }
-          if (sameLaunchTarget(launchDialogTarget, selectedLaunchTarget)) {
-            setNodeLaunchRecords((current) =>
-              mergeNodeLaunchRecord(current, launchDialogTarget, state.record)
-            );
-          }
-          if (state.operation) {
-            setLaunchOperation(launchDialogTarget, state.operation);
-          }
-        })
-        .catch((recordError: unknown) => {
-          if (!closed) {
-            setNodeLaunchRecordError(recordError instanceof Error ? recordError.message : String(recordError));
-          }
-        });
-    };
-    return () => {
-      closed = true;
-      source.close();
-    };
-  }, [
-    applyPreparationFailure,
-    applyPreparedLaunchHandoff,
-    launchDialogOpen,
-    launchDialogOperation?.preparationRunId,
-    launchDialogOperation?.status,
-    launchDialogTarget,
-    selectedLaunchTarget,
-    setLaunchOperation,
-    updateLaunchOperation,
-  ]);
 
   const handleArchiveCurrent = async () => {
     if (!activeWorkstream) {
@@ -2124,11 +2201,16 @@ function GraphDashboard({
     }
   };
 
-  const launchTerminalFromHandoff = async (
+  const launchTerminalFromHandoff = useCallback(async (
     handoff: PawLaunchPreparationResponse,
     input: PawTerminalLaunchInput,
     target: LaunchOperationTarget,
   ) => {
+    const operationKey = launchOperationKey(target);
+    setCompanionLaunchByKey((current) => ({
+      ...current,
+      [operationKey]: { launching: false, result: null, error: null },
+    }));
     updateLaunchOperation(target, (current) =>
       createClientLaunchOperation(target, "launching", {
         ...(current ?? {}),
@@ -2172,6 +2254,44 @@ function GraphDashboard({
         })
       );
       setNodeLaunchRecordRefreshKey((current) => current + 1);
+      if (input.reviewCompanion) {
+        setCompanionLaunchByKey((current) => ({
+          ...current,
+          [operationKey]: { launching: true, result: null, error: null },
+        }));
+        try {
+          const companionResponse = await fetch("/api/companion-terminal-launches", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              cwd: handoff.cwd,
+              kickoffPrompt: input.reviewCompanion.kickoffPrompt,
+              cliArgs: handoff.cliArgs,
+              preferredTerminal: handoff.terminal.preferredTerminal,
+              title: `${input.terminalTitle} REVIEW`,
+              tabColor: input.terminalColor,
+            }),
+          });
+          if (!companionResponse.ok) {
+            const parsed = await parseErrorResponse(companionResponse);
+            throw new Error(parsed.message);
+          }
+          const companionResult = await companionResponse.json() as CompanionTerminalLaunchResponse;
+          setCompanionLaunchByKey((current) => ({
+            ...current,
+            [operationKey]: { launching: false, result: companionResult, error: null },
+          }));
+        } catch (companionError: unknown) {
+          setCompanionLaunchByKey((current) => ({
+            ...current,
+            [operationKey]: {
+              launching: false,
+              result: null,
+              error: companionError instanceof Error ? companionError.message : String(companionError),
+            },
+          }));
+        }
+      }
     } catch (nextError) {
       updateLaunchOperation(target, (current) =>
         createClientLaunchOperation(target, "terminal_failed", {
@@ -2189,9 +2309,9 @@ function GraphDashboard({
       );
       setNodeLaunchRecordRefreshKey((current) => current + 1);
     }
-  };
+  }, [updateLaunchOperation]);
 
-  const launchManagedSdkFromHandoff = async (
+  const launchManagedSdkFromHandoff = useCallback(async (
     handoff: PawLaunchPreparationResponse,
     target: LaunchOperationTarget,
   ) => {
@@ -2271,7 +2391,7 @@ function GraphDashboard({
       );
       setNodeLaunchRecordRefreshKey((current) => current + 1);
     }
-  };
+  }, [setLaunchOperation, updateLaunchOperation]);
 
   const handleSubmitLaunch = async (configuration: PawLaunchDialogConfiguration) => {
     const target = launchDialogTarget ?? selectedLaunchTarget;
@@ -2385,6 +2505,7 @@ function GraphDashboard({
           kickoffPrompt: preparedHandoff.kickoffPrompt,
           terminalTitle: preparedHandoff.terminal.title ?? preparedHandoff.launchMetadata.workTitle,
           terminalColor: preparedHandoff.terminal.tabColor ?? null,
+          reviewCompanion: configuration.reviewCompanion,
         }, target);
       }
     } catch (nextError) {
@@ -2422,6 +2543,103 @@ function GraphDashboard({
     }
     await launchTerminalFromHandoff(launchDialogOperation.handoff, input, launchDialogTarget);
   };
+
+  useEffect(() => {
+    if (
+      !launchDialogOpen ||
+      !launchDialogTarget ||
+      !launchDialogOperation?.preparationRunId ||
+      launchDialogOperation.status !== "preparing"
+    ) {
+      return;
+    }
+    const runId = launchDialogOperation.preparationRunId;
+    if (localRunStreamsRef.current.has(runId) || failedRunReattachRef.current.has(runId)) {
+      return;
+    }
+    let closed = false;
+    const target = launchDialogTarget;
+    const source = new EventSource(
+      `/api/launch-preparations/runs/${encodeURIComponent(runId)}/events`,
+    );
+    source.addEventListener("progress", (event) => {
+      if (closed) {
+        return;
+      }
+      const progress = parseMessageEventData<PawLaunchProgressEvent>(event);
+      updateLaunchOperation(target, (current) => {
+        const operation = current ?? createClientLaunchOperation(target, "preparing");
+        return {
+          ...operation,
+          status: "preparing",
+          error: null,
+          updatedAt: progress.timestamp,
+          progressEvents: appendProgressEvent(operation.progressEvents, progress),
+        };
+      });
+    });
+    source.addEventListener("completed", (event) => {
+      if (closed) {
+        return;
+      }
+      const payload = parseMessageEventData<PawLaunchRunFinishedPayload>(event);
+      if (payload.result) {
+        const nextHandoff = applyPreparedLaunchHandoff(target, payload.result);
+        if (nextHandoff.runtimeKind === "managed-sdk") {
+          void launchManagedSdkFromHandoff(nextHandoff, target);
+        }
+      }
+      source.close();
+    });
+    source.addEventListener("failed", (event) => {
+      if (closed) {
+        return;
+      }
+      applyPreparationFailure(target, parseMessageEventData<PawLaunchRunFinishedPayload>(event));
+      source.close();
+    });
+    source.onerror = () => {
+      if (closed) {
+        return;
+      }
+      failedRunReattachRef.current.add(runId);
+      source.close();
+      void loadNodeLaunchRecord(target.graphPath, target.nodeId)
+        .then((state) => {
+          if (closed) {
+            return;
+          }
+          if (sameLaunchTarget(target, selectedLaunchTarget)) {
+            setNodeLaunchRecords((current) =>
+              mergeNodeLaunchRecord(current, target, state.record)
+            );
+          }
+          if (state.operation) {
+            setLaunchOperation(target, state.operation);
+          }
+        })
+        .catch((recordError: unknown) => {
+          if (!closed) {
+            setNodeLaunchRecordError(recordError instanceof Error ? recordError.message : String(recordError));
+          }
+        });
+    };
+    return () => {
+      closed = true;
+      source.close();
+    };
+  }, [
+    applyPreparationFailure,
+    applyPreparedLaunchHandoff,
+    launchDialogOpen,
+    launchDialogOperation?.preparationRunId,
+    launchDialogOperation?.status,
+    launchDialogTarget,
+    launchManagedSdkFromHandoff,
+    selectedLaunchTarget,
+    setLaunchOperation,
+    updateLaunchOperation,
+  ]);
 
   if (error) {
     return (
@@ -2497,6 +2715,7 @@ function GraphDashboard({
             nodeSessionStatuses={nodeSessionStatuses}
             nodeSessionStatusState={nodeSessionStatusState}
             runtimeOverlay={runtimeOverlay}
+            launchOperations={launchOperationsByNodeId}
             sessionRouteForNode={sessionRouteForNode}
           />
         </ReactFlowProvider>
@@ -2513,6 +2732,11 @@ function GraphDashboard({
             launchRecordError={nodeLaunchRecordError ?? selectedNodeLaunchRecordError}
             runtimeOverlay={selectedRuntimeOverlay}
             onLaunch={handleOpenLaunchDialog}
+            onReleaseStuckOperation={
+              selectedLaunchTarget
+                ? () => releaseStuckLaunchOperation(selectedLaunchTarget)
+                : undefined
+            }
           />
         </div>
       </div>
@@ -2525,11 +2749,14 @@ function GraphDashboard({
           promptProfiles={promptProfiles}
           promptProfilesLoading={promptProfilesLoading}
           promptProfilesError={promptProfilesError}
+          reviewPromptTemplates={reviewPromptTemplates}
+          reviewPromptTemplatesLoading={reviewPromptTemplatesLoading}
+          reviewPromptTemplatesError={reviewPromptTemplatesError}
           preparing={
-            launchDialogOperation?.status === "preparing" ||
-            launchDialogOperation?.status === "managed_starting"
+            launchDialogOperation?.status === "preparing"
           }
           launching={launchDialogOperation?.status === "launching"}
+          launchStatus={launchDialogOperation?.status ?? null}
           error={launchDialogOperation?.error?.error ?? null}
           handoff={launchDialogOperation?.handoff ?? null}
           terminalLaunchResult={launchDialogOperation?.terminalLaunch ?? null}
@@ -2543,10 +2770,14 @@ function GraphDashboard({
           resumingLaunch={launchResuming}
           resumeError={launchResumeError}
           resumeStatus={launchResumeStatus}
+          companionLaunching={launchDialogCompanion?.launching ?? false}
+          companionLaunchError={launchDialogCompanion?.error ?? null}
+          companionLaunchResult={launchDialogCompanion?.result ?? null}
           onCancel={handleCloseLaunchDialog}
           onSubmit={handleSubmitLaunch}
           onLaunchTerminal={handleLaunchTerminal}
           onPromptProfilesChanged={onPromptProfilesChanged}
+          onReviewPromptTemplatesChanged={onReviewPromptTemplatesChanged}
           onReleaseLaunch={launchDialogLatestClaim?.blocksLaunch ? handleReleaseLaunch : undefined}
           onResumeLaunch={canResumeBackgroundLaunch ? handleResumeBackgroundLaunch : undefined}
         />
@@ -2746,8 +2977,48 @@ export default function App() {
   const { route, setRoute } = useDashboardRoute();
   const graphLoader = useGraphLoader(route, true);
   const promptProfileState = usePromptProfilesState();
+  const reviewPromptTemplateState = useReviewPromptTemplatesState();
   const sessionLaunchSettingsState = useSessionLaunchSettingsState();
   const beforeLeaveRef = useRef<(() => Promise<boolean>) | null>(null);
+
+  // Keep the browser tab title in sync with the active route + workstream so
+  // the user can pick the right tab when several Streamliner views are open.
+  useEffect(() => {
+    const base = "Streamliner";
+    let suffix: string | null = null;
+    switch (route.view) {
+      case "landing":
+        suffix = null;
+        break;
+      case "workstreams":
+        suffix = "Workstreams";
+        break;
+      case "sessions":
+        suffix = "Sessions";
+        break;
+      case "settings":
+        suffix = route.section === "profiles"
+          ? "Settings · PAW profiles"
+          : "Settings · Session launch";
+        break;
+      case "workstream": {
+        // Prefer the loaded document title; fall back to the workstreamId
+        // segment so the tab still differentiates while the document is
+        // still loading or failed to load.
+        const loaded = graphLoader.workstream;
+        const matchesRoute =
+          loaded
+          && loaded.projectKey === route.projectKey
+          && loaded.id === route.workstreamId;
+        suffix = matchesRoute ? loaded.title : route.workstreamId;
+        break;
+      }
+    }
+    document.title = suffix ? `${base}: ${suffix}` : base;
+  }, [
+    route,
+    graphLoader.workstream,
+  ]);
 
   const handleRouteChange = useCallback(
     async (nextRoute: DashboardRoute) => {
@@ -2850,6 +3121,11 @@ export default function App() {
           promptProfilesError={promptProfileState.error}
           onRefreshPromptProfiles={promptProfileState.refresh}
           onPromptProfilesChanged={promptProfileState.noteProfilesChanged}
+          reviewPromptTemplates={reviewPromptTemplateState.templates}
+          reviewPromptTemplatesLoading={reviewPromptTemplateState.loading}
+          reviewPromptTemplatesError={reviewPromptTemplateState.error}
+          onRefreshReviewPromptTemplates={reviewPromptTemplateState.refresh}
+          onReviewPromptTemplatesChanged={reviewPromptTemplateState.noteTemplatesChanged}
           sessionLaunchSettings={sessionLaunchSettingsState.settings}
         />
       ) : route.view === "workstreams" ? (

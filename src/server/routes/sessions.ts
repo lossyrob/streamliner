@@ -39,6 +39,7 @@ import type {
   ManagedSdkOwnershipTransferResult,
   ManagedSdkRunner,
 } from "../managed-sdk-runner";
+import type { ManagedRuntimePatchCoalescer } from "../managed-runtime-patch-coalescer";
 import { SessionRegistryEventStream } from "../session-events";
 import {
   buildCopilotResumeCommand,
@@ -68,6 +69,7 @@ export function createSessionsRouter(options: {
   eventStream: SessionRegistryEventStream;
   relaunchDeps?: Partial<RelaunchDeps>;
   managedSdkRunner?: ManagedSdkRunner;
+  runtimePatchCoalescer: ManagedRuntimePatchCoalescer;
   managedCleanupDeps?: Partial<ManagedCleanupDeps>;
   now?: () => Date;
   /**
@@ -86,6 +88,10 @@ export function createSessionsRouter(options: {
   const claimBindingLogger = options.launchClaimStore
     ? getApiLogger().withScope("launch-claim.binding")
     : null;
+  const quiesceRuntimePatchQueue = (sessionId: string): void => {
+    options.runtimePatchCoalescer.flush(sessionId);
+    options.runtimePatchCoalescer.close(sessionId);
+  };
 
   const onTrustedSignalApplied:
     | ((signal: SessionRegistryTrustedSignalInput) => void)
@@ -266,8 +272,10 @@ export function createSessionsRouter(options: {
     const reason = typeof body.reason === "string" ? body.reason : undefined;
     let requested: SessionRegistryRecord;
     try {
+      quiesceRuntimePatchQueue(sessionId);
       requested = target.store.patchRuntimeMetadata(sessionId, {
         lifecycleState: "interrupt_requested",
+        forceLifecycleState: true,
         progressEvents: [{
           type: "lifecycle",
           message: "Managed SDK interruption requested.",
@@ -285,25 +293,39 @@ export function createSessionsRouter(options: {
       return;
     }
     const outcome = await interruptManagedSdkRunner(options.managedSdkRunner, sessionId, reason);
+    const finalState = outcome.ok ? outcome.evidenceState : "interrupt_requested";
     try {
+      quiesceRuntimePatchQueue(sessionId);
       const finalRecord = target.store.patchRuntimeMetadata(sessionId, {
-        lifecycleState: outcome.evidenceState,
+        lifecycleState: finalState,
+        forceLifecycleState: true,
         progressEvents: [{
           type: outcome.ok ? "lifecycle" : "error",
-          message: outcome.message,
+          message: outcome.ok
+            ? outcome.message
+            : `Managed SDK interruption failed; runtime remains active for retry: ${outcome.message}`,
         }],
       });
       assertManagedRuntimePatch(finalRecord, {
-        lifecycleState: outcome.evidenceState,
+        lifecycleState: finalState,
         context: "interrupt",
       });
       managedLogger.info("interrupt", {
         sessionId,
         requestedState: requested.runtime?.lifecycleState,
-        outcome: outcome.evidenceState,
+        outcome: finalState,
         ok: outcome.ok,
       });
-      res.json({ outcome, session: finalRecord });
+      res.json({
+        outcome: outcome.ok
+          ? outcome
+          : {
+              ...outcome,
+              evidenceState: finalState,
+              message: `Managed SDK interruption failed; runtime remains active for retry: ${outcome.message}`,
+            },
+        session: finalRecord,
+      });
     } catch (error: unknown) {
       const failure = managedRuntimeErrorResponse(error);
       managedLogger.warn("interrupt settle failed", {
@@ -341,8 +363,10 @@ export function createSessionsRouter(options: {
     }
     let requested: SessionRegistryRecord;
     try {
+      quiesceRuntimePatchQueue(sessionId);
       requested = target.store.patchRuntimeMetadata(sessionId, {
         lifecycleState: "interrupt_requested",
+        forceLifecycleState: true,
         progressEvents: [{
           type: "lifecycle",
           message: "Managed SDK cancellation requested.",
@@ -364,17 +388,24 @@ export function createSessionsRouter(options: {
       sessionId,
       "Managed SDK run canceled by builder action.",
     );
-    const finalState = outcome.ok || !hasRunner ? "canceled" : "failed";
+    const finalState = outcome.ok || !hasRunner || outcome.evidenceState === "waiting_for_builder"
+      ? "canceled"
+      : "interrupt_requested";
     try {
+      quiesceRuntimePatchQueue(sessionId);
       const record = target.store.patchRuntimeMetadata(sessionId, {
         lifecycleState: finalState,
+        forceLifecycleState: true,
         progressEvents: [{
           type: finalState === "canceled" ? "lifecycle" : "error",
           message: finalState === "canceled"
             ? "Managed SDK run canceled by builder action."
-            : outcome.message,
+            : `Managed SDK cancellation failed; runtime remains active for retry: ${outcome.message}`,
         }],
       });
+      if (finalState === "canceled") {
+        options.runtimePatchCoalescer.close(sessionId);
+      }
       assertManagedRuntimePatch(record, {
         lifecycleState: finalState,
         context: "cancel",
@@ -388,7 +419,11 @@ export function createSessionsRouter(options: {
               ? "Managed SDK run canceled by builder action."
               : `${outcome.message}; recorded cancellation.`,
           }
-        : outcome;
+        : {
+            ...outcome,
+            evidenceState: finalState,
+            message: `Managed SDK cancellation failed; runtime remains active for retry: ${outcome.message}`,
+          };
       managedLogger.info("cancel", {
         sessionId,
         requestedState: requested.runtime?.lifecycleState,
@@ -435,6 +470,7 @@ export function createSessionsRouter(options: {
     const sdkSessionId = runtime?.sdkSessionId;
     if (!sdkSessionId) {
       try {
+        quiesceRuntimePatchQueue(sessionId);
         const failed = target.store.patchRuntimeMetadata(sessionId, {
           lifecycleState: "failed",
           progressEvents: [{
@@ -454,6 +490,7 @@ export function createSessionsRouter(options: {
     }
     if (!isSafeCopilotResumeSessionId(sdkSessionId)) {
       try {
+        quiesceRuntimePatchQueue(sessionId);
         const failed = target.store.patchRuntimeMetadata(sessionId, {
           lifecycleState: "failed",
           progressEvents: [{
@@ -476,6 +513,7 @@ export function createSessionsRouter(options: {
     const timestamp = (options.now?.() ?? new Date()).toISOString();
     let prebound: SessionRegistryRecord;
     try {
+      quiesceRuntimePatchQueue(sessionId);
       // Pre-bind before launch so a fast resume hook attaches to this managed row
       // instead of creating a duplicate observed session.
       prebound = target.store.attachObservedSession(sessionId, {
@@ -522,6 +560,7 @@ export function createSessionsRouter(options: {
       return;
     }
     try {
+      quiesceRuntimePatchQueue(sessionId);
       const reason = "Terminal takeover requested by builder action.";
       const runnerSettlement = await releaseManagedSdkRunnerForTerminal(
         options.managedSdkRunner,
@@ -559,6 +598,7 @@ export function createSessionsRouter(options: {
           },
         }],
       });
+      options.runtimePatchCoalescer.close(sessionId);
       assertManagedRuntimePatch(withTakeoverRuntime, {
         runtimeOwner: "builder-terminal",
         lifecycleState: "terminal_takeover",
@@ -627,6 +667,7 @@ export function createSessionsRouter(options: {
     }
     try {
       await withManagedCleanupLock(sessionId, async () => {
+        options.runtimePatchCoalescer.flush(sessionId);
         const target = managedRuntimeTarget(options.store, sessionId, {
           allowedOwners: ["streamliner-sdk", "builder-terminal"],
         });
@@ -649,6 +690,7 @@ export function createSessionsRouter(options: {
         );
         if (!validation.ok) {
           const message = validation.blockers[0]?.message ?? "Cleanup is blocked by managed runtime guardrails.";
+          quiesceRuntimePatchQueue(sessionId);
           const blocked = target.store.patchRuntimeMetadata(sessionId, {
             lifecycleState: "waiting_for_builder",
             progressEvents: [{
@@ -672,6 +714,7 @@ export function createSessionsRouter(options: {
           return;
         }
 
+        quiesceRuntimePatchQueue(sessionId);
         const cleaning = target.store.patchRuntimeMetadata(sessionId, {
           lifecycleState: "cleaning_up",
           progressEvents: [{
@@ -685,6 +728,7 @@ export function createSessionsRouter(options: {
         });
         const cleanup = await executeManagedCleanup(validation.plan, options.managedCleanupDeps);
         if (!cleanup.ok) {
+          quiesceRuntimePatchQueue(sessionId);
           const failed = target.store.patchRuntimeMetadata(sessionId, {
             lifecycleState: "waiting_for_builder",
             progressEvents: [{
@@ -712,6 +756,7 @@ export function createSessionsRouter(options: {
           return;
         }
         const summary = managedCleanupSummary(validation.plan, cleanup);
+        quiesceRuntimePatchQueue(sessionId);
         const cleaned = target.store.patchRuntimeMetadata(sessionId, {
           lifecycleState: "cleaned_up",
           evidence: [{
@@ -732,6 +777,7 @@ export function createSessionsRouter(options: {
             },
           }],
         });
+        options.runtimePatchCoalescer.close(sessionId);
         assertManagedRuntimePatch(cleaned, {
           lifecycleState: "cleaned_up",
           context: "cleanup finish",
@@ -796,6 +842,7 @@ export function createSessionsRouter(options: {
       return;
     }
     try {
+      quiesceRuntimePatchQueue(sessionId);
       const record = target.store.patchRuntimeMetadata(sessionId, {
         lifecycleState: evidence.kind,
         evidence: [evidence],

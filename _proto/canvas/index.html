@@ -1,0 +1,1746 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DBAgent Portfolio Canvas — Wave Geometry</title>
+<script type="importmap">
+{
+  "imports": {
+    "react":             "https://esm.sh/react@18.3.1",
+    "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
+    "react-dom":         "https://esm.sh/react-dom@18.3.1",
+    "react-dom/client":  "https://esm.sh/react-dom@18.3.1/client",
+    "@xyflow/react":     "https://esm.sh/@xyflow/react@12.3.5?deps=react@18.3.1,react-dom@18.3.1",
+    "elkjs":             "https://esm.sh/elkjs@0.10.0/lib/elk.bundled.js",
+    "htm":               "https://esm.sh/htm@3.1.1"
+  }
+}
+</script>
+<link rel="stylesheet" href="https://esm.sh/@xyflow/react@12.3.5/dist/style.css">
+<style>
+  :root {
+    color-scheme: light;
+    /* Streamliner "Light Deep Ocean" palette — mirrors src/streamliner-theme.css */
+    --bg: #f2f4f8;
+    --panel: rgba(255, 255, 255, 0.82);
+    --panel-2: rgba(255, 255, 255, 0.92);
+    --text: #1a2540;
+    --muted: #3a4f70;
+    --faint: #8d9bb5;
+    --accent: #1d6edc;
+    --green: #12945f;
+    --yellow: #b07808;   /* amber — used for "ready" status */
+    --orange: #c95a1e;   /* hot/focus accent — distinct from amber */
+    --red: #c83232;
+    --purple: #7c3aed;
+    --blue: #1d6edc;     /* in-progress; same accent blue as Streamliner */
+    --rf-bg: transparent;
+    --border: rgba(20, 60, 130, 0.10);
+    --border-strong: rgba(20, 60, 130, 0.16);
+    --shadow-card: 0 8px 30px rgba(31, 58, 105, 0.08);
+    --shadow-soft: 0 4px 14px rgba(31, 58, 105, 0.06);
+  }
+  * { box-sizing: border-box; }
+  html, body, #root { height: 100%; margin: 0; }
+  body {
+    background:
+      radial-gradient(circle at 20% 0%, rgba(29, 110, 220, 0.07), transparent 30rem),
+      radial-gradient(circle at 82% 8%, rgba(124, 58, 237, 0.05), transparent 32rem),
+      var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", "Inter", sans-serif;
+    overflow: hidden;
+  }
+  #root { display: grid; grid-template-rows: auto auto 1fr; }
+  header.topbar {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.75rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.78);
+    backdrop-filter: blur(10px);
+    z-index: 20;
+  }
+  header h1 { margin: 0; font-size: 0.95rem; letter-spacing: -0.005em; font-weight: 700; color: var(--text); }
+  header .meta { margin-top: 0.2rem; color: var(--muted); font-size: 0.72rem; }
+  header .legend { display: flex; gap: 0.8rem; flex-wrap: wrap; font-size: 0.66rem; color: var(--muted); }
+  header .legend .it { display: inline-flex; align-items: center; gap: 0.3rem; }
+  header .legend .sw { display: inline-block; width: 14px; height: 10px; border-radius: 3px; border: 1px solid var(--border); }
+  header .legend .ln { display: inline-block; width: 22px; height: 0; border-top: 2px solid; }
+  header .filter-bar {
+    display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+    padding: 6px 1.25rem 8px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.6);
+    backdrop-filter: blur(8px);
+    font-size: 0.72rem;
+    color: var(--muted);
+  }
+  header .filter-bar .filter-label {
+    text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--faint); font-size: 0.62rem; font-weight: 700;
+    margin-right: 4px;
+  }
+  header .filter-bar button {
+    padding: 3px 11px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.7);
+    color: var(--muted);
+    font-size: 0.7rem;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+  }
+  header .filter-bar button:hover { color: var(--text); border-color: rgba(29,110,220,0.35); background: rgba(255,255,255,0.92); }
+  header .filter-bar button.active { color: var(--accent); border-color: rgba(29,110,220,0.45); background: rgba(29,110,220,0.08); }
+  header .filter-bar button.active.f-ready       { color: var(--yellow); border-color: rgba(176,120,8,0.45); background: rgba(176,120,8,0.10); }
+  header .filter-bar button.active.f-in-progress { color: var(--blue);   border-color: rgba(29,110,220,0.45); background: rgba(29,110,220,0.08); }
+  header .filter-bar button.active.f-blocked     { color: var(--red);    border-color: rgba(200,50,50,0.45); background: rgba(200,50,50,0.08); }
+  header .filter-bar button.active.f-done        { color: var(--green);  border-color: rgba(18,148,95,0.40); background: rgba(18,148,95,0.08); }
+  header .filter-bar button.active.f-hot         { color: var(--orange); border-color: rgba(201,90,30,0.45); background: rgba(201,90,30,0.08); }
+  header .filter-bar .summary {
+    margin-left: auto;
+    color: var(--faint);
+    font-size: 0.66rem;
+  }
+  .content { display: grid; grid-template-columns: 1fr 24rem; height: 100%; min-height: 0; transition: grid-template-columns 180ms ease; }
+  .content.inspector-hidden { grid-template-columns: 1fr; }
+  .canvas-shell { position: relative; min-width: 0; min-height: 0; }
+  .inspector-wrap {
+    position: relative;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .inspector-wrap > aside.inspector { flex: 1; min-height: 0; }
+  .inspector-close {
+    position: absolute;
+    top: 10px; right: 12px;
+    width: 26px; height: 26px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.92);
+    color: var(--muted);
+    font-size: 16px; line-height: 1;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 12;
+    box-shadow: var(--shadow-soft);
+    transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+  }
+  .inspector-close:hover {
+    background: #fff;
+    color: var(--text);
+    border-color: var(--border-strong);
+  }
+  .inspector-show {
+    position: absolute;
+    top: 12px; right: 12px;
+    padding: 6px 14px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.92);
+    color: var(--muted);
+    font-size: 0.7rem;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+    box-shadow: var(--shadow-soft);
+    z-index: 12;
+    transition: background 120ms ease, color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+  }
+  .inspector-show:hover {
+    background: #fff;
+    color: var(--text);
+    border-color: var(--border-strong);
+    box-shadow: var(--shadow-card);
+  }
+  aside.inspector {
+    overflow-y: auto;
+    padding: 1rem 1.1rem 4rem;
+    background: rgba(255, 255, 255, 0.62);
+    border-left: 1px solid var(--border);
+    font-size: 0.82rem;
+    color: var(--text);
+  }
+  aside.inspector h2 { margin: 0 0 0.25rem; font-size: 0.95rem; color: var(--text); }
+  aside.inspector h3 { margin: 0.9rem 0 0.4rem; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.10em; color: var(--faint); font-weight: 700; }
+  aside.inspector p, aside.inspector li { color: var(--muted); line-height: 1.5; font-size: 0.78rem; margin: 0 0 0.3rem; }
+  aside.inspector .placeholder { color: var(--faint); font-style: italic; }
+  aside.inspector .pill { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 0.62rem; margin-right: 0.3rem; font-weight: 600; }
+  aside.inspector .ev { font-size: 0.72rem; color: var(--muted); margin-bottom: 2px; word-break: break-word; }
+  aside.inspector .blocker {
+    margin-bottom: 0.4rem; padding: 0.4rem 0.6rem;
+    border-left: 3px solid var(--red);
+    background: rgba(200,50,50,0.06);
+    border-radius: 0 6px 6px 0;
+    font-size: 0.74rem; color: var(--text);
+  }
+  aside.inspector .blocker.soft-coord, aside.inspector .blocker.soft-data {
+    border-left-color: var(--purple); background: rgba(124,58,237,0.06);
+  }
+  aside.inspector .blocker.hard { border-left-color: var(--green); background: rgba(18,148,95,0.06); }
+  aside.inspector .blocker.external { border-left-color: var(--red); background: rgba(200,50,50,0.06); }
+
+  /* React Flow theming overrides */
+  .react-flow { background: var(--rf-bg); }
+  .react-flow__background { background: transparent; }
+  .react-flow__controls {
+    background: rgba(255,255,255,0.92);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: var(--shadow-card);
+    overflow: hidden;
+  }
+  .react-flow__controls-button { background: rgba(255,255,255,0.92); border: none; border-bottom: 1px solid var(--border); color: var(--muted); }
+  .react-flow__controls-button:hover { background: rgba(255,255,255,1); color: var(--accent); }
+  .react-flow__controls-button svg { fill: currentColor; }
+  .react-flow__minimap {
+    background: rgba(255,255,255,0.85);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: var(--shadow-card);
+  }
+  .react-flow__attribution { display: none !important; }
+  .react-flow__node { font-family: inherit; }
+  .react-flow__handle {
+    width: 8px; height: 8px;
+    background: rgba(255,255,255,0.95);
+    border: 2px solid var(--border-strong);
+  }
+  .react-flow__handle.spine {
+    background: rgba(20,60,130,0.18);
+    border-color: rgba(20,60,130,0.32);
+  }
+  .react-flow__handle.import { background: var(--yellow); border-color: rgba(176,120,8,0.55); }
+  .react-flow__handle.export { background: var(--green); border-color: rgba(18,148,95,0.55); }
+  .react-flow__edge.spine path {
+    stroke: rgba(20,60,130,0.28);
+    stroke-width: 2;
+    stroke-dasharray: none;
+  }
+  .react-flow__edge.hard path { stroke: var(--green); stroke-width: 2.2; }
+  .react-flow__edge.soft-data path { stroke: var(--blue); stroke-width: 2; stroke-dasharray: 8 5; }
+  .react-flow__edge.soft-coord path { stroke: var(--purple); stroke-width: 2; stroke-dasharray: 2 5; }
+  .react-flow__edge.external path { stroke: var(--red); stroke-width: 2; stroke-dasharray: 6 5; }
+  .react-flow__edge.fulfilled path { opacity: 0.30; stroke-width: 1.5; }
+  .react-flow__edge.blocking-current path {
+    stroke-width: 3.5;
+    filter: drop-shadow(0 0 6px currentColor);
+  }
+  .react-flow__edge:hover path, .react-flow__edge.selected path { stroke-width: 3.5; opacity: 1; }
+  .react-flow__edge-text { fill: var(--text); font-size: 10px; }
+  .react-flow__edge-textbg { fill: rgba(255,255,255,0.92); }
+
+  /* Workstream header node */
+  .ws-header-node {
+    width: 100%; height: 100%;
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: linear-gradient(180deg, rgba(29,110,220,0.05) 0%, rgba(255,255,255,0.95) 100%);
+    color: var(--text);
+    box-shadow: var(--shadow-card);
+    cursor: pointer;
+    transition: border-color 120ms ease, box-shadow 120ms ease;
+    overflow: hidden;
+  }
+  .ws-header-node.selected {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(29,110,220,0.10), var(--shadow-card);
+  }
+  .ws-header-node .eyebrow {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 0.6rem; color: var(--faint);
+    text-transform: uppercase; letter-spacing: 0.10em; font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .ws-header-node .pill {
+    padding: 1px 7px; border-radius: 999px; background: rgba(20,60,130,0.06); font-weight: 600;
+  }
+  .ws-header-node .pill.done      { color: var(--green);  background: rgba(18,148,95,0.12); }
+  .ws-header-node .pill.in-flight { color: var(--blue);   background: rgba(29,110,220,0.10); }
+  .ws-header-node .pill.formed    { color: var(--accent); background: rgba(29,110,220,0.10); }
+  .ws-header-node .pill.candidate { color: var(--yellow); background: rgba(176,120,8,0.12); }
+  .ws-header-node h2 {
+    margin: 0; font-size: 0.85rem; line-height: 1.20; color: var(--text);
+    font-weight: 700;
+  }
+  .ws-header-node .summary {
+    margin-top: 5px;
+    color: var(--muted); font-size: 0.66rem; line-height: 1.4;
+    display: -webkit-box; overflow: hidden;
+    -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  }
+  .ws-header-node .meta {
+    margin-top: auto; padding-top: 4px;
+    display: flex; gap: 6px; flex-wrap: wrap;
+    color: var(--faint); font-size: 0.62rem;
+  }
+
+  /* Wave node (vertex card) */
+  .wave-node {
+    width: 100%; height: 100%;
+    padding: 10px 12px;
+    box-sizing: border-box;
+    border: 1.5px solid var(--border);
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.92);
+    color: var(--text);
+    cursor: pointer;
+    box-shadow: var(--shadow-soft);
+    transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease, transform 120ms ease;
+    display: flex; flex-direction: column; gap: 6px;
+    overflow: hidden;
+  }
+  .wave-node:hover { border-color: rgba(29,110,220,0.40); box-shadow: var(--shadow-card); }
+  .wave-node.selected {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(29,110,220,0.12), var(--shadow-card);
+  }
+  /* React Flow's own selection set (e.g., shift-click multi-select) is
+     independent of our inspector-driven `data.selected`. Mirror the accent
+     treatment to the inner card so multi-selection is visible. */
+  .react-flow__node.selected .wave-node,
+  .react-flow__node.selected .ext-node {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(29,110,220,0.18), var(--shadow-card);
+  }
+  /* Status variants — match Streamliner's swimlane treatment */
+  .wave-node.status-done {
+    background: linear-gradient(180deg, rgba(18,148,95,0.09), rgba(255,255,255,0.95));
+    border-color: rgba(18,148,95,0.35);
+    border-style: solid;
+  }
+  .wave-node.status-in-progress {
+    background: linear-gradient(180deg, rgba(29,110,220,0.09), rgba(255,255,255,0.95));
+    border-color: rgba(29,110,220,0.45);
+    border-style: solid;
+    box-shadow: 0 6px 18px rgba(29,110,220,0.08);
+  }
+  .wave-node.status-ready {
+    background: linear-gradient(180deg, rgba(176,120,8,0.12), rgba(255,255,255,0.95));
+    border-color: rgba(176,120,8,0.55);
+    border-style: solid;
+    box-shadow: 0 0 0 2px rgba(176,120,8,0.10), 0 8px 20px rgba(176,120,8,0.08);
+  }
+  .wave-node.status-planned {
+    background: rgba(255,255,255,0.75);
+    border-color: var(--border-strong);
+    border-style: dashed;
+    color: var(--muted);
+  }
+  .wave-node.status-planned .wave-title { color: var(--muted); }
+  .wave-node.status-blocked {
+    background: linear-gradient(180deg, rgba(200,50,50,0.07), rgba(255,255,255,0.95));
+    border-color: rgba(200,50,50,0.45);
+    border-style: dashed;
+  }
+  .wave-node.attn-hot { box-shadow: 0 0 0 2px var(--orange), 0 8px 22px rgba(201,90,30,0.18); }
+  .wave-node.attn-focus { box-shadow: 0 0 0 2px var(--accent), 0 8px 22px rgba(29,110,220,0.18); }
+  .wave-node.pinned, .ext-node.pinned {
+    box-shadow: inset 0 0 0 1px rgba(176,120,8,0.45), 0 6px 18px rgba(31,58,105,0.10);
+  }
+  /* Filter modes — applied when a top-bar filter is active */
+  .wave-node.filter-neighbor, .ext-node.filter-neighbor { opacity: 0.50; }
+  .wave-node.filter-out,      .ext-node.filter-out      { opacity: 0.18; filter: grayscale(0.5); }
+  .wave-node.filter-focus     { /* full visibility + subtle accent */ }
+  /* Edges under filter */
+  .react-flow__edge.filter-focus-edge path     { opacity: 1; stroke-width: 3 !important; }
+  .react-flow__edge.filter-connector-edge path { opacity: 0.50; }
+  .react-flow__edge.filter-out-edge path       { opacity: 0.08; }
+  .pin-badge {
+    position: absolute;
+    top: 4px; right: 4px;
+    width: 22px; height: 22px;
+    padding: 0; margin: 0;
+    border: 1px solid rgba(176,120,8,0.45);
+    border-radius: 999px;
+    background: rgba(176,120,8,0.12);
+    color: var(--yellow);
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 5;
+    transition: background 120ms ease, border-color 120ms ease;
+  }
+  .pin-badge:hover {
+    background: rgba(176,120,8,0.22);
+    border-color: rgba(176,120,8,0.70);
+  }
+  .wave-node .ws-badge {
+    align-self: flex-start;
+    padding: 1px 7px; border-radius: 999px;
+    font-size: 0.58rem;
+    font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.08em;
+    margin-bottom: 2px;
+    line-height: 1.2;
+    max-width: 100%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .wave-node .wave-header {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .wave-node .wave-index {
+    font-size: 0.6rem; color: var(--faint);
+    font-variant-numeric: tabular-nums; flex-shrink: 0;
+    font-weight: 700;
+  }
+  .wave-node .wave-titles { flex: 1; min-width: 0; }
+  .wave-node .wave-title {
+    margin: 0; font-size: 0.76rem; font-weight: 700;
+    line-height: 1.2; color: var(--text);
+    white-space: nowrap; text-overflow: ellipsis; overflow: hidden;
+  }
+  .wave-node .wave-status-pill {
+    flex-shrink: 0;
+    padding: 1px 7px; border-radius: 999px;
+    font-size: 0.58rem;
+    font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.08em;
+    background: rgba(20,60,130,0.06);
+  }
+  .wave-node.status-done .wave-status-pill        { color: var(--green);  background: rgba(18,148,95,0.14); }
+  .wave-node.status-in-progress .wave-status-pill { color: var(--blue);   background: rgba(29,110,220,0.12); }
+  .wave-node.status-ready .wave-status-pill       { color: var(--yellow); background: rgba(176,120,8,0.16); }
+  .wave-node.status-planned .wave-status-pill     { color: var(--faint);  background: rgba(20,60,130,0.04); }
+  .wave-node.status-blocked .wave-status-pill     { color: var(--red);    background: rgba(200,50,50,0.12); }
+  .wave-node .wave-summary {
+    margin: 0;
+    font-size: 0.68rem; line-height: 1.4;
+    color: var(--muted);
+    display: -webkit-box; overflow: hidden;
+    -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+  }
+  .wave-node .wave-edges {
+    margin-top: auto; padding-top: 4px;
+    display: flex; gap: 4px; flex-wrap: wrap;
+    color: var(--faint); font-size: 0.6rem;
+  }
+  .wave-node .ec {
+    padding: 1px 6px; border-radius: 999px;
+    background: rgba(20,60,130,0.06);
+    font-weight: 600;
+  }
+  .wave-node .ec.in  { color: var(--yellow); background: rgba(176,120,8,0.12); }
+  .wave-node .ec.out { color: var(--green);  background: rgba(18,148,95,0.12); }
+
+  /* External dependency node */
+  .ext-node {
+    width: 100%; height: 100%;
+    padding: 8px 12px;
+    border: 1.5px dashed rgba(200,50,50,0.55);
+    border-radius: 14px;
+    background: linear-gradient(180deg, rgba(200,50,50,0.07), rgba(255,255,255,0.95));
+    color: var(--red);
+    box-shadow: var(--shadow-soft);
+    cursor: pointer;
+    box-sizing: border-box;
+    display: flex; flex-direction: column; gap: 5px;
+    overflow: hidden;
+  }
+  .ext-node.selected { box-shadow: 0 0 0 3px rgba(200,50,50,0.14), var(--shadow-card); }
+  .ext-node .ext-tag {
+    align-self: flex-start;
+    padding: 1px 6px; border-radius: 999px;
+    background: rgba(200,50,50,0.14);
+    color: var(--red);
+    font-size: 0.58rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  .ext-node .ext-label {
+    font-size: 0.76rem; font-style: italic; font-weight: 600;
+    line-height: 1.2;
+    color: var(--red);
+  }
+  .ext-node .ext-note {
+    font-size: 0.62rem; color: rgba(122, 34, 34, 0.78); line-height: 1.35;
+    display: -webkit-box; overflow: hidden;
+    -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  }
+
+  /* Workstream group container — backdrop sized to the bounding box of all
+     waves of one workstream. Decorative, not interactive. */
+  .ws-group-node {
+    width: 100%; height: 100%;
+    border: 1.5px dashed transparent;
+    border-radius: 18px;
+    pointer-events: none;
+    box-sizing: border-box;
+    position: relative;
+  }
+  .ws-group-label {
+    position: absolute;
+    top: -1px; left: -1px;
+    padding: 3px 10px 3px 8px;
+    font-size: 0.66rem;
+    font-weight: 700;
+    text-transform: none;
+    letter-spacing: 0.02em;
+    line-height: 1.25;
+    border: 1.5px dashed transparent;
+    border-bottom-style: dashed;
+    border-radius: 18px 0 12px 0;
+    display: inline-flex; align-items: center; gap: 8px;
+    pointer-events: auto;
+    cursor: default;
+    user-select: none;
+  }
+  .ws-group-label .ws-group-stage {
+    text-transform: uppercase;
+    font-size: 0.56rem;
+    letter-spacing: 0.09em;
+    opacity: 0.85;
+    padding-right: 6px;
+    border-right: 1px solid rgba(20,60,130,0.18);
+    font-weight: 700;
+  }
+  .ws-group-label .ws-group-count {
+    margin-left: 6px;
+    padding: 0 6px;
+    font-size: 0.58rem;
+    font-weight: 600;
+    background: rgba(20,60,130,0.08);
+    border-radius: 999px;
+    opacity: 0.95;
+  }
+  /* Variants by workstream stage */
+  .ws-group-node.ws-group-done {
+    border-style: solid;
+    opacity: 0.85;
+  }
+  /* React Flow renders custom nodes inside .react-flow__node; ensure our group
+     fills it and sits behind interactive nodes. */
+  .react-flow__node-workstreamGroup {
+    z-index: -10 !important;
+    pointer-events: none;
+  }
+  /* Edges should always render above the group backdrops. */
+  .react-flow__edges { z-index: 0; }
+
+  .controls-panel {
+    background: rgba(255, 255, 255, 0.92) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 12px;
+    box-shadow: var(--shadow-card);
+    padding: 10px 14px;
+    font-size: 0.72rem;
+    color: var(--muted);
+    backdrop-filter: blur(8px);
+  }
+  .controls-panel label {
+    display: flex; align-items: center; gap: 6px;
+    cursor: pointer; padding: 2px 0;
+  }
+  .controls-panel input[type="checkbox"] {
+    accent-color: var(--accent);
+  }
+  .controls-panel select.control-select {
+    margin-left: auto;
+    background: rgba(255, 255, 255, 0.92);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 2px 6px;
+    font-family: inherit;
+    font-size: 0.7rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: border-color 120ms ease, background 120ms ease;
+  }
+  .controls-panel select.control-select:hover { border-color: var(--border-strong); background: #fff; }
+  .controls-panel select.control-select:focus-visible {
+    outline: 2px solid rgba(29, 110, 220, 0.45);
+    outline-offset: 1px;
+  }
+  .controls-panel .group-label {
+    color: var(--text); text-transform: uppercase; font-size: 0.6rem;
+    letter-spacing: 0.10em; font-weight: 700; margin-bottom: 4px;
+  }
+  .controls-panel .group { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+  .controls-panel .save-status code { color: var(--accent); }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="module">
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import { createRoot } from 'react-dom/client';
+import {
+  ReactFlow,
+  ReactFlowProvider,
+  Handle,
+  Position,
+  MarkerType,
+  Panel,
+  Controls,
+  Background,
+  BackgroundVariant,
+  MiniMap,
+  useReactFlow,
+  applyNodeChanges,
+  applyEdgeChanges
+} from '@xyflow/react';
+import ELK from 'elkjs';
+import htm from 'htm';
+
+const html = htm.bind(React.createElement);
+
+// ============================================================
+// PORTFOLIO DATA — fetched from /api/_proto/canvas/portfolio at boot.
+// ============================================================
+let PORTFOLIO = null;
+
+// ---------- Layout constants ----------
+const WAVE_W = 260;
+const WAVE_H = 130;
+const EXT_W = 200;
+const EXT_H = 76;
+
+// ---------- Indexes ----------
+let waveById = {};
+let workstreamByWaveId = {};
+let workstreamById = {};
+function buildIndexes() {
+  waveById = {};
+  workstreamByWaveId = {};
+  workstreamById = {};
+  for (const ws of PORTFOLIO.workstreams) {
+    workstreamById[ws.id] = ws;
+    for (const w of ws.waves) {
+      waveById[w.id] = w;
+      workstreamByWaveId[w.id] = ws;
+    }
+  }
+}
+
+// ---------- Workstream colors (one hue per workstream) ----------
+// Tuned for a light background — moderately saturated, lowered lightness so
+// the workstream hue reads clearly against the cream/white canvas surface.
+let WS_HUE = {};
+function buildHues() {
+  WS_HUE = {};
+  PORTFOLIO.workstreams.forEach((ws, i) => {
+    const t = i / PORTFOLIO.workstreams.length;
+    WS_HUE[ws.id] = Math.round(t * 320 + 200) % 360;
+  });
+}
+function wsColor(wsId, alpha = 1) {
+  return `hsla(${WS_HUE[wsId] ?? 220}, 62%, 38%, ${alpha})`;
+}
+function wsColorMuted(wsId) {
+  return `hsla(${WS_HUE[wsId] ?? 220}, 55%, 60%, 0.20)`;
+}
+
+// ---------- ELK layout ----------
+const elk = new ELK();
+
+// Persistent layout positions — backed by Streamliner API (filesystem-backed).
+// Keyed by node ID (e.g. "w:par-w1" or "ext:rbac-decision"). The local
+// `pinnedCache` is the in-memory mirror of what the server has; updates flow
+// through saveDebounced() with a 1s debounce after the last change.
+let pinnedCache = {};
+let saveStatusSetter = () => {};       // wired by App
+let pinnedSetSetter = () => {};        // wired by App
+let pinnedCountSetter = () => {};      // wired by App
+
+async function fetchPositions() {
+  const r = await fetch('/api/_proto/canvas/positions');
+  if (!r.ok) throw new Error(`Positions fetch failed: HTTP ${r.status}`);
+  const body = await r.json();
+  return body.positions || {};
+}
+
+async function fetchPortfolio() {
+  const r = await fetch('/api/_proto/canvas/portfolio');
+  if (!r.ok) throw new Error(`Portfolio fetch failed: HTTP ${r.status}`);
+  return r.json();
+}
+
+let saveTimer = null;
+let savePromise = Promise.resolve();
+function flushSave() {
+  saveStatusSetter({ state: 'saving', count: Object.keys(pinnedCache).length });
+  savePromise = (async () => {
+    try {
+      await savePromise;
+    } catch { /* ignore previous error */ }
+    const r = await fetch('/api/_proto/canvas/positions', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ positions: pinnedCache }),
+    });
+    if (!r.ok) {
+      const text = await r.text();
+      saveStatusSetter({ state: 'error', error: text });
+      throw new Error(`PUT positions failed: HTTP ${r.status} ${text}`);
+    }
+    const body = await r.json();
+    saveStatusSetter({ state: 'saved', count: body.count, savedAt: body.savedAt });
+  })();
+  return savePromise;
+}
+function saveDebounced() {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveStatusSetter({ state: 'pending', count: Object.keys(pinnedCache).length });
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    flushSave().catch((err) => console.error('Save failed:', err));
+  }, 1000);
+}
+// Save before unload if there's a pending change.
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', () => {
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+      // Use sendBeacon for last-chance save during unload.
+      try {
+        const blob = new Blob(
+          [JSON.stringify({ positions: pinnedCache })],
+          { type: 'application/json' },
+        );
+        navigator.sendBeacon('/api/_proto/canvas/positions', blob);
+      } catch { /* best-effort */ }
+    }
+  });
+}
+
+function loadPinned() { return pinnedCache; }
+function pinPosition(id, x, y) {
+  pinnedCache[id] = { x, y, manuallyMoved: true, ts: Date.now() };
+  saveDebounced();
+  return pinnedCache;
+}
+function unpinPosition(id) {
+  delete pinnedCache[id];
+  saveDebounced();
+  return pinnedCache;
+}
+function clearAllPinned() {
+  pinnedCache = {};
+  saveDebounced();
+  return pinnedCache;
+}
+function pinnedIds() {
+  return new Set(Object.keys(pinnedCache).filter(k => pinnedCache[k].manuallyMoved));
+}
+
+async function computeElkLayout() {
+  // Build ELK graph: each wave is a node, plus external dependency nodes.
+  // Edges: spine (intra-workstream sequence) + cross-workstream edges + external edges.
+  // ELK handles cycle breaking automatically (with feedback edge style "GREEDY").
+  const elkNodes = [];
+  for (const ws of PORTFOLIO.workstreams) {
+    for (const w of ws.waves) {
+      elkNodes.push({
+        id: 'w:' + w.id,
+        width: WAVE_W,
+        height: WAVE_H,
+      });
+    }
+  }
+  for (const ext of PORTFOLIO.externalDependencies) {
+    elkNodes.push({
+      id: 'ext:' + ext.id,
+      width: EXT_W,
+      height: EXT_H,
+    });
+  }
+
+  const elkEdges = [];
+  // Intra-workstream spine
+  for (const ws of PORTFOLIO.workstreams) {
+    for (let i = 0; i < ws.waves.length - 1; i++) {
+      elkEdges.push({
+        id: 'spine:' + ws.waves[i].id + '->' + ws.waves[i + 1].id,
+        sources: ['w:' + ws.waves[i].id],
+        targets: ['w:' + ws.waves[i + 1].id],
+      });
+    }
+  }
+  // Cross-workstream
+  for (const e of PORTFOLIO.edges) {
+    if (!waveById[e.from] || !waveById[e.to]) continue;
+    elkEdges.push({
+      id: e.from + '->' + e.to + ':' + e.type,
+      sources: ['w:' + e.from],
+      targets: ['w:' + e.to],
+    });
+  }
+  // External
+  for (const ext of PORTFOLIO.externalDependencies) {
+    for (const targetId of ext.blocks) {
+      if (!waveById[targetId]) continue;
+      elkEdges.push({
+        id: 'ext:' + ext.id + '->' + targetId,
+        sources: ['ext:' + ext.id],
+        targets: ['w:' + targetId],
+      });
+    }
+  }
+
+  const result = await elk.layout({
+    id: 'root',
+    layoutOptions: {
+      'elk.algorithm': 'layered',
+      'elk.direction': 'DOWN',
+      'elk.layered.spacing.nodeNodeBetweenLayers': '90',
+      'elk.spacing.nodeNode': '54',
+      'elk.layered.nodePlacement.strategy': 'BRANDES_KOEPF',
+      'elk.layered.nodePlacement.bk.fixedAlignment': 'BALANCED',
+      'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
+      'elk.layered.crossingMinimization.semiInteractive': 'true',
+      'elk.layered.cycleBreaking.strategy': 'GREEDY',
+      'elk.layered.spacing.edgeNodeBetweenLayers': '30',
+      'elk.layered.spacing.edgeEdgeBetweenLayers': '12',
+      'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
+      'elk.layered.compaction.postCompaction.strategy': 'LEFT_RIGHT_CONNECTION_LOCKING',
+      'elk.padding': '[top=40,left=40,bottom=40,right=40]',
+      'elk.aspectRatio': '1.6',
+    },
+    children: elkNodes,
+    edges: elkEdges,
+  });
+
+  const positions = {};
+  for (const child of result.children || []) {
+    positions[child.id] = { x: child.x, y: child.y };
+  }
+  return positions;
+}
+
+// ---------- Status helpers ----------
+function statusColor(s) {
+  switch (s) {
+    case 'done':        return 'var(--green)';
+    case 'in-progress': return 'var(--blue)';
+    case 'ready':       return 'var(--yellow)';
+    case 'blocked':     return 'var(--red)';
+    default:            return 'var(--muted)';
+  }
+}
+function statusBg(s) {
+  switch (s) {
+    case 'done':        return 'rgba(18,148,95,0.14)';
+    case 'in-progress': return 'rgba(29,110,220,0.12)';
+    case 'ready':       return 'rgba(176,120,8,0.16)';
+    case 'blocked':     return 'rgba(200,50,50,0.12)';
+    default:            return 'rgba(20,60,130,0.06)';
+  }
+}
+
+// ---------- Node components ----------
+function WaveNode({ data }) {
+  const wv = data.wave;
+  const ws = data.workstream;
+  const idx = ws.waves.indexOf(wv);
+  const isFirst = idx === 0;
+  const isLast = idx === ws.waves.length - 1;
+  const inCount = data.inboundEdges.length;
+  const outCount = data.outboundEdges.length;
+  const wsColorFull = wsColor(ws.id, 1);
+  return html`
+    <div
+      className=${'wave-node status-' + wv.status
+        + (data.selected ? ' selected' : '')
+        + (ws.attention === 'hot' ? ' attn-hot' : '')
+        + (ws.attention === 'focus' ? ' attn-focus' : '')
+        + (data.pinned ? ' pinned' : '')
+        + (data.filterState && data.filterState !== 'none' ? ' filter-' + data.filterState : '')}
+      style=${{ borderLeft: '4px solid ' + wsColorFull }}
+      onClick=${data.onClick}
+    >
+      ${!isFirst ? html`<${Handle} type="target" position=${Position.Top}    id="spine-in"  className="spine" />` : null}
+      ${!isLast  ? html`<${Handle} type="source" position=${Position.Bottom} id="spine-out" className="spine" />` : null}
+      <${Handle} type="target" position=${Position.Top} id="ext-in" className="spine" style=${{ opacity: 0, pointerEvents: 'none' }} />
+      ${inCount > 0  ? html`<${Handle} type="target" position=${Position.Left}  id="import" className="import" />` : null}
+      ${outCount > 0 ? html`<${Handle} type="source" position=${Position.Right} id="export" className="export" />` : null}
+
+      ${data.pinned ? html`
+        <button
+          className="pin-badge"
+          onClick=${(e) => { e.stopPropagation(); data.onUnpin(); }}
+          title="Pinned to manual position. Click to unpin and let layout reposition."
+        >📌</button>
+      ` : null}
+
+      <div className="ws-badge" style=${{ color: wsColorFull, background: wsColorMuted(ws.id) }}>
+        ${ws.title}
+      </div>
+      <div className="wave-header">
+        <span className="wave-index">${ws.type === 'candidate' ? '★' : 'W' + (idx + 1)}</span>
+        <div className="wave-titles">
+          <div className="wave-title">${wv.name}</div>
+        </div>
+        <span className="wave-status-pill">${wv.status}</span>
+      </div>
+      <p className="wave-summary">${wv.summary || ''}</p>
+      ${(inCount + outCount > 0) ? html`
+        <div className="wave-edges">
+          ${inCount  ? html`<span key="in"  className="ec in">↘ ${inCount}</span>` : null}
+          ${outCount ? html`<span key="out" className="ec out">${outCount} ↗</span>` : null}
+        </div>
+      ` : null}
+    </div>
+  `;
+}
+
+function ExternalNode({ data }) {
+  return html`
+    <div className=${'ext-node'
+      + (data.selected ? ' selected' : '')
+      + (data.pinned ? ' pinned' : '')
+      + (data.filterState && data.filterState !== 'none' ? ' filter-' + data.filterState : '')}
+      onClick=${data.onClick}>
+      <${Handle} type="source" position=${Position.Bottom} id="ext-out" className="export" />
+      <${Handle} type="source" position=${Position.Right} id="ext-out-r" className="export" />
+      ${data.pinned ? html`
+        <button
+          className="pin-badge"
+          onClick=${(e) => { e.stopPropagation(); data.onUnpin(); }}
+          title="Pinned. Click to unpin."
+        >📌</button>
+      ` : null}
+      <div className="ext-tag">EXT · blocks ${data.blocksCount}</div>
+      <div className="ext-label">${data.label}</div>
+    </div>
+  `;
+}
+
+// Workstream container — a translucent backdrop sized to the bounding box of
+// its waves. Decorative (not interactive); helps the eye see how a single
+// workstream's waves are spread across the canvas.
+function WorkstreamGroupNode({ data }) {
+  const ws = data.workstream;
+  const wsColorFull = wsColor(ws.id, 1);
+  return html`
+    <div
+      className=${'ws-group-node ws-group-' + ws.stage}
+      style=${{
+        borderColor: wsColor(ws.id, 0.55),
+        background: `linear-gradient(180deg, ${wsColor(ws.id, 0.10)}, ${wsColor(ws.id, 0.04)})`,
+      }}
+    >
+      <div className="ws-group-label" style=${{ color: wsColorFull, background: wsColorMuted(ws.id), borderColor: wsColor(ws.id, 0.45) }}>
+        <span className="ws-group-stage">${ws.stage}</span>
+        ${ws.title}
+        <span className="ws-group-count">${ws.waves.length} ${ws.waves.length === 1 ? 'wave' : 'waves'}</span>
+      </div>
+    </div>
+  `;
+}
+
+const nodeTypes = {
+  wave: WaveNode,
+  external: ExternalNode,
+  workstreamGroup: WorkstreamGroupNode
+};
+
+// Compute one workstream-group node per workstream by taking the bounding box
+// of all its wave nodes (from current React Flow positions). Returns null if
+// the workstream has no waves with positions yet.
+const WS_GROUP_PADDING = 22;
+const WS_GROUP_LABEL_H = 28;
+function buildWorkstreamGroupNodes(currentNodes) {
+  if (!PORTFOLIO) return [];
+  const positionByWaveId = {};
+  for (const n of currentNodes) {
+    if (n.type === 'wave') {
+      positionByWaveId[n.id] = {
+        x: n.position.x,
+        y: n.position.y,
+        width: n.width || WAVE_W,
+        height: n.height || WAVE_H,
+      };
+    }
+  }
+  const groups = [];
+  for (const ws of PORTFOLIO.workstreams) {
+    const positions = ws.waves.map(w => positionByWaveId['w:' + w.id]).filter(Boolean);
+    if (positions.length === 0) continue;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of positions) {
+      minX = Math.min(minX, p.x);
+      minY = Math.min(minY, p.y);
+      maxX = Math.max(maxX, p.x + p.width);
+      maxY = Math.max(maxY, p.y + p.height);
+    }
+    const x = minX - WS_GROUP_PADDING;
+    const y = minY - WS_GROUP_PADDING - WS_GROUP_LABEL_H;
+    const width = (maxX - minX) + WS_GROUP_PADDING * 2;
+    const height = (maxY - minY) + WS_GROUP_PADDING * 2 + WS_GROUP_LABEL_H;
+    groups.push({
+      id: 'wsg:' + ws.id,
+      type: 'workstreamGroup',
+      position: { x, y },
+      width,
+      height,
+      style: { width, height, zIndex: -10 },
+      // Don't intercept drags / clicks — we want to drag the wave above us.
+      draggable: false,
+      selectable: false,
+      focusable: false,
+      // React Flow renders nodes by their array order; we'll splice these to the
+      // front of the array so they're behind everything visually.
+      data: { workstream: ws }
+    });
+  }
+  return groups;
+}
+
+// ---------- Filter helpers ----------
+// Returns the set of wave IDs (with "w:" prefix) that match the active filter.
+function focusedSetFor(filter) {
+  if (filter === 'all') return null;
+  const s = new Set();
+  for (const ws of PORTFOLIO.workstreams) {
+    for (const w of ws.waves) {
+      let match = false;
+      switch (filter) {
+        case 'ready':       match = w.status === 'ready'; break;
+        case 'in-progress': match = w.status === 'in-progress'; break;
+        case 'blocked':     match = w.status === 'blocked'; break;
+        case 'done':        match = w.status === 'done'; break;
+        case 'planned':     match = w.status === 'planned'; break;
+        case 'hot':         match = ws.attention === 'hot' || ws.attention === 'focus'; break;
+      }
+      if (match) s.add('w:' + w.id);
+    }
+  }
+  return s;
+}
+
+// Returns the set of node IDs that are 1-hop neighbors of the focused set
+// across all edges: cross-workstream wave edges, intra-workstream spine,
+// and external dependency edges.
+function neighborSetFor(focusedIds) {
+  if (!focusedIds) return null;
+  const n = new Set();
+  // Cross-workstream edges
+  for (const e of PORTFOLIO.edges) {
+    const f = 'w:' + e.from;
+    const t = 'w:' + e.to;
+    if (!waveById[e.from] || !waveById[e.to]) continue;
+    if (focusedIds.has(f) && !focusedIds.has(t)) n.add(t);
+    if (focusedIds.has(t) && !focusedIds.has(f)) n.add(f);
+  }
+  // Spine edges (consecutive waves in same workstream)
+  for (const ws of PORTFOLIO.workstreams) {
+    for (let i = 0; i < ws.waves.length - 1; i++) {
+      const a = 'w:' + ws.waves[i].id;
+      const b = 'w:' + ws.waves[i+1].id;
+      if (focusedIds.has(a) && !focusedIds.has(b)) n.add(b);
+      if (focusedIds.has(b) && !focusedIds.has(a)) n.add(a);
+    }
+  }
+  // External dependencies
+  for (const ext of PORTFOLIO.externalDependencies) {
+    const eid = 'ext:' + ext.id;
+    for (const targetId of ext.blocks) {
+      const tid = 'w:' + targetId;
+      if (focusedIds.has(tid)) n.add(eid);
+    }
+  }
+  return n;
+}
+
+function nodeFilterState(id, focusedIds, neighborIds) {
+  if (!focusedIds) return 'none';
+  if (focusedIds.has(id)) return 'focus';
+  if (neighborIds.has(id)) return 'neighbor';
+  return 'out';
+}
+
+function edgeFilterClass(fromId, toId, focusedIds, neighborIds) {
+  if (!focusedIds) return '';
+  const fIn = focusedIds.has(fromId);
+  const tIn = focusedIds.has(toId);
+  if (fIn && tIn) return ' filter-focus-edge';
+  if ((fIn && neighborIds.has(toId)) || (tIn && neighborIds.has(fromId))) return ' filter-connector-edge';
+  return ' filter-out-edge';
+}
+
+// ---------- Build React Flow nodes / edges from ELK positions ----------
+function buildNodes(positions, selection, pinned) {
+  const nodes = [];
+  for (const ws of PORTFOLIO.workstreams) {
+    for (const wv of ws.waves) {
+      const id = 'w:' + wv.id;
+      const pos = positions[id] || { x: 0, y: 0 };
+      const inboundEdges = PORTFOLIO.edges.filter(e => e.to === wv.id);
+      const outboundEdges = PORTFOLIO.edges.filter(e => e.from === wv.id);
+      nodes.push({
+        id,
+        type: 'wave',
+        position: { x: pos.x, y: pos.y },
+        width: WAVE_W,
+        height: WAVE_H,
+        style: { width: WAVE_W, height: WAVE_H },
+        data: {
+          wave: wv,
+          workstream: ws,
+          selected: selection?.kind === 'wave' && selection.id === wv.id,
+          pinned: pinned.has(id),
+          inboundEdges,
+          outboundEdges,
+          onClick: () => selection_set({ kind: 'wave', id: wv.id }),
+          onUnpin: () => unpin_handler(id)
+        }
+      });
+    }
+  }
+  for (const ext of PORTFOLIO.externalDependencies) {
+    const id = 'ext:' + ext.id;
+    const pos = positions[id] || { x: 0, y: 0 };
+    nodes.push({
+      id,
+      type: 'external',
+      position: { x: pos.x, y: pos.y },
+      width: EXT_W,
+      height: EXT_H,
+      style: { width: EXT_W, height: EXT_H },
+      data: {
+        ext,
+        label: ext.label,
+        note: ext.note,
+        blocksCount: ext.blocks.length,
+        selected: selection?.kind === 'external' && selection.id === ext.id,
+        pinned: pinned.has(id),
+        onClick: () => selection_set({ kind: 'external', id: ext.id }),
+        onUnpin: () => unpin_handler(id)
+      }
+    });
+  }
+  return nodes;
+}
+
+function buildEdges(edgeFilters, fulfilledMode, showCandidateEdges, focusedIds, neighborIds) {
+  const edges = [];
+  // Spine: only between consecutive waves of same workstream
+  for (const ws of PORTFOLIO.workstreams) {
+    for (let i = 0; i < ws.waves.length - 1; i++) {
+      const from = ws.waves[i];
+      const to = ws.waves[i + 1];
+      const fc = edgeFilterClass('w:' + from.id, 'w:' + to.id, focusedIds, neighborIds);
+      edges.push({
+        id: 'spine:' + from.id + '->' + to.id,
+        source: 'w:' + from.id,
+        target: 'w:' + to.id,
+        sourceHandle: 'spine-out',
+        targetHandle: 'spine-in',
+        type: 'smoothstep',
+        className: 'spine' + fc,
+        selectable: false,
+        focusable: false,
+        style: { stroke: wsColor(ws.id, 0.55), strokeWidth: 2 }
+      });
+    }
+  }
+  // Cross-workstream wave edges
+  for (const e of PORTFOLIO.edges) {
+    if (!edgeFilters[e.type]) continue;
+    const fromW = waveById[e.from];
+    const toW = waveById[e.to];
+    if (!fromW || !toW) continue;
+    // Hide edges touching candidate (tentative) workstreams when toggled off.
+    if (!showCandidateEdges) {
+      const fromWs = workstreamByWaveId[e.from];
+      const toWs = workstreamByWaveId[e.to];
+      if (fromWs?.type === 'candidate' || toWs?.type === 'candidate') continue;
+    }
+    const fulfilled = fromW.status === 'done';
+    // fulfilledMode: 'on' shows edge normally · 'dim' adds .fulfilled class
+    // (low-opacity, thin) · 'off' hides the edge entirely. Only applies when
+    // the upstream wave is done — in-flight edges are never affected.
+    if (fulfilled && fulfilledMode === 'off') continue;
+    const blockingCurrent = fromW.status === 'in-progress' && (toW.status === 'planned' || toW.status === 'blocked' || toW.status === 'ready');
+    const id = `${e.from}->${e.to}:${e.type}`;
+    const fc = edgeFilterClass('w:' + e.from, 'w:' + e.to, focusedIds, neighborIds);
+    const cls = e.type
+      + (fulfilled && fulfilledMode === 'dim' ? ' fulfilled' : '')
+      + (blockingCurrent ? ' blocking-current' : '')
+      + fc;
+    edges.push({
+      id,
+      source: 'w:' + e.from,
+      target: 'w:' + e.to,
+      sourceHandle: 'export',
+      targetHandle: 'import',
+      type: 'smoothstep',
+      className: cls,
+      data: { what: e.what, edgeType: e.type },
+      markerEnd: { type: MarkerType.ArrowClosed, color: typeColor(e.type) }
+    });
+  }
+  // External edges
+  if (edgeFilters['external']) {
+    for (const ext of PORTFOLIO.externalDependencies) {
+      for (const targetId of ext.blocks) {
+        if (!waveById[targetId]) continue;
+        const fc = edgeFilterClass('ext:' + ext.id, 'w:' + targetId, focusedIds, neighborIds);
+        edges.push({
+          id: 'ext:' + ext.id + '->' + targetId,
+          source: 'ext:' + ext.id,
+          target: 'w:' + targetId,
+          sourceHandle: 'ext-out',
+          targetHandle: 'ext-in',
+          type: 'smoothstep',
+          className: 'external' + fc,
+          data: { what: ext.note, edgeType: 'external' },
+          markerEnd: { type: MarkerType.ArrowClosed, color: '#c83232' }
+        });
+      }
+    }
+  }
+  return edges;
+}
+
+function typeColor(t) {
+  return t === 'hard' ? '#12945f'
+       : t === 'soft-data' ? '#1d6edc'
+       : t === 'soft-coord' ? '#7c3aed'
+       : t === 'external' ? '#c83232' : '#6b7fa0';
+}
+
+// Hoisted selection setter so node onClick handlers can call it.
+let selection_set = () => {};
+let unpin_handler = () => {};
+
+// ---------- Inspector ----------
+function Inspector({ selection }) {
+  if (!selection) {
+    return html`<aside className="inspector">
+      <p className="placeholder">Click a wave card or external dependency to see detail. Drag any node to refine the layout.</p>
+      <h3>How to read</h3>
+      <p>This is an <b>ELK layered</b> graph. The Y-axis is <b>topological depth</b> — each wave sits below all of its hard upstream dependencies, so a wave deep on the canvas means it's waiting on multiple upstream things. ELK reorders within each rank to minimize edge crossings.</p>
+      <p>Each wave card has a <b>colored left border</b> identifying its workstream, and a workstream badge at the top. A <b>candidate</b> shows as a single ★-marked card. A <b>formed workstream</b> shows each wave separately so you can tell which waves are ready while later ones wait.</p>
+      <p>Status: <b style=${{color:'var(--yellow)'}}>ready</b> (yellow glow) = all hard deps done; <b style=${{color:'var(--blue)'}}>in-progress</b> = blue; <b style=${{color:'var(--green)'}}>done</b> = green; <b style=${{color:'var(--red)'}}>blocked</b> = red dashed; <b>planned</b> = gray dashed.</p>
+      <p>Edges: <b style=${{color:'var(--green)'}}>green</b> = hard import, <b style=${{color:'var(--blue)'}}>blue dashed</b> = soft-data, <b style=${{color:'var(--purple)'}}>purple dotted</b> = soft-coord, <b style=${{color:'var(--red)'}}>red dashed</b> = external. Workstream-colored lines are intra-workstream spine (wave-to-next-wave). Fulfilled edges (upstream done) dim. Edges from an in-progress wave to a downstream ready/planned/blocked wave highlight to surface the next-launch surface.</p>
+      <p><b>Drag any node</b> to pin its position. Pinned positions are auto-saved to the Streamliner filesystem (1-second debounce after the last drag) and persist across page reloads, browser changes, machines (when committed), and reconciliation updates. Pinned nodes show a 📌 badge — click to unpin a single node, or "Reset N pinned" (top-left) to clear and re-run ELK.</p>
+      <p><b>Filter bar at top</b>: pick Ready / In progress / Blocked / Done / Planned / Hot to focus the graph on a subset. Focus-set nodes stay fully bright; 1-hop neighbors dim partially (so you can see what connects to the focus set); everything else fades but stays in place. Edges between focus and neighbor are still drawn so the connection structure is visible.</p>
+    </aside>`;
+  }
+  if (selection.kind === 'wave') return html`<${WaveInspector} id=${selection.id} />`;
+  if (selection.kind === 'workstream') return html`<${WorkstreamInspector} id=${selection.id} />`;
+  if (selection.kind === 'external') return html`<${ExternalInspector} id=${selection.id} />`;
+  return null;
+}
+
+function WorkstreamInspector({ id }) {
+  const ws = workstreamById[id];
+  return html`<aside className="inspector">
+    <h2>${ws.title}</h2>
+    <p>
+      <span className="pill" style=${{color:'var(--accent)',background:'rgba(29,110,220,0.10)'}}>${ws.type}</span>
+      <span className="pill" style=${{color:'var(--yellow)',background:'rgba(176,120,8,0.12)'}}>${ws.stage}</span>
+      <span className="pill" style=${{color:'var(--muted)',background:'rgba(20,60,130,0.06)'}}>L${ws.layer}</span>
+    </p>
+    <p>${ws.summary || ''}</p>
+    <h3>Repos</h3>
+    <p>${(ws.repos || []).join(' · ')}</p>
+    ${ws.branch ? html`<h3>Branch</h3><p>${ws.branch}</p>` : null}
+    ${ws.umbrellaPr ? html`<h3>Umbrella PR</h3><p>#${ws.umbrellaPr}</p>` : null}
+    ${ws.parentIssue ? html`<h3>Parent issue</h3><p>#${ws.parentIssue}</p>` : null}
+    <h3>Waves (${ws.waves.length})</h3>
+    ${ws.waves.map(w => html`
+      <p key=${w.id}>
+        <b style=${{color:'var(--text)'}}>${w.name}</b>
+        <span className="pill" style=${{color:statusColor(w.status), background:statusBg(w.status)}}>${w.status}</span>
+        <br><span style=${{color:'var(--muted)',fontSize:'0.72rem'}}>${truncate(w.summary || '', 200)}</span>
+      </p>
+    `)}
+  </aside>`;
+}
+
+function WaveInspector({ id }) {
+  const wv = waveById[id];
+  if (!wv) return null;
+  const ws = workstreamByWaveId[id];
+  const inEdges = PORTFOLIO.edges.filter(e => e.to === id);
+  const outEdges = PORTFOLIO.edges.filter(e => e.from === id);
+  const extDeps = PORTFOLIO.externalDependencies.filter(e => e.blocks.includes(id));
+  return html`<aside className="inspector">
+    <h2>${wv.name}</h2>
+    <p>
+      <span className="pill" style=${{color:'var(--accent)',background:'rgba(29,110,220,0.10)'}}>${ws.title}</span>
+      <span className="pill" style=${{color:statusColor(wv.status), background:statusBg(wv.status)}}>${wv.status}</span>
+    </p>
+    <p>${wv.summary || ''}</p>
+    ${wv.deps && wv.deps.length ? html`
+      <h3>Hard dependencies</h3>
+      ${wv.deps.map(d => {
+        if (d.startsWith('ext:')) {
+          const ext = PORTFOLIO.externalDependencies.find(e => 'ext:' + e.id === d);
+          return html`<div className="blocker external"><b>EXT</b> · ${ext?.label || d} <i style=${{color:'var(--muted)'}}>[external · unmet]</i></div>`;
+        }
+        const dep = waveById[d];
+        const ws2 = workstreamByWaveId[d];
+        const met = dep?.status === 'done';
+        return html`<div className=${'blocker ' + (met ? 'hard' : 'external')}>${ws2?.title || ''} → ${dep?.name || d} <i style=${{color:'var(--muted)'}}>[${dep?.status || '?'}${met ? ' · met' : ' · unmet'}]</i></div>`;
+      })}
+    ` : null}
+    ${wv.softDeps && wv.softDeps.length ? html`
+      <h3>Soft dependencies (coordination)</h3>
+      ${wv.softDeps.map(d => {
+        if (d.startsWith('ext:')) {
+          const ext = PORTFOLIO.externalDependencies.find(e => 'ext:' + e.id === d);
+          return html`<div className="blocker soft-coord"><b>EXT</b> · ${ext?.label || d}</div>`;
+        }
+        const dep = waveById[d];
+        const ws2 = workstreamByWaveId[d];
+        return html`<div className="blocker soft-coord">${ws2?.title || ''} → ${dep?.name || d} <i style=${{color:'var(--muted)'}}>[${dep?.status || '?'}]</i></div>`;
+      })}
+    ` : null}
+    ${extDeps.length ? html`
+      <h3>External blockers</h3>
+      ${extDeps.map(e => html`<div className="blocker external">${e.label} — ${e.note || ''}</div>`)}
+    ` : null}
+    ${inEdges.length ? html`
+      <h3>Inbound edges</h3>
+      ${inEdges.map(e => {
+        const dep = waveById[e.from];
+        const ws2 = workstreamByWaveId[e.from];
+        return html`<div className="ev">⬅ <b>${ws2?.title || ''}</b> · ${dep?.name || e.from} [${e.type}] — ${e.what}</div>`;
+      })}
+    ` : null}
+    ${outEdges.length ? html`
+      <h3>Outbound edges</h3>
+      ${outEdges.map(e => {
+        const dep = waveById[e.to];
+        const ws2 = workstreamByWaveId[e.to];
+        return html`<div className="ev">➡ <b>${ws2?.title || ''}</b> · ${dep?.name || e.to} [${e.type}] — ${e.what}</div>`;
+      })}
+    ` : null}
+    ${wv.evidence && wv.evidence.length ? html`
+      <h3>Evidence</h3>
+      ${wv.evidence.map((ev,i) => html`<div className="ev" key=${i}>${ev.kind}: ${ev.ref}${ev.note ? ' — ' + ev.note : ''}</div>`)}
+    ` : null}
+  </aside>`;
+}
+
+function ExternalInspector({ id }) {
+  const ext = PORTFOLIO.externalDependencies.find(e => e.id === id);
+  return html`<aside className="inspector">
+    <h2>${ext.label}</h2>
+    <p><span className="pill" style=${{color:'var(--red)',background:'rgba(200,50,50,0.12)'}}>EXTERNAL DEPENDENCY</span></p>
+    <p>${ext.note || ''}</p>
+    <h3>Blocks</h3>
+    ${ext.blocks.map(wid => {
+      const dep = waveById[wid];
+      const ws2 = workstreamByWaveId[wid];
+      return html`<div className="blocker external">${ws2?.title || ''} → ${dep?.name || wid}</div>`;
+    })}
+  </aside>`;
+}
+
+function truncate(s, n) {
+  if (!s) return '';
+  return s.length > n ? s.slice(0, n - 1) + '…' : s;
+}
+
+// ---------- App ----------
+function App() {
+  const [bootState, setBootState] = useState({ status: 'loading', error: null });
+  const [saveStatus, setSaveStatus] = useState({ state: 'idle', count: 0 });
+  saveStatusSetter = setSaveStatus;
+  const [selection, setSelection] = useState(null);
+  selection_set = setSelection;
+  const [edgeFilters, setEdgeFilters] = useState({
+    'hard': true, 'soft-data': true, 'soft-coord': true, 'external': true
+  });
+  const [fulfilledMode, setFulfilledMode] = useState('dim'); // 'on' | 'dim' | 'off'
+  const [showCandidateEdges, setShowCandidateEdges] = useState(true);
+  const [inspectorVisible, setInspectorVisible] = useState(true);
+  const [showGroups, setShowGroups] = useState(true);
+  const [nodes, setNodes] = useState([]);
+  const [edges, setEdges] = useState([]);
+  const [layoutReady, setLayoutReady] = useState(false);
+  const [pinnedSet, setPinnedSet] = useState(new Set());
+  pinnedSetSetter = setPinnedSet;
+  const [pinnedCount, setPinnedCount] = useState(0);
+  pinnedCountSetter = setPinnedCount;
+  const [nodeFilter, setNodeFilter] = useState('all');
+
+  // Boot: fetch portfolio + positions before anything else.
+  useEffect(() => {
+    (async () => {
+      try {
+        const [portfolio, positions] = await Promise.all([
+          fetchPortfolio(),
+          fetchPositions(),
+        ]);
+        PORTFOLIO = portfolio;
+        pinnedCache = positions || {};
+        buildIndexes();
+        buildHues();
+        setBootState({ status: 'ready', error: null });
+      } catch (err) {
+        console.error('Boot failed:', err);
+        setBootState({ status: 'error', error: err.message || String(err) });
+      }
+    })();
+  }, []);
+
+  // Focus + neighbor sets for the active filter.
+  const { focusedIds, neighborIds, filterCounts } = useMemo(() => {
+    if (bootState.status !== 'ready') return { focusedIds: null, neighborIds: null, filterCounts: { inSet: 0, neighbors: 0, outside: 0 } };
+    const f = focusedSetFor(nodeFilter);
+    const n = neighborSetFor(f);
+    let inSet = 0, neighbors = 0, outside = 0;
+    if (f) {
+      const totalNodes = PORTFOLIO.workstreams.flatMap(ws => ws.waves).length + PORTFOLIO.externalDependencies.length;
+      inSet = f.size;
+      neighbors = n.size;
+      outside = totalNodes - inSet - neighbors;
+    }
+    return { focusedIds: f, neighborIds: n, filterCounts: { inSet, neighbors, outside } };
+  }, [nodeFilter, bootState.status]);
+
+  // Compute layout: ELK for unpinned, localStorage for pinned.
+  const computeAndApply = useCallback(async (resetPinned = false) => {
+    if (resetPinned) {
+      clearAllPinned();
+    }
+    try {
+      const elkPositions = await computeElkLayout();
+      const pinned = loadPinned();
+      const merged = { ...elkPositions };
+      for (const [id, p] of Object.entries(pinned)) {
+        if (p.manuallyMoved) merged[id] = { x: p.x, y: p.y };
+      }
+      const pSet = pinnedIds();
+      setPinnedSet(pSet);
+      setPinnedCount(pSet.size);
+      setNodes(buildNodes(merged, null, pSet));
+      setEdges(buildEdges(edgeFilters, fulfilledMode, showCandidateEdges, focusedIds, neighborIds));
+      setLayoutReady(true);
+    } catch (err) {
+      console.error('ELK layout failed:', err);
+      const fallback = {};
+      let x = 40, y = 40;
+      for (const ws of PORTFOLIO.workstreams) {
+        for (const w of ws.waves) {
+          fallback['w:' + w.id] = { x, y };
+          y += WAVE_H + 20;
+        }
+        x += WAVE_W + 60;
+        y = 40;
+      }
+      const pinned = loadPinned();
+      for (const [id, p] of Object.entries(pinned)) {
+        if (p.manuallyMoved) fallback[id] = { x: p.x, y: p.y };
+      }
+      const pSet = pinnedIds();
+      setPinnedSet(pSet);
+      setPinnedCount(pSet.size);
+      setNodes(buildNodes(fallback, null, pSet));
+      setEdges(buildEdges(edgeFilters, fulfilledMode, showCandidateEdges, focusedIds, neighborIds));
+      setLayoutReady(true);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Initial layout: only after portfolio + positions have loaded.
+  useEffect(() => {
+    if (bootState.status === 'ready') {
+      computeAndApply(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bootState.status]);
+
+  // Wire the unpin handler.
+  unpin_handler = useCallback((id) => {
+    unpinPosition(id);
+    const pSet = pinnedIds();
+    setPinnedSet(pSet);
+    setPinnedCount(pSet.size);
+    computeAndApply(false);
+  }, [computeAndApply]);
+
+
+  // Re-build node data (selection / pinned / filter) when those change.
+  useEffect(() => {
+    setNodes(prev => prev.map(n => {
+      const isPinned = pinnedSet.has(n.id);
+      const filterState = nodeFilterState(n.id, focusedIds, neighborIds);
+      if (n.type === 'wave') {
+        return { ...n, data: {
+          ...n.data,
+          selected: selection?.kind === 'wave' && selection.id === n.data.wave.id,
+          pinned: isPinned,
+          filterState
+        } };
+      }
+      if (n.type === 'external') {
+        return { ...n, data: {
+          ...n.data,
+          selected: selection?.kind === 'external' && selection.id === n.data.ext.id,
+          pinned: isPinned,
+          filterState
+        } };
+      }
+      return n;
+    }));
+  }, [selection, pinnedSet, focusedIds, neighborIds]);
+
+  // Re-build edges when filters change.
+  useEffect(() => {
+    if (!layoutReady) return;
+    setEdges(buildEdges(edgeFilters, fulfilledMode, showCandidateEdges, focusedIds, neighborIds));
+  }, [edgeFilters, fulfilledMode, showCandidateEdges, focusedIds, neighborIds, layoutReady]);
+
+  const onNodesChange = useCallback((changes) => {
+    // Filter out any change events that target group nodes — they're decorative
+    // and shouldn't enter the persistent state.
+    const filtered = changes.filter(c => !c.id || !c.id.startsWith('wsg:'));
+    setNodes(prev => applyNodeChanges(filtered, prev));
+  }, []);
+  const onEdgesChange = useCallback((changes) => {
+    setEdges(prev => applyEdgeChanges(changes, prev));
+  }, []);
+
+  // Derived nodes for React Flow: prepend workstream-group backdrops (when
+  // toggled on) so they render BEHIND wave/external nodes. Recomputed on
+  // every wave drag so groups follow their waves.
+  const displayedNodes = useMemo(() => {
+    if (!showGroups) return nodes;
+    const groups = buildWorkstreamGroupNodes(nodes);
+    // Group nodes first so React Flow stacks them under regular nodes.
+    return [...groups, ...nodes];
+  }, [nodes, showGroups]);
+
+  const onNodeDragStop = useCallback((event, node) => {
+    pinPosition(node.id, node.position.x, node.position.y);
+    setPinnedSet(prev => {
+      const next = new Set(prev);
+      next.add(node.id);
+      return next;
+    });
+    setPinnedCount(prev => prev + (pinnedSet.has(node.id) ? 0 : 1));
+  }, [pinnedSet]);
+
+  // When the user shift-clicks (or otherwise multi-selects) a set of nodes
+  // and drags any of them, React Flow moves the whole selection together but
+  // only fires onNodeDragStop for the actually-grabbed node. onSelectionDragStop
+  // gives us the full set of moved nodes so every dragged-along position gets
+  // pinned + persisted, not just the one under the cursor. Decorative
+  // workstreamGroup nodes are selectable: false, so they never appear here.
+  const onSelectionDragStop = useCallback((event, draggedNodes) => {
+    if (!Array.isArray(draggedNodes) || draggedNodes.length === 0) return;
+    let added = 0;
+    for (const node of draggedNodes) {
+      if (!pinnedSet.has(node.id)) added++;
+      pinPosition(node.id, node.position.x, node.position.y);
+    }
+    setPinnedSet(prev => {
+      const next = new Set(prev);
+      for (const node of draggedNodes) next.add(node.id);
+      return next;
+    });
+    if (added > 0) setPinnedCount(prev => prev + added);
+  }, [pinnedSet]);
+
+  const FILTER_BUTTONS = [
+    { id: 'all',         label: 'All',         className: '' },
+    { id: 'ready',       label: 'Ready',       className: 'f-ready' },
+    { id: 'in-progress', label: 'In progress', className: 'f-in-progress' },
+    { id: 'blocked',     label: 'Blocked',     className: 'f-blocked' },
+    { id: 'done',        label: 'Done',        className: 'f-done' },
+    { id: 'planned',     label: 'Planned',     className: '' },
+    { id: 'hot',         label: 'Hot / focus', className: 'f-hot' },
+  ];
+
+  if (bootState.status === 'loading') {
+    return html`
+      <div style=${{display:'grid',placeItems:'center',height:'100%'}}>
+        <div style=${{textAlign:'center'}}>
+          <div style=${{fontSize:'1.05rem',marginBottom:'8px'}}>Loading portfolio canvas…</div>
+          <div style=${{color:'var(--muted)',fontSize:'0.78rem'}}>Fetching <code>/api/_proto/canvas/portfolio</code> + <code>positions</code></div>
+        </div>
+      </div>
+    `;
+  }
+  if (bootState.status === 'error') {
+    return html`
+      <div style=${{display:'grid',placeItems:'center',height:'100%',padding:'20px'}}>
+        <div style=${{textAlign:'center',maxWidth:'600px'}}>
+          <div style=${{fontSize:'1.05rem',color:'var(--red)',marginBottom:'8px'}}>Failed to load canvas</div>
+          <div style=${{color:'var(--muted)',fontSize:'0.78rem',whiteSpace:'pre-wrap'}}>${bootState.error}</div>
+          <div style=${{color:'var(--faint)',fontSize:'0.72rem',marginTop:'18px'}}>Is the Streamliner API running? <code>npm run dev:api</code></div>
+        </div>
+      </div>
+    `;
+  }
+
+  return html`
+    <header className="topbar">
+      <div>
+        <h1>DBAgent Portfolio Canvas — Wave Geometry <span style=${{color:'var(--faint)',fontSize:'0.62rem',fontWeight:'400',marginLeft:'8px'}}>_proto · Streamliner backend</span></h1>
+        <div className="meta">
+          ELK layered layout · drag pins position (auto-saved to filesystem) · Y = topological depth · Portfolio last reconciled ${PORTFOLIO.lastReconciledAt}
+        </div>
+      </div>
+      <div>
+        <div className="legend" style=${{marginBottom: '4px'}}>
+          <span className="it"><span className="sw" style=${{background:'rgba(18,148,95,0.14)', borderColor:'rgba(18,148,95,0.45)'}} />done</span>
+          <span className="it"><span className="sw" style=${{background:'rgba(29,110,220,0.12)', borderColor:'rgba(29,110,220,0.50)'}} />in-progress</span>
+          <span className="it"><span className="sw" style=${{background:'rgba(176,120,8,0.16)', borderColor:'rgba(176,120,8,0.65)', boxShadow:'0 0 0 2px rgba(176,120,8,0.12)'}} />ready</span>
+          <span className="it"><span className="sw" style=${{background:'transparent', border:'1px dashed rgba(20,60,130,0.35)'}} />planned</span>
+          <span className="it"><span className="sw" style=${{background:'rgba(200,50,50,0.10)', borderColor:'rgba(200,50,50,0.55)', borderStyle:'dashed'}} />blocked</span>
+        </div>
+        <div className="legend">
+          <span className="it"><span className="ln" style=${{borderColor:'var(--green)'}} />hard</span>
+          <span className="it"><span className="ln" style=${{borderColor:'var(--blue)', borderTopStyle:'dashed'}} />soft-data</span>
+          <span className="it"><span className="ln" style=${{borderColor:'var(--purple)', borderTopStyle:'dotted'}} />soft-coord</span>
+          <span className="it"><span className="ln" style=${{borderColor:'var(--red)', borderTopStyle:'dashed'}} />external</span>
+          <span className="it"><span className="ln" style=${{borderColor:'rgba(20,60,130,0.45)'}} />spine (workstream-colored)</span>
+          <span className="it">📌 pinned</span>
+        </div>
+      </div>
+    </header>
+    <div className="filter-bar">
+      <span className="filter-label">Filter</span>
+      ${FILTER_BUTTONS.map(b => html`
+        <button
+          key=${b.id}
+          className=${(nodeFilter === b.id ? 'active ' : '') + b.className}
+          onClick=${() => setNodeFilter(b.id)}
+        >${b.label}</button>
+      `)}
+      ${nodeFilter !== 'all' ? html`
+        <span className="summary">
+          ${filterCounts.inSet} in set · ${filterCounts.neighbors} neighbors · ${filterCounts.outside} outside
+        </span>
+      ` : html`
+        <span className="summary">No filter — all nodes shown</span>
+      `}
+    </div>
+    <section className=${'content' + (inspectorVisible ? '' : ' inspector-hidden')}>
+      <div className="canvas-shell">
+        <${ReactFlowProvider}>
+          <${ReactFlow}
+            nodes=${displayedNodes}
+            edges=${edges}
+            nodeTypes=${nodeTypes}
+            onNodesChange=${onNodesChange}
+            onEdgesChange=${onEdgesChange}
+            onNodeDragStop=${onNodeDragStop}
+            onSelectionDragStop=${onSelectionDragStop}
+            nodesDraggable=${true}
+            fitView=${layoutReady}
+            fitViewOptions=${{ padding: 0.10, maxZoom: 0.95, minZoom: 0.18 }}
+            minZoom=${0.15}
+            maxZoom=${2.5}
+            panOnDrag=${true}
+            zoomOnScroll=${true}
+            proOptions=${{ hideAttribution: true }}
+            onPaneClick=${() => setSelection(null)}
+          >
+            <${Background} variant=${BackgroundVariant.Dots} gap=${24} size=${1.2} color="rgba(20,60,130,0.18)" />
+            <${Controls} showInteractive=${false} />
+            <${MiniMap}
+              nodeColor=${(node) => {
+                if (node.type === 'wave') return statusColor(node.data.wave.status);
+                if (node.type === 'external') return 'var(--red)';
+                return '#1f2c52';
+              }}
+              maskColor="rgba(20,60,130,0.10)"
+              pannable=${true}
+              zoomable=${true}
+            />
+            <${Panel} position="top-left">
+              <div className="controls-panel">
+                <div className="group-label">Edge types</div>
+                <div className="group">
+                  ${Object.keys(edgeFilters).map(t => html`
+                    <label key=${t}>
+                      <input
+                        type="checkbox"
+                        checked=${edgeFilters[t]}
+                        onChange=${e => setEdgeFilters(prev => ({ ...prev, [t]: e.target.checked }))}
+                      />
+                      ${t}
+                    </label>
+                  `)}
+                </div>
+                <label>
+                  <span>fulfilled edges</span>
+                  <select
+                    className="control-select"
+                    value=${fulfilledMode}
+                    onChange=${e => setFulfilledMode(e.target.value)}
+                    title="How edges from done waves are rendered"
+                  >
+                    <option value="on">show</option>
+                    <option value="dim">dim</option>
+                    <option value="off">hide</option>
+                  </select>
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked=${showGroups}
+                    onChange=${e => setShowGroups(e.target.checked)}
+                  />
+                  show workstream containers
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked=${showCandidateEdges}
+                    onChange=${e => setShowCandidateEdges(e.target.checked)}
+                  />
+                  show candidate edges
+                </label>
+                <div className="save-status" style=${{marginTop:'8px',fontSize:'0.66rem'}}>
+                  ${saveStatus.state === 'idle'    ? html`<span style=${{color:'var(--faint)'}}>● idle</span>` : null}
+                  ${saveStatus.state === 'pending' ? html`<span style=${{color:'var(--yellow)'}}>● change pending — saving in 1s</span>` : null}
+                  ${saveStatus.state === 'saving'  ? html`<span style=${{color:'var(--blue)'}}>● saving ${saveStatus.count} positions…</span>` : null}
+                  ${saveStatus.state === 'saved'   ? html`<span style=${{color:'var(--green)'}}>● saved ${saveStatus.count} · ${(saveStatus.savedAt || '').slice(11,19)}</span>` : null}
+                  ${saveStatus.state === 'error'   ? html`<span style=${{color:'var(--red)'}}>● save failed: ${truncate(saveStatus.error||'',60)}</span>` : null}
+                </div>
+              </div>
+            <//>
+          <//>
+        <//>
+        ${!inspectorVisible ? html`
+          <button
+            type="button"
+            className="inspector-show"
+            onClick=${() => setInspectorVisible(true)}
+            title="Show details panel"
+          >Details ‹</button>
+        ` : null}
+      </div>
+      ${inspectorVisible ? html`
+        <div className="inspector-wrap">
+          <button
+            type="button"
+            className="inspector-close"
+            onClick=${() => setInspectorVisible(false)}
+            title="Hide details panel"
+            aria-label="Hide details panel"
+          >×</button>
+          <${Inspector} selection=${selection} />
+        </div>
+      ` : null}
+    </section>
+  `;
+}
+
+createRoot(document.getElementById('root')).render(html`<${App}/>`);
+</script>
+</body>
+</html>
+

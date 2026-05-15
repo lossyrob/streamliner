@@ -142,6 +142,36 @@ function asEnum<T extends string>(
   return value as T;
 }
 
+/**
+ * Tolerant variant of asEnum used when the caller has opted into resilient
+ * parsing (e.g., the source scanner). When the value is not in the allowed
+ * set, emits a warning through the parse-options callback and returns the
+ * provided fallback so the document can still load. When no callback is
+ * supplied, behaves exactly like asEnum (throws).
+ */
+function asEnumTolerant<T extends string>(
+  value: unknown,
+  label: string,
+  allowed: readonly T[],
+  fallback: T,
+  options: ParseWorkstreamOptions | undefined,
+): T {
+  if (typeof value === "string" && allowed.includes(value as T)) {
+    return value as T;
+  }
+  if (!options?.onParseWarning) {
+    throw new Error(`Expected ${label} to be one of: ${allowed.join(", ")}.`);
+  }
+  options.onParseWarning({
+    code: "non-canonical-enum",
+    label,
+    received: typeof value === "string" ? value : null,
+    allowed: [...allowed],
+    fallback,
+  });
+  return fallback;
+}
+
 function parseIssue(value: unknown, label: string): WorkstreamIssue {
   const record = asObject(value, label);
   return {
@@ -280,7 +310,11 @@ function parseLaunchDefaults(value: unknown, label: string): WorkstreamLaunchDef
   };
 }
 
-function parseNode(value: unknown, label: string): WorkstreamNode {
+function parseNode(
+  value: unknown,
+  label: string,
+  options?: ParseWorkstreamOptions,
+): WorkstreamNode {
   const record = asObject(value, label);
   const tracker = record.tracker;
 
@@ -293,10 +327,12 @@ function parseNode(value: unknown, label: string): WorkstreamNode {
     ),
     title: asNonEmptyString(record.title, `${label}.title`),
     summary: asNonEmptyString(record.summary, `${label}.summary`),
-    status: asEnum<WorkstreamNodeStatus>(
+    status: asEnumTolerant<WorkstreamNodeStatus>(
       record.status,
       `${label}.status`,
       WORKSTREAM_NODE_STATUSES,
+      "blocked",
+      options,
     ),
     attention: asEnum<WorkstreamAttention>(
       record.attention,
@@ -429,7 +465,27 @@ function assertSemanticallyValid(
   return workstream;
 }
 
-export function parseWorkstreamDocument(rawJson: string): WorkstreamDocument {
+export interface ParseWorkstreamWarning {
+  code: "non-canonical-enum";
+  label: string;
+  received: string | null;
+  allowed: string[];
+  fallback: string;
+}
+
+export interface ParseWorkstreamOptions {
+  /**
+   * Callback invoked when a non-fatal schema deviation is tolerated (e.g., an
+   * unknown node status). Without this callback, parseWorkstreamDocument
+   * preserves its strict behavior and throws on unknown enum values.
+   */
+  onParseWarning?: (warning: ParseWorkstreamWarning) => void;
+}
+
+export function parseWorkstreamDocument(
+  rawJson: string,
+  options?: ParseWorkstreamOptions,
+): WorkstreamDocument {
   let parsed: unknown;
 
   try {
@@ -495,7 +551,7 @@ export function parseWorkstreamDocument(rawJson: string): WorkstreamDocument {
             "workstream.designRefs",
             parseDesignReference,
           ),
-    nodes: parseArray(record.nodes, "workstream.nodes", parseNode),
+    nodes: parseArray(record.nodes, "workstream.nodes", (v, l) => parseNode(v, l, options)),
     checkpoints: parseArray(
       record.checkpoints,
       "workstream.checkpoints",
@@ -652,8 +708,12 @@ function buildArtifactOnlyViewModel(
   const inFlight = workstream.nodes.filter(
     (node) => node.status === "in-progress",
   );
+  // Retired and completed are both "no further work expected" buckets, but
+  // they are semantically distinct: completed = work was done; retired = work
+  // was intentionally not pursued (scope moved elsewhere or no longer needed).
+  // Both are excluded from "needs attention" derivations.
   const attentionEligibleNodes = workstream.nodes.filter(
-    (node) => node.status !== "completed",
+    (node) => node.status !== "completed" && node.status !== "retired",
   );
   const readyIds = new Set(readyNow.map((node) => node.id));
   const inFlightIds = new Set(inFlight.map((node) => node.id));
@@ -662,6 +722,7 @@ function buildArtifactOnlyViewModel(
       node.status === "blocked" ||
       (node.attention !== "parked" &&
         node.status !== "completed" &&
+        node.status !== "retired" &&
         !readyIds.has(node.id) &&
         !inFlightIds.has(node.id)),
   );
@@ -674,7 +735,10 @@ function buildArtifactOnlyViewModel(
     .map((node) => node.title);
   const nextValidationItem =
     workstream.nodes.find(
-      (node) => node.type === "gate" && node.status !== "completed",
+      (node) =>
+        node.type === "gate" &&
+        node.status !== "completed" &&
+        node.status !== "retired",
     ) ??
     workstream.checkpoints.find(
       (checkpoint) => checkpoint.status !== "completed",
@@ -717,13 +781,20 @@ function buildArtifactOnlyViewModel(
       node,
       operationalStatus: node.status,
       dependencyReady: node.dependsOn.length === 0,
+      // Both completed and retired nodes count as artifact-satisfied for
+      // downstream gating; operationalStatus distinguishes them in the UI.
       completionSource:
-        node.status === "completed" ? ("artifact" as const) : null,
+        node.status === "completed" || node.status === "retired"
+          ? ("artifact" as const)
+          : null,
     }),
   );
   const artifactCompletedNodeIds = new Set(
     derivedNodes
-      .filter((entry) => entry.node.status === "completed")
+      .filter(
+        (entry) =>
+          entry.node.status === "completed" || entry.node.status === "retired",
+      )
       .map((entry) => entry.node.id),
   );
   const checkpoints = buildCheckpointProgress(
@@ -775,6 +846,13 @@ export function buildWorkstreamViewModel(
       completionMemo.set(nodeId, "artifact");
       return "artifact";
     }
+    // Retired nodes count as "satisfied" for downstream dependency gating.
+    // Treating them as artifact-completed unblocks dependents but is
+    // distinguishable in the UI via operationalStatus.
+    if (node.status === "retired") {
+      completionMemo.set(nodeId, "artifact");
+      return "artifact";
+    }
 
     const issueRef = githubIssueOf(node.tracker);
     const issueSnapshot = issueRef
@@ -808,7 +886,12 @@ export function buildWorkstreamViewModel(
     );
 
     let operationalStatus: WorkstreamOperationalStatus = node.status;
-    if (completionSource !== null) {
+    if (node.status === "retired") {
+      // Retired nodes preserve their status in the UI (distinct from completed)
+      // even though completionSource is set so that downstream dependents are
+      // unblocked. Skip the completion / waiting transitions below.
+      operationalStatus = "retired";
+    } else if (completionSource !== null) {
       operationalStatus = "completed";
     } else if (activePullRequest && needsReview(activePullRequest)) {
       operationalStatus = "waiting-for-review";
@@ -845,7 +928,9 @@ export function buildWorkstreamViewModel(
     (entry) => entry.operationalStatus === "waiting-for-validation",
   );
   const attentionEligibleNodes = derivedNodes.filter(
-    (entry) => entry.operationalStatus !== "completed",
+    (entry) =>
+      entry.operationalStatus !== "completed" &&
+      entry.operationalStatus !== "retired",
   );
   const readyIds = new Set(readyNow.map((node) => node.id));
   const inFlightIds = new Set(inFlight.map((node) => node.id));
@@ -854,9 +939,16 @@ export function buildWorkstreamViewModel(
       (entry) => entry.node.id,
     ),
   );
-  const completedNodeIds = new Set(
+  // Retired nodes also satisfy checkpoint completion for downstream filtering;
+  // a checkpoint that lists a retired node should not count as "still has
+  // work" simply because that node was retired rather than completed.
+  const completedOrRetiredNodeIds = new Set(
     derivedNodes
-      .filter((entry) => entry.operationalStatus === "completed")
+      .filter(
+        (entry) =>
+          entry.operationalStatus === "completed" ||
+          entry.operationalStatus === "retired",
+      )
       .map((entry) => entry.node.id),
   );
   const blockedOrAttention = derivedNodes
@@ -865,6 +957,7 @@ export function buildWorkstreamViewModel(
         operationalStatus === "blocked" ||
         (node.attention !== "parked" &&
           operationalStatus !== "completed" &&
+          operationalStatus !== "retired" &&
           !readyIds.has(node.id) &&
           !inFlightIds.has(node.id) &&
           !waitingIds.has(node.id)),
@@ -879,7 +972,9 @@ export function buildWorkstreamViewModel(
     .map(({ node }) => node.title);
   const nextValidationGate = derivedNodes.find(
     (entry) =>
-      entry.node.type === "gate" && entry.operationalStatus !== "completed",
+      entry.node.type === "gate" &&
+      entry.operationalStatus !== "completed" &&
+      entry.operationalStatus !== "retired",
   )?.node;
   const nextValidationCheckpoint = workstream.checkpoints.find((checkpoint) => {
     if (checkpoint.status === "completed") {
@@ -889,7 +984,9 @@ export function buildWorkstreamViewModel(
       return true;
     }
 
-    return !checkpoint.nodeIds.every((nodeId) => completedNodeIds.has(nodeId));
+    return !checkpoint.nodeIds.every((nodeId) =>
+      completedOrRetiredNodeIds.has(nodeId),
+    );
   });
   const nextValidationItem = nextValidationGate ?? nextValidationCheckpoint;
 
@@ -926,7 +1023,7 @@ export function buildWorkstreamViewModel(
     },
   ];
 
-  const checkpoints = buildCheckpointProgress(workstream, completedNodeIds);
+  const checkpoints = buildCheckpointProgress(workstream, completedOrRetiredNodeIds);
 
   return {
     readyNow,

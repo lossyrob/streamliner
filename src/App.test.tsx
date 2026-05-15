@@ -2991,7 +2991,7 @@ describe("App sessions route", () => {
       });
       await settle(100);
       act(() => {
-        findButton(container, "Initialize PAW launch").click();
+        findButton(container, "Open PAW launch").click();
       });
       await settle();
 
@@ -3680,6 +3680,192 @@ describe("App sessions route", () => {
       expect(container.textContent).toContain("Initial SDK status replayed from start.");
       expect((container.textContent?.match(/Snapshot progress before reopen\./g) ?? [])).toHaveLength(1);
       expect(container.textContent).toContain("Live progress after reattach.");
+    },
+    15_000,
+  );
+
+  it(
+    "continues a reattached managed preparation into background launch",
+    async () => {
+      const graph = buildLaunchGraph();
+      const graphPath = "C:\\graphs\\api-test\\graph.json";
+      const preparedHandoff = {
+        cwd: "C:\\graphs\\api-test",
+        branch: "feature/launch-prompt-profiles",
+        runtimeKind: "managed-sdk",
+        pawWorkDir: "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles",
+        workflowContextPath:
+          "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles\\WorkflowContext.md",
+        streamlinerContextPath:
+          "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles\\streamliner\\context.md",
+        cliArgs: [],
+        terminal: {
+          launchMode: "manual",
+          preferredTerminal: "powershell",
+        },
+        environment: {},
+        sessionStateRoot: "C:\\streamliner-state",
+        kickoffPrompt: "Start PAW launch prompt profiles.",
+        launchMetadata: {
+          launchNonce: "nonce-reattach-managed",
+          launchClaimRef: null,
+          projectKey: "streamliner",
+          workstreamId: "api-test",
+          nodeId: "launch-prompt-profiles",
+          targetRepoIds: ["streamliner"],
+          graphPath,
+          branch: "feature/launch-prompt-profiles",
+          workId: "launch-prompt-profiles",
+          workTitle: "Launch prompt profiles",
+          trackerUrl: "https://github.com/lossyrob/streamliner/issues/33",
+          launchPolicy: null,
+        },
+        contextPackage: {
+          contextId: "ctx",
+          contextPackagePath: "C:\\streamliner-state\\launch-contexts\\ctx",
+          contextFilePath: "C:\\streamliner-state\\launch-contexts\\ctx\\context.md",
+          metadata: {},
+          unavailableInputs: [],
+        },
+      };
+      const launchClaim = {
+        launchClaimId: "claim-reattach-managed",
+        status: "pending",
+        launchedAt: "2026-05-05T12:00:00.000Z",
+        updatedAt: "2026-05-05T12:00:01.000Z",
+        bindingWindowExpiresAt: "2026-05-05T12:10:00.000Z",
+        reservedRegistryId: "registry-reattach-managed",
+        boundRegistryId: null,
+        boundCopilotSessionId: null,
+        failureCode: null,
+        failureReason: null,
+        blocksLaunch: true,
+        retryable: false,
+      };
+      const managedLaunch = {
+        launchClaim,
+        runtimeKind: "managed-sdk",
+        registryId: "registry-reattach-managed",
+        sdkSessionId: "sdk-reattach-managed",
+        sdkWorkspacePath: "C:\\state\\sdk-reattach-managed\\workspace.yaml",
+        sdkStateRoot: "C:\\state\\sdk-reattach-managed",
+        permissionProfile: "managed-autonomous",
+      };
+      let currentLaunchState: unknown = {
+        record: null,
+        operation: {
+          id: "launch-prompt-profiles-operation",
+          graphPath,
+          nodeId: "launch-prompt-profiles",
+          status: "preparing",
+          preparationRunId: "run-managed-reattach",
+          startedAt: "2026-05-03T18:00:00.000Z",
+          updatedAt: "2026-05-03T18:00:00.000Z",
+          completedAt: null,
+          handoff: null,
+          terminalLaunch: null,
+          managedLaunch: null,
+          error: null,
+          progressEvents: [],
+        },
+      };
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return jsonResponse(currentLaunchState);
+        }
+        if (path === "/api/paw-launch-prompt-profiles") {
+          return jsonResponse({ profiles: [] });
+        }
+        if (path === "/api/node-launches" && init?.method === "POST") {
+          const body = JSON.parse(String(init.body)) as {
+            handoff: { runtimeKind?: string; launchMetadata: { nodeId: string } };
+          };
+          expect(body.handoff.runtimeKind).toBe("managed-sdk");
+          expect(body.handoff.launchMetadata.nodeId).toBe("launch-prompt-profiles");
+          currentLaunchState = {
+            record: null,
+            operation: {
+              id: "launch-prompt-profiles-operation",
+              graphPath,
+              nodeId: "launch-prompt-profiles",
+              status: "managed_running",
+              preparationRunId: "run-managed-reattach",
+              startedAt: "2026-05-03T18:00:00.000Z",
+              updatedAt: "2026-05-03T18:00:02.000Z",
+              completedAt: "2026-05-03T18:00:02.000Z",
+              handoff: preparedHandoff,
+              terminalLaunch: null,
+              managedLaunch,
+              error: null,
+              progressEvents: [],
+              latestClaim: launchClaim,
+            },
+          };
+          return jsonResponse({
+            runtimeKind: "managed-sdk",
+            launchClaim,
+            managedSdk: {
+              registryId: managedLaunch.registryId,
+              sdkSessionId: managedLaunch.sdkSessionId,
+              sdkWorkspacePath: managedLaunch.sdkWorkspacePath,
+              sdkStateRoot: managedLaunch.sdkStateRoot,
+              permissionProfile: managedLaunch.permissionProfile,
+            },
+          }, 201);
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      MockEventSource.instances = [];
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      act(() => {
+        findCanvasNode(container, "Launch prompt profiles").click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Open PAW launch").click();
+      });
+      await settle();
+
+      const source = MockEventSource.instances.find((candidate) =>
+        candidate.url.includes("run-managed-reattach")
+      );
+      expect(source?.url).toBe("/api/launch-preparations/runs/run-managed-reattach/events");
+
+      act(() => {
+        source?.emit("completed", {
+          status: "succeeded",
+          result: preparedHandoff,
+          timestamp: "2026-05-03T18:00:01.000Z",
+        });
+      });
+      await settle(100);
+
+      expect(
+        fetchMock.mock.calls.filter(
+          ([input]) => requestPath(input as RequestInfo | URL) === "/api/node-launches",
+        ),
+      ).toHaveLength(1);
+      expect(container.textContent).toContain("Started with managed-autonomous.");
+      expect(findButton(container, "Background session started").disabled).toBe(true);
     },
     15_000,
   );
@@ -4749,7 +4935,7 @@ describe("App sessions route", () => {
   );
 
   it(
-    "refreshes the session list when the live event stream reports a change",
+    "applies live session events and pauses polling while SSE remains live",
     async () => {
       vi.useFakeTimers();
       MockEventSource.instances = [];
@@ -4762,7 +4948,7 @@ describe("App sessions route", () => {
           sessionsRequests += 1;
           return jsonResponse([
             buildSession({
-              title: sessionsRequests === 1 ? "Initial session" : "Live refreshed session",
+              title: sessionsRequests === 1 ? "Initial session" : "Fallback refreshed session",
               version: sessionsRequests === 1 ? 0 : 1,
             }),
           ]);
@@ -4782,16 +4968,226 @@ describe("App sessions route", () => {
       expect(MockEventSource.instances).toHaveLength(1);
       expect(MockEventSource.instances[0]?.url).toBe("/api/sessions/events");
 
+      const liveSession = buildSession({
+        title: "Live pushed session",
+        version: 1,
+      });
       act(() => {
-        MockEventSource.instances[0]?.emit("session.upserted");
+        MockEventSource.instances[0]?.emit("open");
+        MockEventSource.instances[0]?.emit("session.upserted", {
+          registryId: liveSession.id,
+          session: liveSession,
+        });
+      });
+      await flushReact();
+
+      expect(container.textContent).toContain("Live pushed session");
+      expect(sessionsRequests).toBe(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+      await flushReact();
+      expect(sessionsRequests).toBe(1);
+
+      act(() => {
+        MockEventSource.instances[0]?.emit("error");
+      });
+      await flushReact();
+      expect(sessionsRequests).toBe(2);
+    },
+    15_000,
+  );
+
+  it(
+    "falls back to a session fetch for compact runtime updates to unknown sessions",
+    async () => {
+      vi.useFakeTimers();
+      MockEventSource.instances = [];
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+
+      let sessionsRequests = 0;
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path.startsWith("/api/sessions")) {
+          sessionsRequests += 1;
+          return jsonResponse([
+            buildSession({
+              title: sessionsRequests === 1 ? "Initial session" : "Runtime refreshed session",
+              version: sessionsRequests === 1 ? 0 : 1,
+            }),
+          ]);
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      window.history.pushState({}, "", "/?view=sessions");
+
+      act(() => {
+        root.render(<App />);
+      });
+
+      await flushReact();
+      expect(container.textContent).toContain("Initial session");
+      act(() => {
+        MockEventSource.instances[0]?.emit("open");
+        MockEventSource.instances[0]?.emit("session.runtime.updated", {
+          registryId: "unknown-managed-session",
+          runtime: {
+            runtimeKind: "managed-sdk",
+            runtimeOwner: "streamliner-sdk",
+            lifecycleState: "running",
+            permissionProfile: "managed-autonomous",
+            launchClaimId: "claim-unknown",
+            launchNonce: "nonce-unknown",
+            sdkSessionId: "sdk-unknown",
+            sdkWorkspacePath: null,
+            sdkStateRoot: null,
+            startedAt: null,
+            lastStateChangedAt: "2026-05-07T12:00:00.000Z",
+            progressEvents: [],
+            evidence: [],
+          },
+          updatedAt: "2026-05-07T12:00:00.000Z",
+          version: 0,
+        });
       });
       await act(async () => {
         await vi.advanceTimersByTimeAsync(150);
       });
       await flushReact();
 
-      expect(container.textContent).toContain("Live refreshed session");
-      expect(sessionsRequests).toBeGreaterThanOrEqual(2);
+      expect(sessionsRequests).toBe(2);
+      expect(container.textContent).toContain("Runtime refreshed session");
+    },
+    15_000,
+  );
+
+  it(
+    "debounces session search before reopening the live event stream",
+    async () => {
+      vi.useFakeTimers();
+      MockEventSource.instances = [];
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        if (requestPath(input).startsWith("/api/sessions")) {
+          return jsonResponse([buildSession({ title: "Searchable session" })]);
+        }
+        throw new Error(`Unexpected fetch: ${requestPath(input)}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      window.history.pushState({}, "", "/?view=sessions");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await flushReact();
+      expect(MockEventSource.instances).toHaveLength(1);
+
+      const searchInput = container.querySelector<HTMLInputElement>(
+        'input[placeholder="Search sessions, repos, tags…"]',
+      );
+      if (!searchInput) {
+        throw new Error("Could not find session search input.");
+      }
+      setInputValue(searchInput, "managed");
+      await flushReact();
+      expect(MockEventSource.instances).toHaveLength(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(249);
+      });
+      await flushReact();
+      expect(MockEventSource.instances).toHaveLength(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      await flushReact();
+      expect(MockEventSource.instances).toHaveLength(2);
+      expect(MockEventSource.instances[1]?.url).toBe("/api/sessions/events?text=managed");
+    },
+    15_000,
+  );
+
+  it(
+    "resumes polling when the live session event stream goes stale",
+    async () => {
+      vi.useFakeTimers();
+      MockEventSource.instances = [];
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+      let sessionsRequests = 0;
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        if (requestPath(input).startsWith("/api/sessions")) {
+          sessionsRequests += 1;
+          return jsonResponse([buildSession({ title: "Stale stream session" })]);
+        }
+        throw new Error(`Unexpected fetch: ${requestPath(input)}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      window.history.pushState({}, "", "/?view=sessions");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await flushReact();
+      act(() => {
+        MockEventSource.instances[0]?.emit("open");
+      });
+      await flushReact();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(45_000);
+      });
+      await flushReact();
+
+      expect(sessionsRequests).toBe(2);
+    },
+    15_000,
+  );
+
+  it(
+    "keeps polling paused while session event heartbeats arrive",
+    async () => {
+      vi.useFakeTimers();
+      MockEventSource.instances = [];
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+      let sessionsRequests = 0;
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        if (requestPath(input).startsWith("/api/sessions")) {
+          sessionsRequests += 1;
+          return jsonResponse([buildSession({ title: "Heartbeat stream session" })]);
+        }
+        throw new Error(`Unexpected fetch: ${requestPath(input)}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      window.history.pushState({}, "", "/?view=sessions");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await flushReact();
+      act(() => {
+        MockEventSource.instances[0]?.emit("open");
+      });
+      await flushReact();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(14_000);
+      });
+      act(() => {
+        MockEventSource.instances[0]?.emit("heartbeat");
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      await flushReact();
+
+      expect(sessionsRequests).toBe(1);
     },
     15_000,
   );
@@ -5042,6 +5438,86 @@ describe("App sessions route", () => {
 
       expect(container.textContent).not.toContain("changed elsewhere");
       expect(container.textContent).toContain("working");
+    },
+    15_000,
+  );
+
+  it(
+    "does not treat compact runtime updates as stale builder conflicts",
+    async () => {
+      vi.useFakeTimers();
+      MockEventSource.instances = [];
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+      const session = buildSession({
+        id: "runtime-conflict-session",
+        title: "Runtime conflict session",
+        version: 3,
+        runtime: {
+          runtimeKind: "managed-sdk",
+          runtimeOwner: "streamliner-sdk",
+          lifecycleState: "running",
+          permissionProfile: "managed-autonomous",
+          launchClaimId: "claim-runtime-conflict",
+          launchNonce: "nonce-runtime-conflict",
+          sdkSessionId: "sdk-runtime-conflict",
+          sdkWorkspacePath: null,
+          sdkStateRoot: null,
+          startedAt: null,
+          lastStateChangedAt: "2026-05-07T12:00:00.000Z",
+          progressEvents: [],
+          evidence: [],
+        },
+      });
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        if (requestPath(input) === "/api/sessions") {
+          return jsonResponse([session]);
+        }
+        throw new Error(`Unexpected fetch: ${requestPath(input)}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      window.history.pushState({}, "", "/?view=sessions");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await flushReact();
+      act(() => {
+        MockEventSource.instances[0]?.emit("open");
+      });
+      await flushReact();
+      act(() => {
+        findSessionRow(container, "Runtime conflict session").click();
+      });
+      await flushReact();
+      const settingsTab = [...container.querySelectorAll<HTMLButtonElement>(".sl-sheet-tab")].find(
+        (btn) => btn.textContent?.trim() === "Settings",
+      );
+      if (!settingsTab) {
+        throw new Error("Could not find Settings tab.");
+      }
+      act(() => {
+        settingsTab.click();
+      });
+      await flushReact();
+      setInputValue(findInputByLabel(container, "Session title"), "Local runtime edit");
+
+      act(() => {
+        MockEventSource.instances[0]?.emit("session.runtime.updated", {
+          registryId: "runtime-conflict-session",
+          runtime: {
+            ...session.runtime!,
+            lifecycleState: "idle",
+            lastStateChangedAt: "2026-05-07T12:00:01.000Z",
+          },
+          updatedAt: "2026-05-07T12:00:01.000Z",
+          version: 4,
+        });
+      });
+      await flushReact();
+
+      expect(container.textContent).not.toContain("changed elsewhere");
+      expect(findInputByLabel(container, "Session title").value).toBe("Local runtime edit");
     },
     15_000,
   );

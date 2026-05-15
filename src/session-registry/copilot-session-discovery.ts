@@ -35,6 +35,12 @@ export interface DiscoveredCopilotSession {
   copilotProcessId: number | null;
 }
 
+export interface CopilotSessionDiscoveryBatch {
+  sessions: DiscoveredCopilotSession[];
+  nextStartIndex: number;
+  totalDirectories: number;
+}
+
 interface CopilotProcessObservation {
   state: SessionRegistryCopilotProcessState;
   processId: number | null;
@@ -410,6 +416,54 @@ export function discoverCopilotSessions(
     return rightSeen - leftSeen;
   });
   return discovered;
+}
+
+export function discoverCopilotSessionsBatch(
+  sessionRoot: string = getDefaultCopilotSessionStateRoot(),
+  options: {
+    startIndex?: number;
+    maxDirectories?: number;
+  } = {},
+): CopilotSessionDiscoveryBatch {
+  if (!existsSync(sessionRoot)) {
+    discoveryCache.clear();
+    return { sessions: [], nextStartIndex: 0, totalDirectories: 0 };
+  }
+
+  const entries = readdirSync(sessionRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .sort((left, right) => left.name.localeCompare(right.name));
+  const totalDirectories = entries.length;
+  if (totalDirectories === 0) {
+    return { sessions: [], nextStartIndex: 0, totalDirectories };
+  }
+
+  const maxDirectories = Math.max(
+    1,
+    Math.min(options.maxDirectories ?? totalDirectories, totalDirectories),
+  );
+  const startIndex = Math.max(0, options.startIndex ?? 0) % totalDirectories;
+  const sessions: DiscoveredCopilotSession[] = [];
+
+  for (let offset = 0; offset < maxDirectories; offset += 1) {
+    const entry = entries[(startIndex + offset) % totalDirectories];
+    const session = discoverSessionFromDirectory(sessionRoot, entry.name);
+    if (session) {
+      sessions.push(session);
+    }
+  }
+
+  sessions.sort((left, right) => {
+    const leftSeen = left.lastSeenAt ? Date.parse(left.lastSeenAt) : Number.NEGATIVE_INFINITY;
+    const rightSeen = right.lastSeenAt ? Date.parse(right.lastSeenAt) : Number.NEGATIVE_INFINITY;
+    return rightSeen - leftSeen;
+  });
+
+  return {
+    sessions,
+    nextStartIndex: (startIndex + maxDirectories) % totalDirectories,
+    totalDirectories,
+  };
 }
 
 function observationMatches(

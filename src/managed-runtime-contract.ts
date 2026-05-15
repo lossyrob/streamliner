@@ -1,4 +1,5 @@
 import type {
+  SessionRegistryActivityStatus,
   SessionRegistryRuntimeEvidence,
   SessionRegistryRuntimeMetadata,
   SessionRegistryRuntimeProgressEvent,
@@ -49,6 +50,12 @@ export type ManagedRuntimeLifecycleState =
 export const MANAGED_RUNTIME_PROGRESS_EVENT_LIMIT = 8;
 export const MANAGED_RUNTIME_PROGRESS_EVENT_INPUT_CAP = 1000;
 export const MANAGED_RUNTIME_PROGRESS_SUMMARY_MAX_LENGTH = 240;
+
+const MANAGED_RUNTIME_CLEANLY_ENDED_STATES = new Set<ManagedRuntimeLifecycleState>([
+  "canceled",
+  "completed",
+  "cleaned_up",
+]);
 
 export const MANAGED_RUNTIME_PROGRESS_KINDS = [
   "lifecycle",
@@ -137,6 +144,48 @@ export interface ManagedRuntimeProjection {
   progress?: ManagedRuntimeProgressEvent[];
   links?: ManagedRuntimeLink[];
   actions?: ManagedRuntimeActionAvailability[];
+}
+
+export function isManagedRuntimeLifecycleCleanlyEnded(
+  lifecycleState: ManagedRuntimeLifecycleState | null | undefined,
+): boolean {
+  return lifecycleState !== null
+    && lifecycleState !== undefined
+    && MANAGED_RUNTIME_CLEANLY_ENDED_STATES.has(lifecycleState);
+}
+
+export function managedRuntimeActivityStatusForLifecycle(
+  lifecycleState: ManagedRuntimeLifecycleState | null | undefined,
+): SessionRegistryActivityStatus | null {
+  switch (lifecycleState) {
+    case "preparing":
+    case "starting":
+    case "running":
+    case "interrupt_requested":
+    case "cleaning_up":
+    case "terminal_takeover":
+      return "working";
+    case "idle":
+    case "waiting_for_builder":
+    case "pr_ready":
+    case "review_ready":
+    case "cleanup_ready":
+      return "waiting_for_input";
+    case "interrupted":
+      return "interrupted";
+    case "canceled":
+    case "completed":
+    case "cleaned_up":
+      return "exited";
+    case "failed":
+    case null:
+    case undefined:
+      return null;
+    default: {
+      const _exhaustive: never = lifecycleState;
+      return _exhaustive;
+    }
+  }
 }
 
 const MANAGED_RUNTIME_PROGRESS_STATUSES = [
@@ -368,6 +417,7 @@ const SDK_CANCEL_STATES = new Set<ManagedRuntimeLifecycleState>([
   "idle",
   "waiting_for_builder",
   "interrupt_requested",
+  "failed",
 ]);
 
 const SDK_TAKEOVER_STATES = new Set<ManagedRuntimeLifecycleState>([

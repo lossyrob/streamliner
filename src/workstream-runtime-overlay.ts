@@ -229,6 +229,7 @@ function emptyStatusCounts(): Record<WorkstreamRuntimeNodeStatus, number> {
     "in-progress": 0,
     blocked: 0,
     completed: 0,
+    retired: 0,
     "waiting-for-review": 0,
     "waiting-for-validation": 0,
     launching: 0,

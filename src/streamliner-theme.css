@@ -644,6 +644,13 @@ a.sl-action-btn {
   color: var(--sl-red);
 }
 
+.sl-node-pill.status-retired {
+  background: rgba(20, 60, 130, 0.05);
+  color: var(--sl-text-muted);
+  border: 1px dashed rgba(20, 60, 130, 0.22);
+  font-style: italic;
+}
+
 .sl-pill.muted,
 .sl-node-pill.muted {
   background: rgba(20, 60, 130, 0.05);
@@ -3733,6 +3740,25 @@ a.sl-session-context-ref {
 
 .sl-node.dim {
   opacity: 0.34;
+}
+
+.sl-node.status-retired {
+  opacity: 0.62;
+  background: linear-gradient(180deg, rgba(20, 60, 130, 0.04) 0%, rgba(255, 255, 255, 0.85) 100%);
+  border-style: dashed;
+  border-color: rgba(20, 60, 130, 0.20);
+}
+
+/* Selection-driven dim must keep priority over the retired baseline opacity. */
+.sl-node.status-retired.dim {
+  opacity: 0.34;
+}
+
+.sl-node.status-retired .sl-node-title {
+  color: var(--sl-text-muted);
+  text-decoration: line-through;
+  text-decoration-color: rgba(20, 60, 130, 0.35);
+  text-decoration-thickness: 1px;
 }
 
 .sl-node-title {

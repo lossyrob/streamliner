@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { join, resolve as resolvePath } from "node:path";
 
 import express, { type ErrorRequestHandler, type Express } from "express";
 
@@ -28,7 +28,10 @@ import { createLaunchClaimsRouter } from "./routes/launch-claims";
 import { createNodeLaunchesRouter } from "./routes/node-launches";
 import { createNodeLaunchRecordsRouter } from "./routes/node-launch-records";
 import { createPawLaunchPromptProfilesRouter } from "./routes/paw-launch-prompt-profiles";
+import { createPawReviewPromptTemplatesRouter } from "./routes/paw-review-prompt-templates";
 import { createPawWorkflowContextRouter } from "./routes/paw-workflow-context";
+import { createCompanionTerminalLaunchesRouter } from "./routes/companion-terminal-launches";
+import { createProtoCanvasRouter } from "./routes/proto-canvas";
 import { createRecentsRouter } from "./routes/recents";
 import { createSessionLaunchSettingsRouter } from "./routes/session-launch-settings";
 import { createSessionsRouter } from "./routes/sessions";
@@ -36,6 +39,7 @@ import { createWorkstreamsRouter } from "./routes/workstreams";
 import { SessionRegistryEventStream } from "./session-events";
 import type { NodeLaunchDeps } from "./node-launch";
 import { DefaultManagedSdkRunner } from "./managed-sdk-runner";
+import { ManagedRuntimePatchCoalescer } from "./managed-runtime-patch-coalescer";
 import {
   DEFAULT_COPILOT_CLI_ARGS,
   readSessionLaunchSettings,
@@ -76,6 +80,7 @@ export interface StreamlinerApiAppOptions {
   launchPreparationDeps?: LaunchPreparationRouteDeps;
   managedCleanupDeps?: Partial<ManagedCleanupDeps>;
   promptProfilesPath?: string;
+  reviewPromptTemplatesPath?: string;
   sessionLaunchSettingsPath?: string;
   nodeLaunchRecordsPath?: string;
   pawWorkRoot?: string;
@@ -126,11 +131,48 @@ export function createStreamlinerApiApp(
           : undefined
       ),
     });
+  // Recover orphaned launch operations from the previous API process.
+  // LaunchPreparationRunManager state lives in memory only, so any operation
+  // persisted as `preparing`/`launching`/`managed_starting` at the moment the
+  // server restarts has no live run to attach to. Mark them failed up front so
+  // the UI doesn't render them as forever-stuck.
+  void nodeLaunchRecordStore
+    .recoverOrphanedOperations()
+    .then((recovered) => {
+      if (recovered.length === 0) {
+        return;
+      }
+      getApiLogger().withScope("node-launch-records").warn(
+        "Recovered orphaned launch operations on startup.",
+        {
+          count: recovered.length,
+          operations: recovered.map((operation) => ({
+            graphPath: operation.graphPath,
+            nodeId: operation.nodeId,
+            previousStatus: "preparing|launching|managed_starting",
+            preparationRunId: operation.preparationRunId,
+            startedAt: operation.startedAt,
+          })),
+        },
+      );
+    })
+    .catch((error: unknown) => {
+      getApiLogger().withScope("node-launch-records").error(
+        "Failed to recover orphaned launch operations on startup.",
+        { error: error instanceof Error ? error.message : String(error) },
+      );
+    });
   const managedSdkRunner =
     options.nodeLaunchDeps?.managedSdkRunner ?? new DefaultManagedSdkRunner();
+  const runtimePatchCoalescer =
+    options.nodeLaunchDeps?.runtimePatchCoalescer ??
+    new ManagedRuntimePatchCoalescer({
+      patchRuntimeMetadata: store.patchRuntimeMetadata.bind(store),
+    });
   const nodeLaunchDeps: NodeLaunchDeps = {
     ...options.nodeLaunchDeps,
     managedSdkRunner,
+    runtimePatchCoalescer,
   };
 
   app.disable("x-powered-by");
@@ -245,6 +287,18 @@ export function createStreamlinerApiApp(
   );
   app.use(
     "/api",
+    createPawReviewPromptTemplatesRouter({
+      templatesPath: options.reviewPromptTemplatesPath,
+    }),
+  );
+  app.use(
+    "/api",
+    createCompanionTerminalLaunchesRouter({
+      launchTerminal: options.nodeLaunchDeps?.launchTerminal,
+    }),
+  );
+  app.use(
+    "/api",
     createSessionLaunchSettingsRouter({
       settingsPath: options.sessionLaunchSettingsPath,
     }),
@@ -271,11 +325,32 @@ export function createStreamlinerApiApp(
           ?? (() => loadRelaunchDefaultCliArgs(options.sessionLaunchSettingsPath)),
       },
       managedSdkRunner,
+      runtimePatchCoalescer,
       managedCleanupDeps: options.managedCleanupDeps,
       now: options.now,
       launchClaimStore: options.launchClaimStore,
     }),
   );
+  app.use(
+    "/api/_proto/canvas",
+    createProtoCanvasRouter(),
+  );
+
+  // Static prototype page. Visit http://<api-host>:<api-port>/_proto/canvas/
+  // for the DBAgent portfolio canvas. Hard-coded to read from the planning
+  // repo via the /api/_proto/canvas/* routes above.
+  app.use(
+    "/_proto/canvas",
+    express.static(resolvePath(process.cwd(), "_proto", "canvas"), {
+      etag: false,
+      lastModified: false,
+      setHeaders: (res) => {
+        // Aggressive no-cache so prototype iteration is immediate.
+        res.setHeader("Cache-Control", "no-store");
+      },
+    }),
+  );
+
   app.use(malformedJsonHandler);
   app.use(jsonErrorHandler);
 
