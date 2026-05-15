@@ -2,6 +2,7 @@ import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import {
   activitySignalClass,
   activityStatusHint,
+  getEffectiveActivityStatus,
   getActivityStatusLabel,
 } from "./session-activity-status";
 import { handleInAppLinkClick } from "../dashboard-routing";
@@ -180,9 +181,10 @@ function NodeSessionIndicator({
   }
 
   const primarySession = status.primarySession;
-  const signalClass = activitySignalClass(primarySession.activityStatus);
+  const effectiveActivityStatus = getEffectiveActivityStatus(primarySession);
+  const signalClass = activitySignalClass(effectiveActivityStatus);
   const activityLabel = getActivityStatusLabel(primarySession);
-  const activityHint = activityStatusHint(primarySession.activityStatus);
+  const activityHint = activityStatusHint(effectiveActivityStatus);
   const countLabel =
     status.count === 1 ? "1 session" : `${status.count} sessions`;
   const detail =

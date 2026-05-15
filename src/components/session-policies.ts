@@ -1,4 +1,5 @@
 import type { SessionRegistryListItem } from "../session-registry-contract";
+import { isManagedRuntimeLifecycleCleanlyEnded } from "../managed-runtime-contract";
 import {
   buildCopilotResumeCommand,
   quotePowerShellLiteral,
@@ -88,6 +89,12 @@ export function isTrustedInterruptedSession(session: SessionRegistryListItem): b
 
 export function isCleanlyEndedSession(session: SessionRegistryListItem): boolean {
   if (isTrustedInterruptedSession(session)) {
+    return false;
+  }
+  const managedLifecycleState = session.runtime?.runtimeKind === "managed-sdk"
+    ? session.runtime.lifecycleState
+    : null;
+  if (managedLifecycleState && !isManagedRuntimeLifecycleCleanlyEnded(managedLifecycleState)) {
     return false;
   }
   return (
