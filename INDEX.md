@@ -13,6 +13,7 @@
 | [PRODUCT-THESIS.md](PRODUCT-THESIS.md) | **Start here.** Why Streamliner exists: execution compression relocates the bottleneck from doing work to designing work geometry. The three-stage cognitive transition (task conductor → workstream architect → portfolio operator), the failure modes of poorly designed parallel work, and what Streamliner is for. |
 | [PRODUCT-SPEC.md](PRODUCT-SPEC.md) | The full product specification: who it's for, core concepts (design layer, workstreams, work geometry, briefs, nodes, waves, context package, attention levels), the three pillars, operating rhythm, architecture, V1 scope, and open questions. |
 | [PORTFOLIO-LAYER.md](PORTFOLIO-LAYER.md) | Working draft for the product layer above individual workstreams: startup shell, cross-workstream coordination through public checkpoints, session visibility across environments, ad-hoc session handling, and UI direction. |
+| [DISTRIBUTED-CONTROL-PLANE.md](DISTRIBUTED-CONTROL-PLANE.md) | North-star context for Streamliner as a distributed control plane: remote relay/API, local environment agents, session actors, Git as ledger rather than live cursor, and how future candidates should align without treating it as a committed roadmap. |
 
 ## Operating model
 
