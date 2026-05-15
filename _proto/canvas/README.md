@@ -18,7 +18,7 @@ filesystem-backed positions file via three new API endpoints under
 
 This replaces the previous `localStorage`-backed prototype that lived in
 the planning repo at
-`C:\Users\robemanuele\proj\planning\planning\streamliner\dbagent\deps-4.7\portfolio-canvas.html`.
+`C:\Users\robemanuele\proj\planning\planning\streamliner\dbagent\portfolio\portfolio-canvas.html`.
 That file remains usable as the standalone fallback; this prototype is
 the durable workspace for layout work.
 
@@ -26,7 +26,7 @@ the durable workspace for layout work.
 
 | Resource | Path |
 |---|---|
-| Portfolio source (read-only) | `C:\Users\robemanuele\proj\planning\planning\streamliner\dbagent\deps-4.7\portfolio.json` |
+| Portfolio source (read-only) | `C:\Users\robemanuele\proj\planning\planning\streamliner\dbagent\portfolio\portfolio.json` |
 | Positions store (read/write) | `_proto/canvas/state/positions.json` (committed to streamliner repo so layout work persists across machines) |
 
 Both paths are baked into `src/server/routes/proto-canvas.ts`. To repoint

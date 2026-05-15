@@ -1096,6 +1096,63 @@ describe("createStreamlinerApiApp", () => {
     }));
   });
 
+  it("tolerates an unknown node status during source discovery instead of dropping the workstream", async () => {
+    const rootDir = createRootDir();
+    const sourceRoot = join(rootDir, "workstreams");
+    const workstreamDir = join(sourceRoot, "tolerated");
+    mkdirSync(workstreamDir, { recursive: true });
+    // The graph has one node with a status the schema does not recognise. The
+    // tolerant source-scanner path should still register the workstream while
+    // surfacing a tolerated-warning message so the user can fix the typo
+    // without losing visibility of the rest of the graph.
+    const graphContent = buildGraph({
+      title: "Tolerated Graph",
+      nodes: [
+        {
+          id: "first-node",
+          type: "task",
+          title: "First node",
+          summary: "First node summary.",
+          status: "scrapped",
+          attention: "focus",
+          repoIds: ["streamliner"],
+          dependsOn: [],
+        },
+      ],
+    });
+    writeFileSync(join(workstreamDir, "graph.json"), JSON.stringify(graphContent), "utf8");
+    const api = createIsolatedApi(rootDir);
+    activeApps.push(api);
+
+    await request(api.app)
+      .post("/api/workstream-sources")
+      .send({ type: "workstreams-root", path: sourceRoot })
+      .expect(201);
+
+    const listResponse = await request(api.app).get("/api/workstreams").expect(200);
+    const tolerated = listResponse.body.workstreams.find(
+      (entry: { workstreamId: string }) => entry.workstreamId === "api-test",
+    );
+    expect(tolerated).toBeDefined();
+    expect(tolerated).toEqual(expect.objectContaining({
+      title: "Tolerated Graph",
+      source: "source",
+    }));
+
+    const source = listResponse.body.sources[0];
+    const toleratedMessage = source.messages.find(
+      (message: { code: string }) => message.code === "workstream-graph-tolerated",
+    );
+    expect(toleratedMessage).toBeDefined();
+    expect(toleratedMessage).toEqual(expect.objectContaining({
+      severity: "warning",
+      projectKey: "streamliner",
+      workstreamId: "api-test",
+    }));
+    expect(toleratedMessage.message).toContain("scrapped");
+    expect(toleratedMessage.message).toContain("blocked");
+  });
+
   it("streams session registry events over SSE", async () => {
     const rootDir = createRootDir();
     const store = new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") });

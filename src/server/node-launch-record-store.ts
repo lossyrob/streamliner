@@ -355,6 +355,79 @@ export class NodeLaunchRecordStore {
     return operation ? { ...operation, progressEvents: [...operation.progressEvents] } : null;
   }
 
+  /**
+   * Mark every persisted operation that is in an "active" state
+   * (`preparing`, `launching`, `managed_starting`) as `preparation_failed`
+   * with an "orphaned" error code. Intended to run once on API startup so
+   * that operations whose in-memory run state was lost (e.g., because the
+   * dev server restarted in the middle of a PAW init) do not appear stuck
+   * in the UI forever.
+   *
+   * Returns the operations that were recovered so callers can log them.
+   */
+  async recoverOrphanedOperations(now = new Date()): Promise<NodeLaunchOperation[]> {
+    const recovered: NodeLaunchOperation[] = [];
+    await this.updateDocument((document) => {
+      const timestamp = now.toISOString();
+      for (const operation of document.operations) {
+        if (!ACTIVE_LAUNCH_OPERATION_STATUSES.has(operation.status)) {
+          continue;
+        }
+        operation.status = "preparation_failed";
+        operation.completedAt = timestamp;
+        operation.updatedAt = timestamp;
+        operation.terminalLaunch = null;
+        operation.managedLaunch = null;
+        operation.error = operationError(
+          {
+            code: "operation_orphaned",
+            error:
+              "Operation was in flight when the API restarted; in-memory run state was lost. Released so the node can be re-launched.",
+          },
+          timestamp,
+        );
+        recovered.push({ ...operation, progressEvents: [...operation.progressEvents] });
+      }
+      return undefined;
+    });
+    return recovered;
+  }
+
+  /**
+   * Manually release a stuck active operation, marking it
+   * `preparation_failed` with a user-cancellation error code so the UI can
+   * unblock without a server restart. Returns null if the operation is not
+   * found OR is not in an active state (so the caller can return 404 / 409
+   * as appropriate).
+   */
+  async releaseActiveOperation(input: {
+    graphPath: string;
+    nodeId: string;
+    reason?: string;
+    now?: Date;
+  }): Promise<NodeLaunchOperation | null> {
+    return await this.updateDocument((document) => {
+      const operation = findStoredOperation(document, input.graphPath, input.nodeId);
+      if (!operation || !ACTIVE_LAUNCH_OPERATION_STATUSES.has(operation.status)) {
+        return null;
+      }
+      const timestamp = (input.now ?? new Date()).toISOString();
+      operation.status = "preparation_failed";
+      operation.completedAt = timestamp;
+      operation.updatedAt = timestamp;
+      operation.terminalLaunch = null;
+      operation.managedLaunch = null;
+      operation.error = operationError(
+        {
+          code: "operation_released_by_user",
+          error: input.reason ?? "Manually released by the user.",
+        },
+        timestamp,
+      );
+      return operation;
+    });
+  }
+
   async hasWorkflowContextPath(path: string): Promise<boolean> {
     const document = await this.readDocument();
     const normalizedPath = normalizePathForComparison(path);

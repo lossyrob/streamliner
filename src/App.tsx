@@ -1785,6 +1785,30 @@ function GraphDashboard({
     }));
   }, []);
 
+  const releaseStuckLaunchOperation = useCallback(
+    async (target: LaunchOperationTarget): Promise<void> => {
+      const response = await fetch("/api/node-launch-records/operations/release", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          graphPath: target.graphPath,
+          nodeId: target.nodeId,
+          reason: "Manually released from the node inspector.",
+        }),
+      });
+      if (!response.ok) {
+        const parsed = await parseErrorResponse(response);
+        throw new Error(parsed.message);
+      }
+      const body = (await response.json()) as { operation: NodeLaunchOperation };
+      setLaunchOperationByKey((current) => ({
+        ...current,
+        [launchOperationKey(target)]: body.operation,
+      }));
+    },
+    [],
+  );
+
   const prefetchPromptProfiles = useCallback(() => {
     return onRefreshPromptProfiles();
   }, [onRefreshPromptProfiles]);
@@ -2518,6 +2542,11 @@ function GraphDashboard({
             launchRecordError={nodeLaunchRecordError ?? selectedNodeLaunchRecordError}
             runtimeOverlay={selectedRuntimeOverlay}
             onLaunch={handleOpenLaunchDialog}
+            onReleaseStuckOperation={
+              selectedLaunchTarget
+                ? () => releaseStuckLaunchOperation(selectedLaunchTarget)
+                : undefined
+            }
           />
         </div>
       </div>
@@ -2753,6 +2782,45 @@ export default function App() {
   const promptProfileState = usePromptProfilesState();
   const sessionLaunchSettingsState = useSessionLaunchSettingsState();
   const beforeLeaveRef = useRef<(() => Promise<boolean>) | null>(null);
+
+  // Keep the browser tab title in sync with the active route + workstream so
+  // the user can pick the right tab when several Streamliner views are open.
+  useEffect(() => {
+    const base = "Streamliner";
+    let suffix: string | null = null;
+    switch (route.view) {
+      case "landing":
+        suffix = null;
+        break;
+      case "workstreams":
+        suffix = "Workstreams";
+        break;
+      case "sessions":
+        suffix = "Sessions";
+        break;
+      case "settings":
+        suffix = route.section === "profiles"
+          ? "Settings · PAW profiles"
+          : "Settings · Session launch";
+        break;
+      case "workstream": {
+        // Prefer the loaded document title; fall back to the workstreamId
+        // segment so the tab still differentiates while the document is
+        // still loading or failed to load.
+        const loaded = graphLoader.workstream;
+        const matchesRoute =
+          loaded
+          && loaded.projectKey === route.projectKey
+          && loaded.id === route.workstreamId;
+        suffix = matchesRoute ? loaded.title : route.workstreamId;
+        break;
+      }
+    }
+    document.title = suffix ? `${base}: ${suffix}` : base;
+  }, [
+    route,
+    graphLoader.workstream,
+  ]);
 
   const handleRouteChange = useCallback(
     async (nextRoute: DashboardRoute) => {

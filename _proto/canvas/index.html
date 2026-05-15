@@ -20,31 +20,36 @@
 <link rel="stylesheet" href="https://esm.sh/@xyflow/react@12.3.5/dist/style.css">
 <style>
   :root {
-    color-scheme: dark;
-    --bg: #0b1020;
-    --panel: #111831;
-    --panel-2: #17213f;
-    --text: #edf2ff;
-    --muted: #9fb0d9;
-    --faint: #647397;
-    --accent: #77d7ff;
-    --green: #74f0a7;
-    --yellow: #ffd166;
-    --orange: #ff9f66;
-    --red: #ff6b8a;
-    --purple: #c79bff;
-    --blue: #79a7ff;
-    --rf-bg: #0e1428;
+    color-scheme: light;
+    /* Streamliner "Light Deep Ocean" palette — mirrors src/streamliner-theme.css */
+    --bg: #f2f4f8;
+    --panel: rgba(255, 255, 255, 0.82);
+    --panel-2: rgba(255, 255, 255, 0.92);
+    --text: #1a2540;
+    --muted: #3a4f70;
+    --faint: #8d9bb5;
+    --accent: #1d6edc;
+    --green: #12945f;
+    --yellow: #b07808;   /* amber — used for "ready" status */
+    --orange: #c95a1e;   /* hot/focus accent — distinct from amber */
+    --red: #c83232;
+    --purple: #7c3aed;
+    --blue: #1d6edc;     /* in-progress; same accent blue as Streamliner */
+    --rf-bg: transparent;
+    --border: rgba(20, 60, 130, 0.10);
+    --border-strong: rgba(20, 60, 130, 0.16);
+    --shadow-card: 0 8px 30px rgba(31, 58, 105, 0.08);
+    --shadow-soft: 0 4px 14px rgba(31, 58, 105, 0.06);
   }
   * { box-sizing: border-box; }
   html, body, #root { height: 100%; margin: 0; }
   body {
     background:
-      radial-gradient(circle at 20% 0%, rgba(119, 215, 255, 0.10), transparent 28rem),
-      radial-gradient(circle at 82% 8%, rgba(199, 155, 255, 0.07), transparent 30rem),
+      radial-gradient(circle at 20% 0%, rgba(29, 110, 220, 0.07), transparent 30rem),
+      radial-gradient(circle at 82% 8%, rgba(124, 58, 237, 0.05), transparent 32rem),
       var(--bg);
     color: var(--text);
-    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-family: system-ui, -apple-system, "Segoe UI", "Inter", sans-serif;
     overflow: hidden;
   }
   #root { display: grid; grid-template-rows: auto auto 1fr; }
@@ -53,107 +58,171 @@
     align-items: flex-start;
     justify-content: space-between;
     gap: 1rem;
-    padding: 0.65rem 1.25rem;
-    border-bottom: 1px solid rgba(255,255,255,0.08);
-    background: rgba(11,16,32,0.92);
+    padding: 0.75rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.78);
+    backdrop-filter: blur(10px);
     z-index: 20;
   }
-  header h1 { margin: 0; font-size: 0.95rem; letter-spacing: 0.02em; }
+  header h1 { margin: 0; font-size: 0.95rem; letter-spacing: -0.005em; font-weight: 700; color: var(--text); }
   header .meta { margin-top: 0.2rem; color: var(--muted); font-size: 0.72rem; }
   header .legend { display: flex; gap: 0.8rem; flex-wrap: wrap; font-size: 0.66rem; color: var(--muted); }
   header .legend .it { display: inline-flex; align-items: center; gap: 0.3rem; }
-  header .legend .sw { display: inline-block; width: 14px; height: 10px; border-radius: 3px; border: 1px solid rgba(255,255,255,0.12); }
+  header .legend .sw { display: inline-block; width: 14px; height: 10px; border-radius: 3px; border: 1px solid var(--border); }
   header .legend .ln { display: inline-block; width: 22px; height: 0; border-top: 2px solid; }
   header .filter-bar {
     display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
-    padding: 4px 1.25rem 8px;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
-    background: rgba(11,16,32,0.92);
+    padding: 6px 1.25rem 8px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.6);
+    backdrop-filter: blur(8px);
     font-size: 0.72rem;
     color: var(--muted);
   }
   header .filter-bar .filter-label {
     text-transform: uppercase; letter-spacing: 0.08em;
-    color: var(--faint); font-size: 0.62rem;
+    color: var(--faint); font-size: 0.62rem; font-weight: 700;
     margin-right: 4px;
   }
   header .filter-bar button {
-    padding: 3px 10px;
-    border: 1px solid rgba(255,255,255,0.10);
+    padding: 3px 11px;
+    border: 1px solid var(--border);
     border-radius: 999px;
-    background: rgba(255,255,255,0.04);
+    background: rgba(255, 255, 255, 0.7);
     color: var(--muted);
     font-size: 0.7rem;
+    font-weight: 600;
     cursor: pointer;
     font-family: inherit;
     transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
   }
-  header .filter-bar button:hover { color: var(--text); border-color: rgba(119,215,255,0.40); }
-  header .filter-bar button.active { color: var(--text); border-color: rgba(119,215,255,0.65); background: rgba(119,215,255,0.10); }
-  header .filter-bar button.active.f-ready    { color: var(--yellow); border-color: rgba(255,209,102,0.65); background: rgba(255,209,102,0.10); }
-  header .filter-bar button.active.f-in-progress { color: var(--blue); border-color: rgba(121,167,255,0.65); background: rgba(121,167,255,0.10); }
-  header .filter-bar button.active.f-blocked  { color: var(--red); border-color: rgba(255,107,138,0.65); background: rgba(255,107,138,0.10); }
-  header .filter-bar button.active.f-done     { color: var(--green); border-color: rgba(116,240,167,0.55); background: rgba(116,240,167,0.10); }
-  header .filter-bar button.active.f-hot      { color: var(--orange); border-color: rgba(255,159,102,0.65); background: rgba(255,159,102,0.10); }
+  header .filter-bar button:hover { color: var(--text); border-color: rgba(29,110,220,0.35); background: rgba(255,255,255,0.92); }
+  header .filter-bar button.active { color: var(--accent); border-color: rgba(29,110,220,0.45); background: rgba(29,110,220,0.08); }
+  header .filter-bar button.active.f-ready       { color: var(--yellow); border-color: rgba(176,120,8,0.45); background: rgba(176,120,8,0.10); }
+  header .filter-bar button.active.f-in-progress { color: var(--blue);   border-color: rgba(29,110,220,0.45); background: rgba(29,110,220,0.08); }
+  header .filter-bar button.active.f-blocked     { color: var(--red);    border-color: rgba(200,50,50,0.45); background: rgba(200,50,50,0.08); }
+  header .filter-bar button.active.f-done        { color: var(--green);  border-color: rgba(18,148,95,0.40); background: rgba(18,148,95,0.08); }
+  header .filter-bar button.active.f-hot         { color: var(--orange); border-color: rgba(201,90,30,0.45); background: rgba(201,90,30,0.08); }
   header .filter-bar .summary {
     margin-left: auto;
     color: var(--faint);
-    font-size: 0.65rem;
+    font-size: 0.66rem;
   }
-  .content { display: grid; grid-template-columns: 1fr 24rem; height: 100%; min-height: 0; }
+  .content { display: grid; grid-template-columns: 1fr 24rem; height: 100%; min-height: 0; transition: grid-template-columns 180ms ease; }
+  .content.inspector-hidden { grid-template-columns: 1fr; }
   .canvas-shell { position: relative; min-width: 0; min-height: 0; }
+  .inspector-wrap {
+    position: relative;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .inspector-wrap > aside.inspector { flex: 1; min-height: 0; }
+  .inspector-close {
+    position: absolute;
+    top: 10px; right: 12px;
+    width: 26px; height: 26px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.92);
+    color: var(--muted);
+    font-size: 16px; line-height: 1;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 12;
+    box-shadow: var(--shadow-soft);
+    transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+  }
+  .inspector-close:hover {
+    background: #fff;
+    color: var(--text);
+    border-color: var(--border-strong);
+  }
+  .inspector-show {
+    position: absolute;
+    top: 12px; right: 12px;
+    padding: 6px 14px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.92);
+    color: var(--muted);
+    font-size: 0.7rem;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+    box-shadow: var(--shadow-soft);
+    z-index: 12;
+    transition: background 120ms ease, color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+  }
+  .inspector-show:hover {
+    background: #fff;
+    color: var(--text);
+    border-color: var(--border-strong);
+    box-shadow: var(--shadow-card);
+  }
   aside.inspector {
     overflow-y: auto;
     padding: 1rem 1.1rem 4rem;
-    background: rgba(17,24,49,0.92);
-    border-left: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255, 255, 255, 0.62);
+    border-left: 1px solid var(--border);
     font-size: 0.82rem;
+    color: var(--text);
   }
-  aside.inspector h2 { margin: 0 0 0.25rem; font-size: 0.95rem; }
-  aside.inspector h3 { margin: 0.9rem 0 0.4rem; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text); }
-  aside.inspector p, aside.inspector li { color: var(--muted); line-height: 1.45; font-size: 0.78rem; margin: 0 0 0.3rem; }
+  aside.inspector h2 { margin: 0 0 0.25rem; font-size: 0.95rem; color: var(--text); }
+  aside.inspector h3 { margin: 0.9rem 0 0.4rem; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.10em; color: var(--faint); font-weight: 700; }
+  aside.inspector p, aside.inspector li { color: var(--muted); line-height: 1.5; font-size: 0.78rem; margin: 0 0 0.3rem; }
   aside.inspector .placeholder { color: var(--faint); font-style: italic; }
-  aside.inspector .pill { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 0.62rem; margin-right: 0.3rem; }
-  aside.inspector .ev { font-size: 0.7rem; color: var(--muted); margin-bottom: 2px; word-break: break-word; }
+  aside.inspector .pill { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 0.62rem; margin-right: 0.3rem; font-weight: 600; }
+  aside.inspector .ev { font-size: 0.72rem; color: var(--muted); margin-bottom: 2px; word-break: break-word; }
   aside.inspector .blocker {
-    margin-bottom: 0.4rem; padding: 0.35rem 0.5rem;
+    margin-bottom: 0.4rem; padding: 0.4rem 0.6rem;
     border-left: 3px solid var(--red);
-    background: rgba(255,107,138,0.06);
-    border-radius: 0 4px 4px 0;
+    background: rgba(200,50,50,0.06);
+    border-radius: 0 6px 6px 0;
     font-size: 0.74rem; color: var(--text);
   }
   aside.inspector .blocker.soft-coord, aside.inspector .blocker.soft-data {
-    border-left-color: var(--purple); background: rgba(199,155,255,0.06);
+    border-left-color: var(--purple); background: rgba(124,58,237,0.06);
   }
-  aside.inspector .blocker.hard { border-left-color: var(--green); background: rgba(116,240,167,0.04); }
-  aside.inspector .blocker.external { border-left-color: var(--red); }
+  aside.inspector .blocker.hard { border-left-color: var(--green); background: rgba(18,148,95,0.06); }
+  aside.inspector .blocker.external { border-left-color: var(--red); background: rgba(200,50,50,0.06); }
 
   /* React Flow theming overrides */
   .react-flow { background: var(--rf-bg); }
-  .react-flow__background { background: var(--rf-bg); }
-  .react-flow__controls { background: rgba(17,24,49,0.9); border: 1px solid rgba(255,255,255,0.10); }
-  .react-flow__controls-button { background: rgba(17,24,49,0.9); border: none; color: var(--muted); }
-  .react-flow__controls-button:hover { background: rgba(119,215,255,0.10); color: var(--accent); }
+  .react-flow__background { background: transparent; }
+  .react-flow__controls {
+    background: rgba(255,255,255,0.92);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: var(--shadow-card);
+    overflow: hidden;
+  }
+  .react-flow__controls-button { background: rgba(255,255,255,0.92); border: none; border-bottom: 1px solid var(--border); color: var(--muted); }
+  .react-flow__controls-button:hover { background: rgba(255,255,255,1); color: var(--accent); }
   .react-flow__controls-button svg { fill: currentColor; }
   .react-flow__minimap {
-    background: rgba(17,24,49,0.92);
-    border: 1px solid rgba(255,255,255,0.10);
+    background: rgba(255,255,255,0.85);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: var(--shadow-card);
   }
   .react-flow__attribution { display: none !important; }
   .react-flow__node { font-family: inherit; }
   .react-flow__handle {
     width: 8px; height: 8px;
-    background: var(--accent);
-    border: 1px solid rgba(255,255,255,0.20);
+    background: rgba(255,255,255,0.95);
+    border: 2px solid var(--border-strong);
   }
   .react-flow__handle.spine {
-    background: rgba(159,176,217,0.32);
-    border-color: rgba(159,176,217,0.50);
+    background: rgba(20,60,130,0.18);
+    border-color: rgba(20,60,130,0.32);
   }
-  .react-flow__handle.import { background: var(--yellow); }
-  .react-flow__handle.export { background: var(--green); }
+  .react-flow__handle.import { background: var(--yellow); border-color: rgba(176,120,8,0.55); }
+  .react-flow__handle.export { background: var(--green); border-color: rgba(18,148,95,0.55); }
   .react-flow__edge.spine path {
-    stroke: rgba(159,176,217,0.32);
+    stroke: rgba(20,60,130,0.28);
     stroke-width: 2;
     stroke-dasharray: none;
   }
@@ -161,51 +230,52 @@
   .react-flow__edge.soft-data path { stroke: var(--blue); stroke-width: 2; stroke-dasharray: 8 5; }
   .react-flow__edge.soft-coord path { stroke: var(--purple); stroke-width: 2; stroke-dasharray: 2 5; }
   .react-flow__edge.external path { stroke: var(--red); stroke-width: 2; stroke-dasharray: 6 5; }
-  .react-flow__edge.fulfilled path { opacity: 0.32; stroke-width: 1.5; }
+  .react-flow__edge.fulfilled path { opacity: 0.30; stroke-width: 1.5; }
   .react-flow__edge.blocking-current path {
     stroke-width: 3.5;
     filter: drop-shadow(0 0 6px currentColor);
   }
   .react-flow__edge:hover path, .react-flow__edge.selected path { stroke-width: 3.5; opacity: 1; }
   .react-flow__edge-text { fill: var(--text); font-size: 10px; }
-  .react-flow__edge-textbg { fill: rgba(11,16,32,0.85); }
+  .react-flow__edge-textbg { fill: rgba(255,255,255,0.92); }
 
   /* Workstream header node */
   .ws-header-node {
     width: 100%; height: 100%;
     padding: 10px 14px;
-    border: 1px solid rgba(119,215,255,0.30);
+    border: 1px solid var(--border);
     border-radius: 16px;
-    background:
-      linear-gradient(180deg, rgba(119,215,255,0.08), rgba(17,24,49,0.65)),
-      rgba(17,24,49,0.92);
+    background: linear-gradient(180deg, rgba(29,110,220,0.05) 0%, rgba(255,255,255,0.95) 100%);
     color: var(--text);
-    box-shadow: 0 6px 24px rgba(0,0,0,0.25);
+    box-shadow: var(--shadow-card);
     cursor: pointer;
     transition: border-color 120ms ease, box-shadow 120ms ease;
     overflow: hidden;
   }
-  .ws-header-node.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(119,215,255,0.20); }
+  .ws-header-node.selected {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(29,110,220,0.10), var(--shadow-card);
+  }
   .ws-header-node .eyebrow {
     display: flex; justify-content: space-between; align-items: center;
     font-size: 0.6rem; color: var(--faint);
-    text-transform: uppercase; letter-spacing: 0.09em;
+    text-transform: uppercase; letter-spacing: 0.10em; font-weight: 700;
     margin-bottom: 4px;
   }
   .ws-header-node .pill {
-    padding: 1px 7px; border-radius: 999px; background: rgba(255,255,255,0.06);
+    padding: 1px 7px; border-radius: 999px; background: rgba(20,60,130,0.06); font-weight: 600;
   }
-  .ws-header-node .pill.done      { color: var(--green);  background: rgba(116,240,167,0.10); }
-  .ws-header-node .pill.in-flight { color: var(--blue);   background: rgba(121,167,255,0.10); }
-  .ws-header-node .pill.formed    { color: var(--accent); background: rgba(119,215,255,0.10); }
-  .ws-header-node .pill.candidate { color: var(--yellow); background: rgba(255,209,102,0.10); }
+  .ws-header-node .pill.done      { color: var(--green);  background: rgba(18,148,95,0.12); }
+  .ws-header-node .pill.in-flight { color: var(--blue);   background: rgba(29,110,220,0.10); }
+  .ws-header-node .pill.formed    { color: var(--accent); background: rgba(29,110,220,0.10); }
+  .ws-header-node .pill.candidate { color: var(--yellow); background: rgba(176,120,8,0.12); }
   .ws-header-node h2 {
-    margin: 0; font-size: 0.85rem; line-height: 1.15; color: var(--text);
-    font-weight: 600;
+    margin: 0; font-size: 0.85rem; line-height: 1.20; color: var(--text);
+    font-weight: 700;
   }
   .ws-header-node .summary {
     margin-top: 5px;
-    color: var(--muted); font-size: 0.66rem; line-height: 1.35;
+    color: var(--muted); font-size: 0.66rem; line-height: 1.4;
     display: -webkit-box; overflow: hidden;
     -webkit-box-orient: vertical; -webkit-line-clamp: 2;
   }
@@ -220,71 +290,80 @@
     width: 100%; height: 100%;
     padding: 10px 12px;
     box-sizing: border-box;
-    border: 1.5px solid rgba(159,176,217,0.28);
+    border: 1.5px solid var(--border);
     border-radius: 16px;
-    background: rgba(17,24,49,0.88);
+    background: rgba(255, 255, 255, 0.92);
     color: var(--text);
     cursor: pointer;
-    transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+    box-shadow: var(--shadow-soft);
+    transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease, transform 120ms ease;
     display: flex; flex-direction: column; gap: 6px;
     overflow: hidden;
   }
-  .wave-node:hover { border-color: rgba(119,215,255,0.50); }
+  .wave-node:hover { border-color: rgba(29,110,220,0.40); box-shadow: var(--shadow-card); }
   .wave-node.selected {
     border-color: var(--accent);
-    box-shadow: 0 0 0 2px rgba(119,215,255,0.20), 0 12px 30px rgba(0,0,0,0.30);
+    box-shadow: 0 0 0 3px rgba(29,110,220,0.12), var(--shadow-card);
+  }
+  /* React Flow's own selection set (e.g., shift-click multi-select) is
+     independent of our inspector-driven `data.selected`. Mirror the accent
+     treatment to the inner card so multi-selection is visible. */
+  .react-flow__node.selected .wave-node,
+  .react-flow__node.selected .ext-node {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(29,110,220,0.18), var(--shadow-card);
   }
   /* Status variants — match Streamliner's swimlane treatment */
   .wave-node.status-done {
-    background: linear-gradient(180deg, rgba(116,240,167,0.10), rgba(116,240,167,0.04));
-    border-color: rgba(116,240,167,0.42);
+    background: linear-gradient(180deg, rgba(18,148,95,0.09), rgba(255,255,255,0.95));
+    border-color: rgba(18,148,95,0.35);
     border-style: solid;
   }
   .wave-node.status-in-progress {
-    background: linear-gradient(180deg, rgba(121,167,255,0.14), rgba(121,167,255,0.05));
-    border-color: rgba(121,167,255,0.55);
+    background: linear-gradient(180deg, rgba(29,110,220,0.09), rgba(255,255,255,0.95));
+    border-color: rgba(29,110,220,0.45);
     border-style: solid;
-    box-shadow: 0 6px 24px rgba(121,167,255,0.10);
+    box-shadow: 0 6px 18px rgba(29,110,220,0.08);
   }
   .wave-node.status-ready {
-    background: linear-gradient(180deg, rgba(255,209,102,0.16), rgba(255,209,102,0.05));
-    border-color: rgba(255,209,102,0.70);
+    background: linear-gradient(180deg, rgba(176,120,8,0.12), rgba(255,255,255,0.95));
+    border-color: rgba(176,120,8,0.55);
     border-style: solid;
-    box-shadow: 0 0 0 2px rgba(255,209,102,0.16), 0 8px 26px rgba(255,209,102,0.10);
+    box-shadow: 0 0 0 2px rgba(176,120,8,0.10), 0 8px 20px rgba(176,120,8,0.08);
   }
   .wave-node.status-planned {
-    background: rgba(255,255,255,0.025);
-    border-color: rgba(159,176,217,0.28);
+    background: rgba(255,255,255,0.75);
+    border-color: var(--border-strong);
     border-style: dashed;
     color: var(--muted);
   }
   .wave-node.status-planned .wave-title { color: var(--muted); }
   .wave-node.status-blocked {
-    background: rgba(255,107,138,0.06);
-    border-color: rgba(255,107,138,0.50);
+    background: linear-gradient(180deg, rgba(200,50,50,0.07), rgba(255,255,255,0.95));
+    border-color: rgba(200,50,50,0.45);
     border-style: dashed;
   }
-  .wave-node.attn-hot { box-shadow: 0 0 0 2px var(--orange), 0 8px 26px rgba(255,159,102,0.18); }
-  .wave-node.attn-focus { box-shadow: 0 0 0 2px var(--accent), 0 8px 26px rgba(119,215,255,0.18); }
+  .wave-node.attn-hot { box-shadow: 0 0 0 2px var(--orange), 0 8px 22px rgba(201,90,30,0.18); }
+  .wave-node.attn-focus { box-shadow: 0 0 0 2px var(--accent), 0 8px 22px rgba(29,110,220,0.18); }
   .wave-node.pinned, .ext-node.pinned {
-    box-shadow: inset 0 0 0 1px rgba(255,209,102,0.4), 0 6px 20px rgba(0,0,0,0.25);
+    box-shadow: inset 0 0 0 1px rgba(176,120,8,0.45), 0 6px 18px rgba(31,58,105,0.10);
   }
   /* Filter modes — applied when a top-bar filter is active */
-  .wave-node.filter-neighbor, .ext-node.filter-neighbor { opacity: 0.42; }
-  .wave-node.filter-out,      .ext-node.filter-out      { opacity: 0.10; filter: grayscale(0.6); }
+  .wave-node.filter-neighbor, .ext-node.filter-neighbor { opacity: 0.50; }
+  .wave-node.filter-out,      .ext-node.filter-out      { opacity: 0.18; filter: grayscale(0.5); }
   .wave-node.filter-focus     { /* full visibility + subtle accent */ }
   /* Edges under filter */
   .react-flow__edge.filter-focus-edge path     { opacity: 1; stroke-width: 3 !important; }
-  .react-flow__edge.filter-connector-edge path { opacity: 0.55; }
-  .react-flow__edge.filter-out-edge path       { opacity: 0.06; }
+  .react-flow__edge.filter-connector-edge path { opacity: 0.50; }
+  .react-flow__edge.filter-out-edge path       { opacity: 0.08; }
   .pin-badge {
     position: absolute;
     top: 4px; right: 4px;
     width: 22px; height: 22px;
     padding: 0; margin: 0;
-    border: 1px solid rgba(255,209,102,0.35);
+    border: 1px solid rgba(176,120,8,0.45);
     border-radius: 999px;
-    background: rgba(255,209,102,0.12);
+    background: rgba(176,120,8,0.12);
     color: var(--yellow);
     font-size: 11px;
     line-height: 1;
@@ -294,14 +373,14 @@
     transition: background 120ms ease, border-color 120ms ease;
   }
   .pin-badge:hover {
-    background: rgba(255,209,102,0.25);
-    border-color: rgba(255,209,102,0.65);
+    background: rgba(176,120,8,0.22);
+    border-color: rgba(176,120,8,0.70);
   }
   .wave-node .ws-badge {
     align-self: flex-start;
     padding: 1px 7px; border-radius: 999px;
     font-size: 0.58rem;
-    font-weight: 600;
+    font-weight: 700;
     text-transform: uppercase; letter-spacing: 0.08em;
     margin-bottom: 2px;
     line-height: 1.2;
@@ -314,10 +393,11 @@
   .wave-node .wave-index {
     font-size: 0.6rem; color: var(--faint);
     font-variant-numeric: tabular-nums; flex-shrink: 0;
+    font-weight: 700;
   }
   .wave-node .wave-titles { flex: 1; min-width: 0; }
   .wave-node .wave-title {
-    margin: 0; font-size: 0.74rem; font-weight: 600;
+    margin: 0; font-size: 0.76rem; font-weight: 700;
     line-height: 1.2; color: var(--text);
     white-space: nowrap; text-overflow: ellipsis; overflow: hidden;
   }
@@ -325,17 +405,18 @@
     flex-shrink: 0;
     padding: 1px 7px; border-radius: 999px;
     font-size: 0.58rem;
+    font-weight: 700;
     text-transform: uppercase; letter-spacing: 0.08em;
-    background: rgba(255,255,255,0.06);
+    background: rgba(20,60,130,0.06);
   }
-  .wave-node.status-done .wave-status-pill      { color: var(--green); background: rgba(116,240,167,0.18); }
-  .wave-node.status-in-progress .wave-status-pill { color: var(--blue); background: rgba(121,167,255,0.18); }
-  .wave-node.status-ready .wave-status-pill     { color: var(--yellow); background: rgba(255,209,102,0.20); }
-  .wave-node.status-planned .wave-status-pill   { color: var(--faint); background: rgba(255,255,255,0.04); }
-  .wave-node.status-blocked .wave-status-pill   { color: var(--red); background: rgba(255,107,138,0.18); }
+  .wave-node.status-done .wave-status-pill        { color: var(--green);  background: rgba(18,148,95,0.14); }
+  .wave-node.status-in-progress .wave-status-pill { color: var(--blue);   background: rgba(29,110,220,0.12); }
+  .wave-node.status-ready .wave-status-pill       { color: var(--yellow); background: rgba(176,120,8,0.16); }
+  .wave-node.status-planned .wave-status-pill     { color: var(--faint);  background: rgba(20,60,130,0.04); }
+  .wave-node.status-blocked .wave-status-pill     { color: var(--red);    background: rgba(200,50,50,0.12); }
   .wave-node .wave-summary {
     margin: 0;
-    font-size: 0.66rem; line-height: 1.35;
+    font-size: 0.68rem; line-height: 1.4;
     color: var(--muted);
     display: -webkit-box; overflow: hidden;
     -webkit-box-orient: vertical; -webkit-line-clamp: 3;
@@ -347,37 +428,42 @@
   }
   .wave-node .ec {
     padding: 1px 6px; border-radius: 999px;
-    background: rgba(255,255,255,0.04);
+    background: rgba(20,60,130,0.06);
+    font-weight: 600;
   }
-  .wave-node .ec.in { color: var(--yellow); background: rgba(255,209,102,0.10); }
-  .wave-node .ec.out { color: var(--green); background: rgba(116,240,167,0.10); }
+  .wave-node .ec.in  { color: var(--yellow); background: rgba(176,120,8,0.12); }
+  .wave-node .ec.out { color: var(--green);  background: rgba(18,148,95,0.12); }
 
   /* External dependency node */
   .ext-node {
     width: 100%; height: 100%;
     padding: 8px 12px;
-    border: 1.5px dashed rgba(255,107,138,0.55);
+    border: 1.5px dashed rgba(200,50,50,0.55);
     border-radius: 14px;
-    background: rgba(58,20,20,0.85);
+    background: linear-gradient(180deg, rgba(200,50,50,0.07), rgba(255,255,255,0.95));
     color: var(--red);
+    box-shadow: var(--shadow-soft);
     cursor: pointer;
     box-sizing: border-box;
     display: flex; flex-direction: column; gap: 5px;
     overflow: hidden;
   }
-  .ext-node.selected { box-shadow: 0 0 0 2px rgba(255,107,138,0.30); }
+  .ext-node.selected { box-shadow: 0 0 0 3px rgba(200,50,50,0.14), var(--shadow-card); }
   .ext-node .ext-tag {
     align-self: flex-start;
     padding: 1px 6px; border-radius: 999px;
-    background: rgba(255,107,138,0.15);
-    font-size: 0.58rem; text-transform: uppercase; letter-spacing: 0.08em;
+    background: rgba(200,50,50,0.14);
+    color: var(--red);
+    font-size: 0.58rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.08em;
   }
   .ext-node .ext-label {
-    font-size: 0.74rem; font-style: italic; line-height: 1.2;
+    font-size: 0.76rem; font-style: italic; font-weight: 600;
+    line-height: 1.2;
     color: var(--red);
   }
   .ext-node .ext-note {
-    font-size: 0.6rem; color: rgba(255,176,176,0.75); line-height: 1.3;
+    font-size: 0.62rem; color: rgba(122, 34, 34, 0.78); line-height: 1.35;
     display: -webkit-box; overflow: hidden;
     -webkit-box-orient: vertical; -webkit-line-clamp: 2;
   }
@@ -397,7 +483,7 @@
     top: -1px; left: -1px;
     padding: 3px 10px 3px 8px;
     font-size: 0.66rem;
-    font-weight: 600;
+    font-weight: 700;
     text-transform: none;
     letter-spacing: 0.02em;
     line-height: 1.25;
@@ -413,18 +499,19 @@
     text-transform: uppercase;
     font-size: 0.56rem;
     letter-spacing: 0.09em;
-    opacity: 0.7;
+    opacity: 0.85;
     padding-right: 6px;
-    border-right: 1px solid rgba(255,255,255,0.18);
+    border-right: 1px solid rgba(20,60,130,0.18);
+    font-weight: 700;
   }
   .ws-group-label .ws-group-count {
     margin-left: 6px;
     padding: 0 6px;
     font-size: 0.58rem;
-    font-weight: 500;
-    background: rgba(0,0,0,0.25);
+    font-weight: 600;
+    background: rgba(20,60,130,0.08);
     border-radius: 999px;
-    opacity: 0.85;
+    opacity: 0.95;
   }
   /* Variants by workstream stage */
   .ws-group-node.ws-group-done {
@@ -441,46 +528,46 @@
   .react-flow__edges { z-index: 0; }
 
   .controls-panel {
-    background: rgba(17,24,49,0.92) !important;
-    border: 1px solid rgba(255,255,255,0.10) !important;
-    border-radius: 10px;
-    padding: 8px 12px;
-    font-size: 0.7rem;
+    background: rgba(255, 255, 255, 0.92) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 12px;
+    box-shadow: var(--shadow-card);
+    padding: 10px 14px;
+    font-size: 0.72rem;
     color: var(--muted);
+    backdrop-filter: blur(8px);
   }
   .controls-panel label {
     display: flex; align-items: center; gap: 6px;
     cursor: pointer; padding: 2px 0;
   }
+  .controls-panel input[type="checkbox"] {
+    accent-color: var(--accent);
+  }
+  .controls-panel select.control-select {
+    margin-left: auto;
+    background: rgba(255, 255, 255, 0.92);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 2px 6px;
+    font-family: inherit;
+    font-size: 0.7rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: border-color 120ms ease, background 120ms ease;
+  }
+  .controls-panel select.control-select:hover { border-color: var(--border-strong); background: #fff; }
+  .controls-panel select.control-select:focus-visible {
+    outline: 2px solid rgba(29, 110, 220, 0.45);
+    outline-offset: 1px;
+  }
   .controls-panel .group-label {
     color: var(--text); text-transform: uppercase; font-size: 0.6rem;
-    letter-spacing: 0.08em; margin-bottom: 4px;
+    letter-spacing: 0.10em; font-weight: 700; margin-bottom: 4px;
   }
   .controls-panel .group { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
-  .controls-panel .reset-btn {
-    margin-top: 4px;
-    padding: 5px 10px;
-    border: 1px solid rgba(255,209,102,0.45);
-    border-radius: 6px;
-    background: rgba(255,209,102,0.08);
-    color: var(--yellow);
-    font-size: 0.7rem;
-    cursor: pointer;
-    font-family: inherit;
-    width: 100%;
-    transition: background 120ms ease, border-color 120ms ease;
-  }
-  .controls-panel .reset-btn:hover:not(:disabled) {
-    background: rgba(255,209,102,0.16);
-    border-color: rgba(255,209,102,0.75);
-  }
-  .controls-panel .reset-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-    color: var(--faint);
-    border-color: rgba(255,255,255,0.10);
-    background: rgba(255,255,255,0.02);
-  }
+  .controls-panel .save-status code { color: var(--accent); }
 </style>
 </head>
 <body>
@@ -538,6 +625,8 @@ function buildIndexes() {
 }
 
 // ---------- Workstream colors (one hue per workstream) ----------
+// Tuned for a light background — moderately saturated, lowered lightness so
+// the workstream hue reads clearly against the cream/white canvas surface.
 let WS_HUE = {};
 function buildHues() {
   WS_HUE = {};
@@ -547,10 +636,10 @@ function buildHues() {
   });
 }
 function wsColor(wsId, alpha = 1) {
-  return `hsla(${WS_HUE[wsId] ?? 220}, 65%, 60%, ${alpha})`;
+  return `hsla(${WS_HUE[wsId] ?? 220}, 62%, 38%, ${alpha})`;
 }
 function wsColorMuted(wsId) {
-  return `hsla(${WS_HUE[wsId] ?? 220}, 50%, 45%, 0.20)`;
+  return `hsla(${WS_HUE[wsId] ?? 220}, 55%, 60%, 0.20)`;
 }
 
 // ---------- ELK layout ----------
@@ -743,11 +832,11 @@ function statusColor(s) {
 }
 function statusBg(s) {
   switch (s) {
-    case 'done':        return 'rgba(116,240,167,0.18)';
-    case 'in-progress': return 'rgba(121,167,255,0.18)';
-    case 'ready':       return 'rgba(255,209,102,0.18)';
-    case 'blocked':     return 'rgba(255,107,138,0.18)';
-    default:            return 'rgba(255,255,255,0.06)';
+    case 'done':        return 'rgba(18,148,95,0.14)';
+    case 'in-progress': return 'rgba(29,110,220,0.12)';
+    case 'ready':       return 'rgba(176,120,8,0.16)';
+    case 'blocked':     return 'rgba(200,50,50,0.12)';
+    default:            return 'rgba(20,60,130,0.06)';
   }
 }
 
@@ -774,6 +863,7 @@ function WaveNode({ data }) {
     >
       ${!isFirst ? html`<${Handle} type="target" position=${Position.Top}    id="spine-in"  className="spine" />` : null}
       ${!isLast  ? html`<${Handle} type="source" position=${Position.Bottom} id="spine-out" className="spine" />` : null}
+      <${Handle} type="target" position=${Position.Top} id="ext-in" className="spine" style=${{ opacity: 0, pointerEvents: 'none' }} />
       ${inCount > 0  ? html`<${Handle} type="target" position=${Position.Left}  id="import" className="import" />` : null}
       ${outCount > 0 ? html`<${Handle} type="source" position=${Position.Right} id="export" className="export" />` : null}
 
@@ -1035,7 +1125,7 @@ function buildNodes(positions, selection, pinned) {
   return nodes;
 }
 
-function buildEdges(edgeFilters, dimFulfilled, focusedIds, neighborIds) {
+function buildEdges(edgeFilters, fulfilledMode, showCandidateEdges, focusedIds, neighborIds) {
   const edges = [];
   // Spine: only between consecutive waves of same workstream
   for (const ws of PORTFOLIO.workstreams) {
@@ -1063,12 +1153,22 @@ function buildEdges(edgeFilters, dimFulfilled, focusedIds, neighborIds) {
     const fromW = waveById[e.from];
     const toW = waveById[e.to];
     if (!fromW || !toW) continue;
+    // Hide edges touching candidate (tentative) workstreams when toggled off.
+    if (!showCandidateEdges) {
+      const fromWs = workstreamByWaveId[e.from];
+      const toWs = workstreamByWaveId[e.to];
+      if (fromWs?.type === 'candidate' || toWs?.type === 'candidate') continue;
+    }
     const fulfilled = fromW.status === 'done';
+    // fulfilledMode: 'on' shows edge normally · 'dim' adds .fulfilled class
+    // (low-opacity, thin) · 'off' hides the edge entirely. Only applies when
+    // the upstream wave is done — in-flight edges are never affected.
+    if (fulfilled && fulfilledMode === 'off') continue;
     const blockingCurrent = fromW.status === 'in-progress' && (toW.status === 'planned' || toW.status === 'blocked' || toW.status === 'ready');
     const id = `${e.from}->${e.to}:${e.type}`;
     const fc = edgeFilterClass('w:' + e.from, 'w:' + e.to, focusedIds, neighborIds);
     const cls = e.type
-      + (fulfilled && dimFulfilled ? ' fulfilled' : '')
+      + (fulfilled && fulfilledMode === 'dim' ? ' fulfilled' : '')
       + (blockingCurrent ? ' blocking-current' : '')
       + fc;
     edges.push({
@@ -1094,11 +1194,11 @@ function buildEdges(edgeFilters, dimFulfilled, focusedIds, neighborIds) {
           source: 'ext:' + ext.id,
           target: 'w:' + targetId,
           sourceHandle: 'ext-out',
-          targetHandle: 'spine-in',
+          targetHandle: 'ext-in',
           type: 'smoothstep',
           className: 'external' + fc,
           data: { what: ext.note, edgeType: 'external' },
-          markerEnd: { type: MarkerType.ArrowClosed, color: '#ff6b8a' }
+          markerEnd: { type: MarkerType.ArrowClosed, color: '#c83232' }
         });
       }
     }
@@ -1107,10 +1207,10 @@ function buildEdges(edgeFilters, dimFulfilled, focusedIds, neighborIds) {
 }
 
 function typeColor(t) {
-  return t === 'hard' ? '#74f0a7'
-       : t === 'soft-data' ? '#79a7ff'
-       : t === 'soft-coord' ? '#c79bff'
-       : t === 'external' ? '#ff6b8a' : '#9fb0d9';
+  return t === 'hard' ? '#12945f'
+       : t === 'soft-data' ? '#1d6edc'
+       : t === 'soft-coord' ? '#7c3aed'
+       : t === 'external' ? '#c83232' : '#6b7fa0';
 }
 
 // Hoisted selection setter so node onClick handlers can call it.
@@ -1142,9 +1242,9 @@ function WorkstreamInspector({ id }) {
   return html`<aside className="inspector">
     <h2>${ws.title}</h2>
     <p>
-      <span className="pill" style=${{color:'var(--accent)',background:'rgba(119,215,255,0.10)'}}>${ws.type}</span>
-      <span className="pill" style=${{color:'var(--yellow)',background:'rgba(255,209,102,0.10)'}}>${ws.stage}</span>
-      <span className="pill" style=${{color:'var(--muted)',background:'rgba(255,255,255,0.05)'}}>L${ws.layer}</span>
+      <span className="pill" style=${{color:'var(--accent)',background:'rgba(29,110,220,0.10)'}}>${ws.type}</span>
+      <span className="pill" style=${{color:'var(--yellow)',background:'rgba(176,120,8,0.12)'}}>${ws.stage}</span>
+      <span className="pill" style=${{color:'var(--muted)',background:'rgba(20,60,130,0.06)'}}>L${ws.layer}</span>
     </p>
     <p>${ws.summary || ''}</p>
     <h3>Repos</h3>
@@ -1173,7 +1273,7 @@ function WaveInspector({ id }) {
   return html`<aside className="inspector">
     <h2>${wv.name}</h2>
     <p>
-      <span className="pill" style=${{color:'var(--accent)',background:'rgba(119,215,255,0.10)'}}>${ws.title}</span>
+      <span className="pill" style=${{color:'var(--accent)',background:'rgba(29,110,220,0.10)'}}>${ws.title}</span>
       <span className="pill" style=${{color:statusColor(wv.status), background:statusBg(wv.status)}}>${wv.status}</span>
     </p>
     <p>${wv.summary || ''}</p>
@@ -1233,7 +1333,7 @@ function ExternalInspector({ id }) {
   const ext = PORTFOLIO.externalDependencies.find(e => e.id === id);
   return html`<aside className="inspector">
     <h2>${ext.label}</h2>
-    <p><span className="pill" style=${{color:'var(--red)',background:'rgba(255,107,138,0.12)'}}>EXTERNAL DEPENDENCY</span></p>
+    <p><span className="pill" style=${{color:'var(--red)',background:'rgba(200,50,50,0.12)'}}>EXTERNAL DEPENDENCY</span></p>
     <p>${ext.note || ''}</p>
     <h3>Blocks</h3>
     ${ext.blocks.map(wid => {
@@ -1259,7 +1359,9 @@ function App() {
   const [edgeFilters, setEdgeFilters] = useState({
     'hard': true, 'soft-data': true, 'soft-coord': true, 'external': true
   });
-  const [dimFulfilled, setDimFulfilled] = useState(true);
+  const [fulfilledMode, setFulfilledMode] = useState('dim'); // 'on' | 'dim' | 'off'
+  const [showCandidateEdges, setShowCandidateEdges] = useState(true);
+  const [inspectorVisible, setInspectorVisible] = useState(true);
   const [showGroups, setShowGroups] = useState(true);
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
@@ -1321,7 +1423,7 @@ function App() {
       setPinnedSet(pSet);
       setPinnedCount(pSet.size);
       setNodes(buildNodes(merged, null, pSet));
-      setEdges(buildEdges(edgeFilters, dimFulfilled, focusedIds, neighborIds));
+      setEdges(buildEdges(edgeFilters, fulfilledMode, showCandidateEdges, focusedIds, neighborIds));
       setLayoutReady(true);
     } catch (err) {
       console.error('ELK layout failed:', err);
@@ -1343,7 +1445,7 @@ function App() {
       setPinnedSet(pSet);
       setPinnedCount(pSet.size);
       setNodes(buildNodes(fallback, null, pSet));
-      setEdges(buildEdges(edgeFilters, dimFulfilled, focusedIds, neighborIds));
+      setEdges(buildEdges(edgeFilters, fulfilledMode, showCandidateEdges, focusedIds, neighborIds));
       setLayoutReady(true);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1366,12 +1468,6 @@ function App() {
     computeAndApply(false);
   }, [computeAndApply]);
 
-  const onResetPositions = useCallback(() => {
-    if (pinnedCount > 0 && !confirm(`Reset ${pinnedCount} pinned position${pinnedCount === 1 ? '' : 's'}? Nodes will be repositioned by ELK.`)) {
-      return;
-    }
-    computeAndApply(true);
-  }, [pinnedCount, computeAndApply]);
 
   // Re-build node data (selection / pinned / filter) when those change.
   useEffect(() => {
@@ -1401,8 +1497,8 @@ function App() {
   // Re-build edges when filters change.
   useEffect(() => {
     if (!layoutReady) return;
-    setEdges(buildEdges(edgeFilters, dimFulfilled, focusedIds, neighborIds));
-  }, [edgeFilters, dimFulfilled, focusedIds, neighborIds, layoutReady]);
+    setEdges(buildEdges(edgeFilters, fulfilledMode, showCandidateEdges, focusedIds, neighborIds));
+  }, [edgeFilters, fulfilledMode, showCandidateEdges, focusedIds, neighborIds, layoutReady]);
 
   const onNodesChange = useCallback((changes) => {
     // Filter out any change events that target group nodes — they're decorative
@@ -1432,6 +1528,27 @@ function App() {
       return next;
     });
     setPinnedCount(prev => prev + (pinnedSet.has(node.id) ? 0 : 1));
+  }, [pinnedSet]);
+
+  // When the user shift-clicks (or otherwise multi-selects) a set of nodes
+  // and drags any of them, React Flow moves the whole selection together but
+  // only fires onNodeDragStop for the actually-grabbed node. onSelectionDragStop
+  // gives us the full set of moved nodes so every dragged-along position gets
+  // pinned + persisted, not just the one under the cursor. Decorative
+  // workstreamGroup nodes are selectable: false, so they never appear here.
+  const onSelectionDragStop = useCallback((event, draggedNodes) => {
+    if (!Array.isArray(draggedNodes) || draggedNodes.length === 0) return;
+    let added = 0;
+    for (const node of draggedNodes) {
+      if (!pinnedSet.has(node.id)) added++;
+      pinPosition(node.id, node.position.x, node.position.y);
+    }
+    setPinnedSet(prev => {
+      const next = new Set(prev);
+      for (const node of draggedNodes) next.add(node.id);
+      return next;
+    });
+    if (added > 0) setPinnedCount(prev => prev + added);
   }, [pinnedSet]);
 
   const FILTER_BUTTONS = [
@@ -1476,18 +1593,18 @@ function App() {
       </div>
       <div>
         <div className="legend" style=${{marginBottom: '4px'}}>
-          <span className="it"><span className="sw" style=${{background:'rgba(116,240,167,0.18)', borderColor:'rgba(116,240,167,0.45)'}} />done</span>
-          <span className="it"><span className="sw" style=${{background:'rgba(121,167,255,0.18)', borderColor:'rgba(121,167,255,0.55)'}} />in-progress</span>
-          <span className="it"><span className="sw" style=${{background:'rgba(255,209,102,0.18)', borderColor:'rgba(255,209,102,0.7)', boxShadow:'0 0 0 2px rgba(255,209,102,0.16)'}} />ready</span>
-          <span className="it"><span className="sw" style=${{background:'transparent', border:'1px dashed rgba(159,176,217,0.45)'}} />planned</span>
-          <span className="it"><span className="sw" style=${{background:'rgba(255,107,138,0.10)', borderColor:'rgba(255,107,138,0.55)', borderStyle:'dashed'}} />blocked</span>
+          <span className="it"><span className="sw" style=${{background:'rgba(18,148,95,0.14)', borderColor:'rgba(18,148,95,0.45)'}} />done</span>
+          <span className="it"><span className="sw" style=${{background:'rgba(29,110,220,0.12)', borderColor:'rgba(29,110,220,0.50)'}} />in-progress</span>
+          <span className="it"><span className="sw" style=${{background:'rgba(176,120,8,0.16)', borderColor:'rgba(176,120,8,0.65)', boxShadow:'0 0 0 2px rgba(176,120,8,0.12)'}} />ready</span>
+          <span className="it"><span className="sw" style=${{background:'transparent', border:'1px dashed rgba(20,60,130,0.35)'}} />planned</span>
+          <span className="it"><span className="sw" style=${{background:'rgba(200,50,50,0.10)', borderColor:'rgba(200,50,50,0.55)', borderStyle:'dashed'}} />blocked</span>
         </div>
         <div className="legend">
           <span className="it"><span className="ln" style=${{borderColor:'var(--green)'}} />hard</span>
           <span className="it"><span className="ln" style=${{borderColor:'var(--blue)', borderTopStyle:'dashed'}} />soft-data</span>
           <span className="it"><span className="ln" style=${{borderColor:'var(--purple)', borderTopStyle:'dotted'}} />soft-coord</span>
           <span className="it"><span className="ln" style=${{borderColor:'var(--red)', borderTopStyle:'dashed'}} />external</span>
-          <span className="it"><span className="ln" style=${{borderColor:'rgba(159,176,217,0.55)'}} />spine (workstream-colored)</span>
+          <span className="it"><span className="ln" style=${{borderColor:'rgba(20,60,130,0.45)'}} />spine (workstream-colored)</span>
           <span className="it">📌 pinned</span>
         </div>
       </div>
@@ -1509,7 +1626,7 @@ function App() {
         <span className="summary">No filter — all nodes shown</span>
       `}
     </div>
-    <section className="content">
+    <section className=${'content' + (inspectorVisible ? '' : ' inspector-hidden')}>
       <div className="canvas-shell">
         <${ReactFlowProvider}>
           <${ReactFlow}
@@ -1519,6 +1636,7 @@ function App() {
             onNodesChange=${onNodesChange}
             onEdgesChange=${onEdgesChange}
             onNodeDragStop=${onNodeDragStop}
+            onSelectionDragStop=${onSelectionDragStop}
             nodesDraggable=${true}
             fitView=${layoutReady}
             fitViewOptions=${{ padding: 0.10, maxZoom: 0.95, minZoom: 0.18 }}
@@ -1529,7 +1647,7 @@ function App() {
             proOptions=${{ hideAttribution: true }}
             onPaneClick=${() => setSelection(null)}
           >
-            <${Background} variant=${BackgroundVariant.Dots} gap=${24} size=${1.2} color="rgba(159,176,217,0.10)" />
+            <${Background} variant=${BackgroundVariant.Dots} gap=${24} size=${1.2} color="rgba(20,60,130,0.18)" />
             <${Controls} showInteractive=${false} />
             <${MiniMap}
               nodeColor=${(node) => {
@@ -1537,7 +1655,7 @@ function App() {
                 if (node.type === 'external') return 'var(--red)';
                 return '#1f2c52';
               }}
-              maskColor="rgba(11,16,32,0.7)"
+              maskColor="rgba(20,60,130,0.10)"
               pannable=${true}
               zoomable=${true}
             />
@@ -1557,12 +1675,17 @@ function App() {
                   `)}
                 </div>
                 <label>
-                  <input
-                    type="checkbox"
-                    checked=${dimFulfilled}
-                    onChange=${e => setDimFulfilled(e.target.checked)}
-                  />
-                  dim fulfilled edges
+                  <span>fulfilled edges</span>
+                  <select
+                    className="control-select"
+                    value=${fulfilledMode}
+                    onChange=${e => setFulfilledMode(e.target.value)}
+                    title="How edges from done waves are rendered"
+                  >
+                    <option value="on">show</option>
+                    <option value="dim">dim</option>
+                    <option value="off">hide</option>
+                  </select>
                 </label>
                 <label>
                   <input
@@ -1572,17 +1695,15 @@ function App() {
                   />
                   show workstream containers
                 </label>
-                <div className="group-label" style=${{marginTop: '8px'}}>Layout</div>
-                <button
-                  type="button"
-                  className="reset-btn"
-                  onClick=${onResetPositions}
-                  disabled=${pinnedCount === 0}
-                  title=${pinnedCount === 0 ? 'No pinned positions to reset' : 'Reset all pinned positions and re-run ELK'}
-                >
-                  ${pinnedCount > 0 ? `Reset ${pinnedCount} pinned` : 'No pinned positions'}
-                </button>
-                <div className="save-status" style=${{marginTop:'6px',fontSize:'0.66rem'}}>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked=${showCandidateEdges}
+                    onChange=${e => setShowCandidateEdges(e.target.checked)}
+                  />
+                  show candidate edges
+                </label>
+                <div className="save-status" style=${{marginTop:'8px',fontSize:'0.66rem'}}>
                   ${saveStatus.state === 'idle'    ? html`<span style=${{color:'var(--faint)'}}>● idle</span>` : null}
                   ${saveStatus.state === 'pending' ? html`<span style=${{color:'var(--yellow)'}}>● change pending — saving in 1s</span>` : null}
                   ${saveStatus.state === 'saving'  ? html`<span style=${{color:'var(--blue)'}}>● saving ${saveStatus.count} positions…</span>` : null}
@@ -1593,8 +1714,27 @@ function App() {
             <//>
           <//>
         <//>
+        ${!inspectorVisible ? html`
+          <button
+            type="button"
+            className="inspector-show"
+            onClick=${() => setInspectorVisible(true)}
+            title="Show details panel"
+          >Details ‹</button>
+        ` : null}
       </div>
-      <${Inspector} selection=${selection} />
+      ${inspectorVisible ? html`
+        <div className="inspector-wrap">
+          <button
+            type="button"
+            className="inspector-close"
+            onClick=${() => setInspectorVisible(false)}
+            title="Hide details panel"
+            aria-label="Hide details panel"
+          >×</button>
+          <${Inspector} selection=${selection} />
+        </div>
+      ` : null}
     </section>
   `;
 }

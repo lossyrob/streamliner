@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 import type { WorkstreamNode } from "../workstream-schema";
 import type { WorkstreamDerivedNode } from "../workstream-view-model";
 import type { WorkstreamGraphLayoutResult } from "../workstream-graph";
@@ -31,7 +33,21 @@ interface NodeInspectorProps {
   launchRecordError?: string | null;
   runtimeOverlay?: WorkstreamRuntimeNodeOverlay | null;
   onLaunch?: () => void;
+  /**
+   * Optional handler for releasing a stuck active launch operation. Surfaced
+   * when `launchOperation.status` is one of the active states (preparing,
+   * launching, managed_starting). Used to recover from cases where the
+   * server restarted mid-flight and the in-memory run state is gone but the
+   * persisted operation still says "in progress."
+   */
+  onReleaseStuckOperation?: () => Promise<void>;
 }
+
+const ACTIVE_LAUNCH_OPERATION_STATUSES = new Set([
+  "preparing",
+  "launching",
+  "managed_starting",
+]);
 
 function formatStatus(status: string): string {
   return status.replace(/[_-]+/g, " ");
@@ -50,6 +66,8 @@ function statusPillClass(status: string): string {
       return "status-accent";
     case "blocked":
       return "status-red";
+    case "retired":
+      return "status-retired";
     default:
       return "status-amber";
   }
@@ -352,7 +370,11 @@ export function NodeInspector({
   launchRecordError,
   runtimeOverlay = null,
   onLaunch,
+  onReleaseStuckOperation,
 }: NodeInspectorProps) {
+  const [releasing, setReleasing] = useState(false);
+  const [releaseError, setReleaseError] = useState<string | null>(null);
+
   if (!entry) {
     return (
       <div className="sl-sidebar-section">
@@ -535,6 +557,45 @@ export function NodeInspector({
                     </div>
                   )}
                 </dl>
+                {launchOperation
+                  && ACTIVE_LAUNCH_OPERATION_STATUSES.has(launchOperation.status)
+                  && onReleaseStuckOperation && (
+                  <div className="sl-node-launch-release">
+                    <button
+                      type="button"
+                      className="sl-action-btn danger"
+                      disabled={releasing}
+                      onClick={() => {
+                        if (releasing) return;
+                        setReleasing(true);
+                        setReleaseError(null);
+                        void (async () => {
+                          try {
+                            await onReleaseStuckOperation();
+                          } catch (error: unknown) {
+                            setReleaseError(
+                              error instanceof Error ? error.message : String(error),
+                            );
+                          } finally {
+                            setReleasing(false);
+                          }
+                        })();
+                      }}
+                      title="Mark this in-flight operation as failed so the node can be re-launched. Use when the API restarted while a PAW init was running and the in-memory run state is gone."
+                    >
+                      {releasing ? "Releasing..." : "Release stuck operation"}
+                    </button>
+                    <p className="sl-sidebar-note">
+                      Use this if PAW init looks stuck — for example, after the
+                      Streamliner API restarted mid-launch. It marks the operation
+                      as failed without affecting any session that may have actually
+                      started.
+                    </p>
+                    {releaseError && (
+                      <p className="sl-action-error">{releaseError}</p>
+                    )}
+                  </div>
+                )}
                 {launchRecord && (
                   <dl className="sl-node-launch-paths">
                     <LaunchPathRow

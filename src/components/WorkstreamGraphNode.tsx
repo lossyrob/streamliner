@@ -40,6 +40,8 @@ function statusClassName(value: string) {
       return "status-accent";
     case "blocked":
       return "status-red";
+    case "retired":
+      return "status-retired";
     default:
       return "status-amber";
   }

@@ -125,6 +125,37 @@ export function createStreamlinerApiApp(
           : undefined
       ),
     });
+  // Recover orphaned launch operations from the previous API process.
+  // LaunchPreparationRunManager state lives in memory only, so any operation
+  // persisted as `preparing`/`launching`/`managed_starting` at the moment the
+  // server restarts has no live run to attach to. Mark them failed up front so
+  // the UI doesn't render them as forever-stuck.
+  void nodeLaunchRecordStore
+    .recoverOrphanedOperations()
+    .then((recovered) => {
+      if (recovered.length === 0) {
+        return;
+      }
+      getApiLogger().withScope("node-launch-records").warn(
+        "Recovered orphaned launch operations on startup.",
+        {
+          count: recovered.length,
+          operations: recovered.map((operation) => ({
+            graphPath: operation.graphPath,
+            nodeId: operation.nodeId,
+            previousStatus: "preparing|launching|managed_starting",
+            preparationRunId: operation.preparationRunId,
+            startedAt: operation.startedAt,
+          })),
+        },
+      );
+    })
+    .catch((error: unknown) => {
+      getApiLogger().withScope("node-launch-records").error(
+        "Failed to recover orphaned launch operations on startup.",
+        { error: error instanceof Error ? error.message : String(error) },
+      );
+    });
   const managedSdkRunner =
     options.nodeLaunchDeps?.managedSdkRunner ?? new DefaultManagedSdkRunner();
   const runtimePatchCoalescer =

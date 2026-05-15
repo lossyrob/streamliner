@@ -24,7 +24,7 @@ import { Router } from "express";
 // Hard-coded for the prototype. Promote this to config when the prototype
 // graduates.
 const PORTFOLIO_PATH = resolve(
-  "C:\\Users\\robemanuele\\proj\\planning\\planning\\streamliner\\dbagent\\deps-4.7\\portfolio.json",
+  "C:\\Users\\robemanuele\\proj\\planning\\planning\\streamliner\\dbagent\\portfolio\\portfolio.json",
 );
 const POSITIONS_PATH = resolve(
   process.cwd(),
