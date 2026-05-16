@@ -1807,8 +1807,18 @@ function GraphDashboard({
     workstream,
   ]);
 
+  // Re-fetch graph-wide launch records only when the workstream we care about
+  // actually changes (path + backend-readability + identity), NOT when its
+  // surrounding object reference churns. Polling features upstream (e.g., the
+  // live GitHub-status snapshot) can rebuild `activeWorkstreamEntry` reference
+  // on every tick, which previously re-fired this effect indefinitely and
+  // kept the "Loading launch details..." state stuck on.
+  const activeWorkstreamPath =
+    activeWorkstreamEntry && isBackendReadableWorkstreamEntry(activeWorkstreamEntry)
+      ? activeWorkstreamEntry.path
+      : null;
   useEffect(() => {
-    if (!activeWorkstreamEntry || !isBackendReadableWorkstreamEntry(activeWorkstreamEntry)) {
+    if (!activeWorkstreamPath) {
       setNodeLaunchRecords([]);
       setNodeLaunchRecordLoading(false);
       setNodeLaunchRecordError(null);
@@ -1818,7 +1828,7 @@ function GraphDashboard({
     setNodeLaunchRecords([]);
     setNodeLaunchRecordLoading(true);
     setNodeLaunchRecordError(null);
-    loadGraphNodeLaunchRecords(activeWorkstreamEntry.path)
+    loadGraphNodeLaunchRecords(activeWorkstreamPath)
       .then((records) => {
         if (!cancelled) {
           setNodeLaunchRecords(records);
@@ -1838,21 +1848,20 @@ function GraphDashboard({
     return () => {
       cancelled = true;
     };
-  }, [activeWorkstreamEntry, nodeLaunchRecordRefreshKey]);
+  }, [activeWorkstreamPath, nodeLaunchRecordRefreshKey]);
 
+  // Same stability fix for the per-selected-node launch record fetch: depend
+  // on the node id (a stable primitive) instead of the derived entry object,
+  // which gets a fresh reference every time the view-model rebuilds.
   useEffect(() => {
-    if (
-      !activeWorkstreamEntry ||
-      !isBackendReadableWorkstreamEntry(activeWorkstreamEntry) ||
-      !selectedEntry
-    ) {
+    if (!activeWorkstreamPath || !selectedNodeId) {
       setSelectedNodeLaunchRecordLoading(false);
       setSelectedNodeLaunchRecordError(null);
       return;
     }
     const target = {
-      graphPath: activeWorkstreamEntry.path,
-      nodeId: selectedEntry.node.id,
+      graphPath: activeWorkstreamPath,
+      nodeId: selectedNodeId,
     };
     let cancelled = false;
     setSelectedNodeLaunchRecordLoading(true);
@@ -1906,7 +1915,7 @@ function GraphDashboard({
     return () => {
       cancelled = true;
     };
-  }, [activeWorkstreamEntry, nodeLaunchRecordRefreshKey, selectedEntry]);
+  }, [activeWorkstreamPath, nodeLaunchRecordRefreshKey, selectedNodeId]);
 
   const setLaunchOperation = useCallback((
     target: LaunchOperationTarget,
