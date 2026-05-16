@@ -998,6 +998,12 @@ a.sl-action-btn {
   color: var(--sl-text-dim);
 }
 
+.sl-inspector-github-status {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .sl-node-launch-card {
   gap: 12px;
 }
@@ -2177,6 +2183,34 @@ a.sl-action-btn {
   border-color: var(--sl-accent-border);
   color: var(--sl-accent);
   font-weight: 600;
+}
+
+.sl-session-row-context-chip.github-status.green,
+.sl-session-context-ref.github-status.green {
+  background: var(--sl-green-bg);
+  border-color: rgba(38, 142, 91, 0.25);
+  color: var(--sl-green);
+}
+
+.sl-session-row-context-chip.github-status.amber,
+.sl-session-context-ref.github-status.amber {
+  background: var(--sl-amber-bg);
+  border-color: rgba(180, 118, 22, 0.25);
+  color: var(--sl-amber);
+}
+
+.sl-session-row-context-chip.github-status.red,
+.sl-session-context-ref.github-status.red {
+  background: rgba(200, 50, 50, 0.08);
+  border-color: rgba(200, 50, 50, 0.24);
+  color: var(--sl-red);
+}
+
+.sl-session-row-context-chip.github-status.muted,
+.sl-session-context-ref.github-status.muted {
+  background: rgba(20, 60, 130, 0.05);
+  border-color: rgba(16, 34, 60, 0.08);
+  color: var(--sl-text-muted);
 }
 
 .sl-session-row-context-chip.paw-workflow,

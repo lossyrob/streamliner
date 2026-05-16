@@ -13,6 +13,13 @@ import type {
   WorkstreamRuntimeOverlayIssue,
 } from "../workstream-runtime-overlay";
 import {
+  githubIssueSnapshotLabel,
+  githubIssueSnapshotTone,
+  githubPullRequestSnapshotLabel,
+  githubPullRequestSnapshotTone,
+  githubStatusPillClass,
+} from "../github-status-view";
+import {
   formatManagedRuntimeLabel,
   managedLifecycleStatusClass,
   resolveManagedRuntimeActions,
@@ -225,14 +232,19 @@ function RuntimeDetails({ overlay }: { overlay: WorkstreamRuntimeNodeOverlay | n
   ]
     .filter(Boolean)
     .join(" / ");
-  const trackerSummary =
-    overlay.tracker.status === "snapshot"
-      ? trackerSnapshotSummary || "Tracker snapshot loaded."
-      : overlay.tracker.status === "linked"
-        ? "GitHub tracker linked; live issue/PR snapshot not loaded."
-      : overlay.tracker.status === "degraded"
-        ? "Tracker reference is present but no snapshot is loaded."
-        : "No tracker reference.";
+  let trackerSummary = "No tracker reference.";
+  if (overlay.tracker.status === "snapshot") {
+    trackerSummary = trackerSnapshotSummary || "Tracker snapshot loaded.";
+  } else if (
+    overlay.tracker.status === "degraded" &&
+    overlay.tracker.githubIssue?.error
+  ) {
+    trackerSummary = `GitHub tracker snapshot degraded: ${overlay.tracker.githubIssue.error}`;
+  } else if (overlay.tracker.status === "linked") {
+    trackerSummary = "GitHub tracker linked; live issue/PR snapshot not loaded.";
+  } else if (overlay.tracker.status === "degraded") {
+    trackerSummary = "Tracker reference is present but no snapshot is loaded.";
+  }
 
   return (
     <div className="sl-sidebar-section">
@@ -400,6 +412,33 @@ export function NodeInspector({
   const tracker = trackerLabel(node.tracker);
   const trackerHref = trackerUrl(node.tracker);
   const trackerLabelText = node.tracker?.type === "github" ? "Issue" : "Tracker";
+  const trackerStatusChips = [
+    entry.githubIssue
+      ? {
+          key: "issue",
+          label: githubIssueSnapshotLabel(entry.githubIssue),
+          tone: githubIssueSnapshotTone(entry.githubIssue),
+          title: entry.githubIssue.error ?? entry.githubIssue.title,
+        }
+      : null,
+    entry.activePullRequest
+      ? {
+          key: "pr",
+          label: githubPullRequestSnapshotLabel(entry.activePullRequest),
+          tone: githubPullRequestSnapshotTone(entry.activePullRequest),
+          title: entry.activePullRequest.title,
+        }
+      : null,
+  ].filter(
+    (
+      chip,
+    ): chip is {
+      key: string;
+      label: string;
+      tone: ReturnType<typeof githubIssueSnapshotTone>;
+      title: string;
+    } => chip !== null,
+  );
   const latestClaim = launchRecord?.latestClaim ?? launchOperation?.latestClaim ?? null;
   const latestClaimDisplay = latestClaim ? humanizeLaunchClaim(latestClaim) : null;
   const launchButtonLabel = latestClaim?.blocksLaunch || launchOperation || launchRecord
@@ -444,6 +483,19 @@ export function NodeInspector({
                 tracker
               )}
             </span>
+            {trackerStatusChips.length > 0 && (
+              <span className="sl-inspector-github-status">
+                {trackerStatusChips.map((chip) => (
+                  <span
+                    key={chip.key}
+                    className={`sl-pill ${githubStatusPillClass(chip.tone)}`}
+                    title={chip.title}
+                  >
+                    {chip.label}
+                  </span>
+                ))}
+              </span>
+            )}
           </div>
         )}
         {repoLabels.length > 0 && (

@@ -101,8 +101,14 @@ import {
   buildWorkstreamRuntimeOverlay,
   type WorkstreamRuntimeOverlay,
 } from "./workstream-runtime-overlay";
+import {
+  githubStatusRefsForWorkstream,
+  useGithubStatusLookup,
+  workstreamGithubSnapshotFromStatuses,
+} from "./github-status-client";
 
 const POLL_INTERVAL_MS = 2000;
+const GITHUB_STATUS_REFRESH_INTERVAL_MS = 60_000;
 const LAST_GRAPH_KEY = "streamliner:lastGraphPath";
 const PAW_LAUNCH_CWD_OVERRIDES_KEY = "streamliner:pawLaunchCwdByRepo";
 const STREAMLINER_LOGO_URL = "/streamliner-logo.png";
@@ -617,17 +623,23 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
   const [error, setError] = useState<GraphLoadError | null>(null);
   const [registryError, setRegistryError] = useState<string | null>(null);
   const [workstreams, setWorkstreams] = useState<WorkstreamRegistryListEntry[]>([]);
-  const [archivedWorkstreams, setArchivedWorkstreams] = useState<WorkstreamRegistryListEntry[]>([]);
+  const [archivedWorkstreams, setArchivedWorkstreams] = useState<
+    WorkstreamRegistryListEntry[]
+  >([]);
   const [sources, setSources] = useState<WorkstreamSourceListEntry[]>([]);
   const [conflicts, setConflicts] = useState<WorkstreamConflict[]>([]);
   const [migrationWarnings, setMigrationWarnings] = useState<WorkstreamRegistryWarning[]>([]);
   const [registryLoaded, setRegistryLoaded] = useState(false);
+  const [githubStatusRefreshKey, setGithubStatusRefreshKey] = useState(0);
   const workstreamsRef = useRef<WorkstreamRegistryListEntry[]>([]);
   const lastModifiedRef = useRef<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const applyRegistryResponse = useCallback((body: WorkstreamRegistryListResponse) => {
-    const mergedWorkstreams = mergeWorkstreamEntries(body.workstreams, listBrowserWorkstreamEntries());
+    const mergedWorkstreams = mergeWorkstreamEntries(
+      body.workstreams,
+      listBrowserWorkstreamEntries(),
+    );
     workstreamsRef.current = mergedWorkstreams;
     setWorkstreams(mergedWorkstreams);
     setArchivedWorkstreams(body.archivedWorkstreams ?? []);
@@ -645,9 +657,11 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
       const parsed = await parseErrorResponse(res);
       throw new Error(parsed.message);
     }
-    return applyRegistryResponse(normalizeRegistryListResponse(
-      await res.json() as Partial<WorkstreamRegistryListResponse>,
-    ));
+    return applyRegistryResponse(
+      normalizeRegistryListResponse(
+        (await res.json()) as Partial<WorkstreamRegistryListResponse>,
+      ),
+    );
   }, [applyRegistryResponse]);
 
   const loadRegistered = useCallback(
@@ -670,6 +684,7 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
           const doc = parseWorkstreamDocument(graph.content ?? "");
           lastModifiedRef.current = graph.lastModified;
           setWorkstream(doc);
+          setGithubStatusRefreshKey((current) => current + 1);
           setError(null);
           const nextEntries = mergeWorkstreamEntries(
             workstreamsRef.current.filter((candidate) => !isBrowserWorkstreamEntry(candidate)),
@@ -706,6 +721,7 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
       const doc = parseWorkstreamDocument(text);
       lastModifiedRef.current = res.headers.get("Last-Modified");
       setWorkstream(doc);
+      setGithubStatusRefreshKey((current) => current + 1);
       setError(null);
       await fetchRegistry();
     },
@@ -752,6 +768,20 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
       }
     };
   }, [activeWorkstream, enabled, error, loadRegistered]);
+
+  useEffect(() => {
+    if (!enabled || !activeWorkstream || error) {
+      return;
+    }
+
+    const timer = setInterval(() => {
+      setGithubStatusRefreshKey((current) => current + 1);
+    }, GITHUB_STATUS_REFRESH_INTERVAL_MS);
+
+    return () => {
+      clearInterval(timer);
+    };
+  }, [activeWorkstream, enabled, error]);
 
   const addSource = useCallback(
     async (type: WorkstreamSourceType, path: string) => {
@@ -853,10 +883,11 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
       if (typeof body.workstream !== "object" || body.workstream === null) {
         throw new Error("Configuration update did not return a workstream graph.");
       }
-      const parsed = parseWorkstreamDocument(JSON.stringify(body.workstream));
-      lastModifiedRef.current = res.headers.get("Last-Modified");
-      setWorkstream(parsed);
-      setError(null);
+       const parsed = parseWorkstreamDocument(JSON.stringify(body.workstream));
+       lastModifiedRef.current = res.headers.get("Last-Modified");
+       setWorkstream(parsed);
+       setGithubStatusRefreshKey((current) => current + 1);
+       setError(null);
       await fetchRegistry();
     },
     [fetchRegistry],
@@ -872,6 +903,7 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
     conflicts,
     migrationWarnings,
     registryLoading: !registryLoaded,
+    githubStatusRefreshKey,
     activeWorkstream,
     addSource,
     refreshSources,
@@ -1419,6 +1451,7 @@ function GraphDashboard({
   error,
   workstreams,
   activeWorkstream,
+  githubStatusRefreshKey,
   archive,
   untrack,
   saveWorkstreamConfiguration,
@@ -1511,10 +1544,22 @@ function GraphDashboard({
     setSelectedNodeId(selectedNodeIdFromRoute ?? null);
   }, [activeWorkstreamKey, selectedNodeIdFromRoute]);
 
+  const githubStatusRefs = useMemo(
+    () => githubStatusRefsForWorkstream(workstream),
+    [workstream],
+  );
+  const githubStatusLookup = useGithubStatusLookup(
+    githubStatusRefs,
+    githubStatusRefreshKey,
+  );
+  const githubSnapshot = useMemo(
+    () => workstreamGithubSnapshotFromStatuses(githubStatusLookup.statuses.values()),
+    [githubStatusLookup.statuses],
+  );
   const viewModel = useMemo(() => {
     if (!workstream) return null;
-    return buildWorkstreamViewModel(workstream);
-  }, [workstream]);
+    return buildWorkstreamViewModel(workstream, githubSnapshot);
+  }, [githubSnapshot, workstream]);
 
   const layout = useMemo(() => {
     if (!workstream || !viewModel) return null;

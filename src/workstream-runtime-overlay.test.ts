@@ -535,6 +535,44 @@ describe("buildWorkstreamRuntimeOverlay", () => {
     );
   });
 
+  it("degrades tracker overlays when a GitHub snapshot has a fetch error", () => {
+    const entry = buildDerivedNode({
+      node: {
+        id: "tracker-error-node",
+        status: "ready",
+        tracker: {
+          type: "github",
+          owner: "lossyrob",
+          repo: "streamliner",
+          number: 69,
+        },
+      },
+      operationalStatus: "ready",
+      githubIssue: {
+        owner: "lossyrob",
+        repo: "streamliner",
+        number: 69,
+        state: "unknown",
+        title: "Show live GitHub status",
+        url: "https://github.com/lossyrob/streamliner/issues/69",
+        linkedPullRequests: [],
+        fetchedAt: TEST_TIMESTAMP,
+        error: "GitHub rate limit reached while fetching issue #69.",
+      },
+    });
+
+    const overlay = buildOverlay([entry]);
+    const node = overlay.nodesById.get("tracker-error-node");
+
+    expect(node?.tracker.status).toBe("degraded");
+    expect(node?.degradationReasons.map((reason) => reason.code)).toContain(
+      "tracker-snapshot-error",
+    );
+    expect(overlay.summary.counts.degradedNodes).toBe(1);
+    expect(overlay.summary.counts.trackerDegradedNodes).toBe(1);
+    expect(overlay.gateReadiness.status).toBe("degraded");
+  });
+
   it("marks a bound blocking launch claim without a visible session as bound-session-missing", () => {
     const entry = buildDerivedNode({
       node: { id: "unresolved-node", status: "ready" },

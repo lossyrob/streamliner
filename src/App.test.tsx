@@ -600,6 +600,83 @@ describe("App sessions route", () => {
   );
 
   it(
+    "decorates session GitHub refs with live PR status",
+    async () => {
+      const session = buildSession({
+        id: "review-session",
+        title: "Review live status",
+        derivedGithubRefs: [
+          {
+            type: "pr",
+            repo: "lossyrob/streamliner",
+            number: 14,
+            url: "https://github.com/lossyrob/streamliner/pull/14",
+            firstSeenAt: "2026-05-08T11:50:00.000Z",
+            lastSeenAt: "2026-05-08T11:55:00.000Z",
+            source: "gh",
+          },
+        ],
+      });
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path === "/api/sessions") {
+          return jsonResponse([session]);
+        }
+        if (path === "/api/workstreams") {
+          return jsonResponse({ version: 1, migrationWarnings: [], workstreams: [] });
+        }
+        if (path.startsWith("/api/github/status?")) {
+          return jsonResponse({
+            generatedAt: "2026-05-08T12:00:00.000Z",
+            statuses: [
+              {
+                key: "pr:lossyrob/streamliner#14",
+                ref: {
+                  type: "pr",
+                  owner: "lossyrob",
+                  repo: "streamliner",
+                  number: 14,
+                },
+                type: "pr",
+                state: "merged",
+                isDraft: false,
+                reviewDecision: null,
+                mergeStateStatus: "clean",
+                validationState: "passing",
+                validationLabel: "checks passing",
+                title: "Complete implementation",
+                url: "https://github.com/lossyrob/streamliner/pull/14",
+                fetchedAt: "2026-05-08T12:00:00.000Z",
+                statusLabel: "PR merged",
+              },
+            ],
+          });
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState({}, "", "/sessions");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(150);
+
+      const row = findSessionRow(container, "Review live status");
+      expect(row.textContent).toContain("PR #14");
+      expect(row.textContent).toContain("PR merged");
+
+      act(() => {
+        row.click();
+      });
+      await settle();
+
+      expect(container.textContent).toContain("PR #14 · lossyrob/streamliner · PR merged");
+    },
+    15_000,
+  );
+
+  it(
     "manages PAW launch prompt profiles from settings",
     async () => {
       const copyText = vi.fn(async () => {});
@@ -1378,6 +1455,148 @@ describe("App sessions route", () => {
           return path.startsWith("/api/node-launch-records?") && !path.includes("nodeId=");
         }),
       ).toBe(true);
+    },
+    15_000,
+  );
+
+  it(
+    "decorates workstream nodes and the inspector with live GitHub issue status",
+    async () => {
+      const graph = buildLaunchGraph("planned");
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        if (path === "/api/sessions?workstreamId=api-test") {
+          return jsonResponse([]);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return jsonResponse({ record: null, records: [] });
+        }
+        if (path.startsWith("/api/github/status?")) {
+          return jsonResponse({
+            generatedAt: "2026-05-08T12:00:00.000Z",
+            statuses: [
+              {
+                key: "issue:lossyrob/streamliner#33",
+                ref: {
+                  type: "issue",
+                  owner: "lossyrob",
+                  repo: "streamliner",
+                  number: 33,
+                },
+                type: "issue",
+                state: "closed",
+                stateReason: "completed",
+                title: "Launch prompt profiles",
+                url: "https://github.com/lossyrob/streamliner/issues/33",
+                linkedPullRequests: [
+                  {
+                    key: "pr:lossyrob/streamliner#34",
+                    ref: {
+                      type: "pr",
+                      owner: "lossyrob",
+                      repo: "streamliner",
+                      number: 34,
+                    },
+                    type: "pr",
+                    title: "Finish launch prompt profiles",
+                    url: "https://github.com/lossyrob/streamliner/pull/34",
+                    state: "open",
+                    isDraft: false,
+                    reviewDecision: null,
+                    mergeStateStatus: "unstable",
+                    validationState: "failing",
+                    validationLabel: "checks failing",
+                    fetchedAt: "2026-05-08T12:00:00.000Z",
+                    statusLabel: "PR checks failing",
+                  },
+                ],
+                fetchedAt: "2026-05-08T12:00:00.000Z",
+                statusLabel: "issue closed",
+              },
+            ],
+          });
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState(
+        {},
+        "",
+        "/workstreams/streamliner/api-test/nodes/launch-prompt-profiles",
+      );
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(150);
+
+      const graphNode = findCanvasNode(container, "Launch prompt profiles");
+      expect(graphNode.textContent).toContain("issue closed");
+      expect(graphNode.textContent).toContain("1 PR");
+      expect(graphNode.textContent).toContain("PR checks failing");
+      expect(container.textContent).toContain("Issue:");
+      expect(container.textContent).toContain("issue closed");
+      expect(container.textContent).toContain("PR checks failing");
+    },
+    15_000,
+  );
+
+  it(
+    "keeps static tracker UI when live GitHub status fails",
+    async () => {
+      const graph = buildLaunchGraph("planned");
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        if (path === "/api/sessions?workstreamId=api-test") {
+          return jsonResponse([]);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return jsonResponse({ record: null, records: [] });
+        }
+        if (path.startsWith("/api/github/status?")) {
+          return jsonResponse({ error: "GitHub unavailable" }, 503);
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState(
+        {},
+        "",
+        "/workstreams/streamliner/api-test/nodes/launch-prompt-profiles",
+      );
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(150);
+
+      expect(container.textContent).toContain("Launch prompt profiles");
+      expect(container.textContent).toContain("Issue:");
+      expect(container.textContent).toContain("lossyrob/streamliner#33");
+      expect(container.textContent).toContain(
+        "GitHub tracker linked; live issue/PR snapshot not loaded.",
+      );
+      expect(container.textContent).not.toContain("GitHub unavailable");
     },
     15_000,
   );
