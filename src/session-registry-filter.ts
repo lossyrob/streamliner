@@ -26,6 +26,7 @@ interface SessionRegistryTextRecord {
   pawLaunch: SessionRegistryPawLaunch | null;
   pawWorkflow: SessionRegistryPawWorkflow | null;
   tags: string[];
+  copilotSessionId: string | null;
 }
 
 interface SessionRegistryFilterRecord extends SessionRegistryTextRecord {
@@ -75,6 +76,7 @@ export function sessionRegistryRecordTextMatches(
     record.derivedBranch ?? "",
     record.derivedWorktreePath ?? "",
     originKindFor(record) ?? "",
+    record.copilotSessionId ?? "",
     ...refs,
     ...pawWorkflowHaystacks,
     ...pawLaunchHaystacks,

@@ -2286,7 +2286,7 @@ export function SessionsPage({
           className="sl-text-field"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search sessions, repos, tags…"
+          placeholder="Search sessions, repos, tags, Copilot session ID…"
         />
         <label className="sl-session-stale-filter">
           <span className="sl-field-label">Old after</span>

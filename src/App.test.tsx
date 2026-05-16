@@ -4868,7 +4868,7 @@ describe("App sessions route", () => {
       expect(MockEventSource.instances).toHaveLength(1);
 
       const searchInput = container.querySelector<HTMLInputElement>(
-        'input[placeholder="Search sessions, repos, tags…"]',
+        'input[placeholder="Search sessions, repos, tags, Copilot session ID…"]',
       );
       if (!searchInput) {
         throw new Error("Could not find session search input.");
