@@ -939,11 +939,6 @@ export function buildWorkstreamViewModel(
       (entry) => entry.node.id,
     ),
   );
-  const completedNodeIds = new Set(
-    derivedNodes
-      .filter((entry) => entry.operationalStatus === "completed")
-      .map((entry) => entry.node.id),
-  );
   // Retired nodes also satisfy checkpoint completion for downstream filtering;
   // a checkpoint that lists a retired node should not count as "still has
   // work" simply because that node was retired rather than completed.
