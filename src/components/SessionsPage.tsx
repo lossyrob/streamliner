@@ -1783,6 +1783,14 @@ export function SessionsPage({
       const key = workstreamRegistryKey(matches[0]);
       if (!graphStateSnapshot[key] && !loadingWorkstreamGraphKeysRef.current.has(key)) {
         entriesToLoad.set(key, matches[0]);
+        // Claim the key synchronously so rapid re-fires of this effect
+        // (e.g., from an SSE-driven visibleSessions burst at startup) see
+        // it as in-flight and skip. Previously this `add` lived inside the
+        // setWorkstreamGraphs updater, which runs during React's batched
+        // state-update phase -- the ref stayed empty between effect runs,
+        // and every fire issued another duplicate fetch for the same
+        // workstream graph.
+        loadingWorkstreamGraphKeysRef.current.add(key);
       }
     }
 
@@ -1794,7 +1802,6 @@ export function SessionsPage({
       const next = { ...current };
       for (const key of entriesToLoad.keys()) {
         next[key] = { status: "loading" };
-        loadingWorkstreamGraphKeysRef.current.add(key);
       }
       return next;
     });
