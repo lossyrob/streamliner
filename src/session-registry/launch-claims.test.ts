@@ -534,6 +534,50 @@ describe("reconcileOrphanReservedRows", () => {
     expect(second.rowsGraphBindingCleared).toBe(0);
   });
 
+  it("preserves orphan managed SDK rows without a copilotSessionId and clears graphBinding", () => {
+    registryStore.upsertSession({
+      id: "orphan-managed-sdk",
+      title: "Managed orphan",
+      description: "",
+      cwd: "C:/x",
+      repo: null,
+      branch: null,
+      tags: [],
+      origin: { kind: "launched", launchClaimId: "gone-managed-claim" },
+      lifecycleStatus: "active",
+      graphBinding: {
+        workstreamId: "ws",
+        nodeId: "managed-node",
+        launchClaimId: "gone-managed-claim",
+      },
+      runtime: {
+        runtimeKind: "managed-sdk",
+        runtimeOwner: "streamliner-sdk",
+        lifecycleState: "running",
+        permissionProfile: "managed-autonomous",
+        launchClaimId: "gone-managed-claim",
+        launchNonce: "managed-nonce",
+        sdkSessionId: "sdk-session",
+        sdkWorkspacePath: "C:/x/.copilot/sdk",
+        sdkStateRoot: "C:/x/.copilot",
+        startedAt: "2026-05-02T01:00:00.000Z",
+        lastStateChangedAt: "2026-05-02T01:00:00.000Z",
+        progressEvents: [],
+        evidence: [],
+      },
+    });
+
+    const result = reconcileOrphanReservedRows(registryStore, claimStore);
+
+    expect(result.rowsDeleted).toBe(0);
+    expect(result.rowsGraphBindingCleared).toBe(1);
+    const row = registryStore.getSession("orphan-managed-sdk");
+    expect(row).not.toBeNull();
+    expect(row?.copilotSessionId).toBeNull();
+    expect(row?.graphBinding).toBeNull();
+    expect(row?.runtime?.lifecycleState).toBe("running");
+  });
+
   it("leaves rows alone when their claim still exists", () => {
     const outcome = createLaunchClaim(
       registryStore,

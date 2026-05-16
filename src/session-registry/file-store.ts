@@ -1980,6 +1980,7 @@ function matchesText(
     | "cwd"
     | "repo"
     | "branch"
+    | "copilotSessionId"
     | "derivedBranch"
     | "derivedWorktreePath"
     | "derivedGithubRefs"
