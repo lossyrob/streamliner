@@ -1627,6 +1627,14 @@ function GraphDashboard({
     };
   }, [selectedLaunchGraphPath, selectedLaunchNodeId]);
 
+  // Mirror selectedLaunchTarget into a ref so async closures (e.g. the SSE
+  // reattach effect below) can read the latest value without taking a
+  // reactive dependency on it. selectedLaunchTarget is now identity-stable
+  // by graphPath+nodeId, but we still want event handlers that only need
+  // a snapshot to avoid re-subscribing when the user navigates.
+  const selectedLaunchTargetRef = useRef(selectedLaunchTarget);
+  selectedLaunchTargetRef.current = selectedLaunchTarget;
+
   const selectedLaunchOperation = selectedLaunchTarget
     ? launchOperationByKey[launchOperationKey(selectedLaunchTarget)] ?? null
     : null;
@@ -1663,7 +1671,7 @@ function GraphDashboard({
       }
     }
     return operations;
-  }, [activeWorkstreamEntry, launchOperationByKey]);
+  }, [activeWorkstreamEntry?.path, launchOperationByKey]);
 
   const configureDisabledReason = useMemo(() => {
     if (!activeWorkstreamEntry || !isBackendReadableWorkstreamEntry(activeWorkstreamEntry)) {
@@ -1770,13 +1778,20 @@ function GraphDashboard({
   ]);
 
   const launchDefaults = useMemo<PawLaunchDialogDefaults | null>(() => {
-    const defaultsEntry = launchDialogTarget ? launchDialogEntry : selectedEntry;
+    // Resolve the defaults target from primitive ids and the source-of-truth
+    // workstream document, NOT from the viewModel-derived selectedEntry /
+    // launchDialogEntry objects. Those rebuild whenever the live GitHub
+    // status snapshot churns even though the underlying node data is
+    // unchanged, which previously caused launchDefaults to get a fresh
+    // object reference on every poll and ripple through PawLaunchDialog
+    // props.
+    const defaultsNodeId = launchDialogTarget?.nodeId ?? selectedNodeId;
     const graphPath = launchDialogTarget?.graphPath ?? activeWorkstreamEntry?.path;
-    if (!defaultsEntry || !graphPath) return null;
+    if (!defaultsNodeId || !graphPath || !workstream) return null;
+    const defaultsNode = workstream.nodes.find((node) => node.id === defaultsNodeId);
+    if (!defaultsNode) return null;
     const inferredCwd = "";
-    const cwdPreferenceKey = workstream
-      ? launchCwdRepoKey(workstream, defaultsEntry.node.repoIds)
-      : null;
+    const cwdPreferenceKey = launchCwdRepoKey(workstream, defaultsNode.repoIds);
     const savedCwd = readLaunchCwdOverride(cwdPreferenceKey);
     return {
       workflowInstructions: DEFAULT_PAW_WORKFLOW_INSTRUCTIONS,
@@ -1787,13 +1802,13 @@ function GraphDashboard({
       cwdPreferenceKey,
       graphPath,
       terminalPreference: "Manual terminal launch after preparation",
-      githubIssueNumber: defaultsEntry.node.tracker?.type === "github"
-        ? defaultsEntry.node.tracker.number
+      githubIssueNumber: defaultsNode.tracker?.type === "github"
+        ? defaultsNode.tracker.number
         : null,
-      githubIssueLabel: defaultsEntry.node.tracker?.type === "github"
-        ? workstreamTrackerLabel(defaultsEntry.node.tracker)
+      githubIssueLabel: defaultsNode.tracker?.type === "github"
+        ? workstreamTrackerLabel(defaultsNode.tracker)
         : null,
-      githubIssueUrl: workstreamTrackerUrl(defaultsEntry.node.tracker),
+      githubIssueUrl: workstreamTrackerUrl(defaultsNode.tracker),
       terminal: {
         ...DEFAULT_PAW_TERMINAL_CONFIGURATION,
         preferredTerminal:
@@ -1802,16 +1817,15 @@ function GraphDashboard({
         title:
           renderWorkstreamTerminalTitleTemplate(
             workstream?.launchDefaults?.terminal?.titleTemplate,
-            defaultsEntry.node,
-          ) ?? defaultsEntry.node.title,
+            defaultsNode,
+          ) ?? defaultsNode.title,
         tabColor: workstream?.launchDefaults?.terminal?.tabColor ?? null,
       },
     };
   }, [
     activeWorkstreamEntry?.path,
-    launchDialogEntry,
     launchDialogTarget,
-    selectedEntry,
+    selectedNodeId,
     sessionLaunchSettings?.defaultCliArgs,
     workstream,
   ]);
@@ -2627,7 +2641,7 @@ function GraphDashboard({
           if (closed) {
             return;
           }
-          if (sameLaunchTarget(target, selectedLaunchTarget)) {
+          if (sameLaunchTarget(target, selectedLaunchTargetRef.current)) {
             setNodeLaunchRecords((current) =>
               mergeNodeLaunchRecord(current, target, state.record)
             );
@@ -2654,7 +2668,6 @@ function GraphDashboard({
     launchDialogOperation?.status,
     launchDialogTarget,
     launchManagedSdkFromHandoff,
-    selectedLaunchTarget,
     setLaunchOperation,
     updateLaunchOperation,
   ]);
