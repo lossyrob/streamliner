@@ -1608,15 +1608,24 @@ function GraphDashboard({
     ? runtimeOverlay?.nodesById.get(selectedEntry.node.id) ?? null
     : null;
 
+  // Derive the launch target from stable string primitives so its identity
+  // only changes when the underlying graph path or node id actually changes.
+  // Depending on activeWorkstreamEntry/selectedEntry directly churns this
+  // object every time the viewModel rebuilds (e.g. on each github-status
+  // poll), which cascades into prefetch effects and keeps the
+  // "Loading saved profiles" / "Loading launch details" placeholders pinned
+  // on while a fetch is briefly in flight.
+  const selectedLaunchGraphPath = activeWorkstreamEntry?.path ?? null;
+  const selectedLaunchNodeId = selectedEntry?.node.id ?? null;
   const selectedLaunchTarget = useMemo<LaunchOperationTarget | null>(() => {
-    if (!selectedEntry || !activeWorkstreamEntry) {
+    if (!selectedLaunchGraphPath || !selectedLaunchNodeId) {
       return null;
     }
     return {
-      graphPath: activeWorkstreamEntry.path,
-      nodeId: selectedEntry.node.id,
+      graphPath: selectedLaunchGraphPath,
+      nodeId: selectedLaunchNodeId,
     };
-  }, [activeWorkstreamEntry, selectedEntry]);
+  }, [selectedLaunchGraphPath, selectedLaunchNodeId]);
 
   const selectedLaunchOperation = selectedLaunchTarget
     ? launchOperationByKey[launchOperationKey(selectedLaunchTarget)] ?? null
