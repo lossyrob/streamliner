@@ -9,6 +9,7 @@ export const WORKSTREAM_NODE_STATUSES = [
   "in-progress",
   "blocked",
   "completed",
+  "retired",
 ] as const;
 export type WorkstreamNodeStatus = (typeof WORKSTREAM_NODE_STATUSES)[number];
 

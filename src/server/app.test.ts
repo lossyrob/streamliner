@@ -1096,6 +1096,63 @@ describe("createStreamlinerApiApp", () => {
     }));
   });
 
+  it("tolerates an unknown node status during source discovery instead of dropping the workstream", async () => {
+    const rootDir = createRootDir();
+    const sourceRoot = join(rootDir, "workstreams");
+    const workstreamDir = join(sourceRoot, "tolerated");
+    mkdirSync(workstreamDir, { recursive: true });
+    // The graph has one node with a status the schema does not recognise. The
+    // tolerant source-scanner path should still register the workstream while
+    // surfacing a tolerated-warning message so the user can fix the typo
+    // without losing visibility of the rest of the graph.
+    const graphContent = buildGraph({
+      title: "Tolerated Graph",
+      nodes: [
+        {
+          id: "first-node",
+          type: "task",
+          title: "First node",
+          summary: "First node summary.",
+          status: "scrapped",
+          attention: "focus",
+          repoIds: ["streamliner"],
+          dependsOn: [],
+        },
+      ],
+    });
+    writeFileSync(join(workstreamDir, "graph.json"), JSON.stringify(graphContent), "utf8");
+    const api = createIsolatedApi(rootDir);
+    activeApps.push(api);
+
+    await request(api.app)
+      .post("/api/workstream-sources")
+      .send({ type: "workstreams-root", path: sourceRoot })
+      .expect(201);
+
+    const listResponse = await request(api.app).get("/api/workstreams").expect(200);
+    const tolerated = listResponse.body.workstreams.find(
+      (entry: { workstreamId: string }) => entry.workstreamId === "api-test",
+    );
+    expect(tolerated).toBeDefined();
+    expect(tolerated).toEqual(expect.objectContaining({
+      title: "Tolerated Graph",
+      source: "source",
+    }));
+
+    const source = listResponse.body.sources[0];
+    const toleratedMessage = source.messages.find(
+      (message: { code: string }) => message.code === "workstream-graph-tolerated",
+    );
+    expect(toleratedMessage).toBeDefined();
+    expect(toleratedMessage).toEqual(expect.objectContaining({
+      severity: "warning",
+      projectKey: "streamliner",
+      workstreamId: "api-test",
+    }));
+    expect(toleratedMessage.message).toContain("scrapped");
+    expect(toleratedMessage.message).toContain("blocked");
+  });
+
   it("streams session registry events over SSE", async () => {
     const rootDir = createRootDir();
     const store = new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") });
@@ -1243,6 +1300,141 @@ describe("createStreamlinerApiApp", () => {
         nodeId: "graph-node-session-status-ui",
         text: "waiting",
       });
+      stream.req.emit("close");
+    } finally {
+      eventStream.close();
+    }
+  });
+
+  it("sends compact runtime updates only to matching session event queries", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") });
+    const matching = store.upsertSession({
+      id: "managed-matching",
+      title: "Managed Matching",
+      description: "",
+      cwd: "C:\\repo",
+      origin: { kind: "launched", launchClaimId: "claim-matching" },
+      graphBinding: {
+        workstreamId: "sdk-managed-worker-runtime",
+        nodeId: "managed-runtime-api-responsiveness",
+        launchClaimId: "claim-matching",
+      },
+    });
+    const other = store.upsertSession({
+      id: "managed-other",
+      title: "Managed Other",
+      description: "",
+      cwd: "C:\\repo",
+      origin: { kind: "launched", launchClaimId: "claim-other" },
+      graphBinding: {
+        workstreamId: "sdk-managed-worker-runtime",
+        nodeId: "other-node",
+        launchClaimId: "claim-other",
+      },
+    });
+    const eventStream = new SessionRegistryEventStream(store);
+    try {
+      const stream = openEventStream(
+        eventStream,
+        undefined,
+        "/api/sessions/events?workstreamId=sdk-managed-worker-runtime&nodeId=managed-runtime-api-responsiveness",
+      );
+      expect(stream.res.body()).toContain("Managed Matching");
+      expect(stream.res.body()).not.toContain("Managed Other");
+
+      store.patchRuntimeMetadata(other.id, {
+        runtimeKind: "managed-sdk",
+        runtimeOwner: "streamliner-sdk",
+        lifecycleState: "running",
+        sdkSessionId: "sdk-other",
+      });
+      expect(stream.res.body()).not.toContain("sdk-other");
+
+      store.patchRuntimeMetadata(matching.id, {
+        runtimeKind: "managed-sdk",
+        runtimeOwner: "streamliner-sdk",
+        lifecycleState: "running",
+        sdkSessionId: "sdk-matching",
+      });
+      const body = stream.res.body();
+      const runtimeUpdate = body.slice(body.lastIndexOf("event: session.runtime.updated"));
+      expect(runtimeUpdate).toContain("sdk-matching");
+      expect(runtimeUpdate).toContain("managed-matching");
+      expect(runtimeUpdate).not.toContain("Managed Matching");
+      stream.req.emit("close");
+    } finally {
+      eventStream.close();
+    }
+  });
+
+  it("uses the same origin-kind text matching for session event snapshots as list results", () => {
+    const rootDir = createRootDir();
+    const store = new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") });
+    store.upsertSession({
+      id: "launched-origin-event",
+      title: "Origin event",
+      description: "",
+      cwd: "C:\\repo",
+      origin: { kind: "launched", launchClaimId: "claim-origin-event" },
+    });
+    store.upsertSession({
+      id: "manual-origin-event",
+      title: "Origin event",
+      description: "",
+      cwd: "C:\\repo",
+      origin: { kind: "manual" },
+    });
+    const eventStream = new SessionRegistryEventStream(store);
+    try {
+      const stream = openEventStream(
+        eventStream,
+        undefined,
+        "/api/sessions/events?text=launched",
+      );
+
+      expect(store.listSessions({ text: "launched" }).map((session) => session.id))
+        .toEqual(["launched-origin-event"]);
+      expect(stream.res.body()).toContain("launched-origin-event");
+      expect(stream.res.body()).not.toContain("manual-origin-event");
+      stream.req.emit("close");
+    } finally {
+      eventStream.close();
+    }
+  });
+
+  it("synthesizes deletes when upserts stop matching a session event query", () => {
+    const rootDir = createRootDir();
+    const store = new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") });
+    store.upsertSession({
+      id: "matching-to-removed",
+      title: "Alpha row",
+      description: "",
+      cwd: "C:\\repo",
+      origin: { kind: "manual" },
+    });
+    const eventStream = new SessionRegistryEventStream(store);
+    try {
+      const stream = openEventStream(
+        eventStream,
+        undefined,
+        "/api/sessions/events?text=alpha",
+      );
+      expect(stream.res.body()).toContain("Alpha row");
+
+      store.upsertSession({
+        id: "matching-to-removed",
+        title: "Beta row",
+        description: "",
+        cwd: "C:\\repo",
+        origin: { kind: "manual" },
+      });
+
+      const body = stream.res.body();
+      const deletion = body.slice(body.lastIndexOf("event: session.deleted"));
+      expect(deletion).toContain("matching-to-removed");
+      expect(deletion).not.toContain("Beta row");
       stream.req.emit("close");
     } finally {
       eventStream.close();

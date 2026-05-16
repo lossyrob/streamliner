@@ -48,6 +48,8 @@ function minimapNodeColor(node: Node): string {
   switch (data?.entry?.operationalStatus) {
     case "completed":
       return "#2fa66f";
+    case "retired":
+      return "#8d9bb5";
     case "in-progress":
       return "#1f7ae0";
     case "ready":

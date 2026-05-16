@@ -372,9 +372,29 @@ async function summarizeDiscoveredGraph(
   source: WorkstreamSourceConfig,
   previous: WorkstreamRegistryEntry | undefined,
   timestamp: string,
+  toleratedWarnings: WorkstreamScanMessage[],
 ): Promise<WorkstreamRegistryEntry> {
   const graph = await readGraphFile(graphPath);
-  const summary = summarizeWorkstreamDocument(parseWorkstreamDocument(graph.content));
+  const document = parseWorkstreamDocument(graph.content, {
+    onParseWarning: (warning) => {
+      const received =
+        warning.received === null
+          ? "(missing or non-string value)"
+          : `'${warning.received}'`;
+      toleratedWarnings.push(
+        scanMessage(
+          "workstream-graph-tolerated",
+          "warning",
+          `Tolerated non-canonical ${warning.label}: received ${received}, allowed ${warning.allowed.join(", ")}; treating as '${warning.fallback}'.`,
+          {
+            path: graphPath,
+            sourceId: source.id,
+          },
+        ),
+      );
+    },
+  });
+  const summary = summarizeWorkstreamDocument(document);
   return {
     source: "source",
     sourceId: source.id,
@@ -416,13 +436,35 @@ async function scanSource(
   for (const graphPath of graphPaths.sort((left, right) => left.localeCompare(right))) {
     const normalizedPath = pathKey(graphPath);
     seenPaths.add(normalizedPath);
+    const toleratedWarnings: WorkstreamScanMessage[] = [];
     try {
-      entries.push(await summarizeDiscoveredGraph(
+      const entry = await summarizeDiscoveredGraph(
         graphPath,
         source,
         previousByPath.get(normalizedPath),
         timestamp,
-      ));
+        toleratedWarnings,
+      );
+      entries.push(entry);
+      // The graph parsed successfully (possibly with tolerated deviations).
+      // Surface those warnings so the UI shows them but the workstream still
+      // appears in the active registry. Prefer identifiers from the freshly
+      // parsed entry (covers first-scan case where previousByPath is empty),
+      // falling back to previous-registry data if the entry somehow lacks
+      // them.
+      const previous = previousByPath.get(normalizedPath);
+      for (const warning of toleratedWarnings) {
+        const enriched: WorkstreamScanMessage = {
+          ...warning,
+          projectKey:
+            warning.projectKey ?? entry.projectKey ?? previous?.projectKey,
+          workstreamId:
+            warning.workstreamId ??
+            entry.workstreamId ??
+            previous?.workstreamId,
+        };
+        messages.push(enriched);
+      }
     } catch (error: unknown) {
       const previous = previousByPath.get(normalizedPath);
       const code = isNotFound(error) ? "workstream-graph-missing" : "workstream-graph-invalid";

@@ -9,7 +9,11 @@ import {
   useState,
 } from "react";
 
-import type { SessionRegistryListItem, SessionRegistryPatch } from "../session-registry-contract";
+import type {
+  SessionRegistryListItem,
+  SessionRegistryListOptions,
+  SessionRegistryPatch,
+} from "../session-registry-contract";
 import type { SessionRegistryRecord } from "../session-registry-schema";
 import type { ManagedRuntimeProjection } from "../managed-runtime-contract";
 import {
@@ -47,6 +51,7 @@ import {
   activitySignalClass,
   activityStatusClass,
   activityStatusHint,
+  getEffectiveActivityStatus,
   getActivityStatusDescription,
   getActivityStatusLabel,
   getActivityTimestamp,
@@ -60,10 +65,29 @@ import {
   TerminalColorQuickPicker,
 } from "./SessionColorPicker";
 import { ManagedRuntimeActionButton } from "./ManagedRuntimeActionButton";
-import { sessionRegistryListUrl } from "../session-registry-client";
+import {
+  eventRegistryId,
+  runtimeUpdatedPayload,
+  sessionFromEventPayload,
+  sessionMatchesQuery,
+  sessionRegistryEventsUrl,
+  sessionRegistryListUrl,
+  sessionsFromSnapshotPayload,
+} from "../session-registry-client";
+import {
+  githubStatusForRef,
+  useGithubStatusLookup,
+} from "../github-status-client";
+import {
+  type GithubStatusRef,
+  type GithubStatusResult,
+  githubStatusTone,
+} from "../github-status";
 
 const SESSION_POLL_INTERVAL_MS = 15_000;
 const SESSION_EVENT_REFETCH_DEBOUNCE_MS = 150;
+const SESSION_EVENT_STALE_MS = 35_000;
+const SESSION_QUERY_DEBOUNCE_MS = 250;
 const DEFAULT_STALE_SESSION_DAYS = 7;
 const SESSION_STALE_DAYS_STORAGE_KEY = "streamliner:sessionsStaleDays";
 const SESSION_GROUP_MODE_STORAGE_KEY = "streamliner:sessionsGroupMode";
@@ -315,7 +339,6 @@ function builderSnapshotKey(session: SessionRegistryListItem | null): string | n
   }
   return JSON.stringify({
     id: session.id,
-    version: session.version,
     title: session.title,
     description: session.description,
     lifecycleStatus: session.lifecycleStatus,
@@ -323,6 +346,15 @@ function builderSnapshotKey(session: SessionRegistryListItem | null): string | n
     tags: session.tags,
     graphBinding: session.graphBinding,
   });
+}
+
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedValue(value), delayMs);
+    return () => clearTimeout(timer);
+  }, [delayMs, value]);
+  return debouncedValue;
 }
 
 function statusClass(status: SessionRegistryListItem["lifecycleStatus"]): string {
@@ -682,6 +714,15 @@ function githubRefRepo(ref: DerivedGithubRef, session: SessionRegistryListItem):
   return ref.repo ?? session.repo;
 }
 
+function githubRepoParts(repo: string | null): { owner: string; repo: string } | null {
+  const trimmed = repo?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const match = trimmed.match(/^([\w.-]+)\/([\w.-]+)$/);
+  return match ? { owner: match[1], repo: match[2] } : null;
+}
+
 function normalizeGithubRepoForUrl(repo: string | null): string | null {
   const trimmed = repo?.trim();
   if (!trimmed) {
@@ -713,6 +754,51 @@ function safeGithubRefUrl(url: string | null): string | null {
   return null;
 }
 
+function githubStatusRefForDerivedRef(
+  ref: DerivedGithubRef,
+  session: SessionRegistryListItem,
+): GithubStatusRef | null {
+  if (ref.type !== "issue" && ref.type !== "pr") {
+    return null;
+  }
+  const repo = githubRepoParts(githubRefRepo(ref, session));
+  if (!repo) {
+    return null;
+  }
+  return {
+    type: ref.type,
+    owner: repo.owner,
+    repo: repo.repo,
+    number: ref.number,
+  };
+}
+
+function githubStatusRefsForSessions(
+  sessions: readonly SessionRegistryListItem[],
+  selectedSession: SessionRegistryListItem | null,
+): GithubStatusRef[] {
+  const seen = new Set<string>();
+  const refs: GithubStatusRef[] = [];
+  const sourceSessions = selectedSession
+    ? [...sessions, selectedSession]
+    : sessions;
+  for (const session of sourceSessions) {
+    for (const ref of session.derivedGithubRefs) {
+      const statusRef = githubStatusRefForDerivedRef(ref, session);
+      if (!statusRef) {
+        continue;
+      }
+      const key = `${statusRef.type}:${statusRef.owner}/${statusRef.repo}#${statusRef.number}`.toLowerCase();
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      refs.push(statusRef);
+    }
+  }
+  return refs;
+}
+
 function githubRefUrl(ref: DerivedGithubRef, session: SessionRegistryListItem): string | null {
   const explicitUrl = safeGithubRefUrl(ref.url);
   if (explicitUrl) {
@@ -733,31 +819,48 @@ interface GithubRefChipProps {
   refItem: DerivedGithubRef;
   session: SessionRegistryListItem;
   className: string;
+  status?: GithubStatusResult | null;
   showRepo?: boolean;
 }
 
-function GithubRefChip({ refItem, session, className, showRepo = false }: GithubRefChipProps) {
+function GithubRefChip({
+  refItem,
+  session,
+  className,
+  status = null,
+  showRepo = false,
+}: GithubRefChipProps) {
   const label = githubRefLabel(refItem);
   const repo = githubRefRepo(refItem, session);
   const url = githubRefUrl(refItem, session);
+  const statusClass = status ? ` github-status ${githubStatusTone(status)}` : "";
+  const statusTitle = status?.error
+    ? `${status.statusLabel}: ${status.error.message}`
+    : status?.statusLabel;
   const content = (
     <>
       {label}
       {showRepo && repo ? ` · ${repo}` : ""}
+      {status ? ` · ${status.statusLabel}` : ""}
     </>
   );
 
   if (!url) {
-    return <span className={className}>{content}</span>;
+    return (
+      <span className={`${className}${statusClass}`} title={statusTitle}>
+        {content}
+      </span>
+    );
   }
 
   return (
     <a
-      className={`${className} linkable`}
+      className={`${className}${statusClass} linkable`}
       href={url}
       target="_blank"
       rel="noopener noreferrer"
-      aria-label={`Open ${label} in GitHub`}
+      aria-label={`Open ${statusTitle ? `${label} (${statusTitle})` : label} in GitHub`}
+      title={statusTitle}
       onClick={(event) => event.stopPropagation()}
     >
       {content}
@@ -1233,12 +1336,16 @@ export function SessionsPage({
   const [syncState, setSyncState] = useState<SyncState>("connecting");
   const [conflictPending, setConflictPending] = useState<SessionConflictState | null>(null);
   const [creatingState, setCreatingState] = useState<SaveState>("idle");
+  const [githubStatusRefreshKey, setGithubStatusRefreshKey] = useState(0);
   const eventRefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const eventStreamLiveRef = useRef(false);
+  const lastStreamEventAtRef = useRef(0);
   const skipUnmountFlushRef = useRef(false);
   const saveRequestIdRef = useRef(0);
   // Frozen group order per mode. Filled lazily on first render for a mode; cleared by Resort.
   const frozenOrderRef = useRef<Partial<Record<GroupMode, string[]>>>({});
   const creatingRef = useLatestValue(creating);
+  const sessionsRef = useLatestValue(sessions);
   const selectedIdRef = useLatestValue(selectedId);
   const draftRef = useLatestValue(draft);
   const selectedSnapshotRef = useLatestValue(selectedSnapshot);
@@ -1247,91 +1354,117 @@ export function SessionsPage({
   const workstreamGraphsRef = useLatestValue(workstreamGraphs);
   const mountedRef = useRef(false);
   const loadingWorkstreamGraphKeysRef = useRef(new Set<string>());
+  const debouncedQuery = useDebouncedValue(query, SESSION_QUERY_DEBOUNCE_MS);
+
+  const sessionListQuery = useMemo(
+    () => ({
+      includeArchived: showArchived,
+      text: debouncedQuery,
+      workstreamId: routeWorkstreamId,
+      nodeId: routeNodeId,
+    }),
+    [debouncedQuery, routeNodeId, routeWorkstreamId, showArchived],
+  );
+  const sessionMatchOptions = useMemo<SessionRegistryListOptions>(
+    () => ({
+      includeArchived: showArchived,
+      text: debouncedQuery,
+      workstreamId: routeWorkstreamId?.trim() ? routeWorkstreamId : undefined,
+      nodeId: routeNodeId?.trim() ? routeNodeId : undefined,
+    }),
+    [debouncedQuery, routeNodeId, routeWorkstreamId, showArchived],
+  );
+  const sessionEventsUrl = useMemo(
+    () => sessionRegistryEventsUrl(sessionListQuery),
+    [sessionListQuery],
+  );
 
   const applySessionList = useCallback(
     (nextSessions: SessionRegistryListItem[], keepSelection = true) => {
+      sessionsRef.current = nextSessions;
       setSessions(nextSessions);
+      setGithubStatusRefreshKey((current) => current + 1);
       setError(null);
-        const currentCreating = creatingRef.current;
-        const currentSelectedId = selectedIdRef.current;
-        const currentSelectedSnapshot = selectedSnapshotRef.current;
-        const currentDraft = draftRef.current;
-        const currentSaveState = saveStateRef.current;
-        if (!keepSelection) {
-          return;
-        }
-        if (currentCreating) {
+      const currentCreating = creatingRef.current;
+      const currentSelectedId = selectedIdRef.current;
+      const currentSelectedSnapshot = selectedSnapshotRef.current;
+      const currentDraft = draftRef.current;
+      const currentSaveState = saveStateRef.current;
+      if (!keepSelection) {
+        return;
+      }
+      if (currentCreating) {
+        return;
+      }
+
+      if (currentSelectedId) {
+        const matching =
+          nextSessions.find((session) => session.id === currentSelectedId) ?? null;
+        if (!matching) {
+          setSelectedId(null);
+          setSelectedSnapshot(null);
+          setDraft(createEmptyDraft());
+          setSaveState("idle");
+          setConflictPending(null);
+          setSheetOpen(false);
           return;
         }
 
-        if (currentSelectedId) {
-          const matching =
-            nextSessions.find((session) => session.id === currentSelectedId) ?? null;
-          if (!matching) {
-            setSelectedId(null);
-            setSelectedSnapshot(null);
-            setDraft(createEmptyDraft());
-            setSaveState("idle");
-            setConflictPending(null);
-            setSheetOpen(false);
-            return;
+        const currentDraftKey = draftKey(currentDraft);
+        const snapshotDraftKey = currentSelectedSnapshot
+          ? draftKey(draftFromSession(currentSelectedSnapshot))
+          : null;
+        const nextSnapshotKey = sessionSnapshotKey(matching);
+        const currentSnapshotKey = sessionSnapshotKey(currentSelectedSnapshot);
+        const nextBuilderKey = builderSnapshotKey(matching);
+        const currentBuilderKey = builderSnapshotKey(currentSelectedSnapshot);
+        if (
+          currentSaveState !== "saving" &&
+          currentSelectedSnapshot &&
+          currentDraftKey === snapshotDraftKey
+        ) {
+          const nextDraft = draftFromSession(matching);
+          if (currentSnapshotKey !== nextSnapshotKey) {
+            setSelectedSnapshot(matching);
+            setSaveError(null);
           }
-
-          const currentDraftKey = draftKey(currentDraft);
-          const snapshotDraftKey = currentSelectedSnapshot
-            ? draftKey(draftFromSession(currentSelectedSnapshot))
-            : null;
-          const nextSnapshotKey = sessionSnapshotKey(matching);
-          const currentSnapshotKey = sessionSnapshotKey(currentSelectedSnapshot);
-          const nextBuilderKey = builderSnapshotKey(matching);
-          const currentBuilderKey = builderSnapshotKey(currentSelectedSnapshot);
-          if (
-            currentSaveState !== "saving" &&
-            currentSelectedSnapshot &&
-            currentDraftKey === snapshotDraftKey
-          ) {
-            const nextDraft = draftFromSession(matching);
-            if (currentSnapshotKey !== nextSnapshotKey) {
-              setSelectedSnapshot(matching);
-              setSaveError(null);
-            }
-            if (currentDraftKey !== draftKey(nextDraft)) {
-              setDraft(nextDraft);
-            }
-            setConflictPending((current) =>
-              current?.sessionId === matching.id ? null : current,
-            );
-          } else if (
-            currentSaveState !== "saving" &&
-            currentSelectedSnapshot &&
-            currentBuilderKey !== nextBuilderKey
-          ) {
-            const message =
-              "This session changed elsewhere. Your unsaved edits are preserved; edit a field to re-apply them after reviewing the latest row.";
-            setConflictPending({
-              sessionId: matching.id,
-              latest: matching,
-              fields: ["builder-owned fields"],
-              message,
-            });
-            setSaveError(message);
+          if (currentDraftKey !== draftKey(nextDraft)) {
+            setDraft(nextDraft);
           }
+          setConflictPending((current) =>
+            current?.sessionId === matching.id ? null : current,
+          );
+        } else if (
+          currentSaveState !== "saving" &&
+          currentSelectedSnapshot &&
+          currentBuilderKey !== nextBuilderKey
+        ) {
+          const message =
+            "This session changed elsewhere. Your unsaved edits are preserved; edit a field to re-apply them after reviewing the latest row.";
+          setConflictPending({
+            sessionId: matching.id,
+            latest: matching,
+            fields: ["builder-owned fields"],
+            message,
+          });
+          setSaveError(message);
         }
+      }
     },
-    [creatingRef, draftRef, saveStateRef, selectedIdRef, selectedSnapshotRef],
+    [
+      creatingRef,
+      draftRef,
+      saveStateRef,
+      selectedIdRef,
+      selectedSnapshotRef,
+      sessionsRef,
+    ],
   );
 
   const fetchSessions = useCallback(
     async (keepSelection = true) => {
       try {
-        const response = await fetch(
-          sessionRegistryListUrl({
-            includeArchived: showArchived,
-            text: query,
-            workstreamId: routeWorkstreamId,
-            nodeId: routeNodeId,
-          }),
-        );
+        const response = await fetch(sessionRegistryListUrl(sessionListQuery));
         if (!response.ok) {
           throw new Error(`Failed to load sessions (${response.status})`);
         }
@@ -1343,8 +1476,20 @@ export function SessionsPage({
         setLoading(false);
       }
     },
-    [applySessionList, query, routeNodeId, routeWorkstreamId, showArchived],
+    [applySessionList, sessionListQuery],
   );
+
+  const shouldPoll = useCallback(() => {
+    if (!eventStreamLiveRef.current) {
+      return true;
+    }
+    return Date.now() - lastStreamEventAtRef.current > SESSION_EVENT_STALE_MS;
+  }, []);
+
+  const markStreamEvent = useCallback(() => {
+    eventStreamLiveRef.current = true;
+    lastStreamEventAtRef.current = Date.now();
+  }, []);
 
   const scheduleEventRefetch = useCallback(
     (delayMs = SESSION_EVENT_REFETCH_DEBOUNCE_MS) => {
@@ -1375,10 +1520,12 @@ export function SessionsPage({
   useEffect(() => {
     void fetchSessions();
     const timer = setInterval(() => {
-      void fetchSessions();
+      if (shouldPoll()) {
+        void fetchSessions();
+      }
     }, SESSION_POLL_INTERVAL_MS);
     const refreshWhenVisible = () => {
-      if (document.visibilityState !== "hidden") {
+      if (document.visibilityState !== "hidden" && shouldPoll()) {
         void fetchSessions();
       }
     };
@@ -1389,33 +1536,36 @@ export function SessionsPage({
       window.removeEventListener("focus", refreshWhenVisible);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
-  }, [fetchSessions]);
+  }, [fetchSessions, shouldPoll]);
 
   useEffect(() => {
     if (typeof EventSource === "undefined") {
+      eventStreamLiveRef.current = false;
       setSyncState("polling");
       return;
     }
 
     let closed = false;
-    const source = new EventSource("/api/sessions/events");
+    const source = new EventSource(sessionEventsUrl);
     setSyncState("connecting");
 
-    const handleChange = () => {
+    const handleRefetchChange = () => {
+      markStreamEvent();
       scheduleEventRefetch();
     };
+    const handleHeartbeat = () => {
+      markStreamEvent();
+      setSyncState("live");
+    };
     const handleSnapshot = (event: MessageEvent) => {
-      if (query.trim().length > 0 || showArchived || routeWorkstreamId || routeNodeId) {
-        scheduleEventRefetch(0);
-        return;
-      }
+      markStreamEvent();
       try {
-        const payload = JSON.parse(event.data) as { sessions?: unknown };
-        if (!Array.isArray(payload.sessions)) {
+        const nextSessions = sessionsFromSnapshotPayload(JSON.parse(event.data) as unknown);
+        if (!nextSessions) {
           scheduleEventRefetch(0);
           return;
         }
-        applySessionList(payload.sessions as SessionRegistryListItem[]);
+        applySessionList(nextSessions);
         setLoading(false);
       } catch {
         scheduleEventRefetch(0);
@@ -1423,24 +1573,128 @@ export function SessionsPage({
     };
     const handleOpen = () => {
       if (!closed) {
+        markStreamEvent();
         setSyncState("live");
       }
     };
     const handleError = () => {
       if (!closed) {
+        eventStreamLiveRef.current = false;
         setSyncState("reconnecting");
+        void fetchSessions();
       }
+    };
+    const handleUpsert = (event: MessageEvent) => {
+      markStreamEvent();
+      let payload: unknown;
+      try {
+        payload = JSON.parse(event.data) as unknown;
+      } catch {
+        scheduleEventRefetch();
+        return;
+      }
+      const nextSession =
+        typeof payload === "object" && payload !== null && !Array.isArray(payload)
+          ? sessionFromEventPayload((payload as { session?: unknown }).session)
+          : null;
+      if (!nextSession) {
+        scheduleEventRefetch();
+        return;
+      }
+      const currentSessions = sessionsRef.current;
+      const existingIndex = currentSessions.findIndex(
+        (session) => session.id === nextSession.id,
+      );
+      const matches = sessionMatchesQuery(nextSession, sessionMatchOptions);
+      if (existingIndex === -1) {
+        if (matches) {
+          applySessionList([nextSession, ...currentSessions]);
+        }
+      } else if (matches) {
+        const nextSessions = [...currentSessions];
+        nextSessions[existingIndex] = nextSession;
+        applySessionList(nextSessions);
+      } else {
+        applySessionList(
+          currentSessions.filter((session) => session.id !== nextSession.id),
+        );
+      }
+      setLoading(false);
+    };
+    const handleRuntimeUpdate = (event: MessageEvent) => {
+      markStreamEvent();
+      let payload: ReturnType<typeof runtimeUpdatedPayload> = null;
+      try {
+        payload = runtimeUpdatedPayload(JSON.parse(event.data) as unknown);
+      } catch {
+        scheduleEventRefetch();
+        return;
+      }
+      if (!payload) {
+        scheduleEventRefetch();
+        return;
+      }
+      const currentSessions = sessionsRef.current;
+      const existingIndex = currentSessions.findIndex(
+        (session) => session.id === payload.registryId,
+      );
+      if (existingIndex === -1) {
+        scheduleEventRefetch();
+        return;
+      }
+      const existing = currentSessions[existingIndex];
+      if (
+        payload.version !== undefined &&
+        payload.version <= existing.version
+      ) {
+        return;
+      }
+      const updatedSession: SessionRegistryListItem = {
+        ...existing,
+        runtime: payload.runtime,
+        updatedAt: payload.updatedAt ?? existing.updatedAt,
+        version: payload.version ?? existing.version,
+      };
+      const nextSessions = [...currentSessions];
+      if (sessionMatchesQuery(updatedSession, sessionMatchOptions)) {
+        nextSessions[existingIndex] = updatedSession;
+      } else {
+        nextSessions.splice(existingIndex, 1);
+      }
+      applySessionList(nextSessions);
+      setLoading(false);
+    };
+    const handleDelete = (event: MessageEvent) => {
+      markStreamEvent();
+      let registryId: string | null = null;
+      try {
+        registryId = eventRegistryId(JSON.parse(event.data) as unknown);
+      } catch {
+        scheduleEventRefetch();
+        return;
+      }
+      if (!registryId) {
+        scheduleEventRefetch();
+        return;
+      }
+      applySessionList(
+        sessionsRef.current.filter((session) => session.id !== registryId),
+      );
+      setLoading(false);
     };
 
     source.addEventListener("open", handleOpen);
     source.addEventListener("error", handleError);
+    source.addEventListener("heartbeat", handleHeartbeat);
     source.addEventListener("snapshot", handleSnapshot);
-    source.addEventListener("session.upserted", handleChange);
-    source.addEventListener("session.deleted", handleChange);
-    source.addEventListener("session.rebuilt", handleChange);
+    source.addEventListener("session.upserted", handleUpsert);
+    source.addEventListener("session.runtime.updated", handleRuntimeUpdate);
+    source.addEventListener("session.deleted", handleDelete);
+    source.addEventListener("session.rebuilt", handleRefetchChange);
 
     return () => {
       closed = true;
+      eventStreamLiveRef.current = false;
       source.close();
       if (eventRefetchTimerRef.current) {
         clearTimeout(eventRefetchTimerRef.current);
@@ -1449,11 +1703,12 @@ export function SessionsPage({
     };
   }, [
     applySessionList,
-    query,
-    routeNodeId,
-    routeWorkstreamId,
+    fetchSessions,
+    markStreamEvent,
     scheduleEventRefetch,
-    showArchived,
+    sessionEventsUrl,
+    sessionMatchOptions,
+    sessionsRef,
   ]);
 
   const selectedSession = useMemo(
@@ -1486,6 +1741,14 @@ export function SessionsPage({
         (session) => !isSessionStale(session, staleSessionDays),
       ),
     [endedFilteredSessions, staleSessionDays],
+  );
+  const githubStatusRefs = useMemo(
+    () => githubStatusRefsForSessions(visibleSessions, selectedSession),
+    [selectedSession, visibleSessions],
+  );
+  const githubStatuses = useGithubStatusLookup(
+    githubStatusRefs,
+    githubStatusRefreshKey,
   );
   const hiddenGraphScopedManualCount = sessions.length - graphScopedSessions.length;
   const hiddenObservedSessionCount =
@@ -2113,7 +2376,7 @@ export function SessionsPage({
           className="sl-text-field"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search sessions, repos, tags…"
+          placeholder="Search sessions, repos, tags, Copilot session ID…"
         />
         <label className="sl-session-stale-filter">
           <span className="sl-field-label">Old after</span>
@@ -2265,8 +2528,9 @@ export function SessionsPage({
                     const rowWorktree = displayWorktree(session);
                     const rowRestartCommand = buildVisibleRestartCommand(session, defaultCliArgs);
                     const activityLabel = getActivityStatusLabel(session);
-                    const activityHint = activityStatusHint(session.activityStatus);
-                    const signalClass = activitySignalClass(session.activityStatus);
+                    const effectiveActivityStatus = getEffectiveActivityStatus(session);
+                    const activityHint = activityStatusHint(effectiveActivityStatus);
+                    const signalClass = activitySignalClass(effectiveActivityStatus);
                     const signalDetail = trustedStatus ?? observedStatus ?? session.originKind;
                     const rowFolderLeaf = leafName(rowWorktree ?? session.cwd);
                     const rowManagedRuntime = getManagedRuntime(session);
@@ -2376,6 +2640,10 @@ export function SessionsPage({
                                   refItem={ref}
                                   session={session}
                                   className="sl-session-row-context-chip important"
+                                  status={githubStatusForRef(
+                                    githubStatuses.statuses,
+                                    githubStatusRefForDerivedRef(ref, session),
+                                  )}
                                 />
                               ))}
                               {session.tags.map((tag) => (
@@ -2446,7 +2714,7 @@ export function SessionsPage({
                   {selectedSession && (
                     <>
                       <span
-                        className={`sl-pill ${activityStatusClass(selectedSession.activityStatus)}`}
+                        className={`sl-pill ${activityStatusClass(getEffectiveActivityStatus(selectedSession))}`}
                       >
                         {getActivityStatusLabel(selectedSession)}
                       </span>
@@ -2576,6 +2844,7 @@ export function SessionsPage({
                 <SessionOverview
                   session={selectedSession}
                   workstreamLinkage={selectedSessionLinkage}
+                  githubStatuses={githubStatuses.statuses}
                   defaultCliArgs={defaultCliArgs}
                   onOpenWorkstream={onOpenWorkstream}
                   onSessionActionComplete={fetchSessions}
@@ -2648,6 +2917,7 @@ export function SessionsPage({
 interface SessionOverviewProps {
   session: SessionRegistryListItem;
   workstreamLinkage: SessionWorkstreamLinkageResolution | null;
+  githubStatuses: ReadonlyMap<string, GithubStatusResult>;
   defaultCliArgs: readonly string[] | null;
   onOpenWorkstream?: (target: WorkstreamRouteTarget) => void | Promise<void>;
   onSessionActionComplete?: () => void | Promise<void>;
@@ -3031,6 +3301,7 @@ function ManagedRuntimeOverview({
 function SessionOverview({
   session,
   workstreamLinkage,
+  githubStatuses,
   defaultCliArgs,
   onOpenWorkstream,
   onSessionActionComplete,
@@ -3227,6 +3498,10 @@ function SessionOverview({
                         refItem={ref}
                         session={session}
                         className="sl-session-context-ref"
+                        status={githubStatusForRef(
+                          githubStatuses,
+                          githubStatusRefForDerivedRef(ref, session),
+                        )}
                         showRepo
                       />
                     ))}

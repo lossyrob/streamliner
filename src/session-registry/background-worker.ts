@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { SessionRegistryListItem } from "../session-registry-contract";
 import {
   type DiscoveredCopilotSession,
-  discoverCopilotSessions,
+  discoverCopilotSessionsBatch,
   getDefaultCopilotSessionStateRoot,
   syncDiscoveredCopilotSessions,
 } from "./copilot-session-discovery";
@@ -44,6 +44,9 @@ import type { ApiLogger } from "../server/logger";
 export const SESSION_REGISTRY_WORKER_POLL_INTERVAL_MS = 15_000;
 export const SESSION_REGISTRY_WORKER_MAX_CONCURRENCY = 2;
 export const SESSION_REGISTRY_WORKER_INITIAL_DELAY_MS = 10_000;
+// Bound synchronous filesystem work so old Copilot sessions cannot starve HTTP.
+export const SESSION_REGISTRY_WORKER_MAX_INDEXED_SESSIONS_PER_CYCLE = 50;
+export const SESSION_REGISTRY_WORKER_MAX_DISCOVERY_DIRECTORIES_PER_CYCLE = 100;
 export const SESSION_REGISTRY_SUMMARY_REFRESH_USER_TURNS = 5;
 export const SESSION_REGISTRY_SUMMARY_FORMAT_VERSION = "description-v2";
 
@@ -78,6 +81,8 @@ export interface SessionRegistryBackgroundWorkerOptions {
   pollIntervalMs?: number;
   initialDelayMs?: number;
   maxConcurrentSummaries?: number;
+  maxIndexedSessionsPerCycle?: number;
+  maxDiscoveryDirectoriesPerCycle?: number;
   summaryModel?: string;
   summaryTimeoutMs?: number;
   signalSpoolRoot?: string;
@@ -147,12 +152,20 @@ function shouldProcessSessionLog(
   );
 }
 
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => {
+    setImmediate(resolve);
+  });
+}
+
 export class SessionRegistryBackgroundWorker {
   private readonly store: SessionRegistryFileStore;
   private readonly sessionRoot: string;
   private readonly pollIntervalMs: number;
   private readonly initialDelayMs: number;
   private readonly maxConcurrentSummaries: number;
+  private readonly maxIndexedSessionsPerCycle: number;
+  private readonly maxDiscoveryDirectoriesPerCycle: number;
   private readonly summaryModel: string;
   private readonly summaryTimeoutMs: number;
   private readonly signalSpoolRoot: string | undefined;
@@ -167,6 +180,8 @@ export class SessionRegistryBackgroundWorker {
   private initialTimer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
   private hasReconciledOnStartup = false;
+  private indexedSessionCursor = 0;
+  private discoveryStartIndex = 0;
 
   constructor(
     store: SessionRegistryFileStore,
@@ -179,6 +194,12 @@ export class SessionRegistryBackgroundWorker {
       options.initialDelayMs ?? SESSION_REGISTRY_WORKER_INITIAL_DELAY_MS;
     this.maxConcurrentSummaries =
       options.maxConcurrentSummaries ?? SESSION_REGISTRY_WORKER_MAX_CONCURRENCY;
+    this.maxIndexedSessionsPerCycle =
+      options.maxIndexedSessionsPerCycle ??
+      SESSION_REGISTRY_WORKER_MAX_INDEXED_SESSIONS_PER_CYCLE;
+    this.maxDiscoveryDirectoriesPerCycle =
+      options.maxDiscoveryDirectoriesPerCycle ??
+      SESSION_REGISTRY_WORKER_MAX_DISCOVERY_DIRECTORIES_PER_CYCLE;
     this.summaryModel = options.summaryModel ?? DEFAULT_SUMMARY_MODEL;
     this.summaryTimeoutMs = options.summaryTimeoutMs ?? 60_000;
     this.signalSpoolRoot = options.signalSpoolRoot;
@@ -283,17 +304,24 @@ export class SessionRegistryBackgroundWorker {
       } catch (error) {
         this.logger.warn("[session-worker] trusted signal drain failed", error);
       }
+      await yieldToEventLoop();
       // Capture one discovery snapshot for both the registry sync and the
       // launch-claim binding pass to avoid double-scanning and to
       // guarantee within-cycle consistency.
       let discoveredSessions: DiscoveredCopilotSession[] = [];
       try {
-        discoveredSessions = discoverCopilotSessions(this.sessionRoot);
+        const discovery = discoverCopilotSessionsBatch(this.sessionRoot, {
+          startIndex: this.discoveryStartIndex,
+          maxDirectories: this.maxDiscoveryDirectoriesPerCycle,
+        });
+        discoveredSessions = discovery.sessions;
+        this.discoveryStartIndex = discovery.nextStartIndex;
       } catch (error) {
         if (!isLockedError(error)) {
           this.logger.warn("[session-worker] Copilot session discovery scan failed", error);
         }
       }
+      await yieldToEventLoop();
       try {
         syncDiscoveredCopilotSessions(this.store, this.sessionRoot, discoveredSessions);
       } catch (error) {
@@ -301,6 +329,7 @@ export class SessionRegistryBackgroundWorker {
           this.logger.warn("[session-worker] Copilot session discovery sync failed", error);
         }
       }
+      await yieldToEventLoop();
       if (this.claimStore && this.claimLogger) {
         try {
           await runLaunchClaimBindingPass({
@@ -329,10 +358,15 @@ export class SessionRegistryBackgroundWorker {
           }
         }
       }
-      this.indexSessionActivities();
-      this.indexSessionContexts();
-      this.indexSessionPawWorkflows();
-      const candidates = this.collectSummaryCandidates().slice(0, this.maxConcurrentSummaries);
+      const allSessions = this.store.listSessions({ includeArchived: true });
+      const indexedSessions = this.selectIndexedSessionBatch(allSessions);
+      await this.indexSessionActivities(indexedSessions);
+      await this.indexSessionContexts(indexedSessions);
+      await this.indexSessionPawWorkflows(indexedSessions);
+      const candidates = this.collectSummaryCandidates(indexedSessions).slice(
+        0,
+        this.maxConcurrentSummaries,
+      );
       await Promise.all(candidates.map((candidate) => this.summarizeCandidate(candidate)));
     } catch (error) {
       this.logger.error("[session-worker] cycle failed", error);
@@ -393,8 +427,9 @@ export class SessionRegistryBackgroundWorker {
     }
   }
 
-  private collectSummaryCandidates(): SummaryCandidate[] {
-    const sessions = this.store.listSessions({ includeArchived: true });
+  private collectSummaryCandidates(
+    sessions: SessionRegistryListItem[] = this.store.listSessions({ includeArchived: true }),
+  ): SummaryCandidate[] {
     const candidates: SummaryCandidate[] = [];
     for (const session of sessions) {
       if (!shouldProcessSessionLog(session)) {
@@ -428,8 +463,31 @@ export class SessionRegistryBackgroundWorker {
     return candidates;
   }
 
-  private indexSessionContexts(): void {
-    const sessions = this.store.listSessions({ includeArchived: true });
+  private selectIndexedSessionBatch(
+    sessions: SessionRegistryListItem[],
+  ): SessionRegistryListItem[] {
+    if (this.maxIndexedSessionsPerCycle <= 0) {
+      return [];
+    }
+
+    const candidates = sessions.filter((session) => session.lifecycleStatus !== "archived");
+    if (candidates.length <= this.maxIndexedSessionsPerCycle) {
+      this.indexedSessionCursor = 0;
+      return candidates;
+    }
+
+    const selected: SessionRegistryListItem[] = [];
+    const start = this.indexedSessionCursor % candidates.length;
+    for (let index = 0; index < this.maxIndexedSessionsPerCycle; index += 1) {
+      selected.push(candidates[(start + index) % candidates.length]);
+    }
+    this.indexedSessionCursor =
+      (start + this.maxIndexedSessionsPerCycle) % candidates.length;
+    return selected;
+  }
+
+  private async indexSessionContexts(sessions: SessionRegistryListItem[]): Promise<void> {
+    let processed = 0;
     for (const session of sessions) {
       if (!shouldProcessSessionLog(session)) {
         continue;
@@ -448,11 +506,15 @@ export class SessionRegistryBackgroundWorker {
           error,
         );
       }
+      processed += 1;
+      if (processed % 5 === 0) {
+        await yieldToEventLoop();
+      }
     }
   }
 
-  private indexSessionActivities(): void {
-    const sessions = this.store.listSessions({ includeArchived: true });
+  private async indexSessionActivities(sessions: SessionRegistryListItem[]): Promise<void> {
+    let processed = 0;
     for (const session of sessions) {
       if (!shouldProcessSessionLog(session)) {
         continue;
@@ -471,11 +533,15 @@ export class SessionRegistryBackgroundWorker {
           error,
         );
       }
+      processed += 1;
+      if (processed % 5 === 0) {
+        await yieldToEventLoop();
+      }
     }
   }
 
-  private indexSessionPawWorkflows(): void {
-    const sessions = this.store.listSessions({ includeArchived: true });
+  private async indexSessionPawWorkflows(sessions: SessionRegistryListItem[]): Promise<void> {
+    let processed = 0;
     for (const session of sessions) {
       if (session.lifecycleStatus === "archived") {
         continue;
@@ -500,6 +566,10 @@ export class SessionRegistryBackgroundWorker {
           `[session-worker] PAW artifact indexing failed for ${session.id}`,
           error,
         );
+      }
+      processed += 1;
+      if (processed % 5 === 0) {
+        await yieldToEventLoop();
       }
     }
   }

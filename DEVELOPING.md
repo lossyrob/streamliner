@@ -48,10 +48,43 @@ Use `npm run api` for a non-watch API process. The API serves `GET /api/health`,
 | `STREAMLINER_RECENTS_PATH` | `~/.streamliner/recent-graphs.json` | Override the legacy recents path |
 | `STREAMLINER_PREVIEW_READONLY` | unset | Set to `1` for read-only preview API mode |
 | `STREAMLINER_LAUNCH_CLAIMS_ROOT` | `~/.streamliner/state/launch-claims` | Override the launch-claim store root used by `createLaunchClaim` and the binding pass (see `docs/design/session-system.md` Launch Claim Lifecycle) |
+| `GITHUB_TOKEN` / `GH_TOKEN` | unset | Optional token for live GitHub issue/PR status. If unset, the API resolves a repo-specific `gh auth token` profile and then falls back to anonymous GitHub REST. |
+| `STREAMLINER_GITHUB_AUTH_CONFIG` | `~/.streamliner/state/github-auth.json` | Optional local config file that maps GitHub repositories to `gh` auth profiles for live issue/PR status. |
 
 When no `STREAMLINER_GRAPH` is set and no recent graph is available, `GET /api/graph.json` returns a 404. The dashboard handles that by falling back to Vite's static `public/example-project.json` fixture. Use the "Load workstream…" button to select a different workstream JSON file.
 
 The API process writes structured JSON-lines logs to `~/.streamliner/state/logs/api-YYYY-MM-DD.log`. See [`docs/operations/logging.md`](docs/operations/logging.md) for the format, scope reference, and grep/jq recipes.
+
+## GitHub status authentication
+
+Live GitHub issue/PR status does not require storing tokens in Streamliner. The API resolves authentication in this order:
+
+1. `GITHUB_TOKEN` / `GH_TOKEN` for CI or headless environments.
+2. A local repo-specific `gh` profile from `~/.streamliner/state/github-auth.json` or `STREAMLINER_GITHUB_AUTH_CONFIG`.
+3. The active `gh` account for `github.com`.
+4. Anonymous GitHub REST, which may be rate-limited.
+
+Use the local auth config when different repositories need different GitHub accounts:
+
+```json
+{
+  "profiles": {
+    "personal": {
+      "ghConfigDir": "C:\\Users\\robemanuele\\AppData\\Roaming\\gh-pub",
+      "user": "lossyrob"
+    },
+    "work": {
+      "user": "work-user"
+    }
+  },
+  "repositories": {
+    "github.com/lossyrob/streamliner": "personal",
+    "github.com/work-org/*": "work"
+  }
+}
+```
+
+`ghConfigDir` sets `GH_CONFIG_DIR` only for that status lookup. `user` is passed to `gh auth token --hostname github.com --user <user>`, so Streamliner does not need to run `gh auth switch` or persist credentials.
 
 ## Session launch defaults
 

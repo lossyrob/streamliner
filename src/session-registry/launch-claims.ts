@@ -442,6 +442,9 @@ export function reconcileOrphanReservedRows(
         rowsDeleted += 1;
       } else if (deleteResult.reason === "predicate-false") {
         // A session attached during the gap; clear graphBinding.
+        if (fullRecord.graphBinding === null) {
+          continue;
+        }
         const cleared = registryStore.bindClaimToRow(
           fullRecord.id,
           {
@@ -462,6 +465,9 @@ export function reconcileOrphanReservedRows(
       }
     } else {
       // Preserve observed terminal sessions and managed runtime rows, but sever the stale claim binding.
+      if (fullRecord.graphBinding === null) {
+        continue;
+      }
       const cleared = registryStore.bindClaimToRow(
         fullRecord.id,
         {

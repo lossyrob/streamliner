@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 import type { WorkstreamNode } from "../workstream-schema";
 import type { WorkstreamDerivedNode } from "../workstream-view-model";
 import type { WorkstreamGraphLayoutResult } from "../workstream-graph";
@@ -10,6 +12,13 @@ import type {
   WorkstreamRuntimeNodeOverlay,
   WorkstreamRuntimeOverlayIssue,
 } from "../workstream-runtime-overlay";
+import {
+  githubIssueSnapshotLabel,
+  githubIssueSnapshotTone,
+  githubPullRequestSnapshotLabel,
+  githubPullRequestSnapshotTone,
+  githubStatusPillClass,
+} from "../github-status-view";
 import {
   formatManagedRuntimeLabel,
   managedLifecycleStatusClass,
@@ -31,7 +40,21 @@ interface NodeInspectorProps {
   launchRecordError?: string | null;
   runtimeOverlay?: WorkstreamRuntimeNodeOverlay | null;
   onLaunch?: () => void;
+  /**
+   * Optional handler for releasing a stuck active launch operation. Surfaced
+   * when `launchOperation.status` is one of the active states (preparing,
+   * launching, managed_starting). Used to recover from cases where the
+   * server restarted mid-flight and the in-memory run state is gone but the
+   * persisted operation still says "in progress."
+   */
+  onReleaseStuckOperation?: () => Promise<void>;
 }
+
+const ACTIVE_LAUNCH_OPERATION_STATUSES = new Set([
+  "preparing",
+  "launching",
+  "managed_starting",
+]);
 
 function formatStatus(status: string): string {
   return status.replace(/[_-]+/g, " ");
@@ -50,6 +73,8 @@ function statusPillClass(status: string): string {
       return "status-accent";
     case "blocked":
       return "status-red";
+    case "retired":
+      return "status-retired";
     default:
       return "status-amber";
   }
@@ -207,14 +232,19 @@ function RuntimeDetails({ overlay }: { overlay: WorkstreamRuntimeNodeOverlay | n
   ]
     .filter(Boolean)
     .join(" / ");
-  const trackerSummary =
-    overlay.tracker.status === "snapshot"
-      ? trackerSnapshotSummary || "Tracker snapshot loaded."
-      : overlay.tracker.status === "linked"
-        ? "GitHub tracker linked; live issue/PR snapshot not loaded."
-      : overlay.tracker.status === "degraded"
-        ? "Tracker reference is present but no snapshot is loaded."
-        : "No tracker reference.";
+  let trackerSummary = "No tracker reference.";
+  if (overlay.tracker.status === "snapshot") {
+    trackerSummary = trackerSnapshotSummary || "Tracker snapshot loaded.";
+  } else if (
+    overlay.tracker.status === "degraded" &&
+    overlay.tracker.githubIssue?.error
+  ) {
+    trackerSummary = `GitHub tracker snapshot degraded: ${overlay.tracker.githubIssue.error}`;
+  } else if (overlay.tracker.status === "linked") {
+    trackerSummary = "GitHub tracker linked; live issue/PR snapshot not loaded.";
+  } else if (overlay.tracker.status === "degraded") {
+    trackerSummary = "Tracker reference is present but no snapshot is loaded.";
+  }
 
   return (
     <div className="sl-sidebar-section">
@@ -352,7 +382,11 @@ export function NodeInspector({
   launchRecordError,
   runtimeOverlay = null,
   onLaunch,
+  onReleaseStuckOperation,
 }: NodeInspectorProps) {
+  const [releasing, setReleasing] = useState(false);
+  const [releaseError, setReleaseError] = useState<string | null>(null);
+
   if (!entry) {
     return (
       <div className="sl-sidebar-section">
@@ -378,6 +412,33 @@ export function NodeInspector({
   const tracker = trackerLabel(node.tracker);
   const trackerHref = trackerUrl(node.tracker);
   const trackerLabelText = node.tracker?.type === "github" ? "Issue" : "Tracker";
+  const trackerStatusChips = [
+    entry.githubIssue
+      ? {
+          key: "issue",
+          label: githubIssueSnapshotLabel(entry.githubIssue),
+          tone: githubIssueSnapshotTone(entry.githubIssue),
+          title: entry.githubIssue.error ?? entry.githubIssue.title,
+        }
+      : null,
+    entry.activePullRequest
+      ? {
+          key: "pr",
+          label: githubPullRequestSnapshotLabel(entry.activePullRequest),
+          tone: githubPullRequestSnapshotTone(entry.activePullRequest),
+          title: entry.activePullRequest.title,
+        }
+      : null,
+  ].filter(
+    (
+      chip,
+    ): chip is {
+      key: string;
+      label: string;
+      tone: ReturnType<typeof githubIssueSnapshotTone>;
+      title: string;
+    } => chip !== null,
+  );
   const latestClaim = launchRecord?.latestClaim ?? launchOperation?.latestClaim ?? null;
   const latestClaimDisplay = latestClaim ? humanizeLaunchClaim(latestClaim) : null;
   const launchButtonLabel = latestClaim?.blocksLaunch || launchOperation || launchRecord
@@ -422,6 +483,19 @@ export function NodeInspector({
                 tracker
               )}
             </span>
+            {trackerStatusChips.length > 0 && (
+              <span className="sl-inspector-github-status">
+                {trackerStatusChips.map((chip) => (
+                  <span
+                    key={chip.key}
+                    className={`sl-pill ${githubStatusPillClass(chip.tone)}`}
+                    title={chip.title}
+                  >
+                    {chip.label}
+                  </span>
+                ))}
+              </span>
+            )}
           </div>
         )}
         {repoLabels.length > 0 && (
@@ -535,6 +609,45 @@ export function NodeInspector({
                     </div>
                   )}
                 </dl>
+                {launchOperation
+                  && ACTIVE_LAUNCH_OPERATION_STATUSES.has(launchOperation.status)
+                  && onReleaseStuckOperation && (
+                  <div className="sl-node-launch-release">
+                    <button
+                      type="button"
+                      className="sl-action-btn danger"
+                      disabled={releasing}
+                      onClick={() => {
+                        if (releasing) return;
+                        setReleasing(true);
+                        setReleaseError(null);
+                        void (async () => {
+                          try {
+                            await onReleaseStuckOperation();
+                          } catch (error: unknown) {
+                            setReleaseError(
+                              error instanceof Error ? error.message : String(error),
+                            );
+                          } finally {
+                            setReleasing(false);
+                          }
+                        })();
+                      }}
+                      title="Mark this in-flight operation as failed so the node can be re-launched. Use when the API restarted while a PAW init was running and the in-memory run state is gone."
+                    >
+                      {releasing ? "Releasing..." : "Release stuck operation"}
+                    </button>
+                    <p className="sl-sidebar-note">
+                      Use this if PAW init looks stuck — for example, after the
+                      Streamliner API restarted mid-launch. It marks the operation
+                      as failed without affecting any session that may have actually
+                      started.
+                    </p>
+                    {releaseError && (
+                      <p className="sl-action-error">{releaseError}</p>
+                    )}
+                  </div>
+                )}
                 {launchRecord && (
                   <dl className="sl-node-launch-paths">
                     <LaunchPathRow

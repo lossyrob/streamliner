@@ -8,6 +8,7 @@
 - Wave: 2 / `managed-runtime-usable`
 - Tracker: #85
 - Status: planned
+- Depends on: #94
 
 ## Problem Statement
 
@@ -80,13 +81,15 @@ Out of scope:
 
 ## Architecture Fit
 
-The console should consume existing event sources instead of creating a parallel
-runtime store:
+The console should consume bounded API-safe projections instead of creating a
+parallel raw runtime store:
 
 - PAW launch preparation already emits progress events through the launch dialog
   stream.
-- Managed SDK sessions already persist bounded sanitized runtime progress events
-  on registry runtime metadata and expose them through graph/session projections.
+- Managed SDK sessions should expose bounded sanitized runtime progress through
+  the coalesced projections from `managed-runtime-api-responsiveness` (#94), and
+  through supervisor-isolated projections if `managed-runtime-supervisor-isolation`
+  (#95) determines that a child-process boundary is required.
 - The UI should factor shared formatting/presentation primitives so My Sessions,
   graph/node inspector, and launch surfaces do not each invent different event
   vocabularies.

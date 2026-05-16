@@ -8,6 +8,7 @@ import { SessionRegistryFileStore } from "./file-store";
 import {
   __resetCopilotDiscoveryCacheForTests,
   discoverCopilotSessions,
+  discoverCopilotSessionsBatch,
   rememberIgnoredObservedCopilotSessionId,
   syncDiscoveredCopilotSessions,
 } from "./copilot-session-discovery";
@@ -154,6 +155,47 @@ describe("copilot session discovery", () => {
         lifecycleStatus: "ended",
       }),
     );
+  });
+
+  it("discovers sessions in bounded batches", () => {
+    const sessionRoot = createRootDir("streamliner-copilot-session-state-");
+    createdRoots.push(sessionRoot);
+
+    for (const sessionId of ["session-a", "session-b", "session-c"]) {
+      writeWorkspaceFile(
+        sessionRoot,
+        sessionId,
+        [
+          `id: ${sessionId}`,
+          `cwd: C:\\repo\\${sessionId}`,
+          "repository: lossyrob/streamliner",
+          "branch: main",
+          `summary: ${sessionId}`,
+          "updated_at: 2026-04-23T18:28:32.345Z",
+        ].join("\n"),
+      );
+    }
+
+    const first = discoverCopilotSessionsBatch(sessionRoot, {
+      startIndex: 0,
+      maxDirectories: 2,
+    });
+    expect(first.totalDirectories).toBe(3);
+    expect(first.nextStartIndex).toBe(2);
+    expect(first.sessions.map((session) => session.sessionId).sort()).toEqual([
+      "session-a",
+      "session-b",
+    ]);
+
+    const second = discoverCopilotSessionsBatch(sessionRoot, {
+      startIndex: first.nextStartIndex,
+      maxDirectories: 2,
+    });
+    expect(second.nextStartIndex).toBe(1);
+    expect(second.sessions.map((session) => session.sessionId).sort()).toEqual([
+      "session-a",
+      "session-c",
+    ]);
   });
 
   it("adopts Copilot workspace titles for trusted sessions until they are renamed", () => {
