@@ -6,6 +6,11 @@ import {
   type PawLaunchProgressEvent,
   type PawLaunchProgressSink,
 } from "./launch-preparation";
+import type {
+  NodeCompanionTerminalLaunchResponse,
+  NodeLaunchOperation,
+  NodeTerminalLaunchResponse,
+} from "../node-launch-record-contract";
 
 const RUN_EVENT_BUFFER_SIZE = 200;
 
@@ -13,6 +18,10 @@ export type LaunchPreparationRunStatus = "queued" | "running" | "succeeded" | "f
 
 export type LaunchPreparationRunEventName =
   | "progress"
+  | "terminal_launched"
+  | "terminal_failed"
+  | "companion_launched"
+  | "companion_failed"
   | "completed"
   | "failed";
 
@@ -21,6 +30,35 @@ export interface LaunchPreparationRunError {
   error: string;
   step?: string;
   input?: string;
+}
+
+export interface LaunchPreparationRunPostPreparationError {
+  code: string;
+  error: string;
+  details?: unknown;
+  launchClaim?: unknown;
+}
+
+export type LaunchPreparationTerminalOutcome =
+  | { status: "launched"; result: NodeTerminalLaunchResponse }
+  | { status: "failed"; error: LaunchPreparationRunPostPreparationError }
+  | { status: "skipped" };
+
+export type LaunchPreparationCompanionOutcome =
+  | { status: "launched"; result: NodeCompanionTerminalLaunchResponse }
+  | { status: "failed"; error: LaunchPreparationRunPostPreparationError }
+  | { status: "skipped" };
+
+export interface LaunchPreparationPostPreparationOutcome {
+  terminal?: LaunchPreparationTerminalOutcome;
+  companion?: LaunchPreparationCompanionOutcome;
+  operation?: NodeLaunchOperation | null;
+}
+
+export interface LaunchPreparationRunCompletion {
+  result: PawLaunchHandoff;
+  postPreparation?: LaunchPreparationPostPreparationOutcome;
+  operation?: NodeLaunchOperation | null;
 }
 
 export interface LaunchPreparationRunEvent {
@@ -33,6 +71,8 @@ export interface LaunchPreparationRunSnapshot {
   runId: string;
   status: LaunchPreparationRunStatus;
   result?: PawLaunchHandoff;
+  postPreparation?: LaunchPreparationPostPreparationOutcome;
+  operation?: NodeLaunchOperation | null;
   error?: LaunchPreparationRunError;
   events: LaunchPreparationRunEvent[];
 }
@@ -44,12 +84,15 @@ interface LaunchPreparationRunState {
   events: LaunchPreparationRunEvent[];
   listeners: Set<(event: LaunchPreparationRunEvent) => void>;
   result?: PawLaunchHandoff;
+  postPreparation?: LaunchPreparationPostPreparationOutcome;
+  operation?: NodeLaunchOperation | null;
   error?: LaunchPreparationRunError;
 }
 
 export type LaunchPreparationRunExecutor = (
   progress: PawLaunchProgressSink,
-) => Promise<PawLaunchHandoff>;
+  publish: (name: Exclude<LaunchPreparationRunEventName, "progress" | "completed" | "failed">, payload: unknown) => void,
+) => Promise<PawLaunchHandoff | LaunchPreparationRunCompletion>;
 
 function toRunError(error: unknown): LaunchPreparationRunError {
   if (error instanceof LaunchPreparationError) {
@@ -120,14 +163,23 @@ export class LaunchPreparationRunManager {
   ): Promise<void> {
     run.status = "running";
     try {
-      const result = await executor((event) => {
-        this.publish(run, "progress", event);
-      });
+      const completion = normalizeCompletion(await executor(
+        (event) => {
+          this.publish(run, "progress", event);
+        },
+        (name, payload) => {
+          this.publish(run, name, payload);
+        },
+      ));
       run.status = "succeeded";
-      run.result = result;
+      run.result = completion.result;
+      run.postPreparation = completion.postPreparation;
+      run.operation = completion.operation;
       this.publish(run, "completed", {
         status: "succeeded",
-        result,
+        result: completion.result,
+        postPreparation: completion.postPreparation,
+        operation: completion.operation,
         timestamp: new Date().toISOString(),
       });
     } catch (error: unknown) {
@@ -166,8 +218,24 @@ export class LaunchPreparationRunManager {
       runId: run.runId,
       status: run.status,
       result: run.result,
+      postPreparation: run.postPreparation,
+      operation: run.operation,
       error: run.error,
       events: [...run.events],
     };
   }
+}
+
+function normalizeCompletion(
+  value: PawLaunchHandoff | LaunchPreparationRunCompletion,
+): LaunchPreparationRunCompletion {
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    "result" in value &&
+    typeof (value as { result?: unknown }).result === "object"
+  ) {
+    return value as LaunchPreparationRunCompletion;
+  }
+  return { result: value as PawLaunchHandoff };
 }

@@ -5,16 +5,19 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
-import type {
-  NodeLaunchHandoff,
-  NodeLaunchOperation,
-  NodeLaunchOperationError,
-  NodeLaunchOperationProgressEvent,
-  NodeLaunchOperationStatus,
-  NodeLaunchRecord,
-  NodeLaunchRecordPathStatus,
-  NodeManagedSdkLaunchResponse,
-  NodeTerminalLaunchResponse,
+import {
+  isBlockingNodeLaunchOperation,
+  type NodeLaunchHandoff,
+  type NodeCompanionTerminalLaunchResponse,
+  type NodeLaunchOperation,
+  type NodeLaunchOperationError,
+  type NodeLaunchOperationProgressEvent,
+  type NodeLaunchOperationStatus,
+  type NodePostPreparationIntent,
+  type NodeLaunchRecord,
+  type NodeLaunchRecordPathStatus,
+  type NodeManagedSdkLaunchResponse,
+  type NodeTerminalLaunchResponse,
 } from "../node-launch-record-contract";
 import type { PawLaunchHandoff, PawLaunchProgressEvent } from "./launch-preparation";
 
@@ -49,6 +52,14 @@ interface OperationErrorInput {
   step?: string;
   input?: string;
 }
+
+type OperationUpdateFields = Pick<
+  StoredNodeLaunchOperation,
+  "completedAt" | "error" | "terminalLaunch" | "managedLaunch"
+> & Partial<Pick<
+  StoredNodeLaunchOperation,
+  "postPreparation" | "companionLaunch" | "companionError"
+>>;
 
 type ReplaceFile = (source: string, destination: string) => Promise<void>;
 
@@ -205,6 +216,36 @@ function normalizeOperationError(value: unknown): NodeLaunchOperationError | nul
   return operationError;
 }
 
+function normalizePostPreparationIntent(value: unknown): NodePostPreparationIntent | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const intent: NodePostPreparationIntent = {};
+  if (isRecord(value.launchTerminal)) {
+    const launchTerminal: NodePostPreparationIntent["launchTerminal"] = {};
+    const kickoffPrompt = nullableStringField(value.launchTerminal, "kickoffPrompt");
+    const terminalTitle = nullableStringField(value.launchTerminal, "terminalTitle");
+    const terminalColor = nullableStringField(value.launchTerminal, "terminalColor");
+    if (kickoffPrompt !== null) {
+      launchTerminal.kickoffPrompt = kickoffPrompt;
+    }
+    if (terminalTitle !== null) {
+      launchTerminal.terminalTitle = terminalTitle;
+    }
+    if (terminalColor !== null) {
+      launchTerminal.terminalColor = terminalColor;
+    }
+    intent.launchTerminal = launchTerminal;
+  }
+  if (isRecord(value.launchCompanion)) {
+    const kickoffPrompt = stringField(value.launchCompanion, "kickoffPrompt");
+    if (kickoffPrompt) {
+      intent.launchCompanion = { kickoffPrompt };
+    }
+  }
+  return intent.launchTerminal || intent.launchCompanion ? intent : null;
+}
+
 function normalizeStoredOperation(value: unknown): StoredNodeLaunchOperation | null {
   if (!isRecord(value)) {
     return null;
@@ -227,8 +268,11 @@ function normalizeStoredOperation(value: unknown): StoredNodeLaunchOperation | n
     updatedAt,
     completedAt: nullableStringField(value, "completedAt"),
     handoff: isRecord(value.handoff) ? value.handoff as unknown as NodeLaunchHandoff : null,
+    postPreparation: normalizePostPreparationIntent(value.postPreparation),
     terminalLaunch: isRecord(value.terminalLaunch) ? value.terminalLaunch as unknown as NodeTerminalLaunchResponse : null,
     managedLaunch: isRecord(value.managedLaunch) ? value.managedLaunch as unknown as NodeManagedSdkLaunchResponse : null,
+    companionLaunch: isRecord(value.companionLaunch) ? value.companionLaunch as unknown as NodeCompanionTerminalLaunchResponse : null,
+    companionError: normalizeOperationError(value.companionError),
     error: normalizeOperationError(value.error),
     progressEvents: Array.isArray(value.progressEvents)
       ? value.progressEvents
@@ -378,6 +422,8 @@ export class NodeLaunchRecordStore {
         operation.updatedAt = timestamp;
         operation.terminalLaunch = null;
         operation.managedLaunch = null;
+        operation.companionLaunch = null;
+        operation.companionError = null;
         operation.error = operationError(
           {
             code: "operation_orphaned",
@@ -417,6 +463,8 @@ export class NodeLaunchRecordStore {
       operation.updatedAt = timestamp;
       operation.terminalLaunch = null;
       operation.managedLaunch = null;
+      operation.companionLaunch = null;
+      operation.companionError = null;
       operation.error = operationError(
         {
           code: "operation_released_by_user",
@@ -443,6 +491,7 @@ export class NodeLaunchRecordStore {
     graphPath: string;
     nodeId: string;
     runId: string;
+    postPreparation?: NodePostPreparationIntent | null;
     now?: Date;
   }): Promise<NodeLaunchOperation> {
     return await this.updateDocument((document) => {
@@ -458,8 +507,11 @@ export class NodeLaunchRecordStore {
         updatedAt: timestamp,
         completedAt: null,
         handoff: null,
+        postPreparation: input.postPreparation ?? null,
         terminalLaunch: null,
         managedLaunch: null,
+        companionLaunch: null,
+        companionError: null,
         error: null,
         progressEvents: [],
       };
@@ -504,6 +556,8 @@ export class NodeLaunchRecordStore {
         error: null,
         terminalLaunch: null,
         managedLaunch: null,
+        companionLaunch: null,
+        companionError: null,
       });
     });
   }
@@ -527,8 +581,11 @@ export class NodeLaunchRecordStore {
         updatedAt: timestamp,
         completedAt: timestamp,
         handoff: null,
+        postPreparation: existing?.postPreparation ?? null,
         terminalLaunch: null,
         managedLaunch: null,
+        companionLaunch: null,
+        companionError: null,
         error: operationError(input.error, timestamp),
         progressEvents: existing?.progressEvents ?? [],
       };
@@ -549,6 +606,46 @@ export class NodeLaunchRecordStore {
     });
   }
 
+  async markPostPreparationTerminalLaunching(
+    handoff: PawLaunchHandoff,
+    now = new Date(),
+  ): Promise<NodeLaunchOperation> {
+    return await this.updateDocument((document) => {
+      const graphPath = handoff.launchMetadata.graphPath;
+      const nodeId = handoff.launchMetadata.nodeId;
+      const existing = findStoredOperation(document, graphPath, nodeId);
+      if (!existing?.postPreparation?.launchTerminal || existing.status !== "prepared") {
+        throw new DuplicateActiveNodeLaunchOperationError(existing ?? {
+          id: recordId(graphPath, nodeId),
+          graphPath,
+          nodeId,
+          status: "launching",
+          preparationRunId: null,
+          startedAt: now.toISOString(),
+          updatedAt: now.toISOString(),
+          completedAt: null,
+          handoff: null,
+          postPreparation: null,
+          terminalLaunch: null,
+          managedLaunch: null,
+          companionLaunch: null,
+          companionError: null,
+          error: null,
+          progressEvents: [],
+        });
+      }
+      const timestamp = now.toISOString();
+      return operationFromHandoff(document, handoff, "launching", timestamp, {
+        completedAt: null,
+        error: null,
+        terminalLaunch: null,
+        managedLaunch: null,
+        companionLaunch: null,
+        companionError: null,
+      });
+    });
+  }
+
   async markTerminalLaunched(
     handoff: PawLaunchHandoff,
     terminalLaunch: NodeTerminalLaunchResponse,
@@ -559,6 +656,52 @@ export class NodeLaunchRecordStore {
       error: null,
       terminalLaunch,
       managedLaunch: null,
+    });
+  }
+
+  async markCompanionLaunched(input: {
+    handoff: PawLaunchHandoff;
+    companionLaunch: NodeCompanionTerminalLaunchResponse;
+    now?: Date;
+  }): Promise<NodeLaunchOperation> {
+    return await this.updateDocument((document) => {
+      const graphPath = input.handoff.launchMetadata.graphPath;
+      const nodeId = input.handoff.launchMetadata.nodeId;
+      const operation = findStoredOperation(document, graphPath, nodeId);
+      if (!operation) {
+        throw Object.assign(new Error(`Node ${nodeId} does not have a launch operation.`), {
+          statusCode: 404,
+          code: "node_launch_operation_not_found",
+        });
+      }
+      const timestamp = (input.now ?? new Date()).toISOString();
+      operation.updatedAt = timestamp;
+      operation.companionLaunch = input.companionLaunch;
+      operation.companionError = null;
+      return { ...operation, progressEvents: [...operation.progressEvents] };
+    });
+  }
+
+  async markCompanionFailed(input: {
+    handoff: PawLaunchHandoff;
+    error: OperationErrorInput;
+    now?: Date;
+  }): Promise<NodeLaunchOperation> {
+    return await this.updateDocument((document) => {
+      const graphPath = input.handoff.launchMetadata.graphPath;
+      const nodeId = input.handoff.launchMetadata.nodeId;
+      const operation = findStoredOperation(document, graphPath, nodeId);
+      if (!operation) {
+        throw Object.assign(new Error(`Node ${nodeId} does not have a launch operation.`), {
+          statusCode: 404,
+          code: "node_launch_operation_not_found",
+        });
+      }
+      const timestamp = (input.now ?? new Date()).toISOString();
+      operation.updatedAt = timestamp;
+      operation.companionLaunch = null;
+      operation.companionError = operationError(input.error, timestamp);
+      return { ...operation, progressEvents: [...operation.progressEvents] };
     });
   }
 
@@ -609,6 +752,8 @@ export class NodeLaunchRecordStore {
         error: operationError(input.error, timestamp),
         terminalLaunch: null,
         managedLaunch: null,
+        companionLaunch: null,
+        companionError: null,
       });
     });
   }
@@ -631,6 +776,8 @@ export class NodeLaunchRecordStore {
         error: operationError(input.error, timestamp),
         terminalLaunch: null,
         managedLaunch: null,
+        companionLaunch: null,
+        companionError: null,
       });
     });
   }
@@ -648,7 +795,7 @@ export class NodeLaunchRecordStore {
     handoff: PawLaunchHandoff,
     status: NodeLaunchOperationStatus,
     now: Date,
-    updates: Pick<StoredNodeLaunchOperation, "completedAt" | "error" | "terminalLaunch" | "managedLaunch">,
+    updates: OperationUpdateFields,
   ): Promise<NodeLaunchOperation> {
     return await this.updateDocument((document) => {
       const timestamp = now.toISOString();
@@ -660,13 +807,13 @@ export class NodeLaunchRecordStore {
     handoff: PawLaunchHandoff,
     status: NodeLaunchOperationStatus,
     now: Date,
-    updates: Pick<StoredNodeLaunchOperation, "completedAt" | "error" | "terminalLaunch" | "managedLaunch">,
+    updates: OperationUpdateFields,
   ): Promise<NodeLaunchOperation> {
     return await this.updateDocument((document) => {
       const graphPath = handoff.launchMetadata.graphPath;
       const nodeId = handoff.launchMetadata.nodeId;
       const existing = findStoredOperation(document, graphPath, nodeId);
-      if (existing && ACTIVE_LAUNCH_OPERATION_STATUSES.has(existing.status)) {
+      if (existing && isBlockingNodeLaunchOperation(existing)) {
         throw new DuplicateActiveNodeLaunchOperationError({
           ...existing,
           progressEvents: [...existing.progressEvents],
@@ -788,7 +935,7 @@ function operationFromHandoff(
   handoff: PawLaunchHandoff,
   status: NodeLaunchOperationStatus,
   timestamp: string,
-  updates: Pick<StoredNodeLaunchOperation, "completedAt" | "error" | "terminalLaunch" | "managedLaunch">,
+  updates: OperationUpdateFields,
 ): StoredNodeLaunchOperation {
   const graphPath = handoff.launchMetadata.graphPath;
   const nodeId = handoff.launchMetadata.nodeId;
@@ -804,8 +951,17 @@ function operationFromHandoff(
     updatedAt: timestamp,
     completedAt: updates.completedAt,
     handoff: launchHandoff,
+    postPreparation: Object.prototype.hasOwnProperty.call(updates, "postPreparation")
+      ? updates.postPreparation ?? null
+      : existing?.postPreparation ?? null,
     terminalLaunch: updates.terminalLaunch,
     managedLaunch: updates.managedLaunch,
+    companionLaunch: Object.prototype.hasOwnProperty.call(updates, "companionLaunch")
+      ? updates.companionLaunch ?? null
+      : existing?.companionLaunch ?? null,
+    companionError: Object.prototype.hasOwnProperty.call(updates, "companionError")
+      ? updates.companionError ?? null
+      : existing?.companionError ?? null,
     error: updates.error,
     progressEvents: existing?.progressEvents ?? [],
   };

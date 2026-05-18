@@ -17,7 +17,10 @@ import {
   type NodeLaunchDeps,
 } from "../node-launch";
 import type { NodeLaunchRecordStore } from "../node-launch-record-store";
-import { isActiveNodeLaunchOperationStatus } from "../../node-launch-record-contract";
+import {
+  isBlockingNodeLaunchOperation,
+  type NodeTerminalLaunchResponse,
+} from "../../node-launch-record-contract";
 import { SessionRegistryFileStore } from "../../session-registry/file-store";
 import {
   WORKSTREAM_LAUNCH_REQUIRED_TRACKERS,
@@ -314,6 +317,41 @@ function parseResumeBody(body: unknown): ParsedResumeBody {
   };
 }
 
+export async function launchTerminalNodeFromHandoff(options: {
+  registryStore: SessionRegistryFileStore;
+  claimStore: LaunchClaimStore;
+  handoff: PawLaunchHandoff;
+  nodeLaunchRecordStore?: NodeLaunchRecordStore;
+  deps?: NodeLaunchDeps;
+  source?: "manual" | "post-preparation";
+}): Promise<NodeTerminalLaunchResponse> {
+  const markLaunching = options.source === "post-preparation"
+    ? options.nodeLaunchRecordStore?.markPostPreparationTerminalLaunching.bind(options.nodeLaunchRecordStore)
+    : options.nodeLaunchRecordStore?.markTerminalLaunching.bind(options.nodeLaunchRecordStore);
+  await markLaunching?.(options.handoff);
+  try {
+    const result = await launchPreparedNode(
+      options.registryStore,
+      options.claimStore,
+      options.handoff,
+      options.deps,
+    );
+    await options.nodeLaunchRecordStore?.markTerminalLaunched(options.handoff, result);
+    return result;
+  } catch (error: unknown) {
+    if (error instanceof NodeLaunchError && error.code !== "duplicate_active_launch") {
+      await options.nodeLaunchRecordStore?.markTerminalFailed({
+        handoff: options.handoff,
+        error: {
+          code: error.code,
+          error: error.message,
+        },
+      });
+    }
+    throw error;
+  }
+}
+
 export function createNodeLaunchesRouter(options: {
   registryStore: SessionRegistryFileStore;
   claimStore: LaunchClaimStore;
@@ -340,7 +378,7 @@ export function createNodeLaunchesRouter(options: {
         handoff.launchMetadata.graphPath,
         handoff.launchMetadata.nodeId,
       );
-      if (existingOperation && isActiveNodeLaunchOperationStatus(existingOperation.status)) {
+      if (existingOperation && isBlockingNodeLaunchOperation(existingOperation)) {
         res.status(409).json({
           code: "duplicate_active_launch_operation",
           error: `Node ${handoff.launchMetadata.nodeId} already has an active launch operation.`,
@@ -367,36 +405,26 @@ export function createNodeLaunchesRouter(options: {
         });
         res.status(201).json(result);
       } else {
-        await options.nodeLaunchRecordStore?.markTerminalLaunching(handoff);
-        const result = await launchPreparedNode(
-          options.registryStore,
-          options.claimStore,
+        const result = await launchTerminalNodeFromHandoff({
+          registryStore: options.registryStore,
+          claimStore: options.claimStore,
+          nodeLaunchRecordStore: options.nodeLaunchRecordStore,
+          deps: options.deps,
           handoff,
-          options.deps,
-        );
-        await options.nodeLaunchRecordStore?.markTerminalLaunched(handoff, result);
+          source: "manual",
+        });
         res.status(201).json(result);
       }
     } catch (error: unknown) {
       if (error instanceof NodeLaunchError) {
-        if (handoff && error.code !== "duplicate_active_launch") {
-          if (handoff.runtimeKind === "managed-sdk") {
-            await options.nodeLaunchRecordStore?.markManagedFailed({
-              handoff,
-              error: {
-                code: error.code,
-                error: error.message,
-              },
-            });
-          } else {
-            await options.nodeLaunchRecordStore?.markTerminalFailed({
-              handoff,
-              error: {
-                code: error.code,
-                error: error.message,
-              },
-            });
-          }
+        if (handoff && handoff.runtimeKind === "managed-sdk" && error.code !== "duplicate_active_launch") {
+          await options.nodeLaunchRecordStore?.markManagedFailed({
+            handoff,
+            error: {
+              code: error.code,
+              error: error.message,
+            },
+          });
         }
         const body: Record<string, unknown> = {
           code: error.code,
@@ -447,7 +475,7 @@ export function createNodeLaunchesRouter(options: {
         handoff.launchMetadata.graphPath,
         handoff.launchMetadata.nodeId,
       );
-      if (existingOperation && isActiveNodeLaunchOperationStatus(existingOperation.status)) {
+      if (existingOperation && isBlockingNodeLaunchOperation(existingOperation)) {
         res.status(409).json({
           code: "duplicate_active_launch_operation",
           error: `Node ${handoff.launchMetadata.nodeId} already has an active launch operation.`,

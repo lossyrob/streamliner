@@ -10,9 +10,11 @@ import { dirname, join } from "node:path";
 import request from "supertest";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { LaunchClaimFileStore } from "../session-registry/launch-claim-store";
 import { SessionRegistryFileStore } from "../session-registry/file-store";
 import { createStreamlinerApiApp, type StreamlinerApiApp } from "./app";
 import { NodeLaunchRecordStore } from "./node-launch-record-store";
+import type { TerminalLaunchOptions } from "./terminal-launch";
 import {
   LaunchContextPreparationError,
   type LaunchContextPackage,
@@ -113,6 +115,24 @@ function fakeContextPackage(
       ...overrides.metadata,
     },
   };
+}
+
+async function waitForLaunchPreparationRun(
+  api: StreamlinerApiApp,
+  runId: string,
+  status: "succeeded" | "failed" = "succeeded",
+): Promise<request.Response> {
+  let snapshot = await request(api.app)
+    .get(`/api/launch-preparations/runs/${runId}`)
+    .expect(200);
+  for (let attempt = 0; attempt < 20 && snapshot.body.status !== status; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    snapshot = await request(api.app)
+      .get(`/api/launch-preparations/runs/${runId}`)
+      .expect(200);
+  }
+  expect(snapshot.body.status).toBe(status);
+  return snapshot;
 }
 
 function fakePreparedContext(root: string): PreparedLaunchContextPackage {
@@ -1337,6 +1357,314 @@ describe("launch preparation API route", () => {
         branch: "feature/launch-prompt-profiles",
         workflowContextPath: expect.stringContaining("WorkflowContext.md"),
       }),
+    }));
+  });
+
+  it("launches terminal and companion from a post-preparation run on the server", async () => {
+    const root = createRootDir();
+    const graphPath = normalizePath(writeLaunchPolicyGraph(root));
+    const store = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const terminalLaunches: TerminalLaunchOptions[] = [];
+    const api = createStreamlinerApiApp({
+      store,
+      launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
+      nodeLaunchDeps: {
+        launchTerminal: (options) => {
+          terminalLaunches.push(options);
+          return { method: "powershell", pid: 700 + terminalLaunches.length };
+        },
+      },
+      launchPreparationDeps: {
+        cwd: root,
+        stateRoot: join(root, "state"),
+        pawInitRunner: createPawInitRunner(),
+        contextPreparer: createContextPreparer(root),
+      },
+    });
+    activeApps.push(api);
+
+    const started = await request(api.app)
+      .post("/api/launch-preparations/runs")
+      .send({
+        nodeId: "launch-prompt-profiles",
+        graphPath,
+        configuration: {
+          cliArgs: ["--yolo"],
+          workflowInstructions: "Use PAW with local final-pr-only review.",
+        },
+        postPreparation: {
+          launchTerminal: {
+            terminalTitle: "Server Launch",
+            terminalColor: "#123abc",
+          },
+          launchCompanion: {
+            kickoffPrompt: "Review the prepared implementation.",
+          },
+        },
+      })
+      .expect(202);
+
+    expect(started.body.operation).toEqual(expect.objectContaining({
+      status: "preparing",
+      postPreparation: expect.objectContaining({
+        launchTerminal: expect.objectContaining({
+          terminalTitle: "Server Launch",
+          terminalColor: "#123abc",
+        }),
+        launchCompanion: {
+          kickoffPrompt: "Review the prepared implementation.",
+        },
+      }),
+    }));
+
+    const snapshot = await waitForLaunchPreparationRun(api, started.body.runId);
+
+    expect(terminalLaunches).toHaveLength(2);
+    expect(terminalLaunches[0]).toEqual(expect.objectContaining({
+      title: "Server Launch",
+      tabColor: "#123abc",
+      preferredTerminal: "default",
+    }));
+    expect(terminalLaunches[1]).toEqual(expect.objectContaining({
+      title: "Server Launch Review",
+      tabColor: "#123abc",
+    }));
+    expect(String(terminalLaunches[1].command)).toContain("--agent=PAW-Review");
+    expect(String(terminalLaunches[1].command)).toContain("Review the prepared implementation.");
+
+    expect(snapshot.body).toEqual(expect.objectContaining({
+      status: "succeeded",
+      postPreparation: expect.objectContaining({
+        terminal: expect.objectContaining({ status: "launched" }),
+        companion: expect.objectContaining({ status: "launched" }),
+        operation: expect.objectContaining({
+          status: "launched_pending_binding",
+          companionLaunch: expect.objectContaining({
+            terminal: { method: "powershell", pid: 702 },
+          }),
+        }),
+      }),
+      events: expect.arrayContaining([
+        expect.objectContaining({ name: "terminal_launched" }),
+        expect.objectContaining({ name: "companion_launched" }),
+        expect.objectContaining({ name: "completed" }),
+      ]),
+    }));
+
+    const launchRecord = await request(api.app)
+      .get("/api/node-launch-records")
+      .query({
+        graphPath,
+        nodeId: "launch-prompt-profiles",
+      })
+      .expect(200);
+    expect(launchRecord.body.operation).toEqual(expect.objectContaining({
+      status: "launched_pending_binding",
+      terminalLaunch: expect.objectContaining({
+        terminal: { method: "powershell", pid: 701 },
+      }),
+      companionLaunch: expect.objectContaining({
+        terminal: { method: "powershell", pid: 702 },
+      }),
+      companionError: null,
+    }));
+  });
+
+  it("reports terminal post-preparation failures and skips companion launch", async () => {
+    const root = createRootDir();
+    const graphPath = normalizePath(writeLaunchPolicyGraph(root));
+    const store = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const terminalLaunches: TerminalLaunchOptions[] = [];
+    const api = createStreamlinerApiApp({
+      store,
+      launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
+      nodeLaunchDeps: {
+        launchTerminal: (options) => {
+          terminalLaunches.push(options);
+          throw new Error("terminal unavailable");
+        },
+      },
+      launchPreparationDeps: {
+        cwd: root,
+        stateRoot: join(root, "state"),
+        pawInitRunner: createPawInitRunner(),
+        contextPreparer: createContextPreparer(root),
+      },
+    });
+    activeApps.push(api);
+
+    const started = await request(api.app)
+      .post("/api/launch-preparations/runs")
+      .send({
+        nodeId: "launch-prompt-profiles",
+        graphPath,
+        postPreparation: {
+          launchTerminal: {},
+          launchCompanion: {
+            kickoffPrompt: "Review should not start.",
+          },
+        },
+      })
+      .expect(202);
+
+    const snapshot = await waitForLaunchPreparationRun(api, started.body.runId);
+
+    expect(terminalLaunches).toHaveLength(1);
+    expect(snapshot.body.postPreparation).toEqual(expect.objectContaining({
+      terminal: expect.objectContaining({
+        status: "failed",
+        error: expect.objectContaining({
+          code: "terminal_spawn_failed",
+          error: expect.stringContaining("terminal unavailable"),
+        }),
+      }),
+      companion: { status: "skipped" },
+      operation: expect.objectContaining({
+        status: "terminal_failed",
+      }),
+    }));
+    expect(snapshot.body.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "terminal_failed" }),
+      expect.objectContaining({ name: "completed" }),
+    ]));
+    expect(snapshot.body.events).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "companion_launched" }),
+    ]));
+  });
+
+  it("keeps terminal launch success when the post-preparation companion fails", async () => {
+    const root = createRootDir();
+    const graphPath = normalizePath(writeLaunchPolicyGraph(root));
+    const store = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const terminalLaunches: TerminalLaunchOptions[] = [];
+    const api = createStreamlinerApiApp({
+      store,
+      launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
+      nodeLaunchDeps: {
+        launchTerminal: (options) => {
+          terminalLaunches.push(options);
+          if (terminalLaunches.length === 2) {
+            throw new Error("companion unavailable");
+          }
+          return { method: "powershell", pid: 711 };
+        },
+      },
+      launchPreparationDeps: {
+        cwd: root,
+        stateRoot: join(root, "state"),
+        pawInitRunner: createPawInitRunner(),
+        contextPreparer: createContextPreparer(root),
+      },
+    });
+    activeApps.push(api);
+
+    const started = await request(api.app)
+      .post("/api/launch-preparations/runs")
+      .send({
+        nodeId: "launch-prompt-profiles",
+        graphPath,
+        postPreparation: {
+          launchTerminal: {},
+          launchCompanion: {
+            kickoffPrompt: "Review the launch.",
+          },
+        },
+      })
+      .expect(202);
+
+    const snapshot = await waitForLaunchPreparationRun(api, started.body.runId);
+
+    expect(terminalLaunches).toHaveLength(2);
+    expect(snapshot.body.postPreparation).toEqual(expect.objectContaining({
+      terminal: expect.objectContaining({ status: "launched" }),
+      companion: expect.objectContaining({
+        status: "failed",
+        error: {
+          code: "post_preparation_launch_failed",
+          error: "companion unavailable",
+        },
+      }),
+      operation: expect.objectContaining({
+        status: "launched_pending_binding",
+        companionError: expect.objectContaining({
+          code: "post_preparation_launch_failed",
+          error: "companion unavailable",
+        }),
+      }),
+    }));
+    expect(snapshot.body.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "terminal_launched" }),
+      expect.objectContaining({ name: "companion_failed" }),
+      expect.objectContaining({ name: "completed" }),
+    ]));
+  });
+
+  it("does not run post-preparation launch when preparation fails", async () => {
+    const root = createRootDir();
+    const graphPath = normalizePath(writeLaunchPolicyGraph(root));
+    const store = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const terminalLaunches: TerminalLaunchOptions[] = [];
+    const api = createStreamlinerApiApp({
+      store,
+      launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
+      nodeLaunchDeps: {
+        launchTerminal: (options) => {
+          terminalLaunches.push(options);
+          return { method: "powershell", pid: 711 };
+        },
+      },
+      launchPreparationDeps: {
+        cwd: root,
+        stateRoot: join(root, "state"),
+        pawInitRunner: createPawInitRunner(),
+        contextPreparer: () => {
+          throw new LaunchContextPreparationError(
+            "context_generation_failed",
+            500,
+            "Context exploded.",
+          );
+        },
+      },
+    });
+    activeApps.push(api);
+
+    const started = await request(api.app)
+      .post("/api/launch-preparations/runs")
+      .send({
+        nodeId: "launch-prompt-profiles",
+        graphPath,
+        postPreparation: {
+          launchTerminal: {},
+        },
+      })
+      .expect(202);
+
+    const snapshot = await waitForLaunchPreparationRun(api, started.body.runId, "failed");
+
+    expect(terminalLaunches).toHaveLength(0);
+    expect(snapshot.body.error).toEqual(expect.objectContaining({
+      code: "context_preparation_failed",
+      error: "Context exploded.",
+    }));
+    const launchRecord = await request(api.app)
+      .get("/api/node-launch-records")
+      .query({
+        graphPath,
+        nodeId: "launch-prompt-profiles",
+      })
+      .expect(200);
+    expect(launchRecord.body.operation).toEqual(expect.objectContaining({
+      status: "preparation_failed",
+      postPreparation: { launchTerminal: {} },
+      terminalLaunch: null,
     }));
   });
 

@@ -263,6 +263,9 @@ export function createStreamlinerApiApp(
       deps: {
         ...options.launchPreparationDeps,
         nodeLaunchRecordStore,
+        registryStore: store instanceof SessionRegistryFileStore ? store : undefined,
+        launchClaimStore: options.launchClaimStore,
+        nodeLaunchDeps,
         loadDefaultCliArgs: options.launchPreparationDeps?.loadDefaultCliArgs
           ?? (async () => {
             const settings = await readSessionLaunchSettings(options.sessionLaunchSettingsPath);
