@@ -9,6 +9,7 @@ import {
   type TerminalLaunchOptions,
   type TerminalLaunchResult,
 } from "../terminal-launch";
+import type { NodeCompanionTerminalLaunchResponse } from "../../node-launch-record-contract";
 
 /**
  * The companion terminal launch always runs the PAW Review workflow agent.
@@ -24,12 +25,15 @@ import {
  */
 const COMPANION_AGENT_FLAG = "--agent=PAW-Review";
 
-export interface CompanionTerminalLaunchResponse {
-  terminal: TerminalLaunchResult;
+export type CompanionTerminalLaunchResponse = NodeCompanionTerminalLaunchResponse;
+
+export interface CompanionTerminalLaunchInput {
   cwd: string;
-  command: {
-    cliArgs: string[];
-  };
+  kickoffPrompt: string;
+  cliArgs?: string[];
+  preferredTerminal?: TerminalHostPreference;
+  title?: string;
+  tabColor?: string;
 }
 
 export interface CompanionTerminalLaunchDeps {
@@ -123,6 +127,28 @@ function terminalHostPreference(value: unknown): TerminalHostPreference {
   throw Object.assign(new Error("preferredTerminal must be default, windows-terminal, or powershell."), { statusCode: 400 });
 }
 
+export function launchCompanionTerminal(
+  input: CompanionTerminalLaunchInput,
+  deps: CompanionTerminalLaunchDeps = {},
+): CompanionTerminalLaunchResponse {
+  const cliArgs = applyCompanionAgent(input.cliArgs ?? []);
+  const terminal = (deps.launchTerminal ?? launchTerminal)({
+    cwd: input.cwd,
+    command: buildCopilotInteractiveCommand({
+      cliArgs,
+      kickoffPrompt: input.kickoffPrompt,
+    }),
+    preferredTerminal: input.preferredTerminal ?? "default",
+    title: input.title,
+    tabColor: input.tabColor,
+  });
+  return {
+    terminal,
+    cwd: input.cwd,
+    command: { cliArgs },
+  };
+}
+
 export function createCompanionTerminalLaunchesRouter(
   deps: CompanionTerminalLaunchDeps = {},
 ): Router {
@@ -138,25 +164,17 @@ export function createCompanionTerminalLaunchesRouter(
       const cwd = stringField(body.cwd, "cwd");
       const kickoffPrompt = stringField(body.kickoffPrompt, "kickoffPrompt");
       const callerCliArgs = optionalCliArgs(body.cliArgs);
-      const cliArgs = applyCompanionAgent(callerCliArgs);
       const title = optionalStringField(body.title, "title");
       const tabColor = optionalStringField(body.tabColor, "tabColor");
       const preferredTerminal = terminalHostPreference(body.preferredTerminal);
-      const terminal = (deps.launchTerminal ?? launchTerminal)({
+      const response = launchCompanionTerminal({
         cwd,
-        command: buildCopilotInteractiveCommand({
-          cliArgs,
-          kickoffPrompt,
-        }),
+        kickoffPrompt,
+        cliArgs: callerCliArgs,
         preferredTerminal,
         title,
         tabColor,
-      });
-      const response: CompanionTerminalLaunchResponse = {
-        terminal,
-        cwd,
-        command: { cliArgs },
-      };
+      }, deps);
       res.status(201).json(response);
     } catch (error: unknown) {
       next(error);

@@ -21,7 +21,7 @@
     "cleanup:worktree": "tsx scripts/cleanup-worktree.ts",
     "cleanup:worktree:remove": "tsx scripts/cleanup-worktree.ts --execute",
     "cleanup:worktree:force": "tsx scripts/cleanup-worktree.ts --force",
-    "test": "vitest run",
+    "test": "node scripts/run-vitest.mjs",
     "test:e2e": "playwright test",
     "docs:dev": "vitepress dev docs/design",
     "docs:build": "vitepress build docs/design",
