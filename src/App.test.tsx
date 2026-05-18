@@ -3675,7 +3675,9 @@ describe("App sessions route", () => {
           timestamp: "2026-05-03T18:00:02.000Z",
         });
       });
-      await settle();
+      // Wait past PROGRESS_FLUSH_INTERVAL_MS so the throttled coalesce of
+      // back-to-back SSE events flushes before assertions.
+      await settle(200);
 
       expect(container.textContent).toContain("Initial SDK status replayed from start.");
       expect((container.textContent?.match(/Snapshot progress before reopen\./g) ?? [])).toHaveLength(1);

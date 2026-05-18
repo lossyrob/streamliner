@@ -1962,6 +1962,78 @@ function GraphDashboard({
     }));
   }, []);
 
+  // SSE progress events from /api/launch-preparations/runs/:id/events can
+  // arrive at 5-10+ events/sec per active preparation (one event per
+  // tool.started / tool.completed in the underlying Copilot SDK session).
+  // Each setLaunchOperationByKey call re-renders App and cascades through
+  // viewModel / runtimeOverlay / React Flow; with two simultaneous
+  // preparations this is enough to starve the 2-second graph polling and
+  // make the dashboard appear hung. Throttle by coalescing bursts into a
+  // single setState per PROGRESS_FLUSH_INTERVAL_MS window.
+  const PROGRESS_FLUSH_INTERVAL_MS = 120;
+  const pendingProgressEventsRef = useRef<
+    Map<string, { target: LaunchOperationTarget; events: PawLaunchProgressEvent[] }>
+  >(new Map());
+  const lastProgressFlushAtRef = useRef<number>(0);
+  const progressFlushTimerRef = useRef<number | null>(null);
+
+  const flushPendingProgressEvents = useCallback(() => {
+    if (progressFlushTimerRef.current !== null) {
+      window.clearTimeout(progressFlushTimerRef.current);
+      progressFlushTimerRef.current = null;
+    }
+    const pending = pendingProgressEventsRef.current;
+    if (pending.size === 0) {
+      return;
+    }
+    pendingProgressEventsRef.current = new Map();
+    lastProgressFlushAtRef.current = Date.now();
+    setLaunchOperationByKey((current) => {
+      let next: Record<string, NodeLaunchOperation> | null = null;
+      for (const [key, { target, events }] of pending) {
+        const op = (next ?? current)[key];
+        const baseOp = op ?? createClientLaunchOperation(target, "preparing");
+        const mergedProgress = events.reduce(appendProgressEvent, baseOp.progressEvents);
+        const latestTimestamp = events[events.length - 1]?.timestamp ?? baseOp.updatedAt;
+        const updated: NodeLaunchOperation = {
+          ...baseOp,
+          status: "preparing",
+          error: null,
+          updatedAt: latestTimestamp,
+          progressEvents: mergedProgress,
+        };
+        next = { ...(next ?? current), [key]: updated };
+      }
+      return next ?? current;
+    });
+  }, []);
+
+  const enqueueProgressEvent = useCallback(
+    (target: LaunchOperationTarget, event: PawLaunchProgressEvent) => {
+      const key = launchOperationKey(target);
+      const existing = pendingProgressEventsRef.current.get(key);
+      if (existing) {
+        existing.events.push(event);
+      } else {
+        pendingProgressEventsRef.current.set(key, { target, events: [event] });
+      }
+      const elapsed = Date.now() - lastProgressFlushAtRef.current;
+      if (elapsed >= PROGRESS_FLUSH_INTERVAL_MS) {
+        // First event after a quiet period (or the cooldown has elapsed
+        // since the previous flush) — apply immediately so single events
+        // feel responsive and tests that emit one progress event still see
+        // it without needing to advance fake timers.
+        flushPendingProgressEvents();
+      } else if (progressFlushTimerRef.current === null) {
+        progressFlushTimerRef.current = window.setTimeout(
+          flushPendingProgressEvents,
+          PROGRESS_FLUSH_INTERVAL_MS - elapsed,
+        );
+      }
+    },
+    [flushPendingProgressEvents],
+  );
+
   const releaseStuckLaunchOperation = useCallback(
     async (target: LaunchOperationTarget): Promise<void> => {
       const response = await fetch("/api/node-launch-records/operations/release", {
@@ -2500,18 +2572,10 @@ function GraphDashboard({
         closeProgressStream = () => source.close();
         source.addEventListener("progress", (event) => {
           const progress = parseMessageEventData<PawLaunchProgressEvent>(event);
-          updateLaunchOperation(target, (current) => {
-            const operation = current ?? createClientLaunchOperation(target, "preparing");
-            return {
-              ...operation,
-              status: "preparing",
-              error: null,
-              updatedAt: progress.timestamp,
-              progressEvents: appendProgressEvent(operation.progressEvents, progress),
-            };
-          });
+          enqueueProgressEvent(target, progress);
         });
         source.addEventListener("completed", (event) => {
+          flushPendingProgressEvents();
           const payload = parseMessageEventData<PawLaunchRunFinishedPayload>(event);
           const handoff = payload.result;
           if (!handoff) {
@@ -2522,6 +2586,7 @@ function GraphDashboard({
           resolve(nextHandoff);
         });
         source.addEventListener("failed", (event) => {
+          flushPendingProgressEvents();
           const payload = parseMessageEventData<PawLaunchRunFinishedPayload>(event);
           const message = applyPreparationFailure(target, payload);
           reject(new Error(message));
@@ -2599,21 +2664,13 @@ function GraphDashboard({
         return;
       }
       const progress = parseMessageEventData<PawLaunchProgressEvent>(event);
-      updateLaunchOperation(target, (current) => {
-        const operation = current ?? createClientLaunchOperation(target, "preparing");
-        return {
-          ...operation,
-          status: "preparing",
-          error: null,
-          updatedAt: progress.timestamp,
-          progressEvents: appendProgressEvent(operation.progressEvents, progress),
-        };
-      });
+      enqueueProgressEvent(target, progress);
     });
     source.addEventListener("completed", (event) => {
       if (closed) {
         return;
       }
+      flushPendingProgressEvents();
       const payload = parseMessageEventData<PawLaunchRunFinishedPayload>(event);
       if (payload.result) {
         const nextHandoff = applyPreparedLaunchHandoff(target, payload.result);
@@ -2627,6 +2684,7 @@ function GraphDashboard({
       if (closed) {
         return;
       }
+      flushPendingProgressEvents();
       applyPreparationFailure(target, parseMessageEventData<PawLaunchRunFinishedPayload>(event));
       source.close();
     });
@@ -2663,6 +2721,8 @@ function GraphDashboard({
   }, [
     applyPreparationFailure,
     applyPreparedLaunchHandoff,
+    enqueueProgressEvent,
+    flushPendingProgressEvents,
     launchDialogOpen,
     launchDialogOperation?.preparationRunId,
     launchDialogOperation?.status,
