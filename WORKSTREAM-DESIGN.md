@@ -18,6 +18,8 @@ This document complements:
   worker roles.
 - [ORCHESTRATION.md](ORCHESTRATION.md), which describes node creation,
   reconciliation, and wave progression.
+- [VALIDATION-LOOPS.md](VALIDATION-LOOPS.md), which describes the intent and
+  operating shape of validation-loop waves.
 - [NODE-SPEC-FORMAT.md](NODE-SPEC-FORMAT.md), which defines the mission-type
   order a worker receives for one node.
 - [WORKSTREAM-FORMAT.md](WORKSTREAM-FORMAT.md), which defines how workstreams,
@@ -101,8 +103,9 @@ A strong default shape for serious workstreams is:
    splitting nodes only where independent confidence or safe parallelism justifies
    the coordination cost.
 3. **Validation-loop wave:** harden the result through tests, harnesses,
-   playbooks, scenario runs, or agent-driven loops that exercise realistic use
-   and produce evidence.
+   playbooks, scenario runs, or agent-driven loops that exercise realistic use,
+   produce bounded repair work where useful, rerun after repairs, and gather
+   evidence.
 4. **Demonstration gate:** show that the intended capability or confidence state
    is real, inspectable, and acceptable to the developer or downstream consumer.
 
@@ -114,13 +117,22 @@ parts of the pattern they are using and why any part is being skipped.
 
 A validation wave can be more than "run tests." It may create or extend a
 harness, playbook, autonomous loop, scenario runner, or manual-agent loop that
-repeatedly exercises the new behavior, finds issues, fixes them, and produces
-reviewable evidence. The confidence transition is that the work can survive
-realistic use before the developer is asked to accept it.
+repeatedly exercises the new behavior, finds gaps, drives repairs, reruns, and
+produces reviewable evidence. The confidence transition is that the work can
+survive realistic use before the developer is asked to accept it.
 
 Use validation-loop waves when the workstream involves autonomy, UI/UX, runtime
 behavior, safety, cross-node integration, or any workflow where a static code
 review is unlikely to expose the important failures.
+
+A validation loop should define the scenario it exercises, the kind of confidence
+it is trying to earn, how discovered gaps become bounded repair work, when the
+loop reruns, and what evidence the final gate should consume. The loop may be
+manual, agent-operated, or eventually managed by Streamliner automation; the
+formation concern is the earned-confidence shape, not the mechanism.
+
+See [VALIDATION-LOOPS.md](VALIDATION-LOOPS.md) for the operating guidance behind
+this wave pattern.
 
 ### New operating primitives
 
@@ -336,8 +348,10 @@ When forming or reshaping a workstream, ask:
     or authority confidence before later implementation proceeds autonomously?
 14. What validation loop, harness, scenario, or playbook will harden the result
     before final acceptance?
-15. How will the final workstream outcome be demonstrated or walked through?
-16. If this workstream creates a new operating primitive, what smallest real use
+15. What confidence should the validation loop earn, and what evidence should
+    the gate consume?
+16. How will the final workstream outcome be demonstrated or walked through?
+17. If this workstream creates a new operating primitive, what smallest real use
     proves the primitive without absorbing every downstream consumer?
 
 The orchestrator can bias toward fewer, heavier nodes during formation, then
