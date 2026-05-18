@@ -206,7 +206,7 @@ export function createNodeLaunchRecordsRouter(options: {
         }
         res.status(409).json({
           code: "operation_not_active",
-          error: `Operation status '${current.status}' is not eligible for release; only preparing/launching/managed_starting can be released.`,
+          error: `Operation status '${current.status}' is not eligible for release; only preparing/launching/managed_starting or prepared post-preparation terminal launches can be released.`,
           operation: current,
         });
         return;

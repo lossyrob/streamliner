@@ -83,6 +83,8 @@ import {
   type NodeLaunchRecord,
   type NodeLaunchRecordResponse,
   type NodeManagedSdkLaunchResponse,
+  type NodeCompanionTerminalLaunchResponse,
+  type NodePostPreparationIntent,
   type NodeTerminalLaunchResponse,
 } from "./node-launch-record-contract";
 import { loadGraphNodeLaunchRecords } from "./node-launch-record-client";
@@ -124,16 +126,7 @@ interface GraphLoadError {
 
 type PawLaunchPreparationResponse = NodeLaunchHandoff;
 
-interface CompanionTerminalLaunchResponse {
-  terminal: {
-    method: string;
-    pid?: number;
-  };
-  cwd: string;
-  command: {
-    cliArgs: string[];
-  };
-}
+type CompanionTerminalLaunchResponse = NodeCompanionTerminalLaunchResponse;
 
 interface CompanionLaunchState {
   launching: boolean;
@@ -157,6 +150,35 @@ interface PawLaunchRunError {
 interface PawLaunchRunFinishedPayload {
   result?: PawLaunchPreparationResponse;
   error?: PawLaunchRunError;
+  postPreparation?: PawLaunchRunPostPreparationOutcome;
+  operation?: NodeLaunchOperation | null;
+}
+
+interface PawLaunchRunPostPreparationError {
+  code?: string;
+  error: string;
+}
+
+type PawLaunchRunTerminalOutcome =
+  | { status: "launched"; result: NodeTerminalLaunchResponse }
+  | { status: "failed"; error: PawLaunchRunPostPreparationError }
+  | { status: "skipped" };
+
+type PawLaunchRunCompanionOutcome =
+  | { status: "launched"; result: CompanionTerminalLaunchResponse }
+  | { status: "failed"; error: PawLaunchRunPostPreparationError }
+  | { status: "skipped" };
+
+interface PawLaunchRunPostPreparationOutcome {
+  terminal?: PawLaunchRunTerminalOutcome;
+  companion?: PawLaunchRunCompanionOutcome;
+  operation?: NodeLaunchOperation | null;
+}
+
+interface PawLaunchRunCompletion {
+  handoff: PawLaunchPreparationResponse;
+  postPreparation?: PawLaunchRunPostPreparationOutcome;
+  operation?: NodeLaunchOperation | null;
 }
 
 interface LoadedNodeLaunchState {
@@ -437,6 +459,66 @@ function operationError(
     error,
     timestamp: new Date().toISOString(),
   };
+}
+
+function postPreparationIntentFromConfiguration(
+  configuration: PawLaunchDialogConfiguration,
+): NodePostPreparationIntent | undefined {
+  if (configuration.runtimeKind !== "terminal-cli" || !configuration.launchAfterInit) {
+    return undefined;
+  }
+  const terminalTitle = configuration.terminal.title.trim();
+  return {
+    launchTerminal: {
+      ...(terminalTitle ? { terminalTitle } : {}),
+      ...(configuration.terminal.tabColor ? { terminalColor: configuration.terminal.tabColor } : {}),
+    },
+    ...(configuration.reviewCompanion
+      ? { launchCompanion: { kickoffPrompt: configuration.reviewCompanion.kickoffPrompt } }
+      : {}),
+  };
+}
+
+function companionStateFromOperation(operation: NodeLaunchOperation): CompanionLaunchState | null {
+  if (operation.companionLaunch) {
+    return { launching: false, result: operation.companionLaunch, error: null };
+  }
+  if (operation.companionError) {
+    return { launching: false, result: null, error: operation.companionError.error };
+  }
+  if (operation.postPreparation?.launchCompanion) {
+    const launching = operation.status === "preparing" ||
+      operation.status === "prepared" ||
+      operation.status === "launching" ||
+      operation.status === "launched_pending_binding";
+    return { launching, result: null, error: null };
+  }
+  return null;
+}
+
+function companionStateFromPostPreparationOutcome(
+  outcome: PawLaunchRunPostPreparationOutcome | undefined,
+): CompanionLaunchState | null {
+  if (!outcome?.companion) {
+    return null;
+  }
+  if (outcome.companion.status === "launched") {
+    return { launching: false, result: outcome.companion.result, error: null };
+  }
+  if (outcome.companion.status === "failed") {
+    return { launching: false, result: null, error: outcome.companion.error.error };
+  }
+  return { launching: false, result: null, error: null };
+}
+
+function sameCompanionLaunchState(
+  left: CompanionLaunchState | undefined,
+  right: CompanionLaunchState,
+): boolean {
+  return Boolean(left) &&
+    left?.launching === right.launching &&
+    left?.result === right.result &&
+    left?.error === right.error;
 }
 
 function managedLaunchFromApiResponse(
@@ -1959,7 +2041,30 @@ function GraphDashboard({
       ...current,
       [key]: nextOperation,
     }));
+    const companionState = companionStateFromOperation(nextOperation);
+    if (companionState) {
+      setCompanionLaunchByKey((current) => ({
+        ...current,
+        [key]: companionState,
+      }));
+    }
   }, []);
+
+  useEffect(() => {
+    setCompanionLaunchByKey((current) => {
+      let next: Record<string, CompanionLaunchState> | null = null;
+      for (const [key, operation] of Object.entries(launchOperationByKey)) {
+        const companionState = companionStateFromOperation(operation);
+        if (companionState && !sameCompanionLaunchState((next ?? current)[key], companionState)) {
+          next = {
+            ...(next ?? current),
+            [key]: companionState,
+          };
+        }
+      }
+      return next ?? current;
+    });
+  }, [launchOperationByKey]);
 
   const updateLaunchOperation = useCallback((
     target: LaunchOperationTarget,
@@ -2117,6 +2222,59 @@ function GraphDashboard({
     );
     return message;
   }, [updateLaunchOperation]);
+
+  const applyPostPreparationUpdate = useCallback((
+    target: LaunchOperationTarget,
+    payload: PawLaunchRunFinishedPayload,
+    handoff?: PawLaunchPreparationResponse,
+  ) => {
+    if (payload.operation) {
+      setLaunchOperation(target, payload.operation);
+    } else if (payload.postPreparation?.terminal?.status === "launched") {
+      updateLaunchOperation(target, (current) =>
+        createClientLaunchOperation(target, "launched_pending_binding", {
+          ...(current ?? {}),
+          status: "launched_pending_binding",
+          handoff: handoff ?? current?.handoff ?? null,
+          terminalLaunch: payload.postPreparation?.terminal?.status === "launched"
+            ? payload.postPreparation.terminal.result
+            : current?.terminalLaunch ?? null,
+          error: null,
+          completedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        })
+      );
+    } else if (payload.postPreparation?.terminal?.status === "failed") {
+      updateLaunchOperation(target, (current) =>
+        createClientLaunchOperation(target, "terminal_failed", {
+          ...(current ?? {}),
+          status: "terminal_failed",
+          handoff: handoff ?? current?.handoff ?? null,
+          terminalLaunch: null,
+          error: operationError(
+            payload.postPreparation?.terminal?.status === "failed"
+              ? payload.postPreparation.terminal.error.code ?? "terminal_launch_failed"
+              : "terminal_launch_failed",
+            payload.postPreparation?.terminal?.status === "failed"
+              ? payload.postPreparation.terminal.error.error
+              : "Terminal launch failed.",
+          ),
+          completedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        })
+      );
+    }
+    const companionState = companionStateFromPostPreparationOutcome(payload.postPreparation);
+    if (companionState) {
+      setCompanionLaunchByKey((current) => ({
+        ...current,
+        [launchOperationKey(target)]: companionState,
+      }));
+    }
+    if (payload.operation || payload.postPreparation) {
+      setNodeLaunchRecordRefreshKey((current) => current + 1);
+    }
+  }, [setLaunchOperation, updateLaunchOperation]);
 
   const handleArchiveCurrent = async () => {
     if (!activeWorkstream) {
@@ -2518,6 +2676,7 @@ function GraphDashboard({
     const cwdOverride = trimmedCwd && trimmedCwd !== trimmedInferredCwd
       ? trimmedCwd
       : undefined;
+    const postPreparation = postPreparationIntentFromConfiguration(configuration);
     writeLaunchCwdOverride(launchDefaults.cwdPreferenceKey, cwdOverride ?? null);
     updateLaunchOperation(target, (current) =>
       createClientLaunchOperation(target, "preparing", {
@@ -2550,6 +2709,7 @@ function GraphDashboard({
             cliArgs: configuration.cliArgs,
             terminal: configuration.terminal,
           },
+          ...(postPreparation ? { postPreparation } : {}),
         }),
       });
       if (!response.ok) {
@@ -2575,7 +2735,7 @@ function GraphDashboard({
         );
       }
 
-      const preparedHandoff = await new Promise<PawLaunchPreparationResponse>((resolve, reject) => {
+      const completion = await new Promise<PawLaunchRunCompletion>((resolve, reject) => {
         const source = new EventSource(
           `/api/launch-preparations/runs/${encodeURIComponent(started.runId ?? "")}/events`,
         );
@@ -2584,6 +2744,14 @@ function GraphDashboard({
           const progress = parseMessageEventData<PawLaunchProgressEvent>(event);
           enqueueProgressEvent(target, progress);
         });
+        const handlePostPreparationEvent = (event: Event) => {
+          flushPendingProgressEvents();
+          applyPostPreparationUpdate(target, parseMessageEventData<PawLaunchRunFinishedPayload>(event));
+        };
+        source.addEventListener("terminal_launched", handlePostPreparationEvent);
+        source.addEventListener("terminal_failed", handlePostPreparationEvent);
+        source.addEventListener("companion_launched", handlePostPreparationEvent);
+        source.addEventListener("companion_failed", handlePostPreparationEvent);
         source.addEventListener("completed", (event) => {
           flushPendingProgressEvents();
           const payload = parseMessageEventData<PawLaunchRunFinishedPayload>(event);
@@ -2592,8 +2760,17 @@ function GraphDashboard({
             reject(new Error("Launch preparation completed without a handoff."));
             return;
           }
-          const nextHandoff = applyPreparedLaunchHandoff(target, handoff);
-          resolve(nextHandoff);
+          const nextHandoff = clientHandoffFromPreparation(handoff);
+          if (payload.postPreparation || payload.operation) {
+            applyPostPreparationUpdate(target, payload, nextHandoff);
+          } else {
+            applyPreparedLaunchHandoff(target, handoff);
+          }
+          resolve({
+            handoff: nextHandoff,
+            postPreparation: payload.postPreparation,
+            operation: payload.operation,
+          });
         });
         source.addEventListener("failed", (event) => {
           flushPendingProgressEvents();
@@ -2605,13 +2782,13 @@ function GraphDashboard({
           reject(new Error("Lost connection to launch preparation progress stream."));
         };
       });
-      if (preparedHandoff.runtimeKind === "managed-sdk") {
-        await launchManagedSdkFromHandoff(preparedHandoff, target);
-      } else if (configuration.launchAfterInit) {
-        await launchTerminalFromHandoff(preparedHandoff, {
-          kickoffPrompt: preparedHandoff.kickoffPrompt,
-          terminalTitle: preparedHandoff.terminal.title ?? preparedHandoff.launchMetadata.workTitle,
-          terminalColor: preparedHandoff.terminal.tabColor ?? null,
+      if (completion.handoff.runtimeKind === "managed-sdk") {
+        await launchManagedSdkFromHandoff(completion.handoff, target);
+      } else if (configuration.launchAfterInit && !postPreparation) {
+        await launchTerminalFromHandoff(completion.handoff, {
+          kickoffPrompt: completion.handoff.kickoffPrompt,
+          terminalTitle: completion.handoff.terminal.title ?? completion.handoff.launchMetadata.workTitle,
+          terminalColor: completion.handoff.terminal.tabColor ?? null,
           reviewCompanion: configuration.reviewCompanion,
         }, target);
       }
@@ -2684,6 +2861,17 @@ function GraphDashboard({
       const progress = parseMessageEventData<PawLaunchProgressEvent>(event);
       enqueueProgressEvent(target, progress);
     });
+    const handlePostPreparationEvent = (event: Event) => {
+      if (closed) {
+        return;
+      }
+      flushPendingProgressEvents();
+      applyPostPreparationUpdate(target, parseMessageEventData<PawLaunchRunFinishedPayload>(event));
+    };
+    source.addEventListener("terminal_launched", handlePostPreparationEvent);
+    source.addEventListener("terminal_failed", handlePostPreparationEvent);
+    source.addEventListener("companion_launched", handlePostPreparationEvent);
+    source.addEventListener("companion_failed", handlePostPreparationEvent);
     source.addEventListener("completed", (event) => {
       if (closed) {
         return;
@@ -2691,8 +2879,13 @@ function GraphDashboard({
       flushPendingProgressEvents();
       const payload = parseMessageEventData<PawLaunchRunFinishedPayload>(event);
       if (payload.result) {
-        const nextHandoff = applyPreparedLaunchHandoff(target, payload.result);
-        if (nextHandoff.runtimeKind === "managed-sdk") {
+        const nextHandoff = clientHandoffFromPreparation(payload.result);
+        if (payload.postPreparation || payload.operation) {
+          applyPostPreparationUpdate(target, payload, nextHandoff);
+        } else {
+          applyPreparedLaunchHandoff(target, payload.result);
+        }
+        if (nextHandoff.runtimeKind === "managed-sdk" && !payload.postPreparation) {
           void launchManagedSdkFromHandoff(nextHandoff, target);
         }
       }
@@ -2738,6 +2931,7 @@ function GraphDashboard({
     };
   }, [
     applyPreparationFailure,
+    applyPostPreparationUpdate,
     applyPreparedLaunchHandoff,
     enqueueProgressEvent,
     flushPendingProgressEvents,
