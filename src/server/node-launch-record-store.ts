@@ -7,6 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import {
   isBlockingNodeLaunchOperation,
+  isPendingPostPreparationTerminalLaunchOperation,
   type NodeLaunchHandoff,
   type NodeCompanionTerminalLaunchResponse,
   type NodeLaunchOperation,
@@ -73,6 +74,23 @@ const ACTIVE_LAUNCH_OPERATION_STATUSES = new Set<NodeLaunchOperationStatus>([
   "launching",
   "managed_starting",
 ]);
+
+function isRecoverableOrReleasableOperation(operation: NodeLaunchOperation): boolean {
+  return (
+    ACTIVE_LAUNCH_OPERATION_STATUSES.has(operation.status) ||
+    isPendingPostPreparationTerminalLaunchOperation(operation)
+  );
+}
+
+function hasOrphanedCompanionLaunch(operation: NodeLaunchOperation): boolean {
+  return Boolean(
+    operation.status === "launched_pending_binding" &&
+    operation.postPreparation?.launchCompanion &&
+    operation.terminalLaunch &&
+    !operation.companionLaunch &&
+    !operation.companionError
+  );
+}
 
 interface NodeErrnoException extends Error {
   code?: string;
@@ -400,12 +418,12 @@ export class NodeLaunchRecordStore {
   }
 
   /**
-   * Mark every persisted operation that is in an "active" state
-   * (`preparing`, `launching`, `managed_starting`) as `preparation_failed`
-   * with an "orphaned" error code. Intended to run once on API startup so
-   * that operations whose in-memory run state was lost (e.g., because the
-   * dev server restarted in the middle of a PAW init) do not appear stuck
-   * in the UI forever.
+   * Mark every persisted operation that is in an in-memory-controlled state
+   * as recoverable. That includes active statuses (`preparing`, `launching`,
+   * `managed_starting`) and prepared operations waiting for server-side
+   * post-preparation launch. Intended to run once on API startup so that
+   * operations whose in-memory run state was lost do not appear stuck in the
+   * UI forever.
    *
    * Returns the operations that were recovered so callers can log them.
    */
@@ -414,25 +432,37 @@ export class NodeLaunchRecordStore {
     await this.updateDocument((document) => {
       const timestamp = now.toISOString();
       for (const operation of document.operations) {
-        if (!ACTIVE_LAUNCH_OPERATION_STATUSES.has(operation.status)) {
+        if (isRecoverableOrReleasableOperation(operation)) {
+          operation.status = "preparation_failed";
+          operation.completedAt = timestamp;
+          operation.updatedAt = timestamp;
+          operation.terminalLaunch = null;
+          operation.managedLaunch = null;
+          operation.companionLaunch = null;
+          operation.companionError = null;
+          operation.error = operationError(
+            {
+              code: "operation_orphaned",
+              error:
+                "Operation was in flight when the API restarted; in-memory run state was lost. Released so the node can be re-launched.",
+            },
+            timestamp,
+          );
+          recovered.push({ ...operation, progressEvents: [...operation.progressEvents] });
           continue;
         }
-        operation.status = "preparation_failed";
-        operation.completedAt = timestamp;
-        operation.updatedAt = timestamp;
-        operation.terminalLaunch = null;
-        operation.managedLaunch = null;
-        operation.companionLaunch = null;
-        operation.companionError = null;
-        operation.error = operationError(
-          {
-            code: "operation_orphaned",
-            error:
-              "Operation was in flight when the API restarted; in-memory run state was lost. Released so the node can be re-launched.",
-          },
-          timestamp,
-        );
-        recovered.push({ ...operation, progressEvents: [...operation.progressEvents] });
+        if (hasOrphanedCompanionLaunch(operation)) {
+          operation.updatedAt = timestamp;
+          operation.companionError = operationError(
+            {
+              code: "companion_operation_orphaned",
+              error:
+                "Companion launch status was in flight when the API restarted; in-memory run state was lost.",
+            },
+            timestamp,
+          );
+          recovered.push({ ...operation, progressEvents: [...operation.progressEvents] });
+        }
       }
       return undefined;
     });
@@ -440,11 +470,10 @@ export class NodeLaunchRecordStore {
   }
 
   /**
-   * Manually release a stuck active operation, marking it
-   * `preparation_failed` with a user-cancellation error code so the UI can
-   * unblock without a server restart. Returns null if the operation is not
-   * found OR is not in an active state (so the caller can return 404 / 409
-   * as appropriate).
+   * Manually release a stuck active or pending post-preparation operation,
+   * marking it `preparation_failed` with a user-cancellation error code so
+   * the UI can unblock without a server restart. Returns null if the
+   * operation is not found OR is not eligible for release.
    */
   async releaseActiveOperation(input: {
     graphPath: string;
@@ -454,7 +483,7 @@ export class NodeLaunchRecordStore {
   }): Promise<NodeLaunchOperation | null> {
     return await this.updateDocument((document) => {
       const operation = findStoredOperation(document, input.graphPath, input.nodeId);
-      if (!operation || !ACTIVE_LAUNCH_OPERATION_STATUSES.has(operation.status)) {
+      if (!operation || !isRecoverableOrReleasableOperation(operation)) {
         return null;
       }
       const timestamp = (input.now ?? new Date()).toISOString();

@@ -339,7 +339,10 @@ export async function launchTerminalNodeFromHandoff(options: {
     await options.nodeLaunchRecordStore?.markTerminalLaunched(options.handoff, result);
     return result;
   } catch (error: unknown) {
-    if (error instanceof NodeLaunchError && error.code !== "duplicate_active_launch") {
+    if (
+      error instanceof NodeLaunchError &&
+      (error.code !== "duplicate_active_launch" || options.source === "post-preparation")
+    ) {
       await options.nodeLaunchRecordStore?.markTerminalFailed({
         handoff: options.handoff,
         error: {

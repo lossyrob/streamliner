@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { LaunchClaimFileStore } from "../session-registry/launch-claim-store";
 import { SessionRegistryFileStore } from "../session-registry/file-store";
 import { createStreamlinerApiApp, type StreamlinerApiApp } from "./app";
+import type { NodeTerminalLaunchResponse } from "../node-launch-record-contract";
 import { NodeLaunchRecordStore } from "./node-launch-record-store";
 import type { TerminalLaunchOptions } from "./terminal-launch";
 import {
@@ -30,6 +31,7 @@ import {
   type LaunchContextPreparer,
   type PawInitRunner,
   type PawInitRunnerInput,
+  type PawLaunchHandoff,
   type PawLaunchSessionRunnerInput,
 } from "./launch-preparation";
 
@@ -352,6 +354,43 @@ function createContextPreparer(
   return async (options) => {
     calls.push(options);
     return fakeContextPackage(root, options);
+  };
+}
+
+async function prepareTestHandoff(root: string, graphPath: string) {
+  return await preparePawLaunch({
+    nodeId: "launch-prompt-profiles",
+    graphPath,
+    cwd: root,
+    stateRoot: join(root, "state"),
+    pawInitRunner: createPawInitRunner(),
+    contextPreparer: createContextPreparer(root),
+  });
+}
+
+function fakeTerminalLaunch(handoff: PawLaunchHandoff): NodeTerminalLaunchResponse {
+  return {
+    launchClaim: {
+      launchClaimId: "claim-1",
+      status: "pending",
+      launchedAt: "2026-05-03T18:00:03.000Z",
+      updatedAt: "2026-05-03T18:00:03.000Z",
+      bindingWindowExpiresAt: "2026-05-03T18:05:03.000Z",
+      reservedRegistryId: "reserved-1",
+      boundRegistryId: null,
+      boundCopilotSessionId: null,
+      failureCode: null,
+      failureReason: null,
+      blocksLaunch: true,
+      retryable: false,
+    },
+    terminal: { method: "powershell", pid: 733 },
+    cwd: handoff.cwd,
+    branch: handoff.branch,
+    command: {
+      cliArgs: [...handoff.cliArgs],
+      promptNonceLine: "STREAMLINER_LAUNCH_NONCE=nonce-1",
+    },
   };
 }
 
@@ -1665,6 +1704,176 @@ describe("launch preparation API route", () => {
       status: "preparation_failed",
       postPreparation: { launchTerminal: {} },
       terminalLaunch: null,
+    }));
+  });
+
+  it("records duplicate active post-preparation terminal failures", async () => {
+    const root = createRootDir();
+    const graphPath = normalizePath(writeLaunchPolicyGraph(root));
+    const store = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const terminalLaunches: TerminalLaunchOptions[] = [];
+    const api = createStreamlinerApiApp({
+      store,
+      launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
+      nodeLaunchDeps: {
+        launchTerminal: (options) => {
+          terminalLaunches.push(options);
+          return { method: "powershell", pid: 720 + terminalLaunches.length };
+        },
+      },
+      launchPreparationDeps: {
+        cwd: root,
+        stateRoot: join(root, "state"),
+        pawInitRunner: createPawInitRunner(),
+        contextPreparer: createContextPreparer(root),
+      },
+    });
+    activeApps.push(api);
+
+    const first = await request(api.app)
+      .post("/api/launch-preparations/runs")
+      .send({
+        nodeId: "launch-prompt-profiles",
+        graphPath,
+        postPreparation: { launchTerminal: {} },
+      })
+      .expect(202);
+    await waitForLaunchPreparationRun(api, first.body.runId);
+    expect(terminalLaunches).toHaveLength(1);
+
+    const duplicate = await request(api.app)
+      .post("/api/launch-preparations/runs")
+      .send({
+        nodeId: "launch-prompt-profiles",
+        graphPath,
+        postPreparation: { launchTerminal: {} },
+      })
+      .expect(202);
+
+    const snapshot = await waitForLaunchPreparationRun(api, duplicate.body.runId);
+
+    expect(terminalLaunches).toHaveLength(1);
+    expect(snapshot.body.postPreparation).toEqual(expect.objectContaining({
+      terminal: expect.objectContaining({
+        status: "failed",
+        error: expect.objectContaining({
+          code: "duplicate_active_launch",
+        }),
+      }),
+      operation: expect.objectContaining({
+        status: "terminal_failed",
+        error: expect.objectContaining({
+          code: "duplicate_active_launch",
+        }),
+      }),
+    }));
+  });
+
+  it("recovers prepared operations waiting for post-preparation terminal launch", async () => {
+    const root = createRootDir();
+    const graphPath = normalizePath(writeLaunchPolicyGraph(root));
+    const handoff = await prepareTestHandoff(root, graphPath);
+    const nodeLaunchRecordStore = new NodeLaunchRecordStore({
+      recordsPath: join(root, "state", "node-launch-records.json"),
+    });
+
+    await nodeLaunchRecordStore.startPreparationOperation({
+      graphPath,
+      nodeId: "launch-prompt-profiles",
+      runId: "run-orphaned",
+      postPreparation: { launchTerminal: {} },
+      now: new Date("2026-05-03T18:00:00.000Z"),
+    });
+    await nodeLaunchRecordStore.markPreparationSucceeded(
+      handoff,
+      new Date("2026-05-03T18:00:01.000Z"),
+    );
+
+    const recovered = await nodeLaunchRecordStore.recoverOrphanedOperations(
+      new Date("2026-05-03T18:05:00.000Z"),
+    );
+    const operation = await nodeLaunchRecordStore.getOperation(graphPath, "launch-prompt-profiles");
+
+    expect(recovered).toHaveLength(1);
+    expect(operation).toEqual(expect.objectContaining({
+      status: "preparation_failed",
+      postPreparation: { launchTerminal: {} },
+      error: expect.objectContaining({
+        code: "operation_orphaned",
+      }),
+    }));
+  });
+
+  it("allows manual release of prepared operations waiting for post-preparation terminal launch", async () => {
+    const root = createRootDir();
+    const graphPath = normalizePath(writeLaunchPolicyGraph(root));
+    const handoff = await prepareTestHandoff(root, graphPath);
+    const nodeLaunchRecordStore = new NodeLaunchRecordStore({
+      recordsPath: join(root, "state", "node-launch-records.json"),
+    });
+
+    await nodeLaunchRecordStore.startPreparationOperation({
+      graphPath,
+      nodeId: "launch-prompt-profiles",
+      runId: "run-release",
+      postPreparation: { launchTerminal: {} },
+    });
+    await nodeLaunchRecordStore.markPreparationSucceeded(handoff);
+
+    const released = await nodeLaunchRecordStore.releaseActiveOperation({
+      graphPath,
+      nodeId: "launch-prompt-profiles",
+      reason: "release pending post-preparation launch",
+      now: new Date("2026-05-03T18:06:00.000Z"),
+    });
+
+    expect(released).toEqual(expect.objectContaining({
+      status: "preparation_failed",
+      error: expect.objectContaining({
+        code: "operation_released_by_user",
+        error: "release pending post-preparation launch",
+      }),
+    }));
+  });
+
+  it("recovers orphaned post-preparation companion launches without clearing terminal success", async () => {
+    const root = createRootDir();
+    const graphPath = normalizePath(writeLaunchPolicyGraph(root));
+    const handoff = await prepareTestHandoff(root, graphPath);
+    const nodeLaunchRecordStore = new NodeLaunchRecordStore({
+      recordsPath: join(root, "state", "node-launch-records.json"),
+    });
+
+    await nodeLaunchRecordStore.startPreparationOperation({
+      graphPath,
+      nodeId: "launch-prompt-profiles",
+      runId: "run-companion-orphaned",
+      postPreparation: {
+        launchTerminal: {},
+        launchCompanion: { kickoffPrompt: "Review this." },
+      },
+    });
+    await nodeLaunchRecordStore.markPreparationSucceeded(handoff);
+    await nodeLaunchRecordStore.markPostPreparationTerminalLaunching(handoff);
+    await nodeLaunchRecordStore.markTerminalLaunched(handoff, fakeTerminalLaunch(handoff));
+
+    const recovered = await nodeLaunchRecordStore.recoverOrphanedOperations(
+      new Date("2026-05-03T18:07:00.000Z"),
+    );
+    const operation = await nodeLaunchRecordStore.getOperation(graphPath, "launch-prompt-profiles");
+
+    expect(recovered).toHaveLength(1);
+    expect(operation).toEqual(expect.objectContaining({
+      status: "launched_pending_binding",
+      terminalLaunch: expect.objectContaining({
+        terminal: { method: "powershell", pid: 733 },
+      }),
+      companionLaunch: null,
+      companionError: expect.objectContaining({
+        code: "companion_operation_orphaned",
+      }),
     }));
   });
 

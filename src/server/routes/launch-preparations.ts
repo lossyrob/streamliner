@@ -250,6 +250,24 @@ async function operationSnapshot(
   return await store?.getOperation(graphPath, nodeId) ?? null;
 }
 
+async function safeOperationSnapshot(
+  store: NodeLaunchRecordStore | undefined,
+  graphPath: string,
+  nodeId: string,
+  logger: { error: (message: string, fields?: Record<string, unknown>) => void },
+  fields: Record<string, unknown>,
+): Promise<NodeLaunchOperation | null> {
+  try {
+    return await operationSnapshot(store, graphPath, nodeId);
+  } catch (error: unknown) {
+    logger.error("failed to read post-preparation operation snapshot", {
+      ...fields,
+      err: loggableError(error),
+    });
+    return null;
+  }
+}
+
 export function createLaunchPreparationsRouter(options: {
   defaultGraphPath?: string;
   deps?: LaunchPreparationRouteDeps;
@@ -426,17 +444,32 @@ export function createLaunchPreparationsRouter(options: {
             });
           }
         };
+        let preparationSucceeded = false;
         try {
           const result = await preparePawLaunch({
             ...prepareOptions,
             onProgress: progress,
           });
           await operationStore?.markPreparationSucceeded(result);
+          preparationSucceeded = true;
           if (!hasPostPreparationTerminalIntent(postPreparation)) {
             return result;
           }
           const launchHandoff = terminalHandoffForPostPreparation(result, postPreparation);
           const outcome: LaunchPreparationPostPreparationOutcome = {};
+          const snapshotFields = {
+            runId,
+            graphPath: launchHandoff.launchMetadata.graphPath,
+            nodeId: launchHandoff.launchMetadata.nodeId,
+          };
+          const readOperationSnapshot = () =>
+            safeOperationSnapshot(
+              operationStore,
+              launchHandoff.launchMetadata.graphPath,
+              launchHandoff.launchMetadata.nodeId,
+              logger,
+              snapshotFields,
+            );
           logger.info("post-preparation terminal launch starting", {
             runId,
             graphPath: launchHandoff.launchMetadata.graphPath,
@@ -452,11 +485,7 @@ export function createLaunchPreparationsRouter(options: {
               source: "post-preparation",
             });
             outcome.terminal = { status: "launched", result: terminalResult };
-            outcome.operation = await operationSnapshot(
-              operationStore,
-              launchHandoff.launchMetadata.graphPath,
-              launchHandoff.launchMetadata.nodeId,
-            );
+            outcome.operation = await readOperationSnapshot();
             logger.info("post-preparation terminal launch succeeded", {
               runId,
               graphPath: launchHandoff.launchMetadata.graphPath,
@@ -475,11 +504,7 @@ export function createLaunchPreparationsRouter(options: {
           } catch (error: unknown) {
             outcome.terminal = { status: "failed", error: postPreparationError(error) };
             outcome.companion = postPreparation.launchCompanion ? { status: "skipped" } : undefined;
-            outcome.operation = await operationSnapshot(
-              operationStore,
-              launchHandoff.launchMetadata.graphPath,
-              launchHandoff.launchMetadata.nodeId,
-            );
+            outcome.operation = await readOperationSnapshot();
             logger.error("post-preparation terminal launch failed", {
               runId,
               graphPath: launchHandoff.launchMetadata.graphPath,
@@ -523,11 +548,7 @@ export function createLaunchPreparationsRouter(options: {
                 companionLaunch: companionResult,
               });
               outcome.companion = { status: "launched", result: companionResult };
-              outcome.operation = await operationSnapshot(
-                operationStore,
-                launchHandoff.launchMetadata.graphPath,
-                launchHandoff.launchMetadata.nodeId,
-              );
+              outcome.operation = await readOperationSnapshot();
               logger.info("post-preparation companion launch succeeded", {
                 runId,
                 graphPath: launchHandoff.launchMetadata.graphPath,
@@ -542,16 +563,21 @@ export function createLaunchPreparationsRouter(options: {
               });
             } catch (error: unknown) {
               const companionError = postPreparationError(error);
-              await operationStore?.markCompanionFailed({
-                handoff: launchHandoff,
-                error: companionError,
-              });
+              try {
+                await operationStore?.markCompanionFailed({
+                  handoff: launchHandoff,
+                  error: companionError,
+                });
+              } catch (storeError: unknown) {
+                logger.error("failed to store post-preparation companion failure", {
+                  runId,
+                  graphPath: launchHandoff.launchMetadata.graphPath,
+                  nodeId: launchHandoff.launchMetadata.nodeId,
+                  err: loggableError(storeError),
+                });
+              }
               outcome.companion = { status: "failed", error: companionError };
-              outcome.operation = await operationSnapshot(
-                operationStore,
-                launchHandoff.launchMetadata.graphPath,
-                launchHandoff.launchMetadata.nodeId,
-              );
+              outcome.operation = await readOperationSnapshot();
               logger.error("post-preparation companion launch failed", {
                 runId,
                 graphPath: launchHandoff.launchMetadata.graphPath,
@@ -568,15 +594,11 @@ export function createLaunchPreparationsRouter(options: {
             }
           } else {
             outcome.companion = { status: "skipped" };
-            outcome.operation = await operationSnapshot(
-              operationStore,
-              launchHandoff.launchMetadata.graphPath,
-              launchHandoff.launchMetadata.nodeId,
-            );
+            outcome.operation = await readOperationSnapshot();
           }
           return { result, postPreparation: outcome, operation: outcome.operation };
         } catch (error: unknown) {
-          if (graphPath && nodeId.trim()) {
+          if (!preparationSucceeded && graphPath && nodeId.trim()) {
             await operationStore?.markPreparationFailed({
               graphPath,
               nodeId,

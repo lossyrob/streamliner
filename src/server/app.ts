@@ -133,9 +133,9 @@ export function createStreamlinerApiApp(
     });
   // Recover orphaned launch operations from the previous API process.
   // LaunchPreparationRunManager state lives in memory only, so any operation
-  // persisted as `preparing`/`launching`/`managed_starting` at the moment the
-  // server restarts has no live run to attach to. Mark them failed up front so
-  // the UI doesn't render them as forever-stuck.
+  // persisted as active or prepared with pending post-preparation launch intent
+  // at the moment the server restarts has no live run to attach to. Mark them
+  // failed up front so the UI doesn't render them as forever-stuck.
   void nodeLaunchRecordStore
     .recoverOrphanedOperations()
     .then((recovered) => {
