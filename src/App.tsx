@@ -12,7 +12,10 @@ import {
   parseWorkstreamDocument,
   buildWorkstreamViewModel,
 } from "./workstream-view-model";
-import { buildWorkstreamGraphLayout } from "./workstream-graph";
+import {
+  applyWorkstreamGraphSelection,
+  buildWorkstreamGraphBaseLayout,
+} from "./workstream-graph";
 import type { WorkstreamDocument } from "./workstream-schema";
 import {
   buildGraphNodeSessionStatusMap,
@@ -1563,10 +1566,14 @@ function GraphDashboard({
     return buildWorkstreamViewModel(workstream, githubSnapshot);
   }, [githubSnapshot, workstream]);
 
-  const layout = useMemo(() => {
+  const baseLayout = useMemo(() => {
     if (!workstream || !viewModel) return null;
-    return buildWorkstreamGraphLayout(workstream, viewModel, selectedNodeId);
-  }, [selectedNodeId, viewModel, workstream]);
+    return buildWorkstreamGraphBaseLayout(workstream, viewModel);
+  }, [viewModel, workstream]);
+  const layout = useMemo(() => {
+    if (!baseLayout) return null;
+    return applyWorkstreamGraphSelection(baseLayout, selectedNodeId);
+  }, [baseLayout, selectedNodeId]);
 
   const selectedEntry = useMemo(() => {
     if (!selectedNodeId || !viewModel) return null;
@@ -1580,6 +1587,7 @@ function GraphDashboard({
     if (!activeWorkstream) return null;
     return workstreams.find((entry) => registryKey(entry) === registryKey(activeWorkstream)) ?? null;
   }, [activeWorkstream, workstreams]);
+  const activeWorkstreamEntryPath = activeWorkstreamEntry?.path ?? null;
   const runtimeOverlay = useMemo<WorkstreamRuntimeOverlay | null>(() => {
     if (!viewModel) {
       return null;
@@ -1663,17 +1671,17 @@ function GraphDashboard({
 
   const launchOperationsByNodeId = useMemo(() => {
     const operations = new Map<string, NodeLaunchOperation>();
-    if (!activeWorkstreamEntry) {
+    if (!activeWorkstreamEntryPath) {
       return operations;
     }
-    const graphPath = activeWorkstreamEntry.path.toLowerCase();
+    const graphPath = activeWorkstreamEntryPath.toLowerCase();
     for (const operation of Object.values(launchOperationByKey)) {
       if (operation.graphPath.toLowerCase() === graphPath) {
         operations.set(operation.nodeId, operation);
       }
     }
     return operations;
-  }, [activeWorkstreamEntry?.path, launchOperationByKey]);
+  }, [activeWorkstreamEntryPath, launchOperationByKey]);
 
   const configureDisabledReason = useMemo(() => {
     if (!activeWorkstreamEntry || !isBackendReadableWorkstreamEntry(activeWorkstreamEntry)) {

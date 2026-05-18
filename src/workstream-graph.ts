@@ -316,20 +316,13 @@ function separateCheckpointLanes(
   return separatedNodes;
 }
 
-export function buildWorkstreamGraphLayout(
+export function buildWorkstreamGraphBaseLayout(
   workstream: WorkstreamDocument,
   viewModel: WorkstreamViewModel,
-  selectedNodeId: string | null,
 ): WorkstreamGraphLayoutResult {
   const { dependenciesByNode, dependentsByNode } =
     buildDependencyMaps(workstream);
   const renderedEdges = reduceTransitiveEdges(workstream);
-  const ancestors = selectedNodeId
-    ? collectReachableNodes(selectedNodeId, dependenciesByNode)
-    : new Set<string>();
-  const descendants = selectedNodeId
-    ? collectReachableNodes(selectedNodeId, dependentsByNode)
-    : new Set<string>();
 
   const graph = new dagre.graphlib.Graph();
   graph.setGraph({
@@ -368,12 +361,7 @@ export function buildWorkstreamGraphLayout(
         y: (position?.y ?? height / 2) - height / 2,
         width,
         height,
-        highlight: nodeHighlightFor(
-          entry.node.id,
-          selectedNodeId,
-          ancestors,
-          descendants,
-        ),
+        highlight: "none",
         repoLabel: repoLabelForNode(workstream, entry),
         entry,
       };
@@ -386,20 +374,86 @@ export function buildWorkstreamGraphLayout(
     nodes: layoutNodes,
     edges: renderedEdges.map((edge) => ({
       ...edge,
-      highlight: edgeHighlightFor(
-        edge.sourceId,
-        edge.targetId,
-        selectedNodeId,
-        ancestors,
-        descendants,
-      ),
+      highlight: "none",
     })),
     checkpointLanes,
     dependenciesByNode,
     dependentsByNode,
+    ancestors: new Set<string>(),
+    descendants: new Set<string>(),
+  };
+}
+
+export function applyWorkstreamGraphSelection(
+  layout: WorkstreamGraphLayoutResult,
+  selectedNodeId: string | null,
+): WorkstreamGraphLayoutResult {
+  const ancestors = selectedNodeId
+    ? collectReachableNodes(selectedNodeId, layout.dependenciesByNode)
+    : new Set<string>();
+  const descendants = selectedNodeId
+    ? collectReachableNodes(selectedNodeId, layout.dependentsByNode)
+    : new Set<string>();
+
+  let nodesChanged = false;
+  const nodes = layout.nodes.map((node) => {
+    const highlight = nodeHighlightFor(
+      node.id,
+      selectedNodeId,
+      ancestors,
+      descendants,
+    );
+    if (node.highlight === highlight) {
+      return node;
+    }
+    nodesChanged = true;
+    return { ...node, highlight };
+  });
+
+  let edgesChanged = false;
+  const edges = layout.edges.map((edge) => {
+    const highlight = edgeHighlightFor(
+      edge.sourceId,
+      edge.targetId,
+      selectedNodeId,
+      ancestors,
+      descendants,
+    );
+    if (edge.highlight === highlight) {
+      return edge;
+    }
+    edgesChanged = true;
+    return { ...edge, highlight };
+  });
+
+  if (
+    !selectedNodeId &&
+    !nodesChanged &&
+    !edgesChanged &&
+    layout.ancestors.size === 0 &&
+    layout.descendants.size === 0
+  ) {
+    return layout;
+  }
+
+  return {
+    ...layout,
+    nodes,
+    edges,
     ancestors,
     descendants,
   };
+}
+
+export function buildWorkstreamGraphLayout(
+  workstream: WorkstreamDocument,
+  viewModel: WorkstreamViewModel,
+  selectedNodeId: string | null,
+): WorkstreamGraphLayoutResult {
+  return applyWorkstreamGraphSelection(
+    buildWorkstreamGraphBaseLayout(workstream, viewModel),
+    selectedNodeId,
+  );
 }
 
 function laneStateFor(
