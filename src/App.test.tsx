@@ -2011,6 +2011,84 @@ describe("App sessions route", () => {
   );
 
   it(
+    "preselects launchAfterInit, reviewCompanion, and reviewPromptTemplateId from workstream config",
+    async () => {
+      const graph = buildLaunchGraph("ready", {
+        graph: {
+          launchDefaults: {
+            launchAfterInit: true,
+            reviewCompanion: true,
+            reviewPromptTemplateId: "thorough-review",
+          },
+        },
+      });
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return emptyNodeLaunchRecordResponse();
+        }
+        if (path === "/api/paw-launch-prompt-profiles" && (!init?.method || init.method === "GET")) {
+          return jsonResponse({ profiles: [] });
+        }
+        if (path === "/api/paw-review-prompt-templates" && (!init?.method || init.method === "GET")) {
+          return jsonResponse({
+            templates: [
+              {
+                id: "thorough-review",
+                name: "Thorough review",
+                prompt: "Review every line carefully and post nits.",
+                updatedAt: "2026-05-03T18:00:00.000Z",
+              },
+            ],
+          });
+        }
+        if (path === "/api/session-launch-settings") {
+          return jsonResponse({ defaultCliArgs: [] });
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      MockEventSource.instances = [];
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      act(() => {
+        findCanvasNode(container, "Launch prompt profiles").click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Initialize PAW launch").click();
+      });
+      await settle(100);
+
+      const launchAfterInitInput = findInputByLabel(container, "Launch after init");
+      expect(launchAfterInitInput.checked).toBe(true);
+      const reviewCompanionInput = findInputByLabel(
+        container,
+        "Launch PAW Review companion terminal",
+      );
+      expect(reviewCompanionInput.checked).toBe(true);
+      expect(findSelectByLabel(container, "Load review template").value).toBe("thorough-review");
+    },
+    15_000,
+  );
+
+  it(
     "creates a new PAW prompt profile when the selected profile is saved under a new name",
     async () => {
       const graph = buildLaunchGraph();

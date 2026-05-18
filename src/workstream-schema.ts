@@ -126,6 +126,9 @@ export interface WorkstreamLaunchTerminalDefaults {
 export interface WorkstreamLaunchDefaults {
   promptProfileId?: string | null;
   terminal?: WorkstreamLaunchTerminalDefaults;
+  launchAfterInit?: boolean;
+  reviewCompanion?: boolean;
+  reviewPromptTemplateId?: string | null;
 }
 
 export interface WorkstreamNode {

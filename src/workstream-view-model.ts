@@ -298,6 +298,16 @@ function parseLaunchTerminalDefaults(
   };
 }
 
+function parseOptionalBoolean(value: unknown, label: string): boolean | undefined {
+  if (typeof value === "undefined") {
+    return undefined;
+  }
+  if (typeof value !== "boolean") {
+    throw new Error(`Expected ${label} to be a boolean.`);
+  }
+  return value;
+}
+
 function parseLaunchDefaults(value: unknown, label: string): WorkstreamLaunchDefaults {
   const record = asObject(value, label);
   const terminal = record.terminal;
@@ -307,6 +317,12 @@ function parseLaunchDefaults(value: unknown, label: string): WorkstreamLaunchDef
       typeof terminal === "undefined"
         ? undefined
         : parseLaunchTerminalDefaults(terminal, `${label}.terminal`),
+    launchAfterInit: parseOptionalBoolean(record.launchAfterInit, `${label}.launchAfterInit`),
+    reviewCompanion: parseOptionalBoolean(record.reviewCompanion, `${label}.reviewCompanion`),
+    reviewPromptTemplateId: parseOptionalKebabCaseId(
+      record.reviewPromptTemplateId,
+      `${label}.reviewPromptTemplateId`,
+    ),
   };
 }
 

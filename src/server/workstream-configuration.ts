@@ -123,12 +123,45 @@ function normalizePromptProfileId(value: unknown): string | undefined {
   return profileId;
 }
 
+function normalizeReviewPromptTemplateId(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw badConfiguration("launchDefaults.reviewPromptTemplateId must be a kebab-case template id.");
+  }
+  const templateId = value.trim();
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(templateId)) {
+    throw badConfiguration("launchDefaults.reviewPromptTemplateId must be a kebab-case template id.");
+  }
+  return templateId;
+}
+
+function normalizeOptionalBoolean(value: unknown, label: string): boolean | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value !== "boolean") {
+    throw badConfiguration(`${label} must be a boolean.`);
+  }
+  return value;
+}
+
 function normalizeLaunchDefaults(value: unknown): WorkstreamLaunchDefaults | undefined {
   const record = optionalRecord(value, "launchDefaults");
   if (!record) {
     return undefined;
   }
   const promptProfileId = normalizePromptProfileId(record.promptProfileId);
+  const reviewPromptTemplateId = normalizeReviewPromptTemplateId(record.reviewPromptTemplateId);
+  const launchAfterInit = normalizeOptionalBoolean(
+    record.launchAfterInit,
+    "launchDefaults.launchAfterInit",
+  );
+  const reviewCompanion = normalizeOptionalBoolean(
+    record.reviewCompanion,
+    "launchDefaults.reviewCompanion",
+  );
   const terminalRecord = optionalRecord(record.terminal, "launchDefaults.terminal");
   const preferredTerminal = terminalRecord
     ? normalizeTerminalPreference(terminalRecord.preferredTerminal)
@@ -144,9 +177,12 @@ function normalizeLaunchDefaults(value: unknown): WorkstreamLaunchDefaults | und
     ...(titleTemplate ? { titleTemplate } : {}),
     ...(tabColor ? { tabColor } : {}),
   };
-  const launchDefaults = {
+  const launchDefaults: WorkstreamLaunchDefaults = {
     ...(promptProfileId ? { promptProfileId } : {}),
     ...(Object.keys(terminal).length > 0 ? { terminal } : {}),
+    ...(launchAfterInit !== undefined ? { launchAfterInit } : {}),
+    ...(reviewCompanion !== undefined ? { reviewCompanion } : {}),
+    ...(reviewPromptTemplateId ? { reviewPromptTemplateId } : {}),
   };
   return Object.keys(launchDefaults).length > 0 ? launchDefaults : undefined;
 }

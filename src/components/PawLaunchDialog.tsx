@@ -53,6 +53,9 @@ interface PawLaunchDialogProps {
   nodeTitle: string;
   defaults: PawLaunchDialogDefaults;
   defaultPromptProfileId?: string | null;
+  defaultLaunchAfterInit?: boolean;
+  defaultReviewCompanion?: boolean;
+  defaultReviewPromptTemplateId?: string | null;
   promptProfiles?: PawPromptProfile[];
   promptProfilesLoading?: boolean;
   promptProfilesError?: string | null;
@@ -310,6 +313,9 @@ export function PawLaunchDialog({
   nodeTitle,
   defaults,
   defaultPromptProfileId = null,
+  defaultLaunchAfterInit = false,
+  defaultReviewCompanion = false,
+  defaultReviewPromptTemplateId = null,
   promptProfiles = [],
   promptProfilesLoading = false,
   promptProfilesError = null,
@@ -354,8 +360,10 @@ export function PawLaunchDialog({
   const [terminalColor, setTerminalColor] = useState(defaults.terminal.tabColor ?? "");
   const [terminalTitleEdited, setTerminalTitleEdited] = useState(false);
   const [terminalColorEdited, setTerminalColorEdited] = useState(false);
-  const [launchAfterInit, setLaunchAfterInit] = useState(false);
-  const [terminalLaunchAfterInitPreference, setTerminalLaunchAfterInitPreference] = useState(false);
+  const [launchAfterInit, setLaunchAfterInit] = useState(defaultLaunchAfterInit);
+  const [terminalLaunchAfterInitPreference, setTerminalLaunchAfterInitPreference] = useState(
+    defaultLaunchAfterInit,
+  );
   const submittingRef = useRef(false);
   const [profiles, setProfiles] = useState<PawPromptProfile[]>(() =>
     mergePromptProfiles([], promptProfiles)
@@ -374,7 +382,7 @@ export function PawLaunchDialog({
   const [reviewTemplateBusy, setReviewTemplateBusy] = useState(false);
   const [reviewTemplateStatus, setReviewTemplateStatus] = useState<string | null>(null);
   const [reviewTemplateError, setReviewTemplateError] = useState<string | null>(null);
-  const [reviewCompanionEnabled, setReviewCompanionEnabled] = useState(false);
+  const [reviewCompanionEnabled, setReviewCompanionEnabled] = useState(defaultReviewCompanion);
   const [workflowContext, setWorkflowContext] = useState<WorkflowContextDocument | null>(null);
   const [workflowContextText, setWorkflowContextText] = useState("");
   const [workflowContextLoading, setWorkflowContextLoading] = useState(false);
@@ -461,6 +469,28 @@ export function PawLaunchDialog({
     setProfileName(defaultProfile.name);
     setWorkflowInstructions(defaultProfile.instructions);
   }, [defaultPromptProfileId, profiles]);
+
+  const defaultReviewTemplateAppliedRef = useRef(false);
+  const reviewTemplateSelectionTouchedRef = useRef(false);
+  useEffect(() => {
+    if (
+      defaultReviewTemplateAppliedRef.current ||
+      reviewTemplateSelectionTouchedRef.current ||
+      !defaultReviewPromptTemplateId
+    ) {
+      return;
+    }
+    const defaultTemplate = reviewTemplates.find(
+      (template) => template.id === defaultReviewPromptTemplateId,
+    );
+    if (!defaultTemplate) {
+      return;
+    }
+    defaultReviewTemplateAppliedRef.current = true;
+    setReviewTemplateId(defaultTemplate.id);
+    setReviewTemplateName(defaultTemplate.name);
+    setReviewTemplatePrompt(defaultTemplate.prompt);
+  }, [defaultReviewPromptTemplateId, reviewTemplates]);
 
   useEffect(() => {
     if (!handoff) {
@@ -582,6 +612,7 @@ export function PawLaunchDialog({
   };
 
   const applyReviewTemplate = (templateId: string) => {
+    reviewTemplateSelectionTouchedRef.current = true;
     setReviewTemplateId(templateId);
     setReviewTemplateStatus(null);
     setReviewTemplateError(null);

@@ -2848,6 +2848,9 @@ function GraphDashboard({
           nodeTitle={launchDialogEntry.node.title}
           defaults={launchDefaults}
           defaultPromptProfileId={workstream.launchDefaults?.promptProfileId ?? null}
+          defaultLaunchAfterInit={workstream.launchDefaults?.launchAfterInit ?? false}
+          defaultReviewCompanion={workstream.launchDefaults?.reviewCompanion ?? false}
+          defaultReviewPromptTemplateId={workstream.launchDefaults?.reviewPromptTemplateId ?? null}
           promptProfiles={promptProfiles}
           promptProfilesLoading={promptProfilesLoading}
           promptProfilesError={promptProfilesError}
@@ -2891,6 +2894,9 @@ function GraphDashboard({
           promptProfiles={promptProfiles}
           promptProfilesLoading={promptProfilesLoading}
           promptProfilesError={promptProfilesError}
+          reviewPromptTemplates={reviewPromptTemplates}
+          reviewPromptTemplatesLoading={reviewPromptTemplatesLoading}
+          reviewPromptTemplatesError={reviewPromptTemplatesError}
           saving={configurationSaving}
           error={configurationError}
           onCancel={handleCloseConfigurationDialog}

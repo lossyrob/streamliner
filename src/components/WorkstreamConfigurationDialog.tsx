@@ -11,6 +11,7 @@ import {
 } from "../workstream-schema";
 import { WORKSTREAM_TERMINAL_TITLE_TEMPLATE_HELP } from "../workstream-launch-templates";
 import type { PawPromptProfile } from "./paw-prompt-profiles";
+import type { PawReviewPromptTemplate } from "./paw-review-prompt-templates";
 import { TerminalColorQuickPicker } from "./SessionColorPicker";
 
 export interface WorkstreamConfigurationValues {
@@ -23,6 +24,9 @@ interface WorkstreamConfigurationDialogProps {
   promptProfiles?: PawPromptProfile[];
   promptProfilesLoading?: boolean;
   promptProfilesError?: string | null;
+  reviewPromptTemplates?: PawReviewPromptTemplate[];
+  reviewPromptTemplatesLoading?: boolean;
+  reviewPromptTemplatesError?: string | null;
   saving: boolean;
   error?: string | null;
   onCancel: () => void;
@@ -56,6 +60,9 @@ export function WorkstreamConfigurationDialog({
   promptProfiles = [],
   promptProfilesLoading = false,
   promptProfilesError = null,
+  reviewPromptTemplates = [],
+  reviewPromptTemplatesLoading = false,
+  reviewPromptTemplatesError = null,
   saving,
   error,
   onCancel,
@@ -76,12 +83,28 @@ export function WorkstreamConfigurationDialog({
   const [defaultPromptProfileId, setDefaultPromptProfileId] = useState(
     workstream.launchDefaults?.promptProfileId ?? "",
   );
+  const [defaultLaunchAfterInit, setDefaultLaunchAfterInit] = useState(
+    workstream.launchDefaults?.launchAfterInit ?? false,
+  );
+  const [defaultReviewCompanion, setDefaultReviewCompanion] = useState(
+    workstream.launchDefaults?.reviewCompanion ?? false,
+  );
+  const [defaultReviewPromptTemplateId, setDefaultReviewPromptTemplateId] = useState(
+    workstream.launchDefaults?.reviewPromptTemplateId ?? "",
+  );
   const [validationError, setValidationError] = useState<string | null>(null);
   const promptProfilesInitialLoadPending = promptProfilesLoading && promptProfiles.length === 0;
+  const reviewPromptTemplatesInitialLoadPending =
+    reviewPromptTemplatesLoading && reviewPromptTemplates.length === 0;
   const selectedDefaultMissing = Boolean(
     defaultPromptProfileId &&
       !promptProfilesInitialLoadPending &&
       !promptProfiles.some((profile) => profile.id === defaultPromptProfileId),
+  );
+  const selectedDefaultTemplateMissing = Boolean(
+    defaultReviewPromptTemplateId &&
+      !reviewPromptTemplatesInitialLoadPending &&
+      !reviewPromptTemplates.some((template) => template.id === defaultReviewPromptTemplateId),
   );
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -98,9 +121,14 @@ export function WorkstreamConfigurationDialog({
       ...(titleTemplate.trim() ? { titleTemplate: titleTemplate.trim() } : {}),
       ...(color ? { tabColor: color.toLowerCase() } : {}),
     };
-    const launchDefaults = {
+    const launchDefaults: WorkstreamLaunchDefaults = {
       ...(defaultPromptProfileId ? { promptProfileId: defaultPromptProfileId } : {}),
       ...(Object.keys(terminal).length > 0 ? { terminal } : {}),
+      ...(defaultLaunchAfterInit ? { launchAfterInit: true } : {}),
+      ...(defaultReviewCompanion ? { reviewCompanion: true } : {}),
+      ...(defaultReviewPromptTemplateId
+        ? { reviewPromptTemplateId: defaultReviewPromptTemplateId }
+        : {}),
     };
     void onSave({
       launchPolicy: requiredTracker ? { requiredTracker } : null,
@@ -211,6 +239,85 @@ export function WorkstreamConfigurationDialog({
               </span>
               {promptProfilesError && (
                 <span className="sl-action-error">{promptProfilesError}</span>
+              )}
+            </label>
+          </section>
+
+          <section className="sl-workstream-config-section">
+            <div>
+              <span className="sl-section-label">LAUNCH BEHAVIOR DEFAULTS</span>
+              <h3 className="sl-workstream-config-title">Per-launch checkboxes &amp; review template</h3>
+              <p className="sl-field-note">
+                Preselect the PAW launch dialog's "Launch after init", "Launch PAW Review
+                companion", and review prompt template. Builders can still override per launch.
+              </p>
+            </div>
+            <label className="sl-checkbox-row">
+              <input
+                type="checkbox"
+                aria-label="Default to launch terminal after PAW init"
+                checked={defaultLaunchAfterInit}
+                onChange={(event) => setDefaultLaunchAfterInit(event.target.checked)}
+                disabled={saving}
+              />
+              <span>
+                <strong>Default to "Launch after init"</strong>
+                <small>
+                  When checked, the terminal launches automatically when PAW init finishes
+                  instead of pausing for prompt review.
+                </small>
+              </span>
+            </label>
+            <label className="sl-checkbox-row">
+              <input
+                type="checkbox"
+                aria-label="Default to launch PAW Review companion terminal"
+                checked={defaultReviewCompanion}
+                onChange={(event) => setDefaultReviewCompanion(event.target.checked)}
+                disabled={saving}
+              />
+              <span>
+                <strong>Default to "Launch PAW Review companion terminal"</strong>
+                <small>
+                  When checked, a second REVIEW terminal opens alongside the main launch
+                  using the review prompt template below.
+                </small>
+              </span>
+            </label>
+            <label className="sl-field">
+              <span>Default review prompt template</span>
+              <select
+                aria-label="Default review prompt template"
+                value={defaultReviewPromptTemplateId}
+                onChange={(event) => setDefaultReviewPromptTemplateId(event.target.value)}
+                disabled={saving}
+              >
+                <option value="">Custom PAW Review prompt</option>
+                {defaultReviewPromptTemplateId && reviewPromptTemplatesInitialLoadPending && (
+                  <option value={defaultReviewPromptTemplateId}>
+                    Loading template: {defaultReviewPromptTemplateId}
+                  </option>
+                )}
+                {selectedDefaultTemplateMissing && (
+                  <option value={defaultReviewPromptTemplateId}>
+                    Missing template: {defaultReviewPromptTemplateId}
+                  </option>
+                )}
+                {reviewPromptTemplates.map((template) => (
+                  <option key={template.id} value={template.id}>
+                    {template.name} ({template.id})
+                  </option>
+                ))}
+              </select>
+              {reviewPromptTemplatesInitialLoadPending && (
+                <span className="sl-inline-status">Loading saved templates...</span>
+              )}
+              <span className="sl-field-note">
+                Template IDs are local hints stored in graph.json. Deleted or unavailable
+                templates do not block launch.
+              </span>
+              {reviewPromptTemplatesError && (
+                <span className="sl-action-error">{reviewPromptTemplatesError}</span>
               )}
             </label>
           </section>
