@@ -38,6 +38,7 @@ import {
 } from "../session-workstream-linkage";
 import type { WorkstreamRegistryListEntry } from "../workstream-registry-contract";
 import { parseWorkstreamDocument } from "../workstream-view-model";
+import { useIsDocumentVisible } from "../use-document-visibility";
 import {
   buildRestartCommand,
   canManuallyStop,
@@ -1340,6 +1341,7 @@ export function SessionsPage({
   const eventRefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const eventStreamLiveRef = useRef(false);
   const lastStreamEventAtRef = useRef(0);
+  const isDocumentVisible = useIsDocumentVisible();
   const skipUnmountFlushRef = useRef(false);
   const saveRequestIdRef = useRef(0);
   // Frozen group order per mode. Filled lazily on first render for a mode; cleared by Resort.
@@ -1544,6 +1546,14 @@ export function SessionsPage({
       setSyncState("polling");
       return;
     }
+    if (!isDocumentVisible) {
+      // Tab is backgrounded; drop the long-lived SSE so it stops consuming
+      // one of the browser's six per-origin HTTP/1.1 connections while doing
+      // no useful work. Effect re-runs on visibilitychange to reconnect.
+      eventStreamLiveRef.current = false;
+      setSyncState("polling");
+      return;
+    }
 
     let closed = false;
     const source = new EventSource(sessionEventsUrl);
@@ -1704,6 +1714,7 @@ export function SessionsPage({
   }, [
     applySessionList,
     fetchSessions,
+    isDocumentVisible,
     markStreamEvent,
     scheduleEventRefetch,
     sessionEventsUrl,

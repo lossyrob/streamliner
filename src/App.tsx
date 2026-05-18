@@ -97,6 +97,7 @@ import {
 import { renderWorkstreamTerminalTitleTemplate } from "./workstream-launch-templates";
 import { evaluateNodeLaunchPolicy } from "./workstream-launch-policy";
 import { useSessionRegistryList } from "./session-registry-client";
+import { useIsDocumentVisible } from "./use-document-visibility";
 import {
   buildWorkstreamRuntimeOverlay,
   type WorkstreamRuntimeOverlay,
@@ -1514,6 +1515,7 @@ function GraphDashboard({
   const [configurationError, setConfigurationError] = useState<string | null>(null);
   const failedRunReattachRef = useRef<Set<string>>(new Set());
   const localRunStreamsRef = useRef<Set<string>>(new Set());
+  const isDocumentVisible = useIsDocumentVisible();
   const activeWorkstreamKey = activeWorkstream ? registryKey(activeWorkstream) : "";
   const sessionList = useSessionRegistryList(
     { workstreamId: activeWorkstream?.workstreamId ?? null },
@@ -2650,6 +2652,14 @@ function GraphDashboard({
     ) {
       return;
     }
+    if (!isDocumentVisible) {
+      // Tab is hidden — don't open a fresh preparation-progress SSE that
+      // would burn one of the browser's per-origin HTTP/1.1 connection
+      // slots. When the tab becomes visible again this effect re-runs and
+      // the reattach picks up wherever the backend run is at; status
+      // updates persisted server-side mean nothing is lost.
+      return;
+    }
     const runId = launchDialogOperation.preparationRunId;
     if (localRunStreamsRef.current.has(runId) || failedRunReattachRef.current.has(runId)) {
       return;
@@ -2723,6 +2733,7 @@ function GraphDashboard({
     applyPreparedLaunchHandoff,
     enqueueProgressEvent,
     flushPendingProgressEvents,
+    isDocumentVisible,
     launchDialogOpen,
     launchDialogOperation?.preparationRunId,
     launchDialogOperation?.status,

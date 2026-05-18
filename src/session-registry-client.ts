@@ -4,6 +4,7 @@ import type {
   SessionRegistryListOptions,
 } from "./session-registry-contract";
 import { sessionRegistryRecordMatchesOptions } from "./session-registry-filter";
+import { useIsDocumentVisible } from "./use-document-visibility";
 import {
   SESSION_REGISTRY_MANAGED_LIFECYCLE_STATES,
   SESSION_REGISTRY_RUNTIME_EVIDENCE_KINDS,
@@ -288,6 +289,7 @@ export function useSessionRegistryList(
     }
     return nextOptions;
   }, [includeArchived, nodeId, repo, text, workstreamId]);
+  const isDocumentVisible = useIsDocumentVisible();
 
   useEffect(() => {
     sessionsRef.current = sessions;
@@ -371,6 +373,15 @@ export function useSessionRegistryList(
       return;
     }
     if (typeof EventSource === "undefined") {
+      eventStreamLiveRef.current = false;
+      setSyncState("polling");
+      return;
+    }
+    if (!isDocumentVisible) {
+      // Tab is backgrounded; don't hold a long-lived SSE connection that
+      // would consume one of the browser's six per-origin HTTP/1.1 slots
+      // while doing no useful work. Polling-fallback path picks up when
+      // the tab becomes visible again and this effect re-runs.
       eventStreamLiveRef.current = false;
       setSyncState("polling");
       return;
@@ -534,7 +545,7 @@ export function useSessionRegistryList(
         eventRefetchTimerRef.current = null;
       }
     };
-  }, [enabled, eventsUrl, fetchSessions, listOptions, markStreamEvent, scheduleEventRefetch]);
+  }, [enabled, eventsUrl, fetchSessions, isDocumentVisible, listOptions, markStreamEvent, scheduleEventRefetch]);
 
   return { sessions, loading, error, syncState, refresh: fetchSessions };
 }
