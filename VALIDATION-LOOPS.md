@@ -1,9 +1,8 @@
 # Validation Loops
 
-> Operating guidance for validation-loop waves. This document assumes capable
-> agents and developers. It describes the intent, authority shape, and acceptance
-> signal of the loop; it is not a rigid issue taxonomy or defensive prompt
-> scaffold.
+> Operating guidance for validation-loop waves: the intent of the loop, the
+> authority shape of the work it produces, and the kind of signal a gate
+> should be able to consume from it.
 
 ## Purpose
 
@@ -29,14 +28,13 @@ The loop is simple:
 6. Repeat until the workstream has earned its gate or should escalate.
 
 The mechanism can be manual, agent-operated, or eventually managed directly by
-Streamliner. Today it may use terminal sessions, loop scripts, GitHub issues,
-reviewer sessions, and merge loops. The doctrine is the same either way:
-realistic exercise, discovered gaps, bounded repairs, rerun, and evidence.
+Streamliner; the doctrine is the same either way: realistic exercise, discovered
+gaps, bounded repairs, rerun, and evidence.
 
 ## Judgment over taxonomy
 
-The validation actor is expected to use judgment. It should not create issues
-merely because something could be improved. It should create issues when an
+Loop runners should use judgment when deciding what becomes an issue. Do not
+create issues merely because something could be improved. Create issues when an
 observation threatens the workstream's intended confidence transition or when a
 separate issue is the clearest way to bound, review, parallelize, or audit the
 repair.
