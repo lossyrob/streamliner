@@ -153,6 +153,8 @@ async function main() {
   const npxBin = process.platform === "win32" ? "npx.cmd" : "npx";
   const apiPort = String(await getFreePort());
   const apiRuntimeRoot = await mkdtemp(resolve(tmpdir(), "streamliner-screenshot-registry-"));
+  const stateRoot = resolve(apiRuntimeRoot, "state");
+  const logDir = resolve(stateRoot, "logs");
   const workstreamRegistryPath = resolve(apiRuntimeRoot, "workstream-registry", "workstreams.json");
   const workstreamSourceRegistryPath = resolve(apiRuntimeRoot, "workstream-registry", "sources.json");
   const recentsPath = resolve(apiRuntimeRoot, "recent-graphs.json");
@@ -161,6 +163,8 @@ async function main() {
     STREAMLINER_GRAPH: args.graph,
     STREAMLINER_API_PORT: apiPort,
     STREAMLINER_API_HOST: "127.0.0.1",
+    STREAMLINER_STATE_ROOT: stateRoot,
+    STREAMLINER_LOG_DIR: logDir,
     STREAMLINER_SESSION_REGISTRY_ROOT: apiRuntimeRoot,
     STREAMLINER_WORKSTREAM_REGISTRY: workstreamRegistryPath,
     STREAMLINER_WORKSTREAM_SOURCE_REGISTRY: workstreamSourceRegistryPath,
