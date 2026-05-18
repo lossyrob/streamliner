@@ -3328,7 +3328,31 @@ describe("App sessions route", () => {
   it(
     "asks the server to launch the terminal after preparation when launch after init is checked",
     async () => {
-      const graph = buildLaunchGraph();
+      const graph = buildLaunchGraph("ready", {
+        graph: {
+          repos: [
+            {
+              id: "streamliner",
+              owner: "lossyrob",
+              name: "streamliner",
+              role: "primary",
+            },
+            {
+              id: "planning",
+              owner: "lossyrob",
+              name: "planning",
+            },
+          ],
+        },
+        node: {
+          tracker: {
+            type: "github",
+            owner: "lossyrob",
+            repo: "planning",
+            number: 33,
+          },
+        },
+      });
       const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = requestPath(input);
         if (path === "/api/workstreams") {
@@ -3412,7 +3436,7 @@ describe("App sessions route", () => {
       await settle();
       setTextareaValue(
         findTextareaByLabel(container, "PAW Review prompt template"),
-        "Review issue {{githubIssue}}.",
+        "Review issue {{githubRepo}}#{{githubIssue}}.",
       );
       await settle();
       expect(findButton(container, "Run PAW init and launch")).toBeDefined();
@@ -3434,7 +3458,7 @@ describe("App sessions route", () => {
               terminalColor: "#4891c8",
             },
             launchCompanion: {
-              kickoffPrompt: "Review issue 33.",
+              kickoffPrompt: "Review issue lossyrob/planning#33.",
             },
           },
         }),

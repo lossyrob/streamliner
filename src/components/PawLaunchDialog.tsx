@@ -436,6 +436,7 @@ export function PawLaunchDialog({
       defaults.githubIssueNumber !== undefined
     ? renderReviewPromptTemplate(trimmedReviewTemplatePrompt, {
       githubIssue: String(defaults.githubIssueNumber),
+      githubRepo: defaults.githubIssueRepo ?? "",
     })
     : "";
   const terminalColorValue = terminalColor.trim();
@@ -1163,13 +1164,16 @@ export function PawLaunchDialog({
                     value={reviewTemplatePrompt}
                     onChange={setReviewTemplatePrompt}
                     rows={8}
-                    placeholder="Example: GitHub Issue: #{{githubIssue}}"
+                    placeholder="Example: Review {{githubRepo}}#{{githubIssue}}"
                   />
                   <p className="sl-field-note">
                     Uses <code>{"{{githubIssue}}"}</code> for the selected node's issue number
                     {typeof defaults.githubIssueNumber === "number"
-                      ? ` (${defaults.githubIssueNumber}).`
-                      : "."}
+                      ? ` (${defaults.githubIssueNumber})`
+                      : ""}
+                    {" and "}
+                    <code>{"{{githubRepo}}"}</code> for the tracker repository
+                    {defaults.githubIssueRepo ? ` (${defaults.githubIssueRepo}).` : "."}
                   </p>
                 </>
               )}

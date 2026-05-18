@@ -34,6 +34,7 @@ export interface PawLaunchDialogDefaults {
   graphPath: string;
   terminalPreference: string;
   githubIssueNumber?: number | null;
+  githubIssueRepo?: string | null;
   githubIssueLabel?: string | null;
   githubIssueUrl?: string | null;
   terminal: PawLaunchTerminalConfiguration;

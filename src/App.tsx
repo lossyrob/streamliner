@@ -1897,6 +1897,9 @@ function GraphDashboard({
       githubIssueNumber: defaultsNode.tracker?.type === "github"
         ? defaultsNode.tracker.number
         : null,
+      githubIssueRepo: defaultsNode.tracker?.type === "github"
+        ? `${defaultsNode.tracker.owner}/${defaultsNode.tracker.repo}`
+        : null,
       githubIssueLabel: defaultsNode.tracker?.type === "github"
         ? workstreamTrackerLabel(defaultsNode.tracker)
         : null,

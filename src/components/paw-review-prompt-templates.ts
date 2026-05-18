@@ -34,9 +34,12 @@ export function mergeReviewPromptTemplates(
 
 export function renderReviewPromptTemplate(
   template: string,
-  values: { githubIssue: string },
+  values: { githubIssue: string; githubRepo: string },
 ): string {
-  return template.replaceAll("{{githubIssue}}", values.githubIssue);
+  return template.replace(
+    /\{\{(githubIssue|githubRepo)\}\}/g,
+    (_match, key: string) => values[key as keyof typeof values],
+  );
 }
 
 export async function loadReviewPromptTemplates(): Promise<PawReviewPromptTemplate[]> {
