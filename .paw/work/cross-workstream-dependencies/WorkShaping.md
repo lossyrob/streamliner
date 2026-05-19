@@ -21,14 +21,14 @@ The first version should:
 - Match the existing `_proto/canvas` external dependency visual language: red dashed ghost cards and red dashed external edges.
 - Show a short inspector entry for each external dependency, including status and a click target to the other workstream when resolvable.
 - Include unresolved ghost placeholders for missing/unreadable targets and keep those dependencies unsatisfied.
-- Allow explicit local status override only for unresolved or URL-only dependencies.
+- Honor explicit local status override only when a dependency is unresolved or URL-only; resolved Streamliner targets remain authoritative.
 - Allow users to drag graph cards, including external ghost cards, and persist those manual positions across restarts and graph updates.
 
 ## Key decisions from shaping
 
 1. External dependencies are explicit graph data, not inferred from prose.
 2. External references can point to a workstream and optionally a node, with label/URL fallback.
-3. External dependencies participate in readiness and launch gating when resolvable.
+3. External dependencies participate in readiness and dashboard launch-affordance gating when resolvable.
 4. Ghost upstream nodes should render inside the current graph instead of using only badges or inspector metadata.
 5. Unresolved external targets still render as ghost placeholders and remain unsatisfied.
 6. Manual resolution via graph data is allowed only for unresolved or URL-only dependencies; resolved Streamliner targets derive status from upstream graph state.
@@ -80,7 +80,7 @@ Keep `node.dependsOn: string[]` for local graph dependencies. Add a separate ext
 }
 ```
 
-For URL-only or unresolved dependencies, allow a local status override such as `status: "pending" | "satisfied"`. For resolvable Streamliner targets, ignore or reject manual status override so the upstream graph remains authoritative.
+For URL-only or unresolved dependencies, allow a local status override such as `status: "pending" | "satisfied"`. Target-backed entries may carry this override for the unresolved case, but once the target resolves the upstream graph remains authoritative and the local override is ignored.
 
 ### Resolution flow
 
@@ -106,6 +106,8 @@ Ghost upstream nodes are read-only graph elements generated from external depend
 The visual style should borrow from `_proto/canvas`: compact red dashed external cards, a clear `EXT` label, red dashed external edges, and red left-border blocker rows in the inspector. This is a style match only; the portfolio canvas data model and broader canvas controls are not part of this work.
 
 If a ghost target is resolvable, clicking it or its inspector link should navigate to `/workstreams/{projectKey}/{workstreamId}` or `/workstreams/{projectKey}/{workstreamId}/nodes/{nodeId}`. If unresolved but a URL fallback exists, expose the URL. Otherwise show the unresolved label and target identity.
+
+Selecting a ghost node should show read-only blocker details without local-node launch controls.
 
 ### Manual position overlay
 
