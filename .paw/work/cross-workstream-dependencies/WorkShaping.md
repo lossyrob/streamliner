@@ -18,9 +18,11 @@ The first version should:
 - Resolve upstream workstream or node status from registered/source-discovered workstreams when available.
 - Draw ghost upstream nodes in the current graph for external dependencies.
 - Draw dependency edges from ghost upstream nodes to the dependent local node.
+- Match the existing `_proto/canvas` external dependency visual language: red dashed ghost cards and red dashed external edges.
 - Show a short inspector entry for each external dependency, including status and a click target to the other workstream when resolvable.
 - Include unresolved ghost placeholders for missing/unreadable targets and keep those dependencies unsatisfied.
 - Allow explicit local status override only for unresolved or URL-only dependencies.
+- Allow users to drag graph cards, including external ghost cards, and persist those manual positions across restarts and graph updates.
 
 ## Key decisions from shaping
 
@@ -30,6 +32,8 @@ The first version should:
 4. Ghost upstream nodes should render inside the current graph instead of using only badges or inspector metadata.
 5. Unresolved external targets still render as ghost placeholders and remain unsatisfied.
 6. Manual resolution via graph data is allowed only for unresolved or URL-only dependencies; resolved Streamliner targets derive status from upstream graph state.
+7. The external dependency visual treatment should align with the known `_proto/canvas` style: red dashed external cards/edges and compact blocker details.
+8. Manual node placement is in scope, but it should persist in Streamliner local runtime state, not in committed `graph.json`.
 
 ## Work breakdown
 
@@ -43,11 +47,14 @@ The first version should:
 - Fold resolved external dependencies into dependency readiness.
 - Render ghost external nodes and edges in the workstream graph layout.
 - Add inspector details and navigation for external dependencies.
+- Add draggable local and external graph cards with persisted manual positions.
 
 ### Supporting work
 
 - Update format/design documentation for the new graph field and behavior.
+- Document that graph position overrides are local runtime overlay state, not durable graph semantics.
 - Add tests for parsing, validation, readiness gating, graph layout, and inspector rendering.
+- Add tests for position persistence and layout fallback behavior.
 - Add focused UI verification with real graph data because this changes dashboard rendering.
 
 ## Rough architecture
@@ -96,7 +103,15 @@ For URL-only or unresolved dependencies, allow a local status override such as `
 
 Ghost upstream nodes are read-only graph elements generated from external dependency resolution results. They should be visually distinct from local task/gate nodes and should not show launch controls. They should participate in layout as upstream sources for the dependent node so the dependency is visible in graph geometry.
 
+The visual style should borrow from `_proto/canvas`: compact red dashed external cards, a clear `EXT` label, red dashed external edges, and red left-border blocker rows in the inspector. This is a style match only; the portfolio canvas data model and broader canvas controls are not part of this work.
+
 If a ghost target is resolvable, clicking it or its inspector link should navigate to `/workstreams/{projectKey}/{workstreamId}` or `/workstreams/{projectKey}/{workstreamId}/nodes/{nodeId}`. If unresolved but a URL fallback exists, expose the URL. Otherwise show the unresolved label and target identity.
+
+### Manual position overlay
+
+The existing workstream graph uses Dagre-generated positions and currently disables node dragging. External ghost nodes increase the chance that auto-layout produces an awkward or operator-unfriendly arrangement, so the first version should let users drag local nodes and external ghost nodes.
+
+Manual positions should be stored in Streamliner local runtime state keyed by workstream identity and node ID, for example `{projectKey, workstreamId, nodeId}`. They should not be written to `graph.json`, because they are user/layout convenience rather than shared workstream semantics. On render, Streamliner should compute the auto-layout baseline and then overlay saved positions for matching node IDs. Missing position entries use auto-layout. Deleted or renamed nodes naturally leave stale position entries unused.
 
 ## Codebase fit
 
@@ -104,9 +119,11 @@ If a ghost target is resolvable, clicking it or its inspector link should naviga
 - `src/workstream-view-model.ts` parses, validates, and derives operational readiness.
 - `src/workstream-graph.ts` builds graph dependency maps, reduced edges, layout nodes, and highlights.
 - `src/components/WorkstreamGraphNode.tsx` renders graph nodes and can host ghost-node presentation.
+- `src/components/WorkstreamCanvas.tsx` currently disables node dragging and is the likely integration point for drag handlers and position overlays.
 - `src/components/NodeInspector.tsx` already renders local dependencies/dependents and is the natural place for external dependency entries.
 - `src/dashboard-routing.ts` already supports workstream node routes.
 - `src/server/routes/workstreams.ts`, `src/server/workstream-registry.ts`, and `src/server/workstream-sources.ts` already expose registered/source-discovered workstream graphs that resolution can reuse.
+- `_proto/canvas/index.html` demonstrates the desired external dependency card/edge styling and a local-runtime position overlay model to adapt, not copy wholesale.
 - `WORKSTREAM-FORMAT.md` and `docs/design/workstream-format.md` document the graph schema and should be updated with the new field.
 
 ## Edge cases and expected handling
@@ -120,6 +137,10 @@ If a ghost target is resolvable, clicking it or its inspector link should naviga
 - Duplicate external dependencies on one node: reject duplicate local external dependency IDs and avoid duplicate ghost nodes/edges.
 - External dependency cycles across workstreams: do not attempt global cycle detection in the first version; resolve only immediate external dependencies for display/readiness.
 - Transitive external dependencies: do not recursively import upstream graph geometry; show immediate external blockers only.
+- Awkward auto-layout after adding external ghost nodes: users can drag affected cards and the local runtime position overlay preserves those choices across restarts and graph updates.
+- Graph edits that resolve an external dependency: update committed graph dependency status/target data; the next render should show the dependency satisfied and unblock readiness.
+- Node rename/delete after manual placement: ignore stale local position entries for IDs that no longer exist.
+- Multiple users or machines: manual positions are local unless future work adds shared/user-scoped layout sync.
 
 ## Risks and gotchas
 
@@ -128,9 +149,11 @@ If a ghost target is resolvable, clicking it or its inspector link should naviga
 - Readiness behavior must be explicit because changing dependency gating can affect launch availability.
 - The schema should not overload `dependsOn`; keeping local and external dependencies separate preserves existing validation and avoids breaking current graphs.
 - Cross-workstream resolution depends on registered/source-discovered workstreams; unresolved state is a normal condition, not a parse failure.
+- Persisted positions should not become accidental plan authority. Keep them in runtime state and make graph edits the only durable way to resolve dependency status.
+- Drag persistence requires careful interaction with React Flow selection and fit-to-view behavior so saved positions do not make first load disorienting.
 
 ## Open questions for downstream planning
 
 - Exact field names and discriminated-union shape should be finalized during planning.
 - Decide whether the first implementation resolves external graphs entirely client-side from existing API routes or adds a server-side batch endpoint.
-- Decide the precise visual styling for ghost nodes after inspecting the live dashboard.
+- Decide the exact runtime file/API shape for persisted graph positions.
