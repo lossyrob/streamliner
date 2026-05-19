@@ -953,7 +953,10 @@ function buildExternalDependencyView(
       };
     }
 
-    const unresolvedSatisfied = dependency.status === "satisfied";
+    const canUseManualTargetOverride =
+      resolution?.state === "error" || resolution?.state === "unresolved";
+    const unresolvedSatisfied =
+      canUseManualTargetOverride && dependency.status === "satisfied";
     if (unresolvedSatisfied) {
       return {
         key,
@@ -964,9 +967,7 @@ function buildExternalDependencyView(
         detail:
           resolution?.state === "error"
             ? `Manual override while target errored: ${resolution.error}`
-            : resolution?.state === "unresolved"
-              ? `Manual override while target unresolved: ${resolution.reason}`
-              : "Manual override while target is resolving",
+            : `Manual override while target unresolved: ${resolution.reason}`,
         statusLabel: "manually satisfied",
         state: "manual",
         satisfied: true,

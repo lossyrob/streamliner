@@ -128,6 +128,7 @@ const GITHUB_STATUS_REFRESH_INTERVAL_MS = 60_000;
 const LAST_GRAPH_KEY = "streamliner:lastGraphPath";
 const PAW_LAUNCH_CWD_OVERRIDES_KEY = "streamliner:pawLaunchCwdByRepo";
 const STREAMLINER_LOGO_URL = "/streamliner-logo.png";
+const POSITIONS_SAVE_DEBOUNCE_MS = 350;
 const EMPTY_EXTERNAL_DEPENDENCY_RESOLUTIONS: ReadonlyMap<
   string,
   WorkstreamExternalDependencyResolution
@@ -229,6 +230,13 @@ function isKebabCaseId(value: string): boolean {
   return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value);
 }
 
+function isWorkstreamRouteNodeId(value: string): boolean {
+  return (
+    isKebabCaseId(value) ||
+    /^external:[a-z0-9]+(?:-[a-z0-9]+)*:[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value)
+  );
+}
+
 function parseMessageEventData<T>(event: Event): T {
   return JSON.parse((event as MessageEvent<string>).data) as T;
 }
@@ -287,7 +295,7 @@ function readDashboardRoute(): DashboardRoute {
     return { view: "workstreams", message: "That workstream URL is incomplete." };
   }
   const nodeId = decodeSegment(segments[4]);
-  if (!nodeId || !isKebabCaseId(nodeId)) {
+  if (!nodeId || !isWorkstreamRouteNodeId(nodeId)) {
     return { view: "workstreams", message: "That workstream node URL is invalid." };
   }
   return { view: "workstream", projectKey, workstreamId, nodeId };
@@ -1720,7 +1728,7 @@ function useExternalDependencyResolutions(
               if (!response.ok) {
                 upstreamError = (await parseErrorResponse(response)).message;
               } else {
-                upstreamDocument = parseWorkstreamDocument(await response.json());
+                upstreamDocument = parseWorkstreamDocument(await response.text());
               }
             } catch (error: unknown) {
               if (error instanceof DOMException && error.name === "AbortError") {
@@ -1799,9 +1807,18 @@ function useWorkstreamNodePositions(entry: WorkstreamRegistryListEntry | null): 
     ReadonlyMap<string, WorkstreamGraphNodePosition>
   >(new Map());
   const [error, setError] = useState<string | null>(null);
+  const positionsRef = useRef<ReadonlyMap<string, WorkstreamGraphNodePosition>>(new Map());
+  const positionsMountedRef = useRef(true);
+  const pendingPositionSaveRef = useRef<{
+    entry: WorkstreamRegistryListEntry;
+    positions: ReadonlyMap<string, WorkstreamGraphNodePosition>;
+  } | null>(null);
+  const positionSaveTimerRef = useRef<number | null>(null);
+  const positionSaveChainRef = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
     if (!entry || isBrowserWorkstreamEntry(entry)) {
+      positionsRef.current = new Map();
       setPositions(new Map());
       setError(null);
       return;
@@ -1820,13 +1837,16 @@ function useWorkstreamNodePositions(entry: WorkstreamRegistryListEntry | null): 
         }
         const document = await response.json() as WorkstreamPositionsResponse;
         if (!cancelled) {
-          setPositions(positionsRecordToMap(document.positions ?? {}));
+          const nextPositions = positionsRecordToMap(document.positions ?? {});
+          positionsRef.current = nextPositions;
+          setPositions(nextPositions);
         }
       } catch (loadError: unknown) {
         if (loadError instanceof DOMException && loadError.name === "AbortError") {
           return;
         }
         if (!cancelled) {
+          positionsRef.current = new Map();
           setPositions(new Map());
           setError(loadError instanceof Error ? loadError.message : String(loadError));
         }
@@ -1839,6 +1859,90 @@ function useWorkstreamNodePositions(entry: WorkstreamRegistryListEntry | null): 
     };
   }, [entry]);
 
+  const enqueuePositionSave = useCallback(
+    (
+      saveEntry: WorkstreamRegistryListEntry,
+      savePositions: ReadonlyMap<string, WorkstreamGraphNodePosition>,
+    ) => {
+      positionSaveChainRef.current = positionSaveChainRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          try {
+            if (positionsMountedRef.current) {
+              setError(null);
+            }
+            const response = await fetch(registryPositionsUrl(saveEntry), {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                positions: positionsMapToRecord(savePositions),
+              }),
+            });
+            if (!response.ok) {
+              throw new Error((await parseErrorResponse(response)).message);
+            }
+          } catch (saveError: unknown) {
+            if (positionsMountedRef.current) {
+              setError(saveError instanceof Error ? saveError.message : String(saveError));
+            }
+          }
+        });
+    },
+    [],
+  );
+
+  useEffect(() => {
+    positionsMountedRef.current = true;
+    return () => {
+      positionsMountedRef.current = false;
+      if (positionSaveTimerRef.current !== null) {
+        window.clearTimeout(positionSaveTimerRef.current);
+        positionSaveTimerRef.current = null;
+      }
+      const pending = pendingPositionSaveRef.current;
+      pendingPositionSaveRef.current = null;
+      if (pending) {
+        enqueuePositionSave(pending.entry, pending.positions);
+      }
+    };
+  }, [enqueuePositionSave]);
+
+  const schedulePositionSave = useCallback(
+    (
+      saveEntry: WorkstreamRegistryListEntry,
+      savePositions: ReadonlyMap<string, WorkstreamGraphNodePosition>,
+    ) => {
+      const pending = pendingPositionSaveRef.current;
+      if (
+        pending &&
+        registryPositionsUrl(pending.entry) !== registryPositionsUrl(saveEntry)
+      ) {
+        if (positionSaveTimerRef.current !== null) {
+          window.clearTimeout(positionSaveTimerRef.current);
+          positionSaveTimerRef.current = null;
+        }
+        pendingPositionSaveRef.current = null;
+        enqueuePositionSave(pending.entry, pending.positions);
+      }
+      pendingPositionSaveRef.current = {
+        entry: saveEntry,
+        positions: savePositions,
+      };
+      if (positionSaveTimerRef.current !== null) {
+        window.clearTimeout(positionSaveTimerRef.current);
+      }
+      positionSaveTimerRef.current = window.setTimeout(() => {
+        positionSaveTimerRef.current = null;
+        const pending = pendingPositionSaveRef.current;
+        pendingPositionSaveRef.current = null;
+        if (pending) {
+          enqueuePositionSave(pending.entry, pending.positions);
+        }
+      }, POSITIONS_SAVE_DEBOUNCE_MS);
+    },
+    [enqueuePositionSave],
+  );
+
   const updatePosition = useCallback(
     (nodeId: string, position: { x: number; y: number }) => {
       if (!entry || isBrowserWorkstreamEntry(entry)) {
@@ -1846,30 +1950,13 @@ function useWorkstreamNodePositions(entry: WorkstreamRegistryListEntry | null): 
       }
 
       const updatedAt = new Date().toISOString();
-      setPositions((current) => {
-        const next = new Map(current);
-        next.set(nodeId, { ...position, updatedAt });
-        void (async () => {
-          try {
-            setError(null);
-            const response = await fetch(registryPositionsUrl(entry), {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                positions: positionsMapToRecord(next),
-              }),
-            });
-            if (!response.ok) {
-              throw new Error((await parseErrorResponse(response)).message);
-            }
-          } catch (saveError: unknown) {
-            setError(saveError instanceof Error ? saveError.message : String(saveError));
-          }
-        })();
-        return next;
-      });
+      const next = new Map(positionsRef.current);
+      next.set(nodeId, { ...position, updatedAt });
+      positionsRef.current = next;
+      setPositions(next);
+      schedulePositionSave(entry, next);
     },
-    [entry],
+    [entry, schedulePositionSave],
   );
 
   return { positions, error, updatePosition };

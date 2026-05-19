@@ -1552,6 +1552,218 @@ describe("App sessions route", () => {
   );
 
   it(
+    "resolves external dependencies from backend graph JSON text",
+    async () => {
+      const graph = buildWorkstreamGraph({
+        nodes: [
+          {
+            id: "implement-dashboard",
+            type: "task",
+            title: "Implement dashboard",
+            summary: "Render upstream dependency state.",
+            status: "ready",
+            attention: "focus",
+            repoIds: ["streamliner"],
+            dependsOn: [],
+            externalDependsOn: [
+              {
+                id: "upstream-approval",
+                label: "Upstream approval",
+                target: {
+                  projectKey: "streamliner",
+                  workstreamId: "upstream-workstream",
+                  nodeId: "approve-api",
+                },
+              },
+            ],
+          },
+        ],
+        checkpoints: [
+          {
+            id: "dashboard",
+            title: "Dashboard",
+            summary: "Dashboard work.",
+            status: "planned",
+            nodeIds: ["implement-dashboard"],
+          },
+        ],
+      });
+      const upstreamGraph = buildWorkstreamGraph({
+        id: "upstream-workstream",
+        title: "Upstream Workstream",
+        nodes: [
+          {
+            id: "approve-api",
+            type: "gate",
+            title: "Approve API",
+            summary: "Approve the upstream API contract.",
+            status: "completed",
+            attention: "watch",
+            repoIds: ["streamliner"],
+            dependsOn: [],
+          },
+        ],
+        checkpoints: [
+          {
+            id: "approval",
+            title: "Approval",
+            summary: "Approval work.",
+            status: "completed",
+            nodeIds: ["approve-api"],
+          },
+        ],
+      });
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [
+              buildTrackedWorkstream(),
+              buildTrackedWorkstream({
+                workstreamId: "upstream-workstream",
+                title: "Upstream Workstream",
+                path: "C:\\graphs\\upstream-workstream\\graph.json",
+              }),
+            ],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        if (path === "/api/workstreams/streamliner/upstream-workstream/graph") {
+          return jsonResponse(upstreamGraph);
+        }
+        if (path === "/api/workstreams/streamliner/api-test/positions") {
+          return jsonResponse({ schemaVersion: 1, positions: {} });
+        }
+        if (path === "/api/sessions?workstreamId=api-test") {
+          return jsonResponse([]);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return jsonResponse({ record: null, records: [] });
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState(
+        {},
+        "",
+        "/workstreams/streamliner/api-test/nodes/external%3Aimplement-dashboard%3Aupstream-approval",
+      );
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(300);
+
+      expect(container.textContent).toContain("Upstream approval");
+      expect(container.textContent).toContain("Approve API");
+      expect(container.textContent).toContain("Node completed");
+      expect(container.textContent).toContain("satisfied");
+      expect(container.textContent).toContain("Blocks");
+      expect(container.textContent).toContain("Implement dashboard");
+      expect(container.textContent).toContain("Open upstream");
+      expect(container.textContent).not.toContain("Initialize PAW launch");
+    },
+    15_000,
+  );
+
+  it(
+    "surfaces external dependency resolver errors as launch blockers",
+    async () => {
+      const graph = buildWorkstreamGraph({
+        nodes: [
+          {
+            id: "implement-dashboard",
+            type: "task",
+            title: "Implement dashboard",
+            summary: "Render upstream dependency state.",
+            status: "ready",
+            attention: "focus",
+            repoIds: ["streamliner"],
+            dependsOn: [],
+            externalDependsOn: [
+              {
+                id: "upstream-approval",
+                label: "Upstream approval",
+                target: {
+                  projectKey: "streamliner",
+                  workstreamId: "upstream-workstream",
+                  nodeId: "approve-api",
+                },
+              },
+            ],
+          },
+        ],
+        checkpoints: [
+          {
+            id: "dashboard",
+            title: "Dashboard",
+            summary: "Dashboard work.",
+            status: "planned",
+            nodeIds: ["implement-dashboard"],
+          },
+        ],
+      });
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [
+              buildTrackedWorkstream(),
+              buildTrackedWorkstream({
+                workstreamId: "upstream-workstream",
+                title: "Upstream Workstream",
+                path: "C:\\graphs\\upstream-workstream\\graph.json",
+              }),
+            ],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        if (path === "/api/workstreams/streamliner/upstream-workstream/graph") {
+          return new Response("{not json", {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/positions") {
+          return jsonResponse({ schemaVersion: 1, positions: {} });
+        }
+        if (path === "/api/sessions?workstreamId=api-test") {
+          return jsonResponse([]);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return jsonResponse({ record: null, records: [] });
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState(
+        {},
+        "",
+        "/workstreams/streamliner/api-test/nodes/implement-dashboard",
+      );
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(300);
+
+      expect(container.textContent).toContain("Upstream approval");
+      expect(container.textContent).toContain("error");
+      expect(container.textContent).toContain("Only ready nodes can be launched.");
+      expect(findButton(container, "Initialize PAW launch").disabled).toBe(true);
+    },
+    15_000,
+  );
+
+  it(
     "keeps static tracker UI when live GitHub status fails",
     async () => {
       const graph = buildLaunchGraph("planned");

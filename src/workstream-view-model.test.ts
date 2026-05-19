@@ -398,6 +398,36 @@ describe("buildWorkstreamViewModel external dependency readiness", () => {
     expect(entry?.externalDependencies[0]?.state).toBe("manual");
   });
 
+  it("does not honor target-backed manual satisfaction while the target is still resolving", () => {
+    const document = parseWorkstreamDocument(
+      graph({
+        nodes: [
+          nodeOverride({
+            status: "ready",
+            externalDependsOn: [
+              {
+                id: "review-gate",
+                target: {
+                  projectKey: "streamliner",
+                  workstreamId: "launch-flow",
+                  nodeId: "review-gate",
+                },
+                status: "satisfied",
+              },
+            ],
+          }),
+        ],
+      }),
+    );
+
+    const viewModel = buildWorkstreamViewModel(document);
+    const entry = viewModel.derivedNodes[0];
+
+    expect(entry?.dependencyReady).toBe(false);
+    expect(entry?.operationalStatus).toBe("blocked");
+    expect(entry?.externalDependencies[0]?.state).toBe("resolving");
+  });
+
   it("uses resolved target status over a stale manual override", () => {
     const document = parseWorkstreamDocument(
       graph({
