@@ -28,9 +28,12 @@ export function collectViewportFocusIds(
 
   if (baseIds.size === 0) {
     return new Set(
-      layout.nodes
-        .filter(({ entry }) => entry.operationalStatus !== "completed")
-        .map(({ id }) => id),
+      [
+        ...layout.nodes
+          .filter(({ entry }) => entry.operationalStatus !== "completed")
+          .map(({ id }) => id),
+        ...layout.externalNodes.map(({ id }) => id),
+      ],
     );
   }
 

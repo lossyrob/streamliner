@@ -1,13 +1,17 @@
 import { useState } from "react";
 
 import type { WorkstreamNode } from "../workstream-schema";
-import type { WorkstreamDerivedNode } from "../workstream-view-model";
+import type {
+  WorkstreamDerivedNode,
+  WorkstreamExternalDependencyView,
+} from "../workstream-view-model";
 import type { WorkstreamGraphLayoutResult } from "../workstream-graph";
 import type { WorkstreamDocument } from "../workstream-schema";
 import type {
   NodeLaunchOperation,
   NodeLaunchRecord,
 } from "../node-launch-record-contract";
+import { handleInAppLinkClick } from "../dashboard-routing";
 import type {
   WorkstreamRuntimeNodeOverlay,
   WorkstreamRuntimeOverlayIssue,
@@ -30,8 +34,15 @@ import { ManagedRuntimeActionButton } from "./ManagedRuntimeActionButton";
 
 interface NodeInspectorProps {
   entry: WorkstreamDerivedNode | null;
+  externalDependency?: WorkstreamExternalDependencyView | null;
   layout: WorkstreamGraphLayoutResult;
   workstream: WorkstreamDocument;
+  externalRouteForDependency?: (
+    dependency: WorkstreamExternalDependencyView,
+  ) => {
+    href: string;
+    onOpen: () => void | Promise<void>;
+  } | null;
   canLaunch?: boolean;
   launchDisabledReason?: string;
   launchRecord?: NodeLaunchRecord | null;
@@ -118,6 +129,19 @@ function runtimePillClass(status: string): string {
       return "muted";
     default:
       return "accent";
+  }
+}
+
+function externalDependencyPillClass(status: string): string {
+  switch (status) {
+    case "resolved":
+    case "manual":
+      return "status-green";
+    case "unresolved":
+    case "error":
+      return "status-red";
+    default:
+      return "status-amber";
   }
 }
 
@@ -372,8 +396,10 @@ function LaunchPathRow({
 
 export function NodeInspector({
   entry,
+  externalDependency,
   layout,
   workstream,
+  externalRouteForDependency,
   canLaunch = false,
   launchDisabledReason,
   launchRecord,
@@ -386,6 +412,90 @@ export function NodeInspector({
 }: NodeInspectorProps) {
   const [releasing, setReleasing] = useState(false);
   const [releaseError, setReleaseError] = useState<string | null>(null);
+
+  if (!entry && externalDependency) {
+    const route = externalRouteForDependency?.(externalDependency) ?? null;
+    const blockedNode = workstream.nodes.find((node) => node.id === externalDependency.nodeId);
+    return (
+      <div className="sl-sidebar-section">
+        <span className="sl-section-label">INSPECTOR</span>
+        <div className="sl-inspector-card">
+          <h3 className="sl-sidebar-title">{externalDependency.label}</h3>
+          <p className="sl-inspector-summary">{externalDependency.detail}</p>
+          <div className="sl-inspector-meta">
+            <span className="sl-pill status-red">external dependency</span>
+            <span className={`sl-pill ${externalDependencyPillClass(externalDependency.state)}`}>
+              {externalDependency.statusLabel}
+            </span>
+            {externalDependency.archived ? (
+              <span className="sl-pill muted">archived source</span>
+            ) : null}
+          </div>
+          <dl className="sl-node-launch-fields">
+            {blockedNode ? (
+              <div>
+                <dt>Blocks</dt>
+                <dd>{blockedNode.title}</dd>
+              </div>
+            ) : null}
+            {externalDependency.target ? (
+              <>
+                <div>
+                  <dt>Project</dt>
+                  <dd>{externalDependency.target.projectKey}</dd>
+                </div>
+                <div>
+                  <dt>Workstream</dt>
+                  <dd>{externalDependency.target.workstreamId}</dd>
+                </div>
+                {externalDependency.target.nodeId ? (
+                  <div>
+                    <dt>Node</dt>
+                    <dd>{externalDependency.target.nodeId}</dd>
+                  </div>
+                ) : null}
+              </>
+            ) : null}
+            {externalDependency.targetTitle ? (
+              <div>
+                <dt>Resolved target</dt>
+                <dd>{externalDependency.targetTitle}</dd>
+              </div>
+            ) : null}
+            {externalDependency.targetStatus ? (
+              <div>
+                <dt>Target status</dt>
+                <dd>{formatStatus(externalDependency.targetStatus)}</dd>
+              </div>
+            ) : null}
+            {externalDependency.ignoredStatus ? (
+              <div>
+                <dt>Manual status</dt>
+                <dd>Ignored because the target resolved.</dd>
+              </div>
+            ) : null}
+            {externalDependency.error ? (
+              <div>
+                <dt>Resolution error</dt>
+                <dd>{externalDependency.error}</dd>
+              </div>
+            ) : null}
+          </dl>
+          {route ? (
+            <a
+              className="sl-action-btn primary"
+              href={route.href}
+              onClick={(event) => handleInAppLinkClick(event, route.onOpen)}
+              target={externalDependency.target ? undefined : "_blank"}
+              rel={externalDependency.target ? undefined : "noopener noreferrer"}
+            >
+              {externalDependency.target ? "Open upstream" : "Open dependency URL"}
+            </a>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
 
   if (!entry) {
     return (
@@ -710,6 +820,49 @@ export function NodeInspector({
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {entry.externalDependencies.length > 0 && (
+        <div className="sl-sidebar-section">
+          <span className="sl-section-label">
+            EXTERNAL DEPENDENCIES ({entry.externalDependencies.length})
+          </span>
+          <div className="sl-sidebar-list">
+            {entry.externalDependencies.map((dependency) => {
+              const route = externalRouteForDependency?.(dependency) ?? null;
+              const content = (
+                <>
+                  <div className="sl-sidebar-item-header">
+                    <span className="sl-sidebar-item-title">{dependency.label}</span>
+                    <span className={`sl-node-pill ${externalDependencyPillClass(dependency.state)}`}>
+                      {dependency.statusLabel}
+                    </span>
+                  </div>
+                  <div className="sl-sidebar-item-meta">
+                    <span>{dependency.detail}</span>
+                    {dependency.archived ? <span>archived</span> : null}
+                  </div>
+                </>
+              );
+              return route ? (
+                <a
+                  key={dependency.key}
+                  className="sl-sidebar-item"
+                  href={route.href}
+                  onClick={(event) => handleInAppLinkClick(event, route.onOpen)}
+                  target={dependency.target ? undefined : "_blank"}
+                  rel={dependency.target ? undefined : "noopener noreferrer"}
+                >
+                  {content}
+                </a>
+              ) : (
+                <div key={dependency.key} className="sl-sidebar-item">
+                  {content}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

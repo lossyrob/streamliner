@@ -51,6 +51,13 @@ export const WORKSTREAM_PULL_REQUEST_VALIDATION_STATES = [
 export type WorkstreamPullRequestValidationState =
   (typeof WORKSTREAM_PULL_REQUEST_VALIDATION_STATES)[number];
 
+export const WORKSTREAM_EXTERNAL_DEPENDENCY_STATUSES = [
+  "pending",
+  "satisfied",
+] as const;
+export type WorkstreamExternalDependencyStatus =
+  (typeof WORKSTREAM_EXTERNAL_DEPENDENCY_STATUSES)[number];
+
 export interface WorkstreamIssue {
   owner: string;
   repo: string;
@@ -113,6 +120,20 @@ export interface WorkstreamRepo {
   role?: string;
 }
 
+export interface WorkstreamExternalDependencyTarget {
+  projectKey: string;
+  workstreamId: string;
+  nodeId?: string;
+}
+
+export interface WorkstreamExternalDependency {
+  id: string;
+  target?: WorkstreamExternalDependencyTarget;
+  label?: string;
+  url?: string;
+  status?: WorkstreamExternalDependencyStatus;
+}
+
 export interface WorkstreamLaunchPolicy {
   requiredTracker?: WorkstreamLaunchRequiredTracker;
 }
@@ -141,6 +162,7 @@ export interface WorkstreamNode {
   repoIds: string[];
   tracker?: WorkstreamTracker;
   dependsOn: string[];
+  externalDependsOn?: WorkstreamExternalDependency[];
 }
 
 export interface WorkstreamCheckpoint {

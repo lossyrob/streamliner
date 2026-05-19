@@ -12,14 +12,20 @@ import {
 import {
   WorkstreamGraphNode,
   WorkstreamGraphGateNode,
+  WorkstreamExternalDependencyNode,
 } from "./WorkstreamGraphNode";
 import { WorkstreamSwimlane } from "./WorkstreamSwimlane";
 import type { WorkstreamSwimlaneData } from "./WorkstreamSwimlane";
 import { collectViewportFocusIds } from "./workstream-canvas-focus";
 import type {
+  WorkstreamExternalGraphNodeData,
   WorkstreamGraphNodeData,
   WorkstreamGraphLayoutResult,
 } from "../workstream-graph";
+import type {
+  WorkstreamExternalDependencyView,
+} from "../workstream-view-model";
+import type { WorkstreamGraphNodePosition } from "../workstream-positions-contract";
 import type {
   GraphNodeSessionStatusState,
   GraphNodeSessionStatusSummary,
@@ -30,8 +36,18 @@ import type { NodeLaunchOperation } from "../node-launch-record-contract";
 const nodeTypes = {
   workstreamTask: WorkstreamGraphNode,
   workstreamGate: WorkstreamGraphGateNode,
+  workstreamExternalDependency: WorkstreamExternalDependencyNode,
   workstreamSwimlane: WorkstreamSwimlane,
 };
+
+function nodePositionFor(
+  positions: ReadonlyMap<string, WorkstreamGraphNodePosition>,
+  nodeId: string,
+  fallback: { x: number; y: number },
+): { x: number; y: number } {
+  const saved = positions.get(nodeId);
+  return saved ? { x: saved.x, y: saved.y } : fallback;
+}
 
 const EDGE_HIGHLIGHT_STYLES: Record<string, React.CSSProperties> = {
   ancestor: { stroke: "#7c3aed", strokeWidth: 2 },
@@ -40,9 +56,20 @@ const EDGE_HIGHLIGHT_STYLES: Record<string, React.CSSProperties> = {
   none: { stroke: "#94a3b8", strokeWidth: 1.5 },
 };
 
+const EXTERNAL_EDGE_STYLES: Record<string, React.CSSProperties> = {
+  ancestor: { stroke: "#dc2626", strokeWidth: 3, strokeDasharray: "7 5" },
+  descendant: { stroke: "#dc2626", strokeWidth: 3, strokeDasharray: "7 5" },
+  muted: { stroke: "#dc2626", strokeWidth: 1, strokeDasharray: "7 5", opacity: 0.25 },
+  none: { stroke: "#dc2626", strokeWidth: 2, strokeDasharray: "7 5" },
+};
+
 function minimapNodeColor(node: Node): string {
   if (node.type === "workstreamSwimlane") {
     return "rgba(147, 197, 253, 0.18)";
+  }
+  if (node.type === "workstreamExternalDependency") {
+    const data = node.data as Partial<WorkstreamExternalGraphNodeData> | undefined;
+    return data?.dependency?.satisfied ? "#2fa66f" : "#dc2626";
   }
   const data = node.data as Partial<WorkstreamGraphNodeData> | undefined;
   switch (data?.entry?.operationalStatus) {
@@ -78,10 +105,18 @@ interface WorkstreamCanvasProps {
   nodeSessionStatusState?: GraphNodeSessionStatusState;
   runtimeOverlay?: WorkstreamRuntimeOverlay | null;
   launchOperations?: ReadonlyMap<string, NodeLaunchOperation>;
+  nodePositions?: ReadonlyMap<string, WorkstreamGraphNodePosition>;
+  onNodePositionChange?: (nodeId: string, position: { x: number; y: number }) => void;
   sessionRouteForNode?: (nodeId: string) => {
     href: string;
     onOpen: () => void | Promise<void>;
   };
+  externalRouteForDependency?: (
+    dependency: WorkstreamExternalDependencyView,
+  ) => {
+    href: string;
+    onOpen: () => void | Promise<void>;
+  } | null;
 }
 
 export function WorkstreamCanvas({
@@ -93,7 +128,10 @@ export function WorkstreamCanvas({
   nodeSessionStatusState = "ready",
   runtimeOverlay = null,
   launchOperations = new Map(),
+  nodePositions = new Map(),
+  onNodePositionChange,
   sessionRouteForNode,
+  externalRouteForDependency,
 }: WorkstreamCanvasProps) {
   const reactFlow = useReactFlow();
   const fittedKeyRef = useRef<string | null>(null);
@@ -127,7 +165,7 @@ export function WorkstreamCanvas({
           id: ln.id,
           type:
             ln.entry.node.type === "gate" ? "workstreamGate" : "workstreamTask",
-          position: { x: ln.x, y: ln.y },
+          position: nodePositionFor(nodePositions, ln.id, { x: ln.x, y: ln.y }),
           data: {
             entry: ln.entry,
             repoLabel: ln.repoLabel,
@@ -147,6 +185,7 @@ export function WorkstreamCanvas({
       }),
     [
       layout.nodes,
+      nodePositions,
       nodeSessionStatusState,
       nodeSessionStatuses,
       runtimeOverlay,
@@ -154,9 +193,29 @@ export function WorkstreamCanvas({
       sessionRouteForNode,
     ],
   );
+  const externalNodes = useMemo<Node<WorkstreamExternalGraphNodeData>[]>(
+    () =>
+      layout.externalNodes.map((ln) => {
+        const route = externalRouteForDependency?.(ln.dependency) ?? null;
+        return {
+          id: ln.id,
+          type: "workstreamExternalDependency",
+          position: nodePositionFor(nodePositions, ln.id, { x: ln.x, y: ln.y }),
+          data: {
+            dependency: ln.dependency,
+            highlight: ln.highlight,
+            onOpenTarget: route?.onOpen ?? null,
+          },
+          width: ln.width,
+          height: ln.height,
+          style: { width: ln.width, height: ln.height },
+        };
+      }),
+    [externalRouteForDependency, layout.externalNodes, nodePositions],
+  );
   const nodes = useMemo<Node[]>(
-    () => [...laneNodes, ...taskNodes],
-    [laneNodes, taskNodes],
+    () => [...laneNodes, ...externalNodes, ...taskNodes],
+    [externalNodes, laneNodes, taskNodes],
   );
   const viewportFocusIds = useMemo(
     () => collectViewportFocusIds(layout, selectedNodeId),
@@ -168,7 +227,9 @@ export function WorkstreamCanvas({
     );
     const framedBoxes = currentLane
       ? [currentLane]
-      : layout.nodes.filter((node) => viewportFocusIds.has(node.id));
+      : [...layout.nodes, ...layout.externalNodes].filter((node) =>
+          viewportFocusIds.has(node.id),
+        );
     if (framedBoxes.length === 0) {
       return null;
     }
@@ -188,7 +249,7 @@ export function WorkstreamCanvas({
       width: maxX - minX,
       height: maxY - minY,
     };
-  }, [layout.checkpointLanes, layout.nodes, viewportFocusIds]);
+  }, [layout.checkpointLanes, layout.externalNodes, layout.nodes, viewportFocusIds]);
 
   const initialFitPadding = selectedNodeId ? 0.24 : 0.22;
 
@@ -213,7 +274,10 @@ export function WorkstreamCanvas({
         id: le.id,
         source: le.sourceId,
         target: le.targetId,
-        style: EDGE_HIGHLIGHT_STYLES[le.highlight] ?? EDGE_HIGHLIGHT_STYLES.none,
+        style:
+          (le.kind === "external" ? EXTERNAL_EDGE_STYLES : EDGE_HIGHLIGHT_STYLES)[
+            le.highlight
+          ] ?? EDGE_HIGHLIGHT_STYLES.none,
         animated:
           le.highlight === "ancestor" || le.highlight === "descendant",
       })),
@@ -234,6 +298,16 @@ export function WorkstreamCanvas({
     onNodeSelect(null);
   }, [onNodeSelect]);
 
+  const handleNodeDragStop = useCallback(
+    (_event: React.MouseEvent, node: Node) => {
+      if (node.id.startsWith("lane:")) {
+        return;
+      }
+      onNodePositionChange?.(node.id, node.position);
+    },
+    [onNodePositionChange],
+  );
+
   return (
     <div className="sl-canvas">
       <ReactFlow
@@ -241,9 +315,10 @@ export function WorkstreamCanvas({
         edges={edges}
         nodeTypes={nodeTypes}
         onNodeClick={handleNodeClick}
+        onNodeDragStop={handleNodeDragStop}
         onPaneClick={handlePaneClick}
         nodesConnectable={false}
-        nodesDraggable={false}
+        nodesDraggable={Boolean(onNodePositionChange)}
         elementsSelectable={false}
       >
         <Background variant={BackgroundVariant.Dots} />

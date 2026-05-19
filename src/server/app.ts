@@ -73,6 +73,7 @@ export interface StreamlinerApiAppOptions {
   recentsPath?: string;
   workstreamRegistryPath?: string;
   workstreamSourceRegistryPath?: string;
+  workstreamPositionsRoot?: string;
   now?: () => Date;
   readonlyMode?: boolean;
   relaunchDeps?: Partial<RelaunchDeps>;
@@ -208,6 +209,7 @@ export function createStreamlinerApiApp(
       registryPath: options.workstreamRegistryPath,
       sourceRegistryPath: options.workstreamSourceRegistryPath,
       recentsPath: options.recentsPath,
+      workstreamPositionsRoot: options.workstreamPositionsRoot,
       now: options.now,
     }),
   );

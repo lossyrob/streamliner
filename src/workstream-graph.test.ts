@@ -292,4 +292,49 @@ describe("buildWorkstreamGraphLayout", () => {
       expect(previous.y + previous.height).toBeLessThan(current.y);
     }
   });
+
+  it("adds external dependency ghosts to layout and selection ancestry", () => {
+    const workstream = buildFixture([
+      {
+        id: "local-node",
+        type: "task",
+        title: "Local node",
+        summary: "Local node",
+        status: "ready",
+        attention: "focus",
+        repoIds: ["main"],
+        dependsOn: [],
+        externalDependsOn: [
+          {
+            id: "upstream-review",
+            target: {
+              projectKey: "streamliner",
+              workstreamId: "upstream-work",
+              nodeId: "review",
+            },
+          },
+        ],
+      },
+    ]);
+    const viewModel = buildWorkstreamViewModel(
+      workstream,
+      undefined,
+      new Date("2026-03-30T20:06:10.348Z"),
+    );
+    const layout = buildWorkstreamGraphLayout(workstream, viewModel, "local-node");
+
+    expect(layout.externalNodes.map((node) => node.id)).toEqual([
+      "external:local-node:upstream-review",
+    ]);
+    expect(layout.edges).toEqual([
+      {
+        id: "external:local-node:upstream-review->local-node",
+        sourceId: "external:local-node:upstream-review",
+        targetId: "local-node",
+        kind: "external",
+        highlight: "ancestor",
+      },
+    ]);
+    expect(layout.externalNodes[0]?.highlight).toBe("ancestor");
+  });
 });

@@ -2,6 +2,7 @@ import dagre from "@dagrejs/dagre";
 import type { WorkstreamDocument } from "./workstream-schema";
 import type {
   WorkstreamDerivedNode,
+  WorkstreamExternalDependencyView,
   WorkstreamViewModel,
 } from "./workstream-view-model";
 import type {
@@ -15,6 +16,8 @@ const TASK_NODE_WIDTH = 328;
 const TASK_NODE_HEIGHT = 224;
 const GATE_NODE_WIDTH = 384;
 const GATE_NODE_HEIGHT = 96;
+const EXTERNAL_NODE_WIDTH = 248;
+const EXTERNAL_NODE_HEIGHT = 112;
 
 const GRAPH_RANK_SEP = 144;
 const GRAPH_NODE_SEP = 96;
@@ -70,10 +73,17 @@ export interface WorkstreamGraphNodeData extends Record<string, unknown> {
   onOpenSessions: (() => void | Promise<void>) | null;
 }
 
+export interface WorkstreamExternalGraphNodeData extends Record<string, unknown> {
+  dependency: WorkstreamExternalDependencyView;
+  highlight: WorkstreamGraphNodeHighlight;
+  onOpenTarget: (() => void | Promise<void>) | null;
+}
+
 export interface WorkstreamGraphRenderableEdge {
   id: string;
   sourceId: string;
   targetId: string;
+  kind?: "external";
 }
 
 export interface WorkstreamGraphLayoutNode {
@@ -87,6 +97,16 @@ export interface WorkstreamGraphLayoutNode {
   entry: WorkstreamDerivedNode;
 }
 
+export interface WorkstreamGraphExternalLayoutNode {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  highlight: WorkstreamGraphNodeHighlight;
+  dependency: WorkstreamExternalDependencyView;
+}
+
 export interface WorkstreamGraphLayoutEdge
   extends WorkstreamGraphRenderableEdge {
   highlight: WorkstreamGraphEdgeHighlight;
@@ -94,6 +114,7 @@ export interface WorkstreamGraphLayoutEdge
 
 export interface WorkstreamGraphLayoutResult {
   nodes: WorkstreamGraphLayoutNode[];
+  externalNodes: WorkstreamGraphExternalLayoutNode[];
   edges: WorkstreamGraphLayoutEdge[];
   checkpointLanes: WorkstreamGraphCheckpointLane[];
   dependenciesByNode: Map<string, string[]>;
@@ -125,17 +146,47 @@ function repoLabelForNode(
     .join(" · ");
 }
 
-function buildDependencyMaps(workstream: WorkstreamDocument) {
+function externalDependenciesByNode(viewModel?: WorkstreamViewModel) {
+  return new Map(
+    (viewModel?.derivedNodes ?? []).map((entry) => [
+      entry.node.id,
+      entry.externalDependencies,
+    ]),
+  );
+}
+
+function buildDependencyMaps(
+  workstream: WorkstreamDocument,
+  viewModel?: WorkstreamViewModel,
+) {
+  const externalByNode = externalDependenciesByNode(viewModel);
   const dependenciesByNode = new Map(
-    workstream.nodes.map((node) => [node.id, [...node.dependsOn]]),
+    workstream.nodes.map((node) => [
+      node.id,
+      [
+        ...node.dependsOn,
+        ...(externalByNode.get(node.id) ?? []).map(
+          (dependency) => dependency.graphNodeId,
+        ),
+      ],
+    ]),
   );
   const dependentsByNode = new Map(
     workstream.nodes.map((node) => [node.id, [] as string[]]),
   );
 
+  for (const dependencies of externalByNode.values()) {
+    for (const dependency of dependencies) {
+      dependentsByNode.set(dependency.graphNodeId, []);
+    }
+  }
+
   for (const node of workstream.nodes) {
     for (const dependencyId of node.dependsOn) {
       dependentsByNode.get(dependencyId)?.push(node.id);
+    }
+    for (const dependency of externalByNode.get(node.id) ?? []) {
+      dependentsByNode.get(dependency.graphNodeId)?.push(node.id);
     }
   }
 
@@ -321,8 +372,19 @@ export function buildWorkstreamGraphBaseLayout(
   viewModel: WorkstreamViewModel,
 ): WorkstreamGraphLayoutResult {
   const { dependenciesByNode, dependentsByNode } =
-    buildDependencyMaps(workstream);
+    buildDependencyMaps(workstream, viewModel);
   const renderedEdges = reduceTransitiveEdges(workstream);
+  const externalDependencies = viewModel.derivedNodes.flatMap(
+    (entry) => entry.externalDependencies,
+  );
+  const externalEdges = externalDependencies.map<WorkstreamGraphRenderableEdge>(
+    (dependency) => ({
+      id: `${dependency.graphNodeId}->${dependency.nodeId}`,
+      sourceId: dependency.graphNodeId,
+      targetId: dependency.nodeId,
+      kind: "external",
+    }),
+  );
 
   const graph = new dagre.graphlib.Graph();
   graph.setGraph({
@@ -341,7 +403,14 @@ export function buildWorkstreamGraphBaseLayout(
     graph.setNode(entry.node.id, { width, height });
   }
 
-  for (const edge of renderedEdges) {
+  for (const dependency of externalDependencies) {
+    graph.setNode(dependency.graphNodeId, {
+      width: EXTERNAL_NODE_WIDTH,
+      height: EXTERNAL_NODE_HEIGHT,
+    });
+  }
+
+  for (const edge of [...renderedEdges, ...externalEdges]) {
     graph.setEdge(edge.sourceId, edge.targetId);
   }
 
@@ -369,10 +438,26 @@ export function buildWorkstreamGraphBaseLayout(
   );
 
   const checkpointLanes = buildCheckpointLanes(viewModel, layoutNodes);
+  const externalNodes = externalDependencies.map((dependency) => {
+    const position = graph.node(dependency.graphNodeId) as
+      | { x: number; y: number }
+      | undefined;
+
+    return {
+      id: dependency.graphNodeId,
+      x: (position?.x ?? EXTERNAL_NODE_WIDTH / 2) - EXTERNAL_NODE_WIDTH / 2,
+      y: (position?.y ?? EXTERNAL_NODE_HEIGHT / 2) - EXTERNAL_NODE_HEIGHT / 2,
+      width: EXTERNAL_NODE_WIDTH,
+      height: EXTERNAL_NODE_HEIGHT,
+      highlight: "none" as const,
+      dependency,
+    };
+  });
 
   return {
     nodes: layoutNodes,
-    edges: renderedEdges.map((edge) => ({
+    externalNodes,
+    edges: [...renderedEdges, ...externalEdges].map((edge) => ({
       ...edge,
       highlight: "none",
     })),
@@ -426,9 +511,25 @@ export function applyWorkstreamGraphSelection(
     return { ...edge, highlight };
   });
 
+  let externalNodesChanged = false;
+  const externalNodes = layout.externalNodes.map((node) => {
+    const highlight = nodeHighlightFor(
+      node.id,
+      selectedNodeId,
+      ancestors,
+      descendants,
+    );
+    if (node.highlight === highlight) {
+      return node;
+    }
+    externalNodesChanged = true;
+    return { ...node, highlight };
+  });
+
   if (
     !selectedNodeId &&
     !nodesChanged &&
+    !externalNodesChanged &&
     !edgesChanged &&
     layout.ancestors.size === 0 &&
     layout.descendants.size === 0
@@ -439,6 +540,7 @@ export function applyWorkstreamGraphSelection(
   return {
     ...layout,
     nodes,
+    externalNodes,
     edges,
     ancestors,
     descendants,

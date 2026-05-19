@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildWorkstreamViewModel,
   parseWorkstreamDocument,
+  workstreamExternalDependencyKey,
 } from "./workstream-view-model";
 
 function graph(overrides: Record<string, unknown> = {}): string {
@@ -185,6 +186,86 @@ describe("parseWorkstreamDocument node status", () => {
   });
 });
 
+describe("parseWorkstreamDocument external dependencies", () => {
+  it("parses node-level external dependencies", () => {
+    const parsed = parseWorkstreamDocument(
+      graph({
+        nodes: [
+          nodeOverride({
+            externalDependsOn: [
+              {
+                id: "upstream-gate",
+                target: {
+                  projectKey: "streamliner",
+                  workstreamId: "launch-flow",
+                  nodeId: "review-gate",
+                },
+                label: "Launch flow review",
+                url: "https://github.com/lossyrob/streamliner/issues/107",
+                status: "pending",
+              },
+            ],
+          }),
+        ],
+      }),
+    );
+
+    expect(parsed.nodes[0]?.externalDependsOn).toEqual([
+      {
+        id: "upstream-gate",
+        target: {
+          projectKey: "streamliner",
+          workstreamId: "launch-flow",
+          nodeId: "review-gate",
+        },
+        label: "Launch flow review",
+        url: "https://github.com/lossyrob/streamliner/issues/107",
+        status: "pending",
+      },
+    ]);
+  });
+
+  it("rejects duplicate external dependency ids on the same node", () => {
+    expect(() =>
+      parseWorkstreamDocument(
+        graph({
+          nodes: [
+            nodeOverride({
+              externalDependsOn: [
+                { id: "shared", label: "First" },
+                { id: "shared", label: "Second" },
+              ],
+            }),
+          ],
+        }),
+      ),
+    ).toThrow("Duplicate external dependency id 'shared' on node 'first-node'");
+  });
+
+  it("rejects external dependencies from a node to itself", () => {
+    expect(() =>
+      parseWorkstreamDocument(
+        graph({
+          nodes: [
+            nodeOverride({
+              externalDependsOn: [
+                {
+                  id: "self",
+                  target: {
+                    projectKey: "streamliner",
+                    workstreamId: "api-test",
+                    nodeId: "first-node",
+                  },
+                },
+              ],
+            }),
+          ],
+        }),
+      ),
+    ).toThrow("A node cannot externally depend on itself");
+  });
+});
+
 describe("buildWorkstreamViewModel retired-node semantics", () => {
   it("marks retired nodes as artifact-satisfied so downstream gating treats them as met", () => {
     // The artifact-only view-model exposes the per-node completionSource that
@@ -257,5 +338,112 @@ describe("buildWorkstreamViewModel retired-node semantics", () => {
     const ids = viewModel.blockedOrAttention.map((node) => node.id);
     expect(ids).toContain("active");
     expect(ids).not.toContain("gone");
+  });
+});
+
+describe("buildWorkstreamViewModel external dependency readiness", () => {
+  it("blocks a ready node while its targeted external dependency is unresolved", () => {
+    const document = parseWorkstreamDocument(
+      graph({
+        nodes: [
+          nodeOverride({
+            status: "ready",
+            externalDependsOn: [
+              {
+                id: "review-gate",
+                target: {
+                  projectKey: "streamliner",
+                  workstreamId: "launch-flow",
+                  nodeId: "review-gate",
+                },
+              },
+            ],
+          }),
+        ],
+      }),
+    );
+
+    const viewModel = buildWorkstreamViewModel(document);
+    const entry = viewModel.derivedNodes[0];
+
+    expect(entry?.dependencyReady).toBe(false);
+    expect(entry?.operationalStatus).toBe("blocked");
+    expect(entry?.externalDependencies[0]?.state).toBe("resolving");
+  });
+
+  it("allows manual satisfaction for unresolved external dependencies", () => {
+    const document = parseWorkstreamDocument(
+      graph({
+        nodes: [
+          nodeOverride({
+            status: "ready",
+            externalDependsOn: [
+              {
+                id: "url-only",
+                label: "Manual handoff",
+                url: "https://example.invalid/handoff",
+                status: "satisfied",
+              },
+            ],
+          }),
+        ],
+      }),
+    );
+
+    const viewModel = buildWorkstreamViewModel(document);
+    const entry = viewModel.derivedNodes[0];
+
+    expect(entry?.dependencyReady).toBe(true);
+    expect(entry?.operationalStatus).toBe("ready");
+    expect(entry?.externalDependencies[0]?.state).toBe("manual");
+  });
+
+  it("uses resolved target status over a stale manual override", () => {
+    const document = parseWorkstreamDocument(
+      graph({
+        nodes: [
+          nodeOverride({
+            status: "ready",
+            externalDependsOn: [
+              {
+                id: "review-gate",
+                target: {
+                  projectKey: "streamliner",
+                  workstreamId: "launch-flow",
+                  nodeId: "review-gate",
+                },
+                status: "satisfied",
+              },
+            ],
+          }),
+        ],
+      }),
+    );
+    const resolutions = new Map([
+      [
+        workstreamExternalDependencyKey("first-node", "review-gate"),
+        {
+          state: "resolved" as const,
+          target: {
+            kind: "node" as const,
+            title: "Review gate",
+            status: "blocked" as const,
+            satisfied: false,
+          },
+        },
+      ],
+    ]);
+
+    const viewModel = buildWorkstreamViewModel(
+      document,
+      undefined,
+      new Date("2026-05-01T12:00:00.000Z"),
+      { externalDependencyResolutions: resolutions },
+    );
+    const entry = viewModel.derivedNodes[0];
+
+    expect(entry?.dependencyReady).toBe(false);
+    expect(entry?.externalDependencies[0]?.ignoredStatus).toBe("satisfied");
+    expect(entry?.externalDependencies[0]?.targetStatus).toBe("blocked");
   });
 });

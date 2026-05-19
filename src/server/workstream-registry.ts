@@ -34,6 +34,7 @@ export interface WorkstreamRegistryOptions {
   registryPath?: string;
   sourceRegistryPath?: string;
   recentsPath?: string;
+  workstreamPositionsRoot?: string;
   now?: () => Date;
 }
 

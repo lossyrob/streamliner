@@ -100,6 +100,7 @@ Fast-changing operational data is **not** part of the committed workstream artif
       runtime.json
       sessions.json
       tracker-cache.json
+      positions.json
 ```
 
 `projectKey` comes from the workstream's `graph.json`. If `projectKey` is omitted, derive it from the repo marked `role: "primary"`, or from the sole repo ID when only one repo is declared. This is intentionally workstream-scoped rather than config-scoped, because one planning repo config can host workstreams for multiple projects.
@@ -110,6 +111,7 @@ This state is for things like:
 - heartbeats and last-seen timestamps
 - tracker snapshots (GitHub issue / PR state, or future ADO / local-task snapshots)
 - transient node claims or launch metadata
+- manual graph-node positions
 
 The filenames shown above are illustrative. The stable contract is:
 
@@ -382,12 +384,53 @@ Each node is a unit of work in the dependency graph.
 | `repoIds` | string[] | ✓ | References to declared repos (can be empty) |
 | `tracker` | object | | Where the node's spec lives (see Tracker Reference) |
 | `dependsOn` | string[] | ✓ | IDs of nodes that must complete before this one |
+| `externalDependsOn` | array | | External dependencies outside this graph (see External Dependency). These participate in operational readiness without rewriting the committed graph when their target status changes. |
 
 **Node types:**
 
 - **task** - concrete work: implement a feature, write tests, set up infrastructure. Typically backed by a GitHub issue.
 - **research** - investigation or spike: explore an approach, evaluate a library, prototype something. May or may not produce code.
 - **gate** - validation checkpoint where the operator evaluates whether the workstream is on track. Gates block downstream work until passed. Use gates at wave boundaries or major milestones.
+
+### External Dependency
+
+`externalDependsOn` records dependencies that live outside the current graph:
+another Streamliner workstream, a specific node in another workstream, or a
+manual/URL-backed dependency that cannot be resolved through tracked graph data.
+Use `dependsOn` for same-graph prerequisites and `externalDependsOn` only for
+cross-workstream or out-of-graph prerequisites.
+
+```json
+{
+  "id": "upstream-contract",
+  "target": {
+    "projectKey": "streamliner",
+    "workstreamId": "session-lifecycle",
+    "nodeId": "publish-launch-contract"
+  },
+  "label": "Launch contract published",
+  "url": "https://github.com/lossyrob/streamliner/issues/107",
+  "status": "pending"
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `id` | string | ✓ | Kebab-case dependency identifier unique within the owning node's `externalDependsOn` array |
+| `target` | object | | Resolvable upstream Streamliner workstream target. Omit only for manual/URL-backed dependencies. |
+| `target.projectKey` | string | ✓ when `target` present | Project namespace of the upstream workstream |
+| `target.workstreamId` | string | ✓ when `target` present | Upstream workstream id |
+| `target.nodeId` | string | | Optional upstream node id. If omitted, the dependency targets the whole upstream workstream. |
+| `label` | string | | Human-readable label for UI cards and inspector rows. If omitted, Streamliner derives one from the target or URL. |
+| `url` | string | | Optional link to a tracker, design note, external system, or fallback context. |
+| `status` | `"pending"` or `"satisfied"` | | Manual override used only when the target is omitted, unresolved, or errors. If the target resolves, the upstream graph status is authoritative and this value is ignored. |
+
+A targeted external dependency is satisfied when the resolved upstream node is
+`"completed"` or `"retired"`, or when the resolved upstream workstream is
+`"completed"`. Until a target resolves, the dependency is considered not ready
+unless its manual `status` is `"satisfied"`. The dashboard renders each external
+dependency as a compact ghost card and dashed edge feeding the blocked node so
+the dependency can be inspected separately from same-graph prerequisites.
 
 ### Node granularity
 
@@ -479,6 +522,7 @@ Streamliner may also derive a fresher **operational view** at runtime by combini
 - local runtime state under `~/.streamliner/state/...`
 - tracker snapshots (GitHub today; other platforms later)
 - session activity and launch metadata
+- external workstream dependency resolution and manual graph-node position overlays
 
 That derived view can show states like "waiting for review", "waiting for validation", or "session running" without rewriting `graph.json` on every pulse.
 
@@ -489,6 +533,11 @@ The rule is:
 3. **Render the UI from both**, with the graph as the committed base layer and runtime/tracker data as the overlay.
 
 Node-specific design narrowing lives in the node's tracker/spec and coordination notes for now. Add a dedicated node-level `designRefs` field only if context assembly later proves that a separate machine-readable field is needed.
+
+Manual node positions are local runtime overlay state, not graph artifact state.
+Moving a card changes the local positions file and should survive restarts and
+graph refreshes, but it should not churn `graph.json` or block collaborators with
+machine-specific layout preferences.
 
 When multiple worktrees for the same `projectKey` are active, runtime overlay entries must carry enough source metadata (at minimum cwd/worktree path) for the UI to label or filter them correctly against the artifact view it is rendering.
 
@@ -605,8 +654,10 @@ These constraints are enforced at parse time. Violations will cause errors:
 11. **Timestamps are ISO 8601** - e.g. `"2026-04-01T18:22:14.400Z"`
 12. **`schemaVersion` must equal `1`**
 13. **`projectKey` is kebab-case when present**
+14. **External dependency IDs are unique per node** - duplicate `externalDependsOn[].id` values on the same node are invalid
+15. **External targets cannot point at the owning node** - a node cannot externally depend on itself through its own `projectKey`, workstream id, and node id
 
-Streamliner should also validate `designRefs` against the registered design catalog when one exists, but that is runtime validation rather than parse-time schema validation.
+Streamliner should also validate `designRefs` and external dependency targets against registered catalogs when those catalogs exist, but that is runtime validation rather than parse-time schema validation.
 
 Separately, Streamliner may validate runtime state freshness and tracker-cache freshness, but those checks are outside the committed artifact schema.
 

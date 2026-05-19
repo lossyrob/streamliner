@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { act } from "react";
-import type { ReactNode } from "react";
+import type { MouseEvent, ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -14,15 +14,36 @@ import type { GraphNodeSessionStatusSummary } from "../graph-node-session-status
 import type { WorkstreamDerivedNode } from "../workstream-view-model";
 
 const fitBoundsMock = vi.hoisted(() => vi.fn());
+const reactFlowProps = vi.hoisted(() => ({
+  latest: null as {
+    nodes?: Array<{ id: string; position: { x: number; y: number } }>;
+    nodesDraggable?: boolean;
+    onNodeDragStop?: (
+      event: MouseEvent,
+      node: { id: string; position: { x: number; y: number } },
+    ) => void;
+  } | null,
+}));
 
 vi.mock("@xyflow/react", () => ({
   Background: () => null,
   BackgroundVariant: { Dots: "dots" },
   Controls: () => null,
   MiniMap: () => null,
-  ReactFlow: ({ children }: { children: ReactNode }) => (
-    <div data-testid="react-flow">{children}</div>
-  ),
+  ReactFlow: (
+    props: {
+      children: ReactNode;
+      nodes?: Array<{ id: string; position: { x: number; y: number } }>;
+      nodesDraggable?: boolean;
+      onNodeDragStop?: (
+        event: MouseEvent,
+        node: { id: string; position: { x: number; y: number } },
+      ) => void;
+    },
+  ) => {
+    reactFlowProps.latest = props;
+    return <div data-testid="react-flow">{props.children}</div>;
+  },
   useReactFlow: () => ({
     fitBounds: fitBoundsMock,
   }),
@@ -43,6 +64,7 @@ function buildDerivedNode(id: string): WorkstreamDerivedNode {
     operationalStatus: "ready",
     dependencyReady: true,
     completionSource: null,
+    externalDependencies: [],
   };
 }
 
@@ -59,6 +81,7 @@ function buildLayout(offset = 0): WorkstreamGraphLayoutResult {
   };
   return {
     nodes: [node],
+    externalNodes: [],
     edges: [],
     checkpointLanes: [
       {
@@ -111,6 +134,8 @@ describe("WorkstreamCanvas", () => {
       initialFitKey: string;
       selectedNodeId: string | null;
       nodeSessionStatuses: ReadonlyMap<string, GraphNodeSessionStatusSummary>;
+      nodePositions: ReadonlyMap<string, { x: number; y: number; updatedAt: string }>;
+      onNodePositionChange: (nodeId: string, position: { x: number; y: number }) => void;
     }> = {},
   ): void {
     act(() => {
@@ -121,6 +146,8 @@ describe("WorkstreamCanvas", () => {
           selectedNodeId={props.selectedNodeId ?? null}
           onNodeSelect={vi.fn()}
           nodeSessionStatuses={props.nodeSessionStatuses}
+          nodePositions={props.nodePositions}
+          onNodePositionChange={props.onNodePositionChange}
         />,
       );
     });
@@ -154,5 +181,30 @@ describe("WorkstreamCanvas", () => {
     });
 
     expect(fitBoundsMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("overlays saved positions and reports drag stops for persisted layout", () => {
+    const onNodePositionChange = vi.fn();
+
+    renderCanvas({
+      nodePositions: new Map([
+        ["task-a", { x: 320, y: 480, updatedAt: "2026-05-19T12:00:00.000Z" }],
+      ]),
+      onNodePositionChange,
+    });
+
+    expect(reactFlowProps.latest?.nodesDraggable).toBe(true);
+    expect(
+      reactFlowProps.latest?.nodes?.find((node) => node.id === "task-a")?.position,
+    ).toEqual({ x: 320, y: 480 });
+
+    act(() => {
+      reactFlowProps.latest?.onNodeDragStop?.(
+        {} as MouseEvent,
+        { id: "task-a", position: { x: 360, y: 512 } },
+      );
+    });
+
+    expect(onNodePositionChange).toHaveBeenCalledWith("task-a", { x: 360, y: 512 });
   });
 });
