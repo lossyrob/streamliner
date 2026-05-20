@@ -44,7 +44,7 @@ Additional Inputs: none
 ## Control State
 
 TODO Mirror: active-required-items
-Reconciliation: pending
+Reconciliation: current
 
 ### Required Workflow Items
 - `init` | `resolved` | `activity`
