@@ -280,8 +280,10 @@ dependency that cannot be resolved from tracked graph data. Use same-graph
 A targeted dependency is satisfied when the upstream node is `"completed"` or
 `"retired"`, or when the upstream workstream is `"completed"`. Unresolved
 targeted dependencies are not ready unless manually marked `"satisfied"`.
-Streamliner renders external dependencies as compact ghost nodes with dashed
-edges into the blocked local node.
+Streamliner renders target-backed cross-workstream dependencies as
+Streamliner-style ghost nodes with an explicit "other workstream" marker.
+Manual or URL-only external blockers keep the generic red dashed blocker
+treatment. Both forms use dashed edges into the local node.
 
 ### Artifact state vs. operational state
 

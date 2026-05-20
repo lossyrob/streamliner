@@ -3725,6 +3725,49 @@ a.sl-session-context-ref {
   color: var(--sl-red);
 }
 
+.sl-node.cross-workstream {
+  min-height: 112px;
+  border-style: dashed;
+  border-width: 1px 1px 1px 4px;
+  border-color: rgba(124, 58, 237, 0.42);
+  border-left-color: var(--sl-accent);
+  background:
+    linear-gradient(180deg, rgba(124, 58, 237, 0.09), rgba(255, 255, 255, 0.94)),
+    repeating-linear-gradient(
+      135deg,
+      rgba(124, 58, 237, 0.04) 0,
+      rgba(124, 58, 237, 0.04) 8px,
+      rgba(255, 255, 255, 0) 8px,
+      rgba(255, 255, 255, 0) 16px
+    );
+  box-shadow: 0 6px 18px rgba(31, 58, 105, 0.07);
+}
+
+.sl-node.cross-workstream .sl-node-title {
+  color: var(--sl-text);
+}
+
+.sl-node.cross-workstream .sl-node-summary {
+  color: var(--sl-text-mid);
+  -webkit-line-clamp: 2;
+}
+
+.sl-node-ghost-marker {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(124, 58, 237, 0.22);
+  background: rgba(124, 58, 237, 0.08);
+  color: var(--sl-accent);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
 .sl-node.external .sl-node-title {
   color: var(--sl-red);
   font-style: italic;
@@ -3740,6 +3783,14 @@ a.sl-session-context-ref {
   box-shadow:
     0 0 0 3px rgba(220, 38, 38, 0.14),
     0 8px 30px rgba(31, 58, 105, 0.08);
+}
+
+.sl-node.cross-workstream.selected {
+  border-color: rgba(124, 58, 237, 0.70);
+  border-left-color: var(--sl-accent);
+  box-shadow:
+    0 0 0 3px rgba(124, 58, 237, 0.13),
+    0 8px 30px rgba(31, 58, 105, 0.10);
 }
 
 .sl-node.selected {

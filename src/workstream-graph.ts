@@ -83,7 +83,7 @@ export interface WorkstreamGraphRenderableEdge {
   id: string;
   sourceId: string;
   targetId: string;
-  kind?: "external";
+  kind?: "external" | "cross-workstream";
 }
 
 export interface WorkstreamGraphLayoutNode {
@@ -382,7 +382,7 @@ export function buildWorkstreamGraphBaseLayout(
       id: `${dependency.graphNodeId}->${dependency.nodeId}`,
       sourceId: dependency.graphNodeId,
       targetId: dependency.nodeId,
-      kind: "external",
+      kind: dependency.target ? "cross-workstream" : "external",
     }),
   );
 

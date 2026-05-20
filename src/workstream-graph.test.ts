@@ -331,7 +331,7 @@ describe("buildWorkstreamGraphLayout", () => {
         id: "external:local-node:upstream-review->local-node",
         sourceId: "external:local-node:upstream-review",
         targetId: "local-node",
-        kind: "external",
+        kind: "cross-workstream",
         highlight: "ancestor",
       },
     ]);

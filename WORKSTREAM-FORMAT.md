@@ -428,9 +428,11 @@ cross-workstream or out-of-graph prerequisites.
 A targeted external dependency is satisfied when the resolved upstream node is
 `"completed"` or `"retired"`, or when the resolved upstream workstream is
 `"completed"`. Until a target resolves, the dependency is considered not ready
-unless its manual `status` is `"satisfied"`. The dashboard renders each external
-dependency as a compact ghost card and dashed edge feeding the blocked node so
-the dependency can be inspected separately from same-graph prerequisites.
+unless its manual `status` is `"satisfied"`. The dashboard renders target-backed
+cross-workstream dependencies as Streamliner-style ghost cards with an explicit
+"other workstream" marker, while manual/URL-only external blockers keep the
+generic red dashed blocker treatment. Both forms use dashed edges into the local
+node so they can be inspected separately from same-graph prerequisites.
 
 ### Node granularity
 

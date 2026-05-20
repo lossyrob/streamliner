@@ -399,9 +399,10 @@ export function WorkstreamExternalDependencyNode({
   data,
 }: NodeProps<Node<WorkstreamExternalGraphNodeData>>) {
   const dependency = data.dependency;
+  const isCrossWorkstream = Boolean(dependency.target);
   const rootClassName = [
     "sl-node",
-    "external",
+    isCrossWorkstream ? "cross-workstream" : "external",
     highlightClassName(data.highlight),
     dependency.satisfied ? "status-green" : "status-red",
   ]
@@ -412,8 +413,16 @@ export function WorkstreamExternalDependencyNode({
     <div className={rootClassName} onDoubleClick={data.onOpenTarget ?? undefined}>
       <Handle isConnectable={false} position={Position.Bottom} type="source" />
       <Handle isConnectable={false} position={Position.Right} type="source" />
+      {isCrossWorkstream ? (
+        <div className="sl-node-ghost-marker" title="Dependency from another Streamliner workstream">
+          <span aria-hidden="true">↗</span>
+          <span>other workstream</span>
+        </div>
+      ) : null}
       <div className="sl-node-badges">
-        <span className="sl-node-pill status-red">EXT</span>
+        <span className={`sl-node-pill ${isCrossWorkstream ? "status-accent" : "status-red"}`}>
+          {isCrossWorkstream ? "XWS" : "EXT"}
+        </span>
         <span className={`sl-node-pill ${dependency.satisfied ? "status-green" : "status-red"}`}>
           {dependency.statusLabel}
         </span>

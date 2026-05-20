@@ -63,6 +63,13 @@ const EXTERNAL_EDGE_STYLES: Record<string, React.CSSProperties> = {
   none: { stroke: "#dc2626", strokeWidth: 2, strokeDasharray: "7 5" },
 };
 
+const CROSS_WORKSTREAM_EDGE_STYLES: Record<string, React.CSSProperties> = {
+  ancestor: { stroke: "#7c3aed", strokeWidth: 3, strokeDasharray: "7 5" },
+  descendant: { stroke: "#7c3aed", strokeWidth: 3, strokeDasharray: "7 5" },
+  muted: { stroke: "#7c3aed", strokeWidth: 1, strokeDasharray: "7 5", opacity: 0.25 },
+  none: { stroke: "#7c3aed", strokeWidth: 2, strokeDasharray: "7 5" },
+};
+
 function minimapNodeColor(node: Node): string {
   if (node.type === "workstreamSwimlane") {
     return "rgba(147, 197, 253, 0.18)";
@@ -276,17 +283,22 @@ export function WorkstreamCanvas({
 
   const edges = useMemo<Edge[]>(
     () =>
-      layout.edges.map((le) => ({
-        id: le.id,
-        source: le.sourceId,
-        target: le.targetId,
-        style:
-          (le.kind === "external" ? EXTERNAL_EDGE_STYLES : EDGE_HIGHLIGHT_STYLES)[
-            le.highlight
-          ] ?? EDGE_HIGHLIGHT_STYLES.none,
-        animated:
-          le.highlight === "ancestor" || le.highlight === "descendant",
-      })),
+      layout.edges.map((le) => {
+        const styleMap =
+          le.kind === "external"
+            ? EXTERNAL_EDGE_STYLES
+            : le.kind === "cross-workstream"
+              ? CROSS_WORKSTREAM_EDGE_STYLES
+              : EDGE_HIGHLIGHT_STYLES;
+        return {
+          id: le.id,
+          source: le.sourceId,
+          target: le.targetId,
+          style: styleMap[le.highlight] ?? EDGE_HIGHLIGHT_STYLES.none,
+          animated:
+            le.highlight === "ancestor" || le.highlight === "descendant",
+        };
+      }),
     [layout.edges],
   );
 
