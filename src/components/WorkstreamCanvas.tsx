@@ -225,11 +225,17 @@ export function WorkstreamCanvas({
     const currentLane = layout.checkpointLanes.find(
       (lane) => lane.state === "current",
     );
+    const focusedGraphBoxes = [...layout.nodes, ...layout.externalNodes].filter((node) =>
+      viewportFocusIds.has(node.id),
+    );
     const framedBoxes = currentLane
-      ? [currentLane]
-      : [...layout.nodes, ...layout.externalNodes].filter((node) =>
-          viewportFocusIds.has(node.id),
-        );
+      ? [
+          currentLane,
+          ...focusedGraphBoxes.filter(
+            (node) => !currentLane.nodeIds.includes(node.id),
+          ),
+        ]
+      : focusedGraphBoxes;
     if (framedBoxes.length === 0) {
       return null;
     }

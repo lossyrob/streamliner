@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { WorkstreamCanvas } from "./WorkstreamCanvas";
 import type {
+  WorkstreamGraphExternalLayoutNode,
   WorkstreamGraphLayoutNode,
   WorkstreamGraphLayoutResult,
 } from "../workstream-graph";
@@ -104,6 +105,38 @@ function buildLayout(offset = 0): WorkstreamGraphLayoutResult {
   };
 }
 
+function buildExternalNode(): WorkstreamGraphExternalLayoutNode {
+  return {
+    id: "external:task-a:upstream-approval",
+    x: 96,
+    y: -128,
+    width: 248,
+    height: 112,
+    highlight: "selected",
+    dependency: {
+      key: "task-a:upstream-approval",
+      graphNodeId: "external:task-a:upstream-approval",
+      nodeId: "task-a",
+      dependency: {
+        id: "upstream-approval",
+        target: {
+          projectKey: "streamliner",
+          workstreamId: "upstream",
+        },
+      },
+      label: "Upstream approval",
+      detail: "Workstream is not registered.",
+      statusLabel: "unresolved",
+      state: "unresolved",
+      satisfied: false,
+      target: {
+        projectKey: "streamliner",
+        workstreamId: "upstream",
+      },
+    },
+  };
+}
+
 describe("WorkstreamCanvas", () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -181,6 +214,25 @@ describe("WorkstreamCanvas", () => {
     });
 
     expect(fitBoundsMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("includes focused external nodes outside the current checkpoint lane in initial fit bounds", () => {
+    const externalNode = buildExternalNode();
+
+    renderCanvas({
+      layout: {
+        ...buildLayout(),
+        externalNodes: [externalNode],
+        dependenciesByNode: new Map([["task-a", [externalNode.id]]]),
+      },
+      selectedNodeId: externalNode.id,
+    });
+
+    expect(fitBoundsMock).toHaveBeenCalledTimes(1);
+    expect(fitBoundsMock).toHaveBeenLastCalledWith(
+      { x: 0, y: -128, width: 440, height: 480 },
+      { padding: 0.24, duration: 0 },
+    );
   });
 
   it("overlays saved positions and reports drag stops for persisted layout", () => {
