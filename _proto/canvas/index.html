@@ -352,6 +352,10 @@
   .wave-node.filter-neighbor, .ext-node.filter-neighbor { opacity: 0.50; }
   .wave-node.filter-out,      .ext-node.filter-out      { opacity: 0.18; filter: grayscale(0.5); }
   .wave-node.filter-focus     { /* full visibility + subtle accent */ }
+  /* Completed-wave dimming — independent of the top-bar focus filter so users
+     can keep done waves on-canvas (for edge endpoints / context) without
+     letting them dominate the zoomed-out view. */
+  .wave-node.completed-dim { opacity: 0.32; filter: grayscale(0.45); }
   /* Edges under filter */
   .react-flow__edge.filter-focus-edge path     { opacity: 1; stroke-width: 3 !important; }
   .react-flow__edge.filter-connector-edge path { opacity: 0.50; }
@@ -857,6 +861,7 @@ function WaveNode({ data }) {
         + (ws.attention === 'hot' ? ' attn-hot' : '')
         + (ws.attention === 'focus' ? ' attn-focus' : '')
         + (data.pinned ? ' pinned' : '')
+        + (data.completedDim ? ' completed-dim' : '')
         + (data.filterState && data.filterState !== 'none' ? ' filter-' + data.filterState : '')}
       style=${{ borderLeft: '4px solid ' + wsColorFull }}
       onClick=${data.onClick}
@@ -1125,13 +1130,16 @@ function buildNodes(positions, selection, pinned) {
   return nodes;
 }
 
-function buildEdges(edgeFilters, fulfilledMode, showCandidateEdges, focusedIds, neighborIds) {
+function buildEdges(edgeFilters, fulfilledMode, showCandidateEdges, focusedIds, neighborIds, completedMode) {
   const edges = [];
   // Spine: only between consecutive waves of same workstream
   for (const ws of PORTFOLIO.workstreams) {
     for (let i = 0; i < ws.waves.length - 1; i++) {
       const from = ws.waves[i];
       const to = ws.waves[i + 1];
+      // When done waves are hidden, also drop any spine segment they touch
+      // so we don't leave dangling stubs.
+      if (completedMode === 'hide' && (from.status === 'done' || to.status === 'done')) continue;
       const fc = edgeFilterClass('w:' + from.id, 'w:' + to.id, focusedIds, neighborIds);
       edges.push({
         id: 'spine:' + from.id + '->' + to.id,
@@ -1160,6 +1168,9 @@ function buildEdges(edgeFilters, fulfilledMode, showCandidateEdges, focusedIds, 
       if (fromWs?.type === 'candidate' || toWs?.type === 'candidate') continue;
     }
     const fulfilled = fromW.status === 'done';
+    // completedMode 'hide' suppresses any cross-workstream edge that touches a
+    // done wave, on either end, so hidden done nodes don't leave orphan edges.
+    if (completedMode === 'hide' && (fromW.status === 'done' || toW.status === 'done')) continue;
     // fulfilledMode: 'on' shows edge normally · 'dim' adds .fulfilled class
     // (low-opacity, thin) · 'off' hides the edge entirely. Only applies when
     // the upstream wave is done — in-flight edges are never affected.
@@ -1360,6 +1371,7 @@ function App() {
     'hard': true, 'soft-data': true, 'soft-coord': true, 'external': true
   });
   const [fulfilledMode, setFulfilledMode] = useState('dim'); // 'on' | 'dim' | 'off'
+  const [completedMode, setCompletedMode] = useState('show'); // 'show' | 'dim' | 'hide'
   const [showCandidateEdges, setShowCandidateEdges] = useState(true);
   const [inspectorVisible, setInspectorVisible] = useState(true);
   const [showGroups, setShowGroups] = useState(true);
@@ -1423,7 +1435,7 @@ function App() {
       setPinnedSet(pSet);
       setPinnedCount(pSet.size);
       setNodes(buildNodes(merged, null, pSet));
-      setEdges(buildEdges(edgeFilters, fulfilledMode, showCandidateEdges, focusedIds, neighborIds));
+      setEdges(buildEdges(edgeFilters, fulfilledMode, showCandidateEdges, focusedIds, neighborIds, completedMode));
       setLayoutReady(true);
     } catch (err) {
       console.error('ELK layout failed:', err);
@@ -1445,7 +1457,7 @@ function App() {
       setPinnedSet(pSet);
       setPinnedCount(pSet.size);
       setNodes(buildNodes(fallback, null, pSet));
-      setEdges(buildEdges(edgeFilters, fulfilledMode, showCandidateEdges, focusedIds, neighborIds));
+      setEdges(buildEdges(edgeFilters, fulfilledMode, showCandidateEdges, focusedIds, neighborIds, completedMode));
       setLayoutReady(true);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1469,17 +1481,19 @@ function App() {
   }, [computeAndApply]);
 
 
-  // Re-build node data (selection / pinned / filter) when those change.
+  // Re-build node data (selection / pinned / filter / completed-dim) when those change.
   useEffect(() => {
     setNodes(prev => prev.map(n => {
       const isPinned = pinnedSet.has(n.id);
       const filterState = nodeFilterState(n.id, focusedIds, neighborIds);
       if (n.type === 'wave') {
+        const completedDim = completedMode === 'dim' && n.data.wave.status === 'done';
         return { ...n, data: {
           ...n.data,
           selected: selection?.kind === 'wave' && selection.id === n.data.wave.id,
           pinned: isPinned,
-          filterState
+          filterState,
+          completedDim
         } };
       }
       if (n.type === 'external') {
@@ -1492,13 +1506,13 @@ function App() {
       }
       return n;
     }));
-  }, [selection, pinnedSet, focusedIds, neighborIds]);
+  }, [selection, pinnedSet, focusedIds, neighborIds, completedMode]);
 
   // Re-build edges when filters change.
   useEffect(() => {
     if (!layoutReady) return;
-    setEdges(buildEdges(edgeFilters, fulfilledMode, showCandidateEdges, focusedIds, neighborIds));
-  }, [edgeFilters, fulfilledMode, showCandidateEdges, focusedIds, neighborIds, layoutReady]);
+    setEdges(buildEdges(edgeFilters, fulfilledMode, showCandidateEdges, focusedIds, neighborIds, completedMode));
+  }, [edgeFilters, fulfilledMode, showCandidateEdges, focusedIds, neighborIds, completedMode, layoutReady]);
 
   const onNodesChange = useCallback((changes) => {
     // Filter out any change events that target group nodes — they're decorative
@@ -1512,13 +1526,18 @@ function App() {
 
   // Derived nodes for React Flow: prepend workstream-group backdrops (when
   // toggled on) so they render BEHIND wave/external nodes. Recomputed on
-  // every wave drag so groups follow their waves.
+  // every wave drag so groups follow their waves. When completedMode is
+  // 'hide', done waves are filtered out so they no longer occupy space or
+  // attention on the canvas (their edges are dropped in buildEdges).
   const displayedNodes = useMemo(() => {
-    if (!showGroups) return nodes;
-    const groups = buildWorkstreamGroupNodes(nodes);
+    const filtered = completedMode === 'hide'
+      ? nodes.filter(n => !(n.type === 'wave' && n.data?.wave?.status === 'done'))
+      : nodes;
+    if (!showGroups) return filtered;
+    const groups = buildWorkstreamGroupNodes(filtered);
     // Group nodes first so React Flow stacks them under regular nodes.
-    return [...groups, ...nodes];
-  }, [nodes, showGroups]);
+    return [...groups, ...filtered];
+  }, [nodes, showGroups, completedMode]);
 
   const onNodeDragStop = useCallback((event, node) => {
     pinPosition(node.id, node.position.x, node.position.y);
@@ -1685,6 +1704,19 @@ function App() {
                     <option value="on">show</option>
                     <option value="dim">dim</option>
                     <option value="off">hide</option>
+                  </select>
+                </label>
+                <label>
+                  <span>completed waves</span>
+                  <select
+                    className="control-select"
+                    value=${completedMode}
+                    onChange=${e => setCompletedMode(e.target.value)}
+                    title="How done waves are rendered. 'dim' fades them in place; 'hide' removes them and any edges that touch them."
+                  >
+                    <option value="show">show</option>
+                    <option value="dim">dim</option>
+                    <option value="hide">hide</option>
                   </select>
                 </label>
                 <label>
