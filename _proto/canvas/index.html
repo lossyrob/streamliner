@@ -1050,23 +1050,58 @@ function setWorkstreamColor(wsId, hex) {
 
 let saveTimer = null;
 let savePromise = Promise.resolve();
+// Diff tracking for the merge-based save path. dirtyIds = upserts since last
+// successful flush, removedIds = explicit deletions since last successful
+// flush. By PATCHing only this diff (instead of the whole pinnedCache), we
+// avoid clobbering positions that other writers (a parallel portfolio
+// manager session, a second canvas tab, a git branch switch) added or
+// changed between our boot and our save.
+let dirtyIds = new Set();
+let removedIds = new Set();
+
 function flushSave() {
+  // Snapshot the current diff so the in-flight save uses a stable view; any
+  // new edits that land while we're saving accumulate in fresh sets and
+  // trigger another debounced flush.
+  const dirtySnapshot = dirtyIds;
+  const removeSnapshot = removedIds;
+  dirtyIds = new Set();
+  removedIds = new Set();
+  const upsert = {};
+  for (const id of dirtySnapshot) {
+    if (pinnedCache[id]) upsert[id] = pinnedCache[id];
+  }
+  const remove = Array.from(removeSnapshot);
+  if (Object.keys(upsert).length === 0 && remove.length === 0) {
+    return savePromise; // nothing to send
+  }
   saveStatusSetter({ state: 'saving', count: Object.keys(pinnedCache).length });
   savePromise = (async () => {
-    try {
-      await savePromise;
-    } catch { /* ignore previous error */ }
+    try { await savePromise; } catch { /* ignore previous error */ }
     const r = await fetch('/api/_proto/canvas/positions', {
-      method: 'PUT',
+      method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ positions: pinnedCache }),
+      body: JSON.stringify({ upsert, remove }),
     });
     if (!r.ok) {
       const text = await r.text();
+      // Re-queue the diff so the next flush will retry. Don't drop user edits
+      // on a transient server error.
+      for (const id of dirtySnapshot) dirtyIds.add(id);
+      for (const id of removeSnapshot) removedIds.add(id);
       saveStatusSetter({ state: 'error', error: text });
-      throw new Error(`PUT positions failed: HTTP ${r.status} ${text}`);
+      throw new Error(`PATCH positions failed: HTTP ${r.status} ${text}`);
     }
     const body = await r.json();
+    // Adopt the server-side merged view as our authoritative cache. This
+    // brings in any positions added by other writers that we didn't know
+    // about, so subsequent saves stay merge-safe.
+    if (body.positions && typeof body.positions === 'object') {
+      pinnedCache = body.positions;
+      const pSet = pinnedIds();
+      pinnedSetSetter(pSet);
+      pinnedCountSetter(pSet.size);
+    }
     saveStatusSetter({ state: 'saved', count: body.count, savedAt: body.savedAt });
   })();
   return savePromise;
@@ -1085,13 +1120,23 @@ if (typeof window !== 'undefined') {
     if (saveTimer) {
       clearTimeout(saveTimer);
       saveTimer = null;
-      // Use sendBeacon for last-chance save during unload.
+      // Use sendBeacon for last-chance save during unload. Always go through
+      // the merge endpoint so even unload-time saves don't clobber concurrent
+      // writes from elsewhere.
       try {
+        const upsert = {};
+        for (const id of dirtyIds) {
+          if (pinnedCache[id]) upsert[id] = pinnedCache[id];
+        }
+        const remove = Array.from(removedIds);
         const blob = new Blob(
-          [JSON.stringify({ positions: pinnedCache })],
+          [JSON.stringify({ upsert, remove })],
           { type: 'application/json' },
         );
-        navigator.sendBeacon('/api/_proto/canvas/positions', blob);
+        // sendBeacon only supports POST. Use a query-string flag so the
+        // server can route POSTs to /positions through the same merge path
+        // as PATCH for unload-time best-effort saves.
+        navigator.sendBeacon('/api/_proto/canvas/positions?method=patch', blob);
       } catch { /* best-effort */ }
     }
   });
@@ -1100,15 +1145,25 @@ if (typeof window !== 'undefined') {
 function loadPinned() { return pinnedCache; }
 function pinPosition(id, x, y) {
   pinnedCache[id] = { x, y, manuallyMoved: true, ts: Date.now() };
+  dirtyIds.add(id);
+  removedIds.delete(id);
   saveDebounced();
   return pinnedCache;
 }
 function unpinPosition(id) {
   delete pinnedCache[id];
+  removedIds.add(id);
+  dirtyIds.delete(id);
   saveDebounced();
   return pinnedCache;
 }
 function clearAllPinned() {
+  // Intentional bulk wipe of the user's view. Mark every currently-known id
+  // for deletion; positions added by other writers since boot survive.
+  for (const id of Object.keys(pinnedCache)) {
+    removedIds.add(id);
+    dirtyIds.delete(id);
+  }
   pinnedCache = {};
   saveDebounced();
   return pinnedCache;

@@ -8,9 +8,18 @@
 //   - Atomic writes (whole-file replace) so concurrent saves do not interleave
 //
 // Endpoints:
-//   GET  /api/_proto/canvas/portfolio      -> the dbagent portfolio.json
-//   GET  /api/_proto/canvas/positions      -> the positions overlay (may be {})
-//   PUT  /api/_proto/canvas/positions      -> replace the positions overlay
+//   GET    /api/_proto/canvas/portfolio      -> the dbagent portfolio.json
+//   GET    /api/_proto/canvas/positions      -> the positions overlay (may be {})
+//   PUT    /api/_proto/canvas/positions      -> REPLACE the whole positions
+//                                              overlay (used only for "clear
+//                                              all pinned"; routine drags use
+//                                              PATCH below)
+//   PATCH  /api/_proto/canvas/positions      -> partial update: body is
+//                                              { upsert?: {id: pos}, remove?: [id] }.
+//                                              Safe against concurrent writes
+//                                              from other tabs / portfolio
+//                                              manager sessions / branch
+//                                              switches.
 //   GET  /api/_proto/canvas/colors         -> the workstream color overrides
 //                                            ({} when none assigned)
 //   PUT  /api/_proto/canvas/colors         -> replace the colors overlay
@@ -315,6 +324,81 @@ export function createProtoCanvasRouter(): Router {
       const message = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: message });
     }
+  });
+
+  // Partial update — the safe path for routine drag/unpin saves. The client
+  // sends just the ids it touched; the server reads the current file, applies
+  // upserts and removes, and writes atomically. This prevents the "stale
+  // full PUT" lost-update where the client's in-memory cache (loaded at
+  // boot) overwrites changes another writer (e.g. a separate portfolio
+  // manager session, a git branch switch, a second canvas tab) made in the
+  // meantime.
+  const handlePositionsPatch = async (
+    req: Parameters<Parameters<typeof router.patch>[1]>[0],
+    res: Parameters<Parameters<typeof router.patch>[1]>[1],
+  ) => {
+    const body = req.body as { upsert?: unknown; remove?: unknown };
+    if (!body || typeof body !== "object") {
+      res.status(400).json({ error: "Body must be { upsert?: {...}, remove?: [...] }" });
+      return;
+    }
+    const upsertInput =
+      body.upsert && typeof body.upsert === "object" && body.upsert !== null
+        ? (body.upsert as Record<string, unknown>)
+        : {};
+    const removeInput = Array.isArray(body.remove) ? body.remove : [];
+    const upserts: PositionsFile = {};
+    for (const [id, val] of Object.entries(upsertInput)) {
+      if (val && typeof val === "object" && "x" in val && "y" in val) {
+        const v = val as { x: unknown; y: unknown; ts?: unknown };
+        if (typeof v.x === "number" && typeof v.y === "number") {
+          upserts[id] = {
+            x: v.x,
+            y: v.y,
+            manuallyMoved: true,
+            ts: typeof v.ts === "number" ? v.ts : Date.now(),
+          };
+        }
+      }
+    }
+    const removes = new Set<string>();
+    for (const id of removeInput) {
+      if (typeof id === "string" && id.length > 0) removes.add(id);
+    }
+    try {
+      const current = await readJsonSafe<PositionsFile>(POSITIONS_PATH, {});
+      const merged: PositionsFile = { ...current };
+      for (const id of removes) {
+        delete merged[id];
+      }
+      for (const [id, val] of Object.entries(upserts)) {
+        merged[id] = val;
+      }
+      await writeJsonAtomic(POSITIONS_PATH, merged);
+      res.status(200).json({
+        ok: true,
+        path: POSITIONS_PATH,
+        count: Object.keys(merged).length,
+        upserts: Object.keys(upserts).length,
+        removes: removes.size,
+        positions: merged,
+        savedAt: new Date().toISOString(),
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: message });
+    }
+  };
+  router.patch("/positions", handlePositionsPatch);
+  // sendBeacon (used for last-chance saves during page unload) can only POST.
+  // Route POST /positions?method=patch through the same merge handler so the
+  // unload path stays merge-safe.
+  router.post("/positions", async (req, res, next) => {
+    if (req.query?.method === "patch") {
+      await handlePositionsPatch(req, res);
+      return;
+    }
+    next();
   });
 
   router.get("/colors", async (_req, res) => {
