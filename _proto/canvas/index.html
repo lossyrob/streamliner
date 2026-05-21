@@ -13,7 +13,8 @@
     "react-dom/client":  "https://esm.sh/react-dom@18.3.1/client",
     "@xyflow/react":     "https://esm.sh/@xyflow/react@12.3.5?deps=react@18.3.1,react-dom@18.3.1",
     "elkjs":             "https://esm.sh/elkjs@0.10.0/lib/elk.bundled.js",
-    "htm":               "https://esm.sh/htm@3.1.1"
+    "htm":               "https://esm.sh/htm@3.1.1",
+    "react-markdown":    "https://esm.sh/react-markdown@10.1.0?deps=react@18.3.1,react-dom@18.3.1"
   }
 }
 </script>
@@ -572,6 +573,143 @@
   }
   .controls-panel .group { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
   .controls-panel .save-status code { color: var(--accent); }
+
+  /* Inspector "View Brief" / "View Candidate" button. */
+  aside.inspector .doc-open-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0.6rem 0 0.2rem;
+    padding: 5px 11px;
+    font-size: 0.74rem;
+    font-weight: 600;
+    color: var(--accent);
+    background: rgba(29,110,220,0.06);
+    border: 1px solid rgba(29,110,220,0.22);
+    border-radius: 7px;
+    cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease;
+  }
+  aside.inspector .doc-open-btn:hover {
+    background: rgba(29,110,220,0.12);
+    border-color: rgba(29,110,220,0.45);
+  }
+
+  /* Floating Brief/Candidate viewer — non-modal so the canvas stays
+     interactive while it's open. Position: fixed top-right, scrollable
+     body, selectable text. Esc / × closes. */
+  .doc-pane {
+    position: fixed;
+    top: 96px;
+    right: 28px;
+    width: min(720px, calc(100vw - 56px));
+    max-height: calc(100vh - 132px);
+    display: flex;
+    flex-direction: column;
+    background: rgba(255, 255, 255, 0.98);
+    border: 1px solid var(--border-strong);
+    border-radius: 14px;
+    box-shadow: 0 24px 60px rgba(18, 35, 70, 0.18), 0 6px 18px rgba(18, 35, 70, 0.08);
+    backdrop-filter: blur(10px);
+    z-index: 1000;
+    overflow: hidden;
+  }
+  .doc-pane-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px 10px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.92);
+  }
+  .doc-pane-header .title { font-size: 0.86rem; font-weight: 700; color: var(--text); flex: 1; min-width: 0; }
+  .doc-pane-header .title .kind {
+    margin-left: 8px;
+    padding: 1px 7px;
+    font-size: 0.6rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--accent);
+    background: rgba(29,110,220,0.10);
+    border-radius: 999px;
+    vertical-align: middle;
+  }
+  .doc-pane-header .path {
+    font-size: 0.66rem;
+    color: var(--faint);
+    font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 360px;
+  }
+  .doc-pane-header .close-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    width: 28px; height: 28px;
+    border-radius: 7px;
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: background 120ms ease, color 120ms ease;
+  }
+  .doc-pane-header .close-btn:hover { background: rgba(20,60,130,0.06); color: var(--text); }
+  .doc-pane-body {
+    padding: 18px 22px 24px;
+    overflow-y: auto;
+    overflow-x: auto;
+    user-select: text;
+    color: var(--text);
+    line-height: 1.55;
+    font-size: 0.84rem;
+  }
+  .doc-pane-body.loading,
+  .doc-pane-body.error  { color: var(--muted); font-style: italic; }
+  .doc-pane-body.error  { color: var(--red); font-style: normal; }
+  .doc-pane-body h1, .doc-pane-body h2, .doc-pane-body h3,
+  .doc-pane-body h4, .doc-pane-body h5, .doc-pane-body h6 {
+    color: var(--text);
+    margin: 1.1em 0 0.4em;
+    line-height: 1.25;
+  }
+  .doc-pane-body h1 { font-size: 1.35rem; }
+  .doc-pane-body h2 { font-size: 1.15rem; border-bottom: 1px solid var(--border); padding-bottom: 0.25em; }
+  .doc-pane-body h3 { font-size: 1.00rem; }
+  .doc-pane-body h4 { font-size: 0.90rem; color: var(--muted); }
+  .doc-pane-body p  { margin: 0.5em 0; }
+  .doc-pane-body ul, .doc-pane-body ol { margin: 0.4em 0 0.8em; padding-left: 1.5em; }
+  .doc-pane-body li { margin: 0.18em 0; }
+  .doc-pane-body code {
+    font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+    font-size: 0.80rem;
+    background: rgba(20,60,130,0.06);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+  .doc-pane-body pre {
+    background: rgba(20,60,130,0.06);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    overflow-x: auto;
+    font-size: 0.78rem;
+  }
+  .doc-pane-body pre code { background: transparent; padding: 0; }
+  .doc-pane-body blockquote {
+    border-left: 3px solid var(--border-strong);
+    color: var(--muted);
+    margin: 0.6em 0;
+    padding: 0.2em 0.9em;
+    background: rgba(20,60,130,0.03);
+  }
+  .doc-pane-body a { color: var(--accent); text-decoration: underline; text-decoration-color: rgba(29,110,220,0.4); }
+  .doc-pane-body table { border-collapse: collapse; margin: 0.6em 0; }
+  .doc-pane-body th, .doc-pane-body td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
+  .doc-pane-body th { background: rgba(20,60,130,0.04); font-weight: 700; }
+  .doc-pane-body hr { border: none; border-top: 1px solid var(--border); margin: 1.2em 0; }
 </style>
 </head>
 <body>
@@ -597,6 +735,7 @@ import {
 } from '@xyflow/react';
 import ELK from 'elkjs';
 import htm from 'htm';
+import ReactMarkdown from 'react-markdown';
 
 const html = htm.bind(React.createElement);
 
@@ -1227,6 +1366,94 @@ function typeColor(t) {
 // Hoisted selection setter so node onClick handlers can call it.
 let selection_set = () => {};
 let unpin_handler = () => {};
+// Hoisted brief-request setter so inspector "View Brief" buttons can open the
+// floating doc pane without prop-drilling.
+let brief_request_set = () => {};
+
+// ---------- Floating brief/candidate viewer ----------
+// Renders the workstream's brief.md (formed) or shaping/candidates/<id>.md
+// (candidate) as scrollable, selectable markdown. Non-modal: the canvas
+// remains pannable/clickable while the pane is open. Esc or the × button
+// closes it.
+function BriefPane({ request, onClose }) {
+  const [state, setState] = useState({ status: 'loading' });
+
+  useEffect(() => {
+    if (!request) return;
+    let cancelled = false;
+    setState({ status: 'loading' });
+    fetch('/api/_proto/canvas/workstream-doc?id=' + encodeURIComponent(request.id)
+      + (request.type ? '&type=' + encodeURIComponent(request.type === 'candidate' ? 'candidate' : 'formed') : ''))
+      .then(async (r) => {
+        const body = await r.json().catch(() => ({}));
+        if (cancelled) return;
+        if (!r.ok) {
+          setState({
+            status: 'error',
+            message: body.error || ('Request failed with HTTP ' + r.status),
+            triedPaths: body.triedPaths || null,
+          });
+          return;
+        }
+        setState({
+          status: 'ready',
+          kind: body.kind,
+          path: body.path,
+          content: body.content || '',
+        });
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setState({ status: 'error', message: err?.message || String(err) });
+      });
+    return () => { cancelled = true; };
+  }, [request?.id]);
+
+  useEffect(() => {
+    if (!request) return;
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [request, onClose]);
+
+  if (!request) return null;
+
+  const kindLabel = state.status === 'ready'
+    ? (state.kind === 'candidate' ? 'candidate' : 'brief')
+    : (request.type === 'candidate' ? 'candidate' : 'brief');
+
+  return html`
+    <div className="doc-pane" role="dialog" aria-label=${'Workstream ' + kindLabel + ': ' + request.title}>
+      <div className="doc-pane-header">
+        <div className="title">
+          ${request.title}
+          <span className="kind">${kindLabel}</span>
+        </div>
+        ${state.status === 'ready' ? html`<div className="path" title=${state.path}>${state.path}</div>` : null}
+        <button type="button" className="close-btn" onClick=${onClose} aria-label="Close" title="Close (Esc)">×</button>
+      </div>
+      ${state.status === 'loading' ? html`
+        <div className="doc-pane-body loading">Loading ${kindLabel} for <code>${request.id}</code>…</div>
+      ` : null}
+      ${state.status === 'error' ? html`
+        <div className="doc-pane-body error">
+          <div>${state.message}</div>
+          ${Array.isArray(state.triedPaths) && state.triedPaths.length > 0 ? html`
+            <p style=${{marginTop:'10px',fontSize:'0.74rem',color:'var(--muted)',fontStyle:'normal'}}>Looked for:</p>
+            <ul style=${{fontSize:'0.74rem',color:'var(--muted)',fontStyle:'normal'}}>
+              ${state.triedPaths.map((p, i) => html`<li key=${i}><code>${p}</code></li>`)}
+            </ul>
+          ` : null}
+        </div>
+      ` : null}
+      ${state.status === 'ready' ? html`
+        <div className="doc-pane-body">
+          <${ReactMarkdown}>${state.content}<//>
+        </div>
+      ` : null}
+    </div>
+  `;
+}
 
 // ---------- Inspector ----------
 function Inspector({ selection }) {
@@ -1258,6 +1485,16 @@ function WorkstreamInspector({ id }) {
       <span className="pill" style=${{color:'var(--muted)',background:'rgba(20,60,130,0.06)'}}>L${ws.layer}</span>
     </p>
     <p>${ws.summary || ''}</p>
+    <button
+      type="button"
+      className="doc-open-btn"
+      onClick=${() => brief_request_set({ id: ws.id, type: ws.type, title: ws.title })}
+      title=${ws.type === 'candidate'
+        ? 'Open the candidate shaping markdown for this workstream'
+        : 'Open the workstream brief.md'}
+    >
+      ${ws.type === 'candidate' ? '📄 View candidate' : '📄 View brief'}
+    </button>
     <h3>Repos</h3>
     <p>${(ws.repos || []).join(' · ')}</p>
     ${ws.branch ? html`<h3>Branch</h3><p>${ws.branch}</p>` : null}
@@ -1288,6 +1525,18 @@ function WaveInspector({ id }) {
       <span className="pill" style=${{color:statusColor(wv.status), background:statusBg(wv.status)}}>${wv.status}</span>
     </p>
     <p>${wv.summary || ''}</p>
+    ${ws ? html`
+      <button
+        type="button"
+        className="doc-open-btn"
+        onClick=${() => brief_request_set({ id: ws.id, type: ws.type, title: ws.title })}
+        title=${ws.type === 'candidate'
+          ? 'Open the candidate shaping markdown for this wave\u2019s workstream'
+          : 'Open this wave\u2019s workstream brief.md'}
+      >
+        ${ws.type === 'candidate' ? '📄 View candidate' : '📄 View brief'}
+      </button>
+    ` : null}
     ${wv.deps && wv.deps.length ? html`
       <h3>Hard dependencies</h3>
       ${wv.deps.map(d => {
@@ -1367,6 +1616,8 @@ function App() {
   saveStatusSetter = setSaveStatus;
   const [selection, setSelection] = useState(null);
   selection_set = setSelection;
+  const [briefRequest, setBriefRequest] = useState(null); // { id, type, title } | null
+  brief_request_set = setBriefRequest;
   const [edgeFilters, setEdgeFilters] = useState({
     'hard': true, 'soft-data': true, 'soft-coord': true, 'external': true
   });
@@ -1768,6 +2019,7 @@ function App() {
         </div>
       ` : null}
     </section>
+    <${BriefPane} request=${briefRequest} onClose=${() => setBriefRequest(null)} />
   `;
 }
 
