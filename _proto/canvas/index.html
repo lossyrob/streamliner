@@ -919,7 +919,10 @@ function rgbToHsl({ r, g, b }) {
   return { h: h * 360, s: s * 100, l: l * 100 };
 }
 
-// Return a normalized theme { accent, border, chip, tint } for the workstream.
+// Return a normalized theme { accent, border, chip, fill, tint } for the
+// workstream. `fill` is the soft workstream-container background; `tint` is
+// the wave-card background (slightly stronger so cards still pop within the
+// container without competing with it).
 // If WS_COLOR_OVERRIDES[wsId] is set, derive from the picker hex (with the
 // achromatic guard so #b8b8b8 stays gray instead of inheriting hue=0/red).
 // Otherwise, derive from the auto-spread WS_HUE so unassigned workstreams
@@ -936,6 +939,7 @@ function themeFor(wsId) {
         accent: `hsl(0, 0%, ${accentL}%)`,
         border: `hsla(0, 0%, ${borderL}%, 0.55)`,
         chip:   `hsl(0, 0%, 94%)`,
+        fill:   `hsla(0, 0%, ${borderL}%, ${WS_TINT_ALPHA})`,
         tint:   `hsla(0, 0%, ${borderL}%, ${WS_TINT_ALPHA + 0.04})`,
       };
     }
@@ -947,6 +951,7 @@ function themeFor(wsId) {
       accent: `hsl(${h}, ${accentS}%, ${accentL}%)`,
       border: `hsla(${h}, ${borderS}%, ${borderL}%, 0.55)`,
       chip:   `hsl(${h}, ${Math.max(40, accentS - 20)}%, 94%)`,
+      fill:   `hsla(${h}, ${borderS}%, ${borderL}%, ${WS_TINT_ALPHA})`,
       tint:   `hsla(${h}, ${borderS}%, ${borderL}%, ${WS_TINT_ALPHA + 0.04})`,
     };
   }
@@ -957,6 +962,7 @@ function themeFor(wsId) {
     accent: `hsla(${h}, 62%, 38%, 1)`,
     border: `hsla(${h}, 58%, 46%, 0.55)`,
     chip:   `hsla(${h}, 55%, 60%, 0.20)`,
+    fill:   `hsla(${h}, 58%, 46%, ${WS_TINT_ALPHA})`,
     tint:   `hsla(${h}, 58%, 46%, ${WS_TINT_ALPHA + 0.04})`,
   };
 }
@@ -1314,7 +1320,7 @@ function WorkstreamGroupNode({ data }) {
         borderColor: theme.border,
         borderStyle: 'solid',
         borderWidth: '2px',
-        background: 'transparent',
+        background: theme.fill,
       }}
     >
       <div className="ws-group-label" style=${{ color: theme.accent, background: theme.chip, borderColor: theme.border }}>
