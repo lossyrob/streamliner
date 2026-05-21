@@ -595,60 +595,103 @@
     border-color: rgba(29,110,220,0.45);
   }
 
-  /* Workstream color picker — grid of palette swatches plus an Auto reset.
-     Mirrors the terminal color quick-picker in style. */
-  aside.inspector .ws-color-picker { margin: 0.6rem 0 0.4rem; }
-  aside.inspector .ws-color-picker .heading {
-    font-size: 0.62rem;
-    color: var(--faint);
-    text-transform: uppercase;
-    letter-spacing: 0.10em;
-    font-weight: 700;
-    margin-bottom: 6px;
+  /* Workstream color picker — small swatch button that opens a popover with
+     the full 16-swatch palette and an Auto reset. Mirrors the SessionsPage
+     "sl-sheet-color-menu" pattern: trigger looks like a colored chip, popover
+     anchors below it and auto-closes on selection or outside click. */
+  aside.inspector .ws-color-menu {
+    position: relative;
+    display: inline-block;
+    margin-left: 6px;
+    vertical-align: middle;
   }
-  aside.inspector .ws-color-picker .grid {
+  aside.inspector .ws-color-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px 4px 5px;
+    background: rgba(255,255,255,0.78);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.7rem;
+    color: var(--muted);
+    transition: border-color 120ms ease, box-shadow 120ms ease;
+  }
+  aside.inspector .ws-color-trigger:hover,
+  aside.inspector .ws-color-trigger[aria-expanded="true"] {
+    border-color: rgba(29,110,220,0.45);
+    box-shadow: 0 0 0 3px rgba(29,110,220,0.10);
+  }
+  aside.inspector .ws-color-trigger-swatch {
+    width: 18px; height: 18px;
+    border-radius: 5px;
+    border: 1px solid rgba(20,60,130,0.18);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.34);
+    display: inline-block;
+    background-image:
+      linear-gradient(45deg, rgba(20,60,130,0.10) 25%, transparent 25%, transparent 75%, rgba(20,60,130,0.10) 75%),
+      linear-gradient(45deg, rgba(20,60,130,0.10) 25%, transparent 25%, transparent 75%, rgba(20,60,130,0.10) 75%);
+    background-size: 10px 10px;
+    background-position: 0 0, 5px 5px;
+  }
+  aside.inspector .ws-color-trigger-caret { font-size: 0.6rem; opacity: 0.7; }
+  aside.inspector .ws-color-popover {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    z-index: 50;
+    padding: 8px 10px;
+    background: rgba(255,255,255,0.98);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    box-shadow: 0 12px 32px rgba(18,35,70,0.18), 0 4px 10px rgba(18,35,70,0.06);
+    min-width: 168px;
+  }
+  aside.inspector .ws-color-popover .grid {
     display: grid;
-    grid-template-columns: repeat(8, 1fr);
+    grid-template-columns: repeat(8, 18px);
     gap: 4px;
   }
-  aside.inspector .ws-color-picker .swatch {
-    aspect-ratio: 1;
-    border-radius: 6px;
+  aside.inspector .ws-color-popover .swatch {
+    width: 18px; height: 18px;
+    border-radius: 5px;
     border: 1px solid rgba(20,60,130,0.18);
     cursor: pointer;
     padding: 0;
     transition: transform 90ms ease, box-shadow 90ms ease;
   }
-  aside.inspector .ws-color-picker .swatch:hover {
+  aside.inspector .ws-color-popover .swatch:hover {
     transform: scale(1.10);
     box-shadow: 0 2px 6px rgba(31,58,105,0.18);
   }
-  aside.inspector .ws-color-picker .swatch.selected {
+  aside.inspector .ws-color-popover .swatch.selected {
     box-shadow: 0 0 0 2px var(--text), 0 0 0 4px rgba(255,255,255,0.92);
   }
-  aside.inspector .ws-color-picker .actions {
-    display: flex; gap: 6px; margin-top: 6px; align-items: center;
+  aside.inspector .ws-color-popover .actions {
+    display: flex; gap: 6px; margin-top: 8px; align-items: center;
+    padding-top: 6px; border-top: 1px solid var(--border);
   }
-  aside.inspector .ws-color-picker .reset {
-    font-size: 0.68rem;
+  aside.inspector .ws-color-popover .reset {
+    font-size: 0.66rem;
     color: var(--muted);
     background: transparent;
     border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 3px 9px;
+    padding: 2px 8px;
     cursor: pointer;
   }
-  aside.inspector .ws-color-picker .reset:hover {
+  aside.inspector .ws-color-popover .reset:hover {
     color: var(--text);
     border-color: var(--border-strong);
   }
-  aside.inspector .ws-color-picker .reset[disabled] {
+  aside.inspector .ws-color-popover .reset[disabled] {
     opacity: 0.4; cursor: default;
   }
-  aside.inspector .ws-color-picker .current {
+  aside.inspector .ws-color-popover .current {
     margin-left: auto;
     font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
-    font-size: 0.65rem;
+    font-size: 0.62rem;
     color: var(--faint);
   }
   /* Floating Brief/Candidate viewer — non-modal so the canvas stays
@@ -772,7 +815,7 @@
 <div id="root"></div>
 
 <script type="module">
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   ReactFlow,
@@ -1674,35 +1717,75 @@ function Inspector({ selection }) {
 }
 
 function WorkstreamColorPicker({ workstreamId }) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef(null);
   const current = (WS_COLOR_OVERRIDES[workstreamId] || '').toLowerCase();
   const hasOverride = Boolean(current);
+  // The trigger swatch shows the actual hex when an override is set, or the
+  // checker-pattern (transparent default) when on auto so it's clearly
+  // distinguishable from a real color choice.
+  const triggerStyle = current
+    ? { background: current }
+    : {};
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        setOpen(false);
+      }
+    };
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
   return html`
-    <div className="ws-color-picker">
-      <div className="heading">Workstream color</div>
-      <div className="grid">
-        ${TERMINAL_COLOR_PALETTE.map((hex) => html`
-          <button
-            key=${hex}
-            type="button"
-            className=${'swatch' + (current === hex ? ' selected' : '')}
-            style=${{ background: hex }}
-            aria-label=${'Use color ' + hex}
-            aria-pressed=${current === hex}
-            onClick=${() => setWorkstreamColor(workstreamId, hex)}
-          />
-        `)}
-      </div>
-      <div className="actions">
-        <button
-          type="button"
-          className="reset"
-          disabled=${!hasOverride}
-          onClick=${() => setWorkstreamColor(workstreamId, null)}
-          title="Clear the explicit color and fall back to auto-hue"
-        >Auto</button>
-        <span className="current">${hasOverride ? current : 'auto'}</span>
-      </div>
-    </div>
+    <span className="ws-color-menu" ref=${containerRef}>
+      <button
+        type="button"
+        className="ws-color-trigger"
+        aria-label=${hasOverride ? 'Change workstream color (currently ' + current + ')' : 'Pick a workstream color (currently auto)'}
+        aria-expanded=${open}
+        title=${hasOverride ? 'Workstream color: ' + current : 'Workstream color: auto'}
+        onClick=${() => setOpen((v) => !v)}
+      >
+        <span className="ws-color-trigger-swatch" style=${triggerStyle} />
+        <span>${hasOverride ? current : 'auto'}</span>
+        <span className="ws-color-trigger-caret">▾</span>
+      </button>
+      ${open ? html`
+        <div className="ws-color-popover" role="dialog" aria-label="Workstream color picker">
+          <div className="grid">
+            ${TERMINAL_COLOR_PALETTE.map((hex) => html`
+              <button
+                key=${hex}
+                type="button"
+                className=${'swatch' + (current === hex ? ' selected' : '')}
+                style=${{ background: hex }}
+                aria-label=${'Use color ' + hex}
+                aria-pressed=${current === hex}
+                onClick=${() => { setWorkstreamColor(workstreamId, hex); setOpen(false); }}
+              />
+            `)}
+          </div>
+          <div className="actions">
+            <button
+              type="button"
+              className="reset"
+              disabled=${!hasOverride}
+              onClick=${() => { setWorkstreamColor(workstreamId, null); setOpen(false); }}
+              title="Clear the explicit color and fall back to auto-hue"
+            >Auto</button>
+            <span className="current">${hasOverride ? current : 'auto'}</span>
+          </div>
+        </div>
+      ` : null}
+    </span>
   `;
 }
 
