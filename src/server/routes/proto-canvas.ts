@@ -84,6 +84,26 @@ const IGNORED_TOKENS = new Set([
   "per", "via", "by", "from", "into",
 ]);
 
+// Synonym groups: every token in a group is considered equivalent for matching.
+// These cover the abbreviations the dbagent portfolio uses against fully-spelled
+// disk folder names (e.g. id `vmagent-cas-db-access` -> disk
+// `vmagent-cas-database-access`). Add new groups sparingly; over-matching makes
+// fuzzy resolution pick wrong folders.
+const TOKEN_SYNONYMS: ReadonlyArray<ReadonlySet<string>> = [
+  new Set(["db", "database"]),
+  new Set(["auth", "authentication", "authn"]),
+  new Set(["authz", "authorization"]),
+  new Set(["cfg", "config", "configuration"]),
+  new Set(["repo", "repository"]),
+];
+
+function synonymGroupFor(token: string): ReadonlySet<string> | null {
+  for (const group of TOKEN_SYNONYMS) {
+    if (group.has(token)) return group;
+  }
+  return null;
+}
+
 function tokensOf(name: string): Set<string> {
   return new Set(
     name
@@ -93,9 +113,23 @@ function tokensOf(name: string): Set<string> {
   );
 }
 
+/**
+ * A portfolio token matches an on-disk token if they're equal or if both
+ * belong to the same synonym group (covers `db` <-> `database` etc.).
+ */
+function tokenMatches(portfolioToken: string, onDiskToken: string): boolean {
+  if (portfolioToken === onDiskToken) return true;
+  const group = synonymGroupFor(portfolioToken);
+  return group ? group.has(onDiskToken) : false;
+}
+
 function isSubset(needle: Set<string>, haystack: Set<string>): boolean {
   for (const t of needle) {
-    if (!haystack.has(t)) return false;
+    let matched = false;
+    for (const h of haystack) {
+      if (tokenMatches(t, h)) { matched = true; break; }
+    }
+    if (!matched) return false;
   }
   return true;
 }
