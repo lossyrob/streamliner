@@ -11,6 +11,9 @@
 //   GET  /api/_proto/canvas/portfolio      -> the dbagent portfolio.json
 //   GET  /api/_proto/canvas/positions      -> the positions overlay (may be {})
 //   PUT  /api/_proto/canvas/positions      -> replace the positions overlay
+//   GET  /api/_proto/canvas/colors         -> the workstream color overrides
+//                                            ({} when none assigned)
+//   PUT  /api/_proto/canvas/colors         -> replace the colors overlay
 //   GET  /api/_proto/canvas/workstream-doc?id=<id>
 //                                         -> resolves to brief.md (formed) or
 //                                            shaping/candidates/<id>.md
@@ -39,6 +42,13 @@ const POSITIONS_PATH = resolve(
   "canvas",
   "state",
   "positions.json",
+);
+const COLORS_PATH = resolve(
+  process.cwd(),
+  "_proto",
+  "canvas",
+  "state",
+  "colors.json",
 );
 // Root of the dbagent planning artifacts. The workstream-doc lookup walks
 // `<DBAGENT_ROOT>/workstreams/<id>/brief.md` for formed workstreams and
@@ -298,6 +308,49 @@ export function createProtoCanvasRouter(): Router {
       res.status(200).json({
         ok: true,
         path: POSITIONS_PATH,
+        count: Object.keys(cleaned).length,
+        savedAt: new Date().toISOString(),
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  router.get("/colors", async (_req, res) => {
+    try {
+      const data = await readJsonSafe<Record<string, string>>(COLORS_PATH, {});
+      res.setHeader("Cache-Control", "no-cache");
+      res.status(200).json({ path: COLORS_PATH, colors: data });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  router.put("/colors", async (req, res) => {
+    const body = req.body as { colors?: unknown };
+    if (!body || typeof body !== "object" || typeof body.colors !== "object" || body.colors === null) {
+      res.status(400).json({ error: "Body must be { colors: { workstreamId: '#rrggbb' } }" });
+      return;
+    }
+    const incoming = body.colors as Record<string, unknown>;
+    const cleaned: Record<string, string> = {};
+    for (const [id, value] of Object.entries(incoming)) {
+      // Tolerate clients that send null/empty to clear an override.
+      if (value === null || value === "") continue;
+      if (typeof value !== "string") continue;
+      const hex = value.trim().toLowerCase();
+      if (!/^#[0-9a-f]{6}$/.test(hex)) continue;
+      // Same defense-in-depth as workstream-doc: ids must be slug-safe.
+      if (!id || id.includes("/") || id.includes("\\") || id.includes("..")) continue;
+      cleaned[id] = hex;
+    }
+    try {
+      await writeJsonAtomic(COLORS_PATH, cleaned);
+      res.status(200).json({
+        ok: true,
+        path: COLORS_PATH,
         count: Object.keys(cleaned).length,
         savedAt: new Date().toISOString(),
       });

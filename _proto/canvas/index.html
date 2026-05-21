@@ -595,6 +595,62 @@
     border-color: rgba(29,110,220,0.45);
   }
 
+  /* Workstream color picker — grid of palette swatches plus an Auto reset.
+     Mirrors the terminal color quick-picker in style. */
+  aside.inspector .ws-color-picker { margin: 0.6rem 0 0.4rem; }
+  aside.inspector .ws-color-picker .heading {
+    font-size: 0.62rem;
+    color: var(--faint);
+    text-transform: uppercase;
+    letter-spacing: 0.10em;
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+  aside.inspector .ws-color-picker .grid {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 4px;
+  }
+  aside.inspector .ws-color-picker .swatch {
+    aspect-ratio: 1;
+    border-radius: 6px;
+    border: 1px solid rgba(20,60,130,0.18);
+    cursor: pointer;
+    padding: 0;
+    transition: transform 90ms ease, box-shadow 90ms ease;
+  }
+  aside.inspector .ws-color-picker .swatch:hover {
+    transform: scale(1.10);
+    box-shadow: 0 2px 6px rgba(31,58,105,0.18);
+  }
+  aside.inspector .ws-color-picker .swatch.selected {
+    box-shadow: 0 0 0 2px var(--text), 0 0 0 4px rgba(255,255,255,0.92);
+  }
+  aside.inspector .ws-color-picker .actions {
+    display: flex; gap: 6px; margin-top: 6px; align-items: center;
+  }
+  aside.inspector .ws-color-picker .reset {
+    font-size: 0.68rem;
+    color: var(--muted);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 3px 9px;
+    cursor: pointer;
+  }
+  aside.inspector .ws-color-picker .reset:hover {
+    color: var(--text);
+    border-color: var(--border-strong);
+  }
+  aside.inspector .ws-color-picker .reset[disabled] {
+    opacity: 0.4; cursor: default;
+  }
+  aside.inspector .ws-color-picker .current {
+    margin-left: auto;
+    font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+    font-size: 0.65rem;
+    color: var(--faint);
+  }
   /* Floating Brief/Candidate viewer — non-modal so the canvas stays
      interactive while it's open. Position: fixed top-right, scrollable
      body, selectable text. Esc / × closes. */
@@ -768,9 +824,27 @@ function buildIndexes() {
 }
 
 // ---------- Workstream colors (one hue per workstream) ----------
-// Tuned for a light background — moderately saturated, lowered lightness so
-// the workstream hue reads clearly against the cream/white canvas surface.
+// Each workstream has a derived theme: an accent (text/border), a soft
+// container border, a chip background, and a tint for wave card backgrounds.
+// Themes are derived from one of two sources, in order:
+//   1. WS_COLOR_OVERRIDES[wsId] — explicit picker assignment (server-backed).
+//   2. Auto-hue spread — fallback that keeps every workstream visually
+//      distinct on first load before any colors are assigned.
+// Tone tuning mirrors _proto/canvas/color-themes.html: bright pickers like
+// yellow / lime / neon pink are pulled into a comfortable lightness band so
+// they don't blast the eyes against the light canvas.
+const TERMINAL_COLOR_PALETTE = [
+  '#e8114b', '#4891c8', '#41b878', '#ff8c0a',
+  '#c71585', '#2897f0', '#2fcf32', '#ffff00',
+  '#9825d7', '#6754d7', '#00ff00', '#d6bd93',
+  '#f000e8', '#19d9df', '#82c6df', '#b8b8b8',
+];
+// Theme tint strength as alpha for wave-card backgrounds (matches the
+// prototype's 11% slider value). Container fill stays transparent.
+const WS_TINT_ALPHA = 0.11;
 let WS_HUE = {};
+let WS_COLOR_OVERRIDES = {}; // wsId -> '#rrggbb'
+
 function buildHues() {
   WS_HUE = {};
   PORTFOLIO.workstreams.forEach((ws, i) => {
@@ -778,11 +852,86 @@ function buildHues() {
     WS_HUE[ws.id] = Math.round(t * 320 + 200) % 360;
   });
 }
+
+function hexToRgb(hex) {
+  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  if (!m) return { r: 0, g: 0, b: 0 };
+  return { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) };
+}
+function rgbToHsl({ r, g, b }) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  let h = 0, s = 0;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+      case g: h = (b - r) / d + 2; break;
+      case b: h = (r - g) / d + 4; break;
+    }
+    h /= 6;
+  }
+  return { h: h * 360, s: s * 100, l: l * 100 };
+}
+
+// Return a normalized theme { accent, border, chip, tint } for the workstream.
+// If WS_COLOR_OVERRIDES[wsId] is set, derive from the picker hex (with the
+// achromatic guard so #b8b8b8 stays gray instead of inheriting hue=0/red).
+// Otherwise, derive from the auto-spread WS_HUE so unassigned workstreams
+// still get a unique color.
+function themeFor(wsId) {
+  const override = WS_COLOR_OVERRIDES[wsId];
+  if (override) {
+    const hsl = rgbToHsl(hexToRgb(override));
+    const h = Math.round(hsl.h);
+    if (hsl.s < 6) {
+      const accentL = Math.min(46, Math.max(28, Math.round(hsl.l * 0.6)));
+      const borderL = Math.min(60, accentL + 12);
+      return {
+        accent: `hsl(0, 0%, ${accentL}%)`,
+        border: `hsla(0, 0%, ${borderL}%, 0.55)`,
+        chip:   `hsl(0, 0%, 94%)`,
+        tint:   `hsla(0, 0%, ${borderL}%, ${WS_TINT_ALPHA + 0.04})`,
+      };
+    }
+    const accentS = Math.min(82, Math.max(55, Math.round(hsl.s)));
+    const accentL = Math.min(46, Math.max(30, Math.round(hsl.l * 0.7 + 18)));
+    const borderS = Math.min(80, Math.max(50, Math.round(accentS * 0.85)));
+    const borderL = Math.min(58, Math.max(40, accentL + 8));
+    return {
+      accent: `hsl(${h}, ${accentS}%, ${accentL}%)`,
+      border: `hsla(${h}, ${borderS}%, ${borderL}%, 0.55)`,
+      chip:   `hsl(${h}, ${Math.max(40, accentS - 20)}%, 94%)`,
+      tint:   `hsla(${h}, ${borderS}%, ${borderL}%, ${WS_TINT_ALPHA + 0.04})`,
+    };
+  }
+  // Fallback: auto-hue spread, kept consistent with the legacy palette so
+  // existing workstreams without an explicit color don't suddenly shift.
+  const h = WS_HUE[wsId] ?? 220;
+  return {
+    accent: `hsla(${h}, 62%, 38%, 1)`,
+    border: `hsla(${h}, 58%, 46%, 0.55)`,
+    chip:   `hsla(${h}, 55%, 60%, 0.20)`,
+    tint:   `hsla(${h}, 58%, 46%, ${WS_TINT_ALPHA + 0.04})`,
+  };
+}
+
+// Back-compat shims: existing call sites use wsColor()/wsColorMuted(). Both
+// delegate to themeFor() so a single theme source feeds all visuals.
 function wsColor(wsId, alpha = 1) {
-  return `hsla(${WS_HUE[wsId] ?? 220}, 62%, 38%, ${alpha})`;
+  const t = themeFor(wsId);
+  if (alpha >= 0.99) return t.accent;
+  // Render at a custom alpha by extracting the hue/saturation/lightness from
+  // the theme accent. Keeps callers that pass alpha working without growing
+  // the theme surface.
+  const m = /^hsla?\(\s*(\d+)\s*,\s*(\d+)%\s*,\s*(\d+)%/.exec(t.accent);
+  if (!m) return t.accent;
+  return `hsla(${m[1]}, ${m[2]}%, ${m[3]}%, ${alpha})`;
 }
 function wsColorMuted(wsId) {
-  return `hsla(${WS_HUE[wsId] ?? 220}, 55%, 60%, 0.20)`;
+  return themeFor(wsId).chip;
 }
 
 // ---------- ELK layout ----------
@@ -808,6 +957,46 @@ async function fetchPortfolio() {
   const r = await fetch('/api/_proto/canvas/portfolio');
   if (!r.ok) throw new Error(`Portfolio fetch failed: HTTP ${r.status}`);
   return r.json();
+}
+
+async function fetchColors() {
+  const r = await fetch('/api/_proto/canvas/colors');
+  if (!r.ok) return {};
+  const body = await r.json();
+  return body.colors || {};
+}
+
+// Workstream color overrides — pattern matches positions: in-memory cache
+// kept in sync with a server-backed JSON file, updates flow through a 750ms
+// debounce. Color updates are infrequent so we don't bother with a separate
+// save-status indicator.
+let colorsSaveTimer = null;
+let colorsSavePromise = Promise.resolve();
+let colorsChangeListener = () => {}; // wired by App
+function setWorkstreamColor(wsId, hex) {
+  if (!wsId) return;
+  if (!hex) {
+    delete WS_COLOR_OVERRIDES[wsId];
+  } else {
+    WS_COLOR_OVERRIDES[wsId] = hex.toLowerCase();
+  }
+  colorsChangeListener({ ...WS_COLOR_OVERRIDES });
+  if (colorsSaveTimer) clearTimeout(colorsSaveTimer);
+  colorsSaveTimer = setTimeout(() => {
+    colorsSaveTimer = null;
+    colorsSavePromise = (async () => {
+      try { await colorsSavePromise; } catch { /* ignore prior */ }
+      const r = await fetch('/api/_proto/canvas/colors', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ colors: WS_COLOR_OVERRIDES }),
+      });
+      if (!r.ok) {
+        const text = await r.text();
+        throw new Error(`PUT colors failed: HTTP ${r.status} ${text}`);
+      }
+    })().catch((err) => console.error('Color save failed:', err));
+  }, 750);
 }
 
 let saveTimer = null;
@@ -993,6 +1182,7 @@ function WaveNode({ data }) {
   const inCount = data.inboundEdges.length;
   const outCount = data.outboundEdges.length;
   const wsColorFull = wsColor(ws.id, 1);
+  const theme = themeFor(ws.id);
   return html`
     <div
       className=${'wave-node status-' + wv.status
@@ -1002,7 +1192,13 @@ function WaveNode({ data }) {
         + (data.pinned ? ' pinned' : '')
         + (data.completedDim ? ' completed-dim' : '')
         + (data.filterState && data.filterState !== 'none' ? ' filter-' + data.filterState : '')}
-      style=${{ borderLeft: '4px solid ' + wsColorFull }}
+      style=${{
+        borderLeft: '4px solid ' + wsColorFull,
+        // Workstream theme tint overrides the status-specific background
+        // gradient. Status info stays visible through the .status-* border-
+        // color and (for ready) the box-shadow glow, plus the status pill.
+        background: `linear-gradient(180deg, ${theme.tint}, rgba(255,255,255,0.95))`,
+      }}
       onClick=${data.onClick}
     >
       ${!isFirst ? html`<${Handle} type="target" position=${Position.Top}    id="spine-in"  className="spine" />` : null}
@@ -1067,16 +1263,18 @@ function ExternalNode({ data }) {
 // workstream's waves are spread across the canvas.
 function WorkstreamGroupNode({ data }) {
   const ws = data.workstream;
-  const wsColorFull = wsColor(ws.id, 1);
+  const theme = themeFor(ws.id);
   return html`
     <div
       className=${'ws-group-node ws-group-' + ws.stage}
       style=${{
-        borderColor: wsColor(ws.id, 0.55),
-        background: `linear-gradient(180deg, ${wsColor(ws.id, 0.10)}, ${wsColor(ws.id, 0.04)})`,
+        borderColor: theme.border,
+        borderStyle: 'solid',
+        borderWidth: '2px',
+        background: 'transparent',
       }}
     >
-      <div className="ws-group-label" style=${{ color: wsColorFull, background: wsColorMuted(ws.id), borderColor: wsColor(ws.id, 0.45) }}>
+      <div className="ws-group-label" style=${{ color: theme.accent, background: theme.chip, borderColor: theme.border }}>
         <span className="ws-group-stage">${ws.stage}</span>
         ${ws.title}
         <span className="ws-group-count">${ws.waves.length} ${ws.waves.length === 1 ? 'wave' : 'waves'}</span>
@@ -1475,6 +1673,39 @@ function Inspector({ selection }) {
   return null;
 }
 
+function WorkstreamColorPicker({ workstreamId }) {
+  const current = (WS_COLOR_OVERRIDES[workstreamId] || '').toLowerCase();
+  const hasOverride = Boolean(current);
+  return html`
+    <div className="ws-color-picker">
+      <div className="heading">Workstream color</div>
+      <div className="grid">
+        ${TERMINAL_COLOR_PALETTE.map((hex) => html`
+          <button
+            key=${hex}
+            type="button"
+            className=${'swatch' + (current === hex ? ' selected' : '')}
+            style=${{ background: hex }}
+            aria-label=${'Use color ' + hex}
+            aria-pressed=${current === hex}
+            onClick=${() => setWorkstreamColor(workstreamId, hex)}
+          />
+        `)}
+      </div>
+      <div className="actions">
+        <button
+          type="button"
+          className="reset"
+          disabled=${!hasOverride}
+          onClick=${() => setWorkstreamColor(workstreamId, null)}
+          title="Clear the explicit color and fall back to auto-hue"
+        >Auto</button>
+        <span className="current">${hasOverride ? current : 'auto'}</span>
+      </div>
+    </div>
+  `;
+}
+
 function WorkstreamInspector({ id }) {
   const ws = workstreamById[id];
   return html`<aside className="inspector">
@@ -1495,6 +1726,7 @@ function WorkstreamInspector({ id }) {
     >
       ${ws.type === 'candidate' ? '📄 View candidate' : '📄 View brief'}
     </button>
+    <${WorkstreamColorPicker} workstreamId=${ws.id} />
     <h3>Repos</h3>
     <p>${(ws.repos || []).join(' · ')}</p>
     ${ws.branch ? html`<h3>Branch</h3><p>${ws.branch}</p>` : null}
@@ -1537,6 +1769,7 @@ function WaveInspector({ id }) {
         ${ws.type === 'candidate' ? '📄 View candidate' : '📄 View brief'}
       </button>
     ` : null}
+    ${ws ? html`<${WorkstreamColorPicker} workstreamId=${ws.id} />` : null}
     ${wv.deps && wv.deps.length ? html`
       <h3>Hard dependencies</h3>
       ${wv.deps.map(d => {
@@ -1618,6 +1851,13 @@ function App() {
   selection_set = setSelection;
   const [briefRequest, setBriefRequest] = useState(null); // { id, type, title } | null
   brief_request_set = setBriefRequest;
+  // colorsVersion bumps whenever the workstream color overrides change so
+  // that React Flow nodes re-render their workstream-themed visuals.
+  const [colorsVersion, setColorsVersion] = useState(0);
+  useEffect(() => {
+    colorsChangeListener = () => setColorsVersion((v) => v + 1);
+    return () => { colorsChangeListener = () => {}; };
+  }, []);
   const [edgeFilters, setEdgeFilters] = useState({
     'hard': true, 'soft-data': true, 'soft-coord': true, 'external': true
   });
@@ -1635,16 +1875,18 @@ function App() {
   pinnedCountSetter = setPinnedCount;
   const [nodeFilter, setNodeFilter] = useState('all');
 
-  // Boot: fetch portfolio + positions before anything else.
+  // Boot: fetch portfolio + positions + colors before anything else.
   useEffect(() => {
     (async () => {
       try {
-        const [portfolio, positions] = await Promise.all([
+        const [portfolio, positions, colors] = await Promise.all([
           fetchPortfolio(),
           fetchPositions(),
+          fetchColors(),
         ]);
         PORTFOLIO = portfolio;
         pinnedCache = positions || {};
+        WS_COLOR_OVERRIDES = colors || {};
         buildIndexes();
         buildHues();
         setBootState({ status: 'ready', error: null });
@@ -1744,7 +1986,8 @@ function App() {
           selected: selection?.kind === 'wave' && selection.id === n.data.wave.id,
           pinned: isPinned,
           filterState,
-          completedDim
+          completedDim,
+          colorsVersion,
         } };
       }
       if (n.type === 'external') {
@@ -1755,9 +1998,12 @@ function App() {
           filterState
         } };
       }
+      if (n.type === 'workstreamGroup') {
+        return { ...n, data: { ...n.data, colorsVersion } };
+      }
       return n;
     }));
-  }, [selection, pinnedSet, focusedIds, neighborIds, completedMode]);
+  }, [selection, pinnedSet, focusedIds, neighborIds, completedMode, colorsVersion]);
 
   // Re-build edges when filters change.
   useEffect(() => {
