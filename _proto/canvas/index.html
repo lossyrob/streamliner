@@ -1015,6 +1015,30 @@ async function fetchColors() {
   return body.colors || {};
 }
 
+// ---------- Filter preference persistence (localStorage) ----------
+// View-state toggles (edge type checkboxes, fulfilled/completed dropdowns,
+// top-bar node filter, container visibility, etc.) are per-browser
+// preferences rather than portfolio data — they belong in localStorage so
+// they survive page reloads without a server round-trip and don't pollute
+// the git-tracked state directory.
+const FILTER_STORAGE_KEY = 'streamliner.proto.canvas.filters.v1';
+function loadFilterPrefs() {
+  if (typeof localStorage === 'undefined') return {};
+  try {
+    const raw = localStorage.getItem(FILTER_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return (parsed && typeof parsed === 'object') ? parsed : {};
+  } catch { return {}; }
+}
+function saveFilterPrefs(prefs) {
+  if (typeof localStorage === 'undefined') return;
+  try { localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(prefs)); } catch { /* quota / blocked */ }
+}
+// Single read on module load — cheap and lets every useState lazy initializer
+// read from the same snapshot without repeatedly hitting localStorage.
+const INITIAL_FILTER_PREFS = loadFilterPrefs();
+
 // Workstream color overrides — pattern matches positions: in-memory cache
 // kept in sync with a server-backed JSON file, updates flow through a 750ms
 // debounce. Color updates are infrequent so we don't bother with a separate
@@ -2002,14 +2026,30 @@ function App() {
     colorsChangeListener = () => setColorsVersion((v) => v + 1);
     return () => { colorsChangeListener = () => {}; };
   }, []);
-  const [edgeFilters, setEdgeFilters] = useState({
-    'hard': true, 'soft-data': true, 'soft-coord': true, 'external': true
-  });
-  const [fulfilledMode, setFulfilledMode] = useState('dim'); // 'on' | 'dim' | 'off'
-  const [completedMode, setCompletedMode] = useState('show'); // 'show' | 'dim' | 'hide'
-  const [showCandidateEdges, setShowCandidateEdges] = useState(true);
-  const [inspectorVisible, setInspectorVisible] = useState(true);
-  const [showGroups, setShowGroups] = useState(true);
+  // View-state toggles read their initial values from localStorage so they
+  // survive page reloads and (when running against `npm run dev:stable`) any
+  // API restarts. A single useEffect below persists the bundle whenever any
+  // toggle changes.
+  const [edgeFilters, setEdgeFilters] = useState(
+    INITIAL_FILTER_PREFS.edgeFilters && typeof INITIAL_FILTER_PREFS.edgeFilters === 'object'
+      ? { 'hard': true, 'soft-data': true, 'soft-coord': true, 'external': true, ...INITIAL_FILTER_PREFS.edgeFilters }
+      : { 'hard': true, 'soft-data': true, 'soft-coord': true, 'external': true }
+  );
+  const [fulfilledMode, setFulfilledMode] = useState(
+    ['on', 'dim', 'off'].includes(INITIAL_FILTER_PREFS.fulfilledMode) ? INITIAL_FILTER_PREFS.fulfilledMode : 'dim'
+  );
+  const [completedMode, setCompletedMode] = useState(
+    ['show', 'dim', 'hide'].includes(INITIAL_FILTER_PREFS.completedMode) ? INITIAL_FILTER_PREFS.completedMode : 'show'
+  );
+  const [showCandidateEdges, setShowCandidateEdges] = useState(
+    typeof INITIAL_FILTER_PREFS.showCandidateEdges === 'boolean' ? INITIAL_FILTER_PREFS.showCandidateEdges : true
+  );
+  const [inspectorVisible, setInspectorVisible] = useState(
+    typeof INITIAL_FILTER_PREFS.inspectorVisible === 'boolean' ? INITIAL_FILTER_PREFS.inspectorVisible : true
+  );
+  const [showGroups, setShowGroups] = useState(
+    typeof INITIAL_FILTER_PREFS.showGroups === 'boolean' ? INITIAL_FILTER_PREFS.showGroups : true
+  );
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [layoutReady, setLayoutReady] = useState(false);
@@ -2017,7 +2057,23 @@ function App() {
   pinnedSetSetter = setPinnedSet;
   const [pinnedCount, setPinnedCount] = useState(0);
   pinnedCountSetter = setPinnedCount;
-  const [nodeFilter, setNodeFilter] = useState('all');
+  const [nodeFilter, setNodeFilter] = useState(
+    typeof INITIAL_FILTER_PREFS.nodeFilter === 'string' ? INITIAL_FILTER_PREFS.nodeFilter : 'all'
+  );
+
+  // Persist the whole filter bundle whenever any toggle changes. Cheap and
+  // synchronous; localStorage writes are O(small) for this payload.
+  useEffect(() => {
+    saveFilterPrefs({
+      edgeFilters,
+      fulfilledMode,
+      completedMode,
+      showCandidateEdges,
+      showGroups,
+      inspectorVisible,
+      nodeFilter,
+    });
+  }, [edgeFilters, fulfilledMode, completedMode, showCandidateEdges, showGroups, inspectorVisible, nodeFilter]);
 
   // Boot: fetch portfolio + positions + colors before anything else.
   useEffect(() => {
