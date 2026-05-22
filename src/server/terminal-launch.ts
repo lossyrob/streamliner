@@ -5,11 +5,14 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { quotePowerShellLiteral } from "../terminal-command";
+import { getApiLogger } from "./logger";
 export {
   buildCopilotResumeCommand,
   isSafeCopilotResumeSessionId,
   quotePowerShellLiteral,
 } from "../terminal-command";
+
+export const DEFAULT_COPILOT_TERMINAL_LAUNCH_COOLDOWN_MS = 1_500;
 
 export const TERMINAL_HOST_PREFERENCES = [
   "default",
@@ -60,8 +63,20 @@ export interface TerminalLaunchAdapter {
   launch(request: TerminalLaunchRequest): TerminalLaunchResult;
 }
 
+export type TerminalLaunchExecutor = (options: TerminalLaunchOptions) => TerminalLaunchResult;
+
+export interface CopilotTerminalLaunchQueueOptions {
+  /** Low-level terminal launcher to run inside the queue. Defaults to launchTerminal. */
+  launchTerminal?: TerminalLaunchExecutor;
+  /** Override the configured cooldown; mainly used by tests and dependency seams. */
+  cooldownMs?: number;
+  /** Override the delay primitive; mainly used by tests. */
+  delay?: (ms: number) => Promise<void>;
+}
+
 /** Cache for Windows Terminal availability check */
 let wtAvailabilityCache: boolean | null = null;
+let copilotTerminalLaunchTail: Promise<void> = Promise.resolve();
 
 /** Check if Windows Terminal (wt.exe) is available in PATH. Cached per server lifetime. */
 export function isWindowsTerminalAvailable(): boolean {
@@ -82,6 +97,34 @@ export function isWindowsTerminalAvailable(): boolean {
 /** Clear the WT availability cache (for testing) */
 export function clearWindowsTerminalCache(): void {
   wtAvailabilityCache = null;
+}
+
+export function resetCopilotTerminalLaunchQueueForTest(): void {
+  copilotTerminalLaunchTail = Promise.resolve();
+}
+
+export function copilotTerminalLaunchCooldownMs(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const raw = env.STREAMLINER_COPILOT_TERMINAL_LAUNCH_COOLDOWN_MS;
+  if (raw === undefined || raw.trim() === "") {
+    return DEFAULT_COPILOT_TERMINAL_LAUNCH_COOLDOWN_MS;
+  }
+  const parsed = Number(raw);
+  if (Number.isFinite(parsed) && parsed >= 0) {
+    return parsed;
+  }
+  getApiLogger().withScope("terminal-launch").warn(
+    "invalid STREAMLINER_COPILOT_TERMINAL_LAUNCH_COOLDOWN_MS; using default",
+    { value: raw, defaultMs: DEFAULT_COPILOT_TERMINAL_LAUNCH_COOLDOWN_MS },
+  );
+  return DEFAULT_COPILOT_TERMINAL_LAUNCH_COOLDOWN_MS;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolveDelay) => {
+    setTimeout(resolveDelay, ms);
+  });
 }
 
 function isPowerShellCoreAvailable(): boolean {
@@ -348,6 +391,55 @@ export function launchTerminal(
   adapter: TerminalLaunchAdapter = getDefaultTerminalLaunchAdapter(),
 ): TerminalLaunchResult {
   return adapter.launch(normalizeTerminalLaunchRequest(options));
+}
+
+/**
+ * Serialize Streamliner-owned visible Copilot CLI terminal starts so concurrent
+ * launches do not contend on Copilot's shared plugin/cache state.
+ */
+export async function launchCopilotTerminal(
+  options: TerminalLaunchOptions,
+  queueOptions: CopilotTerminalLaunchQueueOptions = {},
+): Promise<TerminalLaunchResult> {
+  const prior = copilotTerminalLaunchTail;
+  let releaseCurrent: () => void = () => {};
+  const current = new Promise<void>((resolveCurrent) => {
+    releaseCurrent = resolveCurrent;
+  });
+  copilotTerminalLaunchTail = prior.then(() => current, () => current);
+
+  await prior.catch(() => undefined);
+
+  const launch = queueOptions.launchTerminal ?? launchTerminal;
+  const cooldownMs = queueOptions.cooldownMs ?? copilotTerminalLaunchCooldownMs();
+  const wait = queueOptions.delay ?? delay;
+  let result: TerminalLaunchResult | undefined;
+  let launchError: unknown;
+  let delayError: unknown;
+
+  try {
+    result = launch(options);
+  } catch (error: unknown) {
+    launchError = error;
+  }
+
+  try {
+    if (cooldownMs > 0) {
+      await wait(cooldownMs);
+    }
+  } catch (error: unknown) {
+    delayError = error;
+  } finally {
+    releaseCurrent();
+  }
+
+  if (launchError !== undefined) {
+    throw launchError;
+  }
+  if (delayError !== undefined) {
+    throw delayError;
+  }
+  return result!;
 }
 
 /**

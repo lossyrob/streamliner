@@ -3,7 +3,7 @@ import { Router } from "express";
 import { isLoopbackAddress } from "../config";
 import {
   buildCopilotInteractiveCommand,
-  launchTerminal,
+  launchCopilotTerminal,
   TERMINAL_HOST_PREFERENCES,
   type TerminalHostPreference,
   type TerminalLaunchOptions,
@@ -127,12 +127,12 @@ function terminalHostPreference(value: unknown): TerminalHostPreference {
   throw Object.assign(new Error("preferredTerminal must be default, windows-terminal, or powershell."), { statusCode: 400 });
 }
 
-export function launchCompanionTerminal(
+export async function launchCompanionTerminal(
   input: CompanionTerminalLaunchInput,
   deps: CompanionTerminalLaunchDeps = {},
-): CompanionTerminalLaunchResponse {
+): Promise<CompanionTerminalLaunchResponse> {
   const cliArgs = applyCompanionAgent(input.cliArgs ?? []);
-  const terminal = (deps.launchTerminal ?? launchTerminal)({
+  const terminal = await launchCopilotTerminal({
     cwd: input.cwd,
     command: buildCopilotInteractiveCommand({
       cliArgs,
@@ -142,6 +142,9 @@ export function launchCompanionTerminal(
     preferredTerminal: input.preferredTerminal ?? "default",
     title: input.title,
     tabColor: input.tabColor,
+  }, {
+    launchTerminal: deps.launchTerminal,
+    cooldownMs: deps.launchTerminal ? 0 : undefined,
   });
   return {
     terminal,
@@ -155,7 +158,7 @@ export function createCompanionTerminalLaunchesRouter(
 ): Router {
   const router = Router();
 
-  router.post("/companion-terminal-launches", (req, res, next) => {
+  router.post("/companion-terminal-launches", async (req, res, next) => {
     if (isNonLoopbackRequest(req)) {
       res.status(403).json({ error: "Companion terminal launch must originate from loopback." });
       return;
@@ -168,7 +171,7 @@ export function createCompanionTerminalLaunchesRouter(
       const title = optionalStringField(body.title, "title");
       const tabColor = optionalStringField(body.tabColor, "tabColor");
       const preferredTerminal = terminalHostPreference(body.preferredTerminal);
-      const response = launchCompanionTerminal({
+      const response = await launchCompanionTerminal({
         cwd,
         kickoffPrompt,
         cliArgs: callerCliArgs,

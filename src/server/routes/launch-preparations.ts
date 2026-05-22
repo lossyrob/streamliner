@@ -532,7 +532,7 @@ export function createLaunchPreparationsRouter(options: {
               nodeId: launchHandoff.launchMetadata.nodeId,
             });
             try {
-              const companionResult = launchCompanionTerminal(
+              const companionResult = await launchCompanionTerminal(
                 {
                   cwd: launchHandoff.cwd,
                   kickoffPrompt: postPreparation.launchCompanion.kickoffPrompt,
