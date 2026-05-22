@@ -1335,14 +1335,6 @@ function WaveNode({ data }) {
       ${inCount > 0  ? html`<${Handle} type="target" position=${Position.Left}  id="import" className="import" />` : null}
       ${outCount > 0 ? html`<${Handle} type="source" position=${Position.Right} id="export" className="export" />` : null}
 
-      ${data.pinned ? html`
-        <button
-          className="pin-badge"
-          onClick=${(e) => { e.stopPropagation(); data.onUnpin(); }}
-          title="Pinned to manual position. Click to unpin and let layout reposition."
-        >📌</button>
-      ` : null}
-
       <div className="ws-badge" style=${{ color: wsColorFull, background: wsColorMuted(ws.id) }}>
         ${ws.title}
       </div>
@@ -1373,13 +1365,6 @@ function ExternalNode({ data }) {
       onClick=${data.onClick}>
       <${Handle} type="source" position=${Position.Bottom} id="ext-out" className="export" />
       <${Handle} type="source" position=${Position.Right} id="ext-out-r" className="export" />
-      ${data.pinned ? html`
-        <button
-          className="pin-badge"
-          onClick=${(e) => { e.stopPropagation(); data.onUnpin(); }}
-          title="Pinned. Click to unpin."
-        >📌</button>
-      ` : null}
       <div className="ext-tag">EXT · blocks ${data.blocksCount}</div>
       <div className="ext-label">${data.label}</div>
     </div>
@@ -1791,7 +1776,7 @@ function Inspector({ selection }) {
       <p>Each wave card has a <b>colored left border</b> identifying its workstream, and a workstream badge at the top. A <b>candidate</b> shows as a single ★-marked card. A <b>formed workstream</b> shows each wave separately so you can tell which waves are ready while later ones wait.</p>
       <p>Status: <b style=${{color:'var(--yellow)'}}>ready</b> (yellow glow) = all hard deps done; <b style=${{color:'var(--blue)'}}>in-progress</b> = blue; <b style=${{color:'var(--green)'}}>done</b> = green; <b style=${{color:'var(--red)'}}>blocked</b> = red dashed; <b>planned</b> = gray dashed.</p>
       <p>Edges: <b style=${{color:'var(--green)'}}>green</b> = hard import, <b style=${{color:'var(--blue)'}}>blue dashed</b> = soft-data, <b style=${{color:'var(--purple)'}}>purple dotted</b> = soft-coord, <b style=${{color:'var(--red)'}}>red dashed</b> = external. Workstream-colored lines are intra-workstream spine (wave-to-next-wave). Fulfilled edges (upstream done) dim. Edges from an in-progress wave to a downstream ready/planned/blocked wave highlight to surface the next-launch surface.</p>
-      <p><b>Drag any node</b> to pin its position. Pinned positions are auto-saved to the Streamliner filesystem (1-second debounce after the last drag) and persist across page reloads, browser changes, machines (when committed), and reconciliation updates. Pinned nodes show a 📌 badge — click to unpin a single node, or "Reset N pinned" (top-left) to clear and re-run ELK.</p>
+      <p><b>Drag any node</b> to pin its position. Pinned positions are auto-saved to the Streamliner filesystem (1-second debounce after the last drag) and persist across page reloads, browser changes, machines (when committed), and reconciliation updates.</p>
       <p><b>Filter bar at top</b>: pick Ready / In progress / Blocked / Done / Planned / Hot to focus the graph on a subset. Focus-set nodes stay fully bright; 1-hop neighbors dim partially (so you can see what connects to the focus set); everything else fades but stays in place. Edges between focus and neighbor are still drawn so the connection structure is visible.</p>
     </aside>`;
   }
@@ -2321,7 +2306,6 @@ function App() {
           <span className="it"><span className="ln" style=${{borderColor:'var(--purple)', borderTopStyle:'dotted'}} />soft-coord</span>
           <span className="it"><span className="ln" style=${{borderColor:'var(--red)', borderTopStyle:'dashed'}} />external</span>
           <span className="it"><span className="ln" style=${{borderColor:'rgba(20,60,130,0.45)'}} />spine (workstream-colored)</span>
-          <span className="it">📌 pinned</span>
         </div>
       </div>
     </header>
