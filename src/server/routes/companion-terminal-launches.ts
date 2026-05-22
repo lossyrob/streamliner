@@ -138,6 +138,7 @@ export function launchCompanionTerminal(
       cliArgs,
       kickoffPrompt: input.kickoffPrompt,
     }),
+    prepareCopilotCli: true,
     preferredTerminal: input.preferredTerminal ?? "default",
     title: input.title,
     tabColor: input.tabColor,

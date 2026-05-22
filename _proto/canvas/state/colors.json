@@ -1,0 +1,12 @@
+{
+  "local-scenario-iteration-loop": "#19d9df",
+  "client-executed-remediation": "#ff8c0a",
+  "launcher-runner-identity": "#41b878",
+  "inference-relay": "#ffff00",
+  "preview-api-rbac": "#6754d7",
+  "scenario-promotion-pipeline": "#f000e8",
+  "azure-rest-guidelines-alignment": "#e8114b",
+  "persisted-schema-evolution": "#6754d7",
+  "dashboard-feedback-capture": "#82c6df",
+  "issue-lifecycle-maturity": "#b8b8b8"
+}

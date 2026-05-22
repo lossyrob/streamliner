@@ -536,6 +536,7 @@ export function createSessionsRouter(options: {
     const terminalOptions: TerminalLaunchOptions = {
       cwd,
       command: buildCopilotResumeCommand(sdkSessionId),
+      prepareCopilotCli: true,
       title: prebound.title,
       tabColor: prebound.color ?? undefined,
     };

@@ -40,6 +40,7 @@ describe("companion terminal launches route", () => {
     expect(launchTerminal).toHaveBeenCalledTimes(1);
     const options = launchTerminal.mock.calls[0][0] as TerminalLaunchOptions;
     expect(options.cwd).toBe("C:\\repo");
+    expect(options.prepareCopilotCli).toBe(true);
     expect(options.preferredTerminal).toBe("windows-terminal");
     expect(options.title).toBe("Node REVIEW");
     expect(options.tabColor).toBe("#336699");

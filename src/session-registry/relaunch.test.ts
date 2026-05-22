@@ -177,6 +177,7 @@ describe("buildRelaunchParams", () => {
     const session = buildRecord({ copilotSessionId: "abc-123" });
     const params = buildRelaunchParams(session);
     expect(params.command).toBe("copilot '--resume=abc-123'");
+    expect(params.prepareCopilotCli).toBe(true);
   });
 
   it("includes Copilot CLI args before the resume argument", () => {

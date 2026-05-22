@@ -41,6 +41,12 @@ export interface TerminalLaunchRequest {
   title?: string;
   /** Tab color as hex string e.g. "#FF0000" (optional; adapter support varies) */
   tabColor?: string;
+  /**
+   * Streamliner-owned Copilot CLI launch: seed launch-local Copilot startup
+   * environment so visible workers do not stop on terminal setup prompts and
+   * yolo/allow-all launches do not stop on folder trust prompts.
+   */
+  prepareCopilotCli?: boolean;
 }
 
 /** Options for launching a terminal */
@@ -97,7 +103,7 @@ function selectPowerShellExecutable(): string {
 export function normalizeTerminalLaunchRequest(
   options: TerminalLaunchOptions,
 ): TerminalLaunchRequest {
-  return {
+  const request: TerminalLaunchRequest = {
     cwd: options.cwd,
     command: options.command,
     env: options.env,
@@ -105,6 +111,10 @@ export function normalizeTerminalLaunchRequest(
     title: options.title,
     tabColor: options.tabColor,
   };
+  if (options.prepareCopilotCli !== undefined) {
+    request.prepareCopilotCli = options.prepareCopilotCli;
+  }
+  return request;
 }
 
 function escapeForWindowsTerminal(value: string): string {
@@ -161,6 +171,28 @@ export function buildSpawnEnv(
     env[pathKey] = filtered;
   }
   return env;
+}
+
+const COPILOT_ALL_ALLOW_FLAG_PATTERN = /(?:^|[\s'"`])--(?:yolo|allow-all)(?=$|[\s='"`])/;
+
+function copilotPromptBypassEnv(command: string | undefined): Record<string, string> {
+  const env: Record<string, string> = {
+    COPILOT_SETUP_TERMINAL: "false",
+  };
+  if (command && COPILOT_ALL_ALLOW_FLAG_PATTERN.test(command)) {
+    env.COPILOT_ALLOW_ALL = "true";
+  }
+  return env;
+}
+
+function buildTerminalSpawnEnv(request: TerminalLaunchRequest): NodeJS.ProcessEnv {
+  const extraEnv = request.prepareCopilotCli
+    ? {
+      ...(request.env ?? {}),
+      ...copilotPromptBypassEnv(request.command),
+    }
+    : request.env;
+  return buildSpawnEnv(extraEnv);
 }
 
 function terminalLaunchScriptRoot(): string {
@@ -260,7 +292,7 @@ export class WindowsTerminalLaunchAdapter implements TerminalLaunchAdapter {
     const child = spawn("wt.exe", args, {
       detached: true,
       stdio: "ignore",
-      env: buildSpawnEnv(request.env),
+      env: buildTerminalSpawnEnv(request),
     });
 
     child.unref();
@@ -285,7 +317,7 @@ export class WindowsTerminalLaunchAdapter implements TerminalLaunchAdapter {
     const child = spawn(executable, args, {
       detached: true,
       stdio: "ignore",
-      env: buildSpawnEnv(request.env),
+      env: buildTerminalSpawnEnv(request),
     });
 
     child.unref();

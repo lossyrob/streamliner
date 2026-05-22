@@ -476,6 +476,7 @@ export async function launchPreparedNode(
       ...handoff.environment,
       STREAMLINER_LAUNCH_CLAIM_ID: claim.launchClaimId,
     },
+    prepareCopilotCli: true,
     preferredTerminal: handoff.terminal.preferredTerminal,
     title: terminalTitle,
     tabColor: handoff.terminal.tabColor ?? undefined,

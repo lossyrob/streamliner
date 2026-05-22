@@ -134,6 +134,7 @@ export function buildRelaunchParams(
 
   if (session.copilotSessionId) {
     options.command = buildCopilotResumeCommand(session.copilotSessionId, cliArgs);
+    options.prepareCopilotCli = true;
   }
 
   if (session.title) {

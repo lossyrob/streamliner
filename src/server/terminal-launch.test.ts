@@ -32,6 +32,8 @@ vi.mock("node:child_process", () => {
 const { spawn, execSync } = await import("node:child_process");
 const scriptRoots: string[] = [];
 let originalScriptRoot: string | undefined;
+let originalCopilotAllowAll: string | undefined;
+let originalCopilotSetupTerminal: string | undefined;
 
 function readLaunchScriptFromSpawnCall(callIndex = 0): { path: string; content: string } {
   const args = vi.mocked(spawn).mock.calls[callIndex]?.[1] as string[] | undefined;
@@ -51,9 +53,13 @@ function readLaunchScriptFromSpawnCall(callIndex = 0): { path: string; content: 
 describe("terminal-launch", () => {
   beforeEach(() => {
     originalScriptRoot = process.env.STREAMLINER_TERMINAL_LAUNCH_SCRIPT_ROOT;
+    originalCopilotAllowAll = process.env.COPILOT_ALLOW_ALL;
+    originalCopilotSetupTerminal = process.env.COPILOT_SETUP_TERMINAL;
     const scriptRoot = mkdtempSync(join(tmpdir(), "streamliner-terminal-launch-test-"));
     scriptRoots.push(scriptRoot);
     process.env.STREAMLINER_TERMINAL_LAUNCH_SCRIPT_ROOT = scriptRoot;
+    delete process.env.COPILOT_ALLOW_ALL;
+    delete process.env.COPILOT_SETUP_TERMINAL;
     clearWindowsTerminalCache();
     vi.clearAllMocks();
   });
@@ -63,6 +69,16 @@ describe("terminal-launch", () => {
       delete process.env.STREAMLINER_TERMINAL_LAUNCH_SCRIPT_ROOT;
     } else {
       process.env.STREAMLINER_TERMINAL_LAUNCH_SCRIPT_ROOT = originalScriptRoot;
+    }
+    if (originalCopilotAllowAll === undefined) {
+      delete process.env.COPILOT_ALLOW_ALL;
+    } else {
+      process.env.COPILOT_ALLOW_ALL = originalCopilotAllowAll;
+    }
+    if (originalCopilotSetupTerminal === undefined) {
+      delete process.env.COPILOT_SETUP_TERMINAL;
+    } else {
+      process.env.COPILOT_SETUP_TERMINAL = originalCopilotSetupTerminal;
     }
     for (const scriptRoot of scriptRoots.splice(0)) {
       rmSync(scriptRoot, { recursive: true, force: true });
@@ -269,6 +285,21 @@ describe("terminal-launch", () => {
       }));
     });
 
+    it("adds launch-local Copilot prompt bypass env before launching Streamliner Copilot workers", () => {
+      launchTerminal({
+        cwd: "C:\\Users\\test\\workspace",
+        command: "copilot --yolo",
+        prepareCopilotCli: true,
+      });
+
+      const callArgs = vi.mocked(spawn).mock.calls[0];
+      const spawnedEnv = (callArgs[2] as { env?: NodeJS.ProcessEnv }).env;
+      expect(spawnedEnv).toEqual(expect.objectContaining({
+        COPILOT_SETUP_TERMINAL: "false",
+        COPILOT_ALLOW_ALL: "true",
+      }));
+    });
+
     it("includes title, color, and command together", () => {
       launchTerminal({
         cwd: "C:\\Users\\test\\workspace",
@@ -398,6 +429,21 @@ describe("terminal-launch", () => {
       const script = readLaunchScriptFromSpawnCall();
       expect(script.content).toContain("Set-Location -LiteralPath 'C:\\Users\\test\\workspace'");
       expect(script.content).toContain("npm run dev");
+    });
+
+    it("does not force all-allow env when a prepared Copilot launch has no all-allow flag", () => {
+      launchTerminal({
+        cwd: "C:\\Users\\test\\workspace",
+        command: "copilot --resume=session-1",
+        prepareCopilotCli: true,
+      });
+
+      const callArgs = vi.mocked(spawn).mock.calls[0];
+      const spawnedEnv = (callArgs[2] as { env?: NodeJS.ProcessEnv }).env;
+      expect(spawnedEnv).toEqual(expect.objectContaining({
+        COPILOT_SETUP_TERMINAL: "false",
+      }));
+      expect(spawnedEnv?.COPILOT_ALLOW_ALL).toBeUndefined();
     });
 
     it("escapes single quotes in PowerShell path", () => {

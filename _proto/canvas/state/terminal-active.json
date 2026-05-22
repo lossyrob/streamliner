@@ -1,0 +1,11 @@
+{
+  "activeIds": [
+    "local-scenario-iteration-loop",
+    "launcher-runner-identity",
+    "client-executed-remediation",
+    "inference-relay",
+    "scenario-promotion-pipeline",
+    "azure-rest-guidelines-alignment",
+    "persisted-schema-evolution"
+  ]
+}
