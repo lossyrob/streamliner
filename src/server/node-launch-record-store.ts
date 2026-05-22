@@ -505,6 +505,55 @@ export class NodeLaunchRecordStore {
     });
   }
 
+  async markLaunchedPendingBindingBound(input: {
+    graphPath: string;
+    nodeId: string;
+    now?: Date;
+  }): Promise<NodeLaunchOperation | null> {
+    return await this.updateDocument((document) => {
+      const operation = findStoredOperation(document, input.graphPath, input.nodeId);
+      if (!operation || operation.status !== "launched_pending_binding") {
+        return null;
+      }
+      const timestamp = (input.now ?? new Date()).toISOString();
+      operation.status = "bound";
+      operation.completedAt = operation.completedAt ?? timestamp;
+      operation.updatedAt = timestamp;
+      operation.error = null;
+      return { ...operation, progressEvents: [...operation.progressEvents] };
+    });
+  }
+
+  async releaseLaunchedPendingBindingOperation(input: {
+    graphPath: string;
+    nodeId: string;
+    reason?: string;
+    now?: Date;
+  }): Promise<NodeLaunchOperation | null> {
+    return await this.updateDocument((document) => {
+      const operation = findStoredOperation(document, input.graphPath, input.nodeId);
+      if (!operation || operation.status !== "launched_pending_binding") {
+        return null;
+      }
+      const timestamp = (input.now ?? new Date()).toISOString();
+      operation.status = "preparation_failed";
+      operation.completedAt = timestamp;
+      operation.updatedAt = timestamp;
+      operation.terminalLaunch = null;
+      operation.managedLaunch = null;
+      operation.companionLaunch = null;
+      operation.companionError = null;
+      operation.error = operationError(
+        {
+          code: "operation_released_by_user",
+          error: input.reason ?? "Manually released by the user.",
+        },
+        timestamp,
+      );
+      return { ...operation, progressEvents: [...operation.progressEvents] };
+    });
+  }
+
   async hasWorkflowContextPath(path: string): Promise<boolean> {
     const document = await this.readDocument();
     const normalizedPath = normalizePathForComparison(path);

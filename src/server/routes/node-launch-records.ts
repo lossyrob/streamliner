@@ -67,6 +67,26 @@ function latestClaimForRecord(
     : null;
 }
 
+function latestClaimForOperation(
+  claimStore: LaunchClaimStore | undefined,
+  operation: NodeLaunchOperation,
+  record: NodeLaunchRecord | null,
+): LaunchClaim | null {
+  const workstreamId = nonEmptyString(record?.workstreamId)
+    ?? nonEmptyString(operation.handoff?.launchMetadata.workstreamId);
+  return workstreamId && claimStore
+    ? findBlockingLaunchClaim(
+      claimStore,
+      workstreamId,
+      operation.nodeId,
+    ) ?? latestLaunchClaimForNode(
+      claimStore,
+      workstreamId,
+      operation.nodeId,
+    )
+    : null;
+}
+
 function withLatestClaim(
   claimStore: LaunchClaimStore | undefined,
   record: NodeLaunchRecord,
@@ -76,6 +96,158 @@ function withLatestClaim(
     ...record,
     latestClaim: latestClaim ? summarizeLaunchClaim(latestClaim) : null,
   };
+}
+
+function nonEmptyString(value: string | null | undefined): string | null {
+  const trimmed = value?.trim() ?? "";
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function stalePendingBindingMetadata(
+  operation: NodeLaunchOperation,
+  record: NodeLaunchRecord | null,
+): { workstreamId: string; nodeId: string; launchClaimId: string } | null {
+  const launchClaimId = nonEmptyString(operation.terminalLaunch?.launchClaim.launchClaimId)
+    ?? nonEmptyString(operation.handoff?.launchMetadata.launchClaimRef)
+    ?? nonEmptyString(record?.launchClaimRef);
+  const workstreamId = nonEmptyString(operation.handoff?.launchMetadata.workstreamId)
+    ?? nonEmptyString(record?.workstreamId);
+  const nodeId = nonEmptyString(operation.handoff?.launchMetadata.nodeId)
+    ?? nonEmptyString(record?.nodeId)
+    ?? nonEmptyString(operation.nodeId);
+  if (!launchClaimId || !workstreamId || !nodeId || nodeId !== operation.nodeId) {
+    return null;
+  }
+  return { workstreamId, nodeId, launchClaimId };
+}
+
+function hasLaunchedRuntimeEvidence(record: ReturnType<SessionRegistryFileStore["getSession"]>): boolean {
+  return Boolean(
+    record &&
+      (record.copilotSessionId !== null || record.runtime?.runtimeKind === "managed-sdk"),
+  );
+}
+
+function graphBindingMatches(
+  actual: NonNullable<ReturnType<SessionRegistryFileStore["getSession"]>>["graphBinding"],
+  expected: { workstreamId: string; nodeId: string; launchClaimId: string },
+): boolean {
+  return actual?.workstreamId === expected.workstreamId &&
+    actual.nodeId === expected.nodeId &&
+    actual.launchClaimId === expected.launchClaimId;
+}
+
+function restoreStalePendingBindingGraphBinding(
+  registryStore: SessionRegistryFileStore,
+  operation: NodeLaunchOperation,
+  record: NodeLaunchRecord | null,
+): {
+  restored: true;
+  registryId: string;
+  workstreamId: string;
+  nodeId: string;
+  launchClaimId: string;
+  boundCopilotSessionId: string | null;
+} | { restored: false } {
+  const metadata = stalePendingBindingMetadata(operation, record);
+  if (!metadata) {
+    return { restored: false };
+  }
+  const registryId = registryStore.findRecordIdByLaunchClaimId(metadata.launchClaimId);
+  if (!registryId) {
+    return { restored: false };
+  }
+  const session = registryStore.getSession(registryId);
+  if (
+    !session ||
+    session.origin.kind !== "launched" ||
+    session.origin.launchClaimId !== metadata.launchClaimId ||
+    !hasLaunchedRuntimeEvidence(session)
+  ) {
+    return { restored: false };
+  }
+  const desiredGraphBinding = {
+    workstreamId: metadata.workstreamId,
+    nodeId: metadata.nodeId,
+    launchClaimId: metadata.launchClaimId,
+  };
+  if (session.graphBinding !== null && !graphBindingMatches(session.graphBinding, desiredGraphBinding)) {
+    return { restored: false };
+  }
+  const bindResult = registryStore.bindClaimToRow(
+    registryId,
+    {
+      cwdAfterNormalize: session.cwd,
+      branch: null,
+      repo: null,
+      requireGraphBindingNullOrMatching: desiredGraphBinding,
+    },
+    { graphBinding: desiredGraphBinding },
+  );
+  if (!bindResult.ok || !graphBindingMatches(bindResult.record.graphBinding, desiredGraphBinding)) {
+    return { restored: false };
+  }
+  return {
+    restored: true,
+    registryId,
+    workstreamId: metadata.workstreamId,
+    nodeId: metadata.nodeId,
+    launchClaimId: metadata.launchClaimId,
+    boundCopilotSessionId: bindResult.record.copilotSessionId,
+  };
+}
+
+function markRestoredLaunchClaimBound(
+  claimStore: LaunchClaimStore | undefined,
+  repair: {
+    registryId: string;
+    workstreamId: string;
+    nodeId: string;
+    launchClaimId: string;
+    boundCopilotSessionId: string | null;
+  },
+): boolean {
+  if (!claimStore) {
+    return true;
+  }
+  const current = claimStore.getClaim(repair.launchClaimId);
+  if (!current) {
+    return true;
+  }
+  if (current.workstreamId !== repair.workstreamId || current.nodeId !== repair.nodeId) {
+    return false;
+  }
+  const now = new Date();
+  if (current.status !== "bound" && summarizeLaunchClaim(current, now).blocksLaunch) {
+    return false;
+  }
+  const updated = claimStore.updateClaim(repair.launchClaimId, (claim) => {
+    if (claim.workstreamId !== repair.workstreamId || claim.nodeId !== repair.nodeId) {
+      return claim;
+    }
+    if (claim.status !== "bound" && summarizeLaunchClaim(claim, now).blocksLaunch) {
+      return claim;
+    }
+    const seenCandidateCopilotSessionIds =
+      repair.boundCopilotSessionId &&
+        !claim.seenCandidateCopilotSessionIds.includes(repair.boundCopilotSessionId)
+        ? [...claim.seenCandidateCopilotSessionIds, repair.boundCopilotSessionId]
+        : claim.seenCandidateCopilotSessionIds;
+    return {
+      ...claim,
+      status: "bound",
+      boundRegistryId: repair.registryId,
+      boundCopilotSessionId: repair.boundCopilotSessionId ?? claim.boundCopilotSessionId,
+      failureCode: null,
+      failureReason: null,
+      seenCandidateCopilotSessionIds,
+      updatedAt: now.toISOString(),
+    };
+  });
+  return updated.status === "bound" &&
+    updated.boundRegistryId === repair.registryId &&
+    updated.workstreamId === repair.workstreamId &&
+    updated.nodeId === repair.nodeId;
 }
 
 export function createNodeLaunchRecordsRouter(options: {
@@ -99,19 +271,11 @@ export function createNodeLaunchRecordsRouter(options: {
       }
       const record = await store.get(graphPath, nodeId);
       const operation = await store.getOperation(graphPath, nodeId);
-      const claimWorkstreamId = record?.workstreamId
-        ?? operation?.handoff?.launchMetadata.workstreamId;
-      const latestClaim = claimWorkstreamId && options.claimStore
-        ? findBlockingLaunchClaim(
-          options.claimStore,
-          claimWorkstreamId,
-          nodeId,
-        ) ?? latestLaunchClaimForNode(
-          options.claimStore,
-          claimWorkstreamId,
-          nodeId,
-        )
-        : null;
+      const latestClaim = operation
+        ? latestClaimForOperation(options.claimStore, operation, record)
+        : record
+          ? latestClaimForRecord(options.claimStore, record)
+          : null;
       const latestClaimSummary = latestClaim ? summarizeLaunchClaim(latestClaim) : null;
       res.json({
         record: record
@@ -194,20 +358,87 @@ export function createNodeLaunchRecordsRouter(options: {
         return;
       }
 
-      const released = await store.releaseActiveOperation({ graphPath, nodeId, reason });
-      if (!released) {
-        const current = await store.getOperation(graphPath, nodeId);
-        if (!current) {
-          res.status(404).json({
-            code: "operation_not_found",
-            error: `No launch operation exists for node '${nodeId}' on this graph.`,
+      const operation = await store.getOperation(graphPath, nodeId);
+      if (!operation) {
+        res.status(404).json({
+          code: "operation_not_found",
+          error: `No launch operation exists for node '${nodeId}' on this graph.`,
+        });
+        return;
+      }
+      const record = await store.get(graphPath, nodeId);
+      const latestClaim = latestClaimForOperation(options.claimStore, operation, record);
+      const latestClaimSummary = latestClaim ? summarizeLaunchClaim(latestClaim) : null;
+
+      if (operation.status === "launched_pending_binding") {
+        if (latestClaimSummary?.blocksLaunch) {
+          res.status(409).json({
+            code: "operation_claim_still_active",
+            error:
+              "Operation is still waiting on an active launch claim; release the launch claim first or wait for binding to finish.",
+            operation: projectOperation(operation, latestClaimSummary),
           });
           return;
         }
+        const repair = options.registryStore
+          ? restoreStalePendingBindingGraphBinding(
+            options.registryStore,
+            operation,
+            record,
+          )
+          : { restored: false as const };
+        if (repair.restored) {
+          const claimMarkedBound = markRestoredLaunchClaimBound(options.claimStore, repair);
+          if (!claimMarkedBound) {
+            res.status(409).json({
+              code: "claim_changed_before_repair",
+              error: "Launch claim changed before the stale pending-binding launch could be resolved.",
+              operation,
+            });
+            return;
+          }
+          const resolved = await store.markLaunchedPendingBindingBound({ graphPath, nodeId });
+          if (!resolved) {
+            res.status(409).json({
+              code: "operation_not_active",
+              error: "Operation changed before the stale pending-binding launch could be resolved.",
+              operation,
+            });
+            return;
+          }
+          res.json({
+            operation: resolved,
+            graphBindingRestored: true,
+            registryId: repair.registryId,
+          });
+          return;
+        }
+        const released = await store.releaseLaunchedPendingBindingOperation({
+          graphPath,
+          nodeId,
+          reason: reason ?? "Stale pending-binding launch released by the user.",
+        });
+        if (!released) {
+          res.status(409).json({
+            code: "operation_not_active",
+            error: "Operation changed before the stale pending-binding launch could be released.",
+            operation,
+          });
+          return;
+        }
+        res.json({
+          operation: released,
+          graphBindingRestored: false,
+        });
+        return;
+      }
+
+      const released = await store.releaseActiveOperation({ graphPath, nodeId, reason });
+      if (!released) {
         res.status(409).json({
           code: "operation_not_active",
-          error: `Operation status '${current.status}' is not eligible for release; only preparing/launching/managed_starting or prepared post-preparation terminal launches can be released.`,
-          operation: current,
+          error: `Operation status '${operation.status}' is not eligible for release; only preparing/launching/managed_starting, prepared post-preparation terminal launches, or stale launched_pending_binding operations can be released.`,
+          operation,
         });
         return;
       }
