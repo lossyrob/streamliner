@@ -131,13 +131,28 @@ function normalizeSummary(value: string | undefined): string | null {
   return trimmed;
 }
 
+function normalizeSessionName(value: string | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed === "|" || trimmed === "|-" || trimmed === ">" || trimmed === ">-") {
+    return null;
+  }
+  return trimmed;
+}
+
 function deriveTitle(
   sessionId: string,
+  name: string | null,
   summary: string | null,
   cwd: string,
   repo: string | null,
   observedSessionKind: SessionRegistryObservedSessionKind,
 ): string {
+  if (name && observedSessionKind !== "helper") {
+    return name;
+  }
   if (summary && observedSessionKind !== "helper") {
     return summary;
   }
@@ -351,6 +366,7 @@ function discoverSessionFromDirectory(
 
   const repo = workspace.repository?.trim() || null;
   const branch = workspace.branch?.trim() || null;
+  const name = normalizeSessionName(workspace.name);
   const summary = normalizeSummary(workspace.summary);
   const observedSessionKind = classifyObservedSessionKind(sessionId, summary, cwd);
   const lastSeenAt = workspace.updated_at?.trim() || workspaceStat.mtime.toISOString();
@@ -359,7 +375,7 @@ function discoverSessionFromDirectory(
 
   const session: DiscoveredCopilotSession = {
     sessionId,
-    title: deriveTitle(sessionId, summary, cwd, repo, observedSessionKind),
+    title: deriveTitle(sessionId, name, summary, cwd, repo, observedSessionKind),
     description: deriveDescription(repo, branch, cwd, observedSessionKind),
     cwd,
     repo,
