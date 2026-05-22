@@ -1317,6 +1317,7 @@ function setWorkstreamColor(wsId, hex) {
 
 let saveTimer = null;
 let savePromise = Promise.resolve();
+let inFlightPayloads = [];
 // Diff tracking for the merge-based save path. dirtyIds = upserts since last
 // successful flush, removedIds = explicit deletions since last successful
 // flush. By PATCHing only this diff (instead of the whole pinnedCache), we
@@ -1325,6 +1326,80 @@ let savePromise = Promise.resolve();
 // changed between our boot and our save.
 let dirtyIds = new Set();
 let removedIds = new Set();
+
+function payloadHasChanges(payload) {
+  return Object.keys(payload.upsert || {}).length > 0 || (payload.remove || []).length > 0;
+}
+
+function dirtyPayloadFromCache() {
+  const upsert = {};
+  for (const id of dirtyIds) {
+    if (pinnedCache[id]) upsert[id] = pinnedCache[id];
+  }
+  return { upsert, remove: Array.from(removedIds) };
+}
+
+function applyPayloadToPositions(positions, payload) {
+  for (const id of payload.remove || []) {
+    delete positions[id];
+  }
+  for (const [id, pos] of Object.entries(payload.upsert || {})) {
+    positions[id] = pos;
+  }
+}
+
+function combinedOutstandingPayload() {
+  const combined = { upsert: {}, remove: [] };
+  const removed = new Set();
+  const apply = (payload) => {
+    for (const id of payload.remove || []) {
+      delete combined.upsert[id];
+      removed.add(id);
+    }
+    for (const [id, pos] of Object.entries(payload.upsert || {})) {
+      removed.delete(id);
+      combined.upsert[id] = pos;
+    }
+  };
+  for (const payload of inFlightPayloads) apply(payload);
+  apply(dirtyPayloadFromCache());
+  combined.remove = Array.from(removed);
+  return combined;
+}
+
+function requeuePayload(payload) {
+  for (const [id, pos] of Object.entries(payload.upsert || {})) {
+    pinnedCache[id] = pos;
+    dirtyIds.add(id);
+    removedIds.delete(id);
+  }
+  for (const id of payload.remove || []) {
+    delete pinnedCache[id];
+    removedIds.add(id);
+    dirtyIds.delete(id);
+  }
+}
+
+function forgetInFlightPayload(payload) {
+  const i = inFlightPayloads.indexOf(payload);
+  if (i >= 0) inFlightPayloads.splice(i, 1);
+}
+
+function sendPayloadBeacon(payload) {
+  if (!payloadHasChanges(payload)) return;
+  const body = JSON.stringify(payload);
+  const blob = new Blob([body], { type: 'application/json' });
+  const url = '/api/_proto/canvas/positions?method=patch';
+  const sent = navigator.sendBeacon?.(url, blob);
+  if (!sent) {
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+      keepalive: true,
+    }).catch((err) => console.error('Unload save failed:', err));
+  }
+}
 
 function flushSave() {
   // Snapshot the current diff so the in-flight save uses a stable view; any
@@ -1339,32 +1414,52 @@ function flushSave() {
     if (pinnedCache[id]) upsert[id] = pinnedCache[id];
   }
   const remove = Array.from(removeSnapshot);
-  if (Object.keys(upsert).length === 0 && remove.length === 0) {
+  const payload = { upsert, remove };
+  if (!payloadHasChanges(payload)) {
     return savePromise; // nothing to send
   }
+  inFlightPayloads.push(payload);
+  const previousSave = savePromise;
   saveStatusSetter({ state: 'saving', count: pinnedPositionCount() });
   savePromise = (async () => {
-    try { await savePromise; } catch { /* ignore previous error */ }
-    const r = await fetch('/api/_proto/canvas/positions', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ upsert, remove }),
-    });
+    try { await previousSave; } catch { /* ignore previous error */ }
+    let r;
+    try {
+      r = await fetch('/api/_proto/canvas/positions', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    } catch (err) {
+      requeuePayload(payload);
+      forgetInFlightPayload(payload);
+      const message = err?.message || String(err);
+      saveStatusSetter({ state: 'error', error: message });
+      throw err;
+    }
     if (!r.ok) {
       const text = await r.text();
       // Re-queue the diff so the next flush will retry. Don't drop user edits
       // on a transient server error.
-      for (const id of dirtySnapshot) dirtyIds.add(id);
-      for (const id of removeSnapshot) removedIds.add(id);
+      requeuePayload(payload);
+      forgetInFlightPayload(payload);
       saveStatusSetter({ state: 'error', error: text });
       throw new Error(`PATCH positions failed: HTTP ${r.status} ${text}`);
     }
     const body = await r.json();
+    forgetInFlightPayload(payload);
     // Adopt the server-side merged view as our authoritative cache. This
     // brings in any positions added by other writers that we didn't know
-    // about, so subsequent saves stay merge-safe.
+    // about, so subsequent saves stay merge-safe. Re-apply newer local
+    // changes after adopting the server view; otherwise an older response can
+    // clobber positions dragged while that response was in flight.
     if (body.positions && typeof body.positions === 'object') {
-      pinnedCache = body.positions;
+      const next = { ...body.positions };
+      for (const pending of inFlightPayloads) {
+        applyPayloadToPositions(next, pending);
+      }
+      applyPayloadToPositions(next, dirtyPayloadFromCache());
+      pinnedCache = next;
       const pSet = pinnedIds();
       pinnedSetSetter(pSet);
       pinnedCountSetter(pSet.size);
@@ -1383,30 +1478,18 @@ function saveDebounced() {
 }
 // Save before unload if there's a pending change.
 if (typeof window !== 'undefined') {
-  window.addEventListener('beforeunload', () => {
+  const flushOnPageExit = () => {
     if (saveTimer) {
       clearTimeout(saveTimer);
       saveTimer = null;
-      // Use sendBeacon for last-chance save during unload. Always go through
-      // the merge endpoint so even unload-time saves don't clobber concurrent
-      // writes from elsewhere.
-      try {
-        const upsert = {};
-        for (const id of dirtyIds) {
-          if (pinnedCache[id]) upsert[id] = pinnedCache[id];
-        }
-        const remove = Array.from(removedIds);
-        const blob = new Blob(
-          [JSON.stringify({ upsert, remove })],
-          { type: 'application/json' },
-        );
-        // sendBeacon only supports POST. Use a query-string flag so the
-        // server can route POSTs to /positions through the same merge path
-        // as PATCH for unload-time best-effort saves.
-        navigator.sendBeacon('/api/_proto/canvas/positions?method=patch', blob);
-      } catch { /* best-effort */ }
     }
-  });
+    // Use sendBeacon for last-chance save during unload. Always include both
+    // pending and already-in-flight payloads; a normal fetch can be aborted by
+    // navigation after the debounce fires but before the server receives it.
+    try { sendPayloadBeacon(combinedOutstandingPayload()); } catch { /* best-effort */ }
+  };
+  window.addEventListener('beforeunload', flushOnPageExit);
+  window.addEventListener('pagehide', flushOnPageExit);
 }
 
 function loadPinned() { return pinnedCache; }
