@@ -523,6 +523,42 @@
     border-style: solid;
     opacity: 0.85;
   }
+  /* TB-C marker — the user has an open terminal window for this workstream.
+     A dark "terminal title bar" fills the top edge of the container with a
+     small "● terminal" caption on the right; the workstream label chip
+     floats above the bar on the left so it stays readable. Height is tuned
+     to sit flush with the label chip's bottom edge (no black peeking out
+     under the label). */
+  .ws-group-node .ws-term-bar {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 20px;
+    background: #111317;
+    border-radius: 16px 16px 0 0;
+    display: flex; align-items: center;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .ws-group-node .ws-term-bar .caption {
+    margin-left: auto;
+    margin-right: 10px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: #9fdcff;
+    font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+    font-size: 0.58rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+  }
+  .ws-group-node .ws-term-bar .caption .live {
+    width: 6px; height: 6px;
+    background: #5fdc7a;
+    border-radius: 999px;
+    box-shadow: 0 0 5px rgba(95,220,122,0.65);
+  }
+  /* Label chip needs to render above the term bar. */
+  .ws-group-node .ws-group-label { z-index: 1; }
   /* React Flow renders custom nodes inside .react-flow__node; ensure our group
      fills it and sits behind interactive nodes. */
   .react-flow__node-workstreamGroup {
@@ -693,6 +729,43 @@
     font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
     font-size: 0.62rem;
     color: var(--faint);
+  }
+  /* "Terminal window open" toggle — pairs with the color picker in the
+     inspector. Compact pill button; flips between off (muted) and on
+     (dark, matching the terminal-titlebar marker). */
+  aside.inspector .ws-term-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 6px;
+    padding: 4px 9px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--muted);
+    background: rgba(255,255,255,0.78);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    vertical-align: middle;
+    transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+  }
+  aside.inspector .ws-term-toggle:hover {
+    border-color: rgba(20,60,130,0.32);
+    background: rgba(255,255,255,0.95);
+  }
+  aside.inspector .ws-term-toggle[aria-pressed="true"] {
+    color: #f3f5fa;
+    background: #111317;
+    border-color: #111317;
+  }
+  aside.inspector .ws-term-toggle .live {
+    width: 7px; height: 7px;
+    border-radius: 999px;
+    background: rgba(20,60,130,0.18);
+  }
+  aside.inspector .ws-term-toggle[aria-pressed="true"] .live {
+    background: #5fdc7a;
+    box-shadow: 0 0 5px rgba(95,220,122,0.65);
   }
   /* Floating Brief/Candidate viewer — non-modal so the canvas stays
      interactive while it's open. Position: fixed top-right, scrollable
@@ -887,6 +960,7 @@ const TERMINAL_COLOR_PALETTE = [
 const WS_TINT_ALPHA = 0.11;
 let WS_HUE = {};
 let WS_COLOR_OVERRIDES = {}; // wsId -> '#rrggbb'
+let WS_TERMINAL_ACTIVE = new Set(); // workstreams with an open terminal window
 
 function buildHues() {
   WS_HUE = {};
@@ -1013,6 +1087,42 @@ async function fetchColors() {
   if (!r.ok) return {};
   const body = await r.json();
   return body.colors || {};
+}
+
+async function fetchTerminalActive() {
+  const r = await fetch('/api/_proto/canvas/terminal-active');
+  if (!r.ok) return [];
+  const body = await r.json();
+  return Array.isArray(body.activeIds) ? body.activeIds : [];
+}
+
+// Persist the WS_TERMINAL_ACTIVE set with the same debounced full-replace
+// pattern as colors. The set is small (one entry per workstream you're
+// actively working on); the user is the only writer so we don't need merge.
+let terminalSaveTimer = null;
+let terminalSavePromise = Promise.resolve();
+let terminalChangeListener = () => {}; // wired by App
+function setWorkstreamTerminalActive(wsId, active) {
+  if (!wsId) return;
+  if (active) WS_TERMINAL_ACTIVE.add(wsId);
+  else WS_TERMINAL_ACTIVE.delete(wsId);
+  terminalChangeListener(new Set(WS_TERMINAL_ACTIVE));
+  if (terminalSaveTimer) clearTimeout(terminalSaveTimer);
+  terminalSaveTimer = setTimeout(() => {
+    terminalSaveTimer = null;
+    terminalSavePromise = (async () => {
+      try { await terminalSavePromise; } catch { /* ignore prior */ }
+      const r = await fetch('/api/_proto/canvas/terminal-active', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ activeIds: Array.from(WS_TERMINAL_ACTIVE) }),
+      });
+      if (!r.ok) {
+        const text = await r.text();
+        throw new Error(`PUT terminal-active failed: HTTP ${r.status} ${text}`);
+      }
+    })().catch((err) => console.error('Terminal-active save failed:', err));
+  }, 600);
 }
 
 // ---------- Filter preference persistence (localStorage) ----------
@@ -1377,6 +1487,7 @@ function ExternalNode({ data }) {
 function WorkstreamGroupNode({ data }) {
   const ws = data.workstream;
   const theme = themeFor(ws.id);
+  const terminalActive = WS_TERMINAL_ACTIVE.has(ws.id);
   return html`
     <div
       className=${'ws-group-node ws-group-' + ws.stage}
@@ -1387,6 +1498,11 @@ function WorkstreamGroupNode({ data }) {
         background: theme.fill,
       }}
     >
+      ${terminalActive ? html`
+        <div className="ws-term-bar" aria-hidden="true">
+          <div className="caption"><span className="live" />terminal</div>
+        </div>
+      ` : null}
       <div className="ws-group-label" style=${{ color: theme.accent, background: theme.chip, borderColor: theme.border }}>
         <span className="ws-group-stage">${ws.stage}</span>
         ${ws.title}
@@ -1859,6 +1975,24 @@ function WorkstreamColorPicker({ workstreamId }) {
   `;
 }
 
+function WorkstreamTerminalToggle({ workstreamId }) {
+  const active = WS_TERMINAL_ACTIVE.has(workstreamId);
+  return html`
+    <button
+      type="button"
+      className="ws-term-toggle"
+      aria-pressed=${active}
+      title=${active
+        ? 'Marked as having an open terminal window. Click to unmark.'
+        : 'Mark this workstream as having an open terminal window.'}
+      onClick=${() => setWorkstreamTerminalActive(workstreamId, !active)}
+    >
+      <span className="live" />
+      ${active ? 'terminal open' : 'mark terminal open'}
+    </button>
+  `;
+}
+
 function WorkstreamInspector({ id }) {
   const ws = workstreamById[id];
   return html`<aside className="inspector">
@@ -1880,6 +2014,7 @@ function WorkstreamInspector({ id }) {
       ${ws.type === 'candidate' ? '📄 View candidate' : '📄 View brief'}
     </button>
     <${WorkstreamColorPicker} workstreamId=${ws.id} />
+    <${WorkstreamTerminalToggle} workstreamId=${ws.id} />
     <h3>Repos</h3>
     <p>${(ws.repos || []).join(' · ')}</p>
     ${ws.branch ? html`<h3>Branch</h3><p>${ws.branch}</p>` : null}
@@ -1923,6 +2058,7 @@ function WaveInspector({ id }) {
       </button>
     ` : null}
     ${ws ? html`<${WorkstreamColorPicker} workstreamId=${ws.id} />` : null}
+    ${ws ? html`<${WorkstreamTerminalToggle} workstreamId=${ws.id} />` : null}
     ${wv.deps && wv.deps.length ? html`
       <h3>Hard dependencies</h3>
       ${wv.deps.map(d => {
@@ -2011,6 +2147,14 @@ function App() {
     colorsChangeListener = () => setColorsVersion((v) => v + 1);
     return () => { colorsChangeListener = () => {}; };
   }, []);
+  // terminalVersion does the same for the WS_TERMINAL_ACTIVE set so the
+  // TB-C marker on workstream containers updates when the user toggles a
+  // workstream's "terminal window open" state.
+  const [terminalVersion, setTerminalVersion] = useState(0);
+  useEffect(() => {
+    terminalChangeListener = () => setTerminalVersion((v) => v + 1);
+    return () => { terminalChangeListener = () => {}; };
+  }, []);
   // View-state toggles read their initial values from localStorage so they
   // survive page reloads and (when running against `npm run dev:stable`) any
   // API restarts. A single useEffect below persists the bundle whenever any
@@ -2064,14 +2208,16 @@ function App() {
   useEffect(() => {
     (async () => {
       try {
-        const [portfolio, positions, colors] = await Promise.all([
+        const [portfolio, positions, colors, terminalActive] = await Promise.all([
           fetchPortfolio(),
           fetchPositions(),
           fetchColors(),
+          fetchTerminalActive(),
         ]);
         PORTFOLIO = portfolio;
         pinnedCache = positions || {};
         WS_COLOR_OVERRIDES = colors || {};
+        WS_TERMINAL_ACTIVE = new Set(terminalActive || []);
         buildIndexes();
         buildHues();
         setBootState({ status: 'ready', error: null });
@@ -2184,11 +2330,11 @@ function App() {
         } };
       }
       if (n.type === 'workstreamGroup') {
-        return { ...n, data: { ...n.data, colorsVersion } };
+        return { ...n, data: { ...n.data, colorsVersion, terminalVersion } };
       }
       return n;
     }));
-  }, [selection, pinnedSet, focusedIds, neighborIds, completedMode, colorsVersion]);
+  }, [selection, pinnedSet, focusedIds, neighborIds, completedMode, colorsVersion, terminalVersion]);
 
   // Re-build edges when filters change.
   useEffect(() => {

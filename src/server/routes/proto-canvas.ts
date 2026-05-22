@@ -23,6 +23,12 @@
 //   GET  /api/_proto/canvas/colors         -> the workstream color overrides
 //                                            ({} when none assigned)
 //   PUT  /api/_proto/canvas/colors         -> replace the colors overlay
+//   GET  /api/_proto/canvas/terminal-active -> { activeIds: ["wsId", ...] }
+//                                            workstreams the user has an open
+//                                            terminal window for (used to
+//                                            render a terminal-titlebar marker
+//                                            on the workstream container)
+//   PUT  /api/_proto/canvas/terminal-active -> replace the active set
 //   GET  /api/_proto/canvas/workstream-doc?id=<id>
 //                                         -> resolves to brief.md (formed) or
 //                                            shaping/candidates/<id>.md
@@ -58,6 +64,13 @@ const COLORS_PATH = resolve(
   "canvas",
   "state",
   "colors.json",
+);
+const TERMINAL_ACTIVE_PATH = resolve(
+  process.cwd(),
+  "_proto",
+  "canvas",
+  "state",
+  "terminal-active.json",
 );
 // Root of the dbagent planning artifacts. The workstream-doc lookup walks
 // `<DBAGENT_ROOT>/workstreams/<id>/brief.md` for formed workstreams and
@@ -436,6 +449,53 @@ export function createProtoCanvasRouter(): Router {
         ok: true,
         path: COLORS_PATH,
         count: Object.keys(cleaned).length,
+        savedAt: new Date().toISOString(),
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  router.get("/terminal-active", async (_req, res) => {
+    try {
+      const data = await readJsonSafe<{ activeIds?: unknown }>(
+        TERMINAL_ACTIVE_PATH,
+        { activeIds: [] },
+      );
+      const activeIds = Array.isArray(data.activeIds)
+        ? data.activeIds.filter((v): v is string => typeof v === "string" && v.length > 0)
+        : [];
+      res.setHeader("Cache-Control", "no-cache");
+      res.status(200).json({ path: TERMINAL_ACTIVE_PATH, activeIds });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  router.put("/terminal-active", async (req, res) => {
+    const body = req.body as { activeIds?: unknown };
+    if (!body || typeof body !== "object" || !Array.isArray(body.activeIds)) {
+      res.status(400).json({ error: "Body must be { activeIds: ['workstreamId', ...] }" });
+      return;
+    }
+    const cleaned: string[] = [];
+    const seen = new Set<string>();
+    for (const id of body.activeIds) {
+      if (typeof id !== "string") continue;
+      const trimmed = id.trim();
+      if (!trimmed || trimmed.includes("/") || trimmed.includes("\\") || trimmed.includes("..")) continue;
+      if (seen.has(trimmed)) continue;
+      seen.add(trimmed);
+      cleaned.push(trimmed);
+    }
+    try {
+      await writeJsonAtomic(TERMINAL_ACTIVE_PATH, { activeIds: cleaned });
+      res.status(200).json({
+        ok: true,
+        path: TERMINAL_ACTIVE_PATH,
+        count: cleaned.length,
         savedAt: new Date().toISOString(),
       });
     } catch (err: unknown) {
