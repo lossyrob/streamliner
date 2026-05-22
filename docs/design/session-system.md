@@ -1,7 +1,7 @@
 ---
 kind: design-doc
 status: draft
-last_updated: 2026-05-11
+last_updated: 2026-05-22
 update_semantics: rewrite-in-place
 authoritative_for: "Session launching, lifecycle, registry contract, tracking, and runtime overlay"
 scope_tags:
@@ -125,7 +125,7 @@ After PAW launch initialization completes, terminal integration re-reads the cur
 1. **Reject duplicate active launches** — before creating a new claim, check launch-claim diagnostics for the same workstream/node and reject non-terminal active-window or bound claims with a typed conflict. This is enforced in the backend service so future CLI, skill, or MCP callers get the same protection as the graph UI.
 2. **Record launch claim** — write a launch claim to Streamliner's runtime state binding the node to the expected session location before the worker session starts. The claim uses the nonce from the prepared handoff when one exists; otherwise the claim-minted nonce becomes the final launch nonce.
 3. **Finalize binding prompt** — preserve the prepared kickoff prompt, replace descriptive launch metadata with the concrete claim id where present, and append exactly one canonical `kickoffNonceLine(claim.launchNonce)` line (`Streamliner launch nonce: ...`) plus the concrete claim id line. The descriptive `- Launch nonce: ...` metadata in the preparation prompt is not the Tier 1 scanner contract; the terminal launch service owns the canonical scanner line.
-4. **Launch Copilot CLI** — reuse the lower-level terminal spawning path used by session relaunch, opening a visible terminal in the returned `cwd` and starting Copilot CLI interactive mode with the selected/default CLI arguments. The service passes `STREAMLINER_LAUNCH_CLAIM_ID` into the spawned process environment so the Copilot plugin hook can emit Tier 2 trusted claim evidence on `session.started`.
+4. **Launch Copilot CLI** — reuse the lower-level terminal spawning path used by session relaunch, opening a visible terminal in the returned `cwd` and starting Copilot CLI interactive mode with the selected/default CLI arguments. Streamliner-owned Copilot CLI starts enter the process-wide Copilot terminal launch queue before spawning so node launches, review companions, session resumes, and managed terminal takeovers do not start at the same instant. The service passes `STREAMLINER_LAUNCH_CLAIM_ID` into the spawned process environment so the Copilot plugin hook can emit Tier 2 trusted claim evidence on `session.started`.
 5. **Bind on trusted signal or discovery** — when the hook signal or session watcher detects the new Copilot session, bind it to the launch claim and reserved registry row.
 6. **Fail honestly** — if terminal spawn fails after claim creation, transition the claim with failure code `terminal-spawn-failed`, clean up the reserved row through the claim-failure contract, log the failure, and return a typed error instead of a success-shaped pending state.
 
@@ -1142,6 +1142,24 @@ PowerShell launch-script creation, and the PowerShell command strings used for
 "prefer Windows Terminal when available, otherwise PowerShell." Future macOS or
 Linux adapters should implement the same launch request shape rather than
 changing launch claims, graph binding, node launch records, or relaunch state.
+
+### Copilot Terminal Launch Serialization
+
+Streamliner-owned visible Copilot CLI starts are serialized through one
+process-wide queue before the terminal adapter spawns the host process. The
+queue covers graph node terminal launches, review companion terminals, session
+relaunches that run `copilot --resume=<id>`, and managed SDK terminal takeover.
+Generic terminal launches that do not start Copilot use the synchronous adapter
+directly and are not delayed.
+
+The queue waits for a configurable cooldown after each terminal spawn attempt
+returns before the next queued Copilot launch may spawn. This delay is a
+contention-reduction heuristic between `wt.exe`/PowerShell starts; it is not a
+readiness proof that the nested Copilot process has finished initializing
+shared plugin or cache state. Spawn failures reject only the caller whose launch
+failed and do not poison the process-wide queue for later launches. Launch
+serialization does not read or mutate Copilot global config, marketplace cache,
+or installed plugin files.
 
 ### Operator Presence
 

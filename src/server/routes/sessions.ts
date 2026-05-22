@@ -44,6 +44,7 @@ import { SessionRegistryEventStream } from "../session-events";
 import {
   buildCopilotResumeCommand,
   isSafeCopilotResumeSessionId,
+  launchCopilotTerminal,
   launchTerminal,
   type TerminalLaunchOptions,
   type TerminalLaunchResult,
@@ -160,7 +161,7 @@ export function createSessionsRouter(options: {
   // Loopback-only: relaunch spawns local processes.
   // Requires non-simple request (Content-Type header) to prevent CSRF from
   // cross-origin pages that can POST to loopback without preflight.
-  router.post("/:id/relaunch", (req, res) => {
+  router.post("/:id/relaunch", async (req, res) => {
     const sessionId = req.params.id;
 
     if (isNonLoopbackRequest(req)) {
@@ -177,7 +178,7 @@ export function createSessionsRouter(options: {
     }
 
     relaunchLogger.info("attempt", { sessionId });
-    const outcome = relaunchSession(options.store, sessionId, options.relaunchDeps);
+    const outcome = await relaunchSession(options.store, sessionId, options.relaunchDeps);
     if (outcome.ok) {
       relaunchLogger.info("success", {
         sessionId,
@@ -541,7 +542,10 @@ export function createSessionsRouter(options: {
     };
     let terminal: TerminalLaunchResult;
     try {
-      terminal = (options.relaunchDeps?.launchTerminal ?? launchTerminal)(terminalOptions);
+      terminal = await launchCopilotTerminal(terminalOptions, {
+        launchTerminal: options.relaunchDeps?.launchTerminal ?? launchTerminal,
+        cooldownMs: options.relaunchDeps?.launchTerminal ? 0 : undefined,
+      });
     } catch (error: unknown) {
       const message = `Failed to launch terminal takeover: ${error instanceof Error ? error.message : String(error)}`;
       try {
