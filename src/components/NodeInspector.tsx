@@ -41,11 +41,8 @@ interface NodeInspectorProps {
   runtimeOverlay?: WorkstreamRuntimeNodeOverlay | null;
   onLaunch?: () => void;
   /**
-   * Optional handler for releasing a stuck active launch operation. Surfaced
-   * when `launchOperation.status` is one of the active states (preparing,
-   * launching, managed_starting). Used to recover from cases where the
-   * server restarted mid-flight and the in-memory run state is gone but the
-   * persisted operation still says "in progress."
+   * Optional handler for releasing a stuck active launch operation or
+   * resolving a stale terminal launch that is no longer blocked by a claim.
    */
   onReleaseStuckOperation?: () => Promise<void>;
 }
@@ -55,6 +52,14 @@ const ACTIVE_LAUNCH_OPERATION_STATUSES = new Set([
   "launching",
   "managed_starting",
 ]);
+
+function canReleaseStuckOperation(operation: NodeLaunchOperation): boolean {
+  return ACTIVE_LAUNCH_OPERATION_STATUSES.has(operation.status) ||
+    (
+      operation.status === "launched_pending_binding" &&
+      operation.latestClaim?.blocksLaunch !== true
+    );
+}
 
 function formatStatus(status: string): string {
   return status.replace(/[_-]+/g, " ");
@@ -441,6 +446,18 @@ export function NodeInspector({
   );
   const latestClaim = launchRecord?.latestClaim ?? launchOperation?.latestClaim ?? null;
   const latestClaimDisplay = latestClaim ? humanizeLaunchClaim(latestClaim) : null;
+  const canReleaseOperation = launchOperation
+    ? canReleaseStuckOperation({ ...launchOperation, latestClaim })
+    : false;
+  const releaseButtonLabel = launchOperation?.status === "launched_pending_binding"
+    ? "Resolve stale launch"
+    : "Release stuck operation";
+  const releaseDescription = launchOperation?.status === "launched_pending_binding"
+    ? "Use this when the launch claim is gone or terminal, but the operation is still waiting for binding. Streamliner will restore a verified session binding when possible, otherwise it marks the operation as failed so the node can be re-launched."
+    : "Use this if PAW init looks stuck — for example, after the Streamliner API restarted mid-launch. It marks the operation as failed without affecting any session that may have actually started.";
+  const releaseTitle = launchOperation?.status === "launched_pending_binding"
+    ? "Resolve this stale pending-binding launch by restoring a verified graph binding when possible, or by marking the operation failed so the node can be re-launched."
+    : "Mark this in-flight operation as failed so the node can be re-launched. Use when the API restarted while a PAW init was running and the in-memory run state is gone.";
   const launchButtonLabel = latestClaim?.blocksLaunch || launchOperation || launchRecord
     ? "Open PAW launch"
     : "Initialize PAW launch";
@@ -610,7 +627,7 @@ export function NodeInspector({
                   )}
                 </dl>
                 {launchOperation
-                  && ACTIVE_LAUNCH_OPERATION_STATUSES.has(launchOperation.status)
+                  && canReleaseOperation
                   && onReleaseStuckOperation && (
                   <div className="sl-node-launch-release">
                     <button
@@ -633,15 +650,12 @@ export function NodeInspector({
                           }
                         })();
                       }}
-                      title="Mark this in-flight operation as failed so the node can be re-launched. Use when the API restarted while a PAW init was running and the in-memory run state is gone."
+                      title={releaseTitle}
                     >
-                      {releasing ? "Releasing..." : "Release stuck operation"}
+                      {releasing ? "Releasing..." : releaseButtonLabel}
                     </button>
                     <p className="sl-sidebar-note">
-                      Use this if PAW init looks stuck — for example, after the
-                      Streamliner API restarted mid-launch. It marks the operation
-                      as failed without affecting any session that may have actually
-                      started.
+                      {releaseDescription}
                     </p>
                     {releaseError && (
                       <p className="sl-action-error">{releaseError}</p>

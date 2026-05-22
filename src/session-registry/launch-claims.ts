@@ -398,9 +398,10 @@ export function applyReservedRowCleanup(
  *     delete the row (orphan reserved row, no real session ever
  *     attached). Deletion is conditional on the predicate evaluated
  *     under the lock.
- *   - Else: clear `graphBinding` (the row had a real terminal session
- *     attach or is a managed runtime row whose history should be
- *     preserved, but the owning claim is gone).
+ *   - Else: preserve the row and its `graphBinding` (the row had a real
+ *     terminal session attach or is a managed runtime row whose history
+ *     should remain associated with the launched node after the
+ *     short-lived claim file is pruned).
  *
  * Also handles the inverse case: claims whose `reservedRegistryId`
  * points at a missing row are left intact (the binding pass and sweep
@@ -416,7 +417,7 @@ export function reconcileOrphanReservedRows(
   const sessions = registryStore.listSessions({ includeArchived: true });
   const launchedSessions = sessions.filter((session) => session.originKind === "launched");
   let rowsDeleted = 0;
-  let rowsGraphBindingCleared = 0;
+  const rowsGraphBindingCleared = 0;
   let rowsInspected = 0;
   for (const session of launchedSessions) {
     rowsInspected += 1;
@@ -441,50 +442,12 @@ export function reconcileOrphanReservedRows(
       if (deleteResult.deleted) {
         rowsDeleted += 1;
       } else if (deleteResult.reason === "predicate-false") {
-        // A session attached during the gap; clear graphBinding.
-        if (fullRecord.graphBinding === null) {
-          continue;
-        }
-        const cleared = registryStore.bindClaimToRow(
-          fullRecord.id,
-          {
-            cwdAfterNormalize: fullRecord.cwd,
-            branch: null,
-            repo: null,
-            requireGraphBindingNullOrMatching: {
-              workstreamId: fullRecord.graphBinding?.workstreamId ?? "",
-              nodeId: fullRecord.graphBinding?.nodeId ?? "",
-              launchClaimId,
-            },
-          },
-          { graphBinding: null },
-        );
-        if (cleared.ok) {
-          rowsGraphBindingCleared += 1;
-        }
-      }
-    } else {
-      // Preserve observed terminal sessions and managed runtime rows, but sever the stale claim binding.
-      if (fullRecord.graphBinding === null) {
+        // A session attached during the cleanup gap; keep its durable binding.
         continue;
       }
-      const cleared = registryStore.bindClaimToRow(
-        fullRecord.id,
-        {
-          cwdAfterNormalize: fullRecord.cwd,
-          branch: null,
-          repo: null,
-          requireGraphBindingNullOrMatching: {
-            workstreamId: fullRecord.graphBinding?.workstreamId ?? "",
-            nodeId: fullRecord.graphBinding?.nodeId ?? "",
-            launchClaimId,
-          },
-        },
-        { graphBinding: null },
-      );
-      if (cleared.ok) {
-        rowsGraphBindingCleared += 1;
-      }
+    } else {
+      // Preserve observed terminal sessions and managed runtime rows with their durable binding.
+      continue;
     }
   }
   return { rowsDeleted, rowsGraphBindingCleared, rowsInspected };

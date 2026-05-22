@@ -127,7 +127,11 @@ describe("SessionRegistryBackgroundWorker — launch-claim startup recovery", ()
     const row = registryStore.getSession("orphan-managed-startup");
     expect(row).not.toBeNull();
     expect(row?.runtime?.lifecycleState).toBe("interrupted");
-    expect(row?.graphBinding).toBeNull();
+    expect(row?.graphBinding).toEqual({
+      workstreamId: "ws",
+      nodeId: "managed-node",
+      launchClaimId: "missing-managed-claim",
+    });
   });
 
   it("does not run startup reconciliation when claimStore is omitted", async () => {
