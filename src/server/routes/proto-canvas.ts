@@ -4,16 +4,14 @@
 // Streamliner feature yet. When this proves out, the contract that should be
 // promoted is:
 //   - Read a portfolio document
-//   - Read/write a positions overlay keyed by node ID
-//   - Atomic writes (whole-file replace) so concurrent saves do not interleave
+//   - Read/write a positions overlay keyed by node ID / workstream anchor ID
+//   - Atomic writes so concurrent saves do not interleave
 //
 // Endpoints:
 //   GET    /api/_proto/canvas/portfolio      -> the dbagent portfolio.json
 //   GET    /api/_proto/canvas/positions      -> the positions overlay (may be {})
-//   PUT    /api/_proto/canvas/positions      -> REPLACE the whole positions
-//                                              overlay (used only for "clear
-//                                              all pinned"; routine drags use
-//                                              PATCH below)
+//   PUT    /api/_proto/canvas/positions      -> legacy full-overlay upsert
+//                                              (routine drags use PATCH below)
 //   PATCH  /api/_proto/canvas/positions      -> partial update: body is
 //                                              { upsert?: {id: pos}, remove?: [id] }.
 //                                              Safe against concurrent writes
@@ -325,12 +323,19 @@ export function createProtoCanvasRouter(): Router {
         }
       }
     }
+    // Defense-in-depth for clients that still send a full overlay (or a
+    // partial overlay via the legacy method): merge `cleaned` over the current
+    // file instead of replacing it. Routine saves use PATCH /positions and
+    // continue to handle both upserts and explicit removes.
     try {
-      await writeJsonAtomic(POSITIONS_PATH, cleaned);
+      const current = await readJsonSafe<PositionsFile>(POSITIONS_PATH, {});
+      const merged: PositionsFile = { ...current, ...cleaned };
+      await writeJsonAtomic(POSITIONS_PATH, merged);
       res.status(200).json({
         ok: true,
         path: POSITIONS_PATH,
-        count: Object.keys(cleaned).length,
+        count: Object.keys(merged).length,
+        upserts: Object.keys(cleaned).length,
         savedAt: new Date().toISOString(),
       });
     } catch (err: unknown) {
@@ -341,11 +346,10 @@ export function createProtoCanvasRouter(): Router {
 
   // Partial update — the safe path for routine drag/unpin saves. The client
   // sends just the ids it touched; the server reads the current file, applies
-  // upserts and removes, and writes atomically. This prevents the "stale
-  // full PUT" lost-update where the client's in-memory cache (loaded at
-  // boot) overwrites changes another writer (e.g. a separate portfolio
-  // manager session, a git branch switch, a second canvas tab) made in the
-  // meantime.
+  // upserts and removes, and writes atomically. This prevents full-overlay
+  // lost updates where a client's in-memory cache overwrites changes another
+  // writer (e.g. a separate portfolio manager session, a git branch switch, a
+  // second canvas tab) made in the meantime.
   const handlePositionsPatch = async (
     req: Parameters<Parameters<typeof router.patch>[1]>[0],
     res: Parameters<Parameters<typeof router.patch>[1]>[1],

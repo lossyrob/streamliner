@@ -1061,13 +1061,146 @@ function wsColorMuted(wsId) {
 const elk = new ELK();
 
 // Persistent layout positions — backed by Streamliner API (filesystem-backed).
-// Keyed by node ID (e.g. "w:par-w1" or "ext:rbac-decision"). The local
+// Keyed by node ID (e.g. "w:par-w1" or "ext:rbac-decision") plus stable
+// workstream anchors ("ws:<workstreamId>") that keep a workstream near its
+// pinned location when reconciliation renames/adds wave nodes. The local
 // `pinnedCache` is the in-memory mirror of what the server has; updates flow
 // through saveDebounced() with a 1s debounce after the last change.
 let pinnedCache = {};
 let saveStatusSetter = () => {};       // wired by App
 let pinnedSetSetter = () => {};        // wired by App
 let pinnedCountSetter = () => {};      // wired by App
+
+function isNodePositionId(id) {
+  return id.startsWith('w:') || id.startsWith('ext:');
+}
+
+function isPinnedRecord(pos) {
+  return pos && typeof pos.x === 'number' && typeof pos.y === 'number' && pos.manuallyMoved;
+}
+
+function workstreamAnchorId(wsId) {
+  return 'ws:' + wsId;
+}
+
+function pinnedPositionCount() {
+  return Object.keys(pinnedCache).filter(id => isNodePositionId(id) && isPinnedRecord(pinnedCache[id])).length;
+}
+
+function wavePositionKey(waveId) {
+  return 'w:' + waveId;
+}
+
+function candidatePositionKeyForWaveId(waveId) {
+  const m = /^(.*?)-(?:w\d+|cand)$/.exec(waveId);
+  return m ? 'w:' + m[1] + '-cand' : null;
+}
+
+function boundsForWorkstream(ws, positions) {
+  let minX = Infinity;
+  let minY = Infinity;
+  let found = false;
+  for (const wave of ws.waves) {
+    const pos = positions[wavePositionKey(wave.id)];
+    if (!pos || typeof pos.x !== 'number' || typeof pos.y !== 'number') continue;
+    minX = Math.min(minX, pos.x);
+    minY = Math.min(minY, pos.y);
+    found = true;
+  }
+  return found ? { x: minX, y: minY } : null;
+}
+
+function explicitPinTranslation(ws, basePositions, pinned) {
+  const deltas = [];
+  for (const wave of ws.waves) {
+    const key = wavePositionKey(wave.id);
+    const base = basePositions[key];
+    const pin = pinned[key];
+    if (!base || !isPinnedRecord(pin)) continue;
+    deltas.push({ dx: pin.x - base.x, dy: pin.y - base.y });
+  }
+  if (deltas.length === 0) return null;
+  deltas.sort((a, b) => a.dx - b.dx);
+  const dx = deltas[Math.floor(deltas.length / 2)].dx;
+  deltas.sort((a, b) => a.dy - b.dy);
+  const dy = deltas[Math.floor(deltas.length / 2)].dy;
+  return { dx, dy };
+}
+
+function legacyCandidateTranslation(ws, basePositions, pinned) {
+  for (const wave of ws.waves) {
+    const candidateKey = candidatePositionKeyForWaveId(wave.id);
+    if (!candidateKey) continue;
+    if (ws.waves.some(candidate => wavePositionKey(candidate.id) === candidateKey)) continue;
+    const legacy = pinned[candidateKey];
+    const base = basePositions[wavePositionKey(wave.id)];
+    if (!base || !isPinnedRecord(legacy)) continue;
+    return { dx: legacy.x - base.x, dy: legacy.y - base.y };
+  }
+  return null;
+}
+
+function workstreamTranslation(ws, basePositions, pinned) {
+  const storedAnchor = pinned[workstreamAnchorId(ws.id)];
+  if (isPinnedRecord(storedAnchor)) {
+    const baseBounds = boundsForWorkstream(ws, basePositions);
+    if (baseBounds) {
+      return { dx: storedAnchor.x - baseBounds.x, dy: storedAnchor.y - baseBounds.y };
+    }
+  }
+  return explicitPinTranslation(ws, basePositions, pinned)
+    || legacyCandidateTranslation(ws, basePositions, pinned);
+}
+
+function applyWorkstreamAnchors(basePositions, pinned) {
+  const anchored = { ...basePositions };
+  for (const ws of PORTFOLIO.workstreams) {
+    const translation = workstreamTranslation(ws, basePositions, pinned);
+    if (!translation) continue;
+    for (const wave of ws.waves) {
+      const key = wavePositionKey(wave.id);
+      const base = basePositions[key];
+      if (!base) continue;
+      anchored[key] = { x: base.x + translation.dx, y: base.y + translation.dy };
+    }
+  }
+  return anchored;
+}
+
+function positionsFromRenderedNodes(renderedNodes, overrides) {
+  const positions = {};
+  for (const node of renderedNodes) {
+    if (!node?.id || !isNodePositionId(node.id)) continue;
+    positions[node.id] = { x: node.position.x, y: node.position.y };
+  }
+  for (const node of overrides) {
+    if (!node?.id || !isNodePositionId(node.id)) continue;
+    positions[node.id] = { x: node.position.x, y: node.position.y };
+  }
+  return positions;
+}
+
+function pinWorkstreamAnchorsFromDrag(renderedNodes, draggedNodes) {
+  const impacted = new Set();
+  for (const node of draggedNodes) {
+    if (!node?.id?.startsWith('w:')) continue;
+    const ws = workstreamByWaveId[node.id.slice(2)];
+    if (ws) impacted.add(ws.id);
+  }
+  if (impacted.size === 0) return;
+  const positions = positionsFromRenderedNodes(renderedNodes, draggedNodes);
+  const now = Date.now();
+  for (const wsId of impacted) {
+    const ws = workstreamById[wsId];
+    if (!ws) continue;
+    const bounds = boundsForWorkstream(ws, positions);
+    if (!bounds) continue;
+    const key = workstreamAnchorId(ws.id);
+    pinnedCache[key] = { x: bounds.x, y: bounds.y, manuallyMoved: true, ts: now };
+    dirtyIds.add(key);
+    removedIds.delete(key);
+  }
+}
 
 async function fetchPositions() {
   const r = await fetch('/api/_proto/canvas/positions');
@@ -1209,7 +1342,7 @@ function flushSave() {
   if (Object.keys(upsert).length === 0 && remove.length === 0) {
     return savePromise; // nothing to send
   }
-  saveStatusSetter({ state: 'saving', count: Object.keys(pinnedCache).length });
+  saveStatusSetter({ state: 'saving', count: pinnedPositionCount() });
   savePromise = (async () => {
     try { await savePromise; } catch { /* ignore previous error */ }
     const r = await fetch('/api/_proto/canvas/positions', {
@@ -1236,13 +1369,13 @@ function flushSave() {
       pinnedSetSetter(pSet);
       pinnedCountSetter(pSet.size);
     }
-    saveStatusSetter({ state: 'saved', count: body.count, savedAt: body.savedAt });
+    saveStatusSetter({ state: 'saved', count: pinnedPositionCount(), savedAt: body.savedAt });
   })();
   return savePromise;
 }
 function saveDebounced() {
   if (saveTimer) clearTimeout(saveTimer);
-  saveStatusSetter({ state: 'pending', count: Object.keys(pinnedCache).length });
+  saveStatusSetter({ state: 'pending', count: pinnedPositionCount() });
   saveTimer = setTimeout(() => {
     saveTimer = null;
     flushSave().catch((err) => console.error('Save failed:', err));
@@ -1288,6 +1421,23 @@ function unpinPosition(id) {
   delete pinnedCache[id];
   removedIds.add(id);
   dirtyIds.delete(id);
+  if (id.startsWith('w:')) {
+    const ws = workstreamByWaveId[id.slice(2)];
+    if (ws) {
+      const hasOtherWavePin = ws.waves.some(wave => {
+        const key = wavePositionKey(wave.id);
+        return key !== id && isPinnedRecord(pinnedCache[key]);
+      });
+      if (!hasOtherWavePin) {
+        const anchorKey = workstreamAnchorId(ws.id);
+        if (pinnedCache[anchorKey]) {
+          delete pinnedCache[anchorKey];
+          removedIds.add(anchorKey);
+          dirtyIds.delete(anchorKey);
+        }
+      }
+    }
+  }
   saveDebounced();
   return pinnedCache;
 }
@@ -1303,7 +1453,7 @@ function clearAllPinned() {
   return pinnedCache;
 }
 function pinnedIds() {
-  return new Set(Object.keys(pinnedCache).filter(k => pinnedCache[k].manuallyMoved));
+  return new Set(Object.keys(pinnedCache).filter(k => isNodePositionId(k) && isPinnedRecord(pinnedCache[k])));
 }
 
 async function computeElkLayout() {
@@ -2251,9 +2401,9 @@ function App() {
     try {
       const elkPositions = await computeElkLayout();
       const pinned = loadPinned();
-      const merged = { ...elkPositions };
+      const merged = applyWorkstreamAnchors(elkPositions, pinned);
       for (const [id, p] of Object.entries(pinned)) {
-        if (p.manuallyMoved) merged[id] = { x: p.x, y: p.y };
+        if (isNodePositionId(id) && isPinnedRecord(p)) merged[id] = { x: p.x, y: p.y };
       }
       const pSet = pinnedIds();
       setPinnedSet(pSet);
@@ -2274,8 +2424,10 @@ function App() {
         y = 40;
       }
       const pinned = loadPinned();
+      const anchoredFallback = applyWorkstreamAnchors(fallback, pinned);
+      Object.assign(fallback, anchoredFallback);
       for (const [id, p] of Object.entries(pinned)) {
-        if (p.manuallyMoved) fallback[id] = { x: p.x, y: p.y };
+        if (isNodePositionId(id) && isPinnedRecord(p)) fallback[id] = { x: p.x, y: p.y };
       }
       const pSet = pinnedIds();
       setPinnedSet(pSet);
@@ -2368,6 +2520,7 @@ function App() {
   }, [nodes, showGroups, completedMode]);
 
   const onNodeDragStop = useCallback((event, node) => {
+    pinWorkstreamAnchorsFromDrag(nodes, [node]);
     pinPosition(node.id, node.position.x, node.position.y);
     setPinnedSet(prev => {
       const next = new Set(prev);
@@ -2375,7 +2528,7 @@ function App() {
       return next;
     });
     setPinnedCount(prev => prev + (pinnedSet.has(node.id) ? 0 : 1));
-  }, [pinnedSet]);
+  }, [nodes, pinnedSet]);
 
   // When the user shift-clicks (or otherwise multi-selects) a set of nodes
   // and drags any of them, React Flow moves the whole selection together but
@@ -2385,6 +2538,7 @@ function App() {
   // workstreamGroup nodes are selectable: false, so they never appear here.
   const onSelectionDragStop = useCallback((event, draggedNodes) => {
     if (!Array.isArray(draggedNodes) || draggedNodes.length === 0) return;
+    pinWorkstreamAnchorsFromDrag(nodes, draggedNodes);
     let added = 0;
     for (const node of draggedNodes) {
       if (!pinnedSet.has(node.id)) added++;
@@ -2396,7 +2550,7 @@ function App() {
       return next;
     });
     if (added > 0) setPinnedCount(prev => prev + added);
-  }, [pinnedSet]);
+  }, [nodes, pinnedSet]);
 
   const FILTER_BUTTONS = [
     { id: 'all',         label: 'All',         className: '' },
@@ -2603,4 +2757,3 @@ createRoot(document.getElementById('root')).render(html`<${App}/>`);
 </script>
 </body>
 </html>
-

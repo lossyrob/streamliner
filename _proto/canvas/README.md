@@ -5,15 +5,15 @@
 >
 > Hard-coded paths. Single page. Will be promoted into a proper Streamliner
 > feature later — at that point the contract that should survive is
-> "portfolio document + positions overlay keyed by node ID + atomic
-> whole-file replace."
+> "portfolio document + positions overlay keyed by node/workstream anchor ID
+> + atomic writes."
 
 ## What this is
 
 A single static page (`index.html`) that loads the DBAgent portfolio data
 from a hard-coded planning-repo file and renders it as a draggable React
 Flow canvas. Drag positions are auto-saved (1s debounce) to a
-filesystem-backed positions file via three new API endpoints under
+filesystem-backed positions file via API endpoints under
 `/api/_proto/canvas/`.
 
 This replaces the previous `localStorage`-backed prototype that lived in
@@ -39,7 +39,9 @@ this graduates, both should become arguments / config.
 |---|---|---|
 | `GET` | `/api/_proto/canvas/portfolio` | Returns the raw `portfolio.json` from the planning repo. |
 | `GET` | `/api/_proto/canvas/positions` | Returns `{ path, positions: { id: { x, y, manuallyMoved, ts } } }`. Returns `{}` for `positions` if the file doesn't exist yet. |
-| `PUT` | `/api/_proto/canvas/positions` | Body: `{ positions: { id: { x, y, ... }, ... } }`. Atomic whole-file replace (write to `.tmp`, rename). Light validation: ignores entries without numeric `x`/`y`. |
+| `PUT` | `/api/_proto/canvas/positions` | Legacy full-overlay upsert. Body: `{ positions: { id: { x, y, ... }, ... } }`. Merges entries over the current file and never deletes. |
+| `PATCH` | `/api/_proto/canvas/positions` | Routine save path. Body: `{ upsert?: { id: { x, y, ... } }, remove?: [id] }`. Applies partial updates atomically. |
+| `POST` | `/api/_proto/canvas/positions?method=patch` | `sendBeacon` unload fallback for the same partial update shape as `PATCH`. |
 
 Mounted in `src/server/app.ts`. The static page is served from
 `/_proto/canvas/` via `express.static()` against the `_proto/canvas/`
@@ -66,7 +68,7 @@ this prototype.
    `saveDebounced()` which schedules a save 1 second later.
 3. The save status indicator in the top-left controls panel shows
    `● change pending — saving in 1s`.
-4. After 1s of inactivity, the cache is `PUT` to
+4. After 1s of inactivity, the changed entries are `PATCH`ed to
    `/api/_proto/canvas/positions`. Status flips to
    `● saving N positions…` then `● saved N · HH:MM:SS`.
 5. The server writes to `_proto/canvas/state/positions.json.tmp` then
@@ -75,6 +77,13 @@ this prototype.
    API; pinned positions take precedence over ELK-computed positions.
 7. On `beforeunload` (tab close), pending saves are flushed via
    `navigator.sendBeacon` as a best-effort last-chance write.
+
+The positions file also stores `ws:<workstreamId>` anchors. A drag of any
+wave records the workstream's current top-left alongside the exact node pin.
+On later portfolio reconciliation, if wave IDs are added or renamed, the
+canvas translates the current ELK layout back near the saved workstream
+anchor before applying exact per-node pins. This keeps a workstream's visual
+location stable even when a candidate becomes a multi-wave workstream.
 
 ## Migrating positions from the older localStorage prototype
 
@@ -95,7 +104,7 @@ identical between the two prototypes.
 When this graduates to a real Streamliner feature, the parts worth
 keeping:
 
-- **Three-endpoint contract** (portfolio, GET positions, PUT positions)
+- **Positions contract** (portfolio, GET positions, PATCH positions)
   generalized to per-document positions overlays
 - **Atomic write pattern** (tmp + rename) for positions
 - **Debounced save with visible status indicator** + `sendBeacon`
