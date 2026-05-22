@@ -1505,6 +1505,30 @@ describe("createStreamlinerApiApp", () => {
     expect(response.body.code).toBe("session_not_found");
   });
 
+  it("relaunch endpoint forwards unexpected relaunch errors to the JSON error handler", async () => {
+    const rootDir = createRootDir();
+    const store = new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") });
+    const session = store.upsertSession({
+      title: "Broken relaunch target",
+      cwd: rootDir,
+      origin: { kind: "manual" },
+    });
+    const api = createStreamlinerApiApp({
+      store,
+      relaunchDeps: {
+        getSession: () => {
+          throw new Error("registry read failed");
+        },
+      },
+    });
+    activeApps.push(api);
+
+    await request(api.app)
+      .post(`/api/sessions/${session.id}/relaunch`)
+      .set("Content-Type", "application/json")
+      .expect(500, { error: "registry read failed" });
+  });
+
   it("relaunch endpoint returns 400 for archived session", async () => {
     const rootDir = createRootDir();
     const store = new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") });
