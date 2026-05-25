@@ -170,6 +170,13 @@ function fakeHandoff(root: string, overrides: Partial<PawLaunchHandoff> = {}): P
         contextPackagePath,
         contextFilePath,
         contextModel: "test",
+        repoInstructions: {
+          repoId: "streamliner",
+          repoRoot: normalizePath(root),
+          path: ".github/copilot-instructions.md",
+          exists: false,
+          unavailableReason: "missing",
+        },
         sourceReferences: [],
         unavailableInputs: [],
       },

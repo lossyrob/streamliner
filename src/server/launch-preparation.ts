@@ -21,11 +21,13 @@ import {
 } from "./launch-policy";
 import { getApiLogger } from "./logger";
 import {
+  COPILOT_INSTRUCTIONS_RELATIVE_PATH,
   LaunchContextPreparationError,
   prepareLaunchContextPackage,
   prepareLaunchContextPackageInput,
   writePreparedLaunchContextPackage,
   type LaunchContextLayer0Selection,
+  type LaunchContextRepoInstructions,
   type LaunchContextSourceReference,
   type LaunchContextGenerator,
   type LaunchContextPackage,
@@ -159,6 +161,18 @@ export interface PawLaunchProgressEvent {
 
 export type PawLaunchProgressSink = (event: PawLaunchProgressEvent) => void;
 
+export interface PawLaunchSdkSessionDebug {
+  sessionId: string;
+  workspacePath?: string;
+  stateRoot: string;
+}
+
+export interface PawLaunchRepoInstructionsCheck {
+  sourcePath: string;
+  executionPath: string;
+  matchesSource: boolean;
+}
+
 export interface PawInitRunnerResult {
   cwd: string;
   branch: string;
@@ -171,17 +185,12 @@ export interface PawInitRunnerResult {
   sessionStateRoot?: string;
   sdkSession?: PawLaunchSdkSessionDebug;
   kickoffAdditionalInstructions?: string;
+  repoInstructions?: PawLaunchRepoInstructionsCheck;
 }
 
 export type PawInitRunner = (
   input: PawInitRunnerInput,
 ) => Promise<PawInitRunnerResult>;
-
-export interface PawLaunchSdkSessionDebug {
-  sessionId: string;
-  workspacePath?: string;
-  stateRoot: string;
-}
 
 export interface PawLaunchSessionRunnerInput {
   nodeId: string;
@@ -702,6 +711,39 @@ function checkoutRootForPawWorkDir(pawWorkDir: string): string {
   return dirname(dirname(dirname(resolve(pawWorkDir))));
 }
 
+function copilotInstructionsPath(checkoutRoot: string): string {
+  return join(checkoutRoot, ...COPILOT_INSTRUCTIONS_RELATIVE_PATH.split("/"));
+}
+
+function repoInstructionsSourcePath(repoInstructions: LaunchContextRepoInstructions): string {
+  if (isAbsolute(repoInstructions.path)) {
+    return normalizeManifestPath(repoInstructions.path);
+  }
+  return normalizeManifestPath(resolve(repoInstructions.repoRoot, ...repoInstructions.path.split("/")));
+}
+
+async function checkExecutionRepoInstructions(
+  repoInstructions: LaunchContextRepoInstructions,
+  pawWorkDir: string,
+): Promise<PawLaunchRepoInstructionsCheck | undefined> {
+  if (!repoInstructions.exists || repoInstructions.content === undefined) {
+    return undefined;
+  }
+  const checkoutRoot = checkoutRootForPawWorkDir(pawWorkDir);
+  const executionPath = copilotInstructionsPath(checkoutRoot);
+  if (!existsSync(executionPath)) {
+    throw new Error(
+      `Execution checkout is missing selected repo Copilot instructions at ${normalizeManifestPath(executionPath)}.`,
+    );
+  }
+  const executionContent = await readFile(executionPath, "utf8");
+  return {
+    sourcePath: repoInstructionsSourcePath(repoInstructions),
+    executionPath: normalizeManifestPath(executionPath),
+    matchesSource: executionContent === repoInstructions.content,
+  };
+}
+
 function normalizeRepoSlug(value: string): string {
   return value.toLowerCase().replace(/\.git$/i, "");
 }
@@ -829,6 +871,26 @@ function existingLaunchRecordPromptLines(record: NodeLaunchRecord | null | undef
   ];
 }
 
+function repoInstructionsPromptLines(
+  repoInstructions: LaunchContextRepoInstructions,
+): string[] {
+  if (!repoInstructions.exists || repoInstructions.content === undefined) {
+    return [];
+  }
+  return [
+    `Selected target repo Copilot instructions (${repoInstructions.path}):`,
+    "",
+    "```markdown",
+    repoInstructions.content.trim(),
+    "```",
+  ];
+}
+
+function repoInstructionsPromptBlock(repoInstructions: LaunchContextRepoInstructions): string[] {
+  const lines = repoInstructionsPromptLines(repoInstructions);
+  return lines.length > 0 ? [...lines, ""] : [];
+}
+
 function workerFacingSourceReferences(
   references: LaunchContextSourceReference[],
 ): Array<Omit<LaunchContextSourceReference, "freshness">> {
@@ -892,6 +954,7 @@ interface StreamlinerLaunchManifest {
     launchCwd: string;
     launchCwdInitialBranch: string | null;
   };
+  repoInstructions: LaunchContextRepoInstructions;
   designHints: Array<Pick<LaunchContextLayer0Selection, "repoId" | "path" | "included">>;
   sourceReferences: Array<Omit<LaunchContextSourceReference, "freshness">>;
   unavailableInputs: PreparedLaunchContextPackage["metadata"]["unavailableInputs"];
@@ -933,6 +996,7 @@ function buildStreamlinerLaunchManifest(
       launchCwd: normalizeManifestPath(input.cwd),
       launchCwdInitialBranch,
     },
+    repoInstructions: input.preparedContext.generationInput.repoInstructions,
     designHints: workerFacingDesignHints(generationInput.designSelection),
     sourceReferences: workerFacingSourceReferences(metadata.sourceReferences),
     unavailableInputs: metadata.unavailableInputs,
@@ -1057,7 +1121,7 @@ async function sendPromptAndWaitForIdle(
   }
 }
 
-function buildPawInitPrompt(input: PawInitRunnerInput): string {
+export function buildPawInitPrompt(input: PawInitRunnerInput): string {
   return [
     "Initialize a PAW workflow for a Streamliner graph launch.",
     "",
@@ -1077,6 +1141,7 @@ function buildPawInitPrompt(input: PawInitRunnerInput): string {
     "- If an existing Streamliner launch record is provided, treat this as an idempotent resume candidate. Inspect the existing worktree, PAW work dir, WorkflowContext.md, and Streamliner context. If they are present, match this selected node/work, and are still valid, reuse them instead of rerunning PAW init or overwriting durable PAW state. Repair or regenerate only missing, stale, or invalid artifacts.",
     "- Do not fail merely because WorkflowContext.md or the PAW work directory already exists.",
     "",
+    ...repoInstructionsPromptBlock(input.stagedContextPackage.metadata.repoInstructions),
     "Selected Streamliner node:",
     `- Node ID: ${input.nodeId}`,
     `- Graph path: ${input.graphPath ?? "default graph"}`,
@@ -1168,6 +1233,10 @@ export async function defaultPawInitRunner(
             "additionalKickoffInstructions",
           );
           const pawWorkDir = resolvePawWorkDir(input.cwd, workId, args.pawWorkDir);
+          const repoInstructionsCheck = await checkExecutionRepoInstructions(
+            input.stagedContextPackage.metadata.repoInstructions,
+            pawWorkDir,
+          );
 
           const workflowContextPath = join(pawWorkDir, "WorkflowContext.md");
           const streamlinerContextPath = join(pawWorkDir, "streamliner", "context.md");
@@ -1193,6 +1262,7 @@ export async function defaultPawInitRunner(
             environment: { ...input.configuration.environment },
             sessionStateRoot: normalizeManifestPath(input.sessionStateRoot),
             kickoffAdditionalInstructions,
+            repoInstructions: repoInstructionsCheck,
           };
           return {
             ...toolResult,
@@ -1308,6 +1378,7 @@ export function buildStreamlinerContextSavePrompt(
     input.configuration.workflowInstructions.trim(),
     "```",
     "",
+    ...repoInstructionsPromptBlock(input.preparedContext.metadata.repoInstructions),
     "Apply the Builder launch instructions while assembling context and while running PAW init later in this same SDK session.",
     "For PAW init: encode durable PAW configuration into WorkflowContext.md fields, then pass the remainder of the Builder instructions verbatim as `additionalKickoffInstructions` -- subtract only the fragments that were fully encoded into WorkflowContext.md, do not paraphrase or summarize the remainder. See the `complete_paw_init` derivation rules in the PAW init prompt for details.",
     "Do not copy the Builder launch instructions wholesale into WorkflowContext.md or context.md.",
@@ -1336,7 +1407,7 @@ export function buildStreamlinerContextSavePrompt(
     "Launch manifest:",
     displayPath(options.manifestPath),
     "",
-    "Read the launch manifest before writing context.md. It contains selected-node metadata, graph/brief/design/tracker source paths or URLs, unavailable-input diagnostics, existing launch details, and the worktree policy. It intentionally contains references and concise metadata rather than full design documents or issue bodies.",
+    "Read the launch manifest before writing context.md. It contains selected-node metadata, graph/brief/design/tracker source paths or URLs, selected target repo Copilot instructions, unavailable-input diagnostics, existing launch details, and the worktree policy. It intentionally contains references and concise metadata rather than full design documents or issue bodies.",
     "",
     "Context markdown requirements:",
     "- Output only Markdown. Do not wrap the answer in a code fence.",
@@ -1447,6 +1518,10 @@ export async function defaultPawLaunchSessionRunner(
             targetBranch,
             pawWorkDir,
           });
+          const repoInstructionsCheck = await checkExecutionRepoInstructions(
+            contextPackage.metadata.repoInstructions,
+            pawWorkDir,
+          );
 
           const workflowContextPath = join(pawWorkDir, "WorkflowContext.md");
           const streamlinerContextPath = join(pawWorkDir, "streamliner", "context.md");
@@ -1472,6 +1547,7 @@ export async function defaultPawLaunchSessionRunner(
             environment: { ...input.configuration.environment },
             sessionStateRoot: normalizeManifestPath(input.sessionStateRoot),
             kickoffAdditionalInstructions,
+            repoInstructions: repoInstructionsCheck,
             sdkSession: session
               ? {
                   sessionId: session.sessionId,
@@ -1575,6 +1651,8 @@ export async function defaultPawLaunchSessionRunner(
     emitProgress(input.onProgress, "completed", "PAW launch preparation completed.", {
       workflowContextPath: toolResult.workflowContextPath,
       streamlinerContextPath: toolResult.streamlinerContextPath,
+      repoInstructionsPath: toolResult.repoInstructions?.executionPath,
+      repoInstructionsMatchesSource: toolResult.repoInstructions?.matchesSource,
     });
     return {
       ...toolResult,

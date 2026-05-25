@@ -19,10 +19,12 @@ import type { TerminalLaunchOptions } from "./terminal-launch";
 import {
   LaunchContextPreparationError,
   type LaunchContextPackage,
+  type LaunchContextRepoInstructions,
   type PrepareLaunchContextPackageOptions,
   type PreparedLaunchContextPackage,
 } from "./launch-context";
 import {
+  buildPawInitPrompt,
   buildStreamlinerContextSavePrompt,
   completePawInitToolParameters,
   preparePawLaunch,
@@ -51,6 +53,26 @@ function createRootDir(): string {
 
 function normalizePath(path: string): string {
   return path.replace(/\\/g, "/");
+}
+
+function fakeRepoInstructions(
+  root: string,
+  overrides: Partial<LaunchContextRepoInstructions> = {},
+): LaunchContextRepoInstructions {
+  return {
+    repoId: "streamliner",
+    repoRoot: normalizePath(root),
+    path: ".github/copilot-instructions.md",
+    exists: true,
+    content: [
+      "# Repo Instructions",
+      "",
+      "- Create sibling worktrees with `script/worktree-new <name>`.",
+      "- Run the repo worktree environment helper before validation.",
+    ].join("\n"),
+    freshness: { kind: "sha256", value: "repo-instructions-hash" },
+    ...overrides,
+  };
 }
 
 function createGitRepo(root: string, originUrl: string): void {
@@ -98,6 +120,7 @@ function fakeContextPackage(
       contextPackagePath: normalizePath(contextPackagePath),
       contextFilePath: normalizePath(contextFilePath),
       contextModel: "test-model",
+      repoInstructions: fakeRepoInstructions(root),
       sourceReferences: [
         {
           kind: "tracker",
@@ -178,6 +201,7 @@ function fakePreparedContext(root: string): PreparedLaunchContextPackage {
   const contextFilePath = join(contextPackagePath, "context.md");
   const graphPath = join(root, ".streamliner", "workstreams", "session-launching-and-tracking", "graph.json");
   const workstreamDir = join(root, ".streamliner", "workstreams", "session-launching-and-tracking");
+  const repoInstructions = fakeRepoInstructions(root);
   const sourceReferences = [
     {
       kind: "graph" as const,
@@ -225,6 +249,7 @@ function fakePreparedContext(root: string): PreparedLaunchContextPackage {
         reference: sourceReferences[2],
         content: "TRACKER_BODY_SHOULD_NOT_BE_IN_INITIAL_PROMPT",
       },
+      repoInstructions,
       designSelection: [{
         repoId: "streamliner",
         path: "docs/design/session-system.md",
@@ -250,6 +275,7 @@ function fakePreparedContext(root: string): PreparedLaunchContextPackage {
       contextPackagePath: normalizePath(contextPackagePath),
       contextFilePath: normalizePath(contextFilePath),
       contextModel: "gpt-5.5",
+      repoInstructions,
       sourceReferences,
       unavailableInputs: [],
     },
@@ -450,6 +476,8 @@ describe("preparePawLaunch", () => {
 
     expect(prompt).toContain("Builder launch instructions (trusted, high priority)");
     expect(prompt).toContain(workflowInstructions);
+    expect(prompt).toContain("Selected target repo Copilot instructions (.github/copilot-instructions.md)");
+    expect(prompt).toContain("script/worktree-new <name>");
     expect(prompt.indexOf("Builder launch instructions")).toBeLessThan(prompt.indexOf("Launch manifest:"));
     expect(prompt).toContain(normalizePath(manifestPath));
     expect(prompt).toContain("Do not check out the target node branch in the launch cwd.");
@@ -459,6 +487,90 @@ describe("preparePawLaunch", () => {
     expect(prompt).not.toContain("DESIGN_BODY_SHOULD_NOT_BE_IN_INITIAL_PROMPT");
     expect(prompt).not.toContain("TRACKER_BODY_SHOULD_NOT_BE_IN_INITIAL_PROMPT");
     expect(prompt).not.toContain("Source blocks are delimited");
+  });
+
+  it("puts selected repo Copilot instructions in the PAW init prompt as worktree guidance", () => {
+    const root = createRootDir();
+    const contextPackage = fakeContextPackage(root, {
+      nodeId: "launch-prompt-profiles",
+      graphPath: join(root, ".streamliner", "workstreams", "session-launching-and-tracking", "graph.json"),
+    });
+
+    const prompt = buildPawInitPrompt({
+      nodeId: "launch-prompt-profiles",
+      graphPath: contextPackage.metadata.graphPath,
+      cwd: root,
+      sessionStateRoot: join(root, "state"),
+      issueUrl: "https://github.com/lossyrob/streamliner/issues/33",
+      launchNonce: "nonce-sdk",
+      configuration: {
+        cwd: root,
+        cliArgs: ["--yolo"],
+        environment: {},
+        workflowInstructions: "Use paw-lite with final-pr-only review.",
+        terminal: {
+          launchMode: "manual",
+          preferredTerminal: "default",
+          title: null,
+          tabColor: null,
+        },
+      },
+      stagedContextPackage: contextPackage,
+      existingLaunch: null,
+    });
+
+    expect(prompt).toContain("Selected target repo Copilot instructions (.github/copilot-instructions.md)");
+    expect(prompt).toContain("Create sibling worktrees with `script/worktree-new <name>`.");
+    expect(prompt).not.toContain("use that helper to satisfy Streamliner's sibling-worktree requirement");
+    expect(prompt).not.toContain("Do not copy them into WorkflowContext.md");
+  });
+
+  it("omits repo Copilot instruction prompt text when no instructions file is loaded", () => {
+    const root = createRootDir();
+    const contextPackage = fakeContextPackage(
+      root,
+      {
+        nodeId: "launch-prompt-profiles",
+        graphPath: join(root, ".streamliner", "workstreams", "session-launching-and-tracking", "graph.json"),
+      },
+      {
+        metadata: {
+          repoInstructions: fakeRepoInstructions(root, {
+            exists: false,
+            content: undefined,
+            freshness: undefined,
+            unavailableReason: "missing",
+            unavailableDetail: "ENOENT",
+          }),
+        },
+      },
+    );
+
+    const prompt = buildPawInitPrompt({
+      nodeId: "launch-prompt-profiles",
+      graphPath: contextPackage.metadata.graphPath,
+      cwd: root,
+      sessionStateRoot: join(root, "state"),
+      launchNonce: "nonce-sdk",
+      configuration: {
+        cwd: root,
+        cliArgs: [],
+        environment: {},
+        workflowInstructions: "Use paw-lite with final-pr-only review.",
+        terminal: {
+          launchMode: "manual",
+          preferredTerminal: "default",
+          title: null,
+          tabColor: null,
+        },
+      },
+      stagedContextPackage: contextPackage,
+      existingLaunch: null,
+    });
+
+    expect(prompt).not.toContain("Selected target repo Copilot instructions");
+    expect(prompt).not.toContain(".github/copilot-instructions.md");
+    expect(prompt).not.toContain("Status: unavailable");
   });
 
   it("rejects PAW work dirs inside the launch checkout when the target branch differs", () => {
@@ -810,6 +922,16 @@ describe("preparePawLaunch", () => {
     const graphPath = join(workstreamDir, "graph.json");
     mkdirSync(workstreamDir, { recursive: true });
     mkdirSync(join(targetRepoRoot, "docs", "design"), { recursive: true });
+    mkdirSync(join(targetRepoRoot, ".github"), { recursive: true });
+    writeFileSync(
+      join(targetRepoRoot, ".github", "copilot-instructions.md"),
+      [
+        "# Extension repo instructions",
+        "",
+        "- Create worktrees with `script/worktree-new <name>`.",
+      ].join("\n"),
+      "utf8",
+    );
     writeFileSync(
       join(orchestrationRoot, ".streamliner", "config.json"),
       JSON.stringify({
@@ -912,6 +1034,12 @@ describe("preparePawLaunch", () => {
     );
     expect(result.cwd).toBe(normalizePath(targetRepoRoot));
     expect(result.contextPackage.metadata.repoRoot).toBe(normalizePath(targetRepoRoot));
+    expect(result.contextPackage.metadata.repoInstructions).toEqual(expect.objectContaining({
+      repoId: "vs-code-postgresql",
+      repoRoot: normalizePath(targetRepoRoot),
+      path: ".github/copilot-instructions.md",
+      content: expect.stringContaining("script/worktree-new <name>"),
+    }));
     expect(result.pawWorkDir).toBe(
       normalizePath(join(targetRepoRoot, ".paw", "work", "extension-table-editing")),
     );
