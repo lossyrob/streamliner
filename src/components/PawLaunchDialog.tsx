@@ -39,6 +39,7 @@ export interface PawTerminalLaunchInput {
   terminalColor: string | null;
   reviewCompanion: {
     kickoffPrompt: string;
+    usePawReviewAgent: boolean;
   } | null;
 }
 
@@ -383,6 +384,7 @@ export function PawLaunchDialog({
   const [reviewTemplateStatus, setReviewTemplateStatus] = useState<string | null>(null);
   const [reviewTemplateError, setReviewTemplateError] = useState<string | null>(null);
   const [reviewCompanionEnabled, setReviewCompanionEnabled] = useState(defaultReviewCompanion);
+  const [reviewCompanionUsePawReviewAgent, setReviewCompanionUsePawReviewAgent] = useState(true);
   const [workflowContext, setWorkflowContext] = useState<WorkflowContextDocument | null>(null);
   const [workflowContextText, setWorkflowContextText] = useState("");
   const [workflowContextLoading, setWorkflowContextLoading] = useState(false);
@@ -737,7 +739,10 @@ export function PawLaunchDialog({
         },
         launchAfterInit: managedRuntimeSelected ? false : launchAfterInit,
         reviewCompanion: reviewCompanionEnabled
-          ? { kickoffPrompt: renderedReviewCompanionPrompt }
+          ? {
+              kickoffPrompt: renderedReviewCompanionPrompt,
+              usePawReviewAgent: reviewCompanionUsePawReviewAgent,
+            }
           : null,
       });
     } finally {
@@ -1050,12 +1055,13 @@ export function PawLaunchDialog({
                 options={TERMINAL_OPTIONS}
                 onChange={(value) => setTerminal((current) => ({ ...current, preferredTerminal: value }))}
               />
-              <TextField
+              <TextAreaField
                 label="Copilot CLI args"
                 ariaLabel="Copilot CLI args"
                 value={cliArgsText}
                 onChange={setCliArgsText}
-                placeholder="Leave empty for no CLI args"
+                placeholder={"Leave empty for no CLI args\n--yolo\n--model=gpt-5.5"}
+                rows={3}
               />
               <div className="sl-field sl-paw-launch-color-field">
                 <span>Terminal tab color</span>
@@ -1108,6 +1114,26 @@ export function PawLaunchDialog({
                   </small>
                 </span>
               </label>
+              {reviewCompanionEnabled && (
+                <label className="sl-checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={reviewCompanionUsePawReviewAgent}
+                    disabled={busy || Boolean(terminalLaunchResult)}
+                    aria-label="Use PAW-Review agent"
+                    onChange={(event) =>
+                      setReviewCompanionUsePawReviewAgent(event.target.checked)
+                    }
+                  />
+                  <span>
+                    <strong>Use PAW-Review agent</strong>
+                    <small>
+                      Adds <code>--agent=PAW-Review</code>. Turn this off for ad hoc review
+                      terminals that should use the default Copilot session behavior.
+                    </small>
+                  </span>
+                </label>
+              )}
               {reviewCompanionEnabled && (
                 <div className="sl-paw-profile-tools">
                   <label className="sl-field">
@@ -1446,7 +1472,10 @@ export function PawLaunchDialog({
                   terminalTitle: trimmedTerminalTitle,
                   terminalColor: terminalTabColor,
                   reviewCompanion: reviewCompanionEnabled
-                    ? { kickoffPrompt: renderedReviewCompanionPrompt }
+                    ? {
+                        kickoffPrompt: renderedReviewCompanionPrompt,
+                        usePawReviewAgent: reviewCompanionUsePawReviewAgent,
+                      }
                     : null,
                 })
               }

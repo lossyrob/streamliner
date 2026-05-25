@@ -148,6 +148,11 @@ function optionalStringField(record: Record<string, unknown>, key: string): stri
   return typeof value === "string" ? value : undefined;
 }
 
+function optionalBooleanField(record: Record<string, unknown>, key: string): boolean | undefined {
+  const value = record[key];
+  return typeof value === "boolean" ? value : undefined;
+}
+
 function normalizeStoredRecord(value: unknown): StoredNodeLaunchRecord | null {
   if (!isRecord(value)) {
     return null;
@@ -258,7 +263,14 @@ function normalizePostPreparationIntent(value: unknown): NodePostPreparationInte
   if (isRecord(value.launchCompanion)) {
     const kickoffPrompt = stringField(value.launchCompanion, "kickoffPrompt");
     if (kickoffPrompt) {
-      intent.launchCompanion = { kickoffPrompt };
+      const usePawReviewAgent = optionalBooleanField(
+        value.launchCompanion,
+        "usePawReviewAgent",
+      );
+      intent.launchCompanion = {
+        kickoffPrompt,
+        ...(usePawReviewAgent !== undefined ? { usePawReviewAgent } : {}),
+      };
     }
   }
   return intent.launchTerminal || intent.launchCompanion ? intent : null;
@@ -415,6 +427,30 @@ export class NodeLaunchRecordStore {
       candidate.nodeId === nodeId && normalizeGraphPathForKey(candidate.graphPath) === key
     );
     return operation ? { ...operation, progressEvents: [...operation.progressEvents] } : null;
+  }
+
+  async clearNodeLaunchState(input: {
+    graphPath: string;
+    nodeId: string;
+  }): Promise<{
+    record: NodeLaunchRecord | null;
+    operation: NodeLaunchOperation | null;
+  }> {
+    return await this.updateDocument((document) => {
+      const key = normalizeGraphPathForKey(input.graphPath);
+      const recordIndex = document.records.findIndex((candidate) =>
+        candidate.nodeId === input.nodeId && normalizeGraphPathForKey(candidate.graphPath) === key
+      );
+      const operationIndex = document.operations.findIndex((candidate) =>
+        candidate.nodeId === input.nodeId && normalizeGraphPathForKey(candidate.graphPath) === key
+      );
+      const [record] = recordIndex >= 0 ? document.records.splice(recordIndex, 1) : [];
+      const [operation] = operationIndex >= 0 ? document.operations.splice(operationIndex, 1) : [];
+      return {
+        record: record ? withPathStatus(record) : null,
+        operation: operation ? { ...operation, progressEvents: [...operation.progressEvents] } : null,
+      };
+    });
   }
 
   /**

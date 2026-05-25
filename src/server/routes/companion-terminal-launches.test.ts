@@ -99,6 +99,25 @@ describe("companion terminal launches route", () => {
     expect(response.body.command.cliArgs).toEqual(["--agent=PAW-Review", "--yolo"]);
   });
 
+  it("omits PAW-Review agent injection when requested for an ad hoc review", async () => {
+    const { app, launchTerminal } = createApp();
+
+    const response = await request(app)
+      .post("/api/companion-terminal-launches")
+      .send({
+        cwd: "C:\\repo",
+        kickoffPrompt: "Review issue 417",
+        cliArgs: ["--agent=Custom", "--yolo"],
+        usePawReviewAgent: false,
+      })
+      .expect(201);
+
+    expect(response.body.command.cliArgs).toEqual(["--agent=Custom", "--yolo"]);
+    const options = launchTerminal.mock.calls[0][0] as TerminalLaunchOptions;
+    expect(options.command).not.toContain("--agent=PAW-Review");
+    expect(options.command).toContain("--agent=Custom");
+  });
+
   it("rejects non-loopback forwarded requests", async () => {
     const { app, launchTerminal } = createApp();
 

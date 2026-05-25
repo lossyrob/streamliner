@@ -6,6 +6,9 @@
     "inference-relay",
     "scenario-promotion-pipeline",
     "azure-rest-guidelines-alignment",
-    "persisted-schema-evolution"
+    "persisted-schema-evolution",
+    "private-preview-customer-server-onboarding",
+    "vmagent-cas-db-access",
+    "runner-launch-hardening"
   ]
 }

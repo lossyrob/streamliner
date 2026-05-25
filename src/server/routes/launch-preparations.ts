@@ -118,6 +118,22 @@ function optionalIntentColor(value: unknown, label: string): string | null {
   return color.toLowerCase();
 }
 
+function optionalIntentBoolean(value: unknown, label: string): boolean | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value !== "boolean") {
+    throw new LaunchPreparationError(
+      "invalid_launch_configuration",
+      400,
+      `${label} must be a boolean.`,
+      "validation",
+      label,
+    );
+  }
+  return value;
+}
+
 function intentRecord(value: unknown, label: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new LaunchPreparationError(
@@ -181,7 +197,14 @@ function requestPostPreparation(value: unknown): NodePostPreparationIntent | nul
         "postPreparation.launchCompanion.kickoffPrompt",
       );
     }
-    postPreparation.launchCompanion = { kickoffPrompt };
+    const usePawReviewAgent = optionalIntentBoolean(
+      launchCompanion.usePawReviewAgent,
+      "postPreparation.launchCompanion.usePawReviewAgent",
+    );
+    postPreparation.launchCompanion = {
+      kickoffPrompt,
+      ...(usePawReviewAgent !== null ? { usePawReviewAgent } : {}),
+    };
   }
   if (postPreparation.launchCompanion && !postPreparation.launchTerminal) {
     throw new LaunchPreparationError(
@@ -540,6 +563,7 @@ export function createLaunchPreparationsRouter(options: {
                   preferredTerminal: launchHandoff.terminal.preferredTerminal,
                   title: `${launchHandoff.terminal.title} Review`,
                   ...(launchHandoff.terminal.tabColor ? { tabColor: launchHandoff.terminal.tabColor } : {}),
+                  usePawReviewAgent: postPreparation.launchCompanion.usePawReviewAgent,
                 },
                 { launchTerminal: options.deps?.nodeLaunchDeps?.launchTerminal },
               );

@@ -49,5 +49,6 @@ export interface PawLaunchDialogConfiguration {
   launchAfterInit: boolean;
   reviewCompanion: {
     kickoffPrompt: string;
+    usePawReviewAgent: boolean;
   } | null;
 }

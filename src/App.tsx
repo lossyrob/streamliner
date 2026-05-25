@@ -82,6 +82,7 @@ import {
   type NodeLaunchOperation,
   type NodeLaunchRecord,
   type NodeLaunchRecordResponse,
+  type NodeLaunchRecordResetResponse,
   type NodeManagedSdkLaunchResponse,
   type NodeCompanionTerminalLaunchResponse,
   type NodePostPreparationIntent,
@@ -200,6 +201,7 @@ interface ManagedSdkLaunchApiResponse {
 
 interface LaunchOperationTarget {
   graphPath: string;
+  workstreamId: string;
   nodeId: string;
 }
 
@@ -474,7 +476,14 @@ function postPreparationIntentFromConfiguration(
       ...(configuration.terminal.tabColor ? { terminalColor: configuration.terminal.tabColor } : {}),
     },
     ...(configuration.reviewCompanion
-      ? { launchCompanion: { kickoffPrompt: configuration.reviewCompanion.kickoffPrompt } }
+      ? {
+        launchCompanion: {
+          kickoffPrompt: configuration.reviewCompanion.kickoffPrompt,
+          ...(configuration.reviewCompanion.usePawReviewAgent
+            ? {}
+            : { usePawReviewAgent: false }),
+        },
+      }
       : {}),
   };
 }
@@ -679,6 +688,25 @@ async function releaseNodeLaunchClaim(launchClaimId: string): Promise<NodeLaunch
     throw new Error(parsed.message);
   }
   return await response.json() as NodeLaunchReleaseResponse;
+}
+
+async function clearPreviousNodeLaunchInit(
+  target: LaunchOperationTarget,
+): Promise<NodeLaunchRecordResetResponse> {
+  const response = await fetch("/api/node-launch-records/clear", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      graphPath: target.graphPath,
+      workstreamId: target.workstreamId,
+      nodeId: target.nodeId,
+    }),
+  });
+  if (!response.ok) {
+    const parsed = await parseErrorResponse(response);
+    throw new Error(parsed.message);
+  }
+  return await response.json() as NodeLaunchRecordResetResponse;
 }
 
 function normalizeRegistryListResponse(
@@ -1606,6 +1634,7 @@ function GraphDashboard({
     { workstreamId: activeWorkstream?.workstreamId ?? null },
     { enabled: Boolean(activeWorkstream) },
   );
+  const refreshSessions = sessionList.refresh;
   const nodeSessionStatuses = useMemo(
     () =>
       activeWorkstream
@@ -1708,16 +1737,18 @@ function GraphDashboard({
   // "Loading saved profiles" / "Loading launch details" placeholders pinned
   // on while a fetch is briefly in flight.
   const selectedLaunchGraphPath = activeWorkstreamEntry?.path ?? null;
+  const selectedLaunchWorkstreamId = activeWorkstream?.workstreamId ?? null;
   const selectedLaunchNodeId = selectedEntry?.node.id ?? null;
   const selectedLaunchTarget = useMemo<LaunchOperationTarget | null>(() => {
-    if (!selectedLaunchGraphPath || !selectedLaunchNodeId) {
+    if (!selectedLaunchGraphPath || !selectedLaunchWorkstreamId || !selectedLaunchNodeId) {
       return null;
     }
     return {
       graphPath: selectedLaunchGraphPath,
+      workstreamId: selectedLaunchWorkstreamId,
       nodeId: selectedLaunchNodeId,
     };
-  }, [selectedLaunchGraphPath, selectedLaunchNodeId]);
+  }, [selectedLaunchGraphPath, selectedLaunchWorkstreamId, selectedLaunchNodeId]);
 
   // Mirror selectedLaunchTarget into a ref so async closures (e.g. the SSE
   // reattach effect below) can read the latest value without taking a
@@ -1972,13 +2003,14 @@ function GraphDashboard({
   // on the node id (a stable primitive) instead of the derived entry object,
   // which gets a fresh reference every time the view-model rebuilds.
   useEffect(() => {
-    if (!activeWorkstreamPath || !selectedNodeId) {
+    if (!activeWorkstreamPath || !selectedLaunchWorkstreamId || !selectedNodeId) {
       setSelectedNodeLaunchRecordLoading(false);
       setSelectedNodeLaunchRecordError(null);
       return;
     }
-    const target = {
+    const target: LaunchOperationTarget = {
       graphPath: activeWorkstreamPath,
+      workstreamId: selectedLaunchWorkstreamId,
       nodeId: selectedNodeId,
     };
     let cancelled = false;
@@ -2033,7 +2065,7 @@ function GraphDashboard({
     return () => {
       cancelled = true;
     };
-  }, [activeWorkstreamPath, nodeLaunchRecordRefreshKey, selectedNodeId]);
+  }, [activeWorkstreamPath, nodeLaunchRecordRefreshKey, selectedLaunchWorkstreamId, selectedNodeId]);
 
   const setLaunchOperation = useCallback((
     target: LaunchOperationTarget,
@@ -2174,6 +2206,33 @@ function GraphDashboard({
       }));
     },
     [],
+  );
+
+  const clearPreviousInit = useCallback(
+    async (target: LaunchOperationTarget): Promise<void> => {
+      await clearPreviousNodeLaunchInit(target);
+      const key = launchOperationKey(target);
+      setNodeLaunchRecords((current) => mergeNodeLaunchRecord(current, target, null));
+      setLaunchOperationByKey((current) => {
+        if (!Object.prototype.hasOwnProperty.call(current, key)) {
+          return current;
+        }
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+      setCompanionLaunchByKey((current) => {
+        if (!Object.prototype.hasOwnProperty.call(current, key)) {
+          return current;
+        }
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+      setNodeLaunchRecordRefreshKey((current) => current + 1);
+      await refreshSessions();
+    },
+    [refreshSessions],
   );
 
   const prefetchPromptProfiles = useCallback(() => {
@@ -2545,6 +2604,7 @@ function GraphDashboard({
               preferredTerminal: handoff.terminal.preferredTerminal,
               title: `${input.terminalTitle} REVIEW`,
               tabColor: input.terminalColor,
+              ...(input.reviewCompanion.usePawReviewAgent ? {} : { usePawReviewAgent: false }),
             }),
           });
           if (!companionResponse.ok) {
@@ -3042,6 +3102,11 @@ function GraphDashboard({
             onReleaseStuckOperation={
               selectedLaunchTarget
                 ? () => releaseStuckLaunchOperation(selectedLaunchTarget)
+                : undefined
+            }
+            onClearPreviousInit={
+              selectedLaunchTarget
+                ? () => clearPreviousInit(selectedLaunchTarget)
                 : undefined
             }
           />

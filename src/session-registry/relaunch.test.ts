@@ -311,7 +311,7 @@ describe("relaunchSession", () => {
     });
     const launchCalls: TerminalLaunchOptions[] = [];
     const { store, deps } = fakeDeps({ [session.id]: session }, {
-      loadDefaultCliArgs: () => ["--yolo"],
+      loadDefaultCliArgs: () => ["--yolo", "--prefer-version", "1.0.52-config-hardening-patch"],
       launchTerminal: (options) => {
         launchCalls.push(options);
         return fakeLaunchTerminal(options);
@@ -321,7 +321,9 @@ describe("relaunchSession", () => {
     const result = await relaunchSession(store, session.id, deps);
 
     expect(result.ok).toBe(true);
-    expect(launchCalls[0]?.command).toBe("copilot '--yolo' '--resume=sess-42'");
+    expect(launchCalls[0]?.command).toBe(
+      "copilot '--yolo' '--prefer-version' '1.0.52-config-hardening-patch' '--resume=sess-42'",
+    );
   });
 
   it("returns default_args_unavailable when defaults are required but cannot be loaded", async () => {

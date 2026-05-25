@@ -22,6 +22,7 @@ export interface NodePostPreparationTerminalIntent {
 
 export interface NodePostPreparationCompanionIntent {
   kickoffPrompt: string;
+  usePawReviewAgent?: boolean;
 }
 
 export interface NodePostPreparationIntent {
@@ -244,4 +245,11 @@ export interface NodeLaunchRecordResponse {
 
 export interface NodeLaunchRecordListResponse {
   records: NodeLaunchRecord[];
+}
+
+export interface NodeLaunchRecordResetResponse {
+  clearedRecord: NodeLaunchRecord | null;
+  clearedOperation: NodeLaunchOperation | null;
+  releasedLaunchClaims: NodeLaunchClaimState[];
+  detachedRegistryIds: string[];
 }

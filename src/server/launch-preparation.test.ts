@@ -1511,6 +1511,86 @@ describe("launch preparation API route", () => {
     }));
   });
 
+  it("launches an ad hoc post-preparation companion without PAW-Review agent injection", async () => {
+    const root = createRootDir();
+    const graphPath = normalizePath(writeLaunchPolicyGraph(root));
+    const store = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const terminalLaunches: TerminalLaunchOptions[] = [];
+    const api = createStreamlinerApiApp({
+      store,
+      launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
+      nodeLaunchDeps: {
+        launchTerminal: (options) => {
+          terminalLaunches.push(options);
+          return { method: "powershell", pid: 720 + terminalLaunches.length };
+        },
+      },
+      launchPreparationDeps: {
+        cwd: root,
+        stateRoot: join(root, "state"),
+        pawInitRunner: createPawInitRunner(),
+        contextPreparer: createContextPreparer(root),
+      },
+    });
+    activeApps.push(api);
+
+    const started = await request(api.app)
+      .post("/api/launch-preparations/runs")
+      .send({
+        nodeId: "launch-prompt-profiles",
+        graphPath,
+        configuration: {
+          cliArgs: ["--yolo"],
+          workflowInstructions: "Use PAW with local final-pr-only review.",
+        },
+        postPreparation: {
+          launchTerminal: {
+            terminalTitle: "Server Launch",
+          },
+          launchCompanion: {
+            kickoffPrompt: "Review the prepared implementation.",
+            usePawReviewAgent: false,
+          },
+        },
+      })
+      .expect(202);
+
+    expect(started.body.operation).toEqual(expect.objectContaining({
+      postPreparation: expect.objectContaining({
+        launchCompanion: {
+          kickoffPrompt: "Review the prepared implementation.",
+          usePawReviewAgent: false,
+        },
+      }),
+    }));
+
+    const snapshot = await waitForLaunchPreparationRun(api, started.body.runId);
+
+    expect(terminalLaunches).toHaveLength(2);
+    expect(String(terminalLaunches[1].command)).not.toContain("--agent=PAW-Review");
+    expect(String(terminalLaunches[1].command)).toContain("--yolo");
+    expect(snapshot.body).toEqual(expect.objectContaining({
+      status: "succeeded",
+      postPreparation: expect.objectContaining({
+        companion: expect.objectContaining({ status: "launched" }),
+      }),
+    }));
+
+    const launchRecord = await request(api.app)
+      .get("/api/node-launch-records")
+      .query({
+        graphPath,
+        nodeId: "launch-prompt-profiles",
+      })
+      .expect(200);
+    expect(launchRecord.body.operation.postPreparation.launchCompanion).toEqual({
+      kickoffPrompt: "Review the prepared implementation.",
+      usePawReviewAgent: false,
+    });
+  });
+
   it("reports terminal post-preparation failures and skips companion launch", async () => {
     const root = createRootDir();
     const graphPath = normalizePath(writeLaunchPolicyGraph(root));

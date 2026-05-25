@@ -7,6 +7,9 @@
   "scenario-promotion-pipeline": "#f000e8",
   "azure-rest-guidelines-alignment": "#e8114b",
   "persisted-schema-evolution": "#6754d7",
-  "dashboard-feedback-capture": "#82c6df",
-  "issue-lifecycle-maturity": "#b8b8b8"
+  "issue-lifecycle-maturity": "#b8b8b8",
+  "private-preview-customer-server-onboarding": "#82c6df",
+  "dashboard-feedback-capture": "#19d9df",
+  "runner-launch-hardening": "#e8114b",
+  "vmagent-cas-db-access": "#c71585"
 }

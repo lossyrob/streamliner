@@ -75,6 +75,30 @@ function buildStoredRecord(overrides: Partial<StoredRecordFixture> = {}): Stored
   };
 }
 
+function buildOperation(overrides: Partial<NodeLaunchOperation> = {}): NodeLaunchOperation {
+  const graphPath = overrides.graphPath ?? "C:\\repo\\.streamliner\\workstreams\\example\\graph.json";
+  const nodeId = overrides.nodeId ?? "node-a";
+  return {
+    id: `${nodeId}-operation`,
+    graphPath,
+    nodeId,
+    status: "terminal_failed",
+    preparationRunId: "run-a",
+    startedAt: "2026-05-04T12:00:00.000Z",
+    updatedAt: "2026-05-04T12:02:00.000Z",
+    completedAt: "2026-05-04T12:02:00.000Z",
+    handoff: null,
+    terminalLaunch: null,
+    error: {
+      code: "terminal_launch_failed",
+      error: "Terminal launch failed.",
+      timestamp: "2026-05-04T12:02:00.000Z",
+    },
+    progressEvents: [],
+    ...overrides,
+  };
+}
+
 function writeRecordDocument(
   recordsPath: string,
   records: StoredRecordFixture[],
@@ -318,6 +342,37 @@ describe("NodeLaunchRecordStore", () => {
         error: "No verified binding evidence remains.",
       }),
     }));
+  });
+
+  it("clears a node launch record and operation without touching other nodes", async () => {
+    const root = createRootDir();
+    const recordsPath = join(root, "node-launch-records.json");
+    const graphPath = join(root, ".streamliner", "workstreams", "example", "graph.json");
+    writeRecordDocument(
+      recordsPath,
+      [
+        buildStoredRecord({ graphPath, nodeId: "node-a" }),
+        buildStoredRecord({ graphPath, nodeId: "node-b" }),
+      ],
+      [
+        buildOperation({ graphPath, nodeId: "node-a" }),
+        buildOperation({ graphPath, nodeId: "node-b" }),
+      ],
+    );
+    const store = new NodeLaunchRecordStore({ recordsPath });
+
+    const cleared = await store.clearNodeLaunchState({ graphPath, nodeId: "node-a" });
+
+    expect(cleared.record).toEqual(expect.objectContaining({ nodeId: "node-a" }));
+    expect(cleared.operation).toEqual(expect.objectContaining({ nodeId: "node-a" }));
+    await expect(store.get(graphPath, "node-a")).resolves.toBeNull();
+    await expect(store.getOperation(graphPath, "node-a")).resolves.toBeNull();
+    await expect(store.get(graphPath, "node-b")).resolves.toEqual(
+      expect.objectContaining({ nodeId: "node-b" }),
+    );
+    await expect(store.getOperation(graphPath, "node-b")).resolves.toEqual(
+      expect.objectContaining({ nodeId: "node-b" }),
+    );
   });
 });
 
@@ -631,5 +686,157 @@ describe("POST /api/node-launch-records/operations/release", () => {
     await expect(
       new NodeLaunchRecordStore({ recordsPath }).getOperation(graphPath, "node-active"),
     ).resolves.toEqual(expect.objectContaining({ status: "launched_pending_binding" }));
+  });
+});
+
+describe("POST /api/node-launch-records/clear", () => {
+  it("clears stored launch state, releases blocking claims, and detaches node sessions", async () => {
+    const root = createRootDir();
+    const recordsPath = join(root, "node-launch-records.json");
+    const graphPath = join(root, ".streamliner", "workstreams", "example", "graph.json");
+    writeRecordDocument(
+      recordsPath,
+      [buildStoredRecord({ graphPath, nodeId: "node-a" })],
+      [buildOperation({ graphPath, nodeId: "node-a" })],
+    );
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    createClaim(claimStore, {
+      launchClaimId: "claim-reset",
+      nodeId: "node-a",
+      launchedAt: "2026-05-04T12:01:00.000Z",
+      status: "bound",
+    });
+    registryStore.upsertSession({
+      id: "registry-claim-reset",
+      title: "Claim-bound session",
+      description: "",
+      cwd: "C:\\repo",
+      repo: "lossyrob/streamliner",
+      branch: "feature/node-a",
+      tags: [],
+      origin: { kind: "launched", launchClaimId: "claim-reset" },
+      lifecycleStatus: "active",
+      graphBinding: {
+        workstreamId: "example-workstream",
+        nodeId: "node-a",
+        launchClaimId: "claim-reset",
+      },
+    });
+    registryStore.upsertSession({
+      id: "node-bound-no-claim",
+      title: "Node-bound session",
+      description: "",
+      cwd: "C:\\repo",
+      repo: "lossyrob/streamliner",
+      branch: "feature/node-a",
+      tags: [],
+      origin: { kind: "manual" },
+      lifecycleStatus: "active",
+      graphBinding: {
+        workstreamId: "example-workstream",
+        nodeId: "node-a",
+      },
+    });
+    const api = createStreamlinerApiApp({
+      store: registryStore,
+      launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: recordsPath,
+    });
+    activeApps.push(api);
+
+    const response = await request(api.app)
+      .post("/api/node-launch-records/clear")
+      .send({ graphPath, nodeId: "node-a" })
+      .expect(200);
+
+    expect(response.body).toEqual(expect.objectContaining({
+      clearedRecord: expect.objectContaining({ nodeId: "node-a" }),
+      clearedOperation: expect.objectContaining({ nodeId: "node-a" }),
+      releasedLaunchClaims: [
+        expect.objectContaining({
+          launchClaimId: "claim-reset",
+          status: "failed",
+          failureCode: "user-cancelled",
+          blocksLaunch: false,
+          retryable: true,
+        }),
+      ],
+      detachedRegistryIds: expect.arrayContaining([
+        "registry-claim-reset",
+        "node-bound-no-claim",
+      ]),
+    }));
+    expect(response.body.detachedRegistryIds).toHaveLength(2);
+    const store = new NodeLaunchRecordStore({ recordsPath });
+    await expect(store.get(graphPath, "node-a")).resolves.toBeNull();
+    await expect(store.getOperation(graphPath, "node-a")).resolves.toBeNull();
+    expect(claimStore.getClaim("claim-reset")).toEqual(expect.objectContaining({
+      status: "failed",
+      failureCode: "user-cancelled",
+    }));
+    expect(registryStore.getSession("registry-claim-reset")?.graphBinding).toBeNull();
+    expect(registryStore.getSession("node-bound-no-claim")?.graphBinding).toBeNull();
+  });
+
+  it("clears claim and session state when persisted PAW init state is already gone", async () => {
+    const root = createRootDir();
+    const recordsPath = join(root, "node-launch-records.json");
+    const graphPath = join(root, ".streamliner", "workstreams", "example", "graph.json");
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    createClaim(claimStore, {
+      launchClaimId: "claim-only-reset",
+      nodeId: "node-a",
+      launchedAt: "2026-05-04T12:01:00.000Z",
+      status: "bound",
+    });
+    registryStore.upsertSession({
+      id: "claim-only-registry",
+      title: "Claim-only session",
+      description: "",
+      cwd: "C:\\repo",
+      repo: "lossyrob/streamliner",
+      branch: "feature/node-a",
+      tags: [],
+      origin: { kind: "launched", launchClaimId: "claim-only-reset" },
+      lifecycleStatus: "active",
+      graphBinding: {
+        workstreamId: "example-workstream",
+        nodeId: "node-a",
+        launchClaimId: "claim-only-reset",
+      },
+    });
+    const api = createStreamlinerApiApp({
+      store: registryStore,
+      launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: recordsPath,
+    });
+    activeApps.push(api);
+
+    const response = await request(api.app)
+      .post("/api/node-launch-records/clear")
+      .send({ graphPath, workstreamId: "example-workstream", nodeId: "node-a" })
+      .expect(200);
+
+    expect(response.body).toEqual(expect.objectContaining({
+      clearedRecord: null,
+      clearedOperation: null,
+      releasedLaunchClaims: [
+        expect.objectContaining({
+          launchClaimId: "claim-only-reset",
+          status: "failed",
+          failureCode: "user-cancelled",
+          blocksLaunch: false,
+          retryable: true,
+        }),
+      ],
+      detachedRegistryIds: ["claim-only-registry"],
+    }));
+    expect(claimStore.getClaim("claim-only-reset")).toEqual(expect.objectContaining({
+      status: "failed",
+      failureCode: "user-cancelled",
+    }));
+    expect(registryStore.getSession("claim-only-registry")?.graphBinding).toBeNull();
   });
 });

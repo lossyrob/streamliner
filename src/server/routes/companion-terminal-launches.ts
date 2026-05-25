@@ -12,16 +12,8 @@ import {
 import type { NodeCompanionTerminalLaunchResponse } from "../../node-launch-record-contract";
 
 /**
- * The companion terminal launch always runs the PAW Review workflow agent.
- * Hard-coded here (rather than passed by the caller) because:
- *   1. The endpoint is purpose-built for PAW Review companions; there is no
- *      use case for a different agent on this route today.
- *   2. The original PR shipped without enforcing the agent flag, so
- *      handoff.cliArgs from the parent node launch (e.g. ["--yolo"]) would
- *      be the only thing the companion received -- the companion would
- *      then start with the default agent instead of PAW-Review.
- * If a future use case requires a different agent, lift this into a request
- * field with PAW-Review as the default.
+ * Review companions default to the PAW-Review workflow agent while allowing
+ * ad hoc review terminals to opt out and inherit the caller's CLI args.
  */
 const COMPANION_AGENT_FLAG = "--agent=PAW-Review";
 
@@ -34,6 +26,7 @@ export interface CompanionTerminalLaunchInput {
   preferredTerminal?: TerminalHostPreference;
   title?: string;
   tabColor?: string;
+  usePawReviewAgent?: boolean;
 }
 
 export interface CompanionTerminalLaunchDeps {
@@ -79,6 +72,16 @@ function optionalStringField(value: unknown, label: string): string | undefined 
   return value.trim() || undefined;
 }
 
+function optionalBooleanField(value: unknown, label: string): boolean | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value !== "boolean") {
+    throw Object.assign(new Error(`${label} must be a boolean.`), { statusCode: 400 });
+  }
+  return value;
+}
+
 function optionalCliArgs(value: unknown): string[] {
   if (value === undefined || value === null) {
     return [];
@@ -90,12 +93,15 @@ function optionalCliArgs(value: unknown): string[] {
 }
 
 /**
- * Strip any caller-supplied --agent or --agent=... and prepend the
- * companion's required agent flag. Prepending (rather than appending) makes
- * the agent decision visible at the start of the rendered command for
- * operators reading logs.
+ * Strip any caller-supplied --agent or --agent=... and prepend PAW-Review
+ * when the caller wants the review workflow agent. Prepending (rather than
+ * appending) makes the agent decision visible at the start of the rendered
+ * command for operators reading logs.
  */
-function applyCompanionAgent(cliArgs: string[]): string[] {
+function applyCompanionAgent(cliArgs: string[], usePawReviewAgent: boolean): string[] {
+  if (!usePawReviewAgent) {
+    return [...cliArgs];
+  }
   const filtered: string[] = [];
   for (let i = 0; i < cliArgs.length; i++) {
     const arg = cliArgs[i];
@@ -131,7 +137,7 @@ export async function launchCompanionTerminal(
   input: CompanionTerminalLaunchInput,
   deps: CompanionTerminalLaunchDeps = {},
 ): Promise<CompanionTerminalLaunchResponse> {
-  const cliArgs = applyCompanionAgent(input.cliArgs ?? []);
+  const cliArgs = applyCompanionAgent(input.cliArgs ?? [], input.usePawReviewAgent ?? true);
   const terminal = await launchCopilotTerminal({
     cwd: input.cwd,
     command: buildCopilotInteractiveCommand({
@@ -171,6 +177,10 @@ export function createCompanionTerminalLaunchesRouter(
       const title = optionalStringField(body.title, "title");
       const tabColor = optionalStringField(body.tabColor, "tabColor");
       const preferredTerminal = terminalHostPreference(body.preferredTerminal);
+      const usePawReviewAgent = optionalBooleanField(
+        body.usePawReviewAgent,
+        "usePawReviewAgent",
+      ) ?? true;
       const response = await launchCompanionTerminal({
         cwd,
         kickoffPrompt,
@@ -178,6 +188,7 @@ export function createCompanionTerminalLaunchesRouter(
         preferredTerminal,
         title,
         tabColor,
+        usePawReviewAgent,
       }, deps);
       res.status(201).json(response);
     } catch (error: unknown) {

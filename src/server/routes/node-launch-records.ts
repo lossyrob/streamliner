@@ -7,6 +7,7 @@ import type {
   NodeLaunchOperation,
   NodeLaunchOperationStatus,
   NodeLaunchRecord,
+  NodeLaunchRecordResetResponse,
 } from "../../node-launch-record-contract";
 import { SessionRegistryFileStore } from "../../session-registry/file-store";
 import { stopSession } from "../../session-registry/stop";
@@ -334,6 +335,68 @@ export function createNodeLaunchRecordsRouter(options: {
     }
   });
 
+  router.post("/node-launch-records/clear", async (req, res, next) => {
+    try {
+      if (isNonLoopbackRequest(req)) {
+        res.status(403).json({ error: "Node launch reset must originate from loopback." });
+        return;
+      }
+      const contentType = req.headers["content-type"] ?? "";
+      if (!contentType.startsWith("application/json")) {
+        res.status(415).json({ error: "Content-Type must be application/json." });
+        return;
+      }
+      const body = (typeof req.body === "object" && req.body !== null
+        ? (req.body as Record<string, unknown>)
+        : {}) as Record<string, unknown>;
+      const graphPath = typeof body.graphPath === "string" ? body.graphPath.trim() : "";
+      const requestedWorkstreamId =
+        typeof body.workstreamId === "string" ? body.workstreamId.trim() : "";
+      const nodeId = typeof body.nodeId === "string" ? body.nodeId.trim() : "";
+      if (!graphPath || !nodeId) {
+        res.status(400).json({
+          error: "Body must include non-empty 'graphPath' and 'nodeId'.",
+        });
+        return;
+      }
+
+      const existingRecord = await store.get(graphPath, nodeId);
+      const existingOperation = await store.getOperation(graphPath, nodeId);
+      const workstreamId = existingRecord?.workstreamId
+        ?? existingOperation?.handoff?.launchMetadata.workstreamId
+        ?? requestedWorkstreamId
+        ?? null;
+      const cleared = await store.clearNodeLaunchState({ graphPath, nodeId });
+      const detachedRegistryIds = new Set<string>();
+      const releasedLaunchClaims = workstreamId && options.claimStore
+        ? releaseNodeLaunchClaims(
+          options.claimStore,
+          options.registryStore,
+          workstreamId,
+          nodeId,
+          detachedRegistryIds,
+        )
+        : [];
+      if (workstreamId && options.registryStore) {
+        detachNodeRegistryRows(
+          options.registryStore,
+          workstreamId,
+          nodeId,
+          detachedRegistryIds,
+        );
+      }
+      const responseBody: NodeLaunchRecordResetResponse = {
+        clearedRecord: cleared.record,
+        clearedOperation: cleared.operation,
+        releasedLaunchClaims,
+        detachedRegistryIds: [...detachedRegistryIds],
+      };
+      res.json(responseBody);
+    } catch (error: unknown) {
+      next(error);
+    }
+  });
+
   router.post("/node-launch-records/operations/release", async (req, res, next) => {
     try {
       if (isNonLoopbackRequest(req)) {
@@ -482,6 +545,75 @@ function projectOperationStatus(
     return "launched_pending_binding";
   }
   return status;
+}
+
+function releaseNodeLaunchClaims(
+  claimStore: LaunchClaimStore,
+  registryStore: SessionRegistryFileStore | undefined,
+  workstreamId: string,
+  nodeId: string,
+  detachedRegistryIds: Set<string>,
+): NodeLaunchClaimState[] {
+  const entries = claimStore.listClaims({
+    workstreamId,
+    nodeId,
+    status: ["pending", "bound"] as const,
+  });
+  const released: NodeLaunchClaimState[] = [];
+  for (const entry of entries) {
+    const claim = claimStore.getClaim(entry.launchClaimId);
+    if (!claim) {
+      continue;
+    }
+    if (registryStore) {
+      for (const registryId of releaseClaimRegistryRows(registryStore, claim)) {
+        detachedRegistryIds.add(registryId);
+      }
+    }
+    const releasedClaim = claimStore.updateClaim(entry.launchClaimId, (current) => ({
+      ...current,
+      status: "failed",
+      failureCode: "user-cancelled",
+      failureReason: "Manually cleared by the user before re-running PAW init.",
+    }));
+    released.push(summarizeLaunchClaim(releasedClaim));
+  }
+  return released;
+}
+
+function detachNodeRegistryRows(
+  registryStore: SessionRegistryFileStore,
+  workstreamId: string,
+  nodeId: string,
+  detachedRegistryIds: Set<string>,
+): void {
+  const sessions = registryStore.listSessions({
+    includeArchived: true,
+    workstreamId,
+    nodeId,
+  });
+  for (const sessionListItem of sessions) {
+    const session = registryStore.getSession(sessionListItem.id);
+    if (!session || !isNodeGraphBinding(session.graphBinding, workstreamId, nodeId)) {
+      continue;
+    }
+    if (session.lifecycleStatus !== "ended" && session.copilotSessionId) {
+      stopSession(registryStore, session.id);
+    }
+    const current = registryStore.getSession(session.id);
+    if (current && isNodeGraphBinding(current.graphBinding, workstreamId, nodeId)) {
+      registryStore.patchSession(session.id, { graphBinding: null });
+      detachedRegistryIds.add(session.id);
+    }
+  }
+}
+
+function isNodeGraphBinding(
+  graphBinding: { workstreamId: string; nodeId: string } | null,
+  workstreamId: string,
+  nodeId: string,
+): boolean {
+  return graphBinding?.workstreamId === workstreamId && graphBinding.nodeId === nodeId;
 }
 
 function releaseClaimRegistryRows(

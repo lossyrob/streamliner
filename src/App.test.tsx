@@ -1460,6 +1460,126 @@ describe("App sessions route", () => {
   );
 
   it(
+    "clears previous PAW init state so a ready node can be initialized again",
+    async () => {
+      const graph = buildLaunchGraph();
+      const launchRecord = {
+        id: "launch-prompt-profiles-record",
+        graphPath: "C:\\graphs\\api-test\\graph.json",
+        projectKey: "streamliner",
+        workstreamId: "api-test",
+        nodeId: "launch-prompt-profiles",
+        workId: "launch-prompt-profiles",
+        workTitle: "Launch prompt profiles",
+        branch: "feature/launch-prompt-profiles",
+        cwd: "C:\\graphs\\api-test",
+        pawWorkDir: "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles",
+        workflowContextPath:
+          "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles\\WorkflowContext.md",
+        streamlinerContextPath:
+          "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles\\streamliner\\context.md",
+        contextPackagePath: "C:\\state\\launch-contexts\\ctx",
+        contextFilePath: "C:\\state\\launch-contexts\\ctx\\context.md",
+        launchNonce: "nonce-1",
+        launchClaimRef: "claim-1",
+        trackerUrl: "https://github.com/lossyrob/streamliner/issues/33",
+        createdAt: "2026-05-03T18:00:00.000Z",
+        updatedAt: "2026-05-03T18:01:00.000Z",
+        pathStatus: {
+          cwdExists: true,
+          pawWorkDirExists: true,
+          workflowContextExists: true,
+          streamlinerContextExists: true,
+          contextPackageExists: true,
+          contextFileExists: true,
+        },
+        latestClaim: {
+          launchClaimId: "claim-1",
+          status: "bound",
+          launchedAt: "2026-05-03T18:00:00.000Z",
+          updatedAt: "2026-05-03T18:01:00.000Z",
+          bindingWindowExpiresAt: "2026-05-03T18:05:00.000Z",
+          reservedRegistryId: "registry-1",
+          boundRegistryId: "registry-1",
+          boundCopilotSessionId: "copilot-1",
+          failureCode: null,
+          failureReason: null,
+          blocksLaunch: true,
+          retryable: false,
+        },
+      };
+      let currentLaunchRecord: typeof launchRecord | null = launchRecord;
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        if (path === "/api/sessions?workstreamId=api-test") {
+          return jsonResponse([]);
+        }
+        if (path === "/api/node-launch-records/clear" && init?.method === "POST") {
+          expect(JSON.parse(String(init.body))).toEqual({
+            graphPath: "C:\\graphs\\api-test\\graph.json",
+            workstreamId: "api-test",
+            nodeId: "launch-prompt-profiles",
+          });
+          currentLaunchRecord = null;
+          return jsonResponse({
+            clearedRecord: launchRecord,
+            clearedOperation: null,
+            releasedLaunchClaims: [launchRecord.latestClaim],
+            detachedRegistryIds: ["registry-1"],
+          });
+        }
+        if (path.startsWith("/api/node-launch-records?") && path.includes("nodeId=")) {
+          return jsonResponse({ record: currentLaunchRecord, operation: null });
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return jsonResponse({ records: currentLaunchRecord ? [currentLaunchRecord] : [] });
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState(
+        {},
+        "",
+        "/workstreams/streamliner/api-test/nodes/launch-prompt-profiles",
+      );
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(300);
+
+      expect(findButton(container, "Open PAW launch")).toBeInstanceOf(HTMLButtonElement);
+      expect(container.textContent).toContain("LATEST PAW LAUNCH");
+      expect(container.textContent).toContain("Bound - terminal active");
+
+      act(() => {
+        findButton(container, "Clear previous init").click();
+      });
+      await settle(150);
+
+      expect(
+        fetchMock.mock.calls.some(
+          ([input]) => requestPath(input as RequestInfo | URL) === "/api/node-launch-records/clear",
+        ),
+      ).toBe(true);
+      expect(findButton(container, "Initialize PAW launch")).toBeInstanceOf(HTMLButtonElement);
+      expect(container.textContent).not.toContain("LATEST PAW LAUNCH");
+      expect(container.textContent).not.toContain("Bound - terminal active");
+    },
+    15_000,
+  );
+
+  it(
     "decorates workstream nodes and the inspector with live GitHub issue status",
     async () => {
       const graph = buildLaunchGraph("planned");
@@ -2083,6 +2203,7 @@ describe("App sessions route", () => {
         "Launch PAW Review companion terminal",
       );
       expect(reviewCompanionInput.checked).toBe(true);
+      expect(findInputByLabel(container, "Use PAW-Review agent").checked).toBe(true);
       expect(findSelectByLabel(container, "Load review template").value).toBe("thorough-review");
     },
     15_000,
@@ -2296,7 +2417,7 @@ describe("App sessions route", () => {
       expect(findTextareaByLabel(container, "Launch instructions").value).toBe(
         "Use saved final PR only workflow text.",
       );
-      setInputValue(findInputByLabel(container, "Copilot CLI args"), "");
+      setTextareaValue(findTextareaByLabel(container, "Copilot CLI args"), "");
       setInputValue(findInputByLabel(container, "Terminal tab title"), "Launch profile worker");
       act(() => {
         findButtonByLabel(container, "Use terminal color #ff8c0a").click();
@@ -3434,6 +3555,11 @@ describe("App sessions route", () => {
         findInputByLabel(container, "Launch PAW Review companion terminal").click();
       });
       await settle();
+      expect(findInputByLabel(container, "Use PAW-Review agent").checked).toBe(true);
+      act(() => {
+        findInputByLabel(container, "Use PAW-Review agent").click();
+      });
+      await settle();
       setTextareaValue(
         findTextareaByLabel(container, "PAW Review prompt template"),
         "Review issue {{githubRepo}}#{{githubIssue}}.",
@@ -3459,6 +3585,7 @@ describe("App sessions route", () => {
             },
             launchCompanion: {
               kickoffPrompt: "Review issue lossyrob/planning#33.",
+              usePawReviewAgent: false,
             },
           },
         }),

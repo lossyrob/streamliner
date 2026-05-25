@@ -45,6 +45,7 @@ interface NodeInspectorProps {
    * resolving a stale terminal launch that is no longer blocked by a claim.
    */
   onReleaseStuckOperation?: () => Promise<void>;
+  onClearPreviousInit?: () => Promise<void>;
 }
 
 const ACTIVE_LAUNCH_OPERATION_STATUSES = new Set([
@@ -388,9 +389,12 @@ export function NodeInspector({
   runtimeOverlay = null,
   onLaunch,
   onReleaseStuckOperation,
+  onClearPreviousInit,
 }: NodeInspectorProps) {
   const [releasing, setReleasing] = useState(false);
   const [releaseError, setReleaseError] = useState<string | null>(null);
+  const [clearing, setClearing] = useState(false);
+  const [clearError, setClearError] = useState<string | null>(null);
 
   if (!entry) {
     return (
@@ -444,7 +448,10 @@ export function NodeInspector({
       title: string;
     } => chip !== null,
   );
-  const latestClaim = launchRecord?.latestClaim ?? launchOperation?.latestClaim ?? null;
+  const latestClaim = launchRecord?.latestClaim
+    ?? launchOperation?.latestClaim
+    ?? runtimeOverlay?.launch.latestClaim
+    ?? null;
   const latestClaimDisplay = latestClaim ? humanizeLaunchClaim(latestClaim) : null;
   const canReleaseOperation = launchOperation
     ? canReleaseStuckOperation({ ...launchOperation, latestClaim })
@@ -461,6 +468,7 @@ export function NodeInspector({
   const launchButtonLabel = latestClaim?.blocksLaunch || launchOperation || launchRecord
     ? "Open PAW launch"
     : "Initialize PAW launch";
+  const hasPreviousInitState = Boolean(launchRecord || launchOperation || latestClaim);
 
   const repoById = new Map(workstream.repos.map((r) => [r.id, r]));
   const repoLabels = node.repoIds.map((id) => {
@@ -537,7 +545,7 @@ export function NodeInspector({
 
       <RuntimeDetails overlay={runtimeOverlay} />
 
-      {(launchRecordLoading || launchRecordError || launchRecord || launchOperation) && (
+      {(launchRecordLoading || launchRecordError || launchRecord || launchOperation || latestClaim) && (
         <div className="sl-sidebar-section">
           <span className="sl-section-label">LATEST PAW LAUNCH</span>
           <div className="sl-inspector-card sl-node-launch-card">
@@ -545,7 +553,7 @@ export function NodeInspector({
               <p className="sl-sidebar-note">Loading launch details…</p>
             ) : launchRecordError ? (
               <p className="sl-action-error">{launchRecordError}</p>
-            ) : launchRecord || launchOperation ? (
+            ) : launchRecord || launchOperation || latestClaim ? (
               <>
                 <div className="sl-inspector-meta">
                   {launchOperation && (
@@ -659,6 +667,42 @@ export function NodeInspector({
                     </p>
                     {releaseError && (
                       <p className="sl-action-error">{releaseError}</p>
+                    )}
+                  </div>
+                )}
+                {hasPreviousInitState && onClearPreviousInit && (
+                  <div className="sl-node-launch-release">
+                    <button
+                      type="button"
+                      className="sl-action-btn danger"
+                      disabled={clearing}
+                      onClick={() => {
+                        if (clearing) return;
+                        setClearing(true);
+                        setClearError(null);
+                        void (async () => {
+                          try {
+                            await onClearPreviousInit();
+                          } catch (error: unknown) {
+                            setClearError(
+                              error instanceof Error ? error.message : String(error),
+                            );
+                          } finally {
+                            setClearing(false);
+                          }
+                        })();
+                      }}
+                      title="Clear the saved PAW init, launch operation, launch claim, and node session binding so this node can be initialized again."
+                    >
+                      {clearing ? "Clearing..." : "Clear previous init"}
+                    </button>
+                    <p className="sl-sidebar-note">
+                      Removes Streamliner&apos;s saved PAW init state and detaches
+                      any session binding for this node. Use when prior work was
+                      retargeted and the node should run from scratch.
+                    </p>
+                    {clearError && (
+                      <p className="sl-action-error">{clearError}</p>
                     )}
                   </div>
                 )}
