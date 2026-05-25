@@ -226,9 +226,16 @@ export class SessionRegistryBackgroundWorker {
     if (this.timer) {
       return;
     }
-    // Startup recovery runs synchronously before the first poll cycle so
-    // stale managed runtime rows and orphan launch reservations cannot
-    // masquerade as active work during the first projection pass.
+    this.initialTimer = setTimeout(() => {
+      this.initialTimer = null;
+      void this.runCycle();
+    }, this.initialDelayMs);
+    this.timer = setInterval(() => {
+      void this.runCycle();
+    }, this.pollIntervalMs);
+  }
+
+  private runStartupReconciliation(): void {
     if (!this.hasReconciledOnStartup) {
       try {
         const result = reconcileManagedRuntimeStartupRows(this.store, {
@@ -264,13 +271,6 @@ export class SessionRegistryBackgroundWorker {
       }
       this.hasReconciledOnStartup = true;
     }
-    this.initialTimer = setTimeout(() => {
-      this.initialTimer = null;
-      void this.runCycle();
-    }, this.initialDelayMs);
-    this.timer = setInterval(() => {
-      void this.runCycle();
-    }, this.pollIntervalMs);
   }
 
   async stop(): Promise<void> {
@@ -291,6 +291,8 @@ export class SessionRegistryBackgroundWorker {
     }
     this.running = true;
     try {
+      this.runStartupReconciliation();
+      await yieldToEventLoop();
       try {
         drainTrustedSessionSignalSpool(this.store, {
           rootDir: this.signalSpoolRoot,
