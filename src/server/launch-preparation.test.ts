@@ -521,8 +521,8 @@ describe("preparePawLaunch", () => {
 
     expect(prompt).toContain("Selected target repo Copilot instructions (.github/copilot-instructions.md)");
     expect(prompt).toContain("Create sibling worktrees with `script/worktree-new <name>`.");
-    expect(prompt).toContain("use that helper to satisfy Streamliner's sibling-worktree requirement");
-    expect(prompt).toContain("Do not copy them into WorkflowContext.md");
+    expect(prompt).not.toContain("use that helper to satisfy Streamliner's sibling-worktree requirement");
+    expect(prompt).not.toContain("Do not copy them into WorkflowContext.md");
   });
 
   it("omits repo Copilot instruction prompt text when no instructions file is loaded", () => {

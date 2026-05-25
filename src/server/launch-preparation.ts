@@ -883,9 +883,6 @@ function repoInstructionsPromptLines(
     "```markdown",
     repoInstructions.content.trim(),
     "```",
-    "",
-    "If they specify a worktree helper, use that helper to satisfy Streamliner's sibling-worktree requirement.",
-    "Do not copy them into WorkflowContext.md, context.md, or additionalKickoffInstructions; the launched worker loads them from its execution checkout.",
   ];
 }
 
