@@ -476,7 +476,7 @@ describe("preparePawLaunch", () => {
 
     expect(prompt).toContain("Builder launch instructions (trusted, high priority)");
     expect(prompt).toContain(workflowInstructions);
-    expect(prompt).toContain("Selected target repo Copilot instructions (trusted repository conventions)");
+    expect(prompt).toContain("Selected target repo Copilot instructions (.github/copilot-instructions.md)");
     expect(prompt).toContain("script/worktree-new <name>");
     expect(prompt.indexOf("Builder launch instructions")).toBeLessThan(prompt.indexOf("Launch manifest:"));
     expect(prompt).toContain(normalizePath(manifestPath));
@@ -519,10 +519,58 @@ describe("preparePawLaunch", () => {
       existingLaunch: null,
     });
 
-    expect(prompt).toContain("Selected target repo Copilot instructions (trusted repository conventions)");
+    expect(prompt).toContain("Selected target repo Copilot instructions (.github/copilot-instructions.md)");
     expect(prompt).toContain("Create sibling worktrees with `script/worktree-new <name>`.");
-    expect(prompt).toContain("use that helper as the way to satisfy Streamliner's sibling-worktree requirement");
-    expect(prompt).toContain("Do not copy these repo instructions into WorkflowContext.md");
+    expect(prompt).toContain("use that helper to satisfy Streamliner's sibling-worktree requirement");
+    expect(prompt).toContain("Do not copy them into WorkflowContext.md");
+  });
+
+  it("omits repo Copilot instruction prompt text when no instructions file is loaded", () => {
+    const root = createRootDir();
+    const contextPackage = fakeContextPackage(
+      root,
+      {
+        nodeId: "launch-prompt-profiles",
+        graphPath: join(root, ".streamliner", "workstreams", "session-launching-and-tracking", "graph.json"),
+      },
+      {
+        metadata: {
+          repoInstructions: fakeRepoInstructions(root, {
+            exists: false,
+            content: undefined,
+            freshness: undefined,
+            unavailableReason: "missing",
+            unavailableDetail: "ENOENT",
+          }),
+        },
+      },
+    );
+
+    const prompt = buildPawInitPrompt({
+      nodeId: "launch-prompt-profiles",
+      graphPath: contextPackage.metadata.graphPath,
+      cwd: root,
+      sessionStateRoot: join(root, "state"),
+      launchNonce: "nonce-sdk",
+      configuration: {
+        cwd: root,
+        cliArgs: [],
+        environment: {},
+        workflowInstructions: "Use paw-lite with final-pr-only review.",
+        terminal: {
+          launchMode: "manual",
+          preferredTerminal: "default",
+          title: null,
+          tabColor: null,
+        },
+      },
+      stagedContextPackage: contextPackage,
+      existingLaunch: null,
+    });
+
+    expect(prompt).not.toContain("Selected target repo Copilot instructions");
+    expect(prompt).not.toContain(".github/copilot-instructions.md");
+    expect(prompt).not.toContain("Status: unavailable");
   });
 
   it("rejects PAW work dirs inside the launch checkout when the target branch differs", () => {
