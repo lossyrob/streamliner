@@ -27,6 +27,7 @@ import { getApiLogger } from "./logger";
 const execFileAsync = promisify(execFile);
 
 const CONTEXT_FILE_NAME = "context.md";
+export const COPILOT_INSTRUCTIONS_RELATIVE_PATH = ".github/copilot-instructions.md";
 const DEFAULT_CONTEXT_GENERATION_MODEL = "claude-sonnet-4.6";
 const DEFAULT_PROMPT_SOURCE_LIMIT_CHARS = 20_000;
 const JSON_PROMPT_SOURCE_LIMIT_CHARS = 24_000;
@@ -39,6 +40,7 @@ export type LaunchContextUnavailableKind =
   | "git"
   | "graph"
   | "local-tracker"
+  | "repo-instructions"
   | "tracker";
 
 export interface LaunchContextUnavailableInput {
@@ -54,12 +56,23 @@ export interface LaunchContextSourceFreshness {
 }
 
 export interface LaunchContextSourceReference {
-  kind: "graph" | "brief" | "design" | "tracker" | "local-tracker";
+  kind: "graph" | "brief" | "design" | "tracker" | "local-tracker" | "repo-instructions";
   role: string;
   path?: string;
   repoId?: string;
   url?: string;
   freshness?: LaunchContextSourceFreshness;
+}
+
+export interface LaunchContextRepoInstructions {
+  repoId: string | null;
+  repoRoot: string;
+  path: string;
+  exists: boolean;
+  content?: string;
+  freshness?: LaunchContextSourceFreshness;
+  unavailableReason?: "missing" | "read_failed";
+  unavailableDetail?: string;
 }
 
 export interface LaunchContextLayer0Selection {
@@ -84,6 +97,7 @@ export interface LaunchContextMetadata {
   contextPackagePath: string;
   contextFilePath: string;
   contextModel: string;
+  repoInstructions: LaunchContextRepoInstructions;
   sourceReferences: LaunchContextSourceReference[];
   unavailableInputs: LaunchContextUnavailableInput[];
 }
@@ -170,6 +184,7 @@ export interface LaunchContextGenerationInput {
   briefSource: LaunchContextLoadedSource;
   designSources: LaunchContextLoadedSource[];
   trackerSource: LaunchContextLoadedSource | null;
+  repoInstructions: LaunchContextRepoInstructions;
   designSelection: LaunchContextLayer0Selection[];
   trackerReference: string | null;
   sourceReferences: LaunchContextSourceReference[];
@@ -514,6 +529,51 @@ async function readSourceFile(options: {
       detail: error instanceof Error ? error.message : String(error),
     });
     return { reference };
+  }
+}
+
+async function readRepoInstructions(options: {
+  repoRoot: string;
+  repoId: string | null;
+  sourceReferences: LaunchContextSourceReference[];
+}): Promise<LaunchContextRepoInstructions> {
+  const absPath = join(options.repoRoot, ...COPILOT_INSTRUCTIONS_RELATIVE_PATH.split("/"));
+  const displayPath = sourceDisplayPath(absPath, options.repoRoot);
+  const reference: LaunchContextSourceReference = {
+    kind: "repo-instructions",
+    role: "copilot-custom-instructions",
+    path: displayPath,
+    repoId: options.repoId ?? undefined,
+  };
+
+  try {
+    const content = await readFile(absPath, "utf8");
+    const freshness = await computeFreshness(
+      absPath,
+      options.repoRoot,
+      content,
+      [],
+    );
+    reference.freshness = freshness;
+    options.sourceReferences.push(reference);
+    return {
+      repoId: options.repoId,
+      repoRoot: normalizeManifestPath(options.repoRoot),
+      path: displayPath,
+      exists: true,
+      content,
+      freshness,
+    };
+  } catch (error: unknown) {
+    options.sourceReferences.push(reference);
+    return {
+      repoId: options.repoId,
+      repoRoot: normalizeManifestPath(options.repoRoot),
+      path: displayPath,
+      exists: false,
+      unavailableReason: isErrno(error, "ENOENT") ? "missing" : "read_failed",
+      unavailableDetail: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
@@ -1315,6 +1375,11 @@ export async function prepareLaunchContextPackageInput(
     sourceReferences,
     trackerResolver: options.trackerResolver ?? defaultGithubIssueTrackerResolver,
   });
+  const repoInstructions = await readRepoInstructions({
+    repoRoot,
+    repoId: launchTarget.targetRepoId ?? primaryRepoId,
+    sourceReferences,
+  });
 
   const metadata: LaunchContextMetadata = {
     contextId,
@@ -1331,6 +1396,7 @@ export async function prepareLaunchContextPackageInput(
     contextPackagePath: normalizeManifestPath(packagePath),
     contextFilePath: normalizeManifestPath(contextFilePath),
     contextModel,
+    repoInstructions,
     sourceReferences,
     unavailableInputs,
   };
@@ -1346,6 +1412,7 @@ export async function prepareLaunchContextPackageInput(
       briefSource,
       designSources,
       trackerSource: trackerResolution.source,
+      repoInstructions,
       designSelection: layer0Selection,
       trackerReference: trackerResolution.referenceText,
       sourceReferences,
