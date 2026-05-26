@@ -1259,6 +1259,12 @@ function groupSessions(
     groups.sort((a, b) => (order[a.key as RecencyBucketKey] ?? 99) - (order[b.key as RecencyBucketKey] ?? 99));
   } else if (mode === "workstream") {
     groups.sort((a, b) => {
+      if (a.key === UNBOUND_SESSION_WORKSTREAM_GROUP.key && b.key !== UNBOUND_SESSION_WORKSTREAM_GROUP.key) {
+        return 1;
+      }
+      if (b.key === UNBOUND_SESSION_WORKSTREAM_GROUP.key && a.key !== UNBOUND_SESSION_WORKSTREAM_GROUP.key) {
+        return -1;
+      }
       if (a.order !== b.order) {
         return a.order - b.order;
       }
@@ -2453,7 +2459,7 @@ export function SessionsPage({
       : groupMode === "flat"
         ? "No grouping — rows sorted by most recent activity"
         : groupMode === "workstream"
-          ? "Workstream groups — unbound first, then tracked order"
+          ? "Workstream groups — tracked workstreams first, unbound last"
           : "Group order frozen at page load · use ↻ Resort to refresh";
 
   return (
