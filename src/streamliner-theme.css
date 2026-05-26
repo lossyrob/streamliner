@@ -1670,6 +1670,14 @@ a.sl-action-btn {
   min-width: 160px;
 }
 
+.sl-session-facet-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 220px;
+  flex: 0 1 280px;
+}
+
 .sl-session-stale-input {
   display: flex;
   align-items: center;

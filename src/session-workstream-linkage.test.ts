@@ -11,8 +11,14 @@ import type { WorkstreamDocument } from "./workstream-schema";
 
 function buildSession(
   graphBinding: SessionRegistryListItem["graphBinding"],
-): Pick<SessionRegistryListItem, "graphBinding"> {
-  return { graphBinding };
+  overrides: Partial<Pick<SessionRegistryListItem, "description" | "originKind">> = {},
+): Pick<SessionRegistryListItem, "graphBinding" | "description" | "originKind"> {
+  return {
+    graphBinding,
+    description: "",
+    originKind: "manual",
+    ...overrides,
+  };
 }
 
 function buildWorkstream(
@@ -99,6 +105,28 @@ describe("resolveSessionWorkstreamLinkage", () => {
       workstreamId: "session-launching-and-tracking",
       nodeId: "sessions-workstream-linkage-ui",
     });
+  });
+
+  it("falls back to launched-row description when graphBinding was pruned", () => {
+    const workstream = buildWorkstream();
+    const graphStates = new Map<string, WorkstreamGraphLoadState>([
+      [workstreamRegistryKey(workstream), { status: "loaded", document: buildGraph() }],
+    ]);
+
+    const resolution = resolveSessionWorkstreamLinkage(
+      buildSession(null, {
+        originKind: "launched",
+        description:
+          "Graph launch for workstream session-launching-and-tracking, node sessions-workstream-linkage-ui.",
+      }),
+      [workstream],
+      graphStates,
+    );
+
+    expect(resolution.status).toBe("resolved");
+    expect(resolution.workstreamId).toBe("session-launching-and-tracking");
+    expect(resolution.nodeId).toBe("sessions-workstream-linkage-ui");
+    expect(resolution.nodeLabel).toBe("Sessions view workstream linkage");
   });
 
   it("does not route ambiguous workstream bindings", () => {

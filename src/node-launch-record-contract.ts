@@ -171,6 +171,7 @@ export interface NodeTerminalLaunchResponse {
 }
 
 export interface NodeCompanionTerminalLaunchResponse {
+  launchClaim?: NodeLaunchClaimState;
   terminal: {
     method: "windows-terminal" | "powershell";
     pid?: number;

@@ -1,4 +1,5 @@
 import type { SessionRegistryListItem } from "./session-registry-contract";
+import { sessionRegistryEffectiveGraphBinding } from "./session-registry-filter";
 import type { WorkstreamRegistryListEntry } from "./workstream-registry-contract";
 import type { WorkstreamDocument, WorkstreamNode } from "./workstream-schema";
 
@@ -72,11 +73,14 @@ export function findGraphBindingWorkstreamMatches(
 }
 
 export function resolveSessionWorkstreamLinkage(
-  session: Pick<SessionRegistryListItem, "graphBinding">,
+  session: Pick<
+    SessionRegistryListItem,
+    "graphBinding" | "description" | "originKind"
+  >,
   workstreams: WorkstreamRegistryListEntry[],
   graphStates: ReadonlyMap<string, WorkstreamGraphLoadState> = new Map(),
 ): SessionWorkstreamLinkageResolution {
-  const binding = session.graphBinding;
+  const binding = sessionRegistryEffectiveGraphBinding(session);
   if (!binding) {
     return {
       status: "unbound",

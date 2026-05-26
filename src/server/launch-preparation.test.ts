@@ -1595,7 +1595,7 @@ describe("launch preparation API route", () => {
       preferredTerminal: "default",
     }));
     expect(terminalLaunches[1]).toEqual(expect.objectContaining({
-      title: "Server Launch Review",
+      title: "Server Launch REVIEW",
       tabColor: "#123abc",
     }));
     expect(String(terminalLaunches[1].command)).toContain("--agent=PAW-Review");

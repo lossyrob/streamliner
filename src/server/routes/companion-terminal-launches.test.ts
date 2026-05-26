@@ -1,8 +1,16 @@
 import express from "express";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import request from "supertest";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createCompanionTerminalLaunchesRouter } from "./companion-terminal-launches";
+import {
+  createCompanionTerminalLaunchesRouter,
+  launchCompanionTerminal,
+} from "./companion-terminal-launches";
+import { LaunchClaimFileStore } from "../../session-registry/launch-claim-store";
+import { SessionRegistryFileStore } from "../../session-registry/file-store";
 import type { TerminalLaunchOptions } from "../terminal-launch";
 
 function createApp() {
@@ -18,6 +26,20 @@ function createApp() {
   app.use("/api", createCompanionTerminalLaunchesRouter({ launchTerminal }));
   return { app, launchTerminal };
 }
+
+const tempRoots: string[] = [];
+
+function makeTempRoot(): string {
+  const root = mkdtempSync(join(tmpdir(), "streamliner-companion-launch-"));
+  tempRoots.push(root);
+  return root;
+}
+
+afterEach(() => {
+  for (const root of tempRoots.splice(0)) {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 describe("companion terminal launches route", () => {
   it("launches a Copilot terminal with the supplied prompt and terminal metadata, prepending --agent=PAW-Review", async () => {
@@ -116,6 +138,122 @@ describe("companion terminal launches route", () => {
     const options = launchTerminal.mock.calls[0][0] as TerminalLaunchOptions;
     expect(options.command).not.toContain("--agent=PAW-Review");
     expect(options.command).toContain("--agent=Custom");
+  });
+
+  it("can reserve a launch claim so companion sessions inherit node title, color, and graph binding", async () => {
+    const root = makeTempRoot();
+    const registryStore = new SessionRegistryFileStore({
+      rootDir: join(root, "registry"),
+    });
+    const claimStore = new LaunchClaimFileStore({
+      rootDir: join(root, "claims"),
+    });
+    const launchTerminal = vi.fn((options: TerminalLaunchOptions) => {
+      void options;
+      return {
+        method: "windows-terminal" as const,
+        pid: 5678,
+      };
+    });
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createCompanionTerminalLaunchesRouter({
+      launchTerminal,
+      registryStore,
+      claimStore,
+      now: () => new Date("2026-05-24T00:00:00.000Z"),
+    }));
+
+    const response = await request(app)
+      .post("/api/companion-terminal-launches")
+      .send({
+        cwd: "C:\\repo",
+        kickoffPrompt: "Review issue 418",
+        cliArgs: ["--yolo"],
+        preferredTerminal: "windows-terminal",
+        title: "Node REVIEW",
+        tabColor: "#336699",
+        launchBinding: {
+          workstreamId: "session-launching-and-tracking",
+          nodeId: "launch-claim-binding",
+          branch: "feature/launch-claim-binding",
+          contextId: "ctx-1",
+        },
+      })
+      .expect(201);
+
+    expect(response.body.launchClaim).toEqual(expect.objectContaining({
+      status: "pending",
+      reservedRegistryId: expect.any(String),
+    }));
+    const reservedId = response.body.launchClaim.reservedRegistryId as string;
+    const reserved = registryStore.getSession(reservedId);
+    expect(reserved).toEqual(expect.objectContaining({
+      title: "Node REVIEW",
+      color: "#336699",
+      graphBinding: expect.objectContaining({
+        workstreamId: "session-launching-and-tracking",
+        nodeId: "launch-claim-binding",
+      }),
+    }));
+    const options = launchTerminal.mock.calls[0][0] as TerminalLaunchOptions;
+    expect(options.env).toEqual(expect.objectContaining({
+      STREAMLINER_LAUNCH_CLAIM_ID: response.body.launchClaim.launchClaimId,
+    }));
+    expect(options.command).toContain("Streamliner launch claim:");
+  });
+
+  it("fails instead of silently skipping binding when launchBinding is supplied without stores", async () => {
+    await expect(
+      launchCompanionTerminal({
+        cwd: "C:\\repo",
+        kickoffPrompt: "Review issue 419",
+        launchBinding: {
+          workstreamId: "session-launching-and-tracking",
+          nodeId: "launch-claim-binding",
+        },
+      }, {
+        launchTerminal: () => ({ method: "windows-terminal", pid: 1234 }),
+      }),
+    ).rejects.toMatchObject({
+      message: "Companion launch binding requires session registry and launch-claim stores.",
+      statusCode: 503,
+    });
+  });
+
+  it("marks the companion launch claim failed when terminal spawning fails", async () => {
+    const root = makeTempRoot();
+    const registryStore = new SessionRegistryFileStore({
+      rootDir: join(root, "registry"),
+    });
+    const claimStore = new LaunchClaimFileStore({
+      rootDir: join(root, "claims"),
+    });
+
+    await expect(
+      launchCompanionTerminal({
+        cwd: "C:\\repo",
+        kickoffPrompt: "Review issue 420",
+        title: "Node REVIEW",
+        launchBinding: {
+          workstreamId: "session-launching-and-tracking",
+          nodeId: "launch-claim-binding",
+        },
+      }, {
+        registryStore,
+        claimStore,
+        launchTerminal: () => {
+          throw new Error("wt unavailable");
+        },
+      }),
+    ).rejects.toThrow("wt unavailable");
+
+    const [claimEntry] = claimStore.listClaims();
+    const claim = claimStore.getClaim(claimEntry.launchClaimId);
+    expect(claim).toEqual(expect.objectContaining({
+      status: "failed",
+      failureCode: "terminal-spawn-failed",
+    }));
   });
 
   it("rejects non-loopback forwarded requests", async () => {

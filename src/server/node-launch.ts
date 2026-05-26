@@ -6,6 +6,7 @@ import type {
   SessionRegistryRecord,
 } from "../session-registry-schema";
 import type { SessionRegistryStore } from "../session-registry-contract";
+import { buildLaunchedSessionDescription } from "../session-registry-filter";
 import type { SessionRegistryFileStore } from "../session-registry/file-store";
 import { isManagedRuntimeActive } from "../session-registry/managed-runtime";
 import {
@@ -431,7 +432,10 @@ function reserveLaunchClaimForHandoff(
     launchNonce: handoff.launchMetadata.launchNonce,
     reservedRowTitle: terminalTitle,
     reservedRowColor: handoff.terminal.tabColor ?? null,
-    reservedRowDescription: `Graph launch for workstream ${handoff.launchMetadata.workstreamId}, node ${handoff.launchMetadata.nodeId}.`,
+    reservedRowDescription: buildLaunchedSessionDescription(
+      handoff.launchMetadata.workstreamId,
+      handoff.launchMetadata.nodeId,
+    ),
     pawLaunch: pawLaunchFor(handoff),
     ...(options.recordCliArgs ? { cliArgs: [...handoff.cliArgs] } : {}),
     lineageMetadata: lineageMetadataFor(handoff),

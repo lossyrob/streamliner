@@ -16,6 +16,7 @@ import {
   type LaunchClaimStore,
   LaunchClaimNotFoundError,
 } from "../launch-claim-contract";
+import { buildLaunchedSessionDescription } from "../session-registry-filter";
 import type { SessionRegistryPawLaunch } from "../session-registry-schema";
 import { SessionRegistryFileStore } from "./file-store";
 
@@ -134,7 +135,7 @@ function buildReservedRowDescription(input: CreateLaunchClaimInput): string {
   if (input.reservedRowDescription !== undefined && input.reservedRowDescription !== null) {
     return input.reservedRowDescription;
   }
-  return `Launch claim for workstream ${input.workstreamId}, node ${input.nodeId}.`;
+  return buildLaunchedSessionDescription(input.workstreamId, input.nodeId);
 }
 
 /**

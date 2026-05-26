@@ -31,11 +31,13 @@ import {
   canLoadWorkstreamGraph,
   findGraphBindingWorkstreamMatches,
   resolveSessionWorkstreamLinkage,
+  UNBOUND_SESSION_WORKSTREAM_GROUP,
   workstreamRegistryKey,
   type SessionWorkstreamLinkageResolution,
   type WorkstreamGraphLoadState,
   type WorkstreamRouteTarget,
 } from "../session-workstream-linkage";
+import { sessionRegistryEffectiveGraphBinding } from "../session-registry-filter";
 import type { WorkstreamRegistryListEntry } from "../workstream-registry-contract";
 import { parseWorkstreamDocument } from "../workstream-view-model";
 import { useIsDocumentVisible } from "../use-document-visibility";
@@ -92,6 +94,7 @@ const SESSION_QUERY_DEBOUNCE_MS = 250;
 const DEFAULT_STALE_SESSION_DAYS = 7;
 const SESSION_STALE_DAYS_STORAGE_KEY = "streamliner:sessionsStaleDays";
 const SESSION_GROUP_MODE_STORAGE_KEY = "streamliner:sessionsGroupMode";
+const SESSION_FACET_ALL = "__all__";
 
 type GroupMode = "recency" | "repo" | "folder" | "workstream" | "flat";
 type SheetTab = "overview" | "activity" | "settings";
@@ -1068,6 +1071,12 @@ interface SessionGroup {
   sessions: SessionRegistryListItem[];
 }
 
+interface SessionFacetOption {
+  value: string;
+  label: string;
+  count: number;
+}
+
 function repoGroupKey(session: SessionRegistryListItem): string {
   return session.repo ?? "__no_repo__";
 }
@@ -1082,6 +1091,42 @@ function displayRepoLabel(repoKey: string): { label: string; code: string | null
   }
   const shortName = repoKey.includes("/") ? repoKey.split("/").slice(-1)[0] : repoKey;
   return { label: shortName, code: repoKey };
+}
+
+function buildRepoFacetOptions(sessions: readonly SessionRegistryListItem[]): SessionFacetOption[] {
+  const counts = new Map<string, number>();
+  for (const session of sessions) {
+    const key = repoGroupKey(session);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([value, count]) => {
+      const display = displayRepoLabel(value);
+      return {
+        value,
+        label: display.code ?? display.label,
+        count,
+      };
+    })
+    .sort((left, right) => left.label.localeCompare(right.label));
+}
+
+function buildWorkstreamFacetOptions(
+  sessions: readonly SessionRegistryListItem[],
+  linkages: ReadonlyMap<string, SessionWorkstreamLinkageResolution>,
+): SessionFacetOption[] {
+  const counts = new Map<string, { label: string; count: number }>();
+  for (const session of sessions) {
+    const group = linkages.get(session.id)?.group ?? UNBOUND_SESSION_WORKSTREAM_GROUP;
+    const existing = counts.get(group.key);
+    counts.set(group.key, {
+      label: group.code ?? group.label,
+      count: (existing?.count ?? 0) + 1,
+    });
+  }
+  return [...counts.entries()]
+    .map(([value, option]) => ({ value, ...option }))
+    .sort((left, right) => left.label.localeCompare(right.label));
 }
 
 function displayFolderLabel(folderKey: string): { label: string; code: string | null } {
@@ -1319,6 +1364,8 @@ export function SessionsPage({
   const [showArchived, setShowArchived] = useState(false);
   const [showEnded, setShowEnded] = useState(false);
   const [showAllObserved, setShowAllObserved] = useState(false);
+  const [repoFacet, setRepoFacet] = useState(SESSION_FACET_ALL);
+  const [workstreamFacet, setWorkstreamFacet] = useState(SESSION_FACET_ALL);
   const [staleSessionDays, setStaleSessionDays] = useState(readStaleSessionDays);
   const [groupMode, setGroupMode] = useState<GroupMode>(readGroupMode);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -1746,20 +1793,12 @@ export function SessionsPage({
     () => filterEndedSessions(relevanceFilteredSessions, showEnded),
     [relevanceFilteredSessions, showEnded],
   );
-  const visibleSessions = useMemo(
+  const staleFilteredSessions = useMemo(
     () =>
       endedFilteredSessions.filter(
         (session) => !isSessionStale(session, staleSessionDays),
       ),
     [endedFilteredSessions, staleSessionDays],
-  );
-  const githubStatusRefs = useMemo(
-    () => githubStatusRefsForSessions(visibleSessions, selectedSession),
-    [selectedSession, visibleSessions],
-  );
-  const githubStatuses = useGithubStatusLookup(
-    githubStatusRefs,
-    githubStatusRefreshKey,
   );
   const hiddenGraphScopedManualCount = sessions.length - graphScopedSessions.length;
   const hiddenObservedSessionCount =
@@ -1767,7 +1806,7 @@ export function SessionsPage({
   const hiddenEndedSessionCount =
     relevanceFilteredSessions.length - endedFilteredSessions.length;
   const hiddenStaleSessionCount =
-    endedFilteredSessions.length - visibleSessions.length;
+    endedFilteredSessions.length - staleFilteredSessions.length;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -1779,8 +1818,8 @@ export function SessionsPage({
   useEffect(() => {
     const entriesToLoad = new Map<string, WorkstreamRegistryListEntry>();
     const graphStateSnapshot = workstreamGraphsRef.current;
-    for (const session of visibleSessions) {
-      const binding = session.graphBinding;
+    for (const session of staleFilteredSessions) {
+      const binding = sessionRegistryEffectiveGraphBinding(session);
       if (!binding) {
         continue;
       }
@@ -1847,7 +1886,7 @@ export function SessionsPage({
         }
       })();
     }
-  }, [visibleSessions, workstreamGraphsRef, workstreams]);
+  }, [staleFilteredSessions, workstreamGraphsRef, workstreams]);
 
   const workstreamGraphStateMap = useMemo(
     () => new Map(Object.entries(workstreamGraphs)),
@@ -1879,6 +1918,57 @@ export function SessionsPage({
           )
         : null,
     [selectedSession, workstreamGraphStateMap, workstreams],
+  );
+
+  const repoFacetOptions = useMemo(
+    () => buildRepoFacetOptions(staleFilteredSessions),
+    [staleFilteredSessions],
+  );
+  const workstreamFacetOptions = useMemo(
+    () => buildWorkstreamFacetOptions(staleFilteredSessions, sessionLinkages),
+    [staleFilteredSessions, sessionLinkages],
+  );
+  useEffect(() => {
+    if (
+      repoFacet !== SESSION_FACET_ALL &&
+      !repoFacetOptions.some((option) => option.value === repoFacet)
+    ) {
+      setRepoFacet(SESSION_FACET_ALL);
+    }
+  }, [repoFacet, repoFacetOptions]);
+  useEffect(() => {
+    if (
+      workstreamFacet !== SESSION_FACET_ALL &&
+      !workstreamFacetOptions.some((option) => option.value === workstreamFacet)
+    ) {
+      setWorkstreamFacet(SESSION_FACET_ALL);
+    }
+  }, [workstreamFacet, workstreamFacetOptions]);
+  const visibleSessions = useMemo(
+    () =>
+      staleFilteredSessions.filter((session) => {
+        if (repoFacet !== SESSION_FACET_ALL && repoGroupKey(session) !== repoFacet) {
+          return false;
+        }
+        if (
+          workstreamFacet !== SESSION_FACET_ALL &&
+          (sessionLinkages.get(session.id)?.group.key ?? UNBOUND_SESSION_WORKSTREAM_GROUP.key) !==
+            workstreamFacet
+        ) {
+          return false;
+        }
+        return true;
+      }),
+    [repoFacet, sessionLinkages, staleFilteredSessions, workstreamFacet],
+  );
+  const hiddenFacetSessionCount = staleFilteredSessions.length - visibleSessions.length;
+  const githubStatusRefs = useMemo(
+    () => githubStatusRefsForSessions(visibleSessions, selectedSession),
+    [selectedSession, visibleSessions],
+  );
+  const githubStatuses = useGithubStatusLookup(
+    githubStatusRefs,
+    githubStatusRefreshKey,
   );
 
   const computedGroups = useMemo(
@@ -2417,6 +2507,38 @@ export function SessionsPage({
             <span className="sl-session-stale-suffix">days</span>
           </div>
         </label>
+        <label className="sl-session-facet-filter">
+          <span className="sl-field-label">Repo</span>
+          <select
+            className="sl-text-field"
+            value={repoFacet}
+            onChange={(event) => setRepoFacet(event.target.value)}
+          >
+            <option value={SESSION_FACET_ALL}>All repos ({staleFilteredSessions.length})</option>
+            {repoFacetOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label} ({option.count})
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="sl-session-facet-filter">
+          <span className="sl-field-label">Workstream</span>
+          <select
+            className="sl-text-field"
+            value={workstreamFacet}
+            onChange={(event) => setWorkstreamFacet(event.target.value)}
+          >
+            <option value={SESSION_FACET_ALL}>
+              All workstreams ({staleFilteredSessions.length})
+            </option>
+            {workstreamFacetOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label} ({option.count})
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
 
       <div className="sl-sessions-group-bar">
@@ -2494,6 +2616,13 @@ export function SessionsPage({
         </div>
       )}
 
+      {hiddenFacetSessionCount > 0 && (
+        <div className="sl-sessions-filter-note">
+          Hiding {hiddenFacetSessionCount} session
+          {hiddenFacetSessionCount === 1 ? "" : "s"} outside the selected repo/workstream filters.
+        </div>
+      )}
+
       {syncNote && <div className="sl-sessions-filter-note">{syncNote}</div>}
 
       {error && <div className="sl-action-error">{error}</div>}
@@ -2515,11 +2644,16 @@ export function SessionsPage({
             No open or interrupted Copilot CLI sessions right now. Show ended to inspect
             sessions that closed cleanly.
           </div>
-        ) : visibleSessions.length === 0 ? (
+        ) : staleFilteredSessions.length === 0 ? (
           <div className="sl-empty-state">
             No sessions updated in the last {staleSessionDays} day
             {staleSessionDays === 1 ? "" : "s"}. Increase the stale window to show
             older sessions.
+          </div>
+        ) : visibleSessions.length === 0 ? (
+          <div className="sl-empty-state">
+            No sessions match the selected repo/workstream filters. Choose All repos
+            or All workstreams to widen the list.
           </div>
         ) : (
           orderedGroups.map((group) => (

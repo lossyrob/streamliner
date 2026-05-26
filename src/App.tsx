@@ -2604,6 +2604,12 @@ function GraphDashboard({
               preferredTerminal: handoff.terminal.preferredTerminal,
               title: `${input.terminalTitle} REVIEW`,
               tabColor: input.terminalColor,
+              launchBinding: {
+                workstreamId: handoff.launchMetadata.workstreamId,
+                nodeId: handoff.launchMetadata.nodeId,
+                branch: handoff.branch,
+                contextId: handoff.contextPackage.contextId,
+              },
               ...(input.reviewCompanion.usePawReviewAgent ? {} : { usePawReviewAgent: false }),
             }),
           });

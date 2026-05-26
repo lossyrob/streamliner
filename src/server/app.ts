@@ -298,6 +298,8 @@ export function createStreamlinerApiApp(
     "/api",
     createCompanionTerminalLaunchesRouter({
       launchTerminal: options.nodeLaunchDeps?.launchTerminal,
+      registryStore: store instanceof SessionRegistryFileStore ? store : undefined,
+      claimStore: options.launchClaimStore,
     }),
   );
   app.use(
