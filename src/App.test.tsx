@@ -5168,6 +5168,13 @@ describe("App sessions route", () => {
           if (path === "/api/sessions") {
             return jsonResponse([session]);
           }
+          if (path === "/api/workstreams") {
+            return jsonResponse({
+              version: 1,
+              migrationWarnings: [],
+              workstreams: [buildTrackedWorkstream()],
+            });
+          }
           if (path === "/api/sessions/trusted-session" && init?.method === "PATCH") {
             const patch = JSON.parse(String(init.body)) as Partial<SessionRegistryListItem>;
             return jsonResponse(
@@ -5211,7 +5218,6 @@ describe("App sessions route", () => {
       expect(container.textContent).toContain("Derived context");
       expect(container.textContent).toContain("Active branch");
       expect(container.textContent).toContain("feature/manual-session-registry");
-
       setInputValue(findInputByLabel(container, "Session title"), "Terminal A session");
       act(() => {
         findButtonByLabel(container, "Show terminal color quick picks").click();
@@ -5224,6 +5230,15 @@ describe("App sessions route", () => {
       expect(
         container.querySelector('[aria-label="Terminal color quick picks"]'),
       ).toBeNull();
+      const settingsTab = [...container.querySelectorAll<HTMLButtonElement>(".sl-sheet-tab")].find(
+        (btn) => btn.textContent?.trim() === "Settings",
+      );
+      expect(settingsTab).toBeDefined();
+      act(() => {
+        settingsTab?.click();
+      });
+      await settle();
+      setSelectValue(findSelectByLabel(container, "Workstream assignment"), "api-test");
       act(() => {
         findButton(container, "Done").click();
       });
@@ -5240,6 +5255,11 @@ describe("App sessions route", () => {
           expectedVersion: session.version,
           title: "Terminal A session",
           color: "#ff8c0a",
+          graphBinding: {
+            workstreamId: "api-test",
+            nodeId: null,
+            launchClaimId: null,
+          },
         }),
       );
     },

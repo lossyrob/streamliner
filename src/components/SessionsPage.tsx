@@ -119,6 +119,7 @@ interface SessionDraft {
   branch: string;
   tagsText: string;
   lifecycleStatus: "active" | "paused" | "archived" | "ended";
+  graphBinding: SessionRegistryListItem["graphBinding"];
 }
 
 type SaveState = "idle" | "saving" | "saved" | "error";
@@ -143,6 +144,7 @@ function draftFromSession(session: SessionRegistryListItem): SessionDraft {
     branch: session.branch ?? "",
     tagsText: session.tags.join(", "),
     lifecycleStatus: session.lifecycleStatus,
+    graphBinding: session.graphBinding ? { ...session.graphBinding } : null,
   };
 }
 
@@ -156,6 +158,7 @@ function createEmptyDraft(): SessionDraft {
     branch: "",
     tagsText: "",
     lifecycleStatus: "active",
+    graphBinding: null,
   };
 }
 
@@ -232,6 +235,7 @@ function draftKey(draft: SessionDraft): string {
     branch: draft.branch,
     tags: normalizeTags(draft.tagsText),
     lifecycleStatus: draft.lifecycleStatus,
+    graphBinding: draft.graphBinding,
   });
 }
 
@@ -256,6 +260,9 @@ function buildPatch(
   const nextTags = normalizeTags(draft.tagsText);
   if (JSON.stringify(nextTags) !== JSON.stringify(session.tags)) {
     patch.tags = nextTags;
+  }
+  if (JSON.stringify(draft.graphBinding ?? null) !== JSON.stringify(session.graphBinding ?? null)) {
+    patch.graphBinding = draft.graphBinding;
   }
 
   if (
@@ -921,6 +928,8 @@ function workstreamLinkageTitle(
   switch (linkage.status) {
     case "resolved":
       return "Open bound workstream node";
+    case "workstream-only":
+      return "Open assigned workstream";
     case "graph-loading":
       return linkage.note ?? "Resolving bound workstream node";
     case "graph-unavailable":
@@ -939,6 +948,8 @@ function workstreamLinkageStatusLabel(
   switch (linkage.status) {
     case "resolved":
       return "Resolved";
+    case "workstream-only":
+      return "Workstream assigned";
     case "graph-loading":
       return "Resolving node";
     case "graph-unavailable":
@@ -3012,6 +3023,7 @@ export function SessionsPage({
                   draft={draft}
                   creating={creating}
                   selectedSession={selectedSession}
+                  workstreams={workstreams}
                   onChange={updateDraft}
                   onCommit={() => {
                     void (creating ? handleCreate() : closeSheet());
@@ -3806,6 +3818,7 @@ interface SessionSettingsFormProps {
   draft: SessionDraft;
   creating: boolean;
   selectedSession: SessionRegistryListItem | null;
+  workstreams: WorkstreamRegistryListEntry[];
   onChange: (updater: (current: SessionDraft) => SessionDraft) => void;
   onCommit: () => void;
 }
@@ -3814,10 +3827,23 @@ function SessionSettingsForm({
   draft,
   creating,
   selectedSession,
+  workstreams,
   onChange,
   onCommit,
 }: SessionSettingsFormProps) {
   const lifecycleLocked = selectedSession?.lifecycleStatus === "ended";
+  const workstreamAssignmentLocked = Boolean(
+    selectedSession?.graphBinding?.nodeId || selectedSession?.graphBinding?.launchClaimId,
+  );
+  const workstreamOptions = useMemo(
+    () =>
+      [...workstreams].sort((left, right) =>
+        `${left.title} ${workstreamRegistryKey(left)}`.localeCompare(
+          `${right.title} ${workstreamRegistryKey(right)}`,
+        )
+      ),
+    [workstreams],
+  );
   const setColor = (color: string) => {
     onChange((current) => ({ ...current, color }));
   };
@@ -3940,6 +3966,38 @@ function SessionSettingsForm({
           placeholder="paw-lite, ui, session-registry"
         />
       </label>
+      {!creating && (
+        <label className="sl-field">
+          <span className="sl-field-label">Workstream assignment</span>
+          <select
+            className="sl-select-field"
+            aria-label="Workstream assignment"
+            value={draft.graphBinding?.workstreamId ?? ""}
+            disabled={workstreamAssignmentLocked}
+            onChange={(event) => {
+              const workstreamId = event.target.value;
+              onChange((current) => ({
+                ...current,
+                graphBinding: workstreamId
+                  ? { workstreamId, nodeId: null, launchClaimId: null }
+                  : null,
+              }));
+            }}
+          >
+            <option value="">Unassigned</option>
+            {workstreamOptions.map((entry) => (
+              <option key={workstreamRegistryKey(entry)} value={entry.workstreamId}>
+                {entry.title} ({workstreamRegistryKey(entry)})
+              </option>
+            ))}
+          </select>
+          <p className="sl-field-note">
+            {workstreamAssignmentLocked
+              ? "This session is already bound to a graph node or launch claim; clear that binding through the node/session recovery flow before changing it here."
+              : "Assign orchestrator or manually discovered sessions to a workstream without attaching them to a specific graph node."}
+          </p>
+        </label>
+      )}
     </div>
   );
 }

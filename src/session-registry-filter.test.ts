@@ -73,6 +73,35 @@ describe("sessionRegistryEffectiveGraphBinding", () => {
     ).toBe(false);
   });
 
+  it("matches workstream-only graph bindings for workstream filters but not node filters", () => {
+    const record = {
+      title: "Orchestrator",
+      description: "",
+      aiSummary: null,
+      cwd: "C:\\repo",
+      repo: "owner/repo",
+      branch: "main",
+      derivedBranch: null,
+      derivedWorktreePath: null,
+      derivedGithubRefs: [],
+      originKind: "manual" as const,
+      pawLaunch: null,
+      pawWorkflow: null,
+      tags: [],
+      copilotSessionId: "copilot-session",
+      graphBinding: { workstreamId: "workstream", nodeId: null },
+      lifecycleStatus: "active" as const,
+    };
+
+    expect(sessionRegistryRecordMatchesOptions(record, { workstreamId: "workstream" })).toBe(true);
+    expect(
+      sessionRegistryRecordMatchesOptions(record, {
+        workstreamId: "workstream",
+        nodeId: "node",
+      }),
+    ).toBe(false);
+  });
+
   it("does not derive graph bindings from matching manual-session descriptions", () => {
     expect(
       sessionRegistryEffectiveGraphBinding({

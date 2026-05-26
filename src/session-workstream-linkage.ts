@@ -18,6 +18,7 @@ export type SessionWorkstreamLinkageStatus =
   | "unbound"
   | "missing-workstream"
   | "ambiguous-workstream"
+  | "workstream-only"
   | "graph-loading"
   | "graph-unavailable"
   | "node-unresolved"
@@ -103,9 +104,9 @@ export function resolveSessionWorkstreamLinkage(
     return {
       status: "missing-workstream",
       workstreamId: binding.workstreamId,
-      nodeId: binding.nodeId,
+      nodeId: binding.nodeId ?? null,
       workstreamLabel: binding.workstreamId,
-      nodeLabel: binding.nodeId,
+      nodeLabel: binding.nodeId ?? null,
       note: "No tracked workstream currently matches this binding.",
       matchCount: 0,
       workstreamEntry: null,
@@ -125,9 +126,9 @@ export function resolveSessionWorkstreamLinkage(
     return {
       status: "ambiguous-workstream",
       workstreamId: binding.workstreamId,
-      nodeId: binding.nodeId,
+      nodeId: binding.nodeId ?? null,
       workstreamLabel: binding.workstreamId,
-      nodeLabel: binding.nodeId,
+      nodeLabel: binding.nodeId ?? null,
       note: `Multiple tracked workstreams match this binding (${matches.length}); Streamliner cannot choose a route safely.`,
       matchCount: matches.length,
       workstreamEntry: null,
@@ -156,6 +157,22 @@ export function resolveSessionWorkstreamLinkage(
     order:
       workstreams.findIndex((entry) => workstreamRegistryKey(entry) === registryKey) + 1,
   };
+  if (!binding.nodeId) {
+    return {
+      status: "workstream-only",
+      workstreamId: binding.workstreamId,
+      nodeId: null,
+      workstreamLabel: workstreamEntry.title,
+      nodeLabel: null,
+      note: "This session is assigned to the workstream but not to a graph node.",
+      matchCount: 1,
+      workstreamEntry,
+      node: null,
+      workstreamRouteTarget,
+      nodeRouteTarget: null,
+      group,
+    };
+  }
   const graphState = graphStates.get(registryKey);
 
   if (graphState?.status === "loaded") {

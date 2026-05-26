@@ -609,7 +609,7 @@ function detachNodeRegistryRows(
 }
 
 function isNodeGraphBinding(
-  graphBinding: { workstreamId: string; nodeId: string } | null,
+  graphBinding: { workstreamId: string; nodeId?: string | null } | null,
   workstreamId: string,
   nodeId: string,
 ): boolean {

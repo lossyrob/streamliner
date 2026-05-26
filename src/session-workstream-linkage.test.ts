@@ -107,6 +107,30 @@ describe("resolveSessionWorkstreamLinkage", () => {
     });
   });
 
+  it("resolves workstream-only assignments without a node route", () => {
+    const workstream = buildWorkstream();
+    const graphStates = new Map<string, WorkstreamGraphLoadState>([
+      [workstreamRegistryKey(workstream), { status: "loaded", document: buildGraph() }],
+    ]);
+
+    const resolution = resolveSessionWorkstreamLinkage(
+      buildSession({
+        workstreamId: "session-launching-and-tracking",
+        nodeId: null,
+      }),
+      [workstream],
+      graphStates,
+    );
+
+    expect(resolution.status).toBe("workstream-only");
+    expect(resolution.workstreamRouteTarget).toEqual({
+      projectKey: "streamliner",
+      workstreamId: "session-launching-and-tracking",
+    });
+    expect(resolution.nodeRouteTarget).toBeNull();
+    expect(resolution.nodeLabel).toBeNull();
+  });
+
   it("falls back to launched-row description when graphBinding was pruned", () => {
     const workstream = buildWorkstream();
     const graphStates = new Map<string, WorkstreamGraphLoadState>([
