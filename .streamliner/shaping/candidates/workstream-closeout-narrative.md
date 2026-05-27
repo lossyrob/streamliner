@@ -47,8 +47,9 @@ they land differently than they do on a page.
   any closed or near-closed workstream, to produce a first narrative.
 - Define the relationship to the reconciliation note and to the brief/graph.
 - Define what makes a *good* narrative: chronological, pivot-aware,
-  named-example-driven, distinguishes inspired vs. recovery interventions,
-  surfaces work-design lessons in story form.
+  self-contained for a cold listener, named-example-driven without opaque ID
+  soup, distinguishes inspired vs. recovery interventions, and surfaces
+  work-design lessons in story form.
 
 ### Out of Scope
 
@@ -144,6 +145,11 @@ Pull the following before drafting:
      `gh issue view <number> --comments --json title,body,comments,state,closedAt`.
    - For each merged PR linked from those issues, fetch title, description,
      review comment threads, and merge timestamp.
+   - Treat issue, PR, branch, and commit identifiers as **source references**,
+     not as narrative vocabulary. Before drafting, translate each important ID
+     into the plain-language event it represents, for example "the guardrail PR
+     that made Launcher mode reject pod-level database URLs" rather than
+     "#492".
 
 4. **Design impact**
    - For each file in `designRefs`, run
@@ -162,6 +168,22 @@ Pull the following before drafting:
      adjacent workstreams.
    - Any export consumers that depended on this workstream's contracts.
 
+### Audience and self-containment pass
+
+Before drafting, assume the markdown will be handed to a podcast generator with
+no GitHub access, no access to private repos, and no memory of the operator's
+workstream shorthand. Build a small glossary for the narrative:
+
+- expand design decision IDs into their meaning ("the design decision that made
+  Launcher the production dispatch boundary" instead of "D-100");
+- expand issue and PR numbers into human-readable events ("the production
+  direct-receive guardrail change" instead of "#492");
+- introduce components and workstreams before relying on their names;
+- explain why each important artifact mattered, not just that it existed.
+
+The final narrative may include issue/PR/design IDs in parentheses for later
+traceability, but the sentence must still make sense if every ID is deleted.
+
 ### Narrative structure to produce
 
 Write `docs/closeout-narrative.md` in the workstream directory with the
@@ -175,14 +197,16 @@ Why this workstream existed. What the world looked like when it was shaped.
 What it was trying to make possible. 2-4 paragraphs.
 
 ## Cast
-The workstreams, repos, design docs, and recurring node/session/PR names that
-the story will reference. Light, list-shaped. Give every recurring named
-entity a one-line introduction so the listener can follow.
+The workstreams, repos, design docs, decisions, components, and recurring node
+names that the story will reference. Light, list-shaped. Give every recurring
+named entity a one-line introduction so the listener can follow. If an issue,
+PR, or decision ID appears here, pair it with a plain-language name and meaning.
 
 ## Acts
 One section per wave or major pivot point. For each act:
 - What the operator hoped the wave would produce.
-- What actually happened, told chronologically with specific node/PR names.
+- What actually happened, told chronologically with specific human-readable
+  node names and events.
 - The inflection moment(s) that defined the act.
 - What the act handed forward.
 
@@ -220,9 +244,19 @@ each thread continues so the listener knows the story is not over for those.
 
 - **Chronological by default.** Story-shaped, not analytical. The
   reconciliation note already carries the analytical version.
-- **Named examples.** Every inflection moment names specific nodes, PRs,
-  decisions, or moments. Abstraction without examples is for the
-  reconciliation note, not here.
+- **Self-contained for a cold listener.** The narrative must be understandable
+  to a podcast generator that cannot open GitHub, inspect design docs, or know
+  local shorthand. Every important component, workstream, design decision, and
+  acronym gets enough context to stand alone.
+- **Named examples, not ID soup.** Every inflection moment names specific
+  nodes, decisions, or moments, but opaque identifiers are secondary. Write
+  "the guardrail change that made Launcher mode reject `TARGET_DATABASE_URL`"
+  before optionally adding "(#492)".
+- **IDs are traceability, not prose.** GitHub issue numbers, PR numbers,
+  commit hashes, branch names, and design IDs may appear in parentheses or
+  footnote-like clauses, but they should not be the subject of the story. Avoid
+  paragraphs whose meaning depends on "D-100", "#478", or "PR #631" unless the
+  artifact has already been introduced in plain language.
 - **Honest about recovery.** Do not narrate around the moments where the
   workstream needed steering. Those are the most valuable parts for the
   operator to hear.
@@ -232,6 +266,9 @@ each thread continues so the listener knows the story is not over for those.
 - **No status reporting.** The narrative is past tense and reflective. Avoid
   "next steps" language; open threads live in their own section and only
   point outward.
+- **Context before reference.** If the narrative mentions an adjacent
+  workstream, design doc, or external system, first explain what role it played
+  in this story. Do not assume the listener knows the portfolio.
 - **Target length:** 800-2000 lines is normal. Long enough to be a real
   retelling, short enough to listen to in a single sitting once the podcast
   generator chews it.
@@ -248,11 +285,18 @@ each thread continues so the listener knows the story is not over for those.
 - Do not make the narrative a closure-gate dependency. Closure depends on
   the reconciliation note, not on this.
 - Do not narrate active workstreams; the genre needs the work to be done.
+- Do not use GitHub or design identifiers as shorthand for meaning. A draft
+  that says "then #501 happened" has not yet become a narrative.
+- Do not depend on links as explanation. Links are useful for the operator, but
+  external podcast tools may not be able to access them.
 
 ### After producing the narrative
 
 - Commit `docs/closeout-narrative.md` in the workstream directory with a
   message like `Add closeout narrative for <workstream-id>`.
+- Do a final "opaque reference" pass before reporting completion. Search for
+  issue/PR/design-ID-heavy sentences and rewrite them so the surrounding prose
+  explains the event without requiring the ID.
 - Report the path back to the operator.
 - If new candidate-worthy observations surfaced while writing (unusual but
   possible), raise them as reconciliation-note promotion candidates rather
@@ -315,12 +359,14 @@ Potential imports:
   the target workstream.
 - Git history for plan evolution.
 - Design-layer diffs during the workstream's window.
+- Human-readable summaries of opaque identifiers encountered during research:
+  issue numbers, PR numbers, commit hashes, branch names, design IDs, and
+  internal shorthand.
 
 ## Open Questions
 
-- Should narratives include cross-workstream context (other active or
-  recently-closed workstreams) when relevant, or stay strictly within the
-  target workstream's boundary?
+- How much cross-workstream context is enough before the narrative becomes a
+  portfolio story rather than a workstream story?
 - Should the narrative ever be regenerated after additional closeout
   reconciliation, or is one shot enough?
 - How should the operator capture *audio*-shaped feedback after listening
