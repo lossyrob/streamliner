@@ -8,6 +8,7 @@ import {
   type WorkstreamLaunchPolicy,
   type WorkstreamLaunchRequiredTracker,
   type WorkstreamLaunchTerminalPreference,
+  type WorkstreamPresentation,
 } from "../workstream-schema";
 import { WORKSTREAM_TERMINAL_TITLE_TEMPLATE_HELP } from "../workstream-launch-templates";
 import type { PawPromptProfile } from "./paw-prompt-profiles";
@@ -15,6 +16,7 @@ import type { PawReviewPromptTemplate } from "./paw-review-prompt-templates";
 import { TerminalColorQuickPicker } from "./SessionColorPicker";
 
 export interface WorkstreamConfigurationValues {
+  presentation: WorkstreamPresentation | null;
   launchPolicy: WorkstreamLaunchPolicy | null;
   launchDefaults: WorkstreamLaunchDefaults | null;
 }
@@ -71,14 +73,17 @@ export function WorkstreamConfigurationDialog({
   const [requiredTracker, setRequiredTracker] = useState<WorkstreamLaunchRequiredTracker | "">(
     workstream.launchPolicy?.requiredTracker ?? "",
   );
+  const [shortName, setShortName] = useState(
+    workstream.presentation?.shortName ?? "",
+  );
+  const [workstreamColor, setWorkstreamColor] = useState(
+    workstream.presentation?.color ?? "",
+  );
   const [preferredTerminal, setPreferredTerminal] = useState<WorkstreamLaunchTerminalPreference>(
     workstream.launchDefaults?.terminal?.preferredTerminal ?? "default",
   );
   const [titleTemplate, setTitleTemplate] = useState(
     workstream.launchDefaults?.terminal?.titleTemplate ?? "",
-  );
-  const [terminalColor, setTerminalColor] = useState(
-    workstream.launchDefaults?.terminal?.tabColor ?? "",
   );
   const [defaultPromptProfileId, setDefaultPromptProfileId] = useState(
     workstream.launchDefaults?.promptProfileId ?? "",
@@ -109,9 +114,9 @@ export function WorkstreamConfigurationDialog({
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const color = terminalColor.trim();
+    const color = workstreamColor.trim();
     if (color && !/^#[0-9a-f]{6}$/i.test(color)) {
-      setValidationError("Terminal tab color must be a #RRGGBB color.");
+      setValidationError("Workstream color must be a #RRGGBB color.");
       return;
     }
     setValidationError(null);
@@ -119,7 +124,10 @@ export function WorkstreamConfigurationDialog({
     const terminal = {
       ...(preferredTerminal !== "default" ? { preferredTerminal } : {}),
       ...(titleTemplate.trim() ? { titleTemplate: titleTemplate.trim() } : {}),
-      ...(color ? { tabColor: color.toLowerCase() } : {}),
+    };
+    const presentation: WorkstreamPresentation = {
+      ...(shortName.trim() ? { shortName: shortName.trim() } : {}),
+      ...(color ? { color: color.toLowerCase() } : {}),
     };
     const launchDefaults: WorkstreamLaunchDefaults = {
       ...(defaultPromptProfileId ? { promptProfileId: defaultPromptProfileId } : {}),
@@ -131,6 +139,7 @@ export function WorkstreamConfigurationDialog({
         : {}),
     };
     void onSave({
+      presentation: Object.keys(presentation).length > 0 ? presentation : null,
       launchPolicy: requiredTracker ? { requiredTracker } : null,
       launchDefaults: Object.keys(launchDefaults).length > 0 ? launchDefaults : null,
     });
@@ -152,7 +161,7 @@ export function WorkstreamConfigurationDialog({
             </div>
             <h2 className="sl-sheet-title">Configure {workstream.title}</h2>
             <p className="sl-paw-launch-subtitle">
-              Save durable launch policy and terminal defaults to this workstream graph.
+              Save durable presentation metadata, launch policy, and terminal defaults to this workstream graph.
               These settings apply to every graph-launch caller.
             </p>
           </div>
@@ -168,6 +177,47 @@ export function WorkstreamConfigurationDialog({
         </div>
 
         <div className="sl-sheet-body sl-workstream-config-body">
+          <section className="sl-workstream-config-section">
+            <div>
+              <span className="sl-section-label">PRESENTATION</span>
+              <h3 className="sl-workstream-config-title">Workstream identity</h3>
+              <p className="sl-field-note">
+                Add compact recognition metadata for dense workstream lists and launch defaults.
+              </p>
+            </div>
+            <div className="sl-paw-launch-grid">
+              <label className="sl-field">
+                <span>Short name</span>
+                <input
+                  aria-label="Workstream short name"
+                  value={shortName}
+                  onChange={(event) => setShortName(event.target.value)}
+                  placeholder="SDK runtime"
+                  disabled={saving}
+                />
+                <span className="sl-field-note">
+                  Used on compact workstream cards and as {"{workstreamShortName}"} in terminal title templates.
+                </span>
+              </label>
+              <label className="sl-field sl-paw-launch-color-field">
+                <span>Workstream color</span>
+                <input
+                  aria-label="Workstream color"
+                  value={workstreamColor}
+                  onChange={(event) => setWorkstreamColor(event.target.value)}
+                  placeholder="#4891c8"
+                  disabled={saving}
+                />
+                <TerminalColorQuickPicker
+                  value={workstreamColor}
+                  onChange={setWorkstreamColor}
+                  ariaLabel="Workstream color quick picks"
+                  buttonLabelPrefix="Use workstream color"
+                />
+              </label>
+            </div>
+          </section>
+
           <section className="sl-workstream-config-section">
             <div>
               <span className="sl-section-label">LAUNCH POLICY</span>
@@ -370,23 +420,9 @@ export function WorkstreamConfigurationDialog({
                   disabled={saving}
                 />
                 <span className="sl-field-note">
-                  Use {"{githubIssue}"}, {"{nodeId}"}, or {"{nodeTitle}"}.
+                  Use {"{githubIssue}"}, {"{nodeId}"}, {"{nodeTitle}"}, or {"{workstreamShortName}"}.
                   Leave empty to use each node title.
                 </span>
-              </label>
-              <label className="sl-field sl-paw-launch-color-field">
-                <span>Terminal tab color</span>
-                <input
-                  aria-label="Default terminal tab color"
-                  value={terminalColor}
-                  onChange={(event) => setTerminalColor(event.target.value)}
-                  placeholder="#4891c8"
-                  disabled={saving}
-                />
-                <TerminalColorQuickPicker
-                  value={terminalColor}
-                  onChange={setTerminalColor}
-                />
               </label>
             </div>
           </section>

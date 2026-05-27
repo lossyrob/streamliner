@@ -50,7 +50,7 @@ Reconciliation: not_run
 - `init` | `resolved` | `activity`
 - `planning` | `resolved` | `activity`
 - `planning-docs-review` | `resolved` | `activity`
-- `implementation` | `in_progress` | `activity`
+- `implementation` | `resolved` | `activity`
 - `final-review` | `pending` | `activity`
 - `final-pr` | `pending` | `activity`
 

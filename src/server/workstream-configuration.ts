@@ -9,11 +9,13 @@ import {
   type WorkstreamLaunchPolicy,
   type WorkstreamLaunchRequiredTracker,
   type WorkstreamLaunchTerminalPreference,
+  type WorkstreamPresentation,
 } from "../workstream-schema";
 import { summarizeWorkstreamDocument } from "../workstream-identity";
 import { parseWorkstreamDocument } from "../workstream-view-model";
 
 export interface WorkstreamConfigurationUpdateInput {
+  presentation?: WorkstreamPresentation | null;
   launchPolicy?: WorkstreamLaunchPolicy | null;
   launchDefaults?: WorkstreamLaunchDefaults | null;
 }
@@ -69,18 +71,43 @@ function normalizeLaunchPolicy(value: unknown): WorkstreamLaunchPolicy | undefin
   return { requiredTracker: requiredTracker as WorkstreamLaunchRequiredTracker };
 }
 
-function normalizeOptionalHexColor(value: unknown): string | undefined {
+function normalizeOptionalHexColor(value: unknown, label: string): string | undefined {
   if (value === undefined || value === null || value === "") {
     return undefined;
   }
   if (typeof value !== "string") {
-    throw badConfiguration("launchDefaults.terminal.tabColor must be a #RRGGBB color.");
+    throw badConfiguration(`${label} must be a #RRGGBB color.`);
   }
   const color = value.trim().toLowerCase();
   if (!/^#[0-9a-f]{6}$/.test(color)) {
-    throw badConfiguration("launchDefaults.terminal.tabColor must be a #RRGGBB color.");
+    throw badConfiguration(`${label} must be a #RRGGBB color.`);
   }
   return color;
+}
+
+function normalizeOptionalString(value: unknown, label: string): string | undefined {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw badConfiguration(`${label} must be a string.`);
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function normalizePresentation(value: unknown): WorkstreamPresentation | undefined {
+  const record = optionalRecord(value, "presentation");
+  if (!record) {
+    return undefined;
+  }
+  const shortName = normalizeOptionalString(record.shortName, "presentation.shortName");
+  const color = normalizeOptionalHexColor(record.color, "presentation.color");
+  const presentation: WorkstreamPresentation = {
+    ...(shortName ? { shortName } : {}),
+    ...(color ? { color } : {}),
+  };
+  return Object.keys(presentation).length > 0 ? presentation : undefined;
 }
 
 function normalizeTerminalPreference(value: unknown): WorkstreamLaunchTerminalPreference | undefined {
@@ -147,10 +174,15 @@ function normalizeOptionalBoolean(value: unknown, label: string): boolean | unde
   return value;
 }
 
-function normalizeLaunchDefaults(value: unknown): WorkstreamLaunchDefaults | undefined {
+interface NormalizedLaunchDefaults {
+  launchDefaults?: WorkstreamLaunchDefaults;
+  migratedPresentationColor?: string;
+}
+
+function normalizeLaunchDefaults(value: unknown): NormalizedLaunchDefaults {
   const record = optionalRecord(value, "launchDefaults");
   if (!record) {
-    return undefined;
+    return {};
   }
   const promptProfileId = normalizePromptProfileId(record.promptProfileId);
   const reviewPromptTemplateId = normalizeReviewPromptTemplateId(record.reviewPromptTemplateId);
@@ -170,12 +202,11 @@ function normalizeLaunchDefaults(value: unknown): WorkstreamLaunchDefaults | und
     ? normalizeTitleTemplate(terminalRecord.titleTemplate)
     : undefined;
   const tabColor = terminalRecord
-    ? normalizeOptionalHexColor(terminalRecord.tabColor)
+    ? normalizeOptionalHexColor(terminalRecord.tabColor, "launchDefaults.terminal.tabColor")
     : undefined;
   const terminal = {
     ...(preferredTerminal ? { preferredTerminal } : {}),
     ...(titleTemplate ? { titleTemplate } : {}),
-    ...(tabColor ? { tabColor } : {}),
   };
   const launchDefaults: WorkstreamLaunchDefaults = {
     ...(promptProfileId ? { promptProfileId } : {}),
@@ -184,7 +215,10 @@ function normalizeLaunchDefaults(value: unknown): WorkstreamLaunchDefaults | und
     ...(reviewCompanion !== undefined ? { reviewCompanion } : {}),
     ...(reviewPromptTemplateId ? { reviewPromptTemplateId } : {}),
   };
-  return Object.keys(launchDefaults).length > 0 ? launchDefaults : undefined;
+  return {
+    ...(Object.keys(launchDefaults).length > 0 ? { launchDefaults } : {}),
+    ...(tabColor ? { migratedPresentationColor: tabColor } : {}),
+  };
 }
 
 function assertConfigurableGraphContent(
@@ -225,6 +259,44 @@ async function atomicWriteJson(path: string, content: string): Promise<void> {
   await rename(tempPath, path);
 }
 
+function applyPresentation(
+  record: Record<string, unknown>,
+  presentation: WorkstreamPresentation | undefined,
+): void {
+  if (presentation) {
+    record.presentation = presentation;
+  } else {
+    delete record.presentation;
+  }
+}
+
+function mergePresentationColor(record: Record<string, unknown>, color: string | undefined): void {
+  if (!color) {
+    return;
+  }
+  const current = isRecord(record.presentation) ? record.presentation : {};
+  record.presentation = {
+    ...current,
+    color,
+  };
+}
+
+function deleteLegacyTerminalColor(record: Record<string, unknown>): void {
+  if (!isRecord(record.launchDefaults)) {
+    return;
+  }
+  const launchDefaults = record.launchDefaults;
+  if (isRecord(launchDefaults.terminal)) {
+    delete launchDefaults.terminal.tabColor;
+    if (Object.keys(launchDefaults.terminal).length === 0) {
+      delete launchDefaults.terminal;
+    }
+  }
+  if (Object.keys(launchDefaults).length === 0) {
+    delete record.launchDefaults;
+  }
+}
+
 export async function updateWorkstreamConfigurationFile(input: {
   graphPath: string;
   content: string;
@@ -233,14 +305,21 @@ export async function updateWorkstreamConfigurationFile(input: {
   configuration: WorkstreamConfigurationUpdateInput;
   now?: () => Date;
 }): Promise<WorkstreamConfigurationUpdateResult> {
+  const configurationRecord = input.configuration as Record<string, unknown>;
   const record = assertConfigurableGraphContent(
     input.content,
     input.graphPath,
     input.projectKey,
     input.workstreamId,
   );
+  const existingWorkstream = parseWorkstreamDocument(input.content);
 
-  if (hasOwn(input.configuration as Record<string, unknown>, "launchPolicy")) {
+  const presentationConfigured = hasOwn(configurationRecord, "presentation");
+  if (presentationConfigured) {
+    applyPresentation(record, normalizePresentation(input.configuration.presentation));
+  }
+
+  if (hasOwn(configurationRecord, "launchPolicy")) {
     const nextPolicy = normalizeLaunchPolicy(input.configuration.launchPolicy);
     if (nextPolicy) {
       record.launchPolicy = nextPolicy;
@@ -249,14 +328,22 @@ export async function updateWorkstreamConfigurationFile(input: {
     }
   }
 
-  if (hasOwn(input.configuration as Record<string, unknown>, "launchDefaults")) {
+  if (hasOwn(configurationRecord, "launchDefaults")) {
     const nextDefaults = normalizeLaunchDefaults(input.configuration.launchDefaults);
-    if (nextDefaults) {
-      record.launchDefaults = nextDefaults;
+    if (nextDefaults.launchDefaults) {
+      record.launchDefaults = nextDefaults.launchDefaults;
     } else {
       delete record.launchDefaults;
     }
+    if (!presentationConfigured) {
+      mergePresentationColor(record, nextDefaults.migratedPresentationColor);
+    }
   }
+
+  if (!presentationConfigured) {
+    mergePresentationColor(record, existingWorkstream.presentation?.color ?? undefined);
+  }
+  deleteLegacyTerminalColor(record);
 
   record.updatedAt = (input.now?.() ?? new Date()).toISOString();
   const nextContent = `${JSON.stringify(record, null, 2)}\n`;

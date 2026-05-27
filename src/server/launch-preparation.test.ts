@@ -290,6 +290,7 @@ function writeLaunchPolicyGraph(
   options: {
     nodeId?: string;
     tracker?: Record<string, unknown>;
+    presentation?: Record<string, unknown>;
     launchPolicy?: Record<string, unknown>;
     launchDefaults?: Record<string, unknown>;
   } = {},
@@ -338,6 +339,9 @@ function writeLaunchPolicyGraph(
   };
   if (options.launchPolicy !== undefined) {
     graph.launchPolicy = options.launchPolicy;
+  }
+  if (options.presentation !== undefined) {
+    graph.presentation = options.presentation;
   }
   if (options.launchDefaults !== undefined) {
     graph.launchDefaults = options.launchDefaults;
@@ -1142,9 +1146,13 @@ describe("preparePawLaunch", () => {
       launchDefaults: {
         terminal: {
           preferredTerminal: "windows-terminal",
-          titleTemplate: "{githubIssue} - {nodeTitle}",
+          titleTemplate: "{workstreamShortName} - {githubIssue} - {nodeTitle}",
           tabColor: "#4891c8",
         },
+      },
+      presentation: {
+        shortName: "SLT",
+        color: "#41b878",
       },
     });
 
@@ -1162,14 +1170,73 @@ describe("preparePawLaunch", () => {
 
     expect(result.terminal).toEqual(expect.objectContaining({
       preferredTerminal: "windows-terminal",
-      title: "#33 - Launch prompt profiles",
+      title: "SLT - #33 - Launch prompt profiles",
       tabColor: "#ff8c0a",
     }));
     expect(pawInitCalls[0].configuration.terminal).toEqual(expect.objectContaining({
       preferredTerminal: "windows-terminal",
-      title: "#33 - Launch prompt profiles",
+      title: "SLT - #33 - Launch prompt profiles",
       tabColor: "#ff8c0a",
     }));
+  });
+
+  it("defaults terminal color from workstream presentation before legacy tab color", async () => {
+    const root = createRootDir();
+    const graphPath = writeLaunchPolicyGraph(root, {
+      tracker: {
+        type: "github",
+        owner: "lossyrob",
+        repo: "streamliner",
+        number: 33,
+      },
+      presentation: {
+        color: "#41b878",
+      },
+      launchDefaults: {
+        terminal: {
+          tabColor: "#4891c8",
+        },
+      },
+    });
+
+    const result = await preparePawLaunch({
+      nodeId: "launch-prompt-profiles",
+      graphPath,
+      cwd: root,
+      stateRoot: join(root, "state"),
+      pawInitRunner: createPawInitRunner(),
+      contextPreparer: createContextPreparer(root),
+    });
+
+    expect(result.terminal.tabColor).toBe("#41b878");
+  });
+
+  it("uses legacy launch default tab color when presentation color is absent", async () => {
+    const root = createRootDir();
+    const graphPath = writeLaunchPolicyGraph(root, {
+      tracker: {
+        type: "github",
+        owner: "lossyrob",
+        repo: "streamliner",
+        number: 33,
+      },
+      launchDefaults: {
+        terminal: {
+          tabColor: "#4891c8",
+        },
+      },
+    });
+
+    const result = await preparePawLaunch({
+      nodeId: "launch-prompt-profiles",
+      graphPath,
+      cwd: root,
+      stateRoot: join(root, "state"),
+      pawInitRunner: createPawInitRunner(),
+      contextPreparer: createContextPreparer(root),
+    });
+
+    expect(result.terminal.tabColor).toBe("#4891c8");
   });
 
   it("validates launch configuration field types", async () => {

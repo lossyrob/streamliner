@@ -13,7 +13,12 @@ import {
 } from "@github/copilot-sdk";
 
 import type { NodeLaunchRecord } from "../node-launch-record-contract";
-import type { WorkstreamLaunchDefaults, WorkstreamLaunchPolicy, WorkstreamNode } from "../workstream-schema";
+import type {
+  WorkstreamDocument,
+  WorkstreamLaunchDefaults,
+  WorkstreamLaunchPolicy,
+  WorkstreamNode,
+} from "../workstream-schema";
 import { renderWorkstreamTerminalTitleTemplate } from "../workstream-launch-templates";
 import {
   evaluateLaunchPolicyFromGraph,
@@ -1806,6 +1811,7 @@ export async function preparePawLaunch(
   let launchPolicy: WorkstreamLaunchPolicy | null = null;
   let launchDefaults: WorkstreamLaunchDefaults | null = null;
   let launchDefaultsNode: WorkstreamNode | null = null;
+  let launchDefaultsWorkstream: WorkstreamDocument | null = null;
   const policyGraphPath = options.graphPath ?? options.defaultGraphPath;
   if (policyGraphPath) {
     const policyResult = evaluateLaunchPolicyFromGraph({
@@ -1840,23 +1846,29 @@ export async function preparePawLaunch(
     launchPolicy = policyResult.launchPolicy;
     launchDefaults = policyResult.launchDefaults;
     launchDefaultsNode = policyResult.node;
+    launchDefaultsWorkstream = policyResult.workstream;
   }
   const terminalTitleDefault = launchDefaultsNode
     ? renderWorkstreamTerminalTitleTemplate(
         launchDefaults?.terminal?.titleTemplate,
         launchDefaultsNode,
+        launchDefaultsWorkstream ?? undefined,
       )
     : null;
+  const terminalColorDefault =
+    launchDefaultsWorkstream?.presentation?.color ?? launchDefaults?.terminal?.tabColor;
   const terminalDefaults = launchDefaults?.terminal
     ? {
         ...(launchDefaults.terminal.preferredTerminal
           ? { preferredTerminal: launchDefaults.terminal.preferredTerminal }
           : {}),
-        ...(launchDefaults.terminal.tabColor
-          ? { tabColor: launchDefaults.terminal.tabColor }
+        ...(terminalColorDefault
+          ? { tabColor: terminalColorDefault }
           : {}),
         ...(terminalTitleDefault ? { title: terminalTitleDefault } : {}),
       }
+    : terminalColorDefault
+      ? { tabColor: terminalColorDefault }
     : undefined;
   const parsedConfiguration = parseConfigurationInput(options.configuration, {
     cliArgs: options.defaultCliArgs,
