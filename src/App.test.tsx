@@ -797,6 +797,114 @@ describe("App sessions route", () => {
     15_000,
   );
 
+  it(
+    "manages PAW Review prompt templates from settings",
+    async () => {
+      const copyText = vi.fn(async () => {});
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: { writeText: copyText },
+      });
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      let templates = [{
+        id: "heavy-review",
+        name: "Heavy Review",
+        prompt: "Review issue {{githubRepo}}#{{githubIssue}}.",
+        updatedAt: "2026-05-03T18:00:00.000Z",
+      }];
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({ version: 1, migrationWarnings: [], workstreams: [] });
+        }
+        if (path === "/api/paw-review-prompt-templates" && (!init?.method || init.method === "GET")) {
+          expect(init?.cache).toBe("no-store");
+          return jsonResponse({ templates });
+        }
+        if (path === "/api/paw-review-prompt-templates" && init?.method === "POST") {
+          const body = JSON.parse(String(init.body)) as { name: string; prompt: string };
+          const template = {
+            id: body.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""),
+            name: body.name,
+            prompt: body.prompt,
+            updatedAt: "2026-05-03T18:01:00.000Z",
+          };
+          templates = [...templates, template];
+          return jsonResponse({ template }, 201);
+        }
+        if (path === "/api/paw-review-prompt-templates/heavy-review-copy" && init?.method === "PUT") {
+          const body = JSON.parse(String(init.body)) as { name: string; prompt: string };
+          const template = {
+            id: "heavy-review-copy",
+            name: body.name,
+            prompt: body.prompt,
+            updatedAt: "2026-05-03T18:02:00.000Z",
+          };
+          templates = templates.map((candidate) =>
+            candidate.id === template.id ? template : candidate
+          );
+          return jsonResponse({ template });
+        }
+        if (path === "/api/paw-review-prompt-templates/heavy-review-copy" && init?.method === "DELETE") {
+          templates = templates.filter((template) => template.id !== "heavy-review-copy");
+          return new Response(null, { status: 204 });
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState({}, "", "/settings/review-templates");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      expect(container.querySelector(".sl-settings-sidebar-head")?.textContent?.trim()).toBe("Settings");
+      expect(container.querySelector(".sl-profiles-header")?.textContent).toContain("PAW Review templates");
+      act(() => {
+        findButtonByLabel(container, "Select review template Heavy Review").click();
+      });
+      await settle();
+      expect(findTextareaByLabel(container, "Review template prompt").value).toBe(
+        "Review issue {{githubRepo}}#{{githubIssue}}.",
+      );
+
+      act(() => {
+        findButton(container, "Copy prompt").click();
+      });
+      await settle();
+      expect(copyText).toHaveBeenCalledWith("Review issue {{githubRepo}}#{{githubIssue}}.");
+
+      act(() => {
+        findButton(container, "Duplicate template").click();
+      });
+      await settle(100);
+      expect(findInputByLabel(container, "Review template name").value).toBe("Heavy Review copy");
+
+      setInputValue(findInputByLabel(container, "Review template name"), "Heavy Review updated");
+      setTextareaValue(
+        findTextareaByLabel(container, "Review template prompt"),
+        "Updated review prompt for {{githubRepo}}#{{githubIssue}}.",
+      );
+      act(() => {
+        findButton(container, "Save changes").click();
+      });
+      await settle(100);
+      expect(container.textContent).toContain('Updated "Heavy Review updated".');
+
+      act(() => {
+        findButton(container, "Delete template").click();
+      });
+      await settle(100);
+      expect(window.confirm).toHaveBeenCalledWith(
+        'Delete "Heavy Review updated"? Workstreams configured to use this review template will fall back to custom PAW Review prompts.',
+      );
+      expect(container.textContent).toContain('Deleted "Heavy Review updated".');
+      expect(container.textContent).not.toContain("heavy-review-copy");
+    },
+    15_000,
+  );
+
   it("renders managed runtime state in My Sessions rows and details", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = requestPath(input);

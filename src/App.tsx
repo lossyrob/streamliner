@@ -41,6 +41,7 @@ import {
   type PawLaunchProgressEvent,
 } from "./components/PawLaunchDialog";
 import { PawProfilesPage } from "./components/PawProfilesPage";
+import { PawReviewTemplatesPage } from "./components/PawReviewTemplatesPage";
 import { SessionLaunchSettingsPage } from "./components/SessionLaunchSettingsPage";
 import {
   loadPromptProfiles,
@@ -234,6 +235,9 @@ function readDashboardRoute(): DashboardRoute {
   }
   if (window.location.pathname === "/settings/session-launch") {
     return { view: "settings", section: "session-launch" };
+  }
+  if (window.location.pathname === "/settings/review-templates") {
+    return { view: "settings", section: "review-templates" };
   }
   if (
     window.location.pathname === "/settings" ||
@@ -1433,6 +1437,10 @@ function useReviewPromptTemplatesState() {
     mutationVersionRef.current += 1;
     setTemplates((current) => mergeReviewPromptTemplates(current, changedTemplates));
   }, []);
+  const noteTemplateDeleted = useCallback((templateId: string) => {
+    mutationVersionRef.current += 1;
+    setTemplates((current) => current.filter((template) => template.id !== templateId));
+  }, []);
 
   const refresh = useCallback(() => {
     if (requestRef.current) {
@@ -1472,6 +1480,7 @@ function useReviewPromptTemplatesState() {
     error,
     refresh,
     noteTemplatesChanged,
+    noteTemplateDeleted,
   };
 }
 
@@ -3212,13 +3221,19 @@ function SettingsPage({
   onRefreshProfiles,
   onProfilesChanged,
   onProfileDeleted,
+  reviewTemplates,
+  reviewTemplatesLoading,
+  reviewTemplatesError,
+  onRefreshReviewTemplates,
+  onReviewTemplatesChanged,
+  onReviewTemplateDeleted,
   sessionLaunchSettings,
   sessionLaunchSettingsLoading,
   sessionLaunchSettingsError,
   onRefreshSessionLaunchSettings,
   onSessionLaunchSettingsChanged,
 }: {
-  section: "profiles" | "session-launch";
+  section: "profiles" | "review-templates" | "session-launch";
   onRouteChange: (route: DashboardRoute) => void | Promise<void>;
   profiles: PawPromptProfile[];
   profilesLoading: boolean;
@@ -3226,6 +3241,12 @@ function SettingsPage({
   onRefreshProfiles: () => Promise<void>;
   onProfilesChanged: (profiles: PawPromptProfile[]) => void;
   onProfileDeleted: (profileId: string) => void;
+  reviewTemplates: PawReviewPromptTemplate[];
+  reviewTemplatesLoading: boolean;
+  reviewTemplatesError: string | null;
+  onRefreshReviewTemplates: () => Promise<void>;
+  onReviewTemplatesChanged: (templates: PawReviewPromptTemplate[]) => void;
+  onReviewTemplateDeleted: (templateId: string) => void;
   sessionLaunchSettings: SessionLaunchSettings | null;
   sessionLaunchSettingsLoading: boolean;
   sessionLaunchSettingsError: string | null;
@@ -3233,7 +3254,7 @@ function SettingsPage({
   onSessionLaunchSettingsChanged: (settings: SessionLaunchSettings) => void;
 }) {
   const renderNavItem = (
-    itemSection: "profiles" | "session-launch",
+    itemSection: "profiles" | "review-templates" | "session-launch",
     label: string,
     description: string,
   ) => {
@@ -3261,6 +3282,7 @@ function SettingsPage({
           <nav className="sl-settings-nav" aria-label="Streamliner settings">
             {renderNavItem("session-launch", "Session launch", "Copilot CLI defaults")}
             {renderNavItem("profiles", "PAW profiles", "Launch prompt defaults")}
+            {renderNavItem("review-templates", "PAW Review templates", "Companion review prompts")}
           </nav>
         </aside>
         <main className="sl-settings-content">
@@ -3272,6 +3294,15 @@ function SettingsPage({
               onRefresh={onRefreshProfiles}
               onProfilesChanged={onProfilesChanged}
               onProfileDeleted={onProfileDeleted}
+            />
+          ) : section === "review-templates" ? (
+            <PawReviewTemplatesPage
+              templates={reviewTemplates}
+              loading={reviewTemplatesLoading}
+              error={reviewTemplatesError}
+              onRefresh={onRefreshReviewTemplates}
+              onTemplatesChanged={onReviewTemplatesChanged}
+              onTemplateDeleted={onReviewTemplateDeleted}
             />
           ) : (
             <SessionLaunchSettingsPage
@@ -3383,6 +3414,8 @@ export default function App() {
       case "settings":
         suffix = route.section === "profiles"
           ? "Settings · PAW profiles"
+          : route.section === "review-templates"
+            ? "Settings · PAW Review templates"
           : "Settings · Session launch";
         break;
       case "workstream": {
@@ -3473,6 +3506,12 @@ export default function App() {
           onRefreshProfiles={promptProfileState.refresh}
           onProfilesChanged={promptProfileState.noteProfilesChanged}
           onProfileDeleted={promptProfileState.noteProfileDeleted}
+          reviewTemplates={reviewPromptTemplateState.templates}
+          reviewTemplatesLoading={reviewPromptTemplateState.loading}
+          reviewTemplatesError={reviewPromptTemplateState.error}
+          onRefreshReviewTemplates={reviewPromptTemplateState.refresh}
+          onReviewTemplatesChanged={reviewPromptTemplateState.noteTemplatesChanged}
+          onReviewTemplateDeleted={reviewPromptTemplateState.noteTemplateDeleted}
           sessionLaunchSettings={sessionLaunchSettingsState.responseError ? null : sessionLaunchSettingsState.settings}
           sessionLaunchSettingsLoading={sessionLaunchSettingsState.loading}
           sessionLaunchSettingsError={sessionLaunchSettingsState.error}
