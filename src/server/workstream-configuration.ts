@@ -313,6 +313,7 @@ export async function updateWorkstreamConfigurationFile(input: {
     input.workstreamId,
   );
   const existingWorkstream = parseWorkstreamDocument(input.content);
+  let migratedPresentationColor: string | undefined;
 
   const presentationConfigured = hasOwn(configurationRecord, "presentation");
   if (presentationConfigured) {
@@ -336,11 +337,12 @@ export async function updateWorkstreamConfigurationFile(input: {
       delete record.launchDefaults;
     }
     if (!presentationConfigured) {
-      mergePresentationColor(record, nextDefaults.migratedPresentationColor);
+      migratedPresentationColor = nextDefaults.migratedPresentationColor;
+      mergePresentationColor(record, migratedPresentationColor);
     }
   }
 
-  if (!presentationConfigured) {
+  if (!presentationConfigured && !migratedPresentationColor) {
     mergePresentationColor(record, existingWorkstream.presentation?.color ?? undefined);
   }
   deleteLegacyTerminalColor(record);

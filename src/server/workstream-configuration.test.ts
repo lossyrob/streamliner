@@ -179,6 +179,40 @@ describe("updateWorkstreamConfigurationFile", () => {
     }));
   });
 
+  it("lets a legacy tab color update replace an existing presentation color", async () => {
+    const graphPath = writeGraph(createRootDir(), buildGraph({
+      presentation: {
+        shortName: "API",
+        color: "#41b878",
+      },
+      launchDefaults: {
+        terminal: {
+          tabColor: "#41b878",
+        },
+      },
+    }));
+
+    const result = await updateConfiguration(graphPath, {
+      launchDefaults: {
+        terminal: {
+          tabColor: "#FF8C0A",
+        },
+      },
+    });
+
+    expect(result.workstream.presentation).toEqual({
+      shortName: "API",
+      color: "#ff8c0a",
+    });
+    expect(result.workstream.launchDefaults).toBeUndefined();
+    expect(readGraph(graphPath)).toEqual(expect.objectContaining({
+      presentation: {
+        shortName: "API",
+        color: "#ff8c0a",
+      },
+    }));
+  });
+
   it("rejects invalid configuration values without rewriting the graph", async () => {
     const invalidConfigurations: Array<{
       label: string;
