@@ -752,6 +752,7 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
   const workstreamsRef = useRef<WorkstreamRegistryListEntry[]>([]);
   const lastModifiedRef = useRef<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const graphPollInFlightRef = useRef(false);
 
   const applyRegistryResponse = useCallback((body: WorkstreamRegistryListResponse) => {
     const mergedWorkstreams = mergeWorkstreamEntries(
@@ -877,7 +878,14 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
     }
 
     pollRef.current = setInterval(() => {
-      void loadRegistered(activeWorkstream, { quiet: true });
+      if (graphPollInFlightRef.current) {
+        return;
+      }
+      graphPollInFlightRef.current = true;
+      void loadRegistered(activeWorkstream, { quiet: true })
+        .finally(() => {
+          graphPollInFlightRef.current = false;
+        });
     }, POLL_INTERVAL_MS);
 
     return () => {
