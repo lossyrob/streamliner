@@ -345,24 +345,64 @@ the builder learn why reality diverged from the plan.
 ### Reconciliation notes and promotion
 
 When a wave, gate, hot-work burst, or completed workstream teaches something
-about the work geometry, reconciliation should be able to emit a compact
-reconciliation note. This is not a generic retrospective. It is a lower-authority
-learning artifact about boundaries, contracts, context gaps, gate timing,
-attention allocation, and downstream impact.
+about the work geometry, reconciliation emits a compact reconciliation note.
+This is not a generic retrospective. It is a lower-authority learning artifact
+about boundaries, contracts, context gaps, gate timing, attention allocation,
+and downstream impact.
 
-A reconciliation note can include:
+The reconciliation note is a durable workstream artifact. It lives at
+`<workstream>/reconciliation-note.md`, follows the structure in
+[WORKSTREAM-FORMAT.md](WORKSTREAM-FORMAT.md#the-reconciliation-note-reconciliation-notemd),
+and is rewritten in place — a single learning summary per workstream that
+deepens as the work progresses.
 
-- what changed;
-- which boundaries held, leaked, or needed expansion;
-- which contracts or exports were missing, underdefined, or validated;
-- what context was stale, missing, or over-prescriptive;
-- what future shaping should preserve or change;
-- promotion candidates.
+#### When it is produced
 
-Promotion keeps authority explicit. A lesson may remain a notebook lesson, become
-a workstream-local brief decision, turn into node-spec guidance, become a
-checkpoint contract, or be promoted into the design layer or a decision record.
-Nothing becomes authoritative merely because an agent wrote it down.
+| Trigger | Reconciliation note expectation |
+|---|---|
+| Final closure gate | **Required.** Closure does not pass until the note exists and every promotion candidate has an explicit disposition. |
+| Wave or checkpoint gate where the work taught something nontrivial | **Recommended.** Extend the existing note in place. |
+| Hot-work burst that changed plan or scope | **Recommended** when the lesson is durable enough to inform future shaping. |
+| Routine reconciliation with no learning to record | None required. The note should not be edited just to prove reconciliation happened. |
+
+#### Closure-gate rule
+
+A workstream's final closure gate does not pass until:
+
+1. `reconciliation-note.md` exists for this workstream.
+2. Every `Closeout Observation` in the brief has a disposition (completed,
+   deferred with rationale, promoted, or dropped). This is the existing
+   closeout observation lane rule, surfaced here because closure depends on it.
+3. Every promotion candidate in the reconciliation note has an explicit
+   disposition: landed (with a link to where it landed), deferred with
+   rationale, or dropped because reconciliation showed it does not matter.
+
+These rules apply to *the closure gate*, not to every reconciliation pass. A
+mid-workstream reconciliation that does not change the closure picture does
+not need to revise the note.
+
+#### Promotion
+
+Promotion keeps authority explicit. A lesson may remain a workstream-local
+note, become a workstream-local brief decision, turn into node-spec guidance,
+become a checkpoint contract, or be promoted into the design layer or a
+decision record. Nothing becomes authoritative merely because an agent wrote
+it down.
+
+Each promotion candidate names its target authority so the disposition is
+verifiable: "Brief decision in workstream X", "New section in
+`docs/design/Y.md`", "ADR draft at `docs/design/decisions/NNN-Z.md`", "New
+shaping candidate at `.streamliner/shaping/candidates/W.md`", or "Out of
+scope — dropped because…".
+
+#### Distinct from any closeout narrative
+
+A workstream may also produce a longer-form prose narrative under `docs/` for
+reflective consumption (for example, feeding an external podcast generator).
+That artifact is optional, story-shaped, and intended for the operator's own
+consolidation away from in-the-moment work. It does not satisfy the
+closure-gate rule — the reconciliation note does. The two artifacts can
+reference each other but serve different audiences.
 
 ## Authority boundaries
 

@@ -39,8 +39,13 @@ workstreams/
   {workstream-id}/
     brief.md
     graph.json
+    reconciliation-note.md
     docs/
 ```
+
+`reconciliation-note.md` is optional during execution and required at the
+workstream's final closure gate. See [The reconciliation note](#the-reconciliation-note-reconciliation-notemd)
+below.
 
 Where that `workstreams/` directory lives is up to the operator:
 
@@ -326,6 +331,78 @@ dependency-bearing into its own node, issue, candidate, or follow-on workstream.
   work remains, materialize the bounded batch into a normal closeout task node
   with a tracker issue instead of executing from brief prose.
 - **Runtime telemetry lives outside the brief.** Session IDs, heartbeats, node claims, and tracker caches belong in Streamliner's local runtime store.
+
+---
+
+## The reconciliation note (`reconciliation-note.md`)
+
+The reconciliation note is the workstream's lower-authority **learning
+artifact**. It captures what the workstream taught the operator about workstream
+design — boundaries, contracts, context fitness, gate timing, attention
+allocation, and downstream impact — in a form that can be read during the next
+workstream's shaping and selectively promoted into the brief, node specs, or
+the design layer.
+
+It is **not** a status report, an executive summary, or a generic
+retrospective. See [ORCHESTRATION.md](ORCHESTRATION.md#reconciliation-notes-and-promotion)
+for when and how it is produced, and for the closure-gate rule that depends on
+it.
+
+### Structure
+
+```markdown
+# {Workstream Title} — Reconciliation
+
+## What changed
+{Initial brief and graph intent compared with shipped reality. Reference
+specific waves, gates, or pivots; do not restate the brief.}
+
+## Boundaries
+- **Held:** {boundaries that worked as drawn}
+- **Leaked:** {boundaries that needed protection during execution}
+- **Expanded:** {boundaries that legitimately moved, with why}
+
+## Contracts and exports
+{Which exports were missing, underdefined, validated cleanly, or had to be
+renegotiated mid-flight.}
+
+## Context fitness
+{Where the context package was stale, missing, or over-prescriptive for
+workers. Where design references pointed cleanly vs. where workers had to
+discover intent.}
+
+## Attention allocation
+{Where operator focus went. Where it should have gone. Which `focus` nodes
+turned out routine; which `watch` nodes needed more presence.}
+
+## Inspired vs. recovery interventions
+{Named examples of hot work, mid-stream steering, or boundary changes.
+Classify each as inspired (new front-line insight) or recovery (work-design
+failure that future shaping should be able to prevent).}
+
+## Promotion candidates
+- {Lesson}: target authority — {brief decision | node-spec guideline |
+  candidate | follow-on workstream | design doc | decision record}
+  - Disposition: {landed at <link> | deferred with rationale | dropped because…}
+```
+
+### Guidelines
+
+- **Target length:** Under 400 lines. Compact and learning-shaped, not narrative.
+- **Single file per workstream, rewritten in place.** Intermediate wave-gate
+  reconciliations may add or revise sections; the file always reads as the
+  current best understanding. Git history is the audit trail.
+- **Every promotion candidate has a disposition before the closure gate
+  passes.** Open candidates indicate the gate is not actually ready to close.
+- **Not a brief replacement.** Workstream-local execution decisions still
+  belong in the brief's `Decisions` section. Design-layer changes still belong
+  in design docs and decision records. The reconciliation note records the
+  *lessons*; the promotion candidates point at where those lessons should land.
+- **Distinct from any closeout narrative.** A workstream may also produce a
+  longer-form prose narrative under `docs/` for reflective consumption (e.g.,
+  feeding an external podcast generator). That artifact is optional and never
+  gating; the reconciliation note is the always-on, structured learning
+  surface.
 
 ---
 
@@ -822,6 +899,11 @@ The design docs describe the intended system from the operator's perspective. Th
   late-stage polish as closeout observations. When real closure work remains,
   materialize safe batches into a single closeout node with a tracker issue.
   Promote large or dependency-bearing observations into normal work.
+- **Produce a reconciliation note at the closure gate.** Write
+  `reconciliation-note.md` per [The reconciliation note](#the-reconciliation-note-reconciliation-notemd).
+  At wave or checkpoint gates it is recommended when the work taught something
+  nontrivial; at the final closure gate it is required. The closure gate does
+  not pass until every promotion candidate has an explicit disposition.
 - **Use gates at wave boundaries.** A gate marks where the operator evaluates the workstream before the next wave proceeds.
 - **Later-wave nodes are sketches.** They need a title, summary, and rough dependencies, but no tracker or detailed spec.
 - **Keep dependencies minimal.** Only add an edge if the upstream node's output is genuinely required by the downstream node.
