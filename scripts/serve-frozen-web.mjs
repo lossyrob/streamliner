@@ -13,6 +13,7 @@ const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 5173;
 const DEFAULT_API_HOST = "127.0.0.1";
 const DEFAULT_API_PORT = "4319";
+const PROXY_RETRY_DELAYS_MS = [150, 500, 1_000];
 const DIST_ROOT = resolve(process.cwd(), "dist");
 const INDEX_HTML = join(DIST_ROOT, "index.html");
 
@@ -58,6 +59,39 @@ function requestBody(req) {
   });
 }
 
+function delay(ms) {
+  return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
+}
+
+function canRetryProxyRequest(method) {
+  return method === "GET" || method === "HEAD";
+}
+
+async function fetchUpstreamWithRetries(target, init) {
+  let lastError;
+  const maxAttempts = canRetryProxyRequest(init.method)
+    ? PROXY_RETRY_DELAYS_MS.length + 1
+    : 1;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      return await fetch(target, init);
+    } catch (error) {
+      lastError = error;
+      const nextDelay = PROXY_RETRY_DELAYS_MS[attempt];
+      if (nextDelay === undefined) {
+        break;
+      }
+      console.warn(
+        `Frozen proxy upstream request failed for ${target.pathname}${target.search}; retrying in ${nextDelay}ms: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      await delay(nextDelay);
+    }
+  }
+  throw lastError;
+}
+
 async function proxyRequest(req, res, targetBaseUrl) {
   const target = new URL(req.url ?? "/", targetBaseUrl);
   const headers = new Headers();
@@ -73,7 +107,7 @@ async function proxyRequest(req, res, targetBaseUrl) {
   const body = req.method === "GET" || req.method === "HEAD"
     ? undefined
     : await requestBody(req);
-  const upstream = await fetch(target, {
+  const upstream = await fetchUpstreamWithRetries(target, {
     method: req.method,
     headers,
     body,
