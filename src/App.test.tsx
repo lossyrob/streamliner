@@ -5184,7 +5184,7 @@ describe("App sessions route", () => {
       expect(window.location.pathname).toBe("/workstreams/streamliner/api-test");
 
       graph = buildWorkstreamGraph({ title: "API Test Updated" });
-      await settle(2_200);
+      await settle(15_500);
       expect(container.textContent).toContain("API Test Updated");
       expect(
         fetchMock.mock.calls.some(([input]) =>
@@ -5192,7 +5192,7 @@ describe("App sessions route", () => {
         ),
       ).toBe(false);
     },
-    15_000,
+    30_000,
   );
 
   it(

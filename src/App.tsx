@@ -115,7 +115,7 @@ import {
   workstreamGithubSnapshotFromStatuses,
 } from "./github-status-client";
 
-const POLL_INTERVAL_MS = 2000;
+const POLL_INTERVAL_MS = 15_000;
 const GITHUB_STATUS_REFRESH_INTERVAL_MS = 60_000;
 const LAST_GRAPH_KEY = "streamliner:lastGraphPath";
 const PAW_LAUNCH_CWD_OVERRIDES_KEY = "streamliner:pawLaunchCwdByRepo";
@@ -753,6 +753,7 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
   const lastModifiedRef = useRef<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const graphPollInFlightRef = useRef(false);
+  const isDocumentVisible = useIsDocumentVisible();
 
   const applyRegistryResponse = useCallback((body: WorkstreamRegistryListResponse) => {
     const mergedWorkstreams = mergeWorkstreamEntries(
@@ -873,7 +874,7 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
   }, [activeWorkstream, enabled, fetchRegistry, loadRegistered]);
 
   useEffect(() => {
-    if (!enabled || !activeWorkstream || error) {
+    if (!enabled || !activeWorkstream || error || !isDocumentVisible) {
       return;
     }
 
@@ -893,10 +894,10 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
         clearInterval(pollRef.current);
       }
     };
-  }, [activeWorkstream, enabled, error, loadRegistered]);
+  }, [activeWorkstream, enabled, error, isDocumentVisible, loadRegistered]);
 
   useEffect(() => {
-    if (!enabled || !activeWorkstream || error) {
+    if (!enabled || !activeWorkstream || error || !isDocumentVisible) {
       return;
     }
 
@@ -907,7 +908,7 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
     return () => {
       clearInterval(timer);
     };
-  }, [activeWorkstream, enabled, error]);
+  }, [activeWorkstream, enabled, error, isDocumentVisible]);
 
   const addSource = useCallback(
     async (type: WorkstreamSourceType, path: string) => {
