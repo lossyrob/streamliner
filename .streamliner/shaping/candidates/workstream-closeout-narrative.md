@@ -213,16 +213,21 @@ anchors:
   recovery moments in the order the operator experienced them. Introduce
   components, workstreams, repos, design decisions, issues, and PRs inline as
   they enter the story rather than pre-loading a cast list the listener must
-  remember.
+  remember. Wave or act openings may include one sentence about what that wave
+  was supposed to produce; the rest of the section should then tell what
+  actually happened.
 - **Inflection points in context.** Surface the moments where the workstream's
   shape changed inside the chronological arc. A short separate section naming
   the top 2-3 pivots is the common case when it keeps the listener oriented;
-  keep them inline only for very small stories where a roll-up would repeat the
-  same prose.
+  roughly 200-400 words is normal for a three-pivot roll-up. Keep pivots inline
+  only for very small stories where a roll-up would repeat the same prose. If
+  compactness and self-containment conflict, self-containment wins.
 - **Lessons in story form.** Boundary, contract, design-layer, attention,
   autonomy, validation, and gate-placement lessons should normally land in two
   short sections: what the work taught about the work, and what it taught about
   how the work was run. Combine them only when the split would be artificial.
+  Some lessons legitimately appear in both sections from different angles; make
+  the cross-reference in prose rather than forcing a single home.
   The reconciliation note remains the structured version; the narrative makes
   those lessons memorable.
 - **Open threads.** What is leaving the workstream alive: follow-on
@@ -237,15 +242,19 @@ moment was design insight versus work-design recovery, but do not add a
 duplicated classification section unless the specific story demands it.
 
 The narrative must not introduce new authoritative facts or lessons that the
-reconciliation note does not also reflect. If drafting surfaces a new
-candidate-worthy observation, update reconciliation first or route the lesson
-through the reconciliation note's promotion-candidate process; do not leave it
-only in narrative prose.
+reconciliation note does not also reflect. Before the closure gate passes, update
+reconciliation first or route a new candidate-worthy observation through the
+reconciliation note's promotion-candidate process. After closure, do not reopen a
+settled reconciliation note just to capture small narrative framings; leave them
+clearly as narrative reflection and flag them for the next adjacent workstream's
+reconciliation or doctrine backlog if they need authority.
 
 ### Voice and constraints
 
 - **Chronological by default.** Story-shaped, not analytical. The
-  reconciliation note already carries the analytical version.
+  reconciliation note already carries the analytical version. A wave opening may
+  briefly name what the wave hoped to produce before the section returns to what
+  actually happened.
 - **Self-contained for a cold listener.** The narrative must be understandable
   to a podcast generator that cannot open GitHub, inspect design docs, or know
   local shorthand. Every important component, workstream, design decision, and
@@ -271,13 +280,19 @@ only in narrative prose.
 - **Context before reference.** If the narrative mentions an adjacent
   workstream, design doc, or external system, first explain what role it played
   in this story. Do not assume the listener knows the portfolio.
+- **Orchestrator vocabulary is allowed when the work requires it.** Terms such
+  as node, gate, candidate, reconciliation, or subagent may be unavoidable in
+  orchestrator-heavy workstreams. Use them sparingly and make sure surrounding
+  prose carries the meaning; self-containment is about avoiding opaque
+  identifiers and link-dependent explanations, not banning all local vocabulary.
 - **Listenability target:** Long enough to be a real retelling, short enough to
   listen to in a single sitting once the podcast generator chews it. As a
   calibration anchor, roughly 1,500-4,000 words is normal depending on
   workstream size, with substrate or policy workstreams often at the lower end
-  and product-feature workstreams often at the upper end. Do not pad a tight
-  story to satisfy the range, and do not cut a large workstream so aggressively
-  that its pivots stop making sense.
+  and product-feature workstreams often at the upper end. Coordination-heavy or
+  pivot-heavy workstreams trend longer regardless of category. Do not pad a
+  tight story to satisfy the range, and do not cut a large workstream so
+  aggressively that its pivots stop making sense.
 
 ### What not to do
 
@@ -287,8 +302,10 @@ only in narrative prose.
 - Do not modify the brief, graph, or design docs based on the narrative
   alone. Lessons promote through the reconciliation note's candidates, not
   through narrative prose.
-- Do not introduce new facts, lessons, or promotion candidates that exist only
-  in the narrative. Reconcile or route them first.
+- Do not introduce new authoritative facts, lessons, or promotion candidates
+  that exist only in the narrative. Reconcile or route them before closure; after
+  closure, keep newly surfaced framings explicitly non-authoritative and flag
+  them for the next appropriate reconciliation or doctrine backlog.
 - Do not generate or attempt to attach audio. The MVP hands the markdown to
   the operator; audio generation is deferred.
 - Do not make the narrative a closure-gate dependency. Closure depends on
@@ -304,7 +321,9 @@ only in narrative prose.
 ### After producing the narrative
 
 - Commit `docs/closeout-narrative.md` in the workstream directory with a
-  message like `Add closeout narrative for <workstream-id>`.
+  message like `Add closeout narrative for <workstream-id>`. In a busy
+  operator-owned planning repo with unrelated uncommitted work, stage and commit
+  the narrative selectively rather than sweeping in other workstreams' changes.
 - Do a final "opaque reference" pass before reporting completion. Search for
   issue/PR/design-ID-heavy sentences and rewrite them so the surrounding prose
   explains the event without requiring the ID.
@@ -317,8 +336,10 @@ only in narrative prose.
   note or brief is acceptable, but only as a pointer, not as a lesson change.
 - Report the path back to the operator.
 - If new candidate-worthy observations surfaced while writing (unusual but
-  possible), raise them as reconciliation-note promotion candidates rather
-  than burying them in the narrative.
+  possible), raise them as reconciliation-note promotion candidates before
+  closure. After closure, do not rewrite the note only for small narrative
+  framings; report them as non-authoritative reflections and route anything that
+  needs authority to the next adjacent workstream or doctrine backlog.
 
 ## Dependencies
 
