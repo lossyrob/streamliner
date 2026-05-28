@@ -312,10 +312,14 @@ layer.}
 
 ## Closeout Observations
 {Optional. Lightweight polish, cleanup, and confidence-gap observations
-discovered while using or executing the workstream. These are not launched work
-yet. When closure work remains, materialize bounded items into a normal closeout
-batch node with a tracker issue; promote anything large, risky, or
-dependency-bearing into its own node, issue, candidate, or follow-on workstream.}
+discovered while using or executing the workstream. Use this exact heading for
+new workstreams. Older or adjacent workstreams may have equivalent closure
+parking lanes such as Closeout Punch List, coverage-routing report, or a named
+closeout checklist; treat those as closeout observations when they collect
+bounded closure items. These are not launched work yet. When closure work
+remains, materialize bounded items into a normal closeout batch node with a
+tracker issue; promote anything large, risky, or dependency-bearing into its
+own node, issue, candidate, or follow-on workstream.}
 ```
 
 ### Guidelines
@@ -348,6 +352,9 @@ retrospective. See [ORCHESTRATION.md](ORCHESTRATION.md#reconciliation-notes-and-
 for when and how it is produced, and for the closure-gate rule that depends on
 it.
 
+Write it from plan/reality divergence and future shaping lessons, not from a
+completed-work inventory.
+
 ### Structure
 
 ```markdown
@@ -355,7 +362,8 @@ it.
 
 ## What changed
 {Initial brief and graph intent compared with shipped reality. Reference
-specific waves, gates, or pivots; do not restate the brief.}
+specific waves, gates, or pivots; do not restate the brief or summarize status
+for its own sake.}
 
 ## Boundaries
 - **Held:** {boundaries that worked as drawn}
@@ -364,7 +372,8 @@ specific waves, gates, or pivots; do not restate the brief.}
 
 ## Contracts and exports
 {Which exports were missing, underdefined, validated cleanly, or had to be
-renegotiated mid-flight.}
+renegotiated mid-flight. For research or shaping workstreams, interpret exports
+as the decisions, artifacts, or lessons another workstream can rely on.}
 
 ## Context fitness
 {Where the context package was stale, missing, or over-prescriptive for
@@ -386,6 +395,56 @@ failure that future shaping should be able to prevent).}
   - Disposition: {landed at <link> | deferred with rationale | dropped because…}
 ```
 
+`Deferred with rationale` is a closed disposition. An open candidate is one with
+no disposition, a vague disposition, or an unresolved target authority.
+
+### Compact example
+
+A compact note may look like:
+
+```markdown
+# Scenario Runner Reliability — Reconciliation
+
+## What changed
+The workstream started as a retry-policy cleanup, but production-like runs
+showed the real boundary was launch-state durability. The final shape moved one
+lesson into the session registry design and left runner ergonomics for later.
+
+## Boundaries
+- **Held:** Runner retry behavior stayed inside the runner.
+- **Leaked:** Launch-state ownership leaked into worker scripts until the
+  registry took it.
+- **Expanded:** Closeout added a coverage-routing check because validation
+  evidence was thinner than expected.
+
+## Contracts and exports
+The durable export is the registry-owned launch-state contract. Downstream
+runner work can rely on the registry, not worker scripts, as the source of truth.
+
+## Context fitness
+Worker field reports were missing on two nodes, so reconciliation used PR bodies,
+diffs, issue comments, and the coverage-routing report as equivalent evidence.
+
+## Attention allocation
+The `watch` nodes stayed routine until validation exposed the launch-state leak;
+the gate should have asked for durability evidence earlier.
+
+## Inspired vs. recovery interventions
+The coverage-routing check was inspired because it exposed a useful validation
+pattern. The launch-state repair was recovery because the original boundary let
+workers own state they should only report.
+
+## Promotion candidates
+- Launch state belongs to the registry: target authority — design doc
+  - Disposition: landed at `docs/design/session-registry.md`.
+- Runner ergonomics need a separate pass: target authority — follow-on workstream
+  - Disposition: deferred with rationale; not needed to close this workstream.
+- Coverage-routing gaps need tracking: target authority — tracker issue
+  - Disposition: landed at issue #123.
+- Keep the old retry checklist: target authority — brief decision
+  - Disposition: dropped because shipped validation made it obsolete.
+```
+
 ### Guidelines
 
 - **Target length:** Under 400 lines. Compact and learning-shaped, not narrative.
@@ -394,6 +453,12 @@ failure that future shaping should be able to prevent).}
   current best understanding. Git history is the audit trail.
 - **Every promotion candidate has a disposition before the closure gate
   passes.** Open candidates indicate the gate is not actually ready to close.
+  Deferred-with-rationale candidates are disposed; undisposed or vague
+  candidates are still open.
+- **Evidence may be equivalent.** Prefer standard worker `### Field report`
+  comments, but when they are missing or non-standard, cite PR bodies, diffs,
+  issue comments, tracker closeout notes, coverage reports, or committed
+  artifact changes instead.
 - **Not a brief replacement.** Workstream-local execution decisions still
   belong in the brief's `Decisions` section. Design-layer changes still belong
   in design docs and decision records. The reconciliation note records the

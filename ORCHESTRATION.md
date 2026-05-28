@@ -116,6 +116,14 @@ and later materializes related entries into a normal closeout node with a tracke
 issue when that is more efficient than many small worker launches, usually near a
 gate or closure point.
 
+The canonical brief heading for new workstreams is `## Closeout Observations`.
+Older or adjacent workstreams may use equivalent closure parking lanes such as
+`Closeout Punch List`, coverage-routing reports, or named closeout checklists.
+Treat those lanes as closeout observations when they collect bounded closure
+items that must be completed, deferred, promoted, or dropped before final
+closure. Do not ignore closure work solely because the heading predates this
+doctrine.
+
 The closeout observation lane is gate-owned and conditional. Do not create an
 empty closeout node just because the workstream is nearing closure. The closure
 gate asks whether any closeout work remains. If none exists, the gate can pass.
@@ -137,7 +145,7 @@ The normal process is:
 Each closeout observation should eventually be one of:
 
 - **completed** in the closeout batch;
-- **deferred** explicitly with rationale;
+- **deferred** explicitly with rationale, which is a closed disposition;
 - **promoted** to its own node, tracker issue, candidate, or follow-on workstream;
 - **dropped** because it no longer matters after reconciliation.
 
@@ -350,6 +358,12 @@ This is not a generic retrospective. It is a lower-authority learning artifact
 about boundaries, contracts, context gaps, gate timing, attention allocation,
 and downstream impact.
 
+Write the note from plan/reality divergence and future shaping lessons, not from
+a completed-work inventory. Evidence can come from standard worker `### Field
+report` comments, but if those are missing or non-standard, cite equivalent
+signals such as PR bodies, diffs, issue comments, tracker closeout notes,
+coverage-routing reports, or committed artifact changes.
+
 The reconciliation note is a durable workstream artifact. It lives at
 `<workstream>/reconciliation-note.md`, follows the structure in
 [WORKSTREAM-FORMAT.md](WORKSTREAM-FORMAT.md#the-reconciliation-note-reconciliation-notemd),
@@ -370,12 +384,18 @@ deepens as the work progresses.
 A workstream's final closure gate does not pass until:
 
 1. `reconciliation-note.md` exists for this workstream.
-2. Every `Closeout Observation` in the brief has a disposition (completed,
-   deferred with rationale, promoted, or dropped). This is the existing
-   closeout observation lane rule, surfaced here because closure depends on it.
+2. Every `Closeout Observation` in the brief, or equivalent closure parking lane
+   such as a `Closeout Punch List` or coverage-routing report, has a disposition
+   (completed, deferred with rationale, promoted, or dropped). This is the
+   existing closeout observation lane rule, surfaced here because closure
+   depends on it.
 3. Every promotion candidate in the reconciliation note has an explicit
    disposition: landed (with a link to where it landed), deferred with
    rationale, or dropped because reconciliation showed it does not matter.
+
+`Deferred with rationale` is a closed disposition. The gate blocks on missing
+or ambiguous dispositions, not on intentionally deferred work that names why it
+is not landing in this workstream.
 
 These rules apply to *the closure gate*, not to every reconciliation pass. A
 mid-workstream reconciliation that does not change the closure picture does
