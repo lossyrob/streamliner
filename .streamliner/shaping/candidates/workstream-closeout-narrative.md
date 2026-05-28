@@ -124,6 +124,11 @@ section breaks.
 
 Pull the following before drafting:
 
+Scale the gather pass to the workstream's size. Small workstreams can skip
+cross-workstream signal and design-layer diffs when neither materially shaped
+the story; medium or large workstreams should gather enough evidence that the
+narrative can explain every major pivot without link-chasing.
+
 1. **Workstream artifacts**
    - `<workstream>/brief.md` (current state).
    - `<workstream>/graph.json` (current state).
@@ -145,6 +150,9 @@ Pull the following before drafting:
    - For each node tracker issue, fetch the issue body, comments, close
      reason, and any `### Field report` comment. Use
      `gh issue view <number> --comments --json title,body,comments,state,closedAt`.
+     If exact field reports are missing or non-standard, use equivalent
+     evidence such as PR bodies, changed files, issue comments, close reasons,
+     or reconciliation evidence notes.
    - For each merged PR linked from those issues, fetch title, description,
      review comment threads, and merge timestamp.
    - Treat issue, PR, branch, and commit identifiers as **source references**,
@@ -154,6 +162,10 @@ Pull the following before drafting:
      "#492".
 
 4. **Design impact**
+   - Determine the window from workstream artifacts: use `createdAt` from
+     `graph.json` for `<workstream-start>`; use the closure-gate completed
+     timestamp for `<workstream-close>`, or today's date if the gate is not yet
+     completed.
    - For each file in `designRefs`, run
      `git log --since=<workstream-start> --until=<workstream-close> --patch -- <path>`
      to capture what changed in the design layer during the workstream's
@@ -174,7 +186,9 @@ Pull the following before drafting:
 
 Before drafting, assume the markdown will be handed to a podcast generator with
 no GitHub access, no access to private repos, and no memory of the operator's
-workstream shorthand. Build a small glossary for the narrative:
+workstream shorthand. Translate identifiers inline as they enter the story by
+default. For ID-heavy workstreams, build a small scratch glossary as an optional
+pre-pass; it does not need to become part of the committed narrative.
 
 - expand design decision IDs into their meaning ("the design decision that made
   Launcher the production dispatch boundary" instead of "D-100");
@@ -201,12 +215,16 @@ anchors:
   they enter the story rather than pre-loading a cast list the listener must
   remember.
 - **Inflection points in context.** Surface the moments where the workstream's
-  shape changed inside the chronological arc. Add a separate roll-up only when
-  the story genuinely benefits from hearing those pivots collected together.
+  shape changed inside the chronological arc. A short separate section naming
+  the top 2-3 pivots is the common case when it keeps the listener oriented;
+  keep them inline only for very small stories where a roll-up would repeat the
+  same prose.
 - **Lessons in story form.** Boundary, contract, design-layer, attention,
-  autonomy, validation, and gate-placement lessons can be combined when they
-  naturally belong together. The reconciliation note remains the structured
-  version; the narrative makes those lessons memorable.
+  autonomy, validation, and gate-placement lessons should normally land in two
+  short sections: what the work taught about the work, and what it taught about
+  how the work was run. Combine them only when the split would be artificial.
+  The reconciliation note remains the structured version; the narrative makes
+  those lessons memorable.
 - **Open threads.** What is leaving the workstream alive: follow-on
   workstreams, promoted candidates, deferred items, or external dependencies.
   Point at where each thread continues so the listener knows the story is not
@@ -217,6 +235,12 @@ candidate dispositions and inspired-vs.-recovery classification. In the
 narrative, preserve that distinction as a writing lens: make it clear when a
 moment was design insight versus work-design recovery, but do not add a
 duplicated classification section unless the specific story demands it.
+
+The narrative must not introduce new authoritative facts or lessons that the
+reconciliation note does not also reflect. If drafting surfaces a new
+candidate-worthy observation, update reconciliation first or route the lesson
+through the reconciliation note's promotion-candidate process; do not leave it
+only in narrative prose.
 
 ### Voice and constraints
 
@@ -248,17 +272,23 @@ duplicated classification section unless the specific story demands it.
   workstream, design doc, or external system, first explain what role it played
   in this story. Do not assume the listener knows the portfolio.
 - **Listenability target:** Long enough to be a real retelling, short enough to
-  listen to in a single sitting once the podcast generator chews it. Do not pad
-  a tight story to satisfy an arbitrary minimum, and do not cut a large
-  workstream so aggressively that its pivots stop making sense.
+  listen to in a single sitting once the podcast generator chews it. As a
+  calibration anchor, roughly 1,500-4,000 words is normal depending on
+  workstream size, with substrate or policy workstreams often at the lower end
+  and product-feature workstreams often at the upper end. Do not pad a tight
+  story to satisfy the range, and do not cut a large workstream so aggressively
+  that its pivots stop making sense.
 
 ### What not to do
 
-- Do not modify `reconciliation-note.md`. The narrative does not replace or
-  refresh structured learning.
+- Do not modify `reconciliation-note.md` to replace or refresh structured
+  learning. The narrative depends on the note; it does not revise the note's
+  lessons as a side effect.
 - Do not modify the brief, graph, or design docs based on the narrative
   alone. Lessons promote through the reconciliation note's candidates, not
   through narrative prose.
+- Do not introduce new facts, lessons, or promotion candidates that exist only
+  in the narrative. Reconcile or route them first.
 - Do not generate or attempt to attach audio. The MVP hands the markdown to
   the operator; audio generation is deferred.
 - Do not make the narrative a closure-gate dependency. Closure depends on
@@ -278,6 +308,13 @@ duplicated classification section unless the specific story demands it.
 - Do a final "opaque reference" pass before reporting completion. Search for
   issue/PR/design-ID-heavy sentences and rewrite them so the surrounding prose
   explains the event without requiring the ID.
+- Run a short self-check: every closed wave is named in the story; every landed
+  promotion candidate from the reconciliation note appears in the lessons or
+  open threads; a podcast listener with no GitHub access could follow each
+  inflection moment from prose alone.
+- No linking is required. The narrative is operator-facing and produced on
+  demand. If discoverability matters, a one-line pointer from the reconciliation
+  note or brief is acceptable, but only as a pointer, not as a lesson change.
 - Report the path back to the operator.
 - If new candidate-worthy observations surfaced while writing (unusual but
   possible), raise them as reconciliation-note promotion candidates rather
