@@ -126,7 +126,7 @@ function repoFromGitRemote(value: string | null): string | null {
   }
 
   const githubSshMatch = trimmed.match(
-    /^(?:ssh:\/\/)?git@github\.com[:/]([\w.-]+)\/([\w.-]+)$/i,
+    /^(?:ssh:\/\/)?git@github\.com(?:-[\w.-]+)?[:/]([\w.-]+)\/([\w.-]+)$/i,
   );
   if (githubSshMatch) {
     return normalizeRepo(`${githubSshMatch[1]}/${githubSshMatch[2]}`);
