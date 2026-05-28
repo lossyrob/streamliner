@@ -268,6 +268,38 @@ describe("indexSessionContext", () => {
     );
   }, GIT_CONTEXT_TEST_TIMEOUT_MS);
 
+  it("backfills missing repo from GitHub SSH host aliases", () => {
+    const root = createRootDir();
+    const repo = join(root, "repo");
+    const eventsPath = join(root, "events.jsonl");
+    mkdirSync(repo, { recursive: true });
+    writeFileSync(eventsPath, "", "utf8");
+    runGitSetup(repo, ["init", "-b", "main"]);
+    runGitSetup(repo, ["remote", "add", "origin", "git@github.com-lossyrob:lossyrob/streamliner.git"]);
+    const stat = statSync(eventsPath);
+
+    const patch = indexSessionContext(
+      buildSession({
+        cwd: repo,
+        repo: null,
+        branch: "main",
+        derivedWorktreePath: repo,
+        derivedContextEventsOffset: stat.size,
+        derivedContextEventsSize: stat.size,
+        derivedContextEventsMtimeMs: stat.mtimeMs,
+      }),
+      eventsPath,
+    );
+
+    expect(patch).toEqual(
+      expect.objectContaining({
+        repo: "lossyrob/streamliner",
+        branch: "main",
+        derivedBranch: "main",
+      }),
+    );
+  }, GIT_CONTEXT_TEST_TIMEOUT_MS);
+
   it("backfills missing repo from username-prefixed GitHub HTTPS remotes", () => {
     const root = createRootDir();
     const repo = join(root, "repo");

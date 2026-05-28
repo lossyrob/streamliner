@@ -37,6 +37,7 @@ import { createSessionLaunchSettingsRouter } from "./routes/session-launch-setti
 import { createSessionsRouter } from "./routes/sessions";
 import { createWorkstreamsRouter } from "./routes/workstreams";
 import { SessionRegistryEventStream } from "./session-events";
+import { WorkstreamEventStream } from "./workstream-events";
 import type { NodeLaunchDeps } from "./node-launch";
 import { DefaultManagedSdkRunner } from "./managed-sdk-runner";
 import { ManagedRuntimePatchCoalescer } from "./managed-runtime-patch-coalescer";
@@ -50,6 +51,7 @@ import {
 export interface StreamlinerApiApp {
   app: Express;
   eventStream: SessionRegistryEventStream;
+  workstreamEventStream: WorkstreamEventStream;
   close: () => void;
 }
 
@@ -89,6 +91,9 @@ export interface StreamlinerApiAppOptions {
   launchClaimStore?: LaunchClaimStore;
   nodeLaunchDeps?: NodeLaunchDeps;
   githubStatusDeps?: GithubStatusServiceOptions;
+  workstreamEventDebounceMs?: number;
+  workstreamEventWatchIntervalMs?: number;
+  workstreamEventHeartbeatIntervalMs?: number;
 }
 
 const malformedJsonHandler: ErrorRequestHandler = (error, _req, res, next) => {
@@ -123,6 +128,15 @@ export function createStreamlinerApiApp(
   const app = express();
   const store = options.store ?? getSessionRegistryStore();
   const eventStream = new SessionRegistryEventStream(store);
+  const workstreamEventStream = new WorkstreamEventStream({
+    registryPath: options.workstreamRegistryPath,
+    sourceRegistryPath: options.workstreamSourceRegistryPath,
+    recentsPath: options.recentsPath,
+    now: options.now,
+    debounceMs: options.workstreamEventDebounceMs,
+    watchIntervalMs: options.workstreamEventWatchIntervalMs,
+    heartbeatIntervalMs: options.workstreamEventHeartbeatIntervalMs,
+  });
   const nodeLaunchRecordStore = options.launchPreparationDeps?.nodeLaunchRecordStore
     ?? new NodeLaunchRecordStore({
       recordsPath: options.nodeLaunchRecordsPath ?? (
@@ -183,6 +197,7 @@ export function createStreamlinerApiApp(
       logger: getApiLogger().withScope("http"),
       skip: (path) =>
         path.startsWith(`${SESSION_REGISTRY_API_BASE_PATH}/events`) ||
+        path.startsWith("/api/workstreams/events") ||
         /^\/api\/launch-preparations\/runs\/[^/]+\/events(?:\?|$)/.test(path),
     }),
   );
@@ -190,6 +205,7 @@ export function createStreamlinerApiApp(
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true });
   });
+  app.get("/api/workstreams/events", workstreamEventStream.handle);
   if (options.readonlyMode) {
     app.use((req, res, next) => {
       if (READONLY_METHODS.has(req.method)) {
@@ -362,6 +378,10 @@ export function createStreamlinerApiApp(
   return {
     app,
     eventStream,
-    close: () => eventStream.close(),
+    workstreamEventStream,
+    close: () => {
+      eventStream.close();
+      workstreamEventStream.close();
+    },
   };
 }

@@ -91,9 +91,8 @@ export interface SessionRegistryBackgroundWorkerOptions {
   summarizer?: Partial<SummarizerDependencies>;
   /** Optional launch-claim store. When provided, the worker runs the
    * launch-claim binding pass + sweep each cycle and runs
-   * reconcileOrphanReservedRows once on startup before the first poll
-   * cycle. When omitted, all launch-claim behavior is skipped (NFR-5
-   * backward compatibility). */
+   * reconcileOrphanReservedRows during the first worker cycle. When omitted,
+   * all launch-claim behavior is skipped (NFR-5 backward compatibility). */
   claimStore?: LaunchClaimStore;
   /** Optional structured logger for launch-claim diagnostics. Required
    * when `claimStore` is provided so binding-pass and sweep events can

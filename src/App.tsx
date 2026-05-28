@@ -115,7 +115,9 @@ import {
   workstreamGithubSnapshotFromStatuses,
 } from "./github-status-client";
 
-const POLL_INTERVAL_MS = 15_000;
+const WORKSTREAM_EVENT_STALE_MS = 45_000;
+const WORKSTREAM_FALLBACK_POLL_INTERVAL_MS = 60_000;
+const WORKSTREAM_FALLBACK_JITTER_RATIO = 0.2;
 const GITHUB_STATUS_REFRESH_INTERVAL_MS = 60_000;
 const LAST_GRAPH_KEY = "streamliner:lastGraphPath";
 const PAW_LAUNCH_CWD_OVERRIDES_KEY = "streamliner:pawLaunchCwdByRepo";
@@ -727,6 +729,35 @@ function normalizeRegistryListResponse(
   };
 }
 
+function isJsonRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseWorkstreamGraphChange(event: Event): { projectKey: string; workstreamId: string } | null {
+  let payload: unknown;
+  try {
+    payload = parseMessageEventData<unknown>(event);
+  } catch {
+    return null;
+  }
+  if (!isJsonRecord(payload)) {
+    return null;
+  }
+  const { projectKey, workstreamId } = payload;
+  return typeof projectKey === "string" && typeof workstreamId === "string"
+    ? { projectKey, workstreamId }
+    : null;
+}
+
+function jitteredWorkstreamFallbackDelay(): number {
+  const spread = WORKSTREAM_FALLBACK_POLL_INTERVAL_MS * WORKSTREAM_FALLBACK_JITTER_RATIO;
+  return Math.round(
+    WORKSTREAM_FALLBACK_POLL_INTERVAL_MS -
+      spread +
+      Math.random() * spread * 2,
+  );
+}
+
 function useGraphLoader(route: DashboardRoute, enabled: boolean) {
   const activeProjectKey = route.view === "workstream" ? route.projectKey : null;
   const activeWorkstreamId = route.view === "workstream" ? route.workstreamId : null;
@@ -751,8 +782,11 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
   const [githubStatusRefreshKey, setGithubStatusRefreshKey] = useState(0);
   const workstreamsRef = useRef<WorkstreamRegistryListEntry[]>([]);
   const lastModifiedRef = useRef<string | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const fallbackPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const graphPollInFlightRef = useRef(false);
+  const workstreamEventLiveRef = useRef(false);
+  const lastWorkstreamEventAtRef = useRef(0);
+  const registryRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isDocumentVisible = useIsDocumentVisible();
 
   const applyRegistryResponse = useCallback((body: WorkstreamRegistryListResponse) => {
@@ -843,9 +877,8 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
       setWorkstream(doc);
       setGithubStatusRefreshKey((current) => current + 1);
       setError(null);
-      await fetchRegistry();
     },
-    [fetchRegistry],
+    [],
   );
 
   useEffect(() => {
@@ -873,28 +906,199 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
     })();
   }, [activeWorkstream, enabled, fetchRegistry, loadRegistered]);
 
+  const markWorkstreamEvent = useCallback(() => {
+    workstreamEventLiveRef.current = true;
+    lastWorkstreamEventAtRef.current = Date.now();
+  }, []);
+
+  const workstreamEventIsStale = useCallback(() => (
+    !workstreamEventLiveRef.current ||
+      Date.now() - lastWorkstreamEventAtRef.current > WORKSTREAM_EVENT_STALE_MS
+  ), []);
+
+  const loadActiveWorkstreamQuietly = useCallback(
+    async (
+      entry: { projectKey: string; workstreamId: string },
+      options: { entries?: WorkstreamRegistryListEntry[] } = {},
+    ) => {
+      if (graphPollInFlightRef.current) {
+        return;
+      }
+      graphPollInFlightRef.current = true;
+      try {
+        await loadRegistered(entry, { quiet: true, entries: options.entries });
+      } finally {
+        graphPollInFlightRef.current = false;
+      }
+    },
+    [loadRegistered],
+  );
+
+  const refreshRegistryFromEvent = useCallback(
+    (delayMs = 100) => {
+      if (!activeWorkstream) {
+        return;
+      }
+      if (registryRefreshTimerRef.current) {
+        clearTimeout(registryRefreshTimerRef.current);
+      }
+      registryRefreshTimerRef.current = setTimeout(() => {
+        registryRefreshTimerRef.current = null;
+        void (async () => {
+          try {
+            const entries = await fetchRegistry();
+            await loadActiveWorkstreamQuietly(activeWorkstream, { entries });
+          } catch (nextError) {
+            setRegistryError(nextError instanceof Error ? nextError.message : String(nextError));
+          }
+        })();
+      }, delayMs);
+    },
+    [activeWorkstream, fetchRegistry, loadActiveWorkstreamQuietly],
+  );
+
+  useEffect(() => {
+    if (!enabled || !activeWorkstream || error || !isDocumentVisible) {
+      workstreamEventLiveRef.current = false;
+      return;
+    }
+    if (typeof EventSource === "undefined") {
+      workstreamEventLiveRef.current = false;
+      return;
+    }
+
+    const source = new EventSource("/api/workstreams/events");
+    let closed = false;
+
+    const handleOpen = () => {
+      if (!closed) {
+        markWorkstreamEvent();
+      }
+    };
+    const handleHeartbeat = () => {
+      if (!closed) {
+        markWorkstreamEvent();
+      }
+    };
+    const handleSnapshot = () => {
+      if (closed) {
+        return;
+      }
+      markWorkstreamEvent();
+    };
+    const handleRegistryChanged = () => {
+      if (closed) {
+        return;
+      }
+      markWorkstreamEvent();
+      refreshRegistryFromEvent();
+    };
+    const handleGraphChanged = (event: Event) => {
+      if (closed) {
+        return;
+      }
+      markWorkstreamEvent();
+      const payload = parseWorkstreamGraphChange(event);
+      if (!payload || registryKey(payload) !== registryKey(activeWorkstream)) {
+        return;
+      }
+      void loadActiveWorkstreamQuietly(activeWorkstream);
+    };
+    const handleError = () => {
+      if (closed) {
+        return;
+      }
+      workstreamEventLiveRef.current = false;
+      refreshRegistryFromEvent(0);
+    };
+
+    source.addEventListener("open", handleOpen);
+    source.addEventListener("heartbeat", handleHeartbeat);
+    source.addEventListener("snapshot", handleSnapshot);
+    source.addEventListener("workstream.registry.changed", handleRegistryChanged);
+    source.addEventListener("workstream.source.changed", handleRegistryChanged);
+    source.addEventListener("workstream.graph.changed", handleGraphChanged);
+    source.onerror = handleError;
+
+    return () => {
+      closed = true;
+      source.close();
+    };
+  }, [
+    activeWorkstream,
+    enabled,
+    error,
+    isDocumentVisible,
+    loadActiveWorkstreamQuietly,
+    markWorkstreamEvent,
+    refreshRegistryFromEvent,
+  ]);
+
   useEffect(() => {
     if (!enabled || !activeWorkstream || error || !isDocumentVisible) {
       return;
     }
 
-    pollRef.current = setInterval(() => {
-      if (graphPollInFlightRef.current) {
-        return;
-      }
-      graphPollInFlightRef.current = true;
-      void loadRegistered(activeWorkstream, { quiet: true })
-        .finally(() => {
-          graphPollInFlightRef.current = false;
-        });
-    }, POLL_INTERVAL_MS);
+    let cancelled = false;
+    const scheduleNextFallback = () => {
+      fallbackPollRef.current = setTimeout(() => {
+        fallbackPollRef.current = null;
+        if (cancelled) {
+          return;
+        }
+        if (workstreamEventIsStale()) {
+          void loadActiveWorkstreamQuietly(activeWorkstream);
+        }
+        scheduleNextFallback();
+      }, jitteredWorkstreamFallbackDelay());
+    };
+    scheduleNextFallback();
 
     return () => {
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
+      cancelled = true;
+      if (fallbackPollRef.current) {
+        clearTimeout(fallbackPollRef.current);
+        fallbackPollRef.current = null;
       }
     };
-  }, [activeWorkstream, enabled, error, isDocumentVisible, loadRegistered]);
+  }, [
+    activeWorkstream,
+    enabled,
+    error,
+    isDocumentVisible,
+    loadActiveWorkstreamQuietly,
+    workstreamEventIsStale,
+  ]);
+
+  useEffect(() => {
+    if (!enabled || !activeWorkstream || error) {
+      return;
+    }
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "hidden") {
+        return;
+      }
+      if (workstreamEventIsStale()) {
+        refreshRegistryFromEvent(0);
+      }
+    };
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      if (registryRefreshTimerRef.current) {
+        clearTimeout(registryRefreshTimerRef.current);
+        registryRefreshTimerRef.current = null;
+      }
+    };
+  }, [
+    activeWorkstream,
+    enabled,
+    error,
+    refreshRegistryFromEvent,
+    workstreamEventIsStale,
+  ]);
 
   useEffect(() => {
     if (!enabled || !activeWorkstream || error || !isDocumentVisible) {

@@ -470,6 +470,22 @@ class MockEventSource extends EventTarget {
   }
 }
 
+function findMockEventSource(url: string): MockEventSource {
+  const source = MockEventSource.instances.find((candidate) => candidate.url === url);
+  if (!source) {
+    throw new Error(`Could not find EventSource for ${url}`);
+  }
+  return source;
+}
+
+function setDocumentVisibility(state: DocumentVisibilityState): void {
+  Object.defineProperty(document, "visibilityState", {
+    configurable: true,
+    value: state,
+  });
+  document.dispatchEvent(new Event("visibilitychange"));
+}
+
 describe("App sessions route", () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -478,6 +494,10 @@ describe("App sessions route", () => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     vi.useRealTimers();
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "visible",
+    });
     (
       globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
     ).IS_REACT_ACT_ENVIRONMENT = true;
@@ -1918,6 +1938,179 @@ describe("App sessions route", () => {
           requestPath(input as RequestInfo | URL) === "/api/workstreams/streamliner/api-test/graph",
         ),
       ).toBe(true);
+    },
+    15_000,
+  );
+
+  it(
+    "refreshes the active workstream from workstream SSE without short-interval graph polling",
+    async () => {
+      vi.useFakeTimers();
+      MockEventSource.instances = [];
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+      let graph = buildWorkstreamGraph();
+      let graphRequests = 0;
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          graphRequests += 1;
+          return jsonResponse(graph);
+        }
+        if (path === "/api/sessions?workstreamId=api-test") {
+          return jsonResponse([]);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return emptyNodeLaunchRecordResponse();
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await flushReact();
+      await flushReact();
+
+      expect(container.textContent).toContain("API Test");
+      expect(graphRequests).toBe(1);
+      const source = findMockEventSource("/api/workstreams/events");
+      act(() => {
+        source.emit("open");
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+      await flushReact();
+      expect(graphRequests).toBe(1);
+
+      graph = buildWorkstreamGraph({ title: "API Test SSE Updated" });
+      act(() => {
+        source.emit("workstream.graph.changed", {
+          projectKey: "streamliner",
+          workstreamId: "api-test",
+          lastModified: "Thu, 28 May 2026 15:00:00 GMT",
+        });
+      });
+      await flushReact();
+      await flushReact();
+
+      expect(graphRequests).toBe(2);
+      expect(container.textContent).toContain("API Test SSE Updated");
+    },
+    15_000,
+  );
+
+  it(
+    "uses a slow visible-tab fallback only when workstream SSE is unavailable",
+    async () => {
+      vi.useFakeTimers();
+      vi.spyOn(Math, "random").mockReturnValue(0.5);
+      vi.stubGlobal("EventSource", undefined);
+      let graphRequests = 0;
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          graphRequests += 1;
+          return jsonResponse(buildWorkstreamGraph());
+        }
+        if (path === "/api/sessions?workstreamId=api-test") {
+          return jsonResponse([]);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return emptyNodeLaunchRecordResponse();
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await flushReact();
+      await flushReact();
+
+      expect(graphRequests).toBe(1);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+      await flushReact();
+      expect(graphRequests).toBe(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(45_000);
+      });
+      await flushReact();
+      expect(graphRequests).toBe(2);
+    },
+    15_000,
+  );
+
+  it(
+    "closes the workstream event stream and does not fallback poll while hidden",
+    async () => {
+      vi.useFakeTimers();
+      MockEventSource.instances = [];
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+      let graphRequests = 0;
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          graphRequests += 1;
+          return jsonResponse(buildWorkstreamGraph());
+        }
+        if (path === "/api/sessions?workstreamId=api-test") {
+          return jsonResponse([]);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return emptyNodeLaunchRecordResponse();
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await flushReact();
+      await flushReact();
+
+      const source = findMockEventSource("/api/workstreams/events");
+      act(() => {
+        setDocumentVisibility("hidden");
+      });
+      await flushReact();
+
+      expect(source.readyState).toBe(2);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120_000);
+      });
+      await flushReact();
+      expect(graphRequests).toBe(1);
     },
     15_000,
   );
@@ -5098,6 +5291,8 @@ describe("App sessions route", () => {
   it(
     "adds a workstream source and refreshes graph content from disk",
     async () => {
+      MockEventSource.instances = [];
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
       let graph = buildWorkstreamGraph();
       let sourceAdded = false;
       const trackedSourceWorkstream = buildTrackedWorkstream({
@@ -5151,6 +5346,12 @@ describe("App sessions route", () => {
         if (path === "/api/workstreams/streamliner/api-test/graph") {
           return jsonResponse(graph);
         }
+        if (path === "/api/sessions?workstreamId=api-test") {
+          return jsonResponse([]);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return emptyNodeLaunchRecordResponse();
+        }
         throw new Error(`Unexpected fetch: ${path}`);
       });
       vi.stubGlobal("fetch", fetchMock);
@@ -5184,7 +5385,13 @@ describe("App sessions route", () => {
       expect(window.location.pathname).toBe("/workstreams/streamliner/api-test");
 
       graph = buildWorkstreamGraph({ title: "API Test Updated" });
-      await settle(15_500);
+      act(() => {
+        findMockEventSource("/api/workstreams/events").emit("workstream.graph.changed", {
+          projectKey: "streamliner",
+          workstreamId: "api-test",
+        });
+      });
+      await settle(100);
       expect(container.textContent).toContain("API Test Updated");
       expect(
         fetchMock.mock.calls.some(([input]) =>
