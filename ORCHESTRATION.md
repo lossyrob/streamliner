@@ -124,6 +124,11 @@ items that must be completed, deferred, promoted, or dropped before final
 closure. Do not ignore closure work solely because the heading predates this
 doctrine.
 
+Some workstreams legitimately have no separate closeout lane. If bounded closure
+items were resolved inline through the brief's `Decisions` section, graph status
+changes, or normal node closure, and no separate parking lane exists, this rule
+is vacuously satisfied; do not create an empty lane just to dispose it.
+
 The closeout observation lane is gate-owned and conditional. Do not create an
 empty closeout node just because the workstream is nearing closure. The closure
 gate asks whether any closeout work remains. If none exists, the gate can pass.
@@ -396,6 +401,8 @@ A workstream's final closure gate does not pass until:
 `Deferred with rationale` is a closed disposition. The gate blocks on missing
 or ambiguous dispositions, not on intentionally deferred work that names why it
 is not landing in this workstream.
+This includes lessons that need operator pickup, Streamliner doctrine backlog
+work, or another authority surface outside the closing workstream.
 
 These rules apply to *the closure gate*, not to every reconciliation pass. A
 mid-workstream reconciliation that does not change the closure picture does
@@ -412,8 +419,8 @@ it down.
 Each promotion candidate names its target authority so the disposition is
 verifiable: "Brief decision in workstream X", "New section in
 `docs/design/Y.md`", "ADR draft at `docs/design/decisions/NNN-Z.md`", "New
-shaping candidate at `.streamliner/shaping/candidates/W.md`", or "Out of
-scope — dropped because…".
+shaping candidate at `.streamliner/shaping/candidates/W.md`", "Operator/doctrine
+backlog — deferred because…", or "Out of scope — dropped because…".
 
 #### Distinct from any closeout narrative
 

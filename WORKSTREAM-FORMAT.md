@@ -376,16 +376,21 @@ renegotiated mid-flight. For research or shaping workstreams, interpret exports
 as the decisions, artifacts, or lessons another workstream can rely on.}
 
 ## Context fitness
-{Where the context package was stale, missing, or over-prescriptive for
-workers. Where design references pointed cleanly vs. where workers had to
-discover intent.}
+{Where the original brief/plan or worker context package was stale, missing, or
+over-prescriptive. Where design references pointed cleanly vs. where workers or
+orchestrators had to discover intent.}
 
 ## Attention allocation
 {Where operator focus went. Where it should have gone. Which `focus` nodes
-turned out routine; which `watch` nodes needed more presence.}
+turned out routine; which `watch` nodes needed more presence. For
+coordination-heavy workstreams, describe orchestrator/operator attention,
+research subagents, reviews, and cross-workstream coordination instead of
+forcing graph-node vocabulary.}
 
 ## Inspired vs. recovery interventions
 {Named examples of hot work, mid-stream steering, or boundary changes.
+Interventions include operator/orchestrator-level pivots and coordination
+decisions, not only worker hot-work.
 Classify each as inspired (new front-line insight) or recovery (work-design
 failure that future shaping should be able to prevent).}
 
@@ -397,6 +402,9 @@ failure that future shaping should be able to prevent).}
 
 `Deferred with rationale` is a closed disposition. An open candidate is one with
 no disposition, a vague disposition, or an unresolved target authority.
+Deferred-with-rationale covers lessons that need operator pickup, Streamliner
+doctrine backlog work, or another authority surface outside the closing
+workstream.
 
 ### Compact example
 
@@ -445,9 +453,57 @@ workers own state they should only report.
   - Disposition: dropped because shipped validation made it obsolete.
 ```
 
+A coordination-shaped note may look like:
+
+```markdown
+# Provider Boundary Promotion — Reconciliation
+
+## What changed
+The workstream began as a narrow model-provider boundary pass, but cross-workstream
+coordination revealed that the real export was a promotion path: the relay
+boundary had to adopt a peer workstream's design plane before it could safely
+move toward main.
+
+## Boundaries
+- **Held:** Provider-specific policy stayed outside the relay boundary.
+- **Leaked:** The original plan assumed the peer design plane would be ready
+  before this workstream needed it.
+- **Expanded:** A pre-promotion integration node became part of the closure path.
+
+## Contracts and exports
+The export is design authority, not runtime code: downstream work can rely on the
+provider-boundary vocabulary and the documented promotion sequence.
+
+## Context fitness
+The original brief under-described cross-workstream timing. Worker context was
+adequate, but the plan needed earlier visibility into the peer design dependency.
+
+## Attention allocation
+The meaningful attention was orchestrator-level: coordinating the peer workstream,
+reviewing the pre-promotion integration point, and deciding that one sketch node
+was skipped by absorption rather than implemented directly.
+
+## Inspired vs. recovery interventions
+Adopting the peer design plane was inspired because it preserved a better
+portfolio shape. The late pre-promotion integration node was recovery because
+the original shaping did not make the dependency explicit enough.
+
+## Promotion candidates
+- Name the peer design plane in future provider-boundary shaping: target
+  authority — Streamliner doctrine backlog
+  - Disposition: deferred with rationale; needs operator pickup outside this
+    workstream.
+- Record skipped-by-absorption as a normal node outcome: target authority —
+  node-spec guideline
+  - Disposition: landed in the closeout node spec.
+```
+
 ### Guidelines
 
 - **Target length:** Under 400 lines. Compact and learning-shaped, not narrative.
+  Brushing against the cap is also a shaping signal: consider whether the
+  workstream itself should have been split, not only whether the note is too
+  verbose.
 - **Single file per workstream, rewritten in place.** Intermediate wave-gate
   reconciliations may add or revise sections; the file always reads as the
   current best understanding. Git history is the audit trail.
