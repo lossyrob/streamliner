@@ -81,40 +81,50 @@ describe("updateWorkstreamConfigurationFile", () => {
     const graphPath = writeGraph(createRootDir());
 
     const result = await updateConfiguration(graphPath, {
+      presentation: {
+        shortName: "API",
+        color: "#FF8C0A",
+      },
       launchPolicy: { requiredTracker: "github-issue" },
       launchDefaults: {
         promptProfileId: "final-pr-only",
         terminal: {
           preferredTerminal: "windows-terminal",
           titleTemplate: "{githubIssue} - {nodeTitle}",
-          tabColor: "#FF8C0A",
         },
       },
     });
 
     expect(result.workstream.launchPolicy).toEqual({ requiredTracker: "github-issue" });
+    expect(result.workstream.presentation).toEqual({
+      shortName: "API",
+      color: "#ff8c0a",
+    });
     expect(result.workstream.launchDefaults).toEqual({
       promptProfileId: "final-pr-only",
       terminal: {
         preferredTerminal: "windows-terminal",
         titleTemplate: "{githubIssue} - {nodeTitle}",
-        tabColor: "#ff8c0a",
       },
     });
     expect(readGraph(graphPath)).toEqual(expect.objectContaining({
       updatedAt: "2026-05-07T18:22:44.000Z",
+      presentation: {
+        shortName: "API",
+        color: "#ff8c0a",
+      },
       launchPolicy: { requiredTracker: "github-issue" },
       launchDefaults: {
         promptProfileId: "final-pr-only",
         terminal: {
           preferredTerminal: "windows-terminal",
           titleTemplate: "{githubIssue} - {nodeTitle}",
-          tabColor: "#ff8c0a",
         },
       },
     }));
 
     await updateConfiguration(graphPath, {
+      presentation: null,
       launchPolicy: null,
       launchDefaults: {
         terminal: {
@@ -126,8 +136,81 @@ describe("updateWorkstreamConfigurationFile", () => {
     });
 
     const cleared = readGraph(graphPath);
+    expect(cleared.presentation).toBeUndefined();
     expect(cleared.launchPolicy).toBeUndefined();
     expect(cleared.launchDefaults).toBeUndefined();
+  });
+
+  it("migrates legacy terminal tab colors to presentation color on save", async () => {
+    const graphPath = writeGraph(createRootDir(), buildGraph({
+      launchDefaults: {
+        terminal: {
+          preferredTerminal: "windows-terminal",
+          titleTemplate: "{nodeTitle}",
+          tabColor: "#4891C8",
+        },
+      },
+    }));
+
+    const result = await updateConfiguration(graphPath, {
+      launchDefaults: {
+        terminal: {
+          preferredTerminal: "powershell",
+          titleTemplate: "{workstreamShortName} - {nodeTitle}",
+        },
+      },
+    });
+
+    expect(result.workstream.presentation).toEqual({ color: "#4891c8" });
+    expect(result.workstream.launchDefaults).toEqual({
+      terminal: {
+        preferredTerminal: "powershell",
+        titleTemplate: "{workstreamShortName} - {nodeTitle}",
+      },
+    });
+    expect(readGraph(graphPath)).toEqual(expect.objectContaining({
+      presentation: { color: "#4891c8" },
+      launchDefaults: {
+        terminal: {
+          preferredTerminal: "powershell",
+          titleTemplate: "{workstreamShortName} - {nodeTitle}",
+        },
+      },
+    }));
+  });
+
+  it("lets a legacy tab color update replace an existing presentation color", async () => {
+    const graphPath = writeGraph(createRootDir(), buildGraph({
+      presentation: {
+        shortName: "API",
+        color: "#41b878",
+      },
+      launchDefaults: {
+        terminal: {
+          tabColor: "#41b878",
+        },
+      },
+    }));
+
+    const result = await updateConfiguration(graphPath, {
+      launchDefaults: {
+        terminal: {
+          tabColor: "#FF8C0A",
+        },
+      },
+    });
+
+    expect(result.workstream.presentation).toEqual({
+      shortName: "API",
+      color: "#ff8c0a",
+    });
+    expect(result.workstream.launchDefaults).toBeUndefined();
+    expect(readGraph(graphPath)).toEqual(expect.objectContaining({
+      presentation: {
+        shortName: "API",
+        color: "#ff8c0a",
+      },
+    }));
   });
 
   it("rejects invalid configuration values without rewriting the graph", async () => {
@@ -145,11 +228,19 @@ describe("updateWorkstreamConfigurationFile", () => {
       },
       {
         label: "tab color",
+        configuration: { presentation: { color: "orange" } },
+      },
+      {
+        label: "legacy tab color",
         configuration: { launchDefaults: { terminal: { tabColor: "orange" } } },
       },
       {
         label: "title template",
         configuration: { launchDefaults: { terminal: { titleTemplate: 42 } } },
+      },
+      {
+        label: "short name",
+        configuration: { presentation: { shortName: 42 } },
       },
       {
         label: "prompt profile id",

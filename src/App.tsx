@@ -1159,55 +1159,69 @@ function WorkstreamHome({
     });
   };
 
-  const renderWorkstreamCard = (entry: WorkstreamRegistryListEntry, archived = false) => (
-    <div className="sl-workstream-card" key={`${archived ? "archived" : "active"}-${registryKey(entry)}`}>
-      <a
-        className="sl-workstream-card-main"
-        href={workstreamRoutePath(entry)}
-        onClick={(event) => handleInAppLinkClick(event, () => onOpenWorkstream(entry))}
-      >
-        <span className="sl-workstream-card-title">{entry.title}</span>
-        <span className="sl-workstream-card-id">{registryKey(entry)}</span>
-        <span className="sl-workstream-card-meta">
-          <span className={`sl-pill ${entry.fileStatus === "available" ? "green" : "amber"}`}>
-            {entry.fileStatus}
+  const renderWorkstreamCard = (entry: WorkstreamRegistryListEntry, archived = false) => {
+    const shortName = entry.presentation?.shortName?.trim();
+    const color = entry.presentation?.color;
+    return (
+      <div className="sl-workstream-card" key={`${archived ? "archived" : "active"}-${registryKey(entry)}`}>
+        <a
+          className="sl-workstream-card-main"
+          href={workstreamRoutePath(entry)}
+          onClick={(event) => handleInAppLinkClick(event, () => onOpenWorkstream(entry))}
+        >
+          <span className="sl-workstream-card-title-row">
+            {color && (
+              <span
+                className="sl-workstream-color-swatch"
+                style={{ backgroundColor: color }}
+                aria-label={`Workstream color ${color}`}
+              />
+            )}
+            {shortName && <span className="sl-workstream-short-name">{shortName}</span>}
+            <span className="sl-workstream-card-title">{entry.title}</span>
           </span>
-          <span className="sl-pill muted">{entry.source ?? "path"}</span>
-          {entry.sourceId && <span className="sl-pill muted">{entry.sourceId}</span>}
-        </span>
-        <span className="sl-path-value">{entry.path}</span>
-      </a>
-      <div className="sl-workstream-card-actions">
-        {archived ? (
-          <button
-            className="sl-action-btn"
-            disabled={busy}
-            onClick={() => void runAction(() => onRestoreWorkstream(entry))}
-          >
-            Restore
-          </button>
-        ) : (
-          <button
-            className="sl-action-btn"
-            disabled={busy}
-            onClick={() => void runAction(() => onArchiveWorkstream(entry))}
-          >
-            Archive
-          </button>
-        )}
-        {!archived && (isPathWorkstreamEntry(entry) || isBrowserWorkstreamEntry(entry)) && (
-          <button
-            className="sl-action-btn danger"
-            disabled={busy}
-            onClick={() => void runAction(() => onUntrackWorkstream(entry))}
-            aria-label={`Untrack ${entry.title}`}
-          >
-            Untrack
-          </button>
-        )}
+          <span className="sl-workstream-card-id">{registryKey(entry)}</span>
+          <span className="sl-workstream-card-meta">
+            <span className={`sl-pill ${entry.fileStatus === "available" ? "green" : "amber"}`}>
+              {entry.fileStatus}
+            </span>
+            <span className="sl-pill muted">{entry.source ?? "path"}</span>
+            {entry.sourceId && <span className="sl-pill muted">{entry.sourceId}</span>}
+          </span>
+          <span className="sl-path-value">{entry.path}</span>
+        </a>
+        <div className="sl-workstream-card-actions">
+          {archived ? (
+            <button
+              className="sl-action-btn"
+              disabled={busy}
+              onClick={() => void runAction(() => onRestoreWorkstream(entry))}
+            >
+              Restore
+            </button>
+          ) : (
+            <button
+              className="sl-action-btn"
+              disabled={busy}
+              onClick={() => void runAction(() => onArchiveWorkstream(entry))}
+            >
+              Archive
+            </button>
+          )}
+          {!archived && (isPathWorkstreamEntry(entry) || isBrowserWorkstreamEntry(entry)) && (
+            <button
+              className="sl-action-btn danger"
+              disabled={busy}
+              onClick={() => void runAction(() => onUntrackWorkstream(entry))}
+              aria-label={`Untrack ${entry.title}`}
+            >
+              Untrack
+            </button>
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div className="sl-shell-panel">
@@ -1961,8 +1975,9 @@ function GraphDashboard({
           renderWorkstreamTerminalTitleTemplate(
             workstream?.launchDefaults?.terminal?.titleTemplate,
             defaultsNode,
+            workstream,
           ) ?? defaultsNode.title,
-        tabColor: workstream?.launchDefaults?.terminal?.tabColor ?? null,
+        tabColor: workstream?.presentation?.color ?? workstream?.launchDefaults?.terminal?.tabColor ?? null,
       },
     };
   }, [

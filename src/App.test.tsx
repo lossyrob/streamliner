@@ -1027,6 +1027,39 @@ describe("App sessions route", () => {
     expect(container.textContent).toContain("No tracked workstreams yet");
   });
 
+  it("shows compact workstream presentation metadata in the tracked list", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = requestPath(input);
+      if (path === "/api/workstreams") {
+        return jsonResponse({
+          version: 1,
+          migrationWarnings: [],
+          workstreams: [
+            buildTrackedWorkstream({
+              title: "Session launching and tracking",
+              presentation: {
+                shortName: "SLT",
+                color: "#4891c8",
+              },
+            }),
+          ],
+        });
+      }
+      throw new Error(`Unexpected fetch: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.pushState({}, "", "/workstreams");
+
+    act(() => {
+      root.render(<App />);
+    });
+    await settle();
+
+    expect(container.textContent).toContain("SLT");
+    expect(container.textContent).toContain("Session launching and tracking");
+    expect(container.querySelector('[aria-label="Workstream color #4891c8"]')).toBeInstanceOf(HTMLElement);
+  });
+
   it(
     "shows bound session workstream context and opens the selected node route",
     async () => {
@@ -4970,6 +5003,7 @@ describe("App sessions route", () => {
           savedConfiguration = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
           graph = {
             ...graph,
+            presentation: savedConfiguration.presentation ?? undefined,
             launchPolicy: savedConfiguration.launchPolicy ?? undefined,
             launchDefaults: savedConfiguration.launchDefaults ?? undefined,
             updatedAt: "2026-05-07T18:10:33.000Z",
@@ -5011,6 +5045,7 @@ describe("App sessions route", () => {
       });
       await settle(100);
       setSelectValue(findSelectByLabel(container, "Required tracker"), "github-issue");
+      setInputValue(findInputByLabel(container, "Workstream short name"), "API");
       expect(findSelectByLabel(container, "Default load profile").value).toBe("final-pr-only");
       setSelectValue(findSelectByLabel(container, "Preferred terminal"), "windows-terminal");
       setInputValue(
@@ -5018,7 +5053,7 @@ describe("App sessions route", () => {
         "{githubIssue} - {nodeTitle}",
       );
       act(() => {
-        findButtonByLabel(container, "Use terminal color #ff8c0a").click();
+        findButtonByLabel(container, "Use workstream color #ff8c0a").click();
       });
       await settle();
       act(() => {
@@ -5027,13 +5062,16 @@ describe("App sessions route", () => {
       await settle(100);
 
       expect(savedConfiguration).toEqual({
+        presentation: {
+          shortName: "API",
+          color: "#ff8c0a",
+        },
         launchPolicy: { requiredTracker: "github-issue" },
         launchDefaults: {
           promptProfileId: "final-pr-only",
           terminal: {
             preferredTerminal: "windows-terminal",
             titleTemplate: "{githubIssue} - {nodeTitle}",
-            tabColor: "#ff8c0a",
           },
         },
       });

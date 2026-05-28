@@ -15,6 +15,7 @@ import type {
   WorkstreamLaunchTerminalPreference,
   WorkstreamNode,
   WorkstreamNodeStatus,
+  WorkstreamPresentation,
   WorkstreamTracker,
   WorkstreamTrackerType,
   WorkstreamNodeType,
@@ -326,6 +327,31 @@ function parseLaunchDefaults(value: unknown, label: string): WorkstreamLaunchDef
   };
 }
 
+function parsePresentation(value: unknown, label: string): WorkstreamPresentation {
+  const record = asObject(value, label);
+  return {
+    shortName: parseOptionalString(record.shortName, `${label}.shortName`),
+    color: parseOptionalHexColor(record.color, `${label}.color`),
+  };
+}
+
+function presentationWithLegacyColorFallback(
+  presentation: WorkstreamPresentation | undefined,
+  launchDefaults: WorkstreamLaunchDefaults | undefined,
+): WorkstreamPresentation | undefined {
+  const shortName = presentation?.shortName;
+  const color = presentation && presentation.color !== undefined
+    ? presentation.color
+    : launchDefaults?.terminal?.tabColor;
+  if (shortName === undefined && color === undefined) {
+    return undefined;
+  }
+  return {
+    ...(shortName !== undefined ? { shortName } : {}),
+    ...(color !== undefined ? { color } : {}),
+  };
+}
+
 function parseNode(
   value: unknown,
   label: string,
@@ -514,9 +540,20 @@ export function parseWorkstreamDocument(
   const record = asObject(parsed, "workstream");
   const projectKey = record.projectKey;
   const trackingIssue = record.trackingIssue;
+  const presentation = record.presentation;
   const launchPolicy = record.launchPolicy;
   const launchDefaults = record.launchDefaults;
   const designRefs = record.designRefs;
+  const parsedLaunchDefaults =
+    typeof launchDefaults === "undefined"
+      ? undefined
+      : parseLaunchDefaults(launchDefaults, "workstream.launchDefaults");
+  const parsedPresentation = presentationWithLegacyColorFallback(
+    typeof presentation === "undefined"
+      ? undefined
+      : parsePresentation(presentation, "workstream.presentation"),
+    parsedLaunchDefaults,
+  );
 
   return assertSemanticallyValid({
     schemaVersion:
@@ -550,14 +587,12 @@ export function parseWorkstreamDocument(
       typeof trackingIssue === "undefined"
         ? undefined
         : parseIssue(trackingIssue, "workstream.trackingIssue"),
+    presentation: parsedPresentation,
     launchPolicy:
       typeof launchPolicy === "undefined"
         ? undefined
         : parseLaunchPolicy(launchPolicy, "workstream.launchPolicy"),
-    launchDefaults:
-      typeof launchDefaults === "undefined"
-        ? undefined
-        : parseLaunchDefaults(launchDefaults, "workstream.launchDefaults"),
+    launchDefaults: parsedLaunchDefaults,
     repos: parseArray(record.repos, "workstream.repos", parseRepo),
     designRefs:
       typeof designRefs === "undefined"

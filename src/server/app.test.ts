@@ -633,13 +633,16 @@ describe("createStreamlinerApiApp", () => {
     const updateResponse = await request(api.app)
       .patch("/api/workstreams/streamliner/api-test/configuration")
       .send({
+        presentation: {
+          shortName: "API",
+          color: "#FF8C0A",
+        },
         launchPolicy: { requiredTracker: "github-issue" },
         launchDefaults: {
           promptProfileId: "final-pr-only",
           terminal: {
             preferredTerminal: "windows-terminal",
             titleTemplate: "{githubIssue} - {nodeTitle}",
-            tabColor: "#FF8C0A",
           },
         },
       })
@@ -648,31 +651,45 @@ describe("createStreamlinerApiApp", () => {
     expect(updateResponse.body.workstream.launchPolicy).toEqual({
       requiredTracker: "github-issue",
     });
+    expect(updateResponse.body.workstream.presentation).toEqual({
+      shortName: "API",
+      color: "#ff8c0a",
+    });
     expect(updateResponse.body.workstream.launchDefaults).toEqual({
       promptProfileId: "final-pr-only",
       terminal: {
         preferredTerminal: "windows-terminal",
         titleTemplate: "{githubIssue} - {nodeTitle}",
-        tabColor: "#ff8c0a",
       },
     });
     const persisted = JSON.parse(readFileSync(graphPath, "utf8")) as Record<string, unknown>;
     expect(persisted.updatedAt).toBe("2026-05-07T18:10:33.000Z");
+    expect(persisted.presentation).toEqual({
+      shortName: "API",
+      color: "#ff8c0a",
+    });
     expect(persisted.launchPolicy).toEqual({ requiredTracker: "github-issue" });
     expect(persisted.launchDefaults).toEqual({
       promptProfileId: "final-pr-only",
       terminal: {
         preferredTerminal: "windows-terminal",
         titleTemplate: "{githubIssue} - {nodeTitle}",
-        tabColor: "#ff8c0a",
       },
     });
+    const listResponse = await request(api.app).get("/api/workstreams").expect(200);
+    expect(listResponse.body.workstreams[0]).toEqual(expect.objectContaining({
+      presentation: {
+        shortName: "API",
+        color: "#ff8c0a",
+      },
+    }));
 
     await request(api.app)
       .patch("/api/workstreams/streamliner/api-test/configuration")
-      .send({ launchPolicy: null, launchDefaults: null })
+      .send({ presentation: null, launchPolicy: null, launchDefaults: null })
       .expect(200);
     const cleared = JSON.parse(readFileSync(graphPath, "utf8")) as Record<string, unknown>;
+    expect(cleared.presentation).toBeUndefined();
     expect(cleared.launchPolicy).toBeUndefined();
     expect(cleared.launchDefaults).toBeUndefined();
   });

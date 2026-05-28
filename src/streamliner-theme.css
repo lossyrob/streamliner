@@ -1599,10 +1599,44 @@ a.sl-action-btn {
   justify-content: flex-end;
 }
 
+.sl-workstream-card-title-row {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sl-workstream-color-swatch {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(13, 20, 32, 0.16);
+  border-radius: 999px;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.76);
+}
+
+.sl-workstream-short-name {
+  max-width: 140px;
+  overflow: hidden;
+  padding: 3px 7px;
+  border: 1px solid rgba(20, 60, 130, 0.12);
+  border-radius: 999px;
+  background: rgba(29, 110, 220, 0.07);
+  color: var(--sl-text);
+  font-size: 12px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .sl-workstream-card-title {
+  min-width: 0;
+  overflow: hidden;
   color: var(--sl-text);
   font-size: 15px;
   font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sl-workstream-card-id {
