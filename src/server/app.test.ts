@@ -620,6 +620,66 @@ describe("createStreamlinerApiApp", () => {
     expect(listResponse.body.workstreams).toEqual([]);
   });
 
+  it("streams workstream graph changes over SSE", async () => {
+    const rootDir = createRootDir();
+    const graphPath = join(rootDir, "graph.json");
+    writeFileSync(graphPath, JSON.stringify(buildGraph()), "utf8");
+    const api = createIsolatedApi(rootDir, {
+      workstreamEventDebounceMs: 5,
+      workstreamEventWatchIntervalMs: 20,
+    });
+    activeApps.push(api);
+
+    await request(api.app)
+      .post("/api/workstreams")
+      .send({ path: graphPath })
+      .expect(201);
+
+    const server = createServer(api.app);
+    const port = await listen(server);
+    const received = await new Promise<string>((resolve, reject) => {
+      let body = "";
+      let graphUpdated = false;
+      const timeout = setTimeout(() => reject(new Error("Timed out waiting for workstream SSE")), 5_000);
+      const req = httpGet(`http://127.0.0.1:${port}/api/workstreams/events`, (res) => {
+        res.setEncoding("utf8");
+        res.on("data", (chunk: string) => {
+          body += chunk;
+          if (body.includes("event: snapshot") && !graphUpdated) {
+            graphUpdated = true;
+            setTimeout(() => {
+              writeFileSync(
+                graphPath,
+                JSON.stringify(buildGraph({ title: "API Test Changed" })),
+                "utf8",
+              );
+            }, 25);
+          }
+          if (
+            body.includes("event: workstream.graph.changed") &&
+            body.includes('"projectKey":"streamliner"') &&
+            body.includes('"workstreamId":"api-test"') &&
+            body.includes('"lastModified"')
+          ) {
+            clearTimeout(timeout);
+            req.destroy();
+            resolve(body);
+          }
+        });
+      });
+      req.on("error", (error) => {
+        if (!body.includes("event: workstream.graph.changed")) {
+          clearTimeout(timeout);
+          reject(error);
+        }
+      });
+    });
+
+    expect(received).toContain("event: snapshot");
+    expect(received).toContain("event: workstream.graph.changed");
+    expect(received).toContain('"lastModified"');
+  });
+
   it("updates persisted workstream launch configuration", async () => {
     const rootDir = createRootDir();
     const graphPath = join(rootDir, "graph.json");
