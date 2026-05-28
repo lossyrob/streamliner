@@ -48,8 +48,9 @@ they land differently than they do on a page.
 - Define the relationship to the reconciliation note and to the brief/graph.
 - Define what makes a *good* narrative: chronological, pivot-aware,
   self-contained for a cold listener, named-example-driven without opaque ID
-  soup, distinguishes inspired vs. recovery interventions, and surfaces
-  work-design lessons in story form.
+  soup, honest about design insights and recovery moments, and able to surface
+  work-design lessons in story form without duplicating the reconciliation
+  note's structured classifications.
 
 ### Out of Scope
 
@@ -106,8 +107,9 @@ post-hoc.
 
 This section is written so an orchestrator session can be pointed at this
 candidate and produce a real `closeout-narrative.md` for an existing workstream
-without further specification. Follow it verbatim for the first few narratives;
-iterate on the structure once we have lived experience.
+without further specification. Treat the guide as guardrails and intent, not as
+a worksheet: preserve the forcing functions, but let the story choose the
+section breaks.
 
 ### Preconditions
 
@@ -186,59 +188,35 @@ traceability, but the sentence must still make sense if every ID is deleted.
 
 ### Narrative structure to produce
 
-Write `docs/closeout-narrative.md` in the workstream directory with the
-following arc. Use the section names as headings.
+Write `docs/closeout-narrative.md` in the workstream directory as a
+chronological retelling with section breaks where the story actually turns. The
+section names are not a contract, but a good narrative normally has these
+anchors:
 
-```markdown
-# {Workstream Title} — Closeout Narrative
+- **Origin.** Why the workstream existed, what the world looked like when it
+  was shaped, and what it was trying to make possible.
+- **Chronological acts.** The major waves, pivots, hot-work bursts, and
+  recovery moments in the order the operator experienced them. Introduce
+  components, workstreams, repos, design decisions, issues, and PRs inline as
+  they enter the story rather than pre-loading a cast list the listener must
+  remember.
+- **Inflection points in context.** Surface the moments where the workstream's
+  shape changed inside the chronological arc. Add a separate roll-up only when
+  the story genuinely benefits from hearing those pivots collected together.
+- **Lessons in story form.** Boundary, contract, design-layer, attention,
+  autonomy, validation, and gate-placement lessons can be combined when they
+  naturally belong together. The reconciliation note remains the structured
+  version; the narrative makes those lessons memorable.
+- **Open threads.** What is leaving the workstream alive: follow-on
+  workstreams, promoted candidates, deferred items, or external dependencies.
+  Point at where each thread continues so the listener knows the story is not
+  over for those.
 
-## Origin
-Why this workstream existed. What the world looked like when it was shaped.
-What it was trying to make possible. 2-4 paragraphs.
-
-## Cast
-The workstreams, repos, design docs, decisions, components, and recurring node
-names that the story will reference. Light, list-shaped. Give every recurring
-named entity a one-line introduction so the listener can follow. If an issue,
-PR, or decision ID appears here, pair it with a plain-language name and meaning.
-
-## Acts
-One section per wave or major pivot point. For each act:
-- What the operator hoped the wave would produce.
-- What actually happened, told chronologically with specific human-readable
-  node names and events.
-- The inflection moment(s) that defined the act.
-- What the act handed forward.
-
-## Inflection moments
-A focused section that pulls the key pivot points together. Hot-work bursts,
-boundary changes, mid-stream re-scoping, recovery interventions, surprises
-that came from real usage. Name each one and locate it in time.
-
-## What we learned about the work
-Boundary, contract, and design-layer lessons. Refer to the reconciliation
-note for the structured version; expand them here into story.
-
-## What we learned about how we worked
-Attention allocation, autonomy bandwidth, validation timing, gate placement,
-how PAW or other workflows performed, where the operator should have been
-more or less present.
-
-## Inspired vs. recovery interventions
-For each named intervention earlier in the narrative, classify it. Make the
-distinction vivid — inspired interventions are the system working as
-intended; recovery interventions are work-design feedback for future shaping.
-
-## If we did it again
-Alternate shapings. Dropped scope worth keeping dropped. Sequencing changes.
-Things that should have been a different workstream entirely. Things that
-should have been folded in earlier.
-
-## Open threads
-What is leaving the workstream alive: follow-on workstreams, promoted
-candidates, deferred items, external dependencies still owed. Point at where
-each thread continues so the listener knows the story is not over for those.
-```
+Use the reconciliation note as the canonical home for structured promotion
+candidate dispositions and inspired-vs.-recovery classification. In the
+narrative, preserve that distinction as a writing lens: make it clear when a
+moment was design insight versus work-design recovery, but do not add a
+duplicated classification section unless the specific story demands it.
 
 ### Voice and constraints
 
@@ -269,9 +247,10 @@ each thread continues so the listener knows the story is not over for those.
 - **Context before reference.** If the narrative mentions an adjacent
   workstream, design doc, or external system, first explain what role it played
   in this story. Do not assume the listener knows the portfolio.
-- **Target length:** 800-2000 lines is normal. Long enough to be a real
-  retelling, short enough to listen to in a single sitting once the podcast
-  generator chews it.
+- **Listenability target:** Long enough to be a real retelling, short enough to
+  listen to in a single sitting once the podcast generator chews it. Do not pad
+  a tight story to satisfy an arbitrary minimum, and do not cut a large
+  workstream so aggressively that its pivots stop making sense.
 
 ### What not to do
 
@@ -285,6 +264,8 @@ each thread continues so the listener knows the story is not over for those.
 - Do not make the narrative a closure-gate dependency. Closure depends on
   the reconciliation note, not on this.
 - Do not narrate active workstreams; the genre needs the work to be done.
+- Do not duplicate reconciliation-note taxonomy as a second worksheet. Use the
+  narrative to make structured lessons memorable, not to re-file them.
 - Do not use GitHub or design identifiers as shorthand for meaning. A draft
   that says "then #501 happened" has not yet become a narrative.
 - Do not depend on links as explanation. Links are useful for the operator, but
@@ -348,7 +329,8 @@ Larger if and when:
 
 Potential exports:
 
-- `docs/closeout-narrative.md` artifact convention and section structure.
+- `docs/closeout-narrative.md` artifact convention, narrative anchors, and
+  voice constraints.
 - POC runbook that any orchestrator session can follow.
 - Voice and content constraints distinguishing narrative from reconciliation
   note.
