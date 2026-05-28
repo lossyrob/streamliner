@@ -396,15 +396,33 @@ failure that future shaping should be able to prevent).}
 
 ## Promotion candidates
 - {Lesson}: target authority — {brief decision | node-spec guideline |
-  candidate | follow-on workstream | design doc | decision record}
+  candidate | follow-on workstream | design doc | decision record |
+  workstream-design lesson (`builder` | `project` | `streamliner`)}
   - Disposition: {landed at <link> | deferred with rationale | dropped because…}
 ```
+
+Use **workstream-design lesson** for pattern-shaped operating heuristics learned
+from this workstream about how future workstreams should be shaped or how the
+builder should engage with them. Tag each one by audience:
+
+- `builder` - the operator's own shaping decisions, attention calibration,
+  interaction patterns, or push-back habits;
+- `project` - project-specific portfolio shaping patterns;
+- `streamliner` - cross-project Streamliner-doctrine candidates.
+
+This target is the capture point, not necessarily the accumulation home. A
+landed disposition links to wherever that audience curates the lesson, such as a
+builder operating-notes file, a project-side workstream-design notes file, a
+Streamliner shaping candidate, or a Streamliner doctrine PR. Deferred with
+rationale is appropriate for single-instance observations whose value depends on
+corroborating workstreams; the disposition names what additional signal would
+justify promotion.
 
 `Deferred with rationale` is a closed disposition. An open candidate is one with
 no disposition, a vague disposition, or an unresolved target authority.
 Deferred-with-rationale covers lessons that need operator pickup, Streamliner
 doctrine backlog work, or another authority surface outside the closing
-workstream.
+workstream, including workstream-design lessons waiting for corroboration.
 
 ### Compact example
 
@@ -490,9 +508,13 @@ the original shaping did not make the dependency explicit enough.
 
 ## Promotion candidates
 - Name the peer design plane in future provider-boundary shaping: target
-  authority — Streamliner doctrine backlog
+  authority — workstream-design lesson (`streamliner`)
   - Disposition: deferred with rationale; needs operator pickup outside this
     workstream.
+- Parallel promotion proofs should represent independent confidence states:
+  target authority — workstream-design lesson (`builder`)
+  - Disposition: deferred with rationale; promote if the same heuristic appears
+    in two more multi-wave workstreams.
 - Record skipped-by-absorption as a normal node outcome: target authority —
   node-spec guideline
   - Disposition: landed in the closeout node spec.

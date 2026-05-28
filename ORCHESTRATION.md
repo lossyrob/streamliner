@@ -402,7 +402,9 @@ A workstream's final closure gate does not pass until:
 or ambiguous dispositions, not on intentionally deferred work that names why it
 is not landing in this workstream.
 This includes lessons that need operator pickup, Streamliner doctrine backlog
-work, or another authority surface outside the closing workstream.
+work, or another authority surface outside the closing workstream. A
+workstream-design lesson deferred until corroboration from additional
+workstreams is closed as long as the disposition names the corroborating signal.
 
 These rules apply to *the closure gate*, not to every reconciliation pass. A
 mid-workstream reconciliation that does not change the closure picture does
@@ -412,15 +414,22 @@ not need to revise the note.
 
 Promotion keeps authority explicit. A lesson may remain a workstream-local
 note, become a workstream-local brief decision, turn into node-spec guidance,
-become a checkpoint contract, or be promoted into the design layer or a
-decision record. Nothing becomes authoritative merely because an agent wrote
-it down.
+become a checkpoint contract, become a workstream-design lesson, or be promoted
+into the design layer or a decision record. Nothing becomes authoritative merely
+because an agent wrote it down.
 
 Each promotion candidate names its target authority so the disposition is
 verifiable: "Brief decision in workstream X", "New section in
 `docs/design/Y.md`", "ADR draft at `docs/design/decisions/NNN-Z.md`", "New
-shaping candidate at `.streamliner/shaping/candidates/W.md`", "Operator/doctrine
-backlog — deferred because…", or "Out of scope — dropped because…".
+shaping candidate at `.streamliner/shaping/candidates/W.md`", "Workstream-design
+lesson (`builder`, `project`, or `streamliner`) — deferred until…", or "Out of
+scope — dropped because…".
+
+Use workstream-design lesson for pattern-shaped operating heuristics that may
+need to accumulate before they deserve a concrete doctrine, project, or builder
+habit artifact. The reconciliation note is the capture point. The disposition
+either links to where the audience now curates the lesson or explains what
+additional signal would justify promotion later.
 
 #### Distinct from any closeout narrative
 
