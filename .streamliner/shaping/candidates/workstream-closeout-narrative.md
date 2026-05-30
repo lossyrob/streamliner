@@ -233,7 +233,9 @@ anchors:
 - **Open threads.** What is leaving the workstream alive: follow-on
   workstreams, promoted candidates, deferred items, or external dependencies.
   Point at where each thread continues so the listener knows the story is not
-  over for those.
+  over for those. When the reconciliation note's promotion-candidate list is
+  long, summarize threads in prose by destination (which adjacent workstream,
+  which follow-on, which queued readiness) rather than re-listing dispositions.
 
 Use the reconciliation note as the canonical home for structured promotion
 candidate dispositions and inspired-vs.-recovery classification. In the
@@ -254,7 +256,10 @@ reconciliation or doctrine backlog if they need authority.
 - **Chronological by default.** Story-shaped, not analytical. The
   reconciliation note already carries the analytical version. A wave opening may
   briefly name what the wave hoped to produce before the section returns to what
-  actually happened.
+  actually happened. Resist `Wave 1` / `Wave 2` / `Wave 3` as section breaks
+  even when the workstream is wave-organized; use waves as the chronological
+  backbone, but break sections on actual narrative turns such as the missed
+  synthesizer, the rejected validation gate, or the boundary that changed.
 - **Self-contained for a cold listener.** The narrative must be understandable
   to a podcast generator that cannot open GitHub, inspect design docs, or know
   local shorthand. Every important component, workstream, design decision, and
