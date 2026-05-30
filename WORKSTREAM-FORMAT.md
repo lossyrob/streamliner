@@ -394,6 +394,10 @@ decisions, not only worker hot-work.
 Classify each as inspired (new front-line insight) or recovery (work-design
 failure that future shaping should be able to prevent).}
 
+## Closeout observation dispositions
+- {Closeout observation or equivalent closure-lane item}: {completed |
+  deferred with rationale | promoted to <link> | dropped because…}
+
 ## Promotion candidates
 - {Lesson}: target authority — {brief decision | node-spec guideline |
   candidate | follow-on workstream | design doc | decision record |
@@ -417,6 +421,13 @@ Streamliner shaping candidate, or a Streamliner doctrine PR. Deferred with
 rationale is appropriate for single-instance observations whose value depends on
 corroborating workstreams; the disposition names what additional signal would
 justify promotion.
+
+Use **Closeout observation dispositions** for brief `Closeout Observations` and
+equivalent closure parking lanes such as closeout punch lists, coverage-routing
+reports, or named closeout checklists. These items are closure-boundary facts,
+not necessarily promotion candidates. List them separately when the closure gate
+needs a disposition audit; use `None` only when no such lane or equivalent item
+exists.
 
 `Deferred with rationale` is a closed disposition. An open candidate is one with
 no disposition, a vague disposition, or an unresolved target authority.
@@ -460,6 +471,12 @@ The coverage-routing check was inspired because it exposed a useful validation
 pattern. The launch-state repair was recovery because the original boundary let
 workers own state they should only report.
 
+## Closeout observation dispositions
+- Validate launch-state coverage routing: completed in issue #123 before
+  closure.
+- Keep the old retry checklist: dropped because shipped validation made it
+  obsolete.
+
 ## Promotion candidates
 - Launch state belongs to the registry: target authority — design doc
   - Disposition: landed at `docs/design/session-registry.md`.
@@ -467,8 +484,6 @@ workers own state they should only report.
   - Disposition: deferred with rationale; not needed to close this workstream.
 - Coverage-routing gaps need tracking: target authority — tracker issue
   - Disposition: landed at issue #123.
-- Keep the old retry checklist: target authority — brief decision
-  - Disposition: dropped because shipped validation made it obsolete.
 ```
 
 A coordination-shaped note may look like:
@@ -533,6 +548,10 @@ the original shaping did not make the dependency explicit enough.
   passes.** Open candidates indicate the gate is not actually ready to close.
   Deferred-with-rationale candidates are disposed; undisposed or vague
   candidates are still open.
+- **Every closeout observation also has a disposition before the closure gate
+  passes.** Put those in `Closeout observation dispositions`, not in `Promotion
+  candidates`, unless the observation also produced a lesson that needs a target
+  authority.
 - **Evidence may be equivalent.** Prefer standard worker `### Field report`
   comments, but when they are missing or non-standard, cite PR bodies, diffs,
   issue comments, tracker closeout notes, coverage reports, or committed

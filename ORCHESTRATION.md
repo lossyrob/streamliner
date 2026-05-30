@@ -393,7 +393,9 @@ A workstream's final closure gate does not pass until:
    such as a `Closeout Punch List` or coverage-routing report, has a disposition
    (completed, deferred with rationale, promoted, or dropped). This is the
    existing closeout observation lane rule, surfaced here because closure
-   depends on it.
+   depends on it. Record these in the reconciliation note's
+   `Closeout observation dispositions` section when such a lane exists, rather
+   than force-fitting closure-boundary facts into promotion candidates.
 3. Every promotion candidate in the reconciliation note has an explicit
    disposition: landed (with a link to where it landed), deferred with
    rationale, or dropped because reconciliation showed it does not matter.
