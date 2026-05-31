@@ -52,9 +52,9 @@ Reconciliation: not_run
 - `planning` | `done` | `activity`
 - `planning-docs-review` | `done` | `activity`
 - `implementation` | `resolved` | `activity`
-- `final-review` | `pending` | `activity`
+- `final-review` | `resolved` | `activity`
 - `final-pr` | `pending` | `activity`
 
 ### Configured Procedure Items
 - `procedure:planning-review` | `resolved` | `procedure`
-- `procedure:final-review` | `pending` | `procedure`
+- `procedure:final-review` | `resolved` | `procedure`
