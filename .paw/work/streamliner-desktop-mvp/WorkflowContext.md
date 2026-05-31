@@ -51,7 +51,7 @@ Reconciliation: not_run
 - `work-shaping` | `done` | `activity`
 - `planning` | `done` | `activity`
 - `planning-docs-review` | `done` | `activity`
-- `implementation` | `pending` | `activity`
+- `implementation` | `in_progress` | `activity`
 - `final-review` | `pending` | `activity`
 - `final-pr` | `pending` | `activity`
 
