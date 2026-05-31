@@ -27,6 +27,7 @@ import {
   buildPawInitPrompt,
   buildStreamlinerContextSavePrompt,
   completePawInitToolParameters,
+  ensureStreamlinerContextAdditionalInput,
   preparePawLaunch,
   resolvePawWorkDirForLaunch,
   validatePawWorktreePolicy,
@@ -442,6 +443,48 @@ describe("preparePawLaunch", () => {
     );
   });
 
+  it("repairs missing Streamliner context input when PAW init leaves Additional Inputs as none", () => {
+    const repaired = ensureStreamlinerContextAdditionalInput(
+      [
+        "# WorkflowContext",
+        "",
+        "Work ID: hidden-prpr-exposure-gating",
+        "Additional Inputs: none",
+        "",
+        "## Control State",
+        "",
+        "TODO Mirror: active-required-items",
+      ].join("\n"),
+      "C:\\repo\\.paw\\work\\hidden-prpr-exposure-gating\\streamliner\\context.md",
+    );
+
+    expect(repaired.changed).toBe(true);
+    expect(repaired.content).toContain(
+      "Additional Inputs: streamliner-context=C:/repo/.paw/work/hidden-prpr-exposure-gating/streamliner/context.md",
+    );
+    expect(repaired.content).toContain("## Control State");
+  });
+
+  it("inserts Streamliner context input before control state when Additional Inputs is absent", () => {
+    const repaired = ensureStreamlinerContextAdditionalInput(
+      [
+        "# WorkflowContext",
+        "",
+        "Work ID: hidden-prpr-exposure-gating",
+        "",
+        "## Control State",
+        "",
+        "TODO Mirror: active-required-items",
+      ].join("\n"),
+      "C:\\repo\\.paw\\work\\hidden-prpr-exposure-gating\\streamliner\\context.md",
+    );
+
+    expect(repaired.changed).toBe(true);
+    expect(repaired.content).toMatch(
+      /Additional Inputs: streamliner-context=C:\/repo\/\.paw\/work\/hidden-prpr-exposure-gating\/streamliner\/context\.md\n\n## Control State/,
+    );
+  });
+
   it("puts trusted builder instructions in the first SDK prompt without source bodies", () => {
     const root = createRootDir();
     const manifestPath = join(root, "state", "copilot-sdk", "launch-manifest.json");
@@ -486,6 +529,8 @@ describe("preparePawLaunch", () => {
     expect(prompt).toContain(normalizePath(manifestPath));
     expect(prompt).toContain("Do not check out the target node branch in the launch cwd.");
     expect(prompt).toContain("create or reuse a sibling worktree");
+    expect(prompt).toContain("Do not retry optional source paths that are missing or marked unavailable");
+    expect(prompt).toContain("Do not assume the selected repo has `docs/design/index.md`");
     expect(prompt).not.toContain("GRAPH_BODY_SHOULD_NOT_BE_IN_INITIAL_PROMPT");
     expect(prompt).not.toContain("BRIEF_BODY_SHOULD_NOT_BE_IN_INITIAL_PROMPT");
     expect(prompt).not.toContain("DESIGN_BODY_SHOULD_NOT_BE_IN_INITIAL_PROMPT");
