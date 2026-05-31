@@ -49,7 +49,7 @@ Reconciliation: not_run
 ### Required Workflow Items
 - `init` | `resolved` | `activity`
 - `work-shaping` | `done` | `activity`
-- `planning` | `pending` | `activity`
+- `planning` | `done` | `activity`
 - `planning-docs-review` | `pending` | `activity`
 - `implementation` | `pending` | `activity`
 - `final-review` | `pending` | `activity`
