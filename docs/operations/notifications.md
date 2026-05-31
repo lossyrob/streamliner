@@ -19,15 +19,19 @@ All endpoints are served by the local Streamliner API (default
 
 | Method / Path | Purpose |
 | --- | --- |
-| `POST /api/notifications` | Create a notification. Validates and enriches the request, persists it, and publishes it over SSE. Returns `201 { notification, warnings? }`. |
-| `GET /api/notifications?afterId=<id>&limit=<n>` | List persisted notifications in ascending id order. `afterId` is a strict (`>`) cursor; `limit` caps the count. Returns `{ notifications: [...] }`. |
+| `POST /api/notifications` | Create a notification. Validates and enriches the request, persists it, and publishes it over SSE. Returns `201 { notification, warnings? }`. Loopback-only (see below). |
+| `GET /api/notifications?afterId=<id>&limit=<n>` | List persisted notifications in ascending id order. `afterId` is a strict (`>`) cursor; `limit` caps the count to the first `n` records after the cursor. Returns `{ notifications: [...] }`. |
 | `GET /api/notifications/:id` | Resolve a single persisted notification by id. Returns `200 { notification }`, `404 not_found` for an unknown id, or `400 invalid_id` for a non-positive id. Used by desktop protocol activation to resolve `<id>` -> link on a cold start. The route is digit-guarded so it never shadows `/api/notifications/events`. |
 | `GET /api/notifications/events` | SSE stream (see below). |
 | `GET /api/client-config` | Discovery: `{ dashboardBaseUrl }` so the desktop can compose links to the locally served dashboard (default `http://127.0.0.1:5173`, override with `STREAMLINER_DASHBOARD_BASE_URL`). |
 
 `POST /api/notifications` is a localhost-only write surface and is therefore
 **exempt from the preview read-only guard** — it remains available even when the
-API runs in read-only preview mode, while registry mutations stay blocked.
+API runs in read-only preview mode, while registry mutations stay blocked. That
+exemption is enforced, not just assumed: the route rejects any request whose
+socket peer (or `x-forwarded-for`) is non-loopback with `403 loopback_only`, so
+binding the API to a non-loopback address can never expose notification writes
+to remote clients.
 
 ### Request fields
 

@@ -136,7 +136,16 @@ fn cache_path(
     event_kind: EventKind,
     size_px: u32,
 ) -> PathBuf {
-    let color = color_hex.trim_start_matches('#').to_ascii_lowercase();
+    // Keep only hex digits in the cache-key color component: the rendered badge
+    // already falls back to the default color for any non-6-hex input, and this
+    // guarantees an attacker-influenced color string (e.g. one containing path
+    // separators) can never traverse outside `cache_dir`.
+    let color: String = color_hex
+        .trim_start_matches('#')
+        .chars()
+        .filter(char::is_ascii_hexdigit)
+        .flat_map(char::to_lowercase)
+        .collect();
     let monogram = derive_display_monogram(Some(monogram)).to_ascii_lowercase();
     cache_dir.join(format!(
         "{color}-{monogram}-{}-{size_px}.png",
@@ -503,6 +512,18 @@ mod tests {
     fn text_color_uses_luminance() {
         assert_eq!(text_color_for_hex("FFFFFF"), (15, 23, 42, 255));
         assert_eq!(text_color_for_hex("000000"), (255, 255, 255, 255));
+    }
+
+    #[test]
+    fn cache_path_strips_non_hex_so_color_cannot_traverse() {
+        let cache = Path::new("C:/tmp/badges");
+        let evil = badge_cache_path(cache, "../../etc/x", "API", EventKind::Done, 96);
+        // The malicious color contributes only its hex digits, so the resulting
+        // path stays directly inside the cache dir.
+        assert_eq!(evil.parent(), Some(cache));
+        let name = evil.file_name().unwrap().to_string_lossy();
+        assert!(!name.contains(".."), "filename must not contain traversal: {name}");
+        assert!(!name.contains('/') && !name.contains('\\'), "no separators: {name}");
     }
 
     #[test]

@@ -77,7 +77,7 @@ export class NotificationEventStream {
     res.flushHeaders?.();
 
     const heartbeat = setInterval(() => {
-      writeHeartbeat(res);
+      this.safeWrite(res, writeHeartbeat);
     }, HEARTBEAT_INTERVAL_MS);
     this.clients.set(res, { res, heartbeat });
 
@@ -97,7 +97,24 @@ export class NotificationEventStream {
       this.buffer.splice(0, this.buffer.length - REPLAY_BUFFER_SIZE);
     }
     for (const client of this.clients.values()) {
-      writeCreated(client.res, record);
+      this.safeWrite(client.res, (res) => writeCreated(res, record));
+    }
+  }
+
+  /**
+   * Write to one client, evicting it on failure. A socket can be gone before its
+   * `close` handler has run; an unguarded `res.write` would then throw
+   * (`ERR_STREAM_WRITE_AFTER_END`) and abort fan-out to the remaining clients.
+   */
+  private safeWrite(res: Response, write: (res: Response) => void): void {
+    try {
+      write(res);
+    } catch {
+      const client = this.clients.get(res);
+      if (client) {
+        clearInterval(client.heartbeat);
+        this.clients.delete(res);
+      }
     }
   }
 

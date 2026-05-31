@@ -25,10 +25,15 @@ struct NotificationGetResponse {
 pub fn parse_notification_id(arg: &str) -> Option<u64> {
     let trimmed = arg.trim();
     let prefix = format!("{PROTOCOL}://notification/");
-    // Scheme/host are case-insensitive; compare the prefix case-insensitively
-    // but slice from the original so the id digits are untouched.
-    if trimmed.len() < prefix.len()
-        || !trimmed[..prefix.len()].eq_ignore_ascii_case(&prefix)
+    // Scheme/host are case-insensitive. Compare bytes (an `&str` slice at an
+    // arbitrary byte index panics inside a multi-byte codepoint, and this URL is
+    // attacker-reachable via the registered protocol handler). Slicing the
+    // original `&str` at `prefix.len()` is char-boundary-safe only AFTER the
+    // ASCII prefix matched byte-for-byte.
+    let prefix_bytes = prefix.as_bytes();
+    let trimmed_bytes = trimmed.as_bytes();
+    if trimmed_bytes.len() < prefix_bytes.len()
+        || !trimmed_bytes[..prefix_bytes.len()].eq_ignore_ascii_case(prefix_bytes)
     {
         return None;
     }
@@ -165,6 +170,17 @@ mod tests {
         assert_eq!(parse_notification_id("streamliner://other/1"), None);
         assert_eq!(parse_notification_id("https://example.com/notification/1"), None);
         assert_eq!(parse_notification_id(""), None);
+    }
+
+    #[test]
+    fn does_not_panic_on_multibyte_urls() {
+        // The protocol handler is attacker-reachable; a multi-byte codepoint
+        // straddling the prefix-length byte boundary must not panic.
+        assert_eq!(parse_notification_id("streamliner://\u{f1}\u{f1}\u{f1}\u{f1}\u{f1}\u{f1}\u{f1}"), None);
+        assert_eq!(parse_notification_id("str\u{e9}amliner://notification/1"), None);
+        assert_eq!(parse_notification_id("\u{1f600}"), None);
+        // Valid id still parses when followed by multi-byte trailing junk.
+        assert_eq!(parse_notification_id("streamliner://notification/7\u{f1}x"), Some(7));
     }
 
     #[test]

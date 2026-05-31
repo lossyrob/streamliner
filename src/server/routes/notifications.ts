@@ -11,6 +11,7 @@ import {
   type NotificationRequest,
 } from "../../notification-contract";
 import { loadWorkstreamRegistry } from "../workstream-registry";
+import { isLoopbackAddress } from "../config";
 import { resolveDashboardBaseUrl } from "../notification-config";
 import { enrichNotification } from "../notification-enrichment";
 import type { NotificationEventStream } from "../notification-events";
@@ -32,6 +33,30 @@ interface ValidationError {
 
 function badRequest(code: string, error: string): ValidationError {
   return { code, error };
+}
+
+function hasNonLoopbackForwardedFor(value: string | string[] | undefined): boolean {
+  if (!value) {
+    return false;
+  }
+  const values = Array.isArray(value) ? value : value.split(",");
+  return values.some((entry) => !isLoopbackAddress(entry.trim()));
+}
+
+/**
+ * Notifications are an unauthenticated, localhost-only write surface (the POST
+ * is mounted ahead of the read-only guard). Enforce that contract here so a
+ * non-loopback bind address can never let a remote client inject toasts/feed
+ * cards, mirroring the other sensitive launch routes.
+ */
+function isNonLoopbackRequest(req: {
+  socket: { remoteAddress?: string };
+  headers: Record<string, string | string[] | undefined>;
+}): boolean {
+  return (
+    !isLoopbackAddress(req.socket.remoteAddress) ||
+    hasNonLoopbackForwardedFor(req.headers["x-forwarded-for"])
+  );
 }
 
 function validateRequest(body: unknown): NotificationRequest | ValidationError {
@@ -122,6 +147,10 @@ export function createNotificationsRouter(deps: NotificationsRouteDeps): Router 
 
   router.post("/notifications", (req, res, next) => {
     void (async () => {
+      if (isNonLoopbackRequest(req)) {
+        res.status(403).json(badRequest("loopback_only", "Notifications must originate from loopback."));
+        return;
+      }
       const validated = validateRequest(req.body);
       if (isValidationError(validated)) {
         res.status(400).json(validated);

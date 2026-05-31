@@ -77,4 +77,17 @@ describe("notifications API wiring", () => {
     expect(list.body.notifications).toHaveLength(1);
     expect(list.body.notifications[0].eventKind).toBe("reconciled");
   });
+
+  it("rejects POST /api/notifications forwarded from a non-loopback client", async () => {
+    const api = buildApi(rootDir());
+    const res = await request(api.app)
+      .post("/api/notifications")
+      .set("x-forwarded-for", "203.0.113.7")
+      .send({ title: "Reconciled", body: "done", eventKind: "reconciled" })
+      .expect(403);
+    expect(res.body.code).toBe("loopback_only");
+    // The rejected write must not have been persisted.
+    const list = await request(api.app).get("/api/notifications").expect(200);
+    expect(list.body.notifications).toHaveLength(0);
+  });
 });

@@ -123,11 +123,11 @@ export class NotificationStore {
     return records.find((record) => record.id === id) ?? null;
   }
 
-  /** Records with `id > afterId`, oldest-first, optionally capped to `limit`. */
+  /** Records with `id > afterId`, oldest-first, optionally capped to the first `limit`. */
   async listSince(afterId: number, limit?: number): Promise<NotificationRecord[]> {
     const records = (await this.readAll()).filter((record) => record.id > afterId);
     records.sort((a, b) => a.id - b.id);
-    return typeof limit === "number" ? records.slice(-limit) : records;
+    return typeof limit === "number" ? records.slice(0, limit) : records;
   }
 
   /** Most recent records, oldest-last (snapshot order), capped to `limit`. */

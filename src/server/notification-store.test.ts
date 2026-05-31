@@ -80,6 +80,15 @@ describe("NotificationStore", () => {
     expect(await store.listSince(5)).toHaveLength(0);
   });
 
+  it("listSince caps to the FIRST `limit` records after the cursor (forward paging)", async () => {
+    const store = new NotificationStore({ storePath: tempStorePath() });
+    for (let i = 0; i < 10; i += 1) {
+      await store.append(draft({ title: `n${i}` }));
+    }
+    // Must return the contiguous window right after the cursor, not the newest.
+    expect((await store.listSince(2, 3)).map((r) => r.id)).toEqual([3, 4, 5]);
+  });
+
   it("listRecent returns newest-last and honors the limit", async () => {
     const store = new NotificationStore({ storePath: tempStorePath() });
     for (let i = 0; i < 5; i += 1) {

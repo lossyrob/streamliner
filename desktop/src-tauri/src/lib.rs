@@ -23,6 +23,16 @@ pub fn run() {
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .expect("failed to build HTTP client");
+    // The SSE stream is long-lived: a total request `timeout` would kill the
+    // connection mid-stream (the server's heartbeat is 15s), causing endless
+    // reconnect churn. Use connect + per-read timeouts instead, with the read
+    // timeout comfortably above the heartbeat interval so a genuinely dead peer
+    // is still detected.
+    let sse_http = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .read_timeout(std::time::Duration::from_secs(30))
+        .build()
+        .expect("failed to build SSE HTTP client");
     let config = tauri::async_runtime::block_on(config::resolve_config(&http));
 
     // Cold start: the OS launches this (first) instance with the protocol URL in
@@ -80,7 +90,7 @@ pub fn run() {
             sse_client::spawn(
                 app.handle().clone(),
                 config.clone(),
-                http.clone(),
+                sse_http,
                 badge_cache_dir,
             );
 
