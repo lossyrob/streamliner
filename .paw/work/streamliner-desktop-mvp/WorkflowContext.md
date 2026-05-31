@@ -53,7 +53,7 @@ Reconciliation: reconciled
 - `planning-docs-review` | `done` | `activity`
 - `implementation` | `resolved` | `activity`
 - `final-review` | `resolved` | `activity`
-- `final-pr` | `in_progress` | `activity`
+- `final-pr` | `resolved` | `activity`
 
 ### Configured Procedure Items
 - `procedure:planning-review` | `resolved` | `procedure`
