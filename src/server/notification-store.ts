@@ -117,6 +117,12 @@ export class NotificationStore {
     });
   }
 
+  /** Single record by id, or `null` if no record with that id exists. */
+  async get(id: number): Promise<NotificationRecord | null> {
+    const records = await this.readAll();
+    return records.find((record) => record.id === id) ?? null;
+  }
+
   /** Records with `id > afterId`, oldest-first, optionally capped to `limit`. */
   async listSince(afterId: number, limit?: number): Promise<NotificationRecord[]> {
     const records = (await this.readAll()).filter((record) => record.id > afterId);

@@ -48,6 +48,18 @@ pub fn render_badge_cached(
     Ok(png)
 }
 
+/// On-disk path that [`render_badge_cached`] uses for the given inputs. Lets a
+/// caller (e.g. the toast emitter) reference the cached PNG file directly.
+pub fn badge_cache_path(
+    cache_dir: impl AsRef<Path>,
+    color_hex: &str,
+    monogram: &str,
+    event_kind: EventKind,
+    size_px: u32,
+) -> PathBuf {
+    cache_path(cache_dir.as_ref(), color_hex, monogram, event_kind, size_px)
+}
+
 pub fn derive_display_monogram(short_name: Option<&str>) -> String {
     let cleaned: String = short_name
         .unwrap_or("")

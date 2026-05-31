@@ -140,6 +140,35 @@ describe("notifications router", () => {
     expect(res.body.notifications.map((n: { id: number }) => n.id)).toEqual([2, 3]);
   });
 
+  it("resolves a single notification by id (activation path)", async () => {
+    const { app } = buildApp();
+    for (let i = 0; i < 3; i += 1) {
+      await request(app).post("/api/notifications").send({ title: `n${i}`, body: "b" });
+    }
+    const res = await request(app).get("/api/notifications/2");
+    expect(res.status).toBe(200);
+    expect(res.body.notification.id).toBe(2);
+    expect(res.body.notification.title).toBe("n1");
+  });
+
+  it("returns 404 for an unknown notification id", async () => {
+    const { app } = buildApp();
+    await request(app).post("/api/notifications").send({ title: "t", body: "b" });
+    const res = await request(app).get("/api/notifications/999");
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe("not_found");
+  });
+
+  it("does not let the :id route shadow the events path", async () => {
+    const { app } = buildApp();
+    // `events` is non-numeric so the digit-constrained :id route must not match
+    // it; with no SSE route mounted here that means a 404 (not a 400/200 from
+    // the id handler).
+    const res = await request(app).get("/api/notifications/events");
+    expect(res.status).toBe(404);
+    expect(res.body.code).not.toBe("invalid_id");
+  });
+
   it("persists notifications to the store and publishes to the stream", async () => {
     const { app, store } = buildApp();
     await request(app).post("/api/notifications").send({ title: "t", body: "b" });

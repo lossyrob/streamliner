@@ -74,6 +74,10 @@ export interface NotificationListResponse {
   notifications: NotificationRecord[];
 }
 
+export interface NotificationGetResponse {
+  notification: NotificationRecord;
+}
+
 export interface NotificationSnapshotPayload {
   notifications: NotificationRecord[];
 }

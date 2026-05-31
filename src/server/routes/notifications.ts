@@ -6,6 +6,7 @@ import {
   isSeverity,
   validateToastLink,
   type NotificationCreateResponse,
+  type NotificationGetResponse,
   type NotificationListResponse,
   type NotificationRequest,
 } from "../../notification-contract";
@@ -181,6 +182,32 @@ export function createNotificationsRouter(deps: NotificationsRouteDeps): Router 
         ? await deps.store.listSince(afterId, limit)
         : await deps.store.listRecent(limit ?? 100);
       const response: NotificationListResponse = { notifications };
+      res.json(response);
+    })().catch(next);
+  });
+
+  // Digit-only guard (Express 5 / path-to-regexp 8 has no inline regex params):
+  // a non-numeric segment falls through via next() so this never shadows the
+  // literal `/notifications/events` SSE route (which is also mounted earlier in
+  // the real app). Used by desktop protocol activation to resolve <id> -> link.
+  router.get("/notifications/:id", (req, res, next) => {
+    void (async () => {
+      const raw = req.params.id;
+      if (!/^\d+$/.test(raw)) {
+        next();
+        return;
+      }
+      const id = Number(raw);
+      if (!Number.isInteger(id) || id <= 0) {
+        res.status(400).json(badRequest("invalid_id", "`id` must be a positive integer."));
+        return;
+      }
+      const notification = await deps.store.get(id);
+      if (!notification) {
+        res.status(404).json(badRequest("not_found", `No notification with id ${id}.`));
+        return;
+      }
+      const response: NotificationGetResponse = { notification };
       res.json(response);
     })().catch(next);
   });
