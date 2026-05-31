@@ -1603,6 +1603,9 @@ describe("App sessions route", () => {
       expect(graphNode.textContent).toContain("runtime active");
       expect(graphNode.textContent).toContain("PAW implementation");
       expect(container.textContent).toContain("RUNTIME DETAILS");
+      const inspectorNodeId = container.querySelector(".sl-inspector-node-id");
+      expect(inspectorNodeId?.textContent).toContain("Node ID");
+      expect(inspectorNodeId?.textContent).toContain("launch-prompt-profiles");
       expect(container.textContent).not.toContain("Runtime overlay");
       expect(container.textContent).toContain("PAW overlay worker (working)");
       expect(container.textContent).toContain("pending blocking launch");

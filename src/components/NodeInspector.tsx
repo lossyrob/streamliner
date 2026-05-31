@@ -481,6 +481,10 @@ export function NodeInspector({
       <span className="sl-section-label">INSPECTOR</span>
       <div className="sl-inspector-card">
         <h3 className="sl-sidebar-title">{node.title}</h3>
+        <div className="sl-inspector-node-id">
+          <span>Node ID</span>
+          <code>{node.id}</code>
+        </div>
         <p className="sl-inspector-summary">{node.summary}</p>
         <div className="sl-inspector-meta">
           <span className={`sl-pill ${statusPillClass(entry.operationalStatus)}`}>

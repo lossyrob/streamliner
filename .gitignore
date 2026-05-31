@@ -19,6 +19,7 @@ test-results/
 playwright-report/
 .playwright/
 .streamliner-preview/
+_proto/canvas/state/
 
 # Editor directories and files
 .vscode/*

@@ -1,6 +1,6 @@
 // _proto/canvas — quick-and-dirty prototype API for the DBAgent portfolio canvas.
 //
-// Hard-coded paths to the dbagent planning artifacts. NOT a generalized
+// Prototype API for the dbagent planning artifacts. NOT a generalized
 // Streamliner feature yet. When this proves out, the contract that should be
 // promoted is:
 //   - Read a portfolio document
@@ -37,39 +37,13 @@
 //
 // Storage:
 //   - portfolio.json: read-only here, sourced from the planning repo
-//   - positions.json: lives next to this router under _proto/canvas/state/
-//     Committed to git so layout work survives across machines.
-import { existsSync } from "node:fs";
+//   - positions/colors/terminal state: lives in the dbagent portfolio state
+//     directory configured by dbagent/streamliner.json.
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { Router } from "express";
 
-// Hard-coded for the prototype. Promote this to config when the prototype
-// graduates.
-const PORTFOLIO_PATH = resolve(
-  "C:\\Users\\robemanuele\\proj\\planning\\planning\\streamliner\\dbagent\\portfolio\\portfolio.json",
-);
-const POSITIONS_PATH = resolve(
-  process.cwd(),
-  "_proto",
-  "canvas",
-  "state",
-  "positions.json",
-);
-const COLORS_PATH = resolve(
-  process.cwd(),
-  "_proto",
-  "canvas",
-  "state",
-  "colors.json",
-);
-const TERMINAL_ACTIVE_PATH = resolve(
-  process.cwd(),
-  "_proto",
-  "canvas",
-  "state",
-  "terminal-active.json",
-);
 // Root of the dbagent planning artifacts. The workstream-doc lookup walks
 // `<DBAGENT_ROOT>/workstreams/<id>/brief.md` for formed workstreams and
 // `<DBAGENT_ROOT>/shaping/candidates/<id>.md` for candidates, with a fuzzy
@@ -78,6 +52,73 @@ const TERMINAL_ACTIVE_PATH = resolve(
 const DBAGENT_ROOT = resolve(
   "C:\\Users\\robemanuele\\proj\\planning\\planning\\streamliner\\dbagent",
 );
+const PROJECT_CONFIG_PATH = join(DBAGENT_ROOT, "streamliner.json");
+
+interface PortfolioConfig {
+  path?: string;
+  stateDir?: string;
+}
+
+interface ProjectConfig {
+  portfolio?: PortfolioConfig;
+}
+
+function readProjectConfig(): ProjectConfig {
+  if (!existsSync(PROJECT_CONFIG_PATH)) {
+    return {};
+  }
+  const parsed = JSON.parse(readFileSync(PROJECT_CONFIG_PATH, "utf-8")) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${PROJECT_CONFIG_PATH} must contain a JSON object.`);
+  }
+
+  const record = parsed as Record<string, unknown>;
+  if (record.portfolio === undefined) {
+    return {};
+  }
+  if (
+    !record.portfolio ||
+    typeof record.portfolio !== "object" ||
+    Array.isArray(record.portfolio)
+  ) {
+    throw new Error(`${PROJECT_CONFIG_PATH} field "portfolio" must be an object.`);
+  }
+
+  const portfolioRecord = record.portfolio as Record<string, unknown>;
+  const portfolio: PortfolioConfig = {};
+  if (portfolioRecord.path !== undefined) {
+    if (typeof portfolioRecord.path !== "string" || !portfolioRecord.path.trim()) {
+      throw new Error(`${PROJECT_CONFIG_PATH} field "portfolio.path" must be a non-empty string.`);
+    }
+    portfolio.path = portfolioRecord.path;
+  }
+  if (portfolioRecord.stateDir !== undefined) {
+    if (typeof portfolioRecord.stateDir !== "string" || !portfolioRecord.stateDir.trim()) {
+      throw new Error(`${PROJECT_CONFIG_PATH} field "portfolio.stateDir" must be a non-empty string.`);
+    }
+    portfolio.stateDir = portfolioRecord.stateDir;
+  }
+
+  return { portfolio };
+}
+
+function resolveProjectPath(configuredPath: string | undefined, fallbackRelativePath: string): string {
+  const candidate = configuredPath?.trim() || fallbackRelativePath;
+  return isAbsolute(candidate) ? resolve(candidate) : resolve(DBAGENT_ROOT, candidate);
+}
+
+const PROJECT_CONFIG = readProjectConfig();
+const PORTFOLIO_PATH = resolveProjectPath(
+  PROJECT_CONFIG.portfolio?.path,
+  join("portfolio", "portfolio.json"),
+);
+const PORTFOLIO_STATE_DIR = resolveProjectPath(
+  PROJECT_CONFIG.portfolio?.stateDir,
+  join("portfolio", "state"),
+);
+const POSITIONS_PATH = join(PORTFOLIO_STATE_DIR, "positions.json");
+const COLORS_PATH = join(PORTFOLIO_STATE_DIR, "colors.json");
+const TERMINAL_ACTIVE_PATH = join(PORTFOLIO_STATE_DIR, "terminal-active.json");
 
 interface PinnedPosition {
   x: number;
