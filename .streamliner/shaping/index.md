@@ -33,6 +33,7 @@ Shaping notes are not project-level design authority. Durable product and archit
 | [Checkpoint and Closeout Experience](candidates/checkpoint-closeout-experience.md) | Shaping | Make checkpoints builder-facing validation surfaces; model closeout observations materializing into normal closeout batch nodes/issues before gates pass. |
 | [Streamliner Performance and Robustness](candidates/streamliner-performance-robustness.md) | Seeded | Improve local API, multi-tab, backing-store, and background-worker responsiveness under real multi-workstream usage. |
 | [Session Attention Widget](candidates/session-attention-widget.md) | Seeded | Provide tray/notification and always-on-top overlay surfaces for actionable session attention states outside browser tabs. |
+| [Git-backed Artifact Sync](candidates/git-backed-artifact-sync.md) | Seeded | Store Streamliner artifacts on a dedicated Git branch and use deterministic loop-based sentries to synchronize artifacts, messages, and attention events across machines and teammates without a remote service. |
 
 ## Operating notes
 
