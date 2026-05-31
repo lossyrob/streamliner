@@ -153,7 +153,7 @@ The full vertical loop proven by this MVP:
 - [x] **Phase 1: Notification API + store + SSE + discovery** - Server ingress, serialized durable store, registry enrichment, id-coupled SSE stream with gap-free backfill, dashboard-base discovery.
 - [x] **Phase 2: `streamliner` CLI with `notify` (globally invocable)** - Distribution-spine CLI entrypoint that POSTs notifications, packaged to run from any cwd.
 - [x] **Phase 3: Desktop `core` crate** - Portable, cargo-tested domain logic (model, SSE parse, deep link, toast-replay suppression, `core::badge` renderer).
-- [ ] **Phase 4a: Desktop shell + SSE client + tray + feed UI** - Tauri scaffold consuming the API/`core`, React feed, tray, live feed updates (no toasts yet).
+- [x] **Phase 4a: Desktop shell + SSE client + tray + feed UI** - Tauri scaffold consuming the API/`core`, React feed, tray, live feed updates (no toasts yet).
 - [ ] **Phase 4b: Native Windows toast emission + protocol activation** - Rich per-workstream+event badge toasts via the raw `windows` crate, protocol-activation click-through (popup/Action Center/post-restart), snapshot-suppression. Native primitives spike-validated; Tauri single-instance/cold-start integration is implementation work.
 - [ ] **Phase 5: Documentation + migration mapping** - Docs.md, migration table, project docs.
 
