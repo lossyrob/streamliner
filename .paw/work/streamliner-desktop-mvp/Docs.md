@@ -52,16 +52,25 @@ toast click --> streamliner://notification/<id> --> resolve GET /api/notificatio
   receives a `snapshot` (which is never toast-eligible). Combined with "only
   `notification.created` above the dedupe high-water mark toasts," a batch of
   events accumulated while the app was closed appears as feed cards with **no**
-  toast burst.
+  toast burst. The cursor is seeded from the snapshot's max id so a *mid-session*
+  reconnect resumes (replaying genuinely new events as toast-eligible
+  `created`s) rather than re-fetching a non-eligible snapshot and dropping the
+  toast.
+- **Dedicated, un-timed-out SSE client.** The long-lived stream uses a separate
+  `reqwest::Client` with connect + per-read timeouts (read timeout > the 15s
+  server heartbeat) but **no** total request `timeout` — a total timeout would
+  kill the connection mid-stream and cause endless reconnect churn. Short
+  request/response calls (config discovery, activation resolve) keep the 10s
+  total-timeout client.
 - **Toasting is best-effort.** A toast/XML/registry failure is logged and never
   blocks the frontend feed emit — native notification failure must not break the
   core app.
 - **Precise id resolution for cold-start activation.** `listSince` returns the
-  newest `limit` records (`slice(-limit)`), so an `afterId=id-1&limit=1` trick
-  is unsound. A dedicated `GET /api/notifications/:id` resolves an arbitrary
-  (possibly old) id when a toast is clicked from the Action Center after the app
-  exited. The route is digit-guarded (`next()` fall-through on non-numeric) so
-  it can never shadow `/api/notifications/events`.
+  first `limit` records after the cursor, so it is not a single-id lookup. A
+  dedicated `GET /api/notifications/:id` resolves an arbitrary (possibly old) id
+  when a toast is clicked from the Action Center after the app exited. The route
+  is digit-guarded (`next()` fall-through on non-numeric) so it can never shadow
+  `/api/notifications/events`.
 - **Portable core / thin platform shell.** All logic that can be tested off
   Windows lives in `streamliner-core` (including the toast XML string builder);
   only the WinRT `Show` and the HKCU registration are `#[cfg(windows)]`, with
@@ -158,7 +167,13 @@ Authoritative endpoint/flag/field tables live in
   activation routing are not headlessly testable in CI (only `cargo build` and
   the portable core/parse tests run automatically).
 - The store is **append-only with no rotation** (acceptable for current event
-  volume; revisit if producers become chatty).
+  volume; revisit if producers become chatty). `listSince(afterId, limit)`
+  returns the first `limit` records strictly after the cursor (forward paging);
+  SSE replay calls it unbounded.
+- **Badge rasterization + WinRT `Show` run inline on the SSE async task.** Toasts
+  are infrequent, so the synchronous render/show is acceptable for the MVP; if
+  notification bursts ever stall concurrent Tauri commands, move that work to
+  `spawn_blocking`.
 - Each `streamliner notify` pays Node cold-start (~80-150 ms) vs `toasty.exe`'s
   sub-10 ms; fine for orchestration pings, documented so it isn't misattributed.
 - Updating the planning-repo orchestrator prompt to call `streamliner notify`
