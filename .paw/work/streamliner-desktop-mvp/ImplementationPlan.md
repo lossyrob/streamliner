@@ -155,7 +155,7 @@ The full vertical loop proven by this MVP:
 - [x] **Phase 3: Desktop `core` crate** - Portable, cargo-tested domain logic (model, SSE parse, deep link, toast-replay suppression, `core::badge` renderer).
 - [x] **Phase 4a: Desktop shell + SSE client + tray + feed UI** - Tauri scaffold consuming the API/`core`, React feed, tray, live feed updates (no toasts yet).
 - [x] **Phase 4b: Native Windows toast emission + protocol activation** - Rich per-workstream+event badge toasts via the raw `windows` crate, protocol-activation click-through (popup/Action Center/post-restart), snapshot-suppression. Native primitives spike-validated; Tauri single-instance/cold-start integration is implementation work.
-- [ ] **Phase 5: Documentation + migration mapping** - Docs.md, migration table, project docs.
+- [x] **Phase 5: Documentation + migration mapping** - Docs.md, migration table, project docs.
 
 ## Phase Candidates
 - [ ] `hero`-banner toast layout for high-salience events (spike-validated; deferred)
