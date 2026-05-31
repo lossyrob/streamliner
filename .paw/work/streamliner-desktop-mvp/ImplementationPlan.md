@@ -152,9 +152,9 @@ The full vertical loop proven by this MVP:
 ## Phase Status
 - [ ] **Phase 1: Notification API + store + SSE + discovery** - Server ingress, serialized durable store, registry enrichment, id-coupled SSE stream with gap-free backfill, dashboard-base discovery.
 - [ ] **Phase 2: `streamliner` CLI with `notify` (globally invocable)** - Distribution-spine CLI entrypoint that POSTs notifications, packaged to run from any cwd.
-- [ ] **Phase 3: Desktop `core` crate** - Portable, cargo-tested domain logic (model, SSE parse, deep link, toast-suppression dedupe, hex icon).
+- [ ] **Phase 3: Desktop `core` crate** - Portable, cargo-tested domain logic (model, SSE parse, deep link, toast-replay suppression, `core::badge` renderer).
 - [ ] **Phase 4a: Desktop shell + SSE client + tray + feed UI** - Tauri scaffold consuming the API/`core`, React feed, tray, live feed updates (no toasts yet).
-- [ ] **Phase 4b: Native Windows toast emission + protocol activation** - Rich per-workstream+event badge toasts via the raw `windows` crate, protocol-activation click-through (popup/Action Center/post-restart), snapshot-suppression. Spike-validated.
+- [ ] **Phase 4b: Native Windows toast emission + protocol activation** - Rich per-workstream+event badge toasts via the raw `windows` crate, protocol-activation click-through (popup/Action Center/post-restart), snapshot-suppression. Native primitives spike-validated; Tauri single-instance/cold-start integration is implementation work.
 - [ ] **Phase 5: Documentation + migration mapping** - Docs.md, migration table, project docs.
 
 ## Phase Candidates
@@ -162,6 +162,22 @@ The full vertical loop proven by this MVP:
 - [ ] Adaptive subgroup WORK/EVENT/AGE grid toast layout (spike-validated; deferred)
 - [ ] Toast action buttons (Open/Snooze/Mute) via additional protocol args
 - [ ] Designer-authored SVG event glyphs via `resvg` (badges spike noted as future)
+
+## Implementation Sequencing (fleet note)
+
+Phase 1 **pins the contracts** (`src/notification-contract.ts`, the request/record
+shape, the SSE event names, and the link/enrichment rules). Once those contracts
+are merged or stubbed, fleet workers can parallelize:
+- **Phase 2 (CLI)** depends only on the request schema + API-base resolver; it can
+  proceed against the pinned contract with mocked `fetch`, before Phase 1's
+  store/SSE internals are finished.
+- **Phase 3 (`core`)** depends only on the record/SSE-event contract; its
+  model/SSE/deeplink/badge logic is cargo-testable independently of Phase 1.
+- **Phase 4a** consumes the API + `core` and should land after both are stable;
+  **Phase 4b** is sequential after 4a (native toast wiring); **Phase 5** is last.
+
+Reserve full end-to-end validation (the supertest ordering test, live SSE checks)
+for after Phase 1's routes/events are actually complete.
 
 ---
 
@@ -209,12 +225,26 @@ desktop dependency. **This phase pins every contract Phases 2-4 depend on.**
 - **`src/server/notification-enrichment.ts`** (new): given a request + registry
   lookup + dashboard base URL, resolve `projectKey`, `workstreamColor`,
   `workstreamShortName` (from `presentation.shortName`, for the badge monogram),
-  and an absolute `link`. Link precedence: explicit request `link` → composed
+  and an absolute `link`. Link precedence: explicit request `link` (validated as
+  an absolute `http`/`https`/`file` URL — see link contract below) → composed
   `<dashboardBase>/workstreams/<projectKey>/<workstreamId>[/nodes/<nodeId>]` when
   the registry lookup succeeds → `null`. Registry lookup is best-effort: match by
   (`projectKey` if given, then) `workstreamId`, falling back to
   `presentation.shortName`; on miss/any error, enrich nothing (never fail the
-  request). Reuse `listRegisteredWorkstreams`.
+  request). **Pin (review R-planning #4): ambiguous match — when an unqualified
+  `workstreamId`/shortName resolves to more than one registered workstream (the id
+  is only unique within a `projectKey`), do NOT guess. Persist the notification
+  but leave `projectKey`/`workstreamColor`/`workstreamShortName`/derived `link`
+  null and include a non-fatal `warnings: string[]` field in the `201` response
+  advising the caller to pass `--project-key`.** Reuse `listRegisteredWorkstreams`.
+- **Link contract (review R-planning #2)**: explicit `link` (CLI `--link` / request
+  body) MUST be an absolute `http`/`https`/`file` URL. Relative/dashboard paths and
+  bare filesystem paths are rejected with `400` (the orchestrator composes absolute
+  URLs, or omits `--link` and lets the server derive one). This keeps the stored
+  `link` openable verbatim and matches the desktop scheme guard
+  (`http`/`https`/`file` only). A unit test asserts a non-absolute or
+  disallowed-scheme (`javascript:`, custom schemes other than the
+  `streamliner://notification/<id>` activation URL) `link` → `400`.
 - **`src/server/notification-config.ts`** (new) or extend existing config: resolve
   the **dashboard base URL** from `process.env.STREAMLINER_DASHBOARD_BASE_URL ??`
   a sensible default (`http://127.0.0.1:5173`). Single source of truth used by
@@ -234,7 +264,8 @@ desktop dependency. **This phase pins every contract Phases 2-4 depend on.**
   asserts the boundary agrees across the HTTP list and SSE replay.
 - **`src/server/routes/notifications.ts`** (new): `createNotificationsRouter`
   with `POST /notifications` (validate → enrich → **store (await) → publish** →
-  return `201` with the stored record) and `GET /notifications` (supports
+  return `201` with the stored record plus an optional non-fatal `warnings: string[]`
+  from enrichment) and `GET /notifications` (supports
   `afterId` + `limit`). Validation `400` with `code`/`error` body. Publish must
   happen only after the store append resolves (so a crash can't emit an event
   absent from the snapshot).
@@ -257,7 +288,9 @@ desktop dependency. **This phase pins every contract Phases 2-4 depend on.**
     lines; `listSince`/`listRecent` ordering + bounds; fresh-dir creation.
   - `notification-enrichment.test.ts`: explicit-link passthrough; composed
     absolute link from registry (by id, by shortName, with/without nodeId);
-    project-key disambiguation; `workstreamShortName` populated from
+    project-key disambiguation; **ambiguous unqualified id/shortName → null
+    enrichment + `warnings` (no guess)**; **non-absolute or disallowed-scheme
+    `link` → `400`**; `workstreamShortName` populated from
     `presentation.shortName`; `eventKind` passthrough + default `generic`;
     invalid `eventKind`/`severity` → `400`; miss/error → no-op.
   - `notification-events.test.ts`: event id == record id; snapshot ordering and
@@ -303,9 +336,12 @@ be runnable from any cwd** so the orchestrator can call it like `toasty.exe`.
   reusable client-config seam #40 builds on.
 - **`src/cli/commands/notify.ts`** (new): parse flags (`--title`, `--body`,
   `--workstream`, `--project-key`, `--severity`, `--event`, `--link`, `--node`,
-  `--session`), validate required `--title`/`--body`, the `severity` enum, and the
+  `--session`), validate required `--title`/`--body`, the `severity` enum, the
   `--event` enum
-  (`online|pr-created|pr-approved|issue-closed|reconciled|done|generic`), build the
+  (`online|pr-created|pr-approved|issue-closed|reconciled|done|generic`), and
+  `--link` (when present, must be an absolute `http`/`https`/`file` URL — reject
+  relative/bare paths client-side with a clear message; the server also enforces
+  this), build the
   request, `POST` via global `fetch`. `2xx` → print id+title, exit `0`. Connection
   failure → actionable stderr message, non-zero. `4xx/5xx` → surface API
   `code`/`error`, non-zero. CLI never raises a toast itself.
@@ -325,9 +361,9 @@ be runnable from any cwd** so the orchestrator can call it like `toasty.exe`.
   `"build:cli"` and a dev `"streamliner": "tsx src/cli/streamliner.ts"`.
 - **Tests**:
   - `src/cli/commands/notify.test.ts`: required/enum validation (incl. `--severity`
-    and `--event` enums); request-body shaping (incl. `--project-key`, `--node`,
-    `--event`); success against mocked fetch; non-zero exit on network error and on
-    API error response.
+    and `--event` enums, and `--link` absolute-URL/scheme validation);
+    request-body shaping (incl. `--project-key`, `--node`, `--event`); success
+    against mocked fetch; non-zero exit on network error and on API error response.
   - `src/cli/api-base.test.ts`: env override and default.
 
 ### Success Criteria:
@@ -483,12 +519,17 @@ isolated in 4b.
 
 ## Phase 4b: Native Windows toast emission + protocol activation
 
-**De-risked by the spike fleet** (all four spikes passed on Win11 26200 — see
-`.paw/work/streamliner-desktop-mvp/spikes/`): this is now a committed native
-design, not a gated experiment. The toast layer uses the **raw `windows` crate**
-to send arbitrary ToastGeneric XML with a generated per-notification badge, and
-**protocol activation** for reliable click-through (verified from popup, Action
-Center, and after sender exit, with no admin).
+**Native primitives de-risked by the spike fleet** (all four spikes passed on
+Win11 26200 — see `.paw/work/streamliner-desktop-mvp/spikes/`): this is a
+committed native design, not a gated experiment. The spikes validate the
+**Windows primitives and the protocol-activation strategy** — sending arbitrary
+ToastGeneric XML via the **raw `windows` crate**, and reliable click-through
+verified from popup, Action Center, and after sender exit, with no admin. **What
+the spikes do NOT cover, and what remains genuine Phase 4b implementation risk:**
+the Tauri app's `tauri-plugin-single-instance` handoff, cold-start routing,
+`<id>`→link resolution, and opening the link after a fresh launch — these are
+proven primitives wired into a real app for the first time here, and are covered
+by the Phase 4b manual checks below (not by the spikes).
 
 ### Architecture (validated):
 
@@ -502,7 +543,7 @@ Center, and after sender exit, with no admin).
   workstream and event in one glance); line 1 = event title; line 2 = body;
   `placement="attribution"` = `workstream / event` metadata. Routine events stay
   compact; reserve a `placement="hero"` banner for high-salience events
-  (`severity=error` / `eventKind` like blocked) — optional polish, not required.
+  (e.g. `severity=error`) — optional polish, not required.
 - **Activation** (activation spike): toast root carries
   `activationType="protocol" launch="streamliner://notification/<id>"`. On click,
   Windows launches the registered handler with that URL; the app resolves the
@@ -549,6 +590,10 @@ Center, and after sender exit, with no admin).
       activation.
 - [ ] Two different workstreams / two different event kinds produce visibly
       distinct badges at toast size.
+- [ ] **Cold-start activation (R-planning #6): with the desktop app NOT running,
+      click an Action Center toast — the app starts, resolves `<id>` from the
+      API/list/store, and opens the correct dashboard link** (exercises the
+      single-instance/cold-start path the spikes did not cover).
 - [ ] **No toast burst on launch**: notifications emitted while the app was closed
       appear only as feed cards on next launch; no duplicate toasts after an SSE
       reconnect.

@@ -50,11 +50,11 @@ Reconciliation: not_run
 - `init` | `resolved` | `activity`
 - `work-shaping` | `done` | `activity`
 - `planning` | `done` | `activity`
-- `planning-docs-review` | `pending` | `activity`
+- `planning-docs-review` | `done` | `activity`
 - `implementation` | `pending` | `activity`
 - `final-review` | `pending` | `activity`
 - `final-pr` | `pending` | `activity`
 
 ### Configured Procedure Items
-- `procedure:planning-review` | `pending` | `procedure`
+- `procedure:planning-review` | `resolved` | `procedure`
 - `procedure:final-review` | `pending` | `procedure`

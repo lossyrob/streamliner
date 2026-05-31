@@ -55,14 +55,15 @@ local dashboard page. Once that single path works end to end, everything else
      per notification) with workstream color, severity, title, body, timestamp,
      and a deep link.
    - Raises a **native Windows toast** for each newly-arriving notification,
-     using **custom WinRT toast XML** so the per-workstream **color-swatch icon**
-     appears on the toast (full toasty icon parity).
+     using **custom ToastGeneric toast XML** so a per-notification **badge**
+     (workstream color + short-name monogram + event-kind chip/glyph) appears on
+     the toast (richer than toasty's static swatch icon).
    - **Toast click and card click** open the notification's deep link (the
      local dashboard workstream/node page) in the default browser.
    - System tray presence (background-resident, like donna desktop).
 6. **`core` Rust crate with zero Tauri dependency** holding all testable logic
-   (notification model, SSE line parsing, toast-XML construction, deep-link
-   resolution, dedupe). Tauri layer is shell + tray + toast emit + window only.
+   (notification model, SSE line parsing, toast-XML construction, badge
+   rendering, deep-link resolution, id-aware toast replay suppression). Tauri layer is shell + tray + toast emit + window only.
    (Mirrors donna desktop's proven core/shell split.)
 7. **Migration mapping doc** in the streamliner repo: a table mapping each
    current orchestrator `toasty.exe` invocation to the equivalent
@@ -102,13 +103,22 @@ Clean-sheet, structured flags that map directly to feed-card fields:
 streamliner notify
   --title    <text>            (required) toast + card title
   --body     <text>            (required) toast + card body
-  --workstream <id>            (optional) workstream short-id; drives color/icon + deep link
+  --workstream <id>            (optional) workstream short-id; drives color/badge + deep link
+  --event    <kind>            (optional, default generic) structured event kind; drives
+                               badge event-chip/glyph (online|pr-created|pr-approved|
+                               issue-closed|reconciled|done|generic)
+  --project-key <key>          (optional) disambiguates --workstream when the same short-id
+                               exists under multiple projects; refines deep link
   --severity <info|warn|error> (optional, default info) card accent + toast styling
-  --link     <url|path>        (optional) explicit deep link; else derived from workstream/node
+  --link     <url>             (optional) explicit deep link; MUST be an absolute
+                               http(s)/file URL; else derived from workstream/node
   --node     <id>              (optional) node id; refines deep link + card
   --session  <id>             (optional) session id; refines deep link + card
-  --dedupe-key <key>           (optional) collapse repeat notifications with same key
 ```
+
+> Deferred (not in MVP): `--dedupe-key`. Producer-level duplicate collapse is out
+> of scope for the MVP — see the dedupe note under Edge cases. The desktop still
+> performs id-aware toast replay suppression so SSE reconnect never double-toasts.
 
 Behavior:
 - Resolves the local API base URL the same way the dashboard/server do
@@ -117,11 +127,13 @@ Behavior:
 - Exits non-zero with a clear message if the API is unreachable (orchestrator
   can decide whether to treat that as fatal). Does NOT itself raise a toast —
   the desktop app owns rendering.
-- Deep link derivation: when `--link` is absent, build from workstream/node
-  using the dashboard route shape
-  `/workstreams/<projectKey>/<workstreamId>[/nodes/<nodeId>]`. (Open shaping
-  question: how the CLI maps a workstream short-id to `projectKey` — see Open
-  questions.)
+- Deep link: an explicit `--link` (absolute `http`/`https`/`file` URL) is sent
+  as-is. When `--link` is absent, **the server enriches** the deep link from the
+  workstream registry using the dashboard route shape
+  `/workstreams/<projectKey>/<workstreamId>[/nodes/<nodeId>]` — the CLI does not
+  resolve `projectKey` itself. On an ambiguous unqualified workstream id, the
+  server does not guess and leaves the link null (pass `--project-key` to
+  disambiguate). See the resolved Open questions.
 
 ### Notification schema (API contract)
 
@@ -133,11 +145,13 @@ Behavior:
   "body": "string",               // required
   "severity": "info|warn|error",  // default info
   "workstreamId": "string|null",
-  "workstreamColor": "6754d7|null", // resolved hex (no #) for swatch icon, if known
+  "projectKey": "string|null",      // resolved/disambiguating project for the workstream
+  "workstreamColor": "6754d7|null", // resolved hex (no #) for badge field, if known
+  "workstreamShortName": "string|null", // resolved short name for badge monogram, if known
+  "eventKind": "online|pr-created|pr-approved|issue-closed|reconciled|done|generic", // default generic
   "nodeId": "string|null",
   "sessionId": "string|null",
-  "link": "string|null",          // resolved deep link
-  "dedupeKey": "string|null",
+  "link": "string|null",          // resolved absolute deep-link URL
   "source": "cli"                 // reserved for future emitters (rules engine, etc.)
 }
 ```
@@ -146,16 +160,17 @@ Behavior:
 
 | Current toasty usage | Equivalent `streamliner notify` |
 |---|---|
-| ONLINE toast w/ swatch icon + `<short> <name>: ...` title | `notify --workstream <id> --title "ONLINE ..." --body "<coach message>"` |
-| PR Created | `notify --workstream <id> --node <node> --title "PR Created" --body "<node title>: <detail>" --link <pr-or-node>` |
-| PR Approved | `notify --workstream <id> --node <node> --title "PR Approved" --body "..."` |
-| Issue Closed | `notify --workstream <id> --node <node> --severity info --title "Issue Closed" --body "..."` |
-| Reconciled | `notify --workstream <id> --title "Reconciled" --body "..."` |
-| DONE | `notify --workstream <id> --severity info --title "DONE ..." --body "🎉 ..."` |
+| ONLINE toast w/ swatch icon + `<short> <name>: ...` title | `notify --workstream <id> --event online --title "ONLINE ..." --body "<coach message>"` |
+| PR Created | `notify --workstream <id> --event pr-created --node <node> --title "PR Created" --body "<node title>: <detail>" --link <pr-or-node>` |
+| PR Approved | `notify --workstream <id> --event pr-approved --node <node> --title "PR Approved" --body "..."` |
+| Issue Closed | `notify --workstream <id> --event issue-closed --node <node> --title "Issue Closed" --body "..."` |
+| Reconciled | `notify --workstream <id> --event reconciled --title "Reconciled" --body "..."` |
+| DONE | `notify --workstream <id> --event done --title "DONE ..." --body "..."` |
 
 The per-workstream icon, which toasty took as an explicit `--icon swatch.png`
-path, becomes implicit: the desktop app resolves the color swatch from the
-workstream color, so the orchestrator only passes `--workstream <id>`.
+path, becomes implicit: the desktop app renders a badge from the workstream
+color + short name and the `--event` kind, so the orchestrator only passes
+`--workstream <id> --event <kind>`.
 
 ## Rough architecture
 
@@ -171,8 +186,8 @@ streamliner CLI  ──HTTP POST /api/notifications──▶  Streamliner local 
                                                      │
                                                      ▼
    Streamliner Desktop (Tauri v2)
-     ├─ core crate (no Tauri dep): model, SSE parse, toast-XML build, link resolve, dedupe
-     ├─ SSE client → on new notification: build WinRT toast XML w/ swatch icon → show
+     ├─ core crate (no Tauri dep): model, SSE parse, toast-XML build, link resolve, badge render, toast replay suppression
+     ├─ SSE client → on new notification: build ToastGeneric XML w/ generated badge → show
      ├─ React feed panel: cards (color, severity, title, body, time) → click = open link
      ├─ toast click / card click → open deep link in default browser
      └─ system tray (background resident)
@@ -194,11 +209,12 @@ Reused existing infrastructure:
 | SSE disconnect / app restart | App reconnects with `Last-Event-ID`; server replays missed notifications from the buffer; list endpoint backfills anything older than the buffer. |
 | Unknown / missing workstream color | Toast + card fall back to a default Streamliner icon/accent; no failure. |
 | Missing `--link` and insufficient ids to derive one | Card shows with no clickable link (or links to dashboard root); no failure. |
-| Duplicate notification (same `dedupeKey`) | Collapse/replace rather than stack; exact policy is an open question (server-side vs client-side). |
+| Ambiguous `--workstream` (same short-id under multiple projects, no `--project-key`) | Server does not guess: persist the notification but leave `projectKey`/color/short-name/derived link null and return a validation warning advising `--project-key`. |
+| Duplicate notification | MVP defers producer-level collapse (no `dedupeKey`). The desktop performs id-aware toast replay suppression so SSE reconnect never re-toasts; repeat producer notifications stack as distinct cards. |
 | Very long title/body | Toast truncates per OS limits; full text retained in the card. |
 | Malformed POST body | API returns 400 with validation detail; CLI surfaces it. |
-| Notification with no workstream (generic) | Allowed; renders with default icon, no deep link unless `--link` given. |
-| State store grows unbounded | MVP: simple cap / ring (e.g. keep last N) or append-only file the app tails; bounded buffer for SSE replay. Decide cap policy in planning. |
+| Notification with no workstream (generic) | Allowed; renders with a generic badge, no deep link unless `--link` given. |
+| State store grows unbounded | MVP decision: append-only NDJSON store with no rotation (the complete on-disk store guarantees gap-free SSE replay/backfill). Bounded retention is deferred; operational cleanup noted as a known limitation. |
 
 ## Codebase fit / reuse opportunities
 
@@ -271,18 +287,26 @@ Reused existing infrastructure:
 
 ## Open questions for planning
 
-1. **projectKey resolution:** how does the CLI/server map a workstream short-id
-   (e.g. `presentation.shortName`) to the dashboard `projectKey` used in routes?
-   Does the CLI resolve the deep link, or does the server enrich it from the
-   workstream registry? (Leaning: server enriches, since it owns the registry.)
-2. **Dedupe location & policy:** server-side (collapse on store, re-emit
-   replacement) vs client-side (feed merges by key). And how `dedupeKey`
-   interacts with SSE `id`-based replay dedupe.
-3. **Store format & cap:** single JSON file vs append-only NDJSON the app tails
-   vs sqlite; retention cap (last N) and SSE replay-buffer size relationship.
-4. **Toast activation mechanism:** which WinRT activation approach (e.g. AUMID /
-   protocol activation / Tauri command) reliably delivers the click back to the
-   app to open the link, including when the app was backgrounded.
+> Status: all resolved during planning (see ImplementationPlan.md). Retained here
+> with their resolutions for traceability.
+
+1. **projectKey resolution:** RESOLVED — the **server enriches** from the
+   workstream registry (it owns the registry). The CLI sends `--workstream` (and
+   optional `--project-key`); the server resolves color, short name, and the
+   deep link. On ambiguous unqualified short-id, the server does not guess (null
+   enrichment + warning).
+2. **Dedupe location & policy:** RESOLVED — producer-level dedupe (`dedupeKey`)
+   is **deferred** from the MVP. The desktop performs id-aware toast replay
+   suppression so SSE reconnect never double-toasts; repeat producer
+   notifications stack as distinct cards.
+3. **Store format & cap:** RESOLVED — **append-only NDJSON** with no rotation in
+   the MVP; the complete on-disk store guarantees gap-free SSE replay/backfill.
+   Bounded retention is deferred (documented limitation).
+4. **Toast activation mechanism:** RESOLVED — **protocol activation**
+   (`streamliner://notification/<id>` + per-user AUMID), validated by the
+   activation spike to survive popup click, Action Center click, and
+   post-sender-exit. Custom ToastGeneric XML is shown via the raw `windows`
+   crate; click is routed through Tauri single-instance/open-url.
 5. **Tooling baseline:** does CI / the repo already build Rust/Tauri, or does
    this introduce a new toolchain + build step (and how is it gated so it
    doesn't break the existing `npm run build`/test)?
@@ -301,17 +325,18 @@ Reused existing infrastructure:
   from issue #40**, implementing only `notify` now but establishing the command
   structure / API-client / config-discovery patterns.
 - **CLI args:** **clean-sheet** structured flags (`--title --body --workstream
-  --severity --link --node --session --dedupe-key`); **no toasty-compat shim**.
-  The orchestrator prompt will be reworded (separate follow-up), so we are
+  --event --project-key --severity --link --node --session`); **no toasty-compat
+  shim**. The orchestrator prompt will be reworded (separate follow-up), so we are
   unconstrained by toasty's UX.
 - **Auto-conditions:** **deferred entirely.** MVP = emit pipeline + toast +
   feed.
 - **App-down behavior:** **require the desktop app running** for a live toast;
   if down, the notification **persists and shows in the feed on launch**.
   Documented assumption (no server fallback toast, no auto-launch).
-- **Toast fidelity:** **invest in custom WinRT toast XML now** for
-  per-workstream swatch icons (full toasty parity), accepting the extra work
-  because it de-risks the toast-activation seam and avoids a visible regression.
+- **Toast fidelity:** **invest in custom ToastGeneric toast XML now** for
+  per-notification badges (workstream color + monogram + event chip — richer than
+  toasty's static swatch), accepting the extra work because it de-risks the
+  toast-activation seam and is the core differentiator over toasty.
 - **Supplant scope:** this PR delivers **full equivalent capability + a
   toasty→streamliner-notify migration mapping doc**; **editing the orchestrator
   prompt** in the planning repo is a **separate follow-up** (keeps this PR inside
