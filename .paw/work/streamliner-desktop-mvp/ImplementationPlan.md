@@ -15,8 +15,10 @@ supplant the orchestrator's `toasty.exe` usage:
    is **globally invocable from any cwd** (so an orchestrator agent can call it
    exactly like it called `toasty.exe`).
 3. A **Streamliner Desktop app** (Tauri v2 + React) that is a thin SSE consumer:
-   raises Windows toasts carrying a per-workstream color swatch and renders a
-   durable, clickable feed of cards that deep-link into the local dashboard.
+   raises native Windows toasts whose icon is a generated **badge encoding both the
+   workstream (color + monogram) and the event type (chip/glyph)** in one glance,
+   and renders a durable, clickable feed of cards that deep-link into the local
+   dashboard.
 4. **Documentation** including a `toasty` → `streamliner notify` migration map.
 
 The full vertical loop proven by this MVP:
@@ -66,19 +68,16 @@ The full vertical loop proven by this MVP:
   developer's main checkout under `public/streamliner-terminal-color-swatches/`
   and are **git-untracked** (no generation script in-repo). The desktop app must
   NOT depend on them; it generates a colored icon from the hex at runtime.
-- **Toast tooling precedent**: the donna desktop template
-  (`C:\Users\robemanuele\proj\pal\personal-agent-layer\donna\desktop`) uses
-  `tauri-plugin-notification` (v2) but **only for basic
-  `.title().body().show()` toasts** — inspection shows it does NOT exercise
-  per-notification icons, AUMID/shortcut setup, or click-activation forwarding.
-  So donna proves the trivial path only; the per-workstream icon + click-through
-  requirements are NOT pre-validated by it (see Phase 4b, which spikes them
-  explicitly and names a protocol-activation fallback). `toasty`
-  (`C:\Users\robemanuele\proj\util\toasty\main.cpp`) is the working reference for
-  the harder path: an AUMID Start-Menu shortcut (`PKEY_AppUserModel_ID` via
-  `IShellLink`/`IPropertyStore`) + a registered `streamliner://` URL scheme +
-  toast XML with `activationType="protocol"`, which survives Action Center clicks
-  and app restart without a COM activator.
+- **Toast tooling decision (spike-validated)**: a 4-agent spike fleet ran on this
+  Win11 machine (artifacts under `.paw/work/streamliner-desktop-mvp/spikes/`) and
+  settled the toast architecture: **raw `windows` crate** (not
+  `tauri-plugin-notification`, which the donna inspection + rust spike confirmed is
+  basic-only) sending arbitrary ToastGeneric XML with a generated per-notification
+  badge, plus **protocol activation** (AUMID + `streamliner://` scheme) verified to
+  survive popup, Action Center, and sender-exit clicks with no admin. This unlocks
+  rich, glanceable encoding of BOTH workstream and event in one toast — the
+  capability the orchestrator's toasty usage lacked. See Phase 3 (`core::badge`)
+  and Phase 4b.
 - **TypeScript constraint**: `erasableSyntaxOnly` — no constructor parameter
   properties; declare fields explicitly. Tests are `*.test.ts(x)` next to source
   using vitest (`--pool=forks` for heavy suites).
@@ -103,14 +102,17 @@ The full vertical loop proven by this MVP:
   notification is not a workstream/repo mutation), so an orchestrator can notify
   against any local instance.
 - `streamliner notify --title <t> --body <m> [--workstream <id>] [--project-key <k>]
-  [--severity info|warn|error] [--link <url>] [--node <id>] [--session <id>]`
-  POSTs to the API and reports success/failure with a clear non-zero exit on
-  unreachable API or error response. **Installed globally** so it runs from any
-  cwd like a normal executable.
-- The desktop app, when running, raises a Windows toast per *new* notification
-  with a per-workstream color swatch and shows a durable feed of clickable cards;
-  clicking a toast or card opens the notification's deep link in the default
-  browser. **Snapshot/backlog items never raise toasts** — only live
+  [--severity info|warn|error] [--event <kind>] [--link <url>] [--node <id>]
+  [--session <id>]` POSTs to the API and reports success/failure with a clear
+  non-zero exit on unreachable API or error response. `--event` is one of
+  `online|pr-created|pr-approved|issue-closed|reconciled|done|generic`. **Installed
+  globally** so it runs from any cwd like a normal executable.
+- The desktop app, when running, raises a native Windows toast per *new*
+  notification whose `appLogoOverride` badge encodes the workstream (color +
+  monogram) and event kind (chip/glyph), and shows a durable feed of clickable
+  cards; clicking a toast (via protocol activation) or card opens the
+  notification's deep link in the default browser. **Snapshot/backlog items never
+  raise toasts** — only live
   `notification.created` events do. When the app is not running, notifications
   still persist and appear in the feed on next launch (documented; no live toast,
   no server fallback toast).
@@ -126,6 +128,10 @@ The full vertical loop proven by this MVP:
   auto-launch on notification.
 - No toast action buttons, no per-workstream mute/policies, no read/unread state
   beyond trivial feed needs, no feed filtering/search.
+- **MVP toast layout is the single compact form** (badge `appLogoOverride` + title
+  + body + attribution). The spike-validated richer surfaces — `hero` banners for
+  high-salience events and adaptive subgroup WORK/EVENT/AGE grids — are deferred
+  polish, not MVP (kept as Phase Candidates so they aren't lost).
 - **No `dedupeKey` / notification de-duplication in the MVP** (dropped after
   review: a half-working dedupe flag risks an empty-looking feed and complicates
   the store/SSE contract; deferred to a later phase with a defined collapse
@@ -148,11 +154,14 @@ The full vertical loop proven by this MVP:
 - [ ] **Phase 2: `streamliner` CLI with `notify` (globally invocable)** - Distribution-spine CLI entrypoint that POSTs notifications, packaged to run from any cwd.
 - [ ] **Phase 3: Desktop `core` crate** - Portable, cargo-tested domain logic (model, SSE parse, deep link, toast-suppression dedupe, hex icon).
 - [ ] **Phase 4a: Desktop shell + SSE client + tray + feed UI** - Tauri scaffold consuming the API/`core`, React feed, tray, live feed updates (no toasts yet).
-- [ ] **Phase 4b: Toast emission + activation (de-risk spike first)** - Per-workstream-iconed toasts via `tauri-plugin-notification`, click → open deep link, snapshot-suppression.
+- [ ] **Phase 4b: Native Windows toast emission + protocol activation** - Rich per-workstream+event badge toasts via the raw `windows` crate, protocol-activation click-through (popup/Action Center/post-restart), snapshot-suppression. Spike-validated.
 - [ ] **Phase 5: Documentation + migration mapping** - Docs.md, migration table, project docs.
 
 ## Phase Candidates
-- [ ] (none deferred into candidates; all in-scope work is phased above)
+- [ ] `hero`-banner toast layout for high-salience events (spike-validated; deferred)
+- [ ] Adaptive subgroup WORK/EVENT/AGE grid toast layout (spike-validated; deferred)
+- [ ] Toast action buttons (Open/Snooze/Mute) via additional protocol args
+- [ ] Designer-authored SVG event glyphs via `resvg` (badges spike noted as future)
 
 ---
 
@@ -165,9 +174,12 @@ desktop dependency. **This phase pins every contract Phases 2-4 depend on.**
 
 - **Notification record** (stored + emitted): `id` (monotonic int, == SSE event
   id), `createdAt` (ISO-8601), `title`, `body`, `severity` (`info|warn|error`),
-  `workstreamId?`, `projectKey?`, `workstreamColor?` (hex, no `#`), `nodeId?`,
-  `sessionId?`, `link?` (absolute URL after enrichment, or `null`), `source`
-  (default `cli`).
+  `eventKind` (`online|pr-created|pr-approved|issue-closed|reconciled|done|generic`,
+  default `generic` — drives the toast event chip/glyph), `workstreamId?`,
+  `projectKey?`, `workstreamColor?` (hex, no `#`), `workstreamShortName?`
+  (enriched from registry `presentation.shortName`; drives the badge monogram),
+  `nodeId?`, `sessionId?`, `link?` (absolute URL after enrichment, or `null`),
+  `source` (default `cli`).
 - **`link` is an absolute URL** after enrichment (composed against the configured
   dashboard base), not a bare path — so the desktop opens it verbatim.
 - **SSE `event.id` == record `id`**, seeded from the store on startup. So
@@ -180,9 +192,11 @@ desktop dependency. **This phase pins every contract Phases 2-4 depend on.**
 
 ### Changes Required:
 
-- **`src/notification-contract.ts`** (new): shared request + record types and the
-  `Severity` union. Request body (client → API): `title` (required), `body`
-  (required), `severity?` (default `info`), `workstreamId?`, `projectKey?`,
+- **`src/notification-contract.ts`** (new): shared request + record types, the
+  `Severity` union, and the `EventKind` union
+  (`online|pr-created|pr-approved|issue-closed|reconciled|done|generic`). Request
+  body (client → API): `title` (required), `body` (required), `severity?` (default
+  `info`), `eventKind?` (default `generic`), `workstreamId?`, `projectKey?`,
   `nodeId?`, `sessionId?`, `link?`, `source?`.
 - **`src/server/notification-store.ts`** (new): durable append-only store at
   `${stateRoot}/notifications/notifications.ndjson`. Responsibilities: on
@@ -193,8 +207,9 @@ desktop dependency. **This phase pins every contract Phases 2-4 depend on.**
   the file. Inject `now` + path for tests; `mkdir` on first write
   (`node-launch-record-store.ts` conventions).
 - **`src/server/notification-enrichment.ts`** (new): given a request + registry
-  lookup + dashboard base URL, resolve `projectKey`, `workstreamColor`, and an
-  absolute `link`. Link precedence: explicit request `link` → composed
+  lookup + dashboard base URL, resolve `projectKey`, `workstreamColor`,
+  `workstreamShortName` (from `presentation.shortName`, for the badge monogram),
+  and an absolute `link`. Link precedence: explicit request `link` → composed
   `<dashboardBase>/workstreams/<projectKey>/<workstreamId>[/nodes/<nodeId>]` when
   the registry lookup succeeds → `null`. Registry lookup is best-effort: match by
   (`projectKey` if given, then) `workstreamId`, falling back to
@@ -242,7 +257,9 @@ desktop dependency. **This phase pins every contract Phases 2-4 depend on.**
     lines; `listSince`/`listRecent` ordering + bounds; fresh-dir creation.
   - `notification-enrichment.test.ts`: explicit-link passthrough; composed
     absolute link from registry (by id, by shortName, with/without nodeId);
-    project-key disambiguation; miss/error → no-op.
+    project-key disambiguation; `workstreamShortName` populated from
+    `presentation.shortName`; `eventKind` passthrough + default `generic`;
+    invalid `eventKind`/`severity` → `400`; miss/error → no-op.
   - `notification-events.test.ts`: event id == record id; snapshot ordering and
     that snapshot is a distinct event; `Last-Event-ID` replay; replay-miss
     backfills via store (no gap); heartbeat carries no id.
@@ -285,11 +302,13 @@ be runnable from any cwd** so the orchestrator can call it like `toasty.exe`.
   (`process.env.STREAMLINER_API_BASE_URL ?? http://127.0.0.1:4319`) — the
   reusable client-config seam #40 builds on.
 - **`src/cli/commands/notify.ts`** (new): parse flags (`--title`, `--body`,
-  `--workstream`, `--project-key`, `--severity`, `--link`, `--node`, `--session`),
-  validate required `--title`/`--body` and the `severity` enum, build the request,
-  `POST` via global `fetch`. `2xx` → print id+title, exit `0`. Connection failure
-  → actionable stderr message, non-zero. `4xx/5xx` → surface API `code`/`error`,
-  non-zero. CLI never raises a toast itself.
+  `--workstream`, `--project-key`, `--severity`, `--event`, `--link`, `--node`,
+  `--session`), validate required `--title`/`--body`, the `severity` enum, and the
+  `--event` enum
+  (`online|pr-created|pr-approved|issue-closed|reconciled|done|generic`), build the
+  request, `POST` via global `fetch`. `2xx` → print id+title, exit `0`. Connection
+  failure → actionable stderr message, non-zero. `4xx/5xx` → surface API
+  `code`/`error`, non-zero. CLI never raises a toast itself.
   - **`--workstream` resolution is documented**: treated as a `workstreamId`,
     with server-side `shortName` fallback; `--project-key` disambiguates when the
     same id exists across sources.
@@ -305,9 +324,10 @@ be runnable from any cwd** so the orchestrator can call it like `toasty.exe`.
   Windows `.cmd`/`.ps1` shims on `PATH`. Add `scripts`:
   `"build:cli"` and a dev `"streamliner": "tsx src/cli/streamliner.ts"`.
 - **Tests**:
-  - `src/cli/commands/notify.test.ts`: required/enum validation; request-body
-    shaping (incl. `--project-key`, `--node`); success against mocked fetch;
-    non-zero exit on network error and on API error response.
+  - `src/cli/commands/notify.test.ts`: required/enum validation (incl. `--severity`
+    and `--event` enums); request-body shaping (incl. `--project-key`, `--node`,
+    `--event`); success against mocked fetch; non-zero exit on network error and on
+    API error response.
   - `src/cli/api-base.test.ts`: env override and default.
 
 ### Success Criteria:
@@ -319,8 +339,9 @@ be runnable from any cwd** so the orchestrator can call it like `toasty.exe`.
 
 #### Manual Verification:
 - [ ] After install, running `streamliner notify --title "PR Created" --body
-      "node X: detail" --workstream <id>` **from an unrelated cwd** returns `0`
-      and the notification appears via `GET /api/notifications`.
+      "node X: detail" --workstream <id> --event pr-created` **from an unrelated
+      cwd** returns `0` and the notification appears via `GET /api/notifications`
+      with `eventKind: "pr-created"`.
 - [ ] With the API stopped, the same command prints a clear error and exits
       non-zero.
 
@@ -334,9 +355,14 @@ donna desktop's `core`/shell split). No Windows-only or Tauri APIs here.
 ### Changes Required:
 
 - **`desktop/core/Cargo.toml`** + **`desktop/core/src/lib.rs`** (new crate):
-  pure-logic crate, no Tauri/WinRT deps.
+  pure-logic crate, no Tauri/WinRT deps. Deps: `serde`/`serde_json`, and for the
+  badge renderer `tiny-skia` + `ab_glyph` (+ a bundled OFL font asset under
+  `desktop/core/assets/`). All platform-independent so `cargo test` runs anywhere.
 - **`desktop/core/src/model.rs`**: `Notification` struct matching the API record
-  (serde derive), `Severity` enum.
+  (serde derive), `Severity` enum, and `EventKind` enum
+  (`online|pr-created|pr-approved|issue-closed|reconciled|done|generic`,
+  `#[serde(rename_all = "kebab-case")]`, with an unknown→`generic` fallback so a
+  newer server can't break an older app).
 - **`desktop/core/src/sse.rs`**: incremental SSE parser → `(eventName, dataJson,
   lastEventId)`; tolerant of `heartbeat` (must **not** advance `Last-Event-ID`),
   `snapshot`, `notification.created`. Handles chunk boundaries.
@@ -353,20 +379,28 @@ donna desktop's `core`/shell split). No Windows-only or Tauri APIs here.
   `notification.created` events). Pure + unit-tested, including a test that a
   `snapshot` carrying ids above the current in-session high-water mark still
   produces zero toast-eligible items.
-- **`desktop/core/src/icon.rs`**: deterministic map from a workstream hex color
-  (or a default) to a solid-color **256×256** PNG (via the pure-Rust `png` crate,
-  as donna uses) written to/cached in a provided cache dir, keyed by hex; returns
-  the path. Removes any dependency on the untracked repo swatch PNGs. Cache dir is
-  a parameter so tests use a temp dir. **Honest framing (review R3): Win11 renders
-  the toast app-logo slot as a small (~48px) circular-cropped image, so this ships
-  as a per-workstream COLOR SWATCH (a colored dot), at parity with the orchestrator's
-  current color-only swatch PNGs — not a labeled badge.** Optional stretch (not
-  MVP-blocking): render the workstream `shortName` initials into the swatch (adds a
-  small font dep, e.g. `ab_glyph`); defer unless cheap.
+- **`desktop/core/src/badge.rs`** (validated by the badges spike): deterministic
+  badge renderer using **`tiny-skia` + `ab_glyph` with a bundled OFL font**
+  (Inter or similar), pure Rust, no system deps. `render_badge(color_hex,
+  monogram, event_kind, size_px) -> PNG bytes` (or writes to a cache path keyed by
+  `(color, monogram, event_kind, size)`). Draws a rounded-square field in the
+  workstream color, centered **2-3 char monogram** (derived from
+  `workstreamShortName`; white/dark per field luminance), and a bottom-right
+  **event chip** (event-specific color + simple white mark) per the spike's
+  legible mapping: online=green dot, pr-created=blue plus, pr-approved=green check,
+  issue-closed=red x, reconciled=purple equals, done=amber star/check,
+  generic=neutral. Renders crisply at 48/96/256 px (generate at target size, don't
+  downscale). Removes any dependency on the untracked repo swatch PNGs. Cache dir
+  is a parameter so tests use a temp dir. **Honest limit (badges spike): event
+  COLOR is the primary at-a-glance signal at 48px; the glyph is confirmation; cap
+  the toast monogram at 3 chars.**
 - **Tests** (`#[cfg(test)]`): SSE parsing across chunk boundaries; heartbeat does
-  not advance `Last-Event-ID`; snapshot vs created classification; deep-link
-  scheme validation (allow/deny); dedupe (snapshot never eligible; replay id
-  suppression); icon caching (same hex → same path, valid 256×256 PNG header).
+  not advance `Last-Event-ID`; snapshot vs created classification; `EventKind`
+  serde round-trip + unknown→`generic` fallback; deep-link scheme validation
+  (allow/deny); dedupe (snapshot never eligible; replay id suppression); badge
+  rendering — deterministic bytes for same inputs, monogram derivation (≤3 chars),
+  one badge per `(color, monogram, event_kind, size)`, valid PNG header at 48/256,
+  luminance-based text color, all 7 event kinds render.
 
 ### Success Criteria:
 
@@ -376,7 +410,9 @@ donna desktop's `core`/shell split). No Windows-only or Tauri APIs here.
 - [ ] Crate compiles warning-free (`cargo build`); `cargo clippy` clean if adopted.
 
 #### Manual Verification:
-- [ ] A generated icon PNG opens and shows the expected solid color at 256×256.
+- [ ] A generated badge PNG opens and shows the workstream color field + monogram
+      + event chip at 256px, and stays legible at 48px (workstream + event
+      identifiable at a glance).
 
 ---
 
@@ -389,9 +425,12 @@ isolated in 4b.
 ### Changes Required:
 
 - **`desktop/src-tauri/`** (new Tauri v2 app): `Cargo.toml` (depends on `core`,
-  `tauri`, `tauri-plugin-notification`), `tauri.conf.json`, `capabilities/`,
-  `build.rs`, icons. Tray-resident background app with a feed window (donna
-  desktop layout).
+  `tauri`, `open`, `tauri-plugin-single-instance` for protocol-activation routing;
+  the Windows toast deps `windows` + `winreg` are added in 4b), `tauri.conf.json`,
+  `capabilities/`, `build.rs`, icons. Tray-resident background app with a feed
+  window (donna desktop layout). **Note: NOT using `tauri-plugin-notification`** —
+  the spikes proved it's too limited (basic toasts only); Streamliner uses a native
+  raw-`windows`-crate toast layer in 4b.
 - **`desktop/src-tauri/src/config.rs`**: resolve the API base + dashboard base
   (env overrides; defaults `http://127.0.0.1:4319` / from `/api/health`).
 - **`desktop/src-tauri/src/sse_client.rs`**: connect to
@@ -414,9 +453,12 @@ isolated in 4b.
   `list_notifications` (initial backlog via the API list endpoint) and
   `open_link` (validate via `core::deeplink` then open with the `open` crate).
 - **`desktop/src/`** (React/TS, Vite; donna layout): `App.tsx`,
-  `components/NotificationFeed.tsx`, `NotificationCard.tsx` (workstream color
-  accent, severity, title, body, relative time; click → `open_link`),
-  `hooks/useNotificationEvents.ts` (Tauri event subscription + initial backlog).
+  `components/NotificationFeed.tsx`, `NotificationCard.tsx` (workstream badge
+  thumbnail + color accent, event-kind label, severity, title, body, relative
+  time; click → `open_link`), `hooks/useNotificationEvents.ts` (Tauri event
+  subscription + initial backlog). The card reuses the same `core::badge` image
+  (exposed via a Tauri command / asset path) so feed and toast are visually
+  consistent.
 - **`desktop/package.json`, `vite.config.ts`, `tsconfig.json`, `README.md`**
   (new): isolated frontend build + run docs + the app-must-be-running assumption.
 - **Tests**: frontend view-model/unit tests (vitest + jsdom) for card rendering
@@ -439,71 +481,74 @@ isolated in 4b.
 
 ---
 
-## Phase 4b: Toast emission + activation (de-risk spike first)
+## Phase 4b: Native Windows toast emission + protocol activation
 
-The single riskiest seam — isolated and spiked before full commit. **Budget this
-phase at ~2x a normal desktop phase**: native Windows toast activation for an
-*unpackaged* app is real systems work, and the plugin does not pre-solve it (see
-Current State note correcting the donna citation).
+**De-risked by the spike fleet** (all four spikes passed on Win11 26200 — see
+`.paw/work/streamliner-desktop-mvp/spikes/`): this is now a committed native
+design, not a gated experiment. The toast layer uses the **raw `windows` crate**
+to send arbitrary ToastGeneric XML with a generated per-notification badge, and
+**protocol activation** for reliable click-through (verified from popup, Action
+Center, and after sender exit, with no admin).
 
-### Spike (do first, timeboxed) — test the load-bearing gate FIRST:
+### Architecture (validated):
 
-- **Gate 0 (do this before anything else): Action Center / post-restart
-  activation.** Using `tauri-plugin-notification` in the Phase 4a app, raise a
-  toast, let the popup expire, then click it from the **Action Center**, and also
-  click a toast after restarting the app. Confirm whether activation forwards back
-  to the app with enough context to resolve the link. **This is the check most
-  likely to fail and the whole phase pivots on it — discover the failure now, not
-  in final manual verification.**
-- Then confirm, on Windows 10/11: (a) the toast appears for an **unpackaged** app;
-  (b) a generated per-workstream **icon** (`core::icon`) renders in the toast;
-  (c) live popup body-click activation works.
-- **Decision gate (three-way, not binary):**
-  1. Plugin delivers popup **and** Action Center activation + per-notification
-     icon → ship on the plugin.
-  2. Plugin delivers popup-only activation (the likely outcome) → adopt the
-     **protocol-activation pattern**: emit toast XML with
-     `activationType="protocol" launch="streamliner://notification/<id>"`,
-     register `streamliner://` under `HKCU\Software\Classes` pointing at the
-     desktop exe, install an AUMID Start-Menu shortcut
-     (`PKEY_AppUserModel_ID` via `IShellLink`+`IPropertyStore`), and call
-     `SetCurrentProcessExplicitAppUserModelID` on startup. Mirror
-     `toasty/main.cpp` (lines ~1666-1779, ~1988-2010). This survives Action
-     Center + restart **without** a COM activator. This is the expected path.
-  3. Only if even sending/icon is blocked → full toasty-style raw WinRT for the
-     send path too.
-- **Note:** a raw-WinRT *in-process `Activated` handler* is NOT a valid fallback —
-  it has the same Action-Center gap as the plugin. The fallback is
-  protocol-activation, above.
-- Record the chosen path and outcome in Docs.md.
+- **Toast send**: build ToastGeneric XML and show it via
+  `Windows.Data.Xml.Dom.XmlDocument::LoadXml` →
+  `ToastNotificationManager::CreateToastNotifierWithId(AUMID)::Show`. The
+  `windows` crate features needed are `Data_Xml_Dom` + `UI_Notifications` (rust
+  spike's exact `Cargo.toml`/`main.rs` are reproducible under `spikes/rust-native/`).
+- **Toast layout** (toast-xml spike): `appLogoOverride hint-crop="none"` = the
+  `core::badge` PNG (workstream color + monogram + event chip — encodes BOTH
+  workstream and event in one glance); line 1 = event title; line 2 = body;
+  `placement="attribution"` = `workstream / event` metadata. Routine events stay
+  compact; reserve a `placement="hero"` banner for high-salience events
+  (`severity=error` / `eventKind` like blocked) — optional polish, not required.
+- **Activation** (activation spike): toast root carries
+  `activationType="protocol" launch="streamliner://notification/<id>"`. On click,
+  Windows launches the registered handler with that URL; the app resolves the
+  notification's deep link and opens it.
+- **Registration** (per-user, no admin): a stable AUMID (e.g. `Streamliner.Desktop`)
+  registered via `HKCU\Software\Classes\AppUserModelId\<AUMID>` (DisplayName +
+  IconUri) — the modern unpackaged route the rust spike used — and/or a Start-Menu
+  shortcut carrying `PKEY_AppUserModel_ID`; a per-user `streamliner://` scheme
+  under `HKCU\Software\Classes\streamliner` → `shell\open\command` pointing at the
+  app exe; and `SetCurrentProcessExplicitAppUserModelID(AUMID)` at startup. This is
+  installer/first-run work; the spike did it at runtime as proof.
 
 ### Changes Required:
 
 - **`desktop/src-tauri/src/toast.rs`**: on each toast-eligible
   `notification.created` (per `core::dedupe`; **snapshot/backlog never toast**),
-  resolve the icon via `core::icon` (cache under the app data dir), raise the
-  toast (plugin if Gate 0 passed; otherwise protocol-activation toast XML), and on
-  activation resolve the URL via `core::deeplink` and open it (reusing the
-  `open_link` command path).
-- **`desktop/src-tauri/src/activation.rs`** (only if Gate 0 fails): one-time
-  AUMID shortcut install + `streamliner://` scheme registration + a single-instance
-  handler that parses the `streamliner://notification/<id>` launch argument and
-  opens the corresponding link. Register a stable AUMID for correct attribution.
-- **Wire** the 4a SSE hook point to the toast emitter.
-- **Tests**: toast-eligibility decisions stay in `core::dedupe` (cargo-tested in
-  Phase 3); the shell wiring + activation are validated by the spike + manual
-  Windows checks (documented).
+  render the badge via `core::badge` (cache under the app data dir; keep the file
+  alive — Windows reads it lazily and retains it in the Action Center), build the
+  toast XML (XML-escaped), and `Show()` it. `#[cfg(target_os = "windows")]`; a
+  no-op stub elsewhere so `core`/CI stay portable.
+- **`desktop/src-tauri/src/activation.rs`**: AUMID + `streamliner://` scheme
+  registration (idempotent, first-run); parse the `streamliner://notification/<id>`
+  launch argument and route it — via `tauri-plugin-single-instance` — into the
+  running app (or cold-start), then resolve `<id>`→link and open it through the
+  `open_link`/`core::deeplink` path.
+- **Wire** the 4a SSE hook point to the toast emitter; pass `eventKind`,
+  `workstreamColor`, `workstreamShortName` from the record into `core::badge`.
+- **Tests**: toast-eligibility + badge rendering stay in `core` (cargo-tested in
+  Phase 3); XML composition/escaping is unit-tested with a pure string builder in
+  `core` (so it's testable off-Windows); the WinRT `Show` + activation are
+  validated by the spike harness + manual Windows checks (documented).
 
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `cargo build` succeeds; `core` dedupe/icon tests still green.
+- [ ] `cargo build` succeeds (Windows); `core` dedupe/badge/sse tests still green.
 
 #### Manual Verification:
-- [ ] `streamliner notify --workstream <id> --title ... --body ...` raises a
-      Windows toast bearing the workstream color swatch and adds a feed card.
+- [ ] `streamliner notify --workstream <id> --event pr-approved --title ...
+      --body ...` raises a Windows toast whose `appLogoOverride` is the workstream
+      badge (color + monogram + the pr-approved event chip) and adds a feed card.
 - [ ] Clicking the toast opens the correct local dashboard page **from both the
-      popup AND the Action Center** (the Gate 0 check, re-verified end-to-end).
+      popup AND the Action Center** (and after the app was restarted), via protocol
+      activation.
+- [ ] Two different workstreams / two different event kinds produce visibly
+      distinct badges at toast size.
 - [ ] **No toast burst on launch**: notifications emitted while the app was closed
       appear only as feed cards on next launch; no duplicate toasts after an SSE
       reconnect.
@@ -519,13 +564,18 @@ Current State note correcting the donna citation).
   `afterId`, readonly exemption, discovery endpoint), notification schema +
   enrichment + id coupling, store location/format + serialization + no-rotation
   limitation, CLI usage + global install, desktop architecture (`core`/shell
-  split, toast path chosen in the 4b spike, snapshot-never-toasts rule, icon
-  generation, dashboard-base config), and the app-must-be-running assumption.
+  split, native raw-`windows`-crate toast layer + protocol activation, AUMID/scheme
+  registration, snapshot-never-toasts + in-memory-cursor rules, `core::badge`
+  rendering + event-kind mapping, dashboard-base config), and the
+  app-must-be-running assumption. Link the spike findings under `spikes/` as the
+  evidence basis.
 - **`docs/notifications.md`** (or `docs/operations/...`, per repo convention):
-  the `toasty` → `streamliner notify` mapping table for orchestrator events
-  (ONLINE, PR Created, PR Approved, Issue Closed, Reconciled, DONE), explaining
-  that the per-workstream icon becomes implicit (pass `--workstream <id>`; the app
-  resolves the color) and that editing the planning-repo prompt is a follow-up.
+  the `toasty` → `streamliner notify` mapping table for orchestrator events,
+  mapping each to an explicit **`--event` kind**: ONLINE→`online`, PR
+  Created→`pr-created`, PR Approved→`pr-approved`, Issue Closed→`issue-closed`,
+  Reconciled→`reconciled`, DONE→`done`. Explain that the per-workstream badge is
+  implicit (pass `--workstream <id>`; the app resolves color + monogram + event
+  chip) and that editing the planning-repo prompt is a follow-up.
   **Include two known-friction notes (review R3): (1) `streamliner notify`
   requires npm's global bin on `PATH` — call out that nvm-windows switches the
   bin dir per Node version and Microsoft Store Node may block `-g` installs;
@@ -557,16 +607,15 @@ Current State note correcting the donna citation).
 
 ### Failure modes of the designed approach (and mitigations)
 
-1. **Toast does not display / click doesn't activate** (riskiest). An AUMID alone
-   may not let an *unpackaged* app display toasts, and Action-Center / post-restart
-   click activation does NOT work without either a COM activator or
-   protocol-based activation. `tauri-plugin-notification` does not solve this
-   (donna only uses basic toasts). Mitigation: spike Action-Center activation
-   FIRST (Gate 0, Phase 4b); if the plugin is popup-only (expected), use the
-   **protocol-activation pattern** (`activationType="protocol"` +
-   `streamliner://` URL-scheme registration + AUMID Start-Menu shortcut), mirroring
-   `toasty/main.cpp` — survives Action Center + restart without a COM activator.
-   Phase 4b is budgeted ~2x accordingly.
+1. **Toast does not display / click doesn't activate** (historically the riskiest —
+   now spike-validated). An AUMID alone may not let an *unpackaged* app display
+   toasts, and Action-Center / post-restart click activation does NOT work without
+   COM or protocol activation. **Resolved by the spike fleet**: the raw `windows`
+   crate displays custom toasts under a per-user-registered AUMID, and protocol
+   activation (`activationType="protocol"` + `streamliner://` scheme) reliably
+   forwarded clicks from popup, Action Center, and after sender exit (no admin) on
+   this machine. Residual risk: per-machine AUMID/scheme registration in the
+   installer (mitigated by per-user `HKCU` registration the spike proved).
 2. **Toast burst on launch.** The snapshot delivers backlog; if treated like live
    events the app fires many toasts. The subtlety (review R2): SSE replay/backfill
    emit `notification.created` (not `snapshot`), so the "snapshot never toasts"
@@ -624,4 +673,10 @@ Current State note correcting the donna citation).
 - Shaping: `.paw/work/streamliner-desktop-mvp/WorkShaping.md`
 - Orchestrator prompt (toasty usage to supplant): `C:\Users\robemanuele\proj\planning\planning\streamliner\dbagent\prompt-drafts\orchestrator-initial-prompt-v1.md`
 - Reuse patterns: `src/server/session-events.ts`, `src/server/workstream-events.ts`, `src/server/node-launch-record-store.ts`, `src/server/workstream-registry.ts` (mutationQueue), `src/server/app.ts`
-- Desktop template (incl. `tauri-plugin-notification`): `C:\Users\robemanuele\proj\pal\personal-agent-layer\donna\desktop`
+- Desktop template (`core`/shell split, tray, feed): `C:\Users\robemanuele\proj\pal\personal-agent-layer\donna\desktop`
+- Toast reference impl (AUMID + protocol activation, C++): `C:\Users\robemanuele\proj\util\toasty\main.cpp`
+- **Capability spike evidence** (all validated on Win11 26200): `.paw/work/streamliner-desktop-mvp/spikes/`
+  - `toast-xml/FINDINGS.md` — ToastGeneric visual design surface + layout recommendations
+  - `activation/FINDINGS.md` — protocol activation verified (popup/Action Center/post-exit, no admin)
+  - `rust-native/FINDINGS.md` — raw `windows` crate toast layer (exact Cargo.toml/main.rs)
+  - `badges/FINDINGS.md` — `tiny-skia`+`ab_glyph` badge renderer + 48px legibility read + samples

@@ -1,0 +1,5 @@
+﻿<toast><visual><binding template="ToastGeneric">
+  <image placement="appLogoOverride" hint-crop="circle" src="file:///C:/Users/robemanuele/proj/streamliner/streamliner-desktop-mvp/.paw/work/streamliner-desktop-mvp/spikes/toast-xml/images/workstream-blue-ro-circle.png"/>
+  <text>Indeterminate progress</text><text>No standalone spinner element in ToastGeneric; use progress value="indeterminate".</text>
+  <progress title="Waiting for review" value="indeterminate" status="Watching PR"/>
+</binding></visual></toast>

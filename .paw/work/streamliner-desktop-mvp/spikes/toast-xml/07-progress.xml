@@ -1,0 +1,6 @@
+﻿<toast><visual><binding template="ToastGeneric">
+  <image placement="appLogoOverride" hint-crop="circle" src="file:///C:/Users/robemanuele/proj/streamliner/streamliner-desktop-mvp/.paw/work/streamliner-desktop-mvp/spikes/toast-xml/images/workstream-blue-ro-circle.png"/>
+  <text>Long running agent</text><text>Progress encodes event state; logo encodes workstream.</text>
+  <progress title="Implementation" value="0.62" valueStringOverride="62%" status="Phase 3/5"/>
+  <text placement="attribution">event: in-progress</text>
+</binding></visual></toast>

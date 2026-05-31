@@ -1,0 +1,8 @@
+[package]
+name = "badge-spike"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ab_glyph = "0.2"
+tiny-skia = "0.11"

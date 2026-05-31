@@ -1,0 +1,10 @@
+﻿<toast><visual><binding template="ToastGeneric">
+  <image placement="appLogoOverride" hint-crop="none" src="file:///C:/Users/robemanuele/proj/streamliner/streamliner-desktop-mvp/.paw/work/streamliner-desktop-mvp/spikes/toast-xml/images/workstream-orange-api-square.png"/>
+  <text>Review requested</text><text>Buttons render as action affordances.</text>
+</binding></visual><actions>
+  <action content="Open" activationType="protocol" arguments="streamliner://open"/>
+  <action content="Snooze" activationType="protocol" arguments="streamliner://snooze"/>
+  <action content="Done" activationType="protocol" arguments="streamliner://done"/>
+  <action content="Mute" activationType="protocol" arguments="streamliner://mute"/>
+  <action content="More" activationType="protocol" arguments="streamliner://more"/>
+</actions></toast>

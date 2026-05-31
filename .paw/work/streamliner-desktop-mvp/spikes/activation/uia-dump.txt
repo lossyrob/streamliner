@@ -1,0 +1,10 @@
+39`tDevice Activation and 25 more pages - Work - Microsoft​ Edge`tChrome_WidgetWin_1`tControlType.Window
+41`tDevice Activation - Microsoft Edge - Work`tBrowserRootView`tControlType.Pane
+128`tStreamliner: VS Code Extension-Wide DBAgent PrPr Alignment - Part of tab group D-VS - Sleeping - Memory usage - 186 MB`tEdgeTab`tControlType.TabItem
+141`tStreamliner: Private Preview Customer/Server Onboarding - Part of tab group D-ON - Memory usage - 205 MB`tEdgeTab`tControlType.TabItem
+180`tDevice Activation`tEdgeTab`tControlType.TabItem
+221`tPowerShell`tTermControl`tControlType.Text
+253`tPowerShell`tTermControl`tControlType.Text
+1856`tNotifications 2 unread`tfui-Tab ___1n654pf f1drj5c3 f16z8u4g f1p99hwk f1410nsr f14prqux fanjz7j f2bc6ao f3jhdtd fddbaav f5c49di f1h4jgr0 f898ecj f1v06gxd f19fj05r f7d9gor fsvis68 f1h11fyl f1ksauwf f1hennsi f1weirht f12skvnv f15a4g4d f11qw3zu fmloiwc f1lomnli frdtq94 fyg69wq f10cthmz fxuebdf fetiogr fmgob90 f8ci5w3 fpzjsxn f59hv1i f1650vbq f1aus5yi f1n4jgi2 f199l2qj fkf9lmy fk0mhp8 fb1nfjg f1grl3l1 fderfxt f1qnfp4b fle9l9j f10oe0of f19rgp5d f160l2fo f16b2ljy f7rdcz1 f1il8ex2 f1852nel f1n8tpmf fccs1nm f6kngxx f157hjdn fv4ho4g f16kt08w ffr0yqk f18ycqdn fbdg0y9 f1vakoyg f4pbjdg f174qlhp felhg1l f1y35nr f1ycw8tc f1l5zut9 f1vr4i6p f12asg9f feo4af9 f1lyku3d ffrzfok flamj82 fa2qhca fch6by3 fztdcc6 f1fantdd f1klolvh fck0cio fvfrssw frbh6e f1s89mdc fanar40 f1iv83x9 fntevs0 fukxyxe f1j5cwq1 f3hs6dx f1b3hft f1ydzst6 f18mtjev f9kkcep f1g4po4f frkzom0 f1j5q7c8 f2re6qv faoagdz fekhphh`tControlType.TabItem
+2286`tPowerShell 7 (x64)`t`tControlType.ListItem
+2287`tPowerShell7`t`tControlType.ListItem
