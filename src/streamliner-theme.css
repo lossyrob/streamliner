@@ -998,6 +998,27 @@ a.sl-action-btn {
   color: var(--sl-text-dim);
 }
 
+.sl-inspector-node-id {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--sl-text-dim);
+}
+
+.sl-inspector-node-id span {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sl-inspector-node-id code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--sl-mono);
+  color: var(--sl-text-mid);
+}
+
 .sl-inspector-github-status {
   display: inline-flex;
   flex-wrap: wrap;
