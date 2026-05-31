@@ -288,6 +288,7 @@
 
   /* Wave node (vertex card) */
   .wave-node {
+    position: relative;
     width: 100%; height: 100%;
     padding: 10px 12px;
     box-sizing: border-box;
@@ -302,6 +303,9 @@
     overflow: hidden;
   }
   .wave-node:hover { border-color: rgba(29,110,220,0.40); box-shadow: var(--shadow-card); }
+  .wave-node.has-gate { padding-right: 22px; }
+  .wave-node.has-progress .wave-summary { -webkit-line-clamp: 2; }
+  .wave-node .react-flow__handle { z-index: 8; }
   .wave-node.selected {
     border-color: var(--accent);
     box-shadow: 0 0 0 3px rgba(29,110,220,0.12), var(--shadow-card);
@@ -438,6 +442,120 @@
   }
   .wave-node .ec.in  { color: var(--yellow); background: rgba(176,120,8,0.12); }
   .wave-node .ec.out { color: var(--green);  background: rgba(18,148,95,0.12); }
+  .wave-progress {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 7px;
+    border: 1px solid rgba(20,60,130,0.08);
+    border-radius: 12px;
+    background: rgba(255,255,255,0.58);
+  }
+  .wave-progress .task-beads {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+  .task-dot {
+    width: 10px;
+    height: 10px;
+    flex: 0 0 auto;
+    border-radius: 999px;
+    border: 1.5px solid rgba(20,60,130,0.16);
+    background: rgba(255,255,255,0.86);
+  }
+  .task-dot.done {
+    background: var(--green);
+    border-color: rgba(18,148,95,0.9);
+    box-shadow: 0 0 0 2px rgba(18,148,95,0.10);
+  }
+  .task-dot.in-progress {
+    border-color: rgba(29,110,220,0.82);
+    background: conic-gradient(var(--blue) 0 62%, rgba(29,110,220,0.16) 62% 100%);
+    box-shadow: 0 0 0 2px rgba(29,110,220,0.10);
+  }
+  .task-dot.ready {
+    border-color: rgba(176,120,8,0.88);
+    background: radial-gradient(circle, rgba(176,120,8,0.72) 0 35%, rgba(255,255,255,0.95) 38% 100%);
+    box-shadow: 0 0 0 2px rgba(176,120,8,0.10);
+  }
+  .task-dot.not-started {
+    border-style: dashed;
+    border-color: rgba(141,155,181,0.70);
+    background: rgba(255,255,255,0.70);
+  }
+  .task-dot.blocked {
+    border-color: rgba(200,50,50,0.82);
+    background:
+      linear-gradient(135deg, transparent 40%, rgba(200,50,50,0.95) 40% 60%, transparent 60%),
+      rgba(200,50,50,0.12);
+    box-shadow: 0 0 0 2px rgba(200,50,50,0.08);
+  }
+  .gate-marker {
+    width: 12px;
+    height: 12px;
+    flex: 0 0 auto;
+    border-radius: 3px;
+    transform: rotate(45deg);
+    border: 1.5px solid rgba(124,58,237,0.75);
+    background: rgba(124,58,237,0.10);
+    box-shadow: 0 0 0 2px rgba(124,58,237,0.07);
+  }
+  .gate-marker.open {
+    border-color: rgba(176,120,8,0.82);
+    background: rgba(176,120,8,0.12);
+    box-shadow: 0 0 0 2px rgba(176,120,8,0.08);
+  }
+  .gate-marker.closed {
+    border-color: rgba(18,148,95,0.92);
+    background: var(--green);
+    box-shadow: 0 0 0 2px rgba(18,148,95,0.12);
+  }
+  .gate-marker.blocked {
+    border-color: rgba(200,50,50,0.88);
+    background: rgba(200,50,50,0.18);
+    box-shadow: 0 0 0 2px rgba(200,50,50,0.08);
+  }
+  .gate-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--muted);
+    font-size: 0.58rem;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .no-gate-status {
+    color: var(--faint);
+    font-size: 0.58rem;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .gate-cap {
+    position: absolute;
+    top: -1px;
+    right: 0;
+    bottom: -1px;
+    width: 10px;
+    border-radius: 0 16px 16px 0;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .gate-cap.open {
+    background: linear-gradient(180deg, rgba(176,120,8,0.14), rgba(176,120,8,0.06));
+    border-left: 1px solid rgba(176,120,8,0.32);
+  }
+  .gate-cap.closed {
+    background: linear-gradient(180deg, rgba(18,148,95,0.32), rgba(18,148,95,0.18));
+    border-left: 1px solid rgba(18,148,95,0.55);
+  }
+  .gate-cap.blocked {
+    background: linear-gradient(180deg, rgba(200,50,50,0.24), rgba(200,50,50,0.10));
+    border-left: 1px solid rgba(200,50,50,0.42);
+  }
 
   /* External dependency node */
   .ext-node {
@@ -918,7 +1036,7 @@ let PORTFOLIO = null;
 
 // ---------- Layout constants ----------
 const WAVE_W = 260;
-const WAVE_H = 130;
+const WAVE_H = 168;
 const EXT_W = 200;
 const EXT_H = 76;
 
@@ -1643,6 +1761,96 @@ function statusBg(s) {
   }
 }
 
+function normalizeProgressStatus(value) {
+  const normalized = String(value || '').trim().toLowerCase().replace(/[\s_]+/g, '-');
+  switch (normalized) {
+    case 'done':
+    case 'complete':
+    case 'completed':
+    case 'closed':
+      return 'done';
+    case 'in-progress':
+    case 'active':
+    case 'running':
+      return 'in-progress';
+    case 'ready':
+      return 'ready';
+    case 'blocked':
+      return 'blocked';
+    case 'planned':
+    case 'not-started':
+    case 'todo':
+    case 'pending':
+      return 'not-started';
+    default:
+      return null;
+  }
+}
+
+function evidenceIdentityText(entry) {
+  return [entry.ref, entry.name, entry.title, entry.id]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+}
+
+function isGateEvidence(entry) {
+  return entry?.kind === 'task' && /\bgate\b/.test(evidenceIdentityText(entry));
+}
+
+function inferTaskStatusFromWave(wave, index, count) {
+  switch (wave.status) {
+    case 'done':
+      return 'done';
+    case 'in-progress':
+      if (count === 1) return 'in-progress';
+      if (index === 0) return 'done';
+      if (index === 1) return 'in-progress';
+      if (index === 2) return 'ready';
+      return 'not-started';
+    case 'ready':
+      return index === 0 ? 'ready' : 'not-started';
+    case 'blocked':
+      if (index === 0 && count > 2) return 'done';
+      if (index === 1 && count > 2) return 'ready';
+      if (index === Math.min(2, count - 1)) return 'blocked';
+      return 'not-started';
+    default:
+      return 'not-started';
+  }
+}
+
+function gateStateForWave(wave) {
+  if (wave.status === 'done') return 'closed';
+  if (wave.status === 'blocked') return 'blocked';
+  return 'open';
+}
+
+function deriveWaveProgress(wave) {
+  const taskEvidence = (wave.evidence || []).filter(entry => entry?.kind === 'task');
+  if (!taskEvidence.length) return null;
+
+  const gateEntry = [...taskEvidence].reverse().find(isGateEvidence) || null;
+  const taskEntries = gateEntry && taskEvidence.length > 1
+    ? taskEvidence.filter(entry => entry !== gateEntry)
+    : taskEvidence;
+  const tasks = taskEntries.map((entry, index) => {
+    const explicitStatus = normalizeProgressStatus(entry.status || entry.state);
+    const status = explicitStatus || inferTaskStatusFromWave(wave, index, taskEntries.length);
+    return {
+      status,
+      label: entry.ref || entry.name || entry.title || `Task ${index + 1}`,
+      inferred: !explicitStatus,
+    };
+  });
+
+  return {
+    tasks,
+    gateState: gateEntry ? gateStateForWave(wave) : null,
+    gateLabel: gateEntry?.ref || gateEntry?.name || gateEntry?.title || 'Gate',
+  };
+}
+
 // ---------- Node components ----------
 function WaveNode({ data }) {
   const wv = data.wave;
@@ -1654,9 +1862,17 @@ function WaveNode({ data }) {
   const outCount = data.outboundEdges.length;
   const wsColorFull = wsColor(ws.id, 1);
   const theme = themeFor(ws.id);
+  const progress = deriveWaveProgress(wv);
+  const hasProgress = Boolean(progress && (progress.tasks.length || progress.gateState));
+  const doneCount = progress?.tasks.filter(task => task.status === 'done').length || 0;
+  const progressLabel = progress
+    ? `${doneCount}/${progress.tasks.length} tasks${progress.gateState ? ` · gate ${progress.gateState}` : ''}`
+    : '';
   return html`
     <div
       className=${'wave-node status-' + wv.status
+        + (hasProgress ? ' has-progress' : '')
+        + (progress?.gateState ? ' has-gate gate-' + progress.gateState : '')
         + (data.selected ? ' selected' : '')
         + (ws.attention === 'hot' ? ' attn-hot' : '')
         + (ws.attention === 'focus' ? ' attn-focus' : '')
@@ -1677,6 +1893,7 @@ function WaveNode({ data }) {
       <${Handle} type="target" position=${Position.Top} id="ext-in" className="spine" style=${{ opacity: 0, pointerEvents: 'none' }} />
       ${inCount > 0  ? html`<${Handle} type="target" position=${Position.Left}  id="import" className="import" />` : null}
       ${outCount > 0 ? html`<${Handle} type="source" position=${Position.Right} id="export" className="export" />` : null}
+      ${progress?.gateState ? html`<span className=${'gate-cap ' + progress.gateState} aria-hidden="true"></span>` : null}
 
       <div className="ws-badge" style=${{ color: wsColorFull, background: wsColorMuted(ws.id) }}>
         ${ws.title}
@@ -1689,6 +1906,24 @@ function WaveNode({ data }) {
         <span className="wave-status-pill">${wv.status}</span>
       </div>
       <p className="wave-summary">${wv.summary || ''}</p>
+      ${hasProgress ? html`
+        <div className="wave-progress" title=${progressLabel}>
+          <div className="task-beads" aria-label=${progressLabel}>
+            ${progress.tasks.map((task, taskIndex) => html`
+              <span
+                key=${taskIndex}
+                className=${'task-dot ' + task.status}
+                title=${task.label + (task.inferred ? ' · status inferred from wave' : '')}
+              ></span>
+            `)}
+          </div>
+          ${progress.gateState ? html`
+            <span className="gate-status" title=${progress.gateLabel}>
+              <span className=${'gate-marker ' + progress.gateState}></span>${progress.gateState}
+            </span>
+          ` : html`<span className="no-gate-status">no gate</span>`}
+        </div>
+      ` : null}
       ${(inCount + outCount > 0) ? html`
         <div className="wave-edges">
           ${inCount  ? html`<span key="in"  className="ec in">↘ ${inCount}</span>` : null}
