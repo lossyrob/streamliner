@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { spawn, execSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { spawn, execFileSync, execSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -12,7 +12,8 @@ export {
   quotePowerShellLiteral,
 } from "../terminal-command";
 
-export const DEFAULT_COPILOT_TERMINAL_LAUNCH_COOLDOWN_MS = 1_500;
+export const DEFAULT_COPILOT_TERMINAL_LAUNCH_COOLDOWN_MS = 15_000;
+const DEFAULT_COPILOT_REQUIRED_PLUGINS = ["streamliner@streamliner-local"] as const;
 
 export const TERMINAL_HOST_PREFERENCES = [
   "default",
@@ -72,6 +73,24 @@ export interface CopilotTerminalLaunchQueueOptions {
   cooldownMs?: number;
   /** Override the delay primitive; mainly used by tests. */
   delay?: (ms: number) => Promise<void>;
+  /** Override or disable Copilot plugin preflight; mainly used by tests. */
+  pluginPreflight?: false | CopilotPluginPreflightOptions;
+}
+
+export type CopilotPluginCommandRunner = (
+  command: string,
+  args: string[],
+) => string;
+
+export interface CopilotPluginPreflightOptions {
+  /** Copilot settings path. Defaults to ~/.copilot/settings.json. */
+  settingsPath?: string;
+  /** Required plugin sources. Defaults to enabledPlugins from settings, then Streamliner. */
+  requiredPlugins?: readonly string[];
+  /** Low-level command runner. Defaults to execFileSync. */
+  run?: CopilotPluginCommandRunner;
+  /** Environment source for feature flags and required-plugin overrides. */
+  env?: NodeJS.ProcessEnv;
 }
 
 /** Cache for Windows Terminal availability check */
@@ -119,6 +138,126 @@ export function copilotTerminalLaunchCooldownMs(
     { value: raw, defaultMs: DEFAULT_COPILOT_TERMINAL_LAUNCH_COOLDOWN_MS },
   );
   return DEFAULT_COPILOT_TERMINAL_LAUNCH_COOLDOWN_MS;
+}
+
+function defaultCopilotSettingsPath(): string {
+  return join(homedir(), ".copilot", "settings.json");
+}
+
+function defaultCopilotPluginCommandRunner(command: string, args: string[]): string {
+  return execFileSync(command, args, {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+}
+
+function splitPluginSources(value: string): string[] {
+  return value
+    .split(/[,\n]/)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
+function envDisablesCopilotPluginPreflight(env: NodeJS.ProcessEnv): boolean {
+  const raw = env.STREAMLINER_COPILOT_PLUGIN_PREFLIGHT;
+  if (raw === undefined) {
+    return false;
+  }
+  return /^(?:0|false|off|no)$/i.test(raw.trim());
+}
+
+function configuredRequiredCopilotPlugins(
+  env: NodeJS.ProcessEnv,
+  settingsPath: string,
+): string[] {
+  const configured = env.STREAMLINER_COPILOT_REQUIRED_PLUGINS;
+  if (configured !== undefined && configured.trim().length > 0) {
+    return splitPluginSources(configured);
+  }
+
+  const enabled = enabledCopilotPluginsFromSettings(settingsPath);
+  return enabled.length > 0 ? enabled : [...DEFAULT_COPILOT_REQUIRED_PLUGINS];
+}
+
+function enabledCopilotPluginsFromSettings(settingsPath: string): string[] {
+  if (!existsSync(settingsPath)) {
+    return [];
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(settingsPath, "utf8")) as unknown;
+  } catch (error: unknown) {
+    getApiLogger().withScope("terminal-launch").warn(
+      "could not read Copilot enabled plugin settings; using default Streamliner plugin preflight",
+      { settingsPath, err: error },
+    );
+    return [];
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return [];
+  }
+  const enabledPlugins = (parsed as Record<string, unknown>).enabledPlugins;
+  if (!enabledPlugins || typeof enabledPlugins !== "object" || Array.isArray(enabledPlugins)) {
+    return [];
+  }
+  return Object.entries(enabledPlugins)
+    .filter(([, enabled]) => enabled === true)
+    .map(([source]) => source)
+    .filter((source) => source.trim().length > 0);
+}
+
+function copilotPluginListContains(pluginListOutput: string, pluginSource: string): boolean {
+  if (pluginListOutput.includes(pluginSource)) {
+    return true;
+  }
+
+  const [pluginName, marketplace] = pluginSource.split("@", 2);
+  if (!pluginName || !marketplace) {
+    return false;
+  }
+  return pluginListOutput.includes(pluginName) && pluginListOutput.includes(marketplace);
+}
+
+export function ensureCopilotPluginsAvailable(
+  options: CopilotPluginPreflightOptions = {},
+): void {
+  const env = options.env ?? process.env;
+  if (envDisablesCopilotPluginPreflight(env)) {
+    return;
+  }
+
+  const settingsPath = options.settingsPath ?? defaultCopilotSettingsPath();
+  const requiredPlugins = options.requiredPlugins
+    ? [...options.requiredPlugins]
+    : configuredRequiredCopilotPlugins(env, settingsPath);
+  if (requiredPlugins.length === 0) {
+    return;
+  }
+
+  const run = options.run ?? defaultCopilotPluginCommandRunner;
+  let pluginList = run("copilot", ["plugin", "list"]);
+  const missing = requiredPlugins.filter(
+    (pluginSource) => !copilotPluginListContains(pluginList, pluginSource),
+  );
+  if (missing.length === 0) {
+    return;
+  }
+
+  const logger = getApiLogger().withScope("terminal-launch");
+  logger.warn("Copilot plugin registry missing required plugins; reinstalling before launch", {
+    missing,
+  });
+  for (const pluginSource of missing) {
+    run("copilot", ["plugin", "install", pluginSource]);
+  }
+
+  pluginList = run("copilot", ["plugin", "list"]);
+  const stillMissing = requiredPlugins.filter(
+    (pluginSource) => !copilotPluginListContains(pluginList, pluginSource),
+  );
+  if (stillMissing.length > 0) {
+    throw new Error(`Copilot plugin preflight failed; missing plugins after install: ${stillMissing.join(", ")}`);
+  }
 }
 
 function delay(ms: number): Promise<void> {
@@ -418,6 +557,9 @@ export async function launchCopilotTerminal(
   let delayError: unknown;
 
   try {
+    if (queueOptions.pluginPreflight !== false) {
+      ensureCopilotPluginsAvailable(queueOptions.pluginPreflight);
+    }
     result = launch(options);
   } catch (error: unknown) {
     launchError = error;

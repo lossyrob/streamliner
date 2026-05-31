@@ -1,5 +1,5 @@
 import type { ChildProcess } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
@@ -11,6 +11,7 @@ import {
   buildCopilotInteractiveCommand,
   buildCopilotResumeCommand,
   getDefaultTerminalLaunchAdapter,
+  ensureCopilotPluginsAvailable,
   normalizeTerminalLaunchRequest,
   isWindowsTerminalAvailable,
   clearWindowsTerminalCache,
@@ -30,6 +31,7 @@ vi.mock("node:child_process", () => {
 
   return {
     spawn: vi.fn(() => mockChild),
+    execFileSync: vi.fn(),
     execSync: vi.fn(),
   };
 });
@@ -633,11 +635,11 @@ describe("terminal-launch", () => {
       const first = launchCopilotTerminal({
         cwd: "C:\\Users\\test\\workspace",
         title: "first",
-      }, { launchTerminal: launch, cooldownMs: 25, delay });
+      }, { launchTerminal: launch, cooldownMs: 25, delay, pluginPreflight: false });
       const second = launchCopilotTerminal({
         cwd: "C:\\Users\\test\\workspace",
         title: "second",
-      }, { launchTerminal: launch, cooldownMs: 25, delay });
+      }, { launchTerminal: launch, cooldownMs: 25, delay, pluginPreflight: false });
 
       await flushMicrotasks();
 
@@ -663,11 +665,11 @@ describe("terminal-launch", () => {
       const first = launchCopilotTerminal({
         cwd: "C:\\Users\\test\\workspace",
         title: "first",
-      }, { launchTerminal: launch, cooldownMs: 0 });
+      }, { launchTerminal: launch, cooldownMs: 0, pluginPreflight: false });
       const second = launchCopilotTerminal({
         cwd: "C:\\Users\\test\\workspace",
         title: "second",
-      }, { launchTerminal: launch, cooldownMs: 0 });
+      }, { launchTerminal: launch, cooldownMs: 0, pluginPreflight: false });
 
       await expect(first).rejects.toThrow("spawn failed");
       await expect(second).resolves.toEqual({ method: "powershell", pid: 42 });
@@ -685,6 +687,7 @@ describe("terminal-launch", () => {
       }, {
         launchTerminal: queuedLaunch,
         cooldownMs: 25,
+        pluginPreflight: false,
         delay: () => new Promise<void>((resolve) => {
           delayResolvers.push(resolve);
         }),
@@ -703,6 +706,58 @@ describe("terminal-launch", () => {
 
       delayResolvers[0]();
       await queued;
+    });
+
+    it("preflights enabled Copilot plugins before launching", async () => {
+      const root = mkdtempSync(join(tmpdir(), "streamliner-copilot-settings-"));
+      scriptRoots.push(root);
+      const settingsPath = join(root, "settings.json");
+      writeFileSync(
+        settingsPath,
+        JSON.stringify({
+          enabledPlugins: {
+            "streamliner@streamliner-local": true,
+            "lossyrob-skills@lossyrob-skills": true,
+          },
+        }),
+        "utf8",
+      );
+      const run = vi.fn()
+        .mockReturnValueOnce("No plugins installed.")
+        .mockReturnValueOnce("")
+        .mockReturnValueOnce("")
+        .mockReturnValueOnce("streamliner streamliner-local\nlossyrob-skills lossyrob-skills\n");
+      const launch = vi.fn<TerminalLaunchExecutor>(
+        () => ({ method: "powershell" as const, pid: 42 }),
+      );
+
+      await launchCopilotTerminal({
+        cwd: "C:\\Users\\test\\workspace",
+        title: "plugins",
+      }, {
+        launchTerminal: launch,
+        cooldownMs: 0,
+        pluginPreflight: { settingsPath, run },
+      });
+
+      expect(run).toHaveBeenCalledWith("copilot", ["plugin", "list"]);
+      expect(run).toHaveBeenCalledWith("copilot", ["plugin", "install", "streamliner@streamliner-local"]);
+      expect(run).toHaveBeenCalledWith("copilot", ["plugin", "install", "lossyrob-skills@lossyrob-skills"]);
+      expect(launch).toHaveBeenCalledTimes(1);
+    });
+
+    it("can disable Copilot plugin preflight with environment", () => {
+      const run = vi.fn(() => {
+        throw new Error("should not run");
+      });
+
+      ensureCopilotPluginsAvailable({
+        requiredPlugins: ["streamliner@streamliner-local"],
+        run,
+        env: { STREAMLINER_COPILOT_PLUGIN_PREFLIGHT: "false" },
+      });
+
+      expect(run).not.toHaveBeenCalled();
     });
   });
 
