@@ -44,7 +44,7 @@ Additional Inputs: none
 ## Control State
 
 TODO Mirror: active-required-items
-Reconciliation: not_run
+Reconciliation: reconciled
 
 ### Required Workflow Items
 - `init` | `resolved` | `activity`
@@ -53,7 +53,7 @@ Reconciliation: not_run
 - `planning-docs-review` | `done` | `activity`
 - `implementation` | `resolved` | `activity`
 - `final-review` | `resolved` | `activity`
-- `final-pr` | `pending` | `activity`
+- `final-pr` | `in_progress` | `activity`
 
 ### Configured Procedure Items
 - `procedure:planning-review` | `resolved` | `procedure`
