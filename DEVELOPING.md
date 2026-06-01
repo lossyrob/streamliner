@@ -166,9 +166,10 @@ the main checkout, and `copilot plugin list` should include
 
 Streamliner also runs a Copilot plugin preflight before Streamliner-owned
 visible Copilot terminal launches. The preflight reads enabled plugins from
-`~/.copilot/settings.json`, reinstalls any missing enabled plugin sources
-serially, and then launches the terminal. This avoids burst launches racing
-Copilot CLI's plugin auto-install path. Set
+`~/.copilot/settings.json`, resolves their installed cache directories, and
+passes them to Copilot with `--plugin-dir` for that launch. It does not run
+`copilot plugin install` on the launch path, so running sessions that are using
+plugin scripts do not block new launches with cache-update `EBUSY` errors. Set
 `STREAMLINER_COPILOT_PLUGIN_PREFLIGHT=false` to disable the preflight, or
 `STREAMLINER_COPILOT_REQUIRED_PLUGINS=plugin@marketplace,...` to override the
 plugin sources checked before launch.

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { spawn, execFileSync, execSync } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -77,18 +77,15 @@ export interface CopilotTerminalLaunchQueueOptions {
   pluginPreflight?: false | CopilotPluginPreflightOptions;
 }
 
-export type CopilotPluginCommandRunner = (
-  command: string,
-  args: string[],
-) => string;
-
 export interface CopilotPluginPreflightOptions {
   /** Copilot settings path. Defaults to ~/.copilot/settings.json. */
   settingsPath?: string;
+  /** Copilot managed config path. Defaults to ~/.copilot/config.json. */
+  configPath?: string;
+  /** Installed plugin cache root. Defaults to ~/.copilot/installed-plugins. */
+  installedPluginsRoot?: string;
   /** Required plugin sources. Defaults to enabledPlugins from settings, then Streamliner. */
   requiredPlugins?: readonly string[];
-  /** Low-level command runner. Defaults to execFileSync. */
-  run?: CopilotPluginCommandRunner;
   /** Environment source for feature flags and required-plugin overrides. */
   env?: NodeJS.ProcessEnv;
 }
@@ -144,11 +141,12 @@ function defaultCopilotSettingsPath(): string {
   return join(homedir(), ".copilot", "settings.json");
 }
 
-function defaultCopilotPluginCommandRunner(command: string, args: string[]): string {
-  return execFileSync(command, args, {
-    encoding: "utf8",
-    windowsHide: true,
-  });
+function defaultCopilotConfigPath(): string {
+  return join(homedir(), ".copilot", "config.json");
+}
+
+function defaultCopilotInstalledPluginsRoot(): string {
+  return join(homedir(), ".copilot", "installed-plugins");
 }
 
 function splitPluginSources(value: string): string[] {
@@ -206,58 +204,100 @@ function enabledCopilotPluginsFromSettings(settingsPath: string): string[] {
     .filter((source) => source.trim().length > 0);
 }
 
-function copilotPluginListContains(pluginListOutput: string, pluginSource: string): boolean {
-  if (pluginListOutput.includes(pluginSource)) {
-    return true;
+function readJsonFile(path: string): unknown | null {
+  if (!existsSync(path)) {
+    return null;
   }
-
-  const [pluginName, marketplace] = pluginSource.split("@", 2);
-  if (!pluginName || !marketplace) {
-    return false;
+  try {
+    return JSON.parse(readFileSync(path, "utf8")) as unknown;
+  } catch (error: unknown) {
+    getApiLogger().withScope("terminal-launch").warn(
+      "could not read Copilot plugin configuration JSON",
+      { path, err: error },
+    );
+    return null;
   }
-  return pluginListOutput.includes(pluginName) && pluginListOutput.includes(marketplace);
 }
 
-export function ensureCopilotPluginsAvailable(
+function configuredPluginCachePaths(configPath: string): Map<string, string> {
+  const parsed = readJsonFile(configPath);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return new Map();
+  }
+  const installedPlugins = (parsed as Record<string, unknown>).installedPlugins;
+  if (!Array.isArray(installedPlugins)) {
+    return new Map();
+  }
+  const cachePaths = new Map<string, string>();
+  for (const plugin of installedPlugins) {
+    if (!plugin || typeof plugin !== "object" || Array.isArray(plugin)) {
+      continue;
+    }
+    const record = plugin as Record<string, unknown>;
+    const name = typeof record.name === "string" ? record.name : "";
+    const marketplace = typeof record.marketplace === "string" ? record.marketplace : "";
+    const cachePath = typeof record.cache_path === "string" ? record.cache_path : "";
+    if (name && marketplace && cachePath) {
+      cachePaths.set(`${name}@${marketplace}`, cachePath);
+    }
+  }
+  return cachePaths;
+}
+
+function fallbackPluginCachePath(pluginSource: string, installedPluginsRoot: string): string | null {
+  const [pluginName, marketplace] = pluginSource.split("@", 2);
+  if (!pluginName || !marketplace) {
+    return null;
+  }
+  return join(installedPluginsRoot, marketplace, pluginName);
+}
+
+export function resolveCopilotPluginDirsForLaunch(
   options: CopilotPluginPreflightOptions = {},
-): void {
+): string[] {
   const env = options.env ?? process.env;
   if (envDisablesCopilotPluginPreflight(env)) {
-    return;
+    return [];
   }
 
   const settingsPath = options.settingsPath ?? defaultCopilotSettingsPath();
+  const configPath = options.configPath ?? defaultCopilotConfigPath();
+  const installedPluginsRoot = options.installedPluginsRoot ?? defaultCopilotInstalledPluginsRoot();
   const requiredPlugins = options.requiredPlugins
     ? [...options.requiredPlugins]
     : configuredRequiredCopilotPlugins(env, settingsPath);
   if (requiredPlugins.length === 0) {
-    return;
+    return [];
   }
 
-  const run = options.run ?? defaultCopilotPluginCommandRunner;
-  let pluginList = run("copilot", ["plugin", "list"]);
-  const missing = requiredPlugins.filter(
-    (pluginSource) => !copilotPluginListContains(pluginList, pluginSource),
-  );
-  if (missing.length === 0) {
-    return;
+  const configuredCachePaths = configuredPluginCachePaths(configPath);
+  const pluginDirs: string[] = [];
+  const missing: string[] = [];
+  for (const pluginSource of requiredPlugins) {
+    const configuredPath = configuredCachePaths.get(pluginSource);
+    const candidates = [
+      configuredPath,
+      fallbackPluginCachePath(pluginSource, installedPluginsRoot),
+    ].filter((candidate): candidate is string => Boolean(candidate));
+    const existingPath = candidates.find((candidate) => existsSync(candidate));
+    if (existingPath) {
+      pluginDirs.push(existingPath);
+    } else {
+      missing.push(`${pluginSource}${candidates.length ? ` (${candidates.join(" or ")})` : ""}`);
+    }
   }
 
-  const logger = getApiLogger().withScope("terminal-launch");
-  logger.warn("Copilot plugin registry missing required plugins; reinstalling before launch", {
-    missing,
-  });
-  for (const pluginSource of missing) {
-    run("copilot", ["plugin", "install", pluginSource]);
+  if (missing.length > 0) {
+    throw new Error(
+      [
+        "Copilot plugin preflight could not find required plugin directories.",
+        `Missing: ${missing.join(", ")}`,
+        "Close sessions that may be using the plugin cache, then repair with `copilot plugin install <plugin@marketplace>`.",
+      ].join(" "),
+    );
   }
 
-  pluginList = run("copilot", ["plugin", "list"]);
-  const stillMissing = requiredPlugins.filter(
-    (pluginSource) => !copilotPluginListContains(pluginList, pluginSource),
-  );
-  if (stillMissing.length > 0) {
-    throw new Error(`Copilot plugin preflight failed; missing plugins after install: ${stillMissing.join(", ")}`);
-  }
+  return [...new Set(pluginDirs)];
 }
 
 function delay(ms: number): Promise<void> {
@@ -434,6 +474,20 @@ export function buildCopilotInteractiveCommand(options: CopilotInteractiveComman
   return `${decodedPrompt}; ${commandParts.join(" ")}`;
 }
 
+function addCopilotPluginDirArgs(command: string | undefined, pluginDirs: readonly string[]): string | undefined {
+  if (!command || pluginDirs.length === 0) {
+    return command;
+  }
+  const pluginArgs = pluginDirs
+    .flatMap((pluginDir) => ["--plugin-dir", pluginDir])
+    .map(quotePowerShellLiteral)
+    .join(" ");
+  return command.replace(
+    /(^|;\s*)copilot(?=\s|$)/,
+    `$1copilot ${pluginArgs}`,
+  );
+}
+
 export class WindowsTerminalLaunchAdapter implements TerminalLaunchAdapter {
   readonly id = "windows";
 
@@ -557,10 +611,17 @@ export async function launchCopilotTerminal(
   let delayError: unknown;
 
   try {
+    let launchOptions = options;
     if (queueOptions.pluginPreflight !== false) {
-      ensureCopilotPluginsAvailable(queueOptions.pluginPreflight);
+      const pluginDirs = resolveCopilotPluginDirsForLaunch(queueOptions.pluginPreflight);
+      if (pluginDirs.length > 0 && options.command) {
+        launchOptions = {
+          ...options,
+          command: addCopilotPluginDirArgs(options.command, pluginDirs),
+        };
+      }
     }
-    result = launch(options);
+    result = launch(launchOptions);
   } catch (error: unknown) {
     launchError = error;
   }

@@ -1,5 +1,5 @@
 import type { ChildProcess } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
@@ -11,7 +11,7 @@ import {
   buildCopilotInteractiveCommand,
   buildCopilotResumeCommand,
   getDefaultTerminalLaunchAdapter,
-  ensureCopilotPluginsAvailable,
+  resolveCopilotPluginDirsForLaunch,
   normalizeTerminalLaunchRequest,
   isWindowsTerminalAvailable,
   clearWindowsTerminalCache,
@@ -708,10 +708,15 @@ describe("terminal-launch", () => {
       await queued;
     });
 
-    it("preflights enabled Copilot plugins before launching", async () => {
+    it("preflights enabled Copilot plugins by passing cache dirs to the launch command", async () => {
       const root = mkdtempSync(join(tmpdir(), "streamliner-copilot-settings-"));
       scriptRoots.push(root);
       const settingsPath = join(root, "settings.json");
+      const installedPluginsRoot = join(root, "installed-plugins");
+      const streamlinerDir = join(installedPluginsRoot, "streamliner-local", "streamliner");
+      const skillsDir = join(installedPluginsRoot, "lossyrob-skills", "lossyrob-skills");
+      mkdirSync(streamlinerDir, { recursive: true });
+      mkdirSync(skillsDir, { recursive: true });
       writeFileSync(
         settingsPath,
         JSON.stringify({
@@ -722,11 +727,6 @@ describe("terminal-launch", () => {
         }),
         "utf8",
       );
-      const run = vi.fn()
-        .mockReturnValueOnce("No plugins installed.")
-        .mockReturnValueOnce("")
-        .mockReturnValueOnce("")
-        .mockReturnValueOnce("streamliner streamliner-local\nlossyrob-skills lossyrob-skills\n");
       const launch = vi.fn<TerminalLaunchExecutor>(
         () => ({ method: "powershell" as const, pid: 42 }),
       );
@@ -734,30 +734,23 @@ describe("terminal-launch", () => {
       await launchCopilotTerminal({
         cwd: "C:\\Users\\test\\workspace",
         title: "plugins",
+        command: "copilot '--resume=session-1'",
       }, {
         launchTerminal: launch,
         cooldownMs: 0,
-        pluginPreflight: { settingsPath, run },
+        pluginPreflight: { settingsPath, installedPluginsRoot },
       });
 
-      expect(run).toHaveBeenCalledWith("copilot", ["plugin", "list"]);
-      expect(run).toHaveBeenCalledWith("copilot", ["plugin", "install", "streamliner@streamliner-local"]);
-      expect(run).toHaveBeenCalledWith("copilot", ["plugin", "install", "lossyrob-skills@lossyrob-skills"]);
-      expect(launch).toHaveBeenCalledTimes(1);
+      expect(launch).toHaveBeenCalledWith(expect.objectContaining({
+        command: `copilot '--plugin-dir' '${streamlinerDir}' '--plugin-dir' '${skillsDir}' '--resume=session-1'`,
+      }));
     });
 
     it("can disable Copilot plugin preflight with environment", () => {
-      const run = vi.fn(() => {
-        throw new Error("should not run");
-      });
-
-      ensureCopilotPluginsAvailable({
+      expect(resolveCopilotPluginDirsForLaunch({
         requiredPlugins: ["streamliner@streamliner-local"],
-        run,
         env: { STREAMLINER_COPILOT_PLUGIN_PREFLIGHT: "false" },
-      });
-
-      expect(run).not.toHaveBeenCalled();
+      })).toEqual([]);
     });
   });
 
