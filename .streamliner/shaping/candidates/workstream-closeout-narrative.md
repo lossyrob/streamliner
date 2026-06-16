@@ -122,12 +122,12 @@ section breaks.
 
 ### Inputs to gather
 
-Pull the following before drafting:
-
 Scale the gather pass to the workstream's size. Small workstreams can skip
 cross-workstream signal and design-layer diffs when neither materially shaped
 the story; medium or large workstreams should gather enough evidence that the
 narrative can explain every major pivot without link-chasing.
+
+Pull the following before drafting:
 
 1. **Workstream artifacts**
    - `<workstream>/brief.md` (current state).
