@@ -488,9 +488,6 @@ workers own state they should only report.
   closure.
 - Keep the old retry checklist: dropped because shipped validation made it
   obsolete.
-- Closeout observations narrative log: distilled into `What changed`,
-  `Boundaries`, and the promotion candidates below; no per-bullet disposition
-  needed because the bullets were lessons, not closure items.
 
 ## Promotion candidates
 - Launch state belongs to the registry: target authority — design doc
