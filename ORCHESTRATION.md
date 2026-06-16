@@ -134,7 +134,7 @@ residual or deferral, disposition it in `Closeout observation dispositions`.
 Some workstreams legitimately have no separate closeout lane. If bounded closure
 items were resolved inline through the brief's `Decisions` section, graph status
 changes, or normal node closure, and no separate parking lane exists, this rule
-is vacuously satisfied; do not create an empty lane just to dispose it.
+is vacuously satisfied.
 
 The closeout observation lane is gate-owned and conditional. Do not create an
 empty closeout node just because the workstream is nearing closure. The closure
@@ -410,13 +410,11 @@ A workstream's final closure gate does not pass until:
 `Deferred with rationale` is a closed disposition. The gate blocks on missing
 or ambiguous dispositions, not on intentionally deferred work that names why it
 is not landing in this workstream.
-This includes lessons that need operator pickup, Streamliner doctrine backlog
-work, or another authority surface outside the closing workstream. A
-workstream-design lesson deferred until corroboration from additional
-workstreams is closed as long as the disposition names the corroborating signal.
-Multiple corroborating instances within one workstream can also satisfy that
-signal; those lessons may be promoted now, landed as an operator, project, or
-Streamliner habit, or deferred with a rationale that names the remaining signal.
+This includes lessons that need operator pickup, doctrine-backlog work, or
+another authority surface outside the closing workstream. A workstream-design
+lesson is closed whether it is promoted now or deferred, as long as the
+disposition names the corroborating signal — which may be future workstreams or
+several distinct instances within this one.
 
 These rules apply to *the closure gate*, not to every reconciliation pass. A
 mid-workstream reconciliation that does not change the closure picture does
@@ -439,11 +437,9 @@ scope — dropped because…".
 
 Use workstream-design lesson for pattern-shaped operating heuristics that may
 need to accumulate before they deserve a concrete doctrine, project, or builder
-habit artifact. The reconciliation note is the capture point. The disposition
-either links to where the audience now curates the lesson or explains what
-additional signal would justify promotion later. Corroboration may come from
-multiple future workstreams or from several distinct instances inside the same
-workstream.
+habit artifact. The reconciliation note is the capture point; the disposition
+either links to where the audience now curates the lesson or names what
+additional signal would justify promotion later.
 
 #### Distinct from any closeout narrative
 
