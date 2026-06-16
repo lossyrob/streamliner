@@ -217,15 +217,17 @@ anchors:
   was supposed to produce; the rest of the section should then tell what
   actually happened.
 - **Inflection points in context.** Surface the moments where the workstream's
-  shape changed inside the chronological arc. A short separate section naming
-  the top 2-3 pivots is the common case when it keeps the listener oriented;
-  roughly 200-400 words is normal for a three-pivot roll-up. Keep pivots inline
-  only for very small stories where a roll-up would repeat the same prose. If
-  compactness and self-containment conflict, self-containment wins. Inflection
-  moments can be single-turn pivots or recurring patterns that repeat the same
-  shape across multiple acts. A pattern that repeats three or more times within
-  one workstream is often the most consolidating shape to name explicitly, even
-  though the individual instances appear in the chronological arc.
+  shape changed inside the chronological arc.
+  - A short separate section naming the top 2-3 pivots is the common case when it
+    keeps the listener oriented (roughly 200-400 words for a three-pivot
+    roll-up). Keep pivots inline only for very small stories where a roll-up
+    would repeat the same prose. If compactness and self-containment conflict,
+    self-containment wins.
+  - Inflection moments can be single-turn pivots or recurring patterns that
+    repeat the same shape across multiple acts. A pattern that repeats three or
+    more times within one workstream is often the most consolidating shape to
+    name explicitly, even though the individual instances appear in the
+    chronological arc.
 - **Lessons in story form.** Boundary, contract, design-layer, attention,
   autonomy, validation, and gate-placement lessons should normally land in two
   short sections: what the work taught about the work, and what it taught about
@@ -247,16 +249,18 @@ narrative, preserve that distinction as a writing lens: make it clear when a
 moment was design insight versus work-design recovery, but do not add a
 duplicated classification section unless the specific story demands it.
 
-The narrative must not introduce new authoritative facts or lessons that the
-reconciliation note does not also reflect. Before the closure gate passes, update
-reconciliation first or route a new candidate-worthy observation through the
-reconciliation note's promotion-candidate process. After closure, do not reopen a
-settled reconciliation note just to capture small narrative framings; leave them
-clearly as narrative reflection and flag them for the next adjacent workstream's
-reconciliation or doctrine backlog if they need authority. Sharper or
-differently shaped expressions of lessons already reflected in reconciliation
-are not new lessons and do not need authority routing; only genuinely new facts
-or framings count against this rule.
+The **no-new-facts rule:** the narrative must not introduce new authoritative
+facts or lessons that the reconciliation note does not also reflect.
+
+- Before the closure gate passes, update reconciliation first, or route a new
+  candidate-worthy observation through its promotion-candidate process.
+- After closure, do not reopen a settled reconciliation note just to capture
+  small narrative framings; leave them as narrative reflection and flag them for
+  the next adjacent workstream's reconciliation or doctrine backlog if they need
+  authority.
+- Sharper or differently shaped expressions of lessons already reflected in
+  reconciliation are not new lessons and do not need authority routing; only
+  genuinely new facts or framings count against this rule.
 
 ### Voice and constraints
 
@@ -315,9 +319,7 @@ or framings count against this rule.
   alone. Lessons promote through the reconciliation note's candidates, not
   through narrative prose.
 - Do not introduce new authoritative facts, lessons, or promotion candidates
-  that exist only in the narrative. Reconcile or route them before closure; after
-  closure, keep newly surfaced framings explicitly non-authoritative and flag
-  them for the next appropriate reconciliation or doctrine backlog.
+  that exist only in the narrative (see the no-new-facts rule above).
 - Do not generate or attempt to attach audio. The MVP hands the markdown to
   the operator; audio generation is deferred.
 - Do not make the narrative a closure-gate dependency. Closure depends on
@@ -346,12 +348,9 @@ or framings count against this rule.
 - No linking is required. The narrative is operator-facing and produced on
   demand. If discoverability matters, a one-line pointer from the reconciliation
   note or brief is acceptable, but only as a pointer, not as a lesson change.
-- Report the path back to the operator.
 - If new candidate-worthy observations surfaced while writing (unusual but
-  possible), raise them as reconciliation-note promotion candidates before
-  closure. After closure, do not rewrite the note only for small narrative
-  framings; report them as non-authoritative reflections and route anything that
-  needs authority to the next adjacent workstream or doctrine backlog.
+  possible), handle them per the no-new-facts rule above.
+- Report the path back to the operator.
 
 ## Dependencies
 
