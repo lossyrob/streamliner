@@ -124,6 +124,13 @@ items that must be completed, deferred, promoted, or dropped before final
 closure. Do not ignore closure work solely because the heading predates this
 doctrine.
 
+Some workstreams use `Closeout Observations` as a running narrative log of
+field-report lessons rather than as a closure punch list. The closure-gate rule
+applies to actionable closure items, not to every narrative observation bullet.
+If a narrative observation became a lesson, reflect it in the reconciliation
+note's learning sections or promotion candidates; if it records an accepted
+residual or deferral, disposition it in `Closeout observation dispositions`.
+
 Some workstreams legitimately have no separate closeout lane. If bounded closure
 items were resolved inline through the brief's `Decisions` section, graph status
 changes, or normal node closure, and no separate parking lane exists, this rule
@@ -389,11 +396,11 @@ deepens as the work progresses.
 A workstream's final closure gate does not pass until:
 
 1. `reconciliation-note.md` exists for this workstream.
-2. Every `Closeout Observation` in the brief, or equivalent closure parking lane
-   such as a `Closeout Punch List` or coverage-routing report, has a disposition
-   (completed, deferred with rationale, promoted, or dropped). This is the
-   existing closeout observation lane rule, surfaced here because closure
-   depends on it. Record these in the reconciliation note's
+2. Every actionable `Closeout Observation` in the brief, or equivalent closure
+   parking lane such as a `Closeout Punch List` or coverage-routing report, has
+   a disposition (completed, deferred with rationale, promoted, or dropped).
+   This is the existing closeout observation lane rule, surfaced here because
+   closure depends on it. Record these in the reconciliation note's
    `Closeout observation dispositions` section when such a lane exists, rather
    than force-fitting closure-boundary facts into promotion candidates.
 3. Every promotion candidate in the reconciliation note has an explicit
@@ -407,6 +414,9 @@ This includes lessons that need operator pickup, Streamliner doctrine backlog
 work, or another authority surface outside the closing workstream. A
 workstream-design lesson deferred until corroboration from additional
 workstreams is closed as long as the disposition names the corroborating signal.
+Multiple corroborating instances within one workstream can also satisfy that
+signal; those lessons may be promoted now, landed as an operator, project, or
+Streamliner habit, or deferred with a rationale that names the remaining signal.
 
 These rules apply to *the closure gate*, not to every reconciliation pass. A
 mid-workstream reconciliation that does not change the closure picture does
@@ -431,7 +441,9 @@ Use workstream-design lesson for pattern-shaped operating heuristics that may
 need to accumulate before they deserve a concrete doctrine, project, or builder
 habit artifact. The reconciliation note is the capture point. The disposition
 either links to where the audience now curates the lesson or explains what
-additional signal would justify promotion later.
+additional signal would justify promotion later. Corroboration may come from
+multiple future workstreams or from several distinct instances inside the same
+workstream.
 
 #### Distinct from any closeout narrative
 

@@ -319,7 +319,10 @@ closeout checklist; treat those as closeout observations when they collect
 bounded closure items. These are not launched work yet. When closure work
 remains, materialize bounded items into a normal closeout batch node with a
 tracker issue; promote anything large, risky, or dependency-bearing into its
-own node, issue, candidate, or follow-on workstream.}
+own node, issue, candidate, or follow-on workstream. If this section is
+intentionally a running narrative log rather than a closure punch list, say so
+in the section and let reconciliation distill its lessons instead of forcing
+every bullet into closure-item vocabulary.}
 ```
 
 ### Guidelines
@@ -397,6 +400,8 @@ failure that future shaping should be able to prevent).}
 ## Closeout observation dispositions
 - {Closeout observation or equivalent closure-lane item}: {completed |
   deferred with rationale | promoted to <link> | dropped because…}
+- {Narrative-log summary, if applicable}: {reflected in reconciliation sections |
+  promoted as candidates below | accepted residual captured here}
 
 ## Promotion candidates
 - {Lesson}: target authority — {brief decision | node-spec guideline |
@@ -420,14 +425,21 @@ builder operating-notes file, a project-side workstream-design notes file, a
 Streamliner shaping candidate, or a Streamliner doctrine PR. Deferred with
 rationale is appropriate for single-instance observations whose value depends on
 corroborating workstreams; the disposition names what additional signal would
-justify promotion.
+justify promotion. A lesson with multiple corroborating instances inside the
+same workstream may be dispositioned as promote now or landed as an
+operator, project, or Streamliner habit without waiting for cross-workstream
+corroboration.
 
 Use **Closeout observation dispositions** for brief `Closeout Observations` and
 equivalent closure parking lanes such as closeout punch lists, coverage-routing
 reports, or named closeout checklists. These items are closure-boundary facts,
 not necessarily promotion candidates. List them separately when the closure gate
 needs a disposition audit; use `None` only when no such lane or equivalent item
-exists.
+exists. When `Closeout Observations` is a running narrative log, do not list
+every bullet. Instead, summarize how the log was distilled: observations that
+became lessons land in `What changed`, `Boundaries`, `Inspired vs. recovery`, or
+`Promotion candidates`; accepted residuals or accepted deferrals land in
+`Closeout observation dispositions`.
 
 `Deferred with rationale` is a closed disposition. An open candidate is one with
 no disposition, a vague disposition, or an unresolved target authority.
@@ -476,6 +488,9 @@ workers own state they should only report.
   closure.
 - Keep the old retry checklist: dropped because shipped validation made it
   obsolete.
+- Closeout observations narrative log: distilled into `What changed`,
+  `Boundaries`, and the promotion candidates below; no per-bullet disposition
+  needed because the bullets were lessons, not closure items.
 
 ## Promotion candidates
 - Launch state belongs to the registry: target authority — design doc
@@ -528,8 +543,8 @@ the original shaping did not make the dependency explicit enough.
     workstream.
 - Parallel promotion proofs should represent independent confidence states:
   target authority — workstream-design lesson (`builder`)
-  - Disposition: deferred with rationale; promote if the same heuristic appears
-    in two more multi-wave workstreams.
+  - Disposition: landed as builder operating habit; corroborated by three
+    independent plan-boundary challenges in this workstream.
 - Record skipped-by-absorption as a normal node outcome: target authority —
   node-spec guideline
   - Disposition: landed in the closeout node spec.
@@ -548,10 +563,11 @@ the original shaping did not make the dependency explicit enough.
   passes.** Open candidates indicate the gate is not actually ready to close.
   Deferred-with-rationale candidates are disposed; undisposed or vague
   candidates are still open.
-- **Every closeout observation also has a disposition before the closure gate
-  passes.** Put those in `Closeout observation dispositions`, not in `Promotion
-  candidates`, unless the observation also produced a lesson that needs a target
-  authority.
+- **Every actionable closeout item also has a disposition before the closure
+  gate passes.** Put those in `Closeout observation dispositions`, not in
+  `Promotion candidates`, unless the observation also produced a lesson that
+  needs a target authority. Narrative observation logs do not need per-bullet
+  dispositions when their lessons are distilled into the reconciliation note.
 - **Evidence may be equivalent.** Prefer standard worker `### Field report`
   comments, but when they are missing or non-standard, cite PR bodies, diffs,
   issue comments, tracker closeout notes, coverage reports, or committed
