@@ -271,19 +271,15 @@ facts or lessons that the reconciliation note does not also reflect.
   even when the workstream is wave-organized; use waves as the chronological
   backbone, but break sections on actual narrative turns such as the missed
   synthesizer, the rejected validation gate, or the boundary that changed.
-- **Self-contained for a cold listener.** The narrative must be understandable
-  to a podcast generator that cannot open GitHub, inspect design docs, or know
-  local shorthand. Every important component, workstream, design decision, and
-  acronym gets enough context to stand alone.
-- **Named examples, not ID soup.** Every inflection moment names specific
-  nodes, decisions, or moments, but opaque identifiers are secondary. Write
-  "the guardrail change that made Launcher mode reject `TARGET_DATABASE_URL`"
-  before optionally adding "(#492)".
-- **IDs are traceability, not prose.** GitHub issue numbers, PR numbers,
-  commit hashes, branch names, and design IDs may appear in parentheses or
-  footnote-like clauses, but they should not be the subject of the story. Avoid
-  paragraphs whose meaning depends on "D-100", "#478", or "PR #631" unless the
-  artifact has already been introduced in plain language.
+- **Self-contained for a cold listener.** Write so a podcast generator with no
+  GitHub access can follow. Introduce every component, workstream, design
+  decision, adjacent system, and acronym in plain language — and the role it
+  played — before relying on its name. Keep identifiers (issue/PR numbers,
+  commit hashes, branch names, design IDs) as optional parenthetical
+  traceability, never the subject of a sentence: "the guardrail change that made
+  Launcher reject `TARGET_DATABASE_URL`" before optionally adding "(#492)". A
+  draft that says "then #501 happened" has not yet become a narrative, and links
+  cannot carry meaning the listener's tools may not follow.
 - **Honest about recovery.** Do not narrate around the moments where the
   workstream needed steering. Those are the most valuable parts for the
   operator to hear.
@@ -293,9 +289,6 @@ facts or lessons that the reconciliation note does not also reflect.
 - **No status reporting.** The narrative is past tense and reflective. Avoid
   "next steps" language; open threads live in their own section and only
   point outward.
-- **Context before reference.** If the narrative mentions an adjacent
-  workstream, design doc, or external system, first explain what role it played
-  in this story. Do not assume the listener knows the portfolio.
 - **Orchestrator vocabulary is allowed when the work requires it.** Terms such
   as node, gate, candidate, reconciliation, or subagent may be unavoidable in
   orchestrator-heavy workstreams. Use them sparingly and make sure surrounding
@@ -327,10 +320,6 @@ facts or lessons that the reconciliation note does not also reflect.
 - Do not narrate active workstreams; the genre needs the work to be done.
 - Do not duplicate reconciliation-note taxonomy as a second worksheet. Use the
   narrative to make structured lessons memorable, not to re-file them.
-- Do not use GitHub or design identifiers as shorthand for meaning. A draft
-  that says "then #501 happened" has not yet become a narrative.
-- Do not depend on links as explanation. Links are useful for the operator, but
-  external podcast tools may not be able to access them.
 
 ### After producing the narrative
 
