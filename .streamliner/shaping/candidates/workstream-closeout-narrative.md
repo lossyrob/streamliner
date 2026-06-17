@@ -218,21 +218,21 @@ anchors:
   actually happened.
 - **Inflection points in context.** Surface the moments where the workstream's
   shape changed inside the chronological arc.
-  - A short separate section naming the top 2-3 pivots is the common case when it
-    keeps the listener oriented (roughly 200-400 words for a three-pivot
-    roll-up). Keep pivots inline only for very small stories where a roll-up
-    would repeat the same prose. If compactness and self-containment conflict,
-    self-containment wins.
+  - A short separate section naming the few pivots that actually mattered is the
+    common case when it keeps the listener oriented; keep it brief, and keep
+    pivots inline only for very small stories where a roll-up would repeat the
+    same prose. If compactness and self-containment conflict, self-containment
+    wins.
   - Inflection moments can be single-turn pivots or recurring patterns that
-    repeat the same shape across multiple acts. A pattern that repeats three or
-    more times within one workstream is often the most consolidating shape to
-    name explicitly, even though the individual instances appear in the
-    chronological arc.
+    repeat the same shape across multiple acts. A pattern that recurs several
+    times within one workstream is often the most consolidating shape to name
+    explicitly, even though the individual instances appear in the chronological
+    arc.
 - **Lessons in story form.** Boundary, contract, design-layer, attention,
-  autonomy, validation, and gate-placement lessons should normally land in two
-  short sections: what the work taught about the work, and what it taught about
-  how the work was run. Combine them only when the split would be artificial.
-  Some lessons legitimately appear in both sections from different angles; make
+  autonomy, validation, and gate-placement lessons usually separate into two
+  parts: what the work taught about the work, and what it taught about how the
+  work was run. Combine them only when the split would be artificial.
+  Some lessons legitimately appear in both parts from different angles; make
   the cross-reference in prose rather than forcing a single home.
   The reconciliation note remains the structured version; the narrative makes
   those lessons memorable.
@@ -295,12 +295,10 @@ facts or lessons that the reconciliation note does not also reflect.
   prose carries the meaning; self-containment is about avoiding opaque
   identifiers and link-dependent explanations, not banning all local vocabulary.
 - **Listenability target:** Long enough to be a real retelling, short enough to
-  listen to in a single sitting once the podcast generator chews it. As a
-  calibration anchor, roughly 1,500-4,000 words is normal depending on
-  workstream size, with substrate or policy workstreams often at the lower end
-  and product-feature workstreams often at the upper end. Coordination-heavy or
-  pivot-heavy workstreams trend longer regardless of category. Do not pad a
-  tight story to satisfy the range, and do not cut a large workstream so
+  listen to in a single sitting once the podcast generator chews it. Let the
+  story set the length: substrate or policy workstreams tend to run shorter,
+  while product-feature, coordination-heavy, or pivot-heavy ones run longer. Do
+  not pad a tight story to hit a target, and do not cut a large workstream so
   aggressively that its pivots stop making sense.
 
 ### What not to do
