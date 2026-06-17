@@ -7,6 +7,7 @@ import {
   isSafeCopilotResumeSessionId,
   type TerminalLaunchOptions,
   type TerminalLaunchResult,
+  launchCopilotTerminal,
   launchTerminal,
 } from "../server/terminal-launch";
 import { DEFAULT_COPILOT_CLI_ARGS } from "../server/session-launch-settings";
@@ -134,6 +135,7 @@ export function buildRelaunchParams(
 
   if (session.copilotSessionId) {
     options.command = buildCopilotResumeCommand(session.copilotSessionId, cliArgs);
+    options.prepareCopilotCli = true;
   }
 
   if (session.title) {
@@ -147,11 +149,11 @@ export function buildRelaunchParams(
   return options;
 }
 
-export function relaunchSession(
+export async function relaunchSession(
   store: SessionRegistryStore,
   sessionId: string,
   deps?: Partial<RelaunchDeps>,
-): RelaunchOutcome {
+): Promise<RelaunchOutcome> {
   const resolved = { ...defaultDeps(store), ...deps };
 
   const session = resolved.getSession(sessionId);
@@ -187,7 +189,12 @@ export function relaunchSession(
   }
 
   try {
-    const launchResult = resolved.launchTerminal(launchOptions);
+    const launchResult = session.copilotSessionId
+      ? await launchCopilotTerminal(launchOptions, {
+        launchTerminal: resolved.launchTerminal,
+        cooldownMs: deps?.launchTerminal ? 0 : undefined,
+      })
+      : resolved.launchTerminal(launchOptions);
 
     // The Copilot CLI hooks (`sessionStart`, etc.) do not fire on `--resume`,
     // so derived/observed status fields would otherwise stay stale until the

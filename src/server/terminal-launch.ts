@@ -1,15 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { spawn, execSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { quotePowerShellLiteral } from "../terminal-command";
+import { getApiLogger } from "./logger";
 export {
   buildCopilotResumeCommand,
   isSafeCopilotResumeSessionId,
   quotePowerShellLiteral,
 } from "../terminal-command";
+
+export const DEFAULT_COPILOT_TERMINAL_LAUNCH_COOLDOWN_MS = 15_000;
+const DEFAULT_COPILOT_REQUIRED_PLUGINS = ["streamliner@streamliner-local"] as const;
 
 export const TERMINAL_HOST_PREFERENCES = [
   "default",
@@ -41,6 +45,12 @@ export interface TerminalLaunchRequest {
   title?: string;
   /** Tab color as hex string e.g. "#FF0000" (optional; adapter support varies) */
   tabColor?: string;
+  /**
+   * Streamliner-owned Copilot CLI launch: seed launch-local Copilot startup
+   * environment so visible workers do not stop on terminal setup prompts and
+   * yolo/allow-all launches do not stop on folder trust prompts.
+   */
+  prepareCopilotCli?: boolean;
 }
 
 /** Options for launching a terminal */
@@ -54,8 +64,35 @@ export interface TerminalLaunchAdapter {
   launch(request: TerminalLaunchRequest): TerminalLaunchResult;
 }
 
+export type TerminalLaunchExecutor = (options: TerminalLaunchOptions) => TerminalLaunchResult;
+
+export interface CopilotTerminalLaunchQueueOptions {
+  /** Low-level terminal launcher to run inside the queue. Defaults to launchTerminal. */
+  launchTerminal?: TerminalLaunchExecutor;
+  /** Override the configured cooldown; mainly used by tests and dependency seams. */
+  cooldownMs?: number;
+  /** Override the delay primitive; mainly used by tests. */
+  delay?: (ms: number) => Promise<void>;
+  /** Override or disable Copilot plugin preflight; mainly used by tests. */
+  pluginPreflight?: false | CopilotPluginPreflightOptions;
+}
+
+export interface CopilotPluginPreflightOptions {
+  /** Copilot settings path. Defaults to ~/.copilot/settings.json. */
+  settingsPath?: string;
+  /** Copilot managed config path. Defaults to ~/.copilot/config.json. */
+  configPath?: string;
+  /** Installed plugin cache root. Defaults to ~/.copilot/installed-plugins. */
+  installedPluginsRoot?: string;
+  /** Required plugin sources. Defaults to enabledPlugins from settings, then Streamliner. */
+  requiredPlugins?: readonly string[];
+  /** Environment source for feature flags and required-plugin overrides. */
+  env?: NodeJS.ProcessEnv;
+}
+
 /** Cache for Windows Terminal availability check */
 let wtAvailabilityCache: boolean | null = null;
+let copilotTerminalLaunchTail: Promise<void> = Promise.resolve();
 
 /** Check if Windows Terminal (wt.exe) is available in PATH. Cached per server lifetime. */
 export function isWindowsTerminalAvailable(): boolean {
@@ -78,6 +115,197 @@ export function clearWindowsTerminalCache(): void {
   wtAvailabilityCache = null;
 }
 
+export function resetCopilotTerminalLaunchQueueForTest(): void {
+  copilotTerminalLaunchTail = Promise.resolve();
+}
+
+export function copilotTerminalLaunchCooldownMs(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const raw = env.STREAMLINER_COPILOT_TERMINAL_LAUNCH_COOLDOWN_MS;
+  if (raw === undefined || raw.trim() === "") {
+    return DEFAULT_COPILOT_TERMINAL_LAUNCH_COOLDOWN_MS;
+  }
+  const parsed = Number(raw);
+  if (Number.isFinite(parsed) && parsed >= 0) {
+    return parsed;
+  }
+  getApiLogger().withScope("terminal-launch").warn(
+    "invalid STREAMLINER_COPILOT_TERMINAL_LAUNCH_COOLDOWN_MS; using default",
+    { value: raw, defaultMs: DEFAULT_COPILOT_TERMINAL_LAUNCH_COOLDOWN_MS },
+  );
+  return DEFAULT_COPILOT_TERMINAL_LAUNCH_COOLDOWN_MS;
+}
+
+function defaultCopilotSettingsPath(): string {
+  return join(homedir(), ".copilot", "settings.json");
+}
+
+function defaultCopilotConfigPath(): string {
+  return join(homedir(), ".copilot", "config.json");
+}
+
+function defaultCopilotInstalledPluginsRoot(): string {
+  return join(homedir(), ".copilot", "installed-plugins");
+}
+
+function splitPluginSources(value: string): string[] {
+  return value
+    .split(/[,\n]/)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
+function envDisablesCopilotPluginPreflight(env: NodeJS.ProcessEnv): boolean {
+  const raw = env.STREAMLINER_COPILOT_PLUGIN_PREFLIGHT;
+  if (raw === undefined) {
+    return false;
+  }
+  return /^(?:0|false|off|no)$/i.test(raw.trim());
+}
+
+function configuredRequiredCopilotPlugins(
+  env: NodeJS.ProcessEnv,
+  settingsPath: string,
+): string[] {
+  const configured = env.STREAMLINER_COPILOT_REQUIRED_PLUGINS;
+  if (configured !== undefined && configured.trim().length > 0) {
+    return splitPluginSources(configured);
+  }
+
+  const enabled = enabledCopilotPluginsFromSettings(settingsPath);
+  return enabled.length > 0 ? enabled : [...DEFAULT_COPILOT_REQUIRED_PLUGINS];
+}
+
+function enabledCopilotPluginsFromSettings(settingsPath: string): string[] {
+  if (!existsSync(settingsPath)) {
+    return [];
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(settingsPath, "utf8")) as unknown;
+  } catch (error: unknown) {
+    getApiLogger().withScope("terminal-launch").warn(
+      "could not read Copilot enabled plugin settings; using default Streamliner plugin preflight",
+      { settingsPath, err: error },
+    );
+    return [];
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return [];
+  }
+  const enabledPlugins = (parsed as Record<string, unknown>).enabledPlugins;
+  if (!enabledPlugins || typeof enabledPlugins !== "object" || Array.isArray(enabledPlugins)) {
+    return [];
+  }
+  return Object.entries(enabledPlugins)
+    .filter(([, enabled]) => enabled === true)
+    .map(([source]) => source)
+    .filter((source) => source.trim().length > 0);
+}
+
+function readJsonFile(path: string): unknown | null {
+  if (!existsSync(path)) {
+    return null;
+  }
+  try {
+    return JSON.parse(readFileSync(path, "utf8")) as unknown;
+  } catch (error: unknown) {
+    getApiLogger().withScope("terminal-launch").warn(
+      "could not read Copilot plugin configuration JSON",
+      { path, err: error },
+    );
+    return null;
+  }
+}
+
+function configuredPluginCachePaths(configPath: string): Map<string, string> {
+  const parsed = readJsonFile(configPath);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return new Map();
+  }
+  const installedPlugins = (parsed as Record<string, unknown>).installedPlugins;
+  if (!Array.isArray(installedPlugins)) {
+    return new Map();
+  }
+  const cachePaths = new Map<string, string>();
+  for (const plugin of installedPlugins) {
+    if (!plugin || typeof plugin !== "object" || Array.isArray(plugin)) {
+      continue;
+    }
+    const record = plugin as Record<string, unknown>;
+    const name = typeof record.name === "string" ? record.name : "";
+    const marketplace = typeof record.marketplace === "string" ? record.marketplace : "";
+    const cachePath = typeof record.cache_path === "string" ? record.cache_path : "";
+    if (name && marketplace && cachePath) {
+      cachePaths.set(`${name}@${marketplace}`, cachePath);
+    }
+  }
+  return cachePaths;
+}
+
+function fallbackPluginCachePath(pluginSource: string, installedPluginsRoot: string): string | null {
+  const [pluginName, marketplace] = pluginSource.split("@", 2);
+  if (!pluginName || !marketplace) {
+    return null;
+  }
+  return join(installedPluginsRoot, marketplace, pluginName);
+}
+
+export function resolveCopilotPluginDirsForLaunch(
+  options: CopilotPluginPreflightOptions = {},
+): string[] {
+  const env = options.env ?? process.env;
+  if (envDisablesCopilotPluginPreflight(env)) {
+    return [];
+  }
+
+  const settingsPath = options.settingsPath ?? defaultCopilotSettingsPath();
+  const configPath = options.configPath ?? defaultCopilotConfigPath();
+  const installedPluginsRoot = options.installedPluginsRoot ?? defaultCopilotInstalledPluginsRoot();
+  const requiredPlugins = options.requiredPlugins
+    ? [...options.requiredPlugins]
+    : configuredRequiredCopilotPlugins(env, settingsPath);
+  if (requiredPlugins.length === 0) {
+    return [];
+  }
+
+  const configuredCachePaths = configuredPluginCachePaths(configPath);
+  const pluginDirs: string[] = [];
+  const missing: string[] = [];
+  for (const pluginSource of requiredPlugins) {
+    const configuredPath = configuredCachePaths.get(pluginSource);
+    const candidates = [
+      configuredPath,
+      fallbackPluginCachePath(pluginSource, installedPluginsRoot),
+    ].filter((candidate): candidate is string => Boolean(candidate));
+    const existingPath = candidates.find((candidate) => existsSync(candidate));
+    if (existingPath) {
+      pluginDirs.push(existingPath);
+    } else {
+      missing.push(`${pluginSource}${candidates.length ? ` (${candidates.join(" or ")})` : ""}`);
+    }
+  }
+
+  if (missing.length > 0) {
+    throw new Error(
+      [
+        "Copilot plugin preflight could not find required plugin directories.",
+        `Missing: ${missing.join(", ")}`,
+        "Close sessions that may be using the plugin cache, then repair with `copilot plugin install <plugin@marketplace>`.",
+      ].join(" "),
+    );
+  }
+
+  return [...new Set(pluginDirs)];
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolveDelay) => {
+    setTimeout(resolveDelay, ms);
+  });
+}
+
 function isPowerShellCoreAvailable(): boolean {
   try {
     execSync("where pwsh", { stdio: "ignore" });
@@ -97,7 +325,7 @@ function selectPowerShellExecutable(): string {
 export function normalizeTerminalLaunchRequest(
   options: TerminalLaunchOptions,
 ): TerminalLaunchRequest {
-  return {
+  const request: TerminalLaunchRequest = {
     cwd: options.cwd,
     command: options.command,
     env: options.env,
@@ -105,6 +333,10 @@ export function normalizeTerminalLaunchRequest(
     title: options.title,
     tabColor: options.tabColor,
   };
+  if (options.prepareCopilotCli !== undefined) {
+    request.prepareCopilotCli = options.prepareCopilotCli;
+  }
+  return request;
 }
 
 function escapeForWindowsTerminal(value: string): string {
@@ -161,6 +393,28 @@ export function buildSpawnEnv(
     env[pathKey] = filtered;
   }
   return env;
+}
+
+const COPILOT_ALL_ALLOW_FLAG_PATTERN = /(?:^|[\s'"`])--(?:yolo|allow-all)(?=$|[\s='"`])/;
+
+function copilotPromptBypassEnv(command: string | undefined): Record<string, string> {
+  const env: Record<string, string> = {
+    COPILOT_SETUP_TERMINAL: "false",
+  };
+  if (command && COPILOT_ALL_ALLOW_FLAG_PATTERN.test(command)) {
+    env.COPILOT_ALLOW_ALL = "true";
+  }
+  return env;
+}
+
+function buildTerminalSpawnEnv(request: TerminalLaunchRequest): NodeJS.ProcessEnv {
+  const extraEnv = request.prepareCopilotCli
+    ? {
+      ...(request.env ?? {}),
+      ...copilotPromptBypassEnv(request.command),
+    }
+    : request.env;
+  return buildSpawnEnv(extraEnv);
 }
 
 function terminalLaunchScriptRoot(): string {
@@ -220,6 +474,20 @@ export function buildCopilotInteractiveCommand(options: CopilotInteractiveComman
   return `${decodedPrompt}; ${commandParts.join(" ")}`;
 }
 
+function addCopilotPluginDirArgs(command: string | undefined, pluginDirs: readonly string[]): string | undefined {
+  if (!command || pluginDirs.length === 0) {
+    return command;
+  }
+  const pluginArgs = pluginDirs
+    .flatMap((pluginDir) => ["--plugin-dir", pluginDir])
+    .map(quotePowerShellLiteral)
+    .join(" ");
+  return command.replace(
+    /(^|;\s*)copilot(?=\s|$)/,
+    `$1copilot ${pluginArgs}`,
+  );
+}
+
 export class WindowsTerminalLaunchAdapter implements TerminalLaunchAdapter {
   readonly id = "windows";
 
@@ -260,7 +528,7 @@ export class WindowsTerminalLaunchAdapter implements TerminalLaunchAdapter {
     const child = spawn("wt.exe", args, {
       detached: true,
       stdio: "ignore",
-      env: buildSpawnEnv(request.env),
+      env: buildTerminalSpawnEnv(request),
     });
 
     child.unref();
@@ -285,7 +553,7 @@ export class WindowsTerminalLaunchAdapter implements TerminalLaunchAdapter {
     const child = spawn(executable, args, {
       detached: true,
       stdio: "ignore",
-      env: buildSpawnEnv(request.env),
+      env: buildTerminalSpawnEnv(request),
     });
 
     child.unref();
@@ -316,6 +584,65 @@ export function launchTerminal(
   adapter: TerminalLaunchAdapter = getDefaultTerminalLaunchAdapter(),
 ): TerminalLaunchResult {
   return adapter.launch(normalizeTerminalLaunchRequest(options));
+}
+
+/**
+ * Serialize Streamliner-owned visible Copilot CLI terminal starts so concurrent
+ * launches do not contend on Copilot's shared plugin/cache state.
+ */
+export async function launchCopilotTerminal(
+  options: TerminalLaunchOptions,
+  queueOptions: CopilotTerminalLaunchQueueOptions = {},
+): Promise<TerminalLaunchResult> {
+  const prior = copilotTerminalLaunchTail;
+  let releaseCurrent: () => void = () => {};
+  const current = new Promise<void>((resolveCurrent) => {
+    releaseCurrent = resolveCurrent;
+  });
+  copilotTerminalLaunchTail = prior.then(() => current, () => current);
+
+  await prior.catch(() => undefined);
+
+  const launch = queueOptions.launchTerminal ?? launchTerminal;
+  const cooldownMs = queueOptions.cooldownMs ?? copilotTerminalLaunchCooldownMs();
+  const wait = queueOptions.delay ?? delay;
+  let result: TerminalLaunchResult | undefined;
+  let launchError: unknown;
+  let delayError: unknown;
+
+  try {
+    let launchOptions = options;
+    if (queueOptions.pluginPreflight !== false) {
+      const pluginDirs = resolveCopilotPluginDirsForLaunch(queueOptions.pluginPreflight);
+      if (pluginDirs.length > 0 && options.command) {
+        launchOptions = {
+          ...options,
+          command: addCopilotPluginDirArgs(options.command, pluginDirs),
+        };
+      }
+    }
+    result = launch(launchOptions);
+  } catch (error: unknown) {
+    launchError = error;
+  }
+
+  try {
+    if (cooldownMs > 0) {
+      await wait(cooldownMs);
+    }
+  } catch (error: unknown) {
+    delayError = error;
+  } finally {
+    releaseCurrent();
+  }
+
+  if (launchError !== undefined) {
+    throw launchError;
+  }
+  if (delayError !== undefined) {
+    throw delayError;
+  }
+  return result!;
 }
 
 /**

@@ -620,6 +620,66 @@ describe("createStreamlinerApiApp", () => {
     expect(listResponse.body.workstreams).toEqual([]);
   });
 
+  it("streams workstream graph changes over SSE", async () => {
+    const rootDir = createRootDir();
+    const graphPath = join(rootDir, "graph.json");
+    writeFileSync(graphPath, JSON.stringify(buildGraph()), "utf8");
+    const api = createIsolatedApi(rootDir, {
+      workstreamEventDebounceMs: 5,
+      workstreamEventWatchIntervalMs: 20,
+    });
+    activeApps.push(api);
+
+    await request(api.app)
+      .post("/api/workstreams")
+      .send({ path: graphPath })
+      .expect(201);
+
+    const server = createServer(api.app);
+    const port = await listen(server);
+    const received = await new Promise<string>((resolve, reject) => {
+      let body = "";
+      let graphUpdated = false;
+      const timeout = setTimeout(() => reject(new Error("Timed out waiting for workstream SSE")), 5_000);
+      const req = httpGet(`http://127.0.0.1:${port}/api/workstreams/events`, (res) => {
+        res.setEncoding("utf8");
+        res.on("data", (chunk: string) => {
+          body += chunk;
+          if (body.includes("event: snapshot") && !graphUpdated) {
+            graphUpdated = true;
+            setTimeout(() => {
+              writeFileSync(
+                graphPath,
+                JSON.stringify(buildGraph({ title: "API Test Changed" })),
+                "utf8",
+              );
+            }, 25);
+          }
+          if (
+            body.includes("event: workstream.graph.changed") &&
+            body.includes('"projectKey":"streamliner"') &&
+            body.includes('"workstreamId":"api-test"') &&
+            body.includes('"lastModified"')
+          ) {
+            clearTimeout(timeout);
+            req.destroy();
+            resolve(body);
+          }
+        });
+      });
+      req.on("error", (error) => {
+        if (!body.includes("event: workstream.graph.changed")) {
+          clearTimeout(timeout);
+          reject(error);
+        }
+      });
+    });
+
+    expect(received).toContain("event: snapshot");
+    expect(received).toContain("event: workstream.graph.changed");
+    expect(received).toContain('"lastModified"');
+  });
+
   it("updates persisted workstream launch configuration", async () => {
     const rootDir = createRootDir();
     const graphPath = join(rootDir, "graph.json");
@@ -633,13 +693,16 @@ describe("createStreamlinerApiApp", () => {
     const updateResponse = await request(api.app)
       .patch("/api/workstreams/streamliner/api-test/configuration")
       .send({
+        presentation: {
+          shortName: "API",
+          color: "#FF8C0A",
+        },
         launchPolicy: { requiredTracker: "github-issue" },
         launchDefaults: {
           promptProfileId: "final-pr-only",
           terminal: {
             preferredTerminal: "windows-terminal",
             titleTemplate: "{githubIssue} - {nodeTitle}",
-            tabColor: "#FF8C0A",
           },
         },
       })
@@ -648,31 +711,45 @@ describe("createStreamlinerApiApp", () => {
     expect(updateResponse.body.workstream.launchPolicy).toEqual({
       requiredTracker: "github-issue",
     });
+    expect(updateResponse.body.workstream.presentation).toEqual({
+      shortName: "API",
+      color: "#ff8c0a",
+    });
     expect(updateResponse.body.workstream.launchDefaults).toEqual({
       promptProfileId: "final-pr-only",
       terminal: {
         preferredTerminal: "windows-terminal",
         titleTemplate: "{githubIssue} - {nodeTitle}",
-        tabColor: "#ff8c0a",
       },
     });
     const persisted = JSON.parse(readFileSync(graphPath, "utf8")) as Record<string, unknown>;
     expect(persisted.updatedAt).toBe("2026-05-07T18:10:33.000Z");
+    expect(persisted.presentation).toEqual({
+      shortName: "API",
+      color: "#ff8c0a",
+    });
     expect(persisted.launchPolicy).toEqual({ requiredTracker: "github-issue" });
     expect(persisted.launchDefaults).toEqual({
       promptProfileId: "final-pr-only",
       terminal: {
         preferredTerminal: "windows-terminal",
         titleTemplate: "{githubIssue} - {nodeTitle}",
-        tabColor: "#ff8c0a",
       },
     });
+    const listResponse = await request(api.app).get("/api/workstreams").expect(200);
+    expect(listResponse.body.workstreams[0]).toEqual(expect.objectContaining({
+      presentation: {
+        shortName: "API",
+        color: "#ff8c0a",
+      },
+    }));
 
     await request(api.app)
       .patch("/api/workstreams/streamliner/api-test/configuration")
-      .send({ launchPolicy: null, launchDefaults: null })
+      .send({ presentation: null, launchPolicy: null, launchDefaults: null })
       .expect(200);
     const cleared = JSON.parse(readFileSync(graphPath, "utf8")) as Record<string, unknown>;
+    expect(cleared.presentation).toBeUndefined();
     expect(cleared.launchPolicy).toBeUndefined();
     expect(cleared.launchDefaults).toBeUndefined();
   });
@@ -1503,6 +1580,30 @@ describe("createStreamlinerApiApp", () => {
     const response = await request(api.app)
       .post("/api/sessions/nonexistent/relaunch").set("Content-Type", "application/json").expect(404);
     expect(response.body.code).toBe("session_not_found");
+  });
+
+  it("relaunch endpoint forwards unexpected relaunch errors to the JSON error handler", async () => {
+    const rootDir = createRootDir();
+    const store = new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") });
+    const session = store.upsertSession({
+      title: "Broken relaunch target",
+      cwd: rootDir,
+      origin: { kind: "manual" },
+    });
+    const api = createStreamlinerApiApp({
+      store,
+      relaunchDeps: {
+        getSession: () => {
+          throw new Error("registry read failed");
+        },
+      },
+    });
+    activeApps.push(api);
+
+    await request(api.app)
+      .post(`/api/sessions/${session.id}/relaunch`)
+      .set("Content-Type", "application/json")
+      .expect(500, { error: "registry read failed" });
   });
 
   it("relaunch endpoint returns 400 for archived session", async () => {

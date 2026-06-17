@@ -170,6 +170,13 @@ function fakeHandoff(root: string, overrides: Partial<PawLaunchHandoff> = {}): P
         contextPackagePath,
         contextFilePath,
         contextModel: "test",
+        repoInstructions: {
+          repoId: "streamliner",
+          repoRoot: normalizePath(root),
+          path: ".github/copilot-instructions.md",
+          exists: false,
+          unavailableReason: "missing",
+        },
         sourceReferences: [],
         unavailableInputs: [],
       },
@@ -316,6 +323,7 @@ describe("launchPreparedNode", () => {
       preferredTerminal: "powershell",
       title: "Terminal Launch",
       tabColor: "#4891c8",
+      prepareCopilotCli: true,
       env: expect.objectContaining({
         STREAMLINER_LOG_LEVEL: "debug",
         STREAMLINER_LAUNCH_CLAIM_ID: result.launchClaim.launchClaimId,
@@ -1582,6 +1590,7 @@ describe("managed runtime session API routes", () => {
     const interrupts: string[] = [];
     const transfers: string[] = [];
     let launchedCommand: string | undefined;
+    let launchedPrepareCopilotCli: boolean | undefined;
     const runner: ManagedSdkRunner = {
       start: async (input) => ({
         registryId: input.registryId,
@@ -1613,6 +1622,7 @@ describe("managed runtime session API routes", () => {
       relaunchDeps: {
         launchTerminal: (options) => {
           launchedCommand = options.command;
+          launchedPrepareCopilotCli = options.prepareCopilotCli;
           registryStore.recordTrustedSessionSignal({
             event: "session.started",
             source: "copilot-cli-hook",
@@ -1662,6 +1672,7 @@ describe("managed runtime session API routes", () => {
     expect(interrupts).toEqual([]);
     expect(transfers).toEqual([record.id]);
     expect(launchedCommand).toContain("sdk-session-123");
+    expect(launchedPrepareCopilotCli).toBe(true);
     expect(takeoverResponse.body).toEqual(expect.objectContaining({
       outcome: expect.objectContaining({
         ok: true,

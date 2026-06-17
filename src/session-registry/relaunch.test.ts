@@ -177,6 +177,7 @@ describe("buildRelaunchParams", () => {
     const session = buildRecord({ copilotSessionId: "abc-123" });
     const params = buildRelaunchParams(session);
     expect(params.command).toBe("copilot '--resume=abc-123'");
+    expect(params.prepareCopilotCli).toBe(true);
   });
 
   it("includes Copilot CLI args before the resume argument", () => {
@@ -207,39 +208,39 @@ describe("buildRelaunchParams", () => {
 });
 
 describe("relaunchSession", () => {
-  it("returns session_not_found for missing session", () => {
+  it("returns session_not_found for missing session", async () => {
     const { store, deps } = fakeDeps({});
-    const result = relaunchSession(store, "nonexistent", deps);
+    const result = await relaunchSession(store, "nonexistent", deps);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.code).toBe("session_not_found");
     }
   });
 
-  it("returns validation error for archived session", () => {
+  it("returns validation error for archived session", async () => {
     const session = buildRecord({ lifecycleStatus: "archived" });
     const { store, deps } = fakeDeps({ [session.id]: session });
-    const result = relaunchSession(store, session.id, deps);
+    const result = await relaunchSession(store, session.id, deps);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.code).toBe("session_archived");
     }
   });
 
-  it("returns validation error for invalid Copilot session IDs", () => {
+  it("returns validation error for invalid Copilot session IDs", async () => {
     const session = buildRecord({ copilotSessionId: "it's-a-session" });
     const { store, deps } = fakeDeps({ [session.id]: session });
-    const result = relaunchSession(store, session.id, deps);
+    const result = await relaunchSession(store, session.id, deps);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.code).toBe("invalid_copilot_session_id");
     }
   });
 
-  it("returns success with launch details for valid session", () => {
+  it("returns success with launch details for valid session", async () => {
     const session = buildRecord({ copilotSessionId: "sess-42", color: "#00FF00" });
     const { store, deps } = fakeDeps({ [session.id]: session });
-    const result = relaunchSession(store, session.id, deps);
+    const result = await relaunchSession(store, session.id, deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.result.sessionId).toBe(session.id);
@@ -251,7 +252,7 @@ describe("relaunchSession", () => {
     }
   });
 
-  it("uses recorded launch args without loading configured defaults", () => {
+  it("uses recorded launch args without loading configured defaults", async () => {
     const session = buildRecord({
       copilotSessionId: "sess-42",
       origin: {
@@ -271,13 +272,13 @@ describe("relaunchSession", () => {
       },
     });
 
-    const result = relaunchSession(store, session.id, deps);
+    const result = await relaunchSession(store, session.id, deps);
 
     expect(result.ok).toBe(true);
     expect(launchCalls[0]?.command).toBe("copilot '--yolo' '--model=gpt-5.5' '--resume=sess-42'");
   });
 
-  it("honors recorded empty launch args without loading configured defaults", () => {
+  it("honors recorded empty launch args without loading configured defaults", async () => {
     const session = buildRecord({
       copilotSessionId: "sess-42",
       origin: {
@@ -297,33 +298,35 @@ describe("relaunchSession", () => {
       },
     });
 
-    const result = relaunchSession(store, session.id, deps);
+    const result = await relaunchSession(store, session.id, deps);
 
     expect(result.ok).toBe(true);
     expect(launchCalls[0]?.command).toBe("copilot '--resume=sess-42'");
   });
 
-  it("uses configured defaults when recorded launch args are missing", () => {
+  it("uses configured defaults when recorded launch args are missing", async () => {
     const session = buildRecord({
       copilotSessionId: "sess-42",
       origin: { kind: "launched", launchClaimId: "claim-1" },
     });
     const launchCalls: TerminalLaunchOptions[] = [];
     const { store, deps } = fakeDeps({ [session.id]: session }, {
-      loadDefaultCliArgs: () => ["--yolo"],
+      loadDefaultCliArgs: () => ["--yolo", "--prefer-version", "1.0.52-config-hardening-patch"],
       launchTerminal: (options) => {
         launchCalls.push(options);
         return fakeLaunchTerminal(options);
       },
     });
 
-    const result = relaunchSession(store, session.id, deps);
+    const result = await relaunchSession(store, session.id, deps);
 
     expect(result.ok).toBe(true);
-    expect(launchCalls[0]?.command).toBe("copilot '--yolo' '--resume=sess-42'");
+    expect(launchCalls[0]?.command).toBe(
+      "copilot '--yolo' '--prefer-version' '1.0.52-config-hardening-patch' '--resume=sess-42'",
+    );
   });
 
-  it("returns default_args_unavailable when defaults are required but cannot be loaded", () => {
+  it("returns default_args_unavailable when defaults are required but cannot be loaded", async () => {
     const session = buildRecord({
       copilotSessionId: "sess-42",
       origin: { kind: "launched", launchClaimId: "claim-1" },
@@ -334,7 +337,7 @@ describe("relaunchSession", () => {
       },
     });
 
-    const result = relaunchSession(store, session.id, deps);
+    const result = await relaunchSession(store, session.id, deps);
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -343,7 +346,7 @@ describe("relaunchSession", () => {
     }
   });
 
-  it("synthesizes a session.started signal on success when copilotSessionId exists", () => {
+  it("synthesizes a session.started signal on success when copilotSessionId exists", async () => {
     const session = buildRecord({
       copilotSessionId: "sess-42",
       repo: "lossyrob/streamliner",
@@ -351,7 +354,7 @@ describe("relaunchSession", () => {
       trustedExecutionKind: "copilot_cli",
     });
     const { store, recordedSignals, deps } = fakeDeps({ [session.id]: session });
-    relaunchSession(store, session.id, deps);
+    await relaunchSession(store, session.id, deps);
     expect(recordedSignals).toHaveLength(1);
     expect(recordedSignals[0]).toEqual(
       expect.objectContaining({
@@ -367,14 +370,14 @@ describe("relaunchSession", () => {
     );
   });
 
-  it("does not synthesize a signal when no copilotSessionId", () => {
+  it("does not synthesize a signal when no copilotSessionId", async () => {
     const session = buildRecord();
     const { store, recordedSignals, deps } = fakeDeps({ [session.id]: session });
-    relaunchSession(store, session.id, deps);
+    await relaunchSession(store, session.id, deps);
     expect(recordedSignals).toHaveLength(0);
   });
 
-  it("still returns success when synthesized-signal recording throws", () => {
+  it("still returns success when synthesized-signal recording throws", async () => {
     const session = buildRecord({ copilotSessionId: "sess-42" });
     const store = {
       getSession: (id: string) => (id === session.id ? session : null),
@@ -382,29 +385,29 @@ describe("relaunchSession", () => {
         throw new Error("registry locked");
       },
     } as unknown as SessionRegistryStore;
-    const result = relaunchSession(store, session.id, {
+    const result = await relaunchSession(store, session.id, {
       existsSync: () => true,
       launchTerminal: fakeLaunchTerminal,
     });
     expect(result.ok).toBe(true);
   });
 
-  it("reports copilotResumed as false when no copilotSessionId", () => {
+  it("reports copilotResumed as false when no copilotSessionId", async () => {
     const session = buildRecord();
     const { store, deps } = fakeDeps({ [session.id]: session });
-    const result = relaunchSession(store, session.id, deps);
+    const result = await relaunchSession(store, session.id, deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.result.copilotResumed).toBe(false);
     }
   });
 
-  it("reports colorApplied as false for powershell method", () => {
+  it("reports colorApplied as false for powershell method", async () => {
     const session = buildRecord({ color: "#FF0000" });
     const { store, deps } = fakeDeps({ [session.id]: session }, {
       launchTerminal: () => ({ method: "powershell", pid: 999 }),
     });
-    const result = relaunchSession(store, session.id, deps);
+    const result = await relaunchSession(store, session.id, deps);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.result.colorApplied).toBe(false);
@@ -412,12 +415,12 @@ describe("relaunchSession", () => {
     }
   });
 
-  it("returns spawn_failed when launchTerminal throws", () => {
+  it("returns spawn_failed when launchTerminal throws", async () => {
     const session = buildRecord();
     const { store, deps } = fakeDeps({ [session.id]: session }, {
       launchTerminal: () => { throw new Error("wt.exe not found"); },
     });
-    const result = relaunchSession(store, session.id, deps);
+    const result = await relaunchSession(store, session.id, deps);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.code).toBe("spawn_failed");
@@ -425,12 +428,12 @@ describe("relaunchSession", () => {
     }
   });
 
-  it("returns cwd_not_found when directory does not exist", () => {
+  it("returns cwd_not_found when directory does not exist", async () => {
     const session = buildRecord();
     const { store, deps } = fakeDeps({ [session.id]: session }, {
       existsSync: () => false,
     });
-    const result = relaunchSession(store, session.id, deps);
+    const result = await relaunchSession(store, session.id, deps);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.code).toBe("cwd_not_found");

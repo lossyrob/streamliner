@@ -34,6 +34,7 @@ export interface PawLaunchDialogDefaults {
   graphPath: string;
   terminalPreference: string;
   githubIssueNumber?: number | null;
+  githubIssueRepo?: string | null;
   githubIssueLabel?: string | null;
   githubIssueUrl?: string | null;
   terminal: PawLaunchTerminalConfiguration;
@@ -48,5 +49,6 @@ export interface PawLaunchDialogConfiguration {
   launchAfterInit: boolean;
   reviewCompanion: {
     kickoffPrompt: string;
+    usePawReviewAgent: boolean;
   } | null;
 }

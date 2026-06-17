@@ -456,6 +456,20 @@ function linkedPullRequestRefsFromTimeline(
     if (!isRecord(event)) {
       continue;
     }
+    // Only treat PRs as "linked" when GitHub emits a `connected` timeline
+    // event — that's the explicit "Linked pull requests" sidebar signal,
+    // populated either by a closing-keyword (closes/fixes/resolves #N) in
+    // the PR body or by a user manually linking the PR via the Development
+    // section.
+    //
+    // `cross-referenced` events fire for every passing mention (a PR body
+    // saying "see #358 for context", a comment referencing the issue,
+    // etc.) and were the source of false-positive PR linkages — e.g. an
+    // unrelated "design note" PR pushing a still-ready node into
+    // `waiting-for-review` because it happened to mention the issue.
+    if (event.event !== "connected") {
+      continue;
+    }
     const source = event.source;
     if (!isRecord(source)) {
       continue;

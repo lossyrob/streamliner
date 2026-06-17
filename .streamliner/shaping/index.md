@@ -34,6 +34,7 @@ Shaping notes are not project-level design authority. Durable product and archit
 | [Streamliner Performance and Robustness](candidates/streamliner-performance-robustness.md) | Seeded | Improve local API, multi-tab, backing-store, and background-worker responsiveness under real multi-workstream usage. |
 | [Session Attention Widget](candidates/session-attention-widget.md) | Seeded | Provide tray/notification and always-on-top overlay surfaces for actionable session attention states outside browser tabs. |
 | [Session Actor Control Plane](candidates/session-actor-control-plane.md) | Seeded | Treat selected terminal and SDK sessions as ephemeral, role-bound runtime actors with scoped autonomy, field reports, and local message/heartbeat semantics attached to work geometry. |
+| [Workstream Closeout Narrative](candidates/workstream-closeout-narrative.md) | Seeded | Generate a chronological closeout narrative per workstream that an orchestrator session can produce on demand; consumed via an external GenAI podcast generator for zoomed-out reflection. |
 
 ## Operating notes
 

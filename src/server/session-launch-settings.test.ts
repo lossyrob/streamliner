@@ -49,13 +49,33 @@ describe("session launch settings", () => {
     const root = createRoot();
     const path = join(root, "settings.json");
     try {
-      await writeSessionLaunchSettings({ defaultCliArgs: ["--model=gpt-5.5", "--yolo"] }, path);
+      await writeSessionLaunchSettings({
+        defaultCliArgs: ["--model=gpt-5.5", "--prefer-version", "1.0.52-config-hardening-patch", "--yolo"],
+      }, path);
       await expect(readSessionLaunchSettings(path)).resolves.toEqual({
-        defaultCliArgs: ["--model=gpt-5.5", "--yolo"],
+        defaultCliArgs: ["--model=gpt-5.5", "--prefer-version", "1.0.52-config-hardening-patch", "--yolo"],
       });
       expect(JSON.parse(readFileSync(path, "utf8"))).toMatchObject({
         version: 1,
-        defaultCliArgs: ["--model=gpt-5.5", "--yolo"],
+        defaultCliArgs: ["--model=gpt-5.5", "--prefer-version", "1.0.52-config-hardening-patch", "--yolo"],
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("normalizes legacy prefer-version equals form", async () => {
+    const root = createRoot();
+    const path = join(root, "settings.json");
+    try {
+      await writeSessionLaunchSettings({
+        defaultCliArgs: ["--prefer-version=1.0.52-config-hardening-patch", "--yolo"],
+      }, path);
+      await expect(readSessionLaunchSettings(path)).resolves.toEqual({
+        defaultCliArgs: ["--prefer-version", "1.0.52-config-hardening-patch", "--yolo"],
+      });
+      expect(JSON.parse(readFileSync(path, "utf8"))).toMatchObject({
+        defaultCliArgs: ["--prefer-version", "1.0.52-config-hardening-patch", "--yolo"],
       });
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -78,6 +98,8 @@ describe("session launch settings", () => {
     expect(() => normalizeDefaultCliArgs(["--resume"])).toThrow(/--resume/);
     expect(() => normalizeDefaultCliArgs(["kickoff prompt"])).toThrow(/whitespace|option tokens/);
     expect(() => normalizeDefaultCliArgs(["model-name"])).toThrow(/option tokens/);
+    expect(() => normalizeDefaultCliArgs(["--prefer-version"])).toThrow(/requires a value/);
+    expect(() => normalizeDefaultCliArgs(["--prefer-version", "--yolo"])).toThrow(/requires a value/);
   });
 
   it("surfaces malformed settings files", async () => {

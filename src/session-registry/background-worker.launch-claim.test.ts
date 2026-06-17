@@ -44,7 +44,7 @@ describe("SessionRegistryBackgroundWorker — launch-claim startup recovery", ()
     logger = new ApiLogger({ logDir: logRoot, mirrorConsole: false, purgeOnStart: false });
   });
 
-  it("runs reconcileOrphanReservedRows synchronously before the first poll cycle", async () => {
+  it("runs reconcileOrphanReservedRows during the first poll cycle", async () => {
     // Create an orphan launched row (no matching claim).
     registryStore.upsertSession({
       id: "orphan-startup",
@@ -73,10 +73,66 @@ describe("SessionRegistryBackgroundWorker — launch-claim startup recovery", ()
       logger: { info: () => {}, warn: () => {}, error: () => {} },
     });
     worker.start();
-    // Reconciliation runs synchronously inside start(). Stop the timers
-    // immediately so the test does not hang.
+    expect(registryStore.getSession("orphan-startup")).not.toBeNull();
+    await worker.runCycle();
     await worker.stop();
     expect(registryStore.getSession("orphan-startup")).toBeNull();
+  });
+
+  it("preserves orphan managed SDK rows after startup reconciliation marks them interrupted", async () => {
+    registryStore.upsertSession({
+      id: "orphan-managed-startup",
+      title: "managed orphan",
+      description: "",
+      cwd: "C:/x",
+      repo: null,
+      branch: null,
+      tags: [],
+      origin: { kind: "launched", launchClaimId: "missing-managed-claim" },
+      lifecycleStatus: "active",
+      graphBinding: {
+        workstreamId: "ws",
+        nodeId: "managed-node",
+        launchClaimId: "missing-managed-claim",
+      },
+      runtime: {
+        runtimeKind: "managed-sdk",
+        runtimeOwner: "streamliner-sdk",
+        lifecycleState: "running",
+        permissionProfile: "managed-autonomous",
+        launchClaimId: "missing-managed-claim",
+        launchNonce: "managed-nonce",
+        sdkSessionId: "sdk-session",
+        sdkWorkspacePath: "C:/x/.copilot/sdk",
+        sdkStateRoot: "C:/x/.copilot",
+        startedAt: "2026-05-02T01:00:00.000Z",
+        lastStateChangedAt: "2026-05-02T01:00:00.000Z",
+        progressEvents: [],
+        evidence: [],
+      },
+    });
+
+    const worker = new SessionRegistryBackgroundWorker(registryStore, {
+      sessionRoot: sessionStateRoot,
+      pollIntervalMs: 1_000_000,
+      initialDelayMs: 1_000_000,
+      claimStore,
+      claimLogger: logger,
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+      now: () => new Date("2026-05-10T04:00:00.000Z"),
+    });
+    worker.start();
+    await worker.runCycle();
+    await worker.stop();
+
+    const row = registryStore.getSession("orphan-managed-startup");
+    expect(row).not.toBeNull();
+    expect(row?.runtime?.lifecycleState).toBe("interrupted");
+    expect(row?.graphBinding).toEqual({
+      workstreamId: "ws",
+      nodeId: "managed-node",
+      launchClaimId: "missing-managed-claim",
+    });
   });
 
   it("does not run startup reconciliation when claimStore is omitted", async () => {
@@ -103,6 +159,7 @@ describe("SessionRegistryBackgroundWorker — launch-claim startup recovery", ()
       logger: { info: () => {}, warn: () => {}, error: () => {} },
     });
     worker.start();
+    await worker.runCycle();
     await worker.stop();
     expect(registryStore.getSession("orphan-noclaim")).not.toBeNull();
   });
@@ -117,6 +174,7 @@ describe("SessionRegistryBackgroundWorker — launch-claim startup recovery", ()
       logger: { info: () => {}, warn: () => {}, error: () => {} },
     });
     worker.start();
+    await worker.runCycle();
     // Create an orphan AFTER startup reconciliation has run.
     registryStore.upsertSession({
       id: "post-startup-orphan",

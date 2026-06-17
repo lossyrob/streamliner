@@ -1,20 +1,26 @@
 import type { ChildProcess } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import {
   TERMINAL_HOST_PREFERENCES,
+  DEFAULT_COPILOT_TERMINAL_LAUNCH_COOLDOWN_MS,
   buildSpawnEnv,
+  copilotTerminalLaunchCooldownMs,
   buildCopilotInteractiveCommand,
   buildCopilotResumeCommand,
   getDefaultTerminalLaunchAdapter,
+  resolveCopilotPluginDirsForLaunch,
   normalizeTerminalLaunchRequest,
   isWindowsTerminalAvailable,
   clearWindowsTerminalCache,
+  launchCopilotTerminal,
   launchTerminal,
   quotePowerShellLiteral,
+  resetCopilotTerminalLaunchQueueForTest,
   type TerminalLaunchAdapter,
+  type TerminalLaunchExecutor,
 } from "./terminal-launch";
 
 vi.mock("node:child_process", () => {
@@ -25,6 +31,7 @@ vi.mock("node:child_process", () => {
 
   return {
     spawn: vi.fn(() => mockChild),
+    execFileSync: vi.fn(),
     execSync: vi.fn(),
   };
 });
@@ -32,6 +39,14 @@ vi.mock("node:child_process", () => {
 const { spawn, execSync } = await import("node:child_process");
 const scriptRoots: string[] = [];
 let originalScriptRoot: string | undefined;
+let originalCopilotAllowAll: string | undefined;
+let originalCopilotSetupTerminal: string | undefined;
+
+async function flushMicrotasks(): Promise<void> {
+  for (let i = 0; i < 5; i++) {
+    await Promise.resolve();
+  }
+}
 
 function readLaunchScriptFromSpawnCall(callIndex = 0): { path: string; content: string } {
   const args = vi.mocked(spawn).mock.calls[callIndex]?.[1] as string[] | undefined;
@@ -51,10 +66,15 @@ function readLaunchScriptFromSpawnCall(callIndex = 0): { path: string; content: 
 describe("terminal-launch", () => {
   beforeEach(() => {
     originalScriptRoot = process.env.STREAMLINER_TERMINAL_LAUNCH_SCRIPT_ROOT;
+    originalCopilotAllowAll = process.env.COPILOT_ALLOW_ALL;
+    originalCopilotSetupTerminal = process.env.COPILOT_SETUP_TERMINAL;
     const scriptRoot = mkdtempSync(join(tmpdir(), "streamliner-terminal-launch-test-"));
     scriptRoots.push(scriptRoot);
     process.env.STREAMLINER_TERMINAL_LAUNCH_SCRIPT_ROOT = scriptRoot;
+    delete process.env.COPILOT_ALLOW_ALL;
+    delete process.env.COPILOT_SETUP_TERMINAL;
     clearWindowsTerminalCache();
+    resetCopilotTerminalLaunchQueueForTest();
     vi.clearAllMocks();
   });
 
@@ -64,9 +84,20 @@ describe("terminal-launch", () => {
     } else {
       process.env.STREAMLINER_TERMINAL_LAUNCH_SCRIPT_ROOT = originalScriptRoot;
     }
+    if (originalCopilotAllowAll === undefined) {
+      delete process.env.COPILOT_ALLOW_ALL;
+    } else {
+      process.env.COPILOT_ALLOW_ALL = originalCopilotAllowAll;
+    }
+    if (originalCopilotSetupTerminal === undefined) {
+      delete process.env.COPILOT_SETUP_TERMINAL;
+    } else {
+      process.env.COPILOT_SETUP_TERMINAL = originalCopilotSetupTerminal;
+    }
     for (const scriptRoot of scriptRoots.splice(0)) {
       rmSync(scriptRoot, { recursive: true, force: true });
     }
+    resetCopilotTerminalLaunchQueueForTest();
   });
 
   describe("isWindowsTerminalAvailable", () => {
@@ -269,6 +300,21 @@ describe("terminal-launch", () => {
       }));
     });
 
+    it("adds launch-local Copilot prompt bypass env before launching Streamliner Copilot workers", () => {
+      launchTerminal({
+        cwd: "C:\\Users\\test\\workspace",
+        command: "copilot --yolo",
+        prepareCopilotCli: true,
+      });
+
+      const callArgs = vi.mocked(spawn).mock.calls[0];
+      const spawnedEnv = (callArgs[2] as { env?: NodeJS.ProcessEnv }).env;
+      expect(spawnedEnv).toEqual(expect.objectContaining({
+        COPILOT_SETUP_TERMINAL: "false",
+        COPILOT_ALLOW_ALL: "true",
+      }));
+    });
+
     it("includes title, color, and command together", () => {
       launchTerminal({
         cwd: "C:\\Users\\test\\workspace",
@@ -398,6 +444,21 @@ describe("terminal-launch", () => {
       const script = readLaunchScriptFromSpawnCall();
       expect(script.content).toContain("Set-Location -LiteralPath 'C:\\Users\\test\\workspace'");
       expect(script.content).toContain("npm run dev");
+    });
+
+    it("does not force all-allow env when a prepared Copilot launch has no all-allow flag", () => {
+      launchTerminal({
+        cwd: "C:\\Users\\test\\workspace",
+        command: "copilot --resume=session-1",
+        prepareCopilotCli: true,
+      });
+
+      const callArgs = vi.mocked(spawn).mock.calls[0];
+      const spawnedEnv = (callArgs[2] as { env?: NodeJS.ProcessEnv }).env;
+      expect(spawnedEnv).toEqual(expect.objectContaining({
+        COPILOT_SETUP_TERMINAL: "false",
+      }));
+      expect(spawnedEnv?.COPILOT_ALLOW_ALL).toBeUndefined();
     });
 
     it("escapes single quotes in PowerShell path", () => {
@@ -540,6 +601,156 @@ describe("terminal-launch", () => {
 
     it("uses the Windows adapter as the current default adapter", () => {
       expect(getDefaultTerminalLaunchAdapter().id).toBe("windows");
+    });
+  });
+
+  describe("launchCopilotTerminal queue", () => {
+    it("uses a configurable cooldown with a safe default", () => {
+      expect(copilotTerminalLaunchCooldownMs({})).toBe(DEFAULT_COPILOT_TERMINAL_LAUNCH_COOLDOWN_MS);
+      expect(copilotTerminalLaunchCooldownMs({
+        STREAMLINER_COPILOT_TERMINAL_LAUNCH_COOLDOWN_MS: "2500",
+      })).toBe(2500);
+      expect(copilotTerminalLaunchCooldownMs({
+        STREAMLINER_COPILOT_TERMINAL_LAUNCH_COOLDOWN_MS: "0",
+      })).toBe(0);
+    });
+
+    it("serializes Copilot launches until the cooldown delay resolves", async () => {
+      const delayResolvers: Array<() => void> = [];
+      const events: string[] = [];
+      const launch = vi.fn<TerminalLaunchExecutor>((options) => {
+        events.push(`launch:${options.title}`);
+        return {
+          method: "powershell" as const,
+          pid: events.length,
+        };
+      });
+      const delay = vi.fn((ms: number) => {
+        events.push(`delay:${ms}`);
+        return new Promise<void>((resolve) => {
+          delayResolvers.push(resolve);
+        });
+      });
+
+      const first = launchCopilotTerminal({
+        cwd: "C:\\Users\\test\\workspace",
+        title: "first",
+      }, { launchTerminal: launch, cooldownMs: 25, delay, pluginPreflight: false });
+      const second = launchCopilotTerminal({
+        cwd: "C:\\Users\\test\\workspace",
+        title: "second",
+      }, { launchTerminal: launch, cooldownMs: 25, delay, pluginPreflight: false });
+
+      await flushMicrotasks();
+
+      expect(launch).toHaveBeenCalledTimes(1);
+      expect(events).toEqual(["launch:first", "delay:25"]);
+      delayResolvers[0]();
+      await first;
+      await flushMicrotasks();
+
+      expect(launch).toHaveBeenCalledTimes(2);
+      expect(events).toEqual(["launch:first", "delay:25", "launch:second", "delay:25"]);
+      delayResolvers[1]();
+      await second;
+    });
+
+    it("does not poison the queue after a launch failure", async () => {
+      const launch = vi.fn<TerminalLaunchExecutor>()
+        .mockImplementationOnce(() => {
+          throw new Error("spawn failed");
+        })
+        .mockImplementationOnce(() => ({ method: "powershell" as const, pid: 42 }));
+
+      const first = launchCopilotTerminal({
+        cwd: "C:\\Users\\test\\workspace",
+        title: "first",
+      }, { launchTerminal: launch, cooldownMs: 0, pluginPreflight: false });
+      const second = launchCopilotTerminal({
+        cwd: "C:\\Users\\test\\workspace",
+        title: "second",
+      }, { launchTerminal: launch, cooldownMs: 0, pluginPreflight: false });
+
+      await expect(first).rejects.toThrow("spawn failed");
+      await expect(second).resolves.toEqual({ method: "powershell", pid: 42 });
+      expect(launch).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not delay generic non-Copilot terminal launches", async () => {
+      const delayResolvers: Array<() => void> = [];
+      const queuedLaunch = vi.fn<TerminalLaunchExecutor>(
+        () => ({ method: "powershell" as const, pid: 1 }),
+      );
+      const queued = launchCopilotTerminal({
+        cwd: "C:\\Users\\test\\workspace",
+        title: "queued Copilot",
+      }, {
+        launchTerminal: queuedLaunch,
+        cooldownMs: 25,
+        pluginPreflight: false,
+        delay: () => new Promise<void>((resolve) => {
+          delayResolvers.push(resolve);
+        }),
+      });
+      await flushMicrotasks();
+
+      const directLaunch = vi.fn(() => ({ method: "powershell" as const, pid: 99 }));
+      const adapter: TerminalLaunchAdapter = {
+        id: "direct-adapter",
+        launch: directLaunch,
+      };
+
+      expect(launchTerminal({ cwd: "C:\\Users\\test\\workspace" }, adapter))
+        .toEqual({ method: "powershell", pid: 99 });
+      expect(directLaunch).toHaveBeenCalledTimes(1);
+
+      delayResolvers[0]();
+      await queued;
+    });
+
+    it("preflights enabled Copilot plugins by passing cache dirs to the launch command", async () => {
+      const root = mkdtempSync(join(tmpdir(), "streamliner-copilot-settings-"));
+      scriptRoots.push(root);
+      const settingsPath = join(root, "settings.json");
+      const installedPluginsRoot = join(root, "installed-plugins");
+      const streamlinerDir = join(installedPluginsRoot, "streamliner-local", "streamliner");
+      const skillsDir = join(installedPluginsRoot, "lossyrob-skills", "lossyrob-skills");
+      mkdirSync(streamlinerDir, { recursive: true });
+      mkdirSync(skillsDir, { recursive: true });
+      writeFileSync(
+        settingsPath,
+        JSON.stringify({
+          enabledPlugins: {
+            "streamliner@streamliner-local": true,
+            "lossyrob-skills@lossyrob-skills": true,
+          },
+        }),
+        "utf8",
+      );
+      const launch = vi.fn<TerminalLaunchExecutor>(
+        () => ({ method: "powershell" as const, pid: 42 }),
+      );
+
+      await launchCopilotTerminal({
+        cwd: "C:\\Users\\test\\workspace",
+        title: "plugins",
+        command: "copilot '--resume=session-1'",
+      }, {
+        launchTerminal: launch,
+        cooldownMs: 0,
+        pluginPreflight: { settingsPath, installedPluginsRoot },
+      });
+
+      expect(launch).toHaveBeenCalledWith(expect.objectContaining({
+        command: `copilot '--plugin-dir' '${streamlinerDir}' '--plugin-dir' '${skillsDir}' '--resume=session-1'`,
+      }));
+    });
+
+    it("can disable Copilot plugin preflight with environment", () => {
+      expect(resolveCopilotPluginDirsForLaunch({
+        requiredPlugins: ["streamliner@streamliner-local"],
+        env: { STREAMLINER_COPILOT_PLUGIN_PREFLIGHT: "false" },
+      })).toEqual([]);
     });
   });
 

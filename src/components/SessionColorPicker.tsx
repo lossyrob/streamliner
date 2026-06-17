@@ -28,12 +28,19 @@ function normalizeColor(value: string): string {
 interface TerminalColorQuickPickerProps {
   value: string;
   onChange: (color: string) => void;
+  ariaLabel?: string;
+  buttonLabelPrefix?: string;
 }
 
-export function TerminalColorQuickPicker({ value, onChange }: TerminalColorQuickPickerProps) {
+export function TerminalColorQuickPicker({
+  value,
+  onChange,
+  ariaLabel = "Terminal color quick picks",
+  buttonLabelPrefix = "Use terminal color",
+}: TerminalColorQuickPickerProps) {
   const normalizedColor = normalizeColor(value);
   return (
-    <div className="sl-terminal-color-picker" aria-label="Terminal color quick picks">
+    <div className="sl-terminal-color-picker" aria-label={ariaLabel}>
       <div className="sl-terminal-color-grid">
         {TERMINAL_COLOR_QUICK_PICKS.map((color) => (
           <button
@@ -43,7 +50,7 @@ export function TerminalColorQuickPicker({ value, onChange }: TerminalColorQuick
               normalizedColor === color ? " selected" : ""
             }`}
             style={{ backgroundColor: color }}
-            aria-label={`Use terminal color ${color}`}
+            aria-label={`${buttonLabelPrefix} ${color}`}
             aria-pressed={normalizedColor === color}
             onClick={() => onChange(color)}
           />

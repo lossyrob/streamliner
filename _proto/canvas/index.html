@@ -13,7 +13,8 @@
     "react-dom/client":  "https://esm.sh/react-dom@18.3.1/client",
     "@xyflow/react":     "https://esm.sh/@xyflow/react@12.3.5?deps=react@18.3.1,react-dom@18.3.1",
     "elkjs":             "https://esm.sh/elkjs@0.10.0/lib/elk.bundled.js",
-    "htm":               "https://esm.sh/htm@3.1.1"
+    "htm":               "https://esm.sh/htm@3.1.1",
+    "react-markdown":    "https://esm.sh/react-markdown@10.1.0?deps=react@18.3.1,react-dom@18.3.1"
   }
 }
 </script>
@@ -287,6 +288,7 @@
 
   /* Wave node (vertex card) */
   .wave-node {
+    position: relative;
     width: 100%; height: 100%;
     padding: 10px 12px;
     box-sizing: border-box;
@@ -301,6 +303,9 @@
     overflow: hidden;
   }
   .wave-node:hover { border-color: rgba(29,110,220,0.40); box-shadow: var(--shadow-card); }
+  .wave-node.has-gate { padding-right: 22px; }
+  .wave-node.has-progress .wave-summary { -webkit-line-clamp: 2; }
+  .wave-node .react-flow__handle { z-index: 8; }
   .wave-node.selected {
     border-color: var(--accent);
     box-shadow: 0 0 0 3px rgba(29,110,220,0.12), var(--shadow-card);
@@ -352,6 +357,10 @@
   .wave-node.filter-neighbor, .ext-node.filter-neighbor { opacity: 0.50; }
   .wave-node.filter-out,      .ext-node.filter-out      { opacity: 0.18; filter: grayscale(0.5); }
   .wave-node.filter-focus     { /* full visibility + subtle accent */ }
+  /* Completed-wave dimming — independent of the top-bar focus filter so users
+     can keep done waves on-canvas (for edge endpoints / context) without
+     letting them dominate the zoomed-out view. */
+  .wave-node.completed-dim { opacity: 0.32; filter: grayscale(0.45); }
   /* Edges under filter */
   .react-flow__edge.filter-focus-edge path     { opacity: 1; stroke-width: 3 !important; }
   .react-flow__edge.filter-connector-edge path { opacity: 0.50; }
@@ -433,6 +442,120 @@
   }
   .wave-node .ec.in  { color: var(--yellow); background: rgba(176,120,8,0.12); }
   .wave-node .ec.out { color: var(--green);  background: rgba(18,148,95,0.12); }
+  .wave-progress {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 7px;
+    border: 1px solid rgba(20,60,130,0.08);
+    border-radius: 12px;
+    background: rgba(255,255,255,0.58);
+  }
+  .wave-progress .task-beads {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+  .task-dot {
+    width: 10px;
+    height: 10px;
+    flex: 0 0 auto;
+    border-radius: 999px;
+    border: 1.5px solid rgba(20,60,130,0.16);
+    background: rgba(255,255,255,0.86);
+  }
+  .task-dot.done {
+    background: var(--green);
+    border-color: rgba(18,148,95,0.9);
+    box-shadow: 0 0 0 2px rgba(18,148,95,0.10);
+  }
+  .task-dot.in-progress {
+    border-color: rgba(29,110,220,0.82);
+    background: conic-gradient(var(--blue) 0 62%, rgba(29,110,220,0.16) 62% 100%);
+    box-shadow: 0 0 0 2px rgba(29,110,220,0.10);
+  }
+  .task-dot.ready {
+    border-color: rgba(176,120,8,0.88);
+    background: radial-gradient(circle, rgba(176,120,8,0.72) 0 35%, rgba(255,255,255,0.95) 38% 100%);
+    box-shadow: 0 0 0 2px rgba(176,120,8,0.10);
+  }
+  .task-dot.not-started {
+    border-style: dashed;
+    border-color: rgba(141,155,181,0.70);
+    background: rgba(255,255,255,0.70);
+  }
+  .task-dot.blocked {
+    border-color: rgba(200,50,50,0.82);
+    background:
+      linear-gradient(135deg, transparent 40%, rgba(200,50,50,0.95) 40% 60%, transparent 60%),
+      rgba(200,50,50,0.12);
+    box-shadow: 0 0 0 2px rgba(200,50,50,0.08);
+  }
+  .gate-marker {
+    width: 12px;
+    height: 12px;
+    flex: 0 0 auto;
+    border-radius: 3px;
+    transform: rotate(45deg);
+    border: 1.5px solid rgba(124,58,237,0.75);
+    background: rgba(124,58,237,0.10);
+    box-shadow: 0 0 0 2px rgba(124,58,237,0.07);
+  }
+  .gate-marker.open {
+    border-color: rgba(176,120,8,0.82);
+    background: rgba(176,120,8,0.12);
+    box-shadow: 0 0 0 2px rgba(176,120,8,0.08);
+  }
+  .gate-marker.closed {
+    border-color: rgba(18,148,95,0.92);
+    background: var(--green);
+    box-shadow: 0 0 0 2px rgba(18,148,95,0.12);
+  }
+  .gate-marker.blocked {
+    border-color: rgba(200,50,50,0.88);
+    background: rgba(200,50,50,0.18);
+    box-shadow: 0 0 0 2px rgba(200,50,50,0.08);
+  }
+  .gate-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--muted);
+    font-size: 0.58rem;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .no-gate-status {
+    color: var(--faint);
+    font-size: 0.58rem;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .gate-cap {
+    position: absolute;
+    top: -1px;
+    right: 0;
+    bottom: -1px;
+    width: 10px;
+    border-radius: 0 16px 16px 0;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .gate-cap.open {
+    background: linear-gradient(180deg, rgba(176,120,8,0.14), rgba(176,120,8,0.06));
+    border-left: 1px solid rgba(176,120,8,0.32);
+  }
+  .gate-cap.closed {
+    background: linear-gradient(180deg, rgba(18,148,95,0.32), rgba(18,148,95,0.18));
+    border-left: 1px solid rgba(18,148,95,0.55);
+  }
+  .gate-cap.blocked {
+    background: linear-gradient(180deg, rgba(200,50,50,0.24), rgba(200,50,50,0.10));
+    border-left: 1px solid rgba(200,50,50,0.42);
+  }
 
   /* External dependency node */
   .ext-node {
@@ -518,6 +641,42 @@
     border-style: solid;
     opacity: 0.85;
   }
+  /* TB-C marker — the user has an open terminal window for this workstream.
+     A dark "terminal title bar" fills the top edge of the container with a
+     small "● terminal" caption on the right; the workstream label chip
+     floats above the bar on the left so it stays readable. Height is tuned
+     to sit flush with the label chip's bottom edge (no black peeking out
+     under the label). */
+  .ws-group-node .ws-term-bar {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 20px;
+    background: #111317;
+    border-radius: 16px 16px 0 0;
+    display: flex; align-items: center;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .ws-group-node .ws-term-bar .caption {
+    margin-left: auto;
+    margin-right: 10px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: #9fdcff;
+    font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+    font-size: 0.58rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+  }
+  .ws-group-node .ws-term-bar .caption .live {
+    width: 6px; height: 6px;
+    background: #5fdc7a;
+    border-radius: 999px;
+    box-shadow: 0 0 5px rgba(95,220,122,0.65);
+  }
+  /* Label chip needs to render above the term bar. */
+  .ws-group-node .ws-group-label { z-index: 1; }
   /* React Flow renders custom nodes inside .react-flow__node; ensure our group
      fills it and sits behind interactive nodes. */
   .react-flow__node-workstreamGroup {
@@ -568,13 +727,286 @@
   }
   .controls-panel .group { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
   .controls-panel .save-status code { color: var(--accent); }
+
+  /* Inspector "View Brief" / "View Candidate" button. */
+  aside.inspector .doc-open-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0.6rem 0 0.2rem;
+    padding: 5px 11px;
+    font-size: 0.74rem;
+    font-weight: 600;
+    color: var(--accent);
+    background: rgba(29,110,220,0.06);
+    border: 1px solid rgba(29,110,220,0.22);
+    border-radius: 7px;
+    cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease;
+  }
+  aside.inspector .doc-open-btn:hover {
+    background: rgba(29,110,220,0.12);
+    border-color: rgba(29,110,220,0.45);
+  }
+
+  /* Workstream color picker — small swatch button that opens a popover with
+     the full 16-swatch palette and an Auto reset. Mirrors the SessionsPage
+     "sl-sheet-color-menu" pattern: trigger looks like a colored chip, popover
+     anchors below it and auto-closes on selection or outside click. */
+  aside.inspector .ws-color-menu {
+    position: relative;
+    display: inline-block;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  aside.inspector .ws-color-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px 4px 5px;
+    background: rgba(255,255,255,0.78);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.7rem;
+    color: var(--muted);
+    transition: border-color 120ms ease, box-shadow 120ms ease;
+  }
+  aside.inspector .ws-color-trigger:hover,
+  aside.inspector .ws-color-trigger[aria-expanded="true"] {
+    border-color: rgba(29,110,220,0.45);
+    box-shadow: 0 0 0 3px rgba(29,110,220,0.10);
+  }
+  aside.inspector .ws-color-trigger-swatch {
+    width: 18px; height: 18px;
+    border-radius: 5px;
+    border: 1px solid rgba(20,60,130,0.18);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.34);
+    display: inline-block;
+    background-image:
+      linear-gradient(45deg, rgba(20,60,130,0.10) 25%, transparent 25%, transparent 75%, rgba(20,60,130,0.10) 75%),
+      linear-gradient(45deg, rgba(20,60,130,0.10) 25%, transparent 25%, transparent 75%, rgba(20,60,130,0.10) 75%);
+    background-size: 10px 10px;
+    background-position: 0 0, 5px 5px;
+  }
+  aside.inspector .ws-color-trigger-caret { font-size: 0.6rem; opacity: 0.7; }
+  aside.inspector .ws-color-popover {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    z-index: 50;
+    padding: 8px 10px;
+    background: rgba(255,255,255,0.98);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    box-shadow: 0 12px 32px rgba(18,35,70,0.18), 0 4px 10px rgba(18,35,70,0.06);
+    min-width: 168px;
+  }
+  aside.inspector .ws-color-popover .grid {
+    display: grid;
+    grid-template-columns: repeat(8, 18px);
+    gap: 4px;
+  }
+  aside.inspector .ws-color-popover .swatch {
+    width: 18px; height: 18px;
+    border-radius: 5px;
+    border: 1px solid rgba(20,60,130,0.18);
+    cursor: pointer;
+    padding: 0;
+    transition: transform 90ms ease, box-shadow 90ms ease;
+  }
+  aside.inspector .ws-color-popover .swatch:hover {
+    transform: scale(1.10);
+    box-shadow: 0 2px 6px rgba(31,58,105,0.18);
+  }
+  aside.inspector .ws-color-popover .swatch.selected {
+    box-shadow: 0 0 0 2px var(--text), 0 0 0 4px rgba(255,255,255,0.92);
+  }
+  aside.inspector .ws-color-popover .actions {
+    display: flex; gap: 6px; margin-top: 8px; align-items: center;
+    padding-top: 6px; border-top: 1px solid var(--border);
+  }
+  aside.inspector .ws-color-popover .reset {
+    font-size: 0.66rem;
+    color: var(--muted);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 2px 8px;
+    cursor: pointer;
+  }
+  aside.inspector .ws-color-popover .reset:hover {
+    color: var(--text);
+    border-color: var(--border-strong);
+  }
+  aside.inspector .ws-color-popover .reset[disabled] {
+    opacity: 0.4; cursor: default;
+  }
+  aside.inspector .ws-color-popover .current {
+    margin-left: auto;
+    font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+    font-size: 0.62rem;
+    color: var(--faint);
+  }
+  /* "Terminal window open" toggle — pairs with the color picker in the
+     inspector. Compact pill button; flips between off (muted) and on
+     (dark, matching the terminal-titlebar marker). */
+  aside.inspector .ws-term-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 6px;
+    padding: 4px 9px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--muted);
+    background: rgba(255,255,255,0.78);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    vertical-align: middle;
+    transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+  }
+  aside.inspector .ws-term-toggle:hover {
+    border-color: rgba(20,60,130,0.32);
+    background: rgba(255,255,255,0.95);
+  }
+  aside.inspector .ws-term-toggle[aria-pressed="true"] {
+    color: #f3f5fa;
+    background: #111317;
+    border-color: #111317;
+  }
+  aside.inspector .ws-term-toggle .live {
+    width: 7px; height: 7px;
+    border-radius: 999px;
+    background: rgba(20,60,130,0.18);
+  }
+  aside.inspector .ws-term-toggle[aria-pressed="true"] .live {
+    background: #5fdc7a;
+    box-shadow: 0 0 5px rgba(95,220,122,0.65);
+  }
+  /* Floating Brief/Candidate viewer — non-modal so the canvas stays
+     interactive while it's open. Position: fixed top-right, scrollable
+     body, selectable text. Esc / × closes. */
+  .doc-pane {
+    position: fixed;
+    top: 96px;
+    right: 28px;
+    width: min(720px, calc(100vw - 56px));
+    max-height: calc(100vh - 132px);
+    display: flex;
+    flex-direction: column;
+    background: rgba(255, 255, 255, 0.98);
+    border: 1px solid var(--border-strong);
+    border-radius: 14px;
+    box-shadow: 0 24px 60px rgba(18, 35, 70, 0.18), 0 6px 18px rgba(18, 35, 70, 0.08);
+    backdrop-filter: blur(10px);
+    z-index: 1000;
+    overflow: hidden;
+  }
+  .doc-pane-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px 10px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.92);
+  }
+  .doc-pane-header .title { font-size: 0.86rem; font-weight: 700; color: var(--text); flex: 1; min-width: 0; }
+  .doc-pane-header .title .kind {
+    margin-left: 8px;
+    padding: 1px 7px;
+    font-size: 0.6rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--accent);
+    background: rgba(29,110,220,0.10);
+    border-radius: 999px;
+    vertical-align: middle;
+  }
+  .doc-pane-header .path {
+    font-size: 0.66rem;
+    color: var(--faint);
+    font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 360px;
+  }
+  .doc-pane-header .close-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    width: 28px; height: 28px;
+    border-radius: 7px;
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: background 120ms ease, color 120ms ease;
+  }
+  .doc-pane-header .close-btn:hover { background: rgba(20,60,130,0.06); color: var(--text); }
+  .doc-pane-body {
+    padding: 18px 22px 24px;
+    overflow-y: auto;
+    overflow-x: auto;
+    user-select: text;
+    color: var(--text);
+    line-height: 1.55;
+    font-size: 0.84rem;
+  }
+  .doc-pane-body.loading,
+  .doc-pane-body.error  { color: var(--muted); font-style: italic; }
+  .doc-pane-body.error  { color: var(--red); font-style: normal; }
+  .doc-pane-body h1, .doc-pane-body h2, .doc-pane-body h3,
+  .doc-pane-body h4, .doc-pane-body h5, .doc-pane-body h6 {
+    color: var(--text);
+    margin: 1.1em 0 0.4em;
+    line-height: 1.25;
+  }
+  .doc-pane-body h1 { font-size: 1.35rem; }
+  .doc-pane-body h2 { font-size: 1.15rem; border-bottom: 1px solid var(--border); padding-bottom: 0.25em; }
+  .doc-pane-body h3 { font-size: 1.00rem; }
+  .doc-pane-body h4 { font-size: 0.90rem; color: var(--muted); }
+  .doc-pane-body p  { margin: 0.5em 0; }
+  .doc-pane-body ul, .doc-pane-body ol { margin: 0.4em 0 0.8em; padding-left: 1.5em; }
+  .doc-pane-body li { margin: 0.18em 0; }
+  .doc-pane-body code {
+    font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+    font-size: 0.80rem;
+    background: rgba(20,60,130,0.06);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+  .doc-pane-body pre {
+    background: rgba(20,60,130,0.06);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    overflow-x: auto;
+    font-size: 0.78rem;
+  }
+  .doc-pane-body pre code { background: transparent; padding: 0; }
+  .doc-pane-body blockquote {
+    border-left: 3px solid var(--border-strong);
+    color: var(--muted);
+    margin: 0.6em 0;
+    padding: 0.2em 0.9em;
+    background: rgba(20,60,130,0.03);
+  }
+  .doc-pane-body a { color: var(--accent); text-decoration: underline; text-decoration-color: rgba(29,110,220,0.4); }
+  .doc-pane-body table { border-collapse: collapse; margin: 0.6em 0; }
+  .doc-pane-body th, .doc-pane-body td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
+  .doc-pane-body th { background: rgba(20,60,130,0.04); font-weight: 700; }
+  .doc-pane-body hr { border: none; border-top: 1px solid var(--border); margin: 1.2em 0; }
 </style>
 </head>
 <body>
 <div id="root"></div>
 
 <script type="module">
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   ReactFlow,
@@ -593,6 +1025,7 @@ import {
 } from '@xyflow/react';
 import ELK from 'elkjs';
 import htm from 'htm';
+import ReactMarkdown from 'react-markdown';
 
 const html = htm.bind(React.createElement);
 
@@ -603,7 +1036,7 @@ let PORTFOLIO = null;
 
 // ---------- Layout constants ----------
 const WAVE_W = 260;
-const WAVE_H = 130;
+const WAVE_H = 168;
 const EXT_W = 200;
 const EXT_H = 76;
 
@@ -625,9 +1058,28 @@ function buildIndexes() {
 }
 
 // ---------- Workstream colors (one hue per workstream) ----------
-// Tuned for a light background — moderately saturated, lowered lightness so
-// the workstream hue reads clearly against the cream/white canvas surface.
+// Each workstream has a derived theme: an accent (text/border), a soft
+// container border, a chip background, and a tint for wave card backgrounds.
+// Themes are derived from one of two sources, in order:
+//   1. WS_COLOR_OVERRIDES[wsId] — explicit picker assignment (server-backed).
+//   2. Auto-hue spread — fallback that keeps every workstream visually
+//      distinct on first load before any colors are assigned.
+// Tone tuning mirrors _proto/canvas/color-themes.html: bright pickers like
+// yellow / lime / neon pink are pulled into a comfortable lightness band so
+// they don't blast the eyes against the light canvas.
+const TERMINAL_COLOR_PALETTE = [
+  '#e8114b', '#4891c8', '#41b878', '#ff8c0a',
+  '#c71585', '#2897f0', '#2fcf32', '#ffff00',
+  '#9825d7', '#6754d7', '#00ff00', '#d6bd93',
+  '#f000e8', '#19d9df', '#82c6df', '#b8b8b8',
+];
+// Theme tint strength as alpha for wave-card backgrounds (matches the
+// prototype's 11% slider value). Container fill stays transparent.
+const WS_TINT_ALPHA = 0.11;
 let WS_HUE = {};
+let WS_COLOR_OVERRIDES = {}; // wsId -> '#rrggbb'
+let WS_TERMINAL_ACTIVE = new Set(); // workstreams with an open terminal window
+
 function buildHues() {
   WS_HUE = {};
   PORTFOLIO.workstreams.forEach((ws, i) => {
@@ -635,24 +1087,238 @@ function buildHues() {
     WS_HUE[ws.id] = Math.round(t * 320 + 200) % 360;
   });
 }
+
+function hexToRgb(hex) {
+  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  if (!m) return { r: 0, g: 0, b: 0 };
+  return { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) };
+}
+function rgbToHsl({ r, g, b }) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  let h = 0, s = 0;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+      case g: h = (b - r) / d + 2; break;
+      case b: h = (r - g) / d + 4; break;
+    }
+    h /= 6;
+  }
+  return { h: h * 360, s: s * 100, l: l * 100 };
+}
+
+// Return a normalized theme { accent, border, chip, fill, tint } for the
+// workstream. `fill` is the soft workstream-container background; `tint` is
+// the wave-card background (slightly stronger so cards still pop within the
+// container without competing with it).
+// If WS_COLOR_OVERRIDES[wsId] is set, derive from the picker hex (with the
+// achromatic guard so #b8b8b8 stays gray instead of inheriting hue=0/red).
+// Otherwise, derive from the auto-spread WS_HUE so unassigned workstreams
+// still get a unique color.
+function themeFor(wsId) {
+  const override = WS_COLOR_OVERRIDES[wsId];
+  if (override) {
+    const hsl = rgbToHsl(hexToRgb(override));
+    const h = Math.round(hsl.h);
+    if (hsl.s < 6) {
+      const accentL = Math.min(46, Math.max(28, Math.round(hsl.l * 0.6)));
+      const borderL = Math.min(60, accentL + 12);
+      return {
+        accent: `hsl(0, 0%, ${accentL}%)`,
+        border: `hsla(0, 0%, ${borderL}%, 0.55)`,
+        chip:   `hsl(0, 0%, 94%)`,
+        fill:   `hsla(0, 0%, ${borderL}%, ${WS_TINT_ALPHA})`,
+        tint:   `hsla(0, 0%, ${borderL}%, ${WS_TINT_ALPHA + 0.04})`,
+      };
+    }
+    const accentS = Math.min(82, Math.max(55, Math.round(hsl.s)));
+    const accentL = Math.min(46, Math.max(30, Math.round(hsl.l * 0.7 + 18)));
+    const borderS = Math.min(80, Math.max(50, Math.round(accentS * 0.85)));
+    const borderL = Math.min(58, Math.max(40, accentL + 8));
+    return {
+      accent: `hsl(${h}, ${accentS}%, ${accentL}%)`,
+      border: `hsla(${h}, ${borderS}%, ${borderL}%, 0.55)`,
+      chip:   `hsl(${h}, ${Math.max(40, accentS - 20)}%, 94%)`,
+      fill:   `hsla(${h}, ${borderS}%, ${borderL}%, ${WS_TINT_ALPHA})`,
+      tint:   `hsla(${h}, ${borderS}%, ${borderL}%, ${WS_TINT_ALPHA + 0.04})`,
+    };
+  }
+  // Fallback: auto-hue spread, kept consistent with the legacy palette so
+  // existing workstreams without an explicit color don't suddenly shift.
+  const h = WS_HUE[wsId] ?? 220;
+  return {
+    accent: `hsla(${h}, 62%, 38%, 1)`,
+    border: `hsla(${h}, 58%, 46%, 0.55)`,
+    chip:   `hsla(${h}, 55%, 60%, 0.20)`,
+    fill:   `hsla(${h}, 58%, 46%, ${WS_TINT_ALPHA})`,
+    tint:   `hsla(${h}, 58%, 46%, ${WS_TINT_ALPHA + 0.04})`,
+  };
+}
+
+// Back-compat shims: existing call sites use wsColor()/wsColorMuted(). Both
+// delegate to themeFor() so a single theme source feeds all visuals.
 function wsColor(wsId, alpha = 1) {
-  return `hsla(${WS_HUE[wsId] ?? 220}, 62%, 38%, ${alpha})`;
+  const t = themeFor(wsId);
+  if (alpha >= 0.99) return t.accent;
+  // Render at a custom alpha by extracting the hue/saturation/lightness from
+  // the theme accent. Keeps callers that pass alpha working without growing
+  // the theme surface.
+  const m = /^hsla?\(\s*(\d+)\s*,\s*(\d+)%\s*,\s*(\d+)%/.exec(t.accent);
+  if (!m) return t.accent;
+  return `hsla(${m[1]}, ${m[2]}%, ${m[3]}%, ${alpha})`;
 }
 function wsColorMuted(wsId) {
-  return `hsla(${WS_HUE[wsId] ?? 220}, 55%, 60%, 0.20)`;
+  return themeFor(wsId).chip;
 }
 
 // ---------- ELK layout ----------
 const elk = new ELK();
 
 // Persistent layout positions — backed by Streamliner API (filesystem-backed).
-// Keyed by node ID (e.g. "w:par-w1" or "ext:rbac-decision"). The local
+// Keyed by node ID (e.g. "w:par-w1" or "ext:rbac-decision") plus stable
+// workstream anchors ("ws:<workstreamId>") that keep a workstream near its
+// pinned location when reconciliation renames/adds wave nodes. The local
 // `pinnedCache` is the in-memory mirror of what the server has; updates flow
 // through saveDebounced() with a 1s debounce after the last change.
 let pinnedCache = {};
 let saveStatusSetter = () => {};       // wired by App
 let pinnedSetSetter = () => {};        // wired by App
 let pinnedCountSetter = () => {};      // wired by App
+
+function isNodePositionId(id) {
+  return id.startsWith('w:') || id.startsWith('ext:');
+}
+
+function isPinnedRecord(pos) {
+  return pos && typeof pos.x === 'number' && typeof pos.y === 'number' && pos.manuallyMoved;
+}
+
+function workstreamAnchorId(wsId) {
+  return 'ws:' + wsId;
+}
+
+function pinnedPositionCount() {
+  return Object.keys(pinnedCache).filter(id => isNodePositionId(id) && isPinnedRecord(pinnedCache[id])).length;
+}
+
+function wavePositionKey(waveId) {
+  return 'w:' + waveId;
+}
+
+function candidatePositionKeyForWaveId(waveId) {
+  const m = /^(.*?)-(?:w\d+|cand)$/.exec(waveId);
+  return m ? 'w:' + m[1] + '-cand' : null;
+}
+
+function boundsForWorkstream(ws, positions) {
+  let minX = Infinity;
+  let minY = Infinity;
+  let found = false;
+  for (const wave of ws.waves) {
+    const pos = positions[wavePositionKey(wave.id)];
+    if (!pos || typeof pos.x !== 'number' || typeof pos.y !== 'number') continue;
+    minX = Math.min(minX, pos.x);
+    minY = Math.min(minY, pos.y);
+    found = true;
+  }
+  return found ? { x: minX, y: minY } : null;
+}
+
+function explicitPinTranslation(ws, basePositions, pinned) {
+  const deltas = [];
+  for (const wave of ws.waves) {
+    const key = wavePositionKey(wave.id);
+    const base = basePositions[key];
+    const pin = pinned[key];
+    if (!base || !isPinnedRecord(pin)) continue;
+    deltas.push({ dx: pin.x - base.x, dy: pin.y - base.y });
+  }
+  if (deltas.length === 0) return null;
+  deltas.sort((a, b) => a.dx - b.dx);
+  const dx = deltas[Math.floor(deltas.length / 2)].dx;
+  deltas.sort((a, b) => a.dy - b.dy);
+  const dy = deltas[Math.floor(deltas.length / 2)].dy;
+  return { dx, dy };
+}
+
+function legacyCandidateTranslation(ws, basePositions, pinned) {
+  for (const wave of ws.waves) {
+    const candidateKey = candidatePositionKeyForWaveId(wave.id);
+    if (!candidateKey) continue;
+    if (ws.waves.some(candidate => wavePositionKey(candidate.id) === candidateKey)) continue;
+    const legacy = pinned[candidateKey];
+    const base = basePositions[wavePositionKey(wave.id)];
+    if (!base || !isPinnedRecord(legacy)) continue;
+    return { dx: legacy.x - base.x, dy: legacy.y - base.y };
+  }
+  return null;
+}
+
+function workstreamTranslation(ws, basePositions, pinned) {
+  const storedAnchor = pinned[workstreamAnchorId(ws.id)];
+  if (isPinnedRecord(storedAnchor)) {
+    const baseBounds = boundsForWorkstream(ws, basePositions);
+    if (baseBounds) {
+      return { dx: storedAnchor.x - baseBounds.x, dy: storedAnchor.y - baseBounds.y };
+    }
+  }
+  return explicitPinTranslation(ws, basePositions, pinned)
+    || legacyCandidateTranslation(ws, basePositions, pinned);
+}
+
+function applyWorkstreamAnchors(basePositions, pinned) {
+  const anchored = { ...basePositions };
+  for (const ws of PORTFOLIO.workstreams) {
+    const translation = workstreamTranslation(ws, basePositions, pinned);
+    if (!translation) continue;
+    for (const wave of ws.waves) {
+      const key = wavePositionKey(wave.id);
+      const base = basePositions[key];
+      if (!base) continue;
+      anchored[key] = { x: base.x + translation.dx, y: base.y + translation.dy };
+    }
+  }
+  return anchored;
+}
+
+function positionsFromRenderedNodes(renderedNodes, overrides) {
+  const positions = {};
+  for (const node of renderedNodes) {
+    if (!node?.id || !isNodePositionId(node.id)) continue;
+    positions[node.id] = { x: node.position.x, y: node.position.y };
+  }
+  for (const node of overrides) {
+    if (!node?.id || !isNodePositionId(node.id)) continue;
+    positions[node.id] = { x: node.position.x, y: node.position.y };
+  }
+  return positions;
+}
+
+function pinWorkstreamAnchorsFromDrag(renderedNodes, draggedNodes) {
+  const impacted = new Set();
+  for (const node of draggedNodes) {
+    if (!node?.id?.startsWith('w:')) continue;
+    const ws = workstreamByWaveId[node.id.slice(2)];
+    if (ws) impacted.add(ws.id);
+  }
+  if (impacted.size === 0) return;
+  const positions = positionsFromRenderedNodes(renderedNodes, draggedNodes);
+  const now = Date.now();
+  for (const wsId of impacted) {
+    const ws = workstreamById[wsId];
+    if (!ws) continue;
+    const bounds = boundsForWorkstream(ws, positions);
+    if (!bounds) continue;
+    const key = workstreamAnchorId(ws.id);
+    pinnedCache[key] = { x: bounds.x, y: bounds.y, manuallyMoved: true, ts: now };
+    dirtyIds.add(key);
+    removedIds.delete(key);
+  }
+}
 
 async function fetchPositions() {
   const r = await fetch('/api/_proto/canvas/positions');
@@ -667,32 +1333,262 @@ async function fetchPortfolio() {
   return r.json();
 }
 
+async function fetchColors() {
+  const r = await fetch('/api/_proto/canvas/colors');
+  if (!r.ok) return {};
+  const body = await r.json();
+  return body.colors || {};
+}
+
+async function fetchTerminalActive() {
+  const r = await fetch('/api/_proto/canvas/terminal-active');
+  if (!r.ok) return [];
+  const body = await r.json();
+  return Array.isArray(body.activeIds) ? body.activeIds : [];
+}
+
+// Persist the WS_TERMINAL_ACTIVE set with the same debounced full-replace
+// pattern as colors. The set is small (one entry per workstream you're
+// actively working on); the user is the only writer so we don't need merge.
+let terminalSaveTimer = null;
+let terminalSavePromise = Promise.resolve();
+let terminalChangeListener = () => {}; // wired by App
+function setWorkstreamTerminalActive(wsId, active) {
+  if (!wsId) return;
+  if (active) WS_TERMINAL_ACTIVE.add(wsId);
+  else WS_TERMINAL_ACTIVE.delete(wsId);
+  terminalChangeListener(new Set(WS_TERMINAL_ACTIVE));
+  if (terminalSaveTimer) clearTimeout(terminalSaveTimer);
+  terminalSaveTimer = setTimeout(() => {
+    terminalSaveTimer = null;
+    terminalSavePromise = (async () => {
+      try { await terminalSavePromise; } catch { /* ignore prior */ }
+      const r = await fetch('/api/_proto/canvas/terminal-active', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ activeIds: Array.from(WS_TERMINAL_ACTIVE) }),
+      });
+      if (!r.ok) {
+        const text = await r.text();
+        throw new Error(`PUT terminal-active failed: HTTP ${r.status} ${text}`);
+      }
+    })().catch((err) => console.error('Terminal-active save failed:', err));
+  }, 600);
+}
+
+// ---------- Filter preference persistence (localStorage) ----------
+// View-state toggles (edge type checkboxes, fulfilled/completed dropdowns,
+// top-bar node filter, container visibility, etc.) are per-browser
+// preferences rather than portfolio data — they belong in localStorage so
+// they survive page reloads without a server round-trip and don't pollute
+// the git-tracked state directory.
+const FILTER_STORAGE_KEY = 'streamliner.proto.canvas.filters.v1';
+function loadFilterPrefs() {
+  if (typeof localStorage === 'undefined') return {};
+  try {
+    const raw = localStorage.getItem(FILTER_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return (parsed && typeof parsed === 'object') ? parsed : {};
+  } catch { return {}; }
+}
+function saveFilterPrefs(prefs) {
+  if (typeof localStorage === 'undefined') return;
+  try { localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(prefs)); } catch { /* quota / blocked */ }
+}
+// Single read on module load — cheap and lets every useState lazy initializer
+// read from the same snapshot without repeatedly hitting localStorage.
+const INITIAL_FILTER_PREFS = loadFilterPrefs();
+
+// Workstream color overrides — pattern matches positions: in-memory cache
+// kept in sync with a server-backed JSON file, updates flow through a 750ms
+// debounce. Color updates are infrequent so we don't bother with a separate
+// save-status indicator.
+let colorsSaveTimer = null;
+let colorsSavePromise = Promise.resolve();
+let colorsChangeListener = () => {}; // wired by App
+function setWorkstreamColor(wsId, hex) {
+  if (!wsId) return;
+  if (!hex) {
+    delete WS_COLOR_OVERRIDES[wsId];
+  } else {
+    WS_COLOR_OVERRIDES[wsId] = hex.toLowerCase();
+  }
+  colorsChangeListener({ ...WS_COLOR_OVERRIDES });
+  if (colorsSaveTimer) clearTimeout(colorsSaveTimer);
+  colorsSaveTimer = setTimeout(() => {
+    colorsSaveTimer = null;
+    colorsSavePromise = (async () => {
+      try { await colorsSavePromise; } catch { /* ignore prior */ }
+      const r = await fetch('/api/_proto/canvas/colors', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ colors: WS_COLOR_OVERRIDES }),
+      });
+      if (!r.ok) {
+        const text = await r.text();
+        throw new Error(`PUT colors failed: HTTP ${r.status} ${text}`);
+      }
+    })().catch((err) => console.error('Color save failed:', err));
+  }, 750);
+}
+
 let saveTimer = null;
 let savePromise = Promise.resolve();
-function flushSave() {
-  saveStatusSetter({ state: 'saving', count: Object.keys(pinnedCache).length });
-  savePromise = (async () => {
-    try {
-      await savePromise;
-    } catch { /* ignore previous error */ }
-    const r = await fetch('/api/_proto/canvas/positions', {
-      method: 'PUT',
+let inFlightPayloads = [];
+// Diff tracking for the merge-based save path. dirtyIds = upserts since last
+// successful flush, removedIds = explicit deletions since last successful
+// flush. By PATCHing only this diff (instead of the whole pinnedCache), we
+// avoid clobbering positions that other writers (a parallel portfolio
+// manager session, a second canvas tab, a git branch switch) added or
+// changed between our boot and our save.
+let dirtyIds = new Set();
+let removedIds = new Set();
+
+function payloadHasChanges(payload) {
+  return Object.keys(payload.upsert || {}).length > 0 || (payload.remove || []).length > 0;
+}
+
+function dirtyPayloadFromCache() {
+  const upsert = {};
+  for (const id of dirtyIds) {
+    if (pinnedCache[id]) upsert[id] = pinnedCache[id];
+  }
+  return { upsert, remove: Array.from(removedIds) };
+}
+
+function applyPayloadToPositions(positions, payload) {
+  for (const id of payload.remove || []) {
+    delete positions[id];
+  }
+  for (const [id, pos] of Object.entries(payload.upsert || {})) {
+    positions[id] = pos;
+  }
+}
+
+function combinedOutstandingPayload() {
+  const combined = { upsert: {}, remove: [] };
+  const removed = new Set();
+  const apply = (payload) => {
+    for (const id of payload.remove || []) {
+      delete combined.upsert[id];
+      removed.add(id);
+    }
+    for (const [id, pos] of Object.entries(payload.upsert || {})) {
+      removed.delete(id);
+      combined.upsert[id] = pos;
+    }
+  };
+  for (const payload of inFlightPayloads) apply(payload);
+  apply(dirtyPayloadFromCache());
+  combined.remove = Array.from(removed);
+  return combined;
+}
+
+function requeuePayload(payload) {
+  for (const [id, pos] of Object.entries(payload.upsert || {})) {
+    pinnedCache[id] = pos;
+    dirtyIds.add(id);
+    removedIds.delete(id);
+  }
+  for (const id of payload.remove || []) {
+    delete pinnedCache[id];
+    removedIds.add(id);
+    dirtyIds.delete(id);
+  }
+}
+
+function forgetInFlightPayload(payload) {
+  const i = inFlightPayloads.indexOf(payload);
+  if (i >= 0) inFlightPayloads.splice(i, 1);
+}
+
+function sendPayloadBeacon(payload) {
+  if (!payloadHasChanges(payload)) return;
+  const body = JSON.stringify(payload);
+  const blob = new Blob([body], { type: 'application/json' });
+  const url = '/api/_proto/canvas/positions?method=patch';
+  const sent = navigator.sendBeacon?.(url, blob);
+  if (!sent) {
+    fetch(url, {
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ positions: pinnedCache }),
-    });
+      body,
+      keepalive: true,
+    }).catch((err) => console.error('Unload save failed:', err));
+  }
+}
+
+function flushSave() {
+  // Snapshot the current diff so the in-flight save uses a stable view; any
+  // new edits that land while we're saving accumulate in fresh sets and
+  // trigger another debounced flush.
+  const dirtySnapshot = dirtyIds;
+  const removeSnapshot = removedIds;
+  dirtyIds = new Set();
+  removedIds = new Set();
+  const upsert = {};
+  for (const id of dirtySnapshot) {
+    if (pinnedCache[id]) upsert[id] = pinnedCache[id];
+  }
+  const remove = Array.from(removeSnapshot);
+  const payload = { upsert, remove };
+  if (!payloadHasChanges(payload)) {
+    return savePromise; // nothing to send
+  }
+  inFlightPayloads.push(payload);
+  const previousSave = savePromise;
+  saveStatusSetter({ state: 'saving', count: pinnedPositionCount() });
+  savePromise = (async () => {
+    try { await previousSave; } catch { /* ignore previous error */ }
+    let r;
+    try {
+      r = await fetch('/api/_proto/canvas/positions', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    } catch (err) {
+      requeuePayload(payload);
+      forgetInFlightPayload(payload);
+      const message = err?.message || String(err);
+      saveStatusSetter({ state: 'error', error: message });
+      throw err;
+    }
     if (!r.ok) {
       const text = await r.text();
+      // Re-queue the diff so the next flush will retry. Don't drop user edits
+      // on a transient server error.
+      requeuePayload(payload);
+      forgetInFlightPayload(payload);
       saveStatusSetter({ state: 'error', error: text });
-      throw new Error(`PUT positions failed: HTTP ${r.status} ${text}`);
+      throw new Error(`PATCH positions failed: HTTP ${r.status} ${text}`);
     }
     const body = await r.json();
-    saveStatusSetter({ state: 'saved', count: body.count, savedAt: body.savedAt });
+    forgetInFlightPayload(payload);
+    // Adopt the server-side merged view as our authoritative cache. This
+    // brings in any positions added by other writers that we didn't know
+    // about, so subsequent saves stay merge-safe. Re-apply newer local
+    // changes after adopting the server view; otherwise an older response can
+    // clobber positions dragged while that response was in flight.
+    if (body.positions && typeof body.positions === 'object') {
+      const next = { ...body.positions };
+      for (const pending of inFlightPayloads) {
+        applyPayloadToPositions(next, pending);
+      }
+      applyPayloadToPositions(next, dirtyPayloadFromCache());
+      pinnedCache = next;
+      const pSet = pinnedIds();
+      pinnedSetSetter(pSet);
+      pinnedCountSetter(pSet.size);
+    }
+    saveStatusSetter({ state: 'saved', count: pinnedPositionCount(), savedAt: body.savedAt });
   })();
   return savePromise;
 }
 function saveDebounced() {
   if (saveTimer) clearTimeout(saveTimer);
-  saveStatusSetter({ state: 'pending', count: Object.keys(pinnedCache).length });
+  saveStatusSetter({ state: 'pending', count: pinnedPositionCount() });
   saveTimer = setTimeout(() => {
     saveTimer = null;
     flushSave().catch((err) => console.error('Save failed:', err));
@@ -700,40 +1596,65 @@ function saveDebounced() {
 }
 // Save before unload if there's a pending change.
 if (typeof window !== 'undefined') {
-  window.addEventListener('beforeunload', () => {
+  const flushOnPageExit = () => {
     if (saveTimer) {
       clearTimeout(saveTimer);
       saveTimer = null;
-      // Use sendBeacon for last-chance save during unload.
-      try {
-        const blob = new Blob(
-          [JSON.stringify({ positions: pinnedCache })],
-          { type: 'application/json' },
-        );
-        navigator.sendBeacon('/api/_proto/canvas/positions', blob);
-      } catch { /* best-effort */ }
     }
-  });
+    // Use sendBeacon for last-chance save during unload. Always include both
+    // pending and already-in-flight payloads; a normal fetch can be aborted by
+    // navigation after the debounce fires but before the server receives it.
+    try { sendPayloadBeacon(combinedOutstandingPayload()); } catch { /* best-effort */ }
+  };
+  window.addEventListener('beforeunload', flushOnPageExit);
+  window.addEventListener('pagehide', flushOnPageExit);
 }
 
 function loadPinned() { return pinnedCache; }
 function pinPosition(id, x, y) {
   pinnedCache[id] = { x, y, manuallyMoved: true, ts: Date.now() };
+  dirtyIds.add(id);
+  removedIds.delete(id);
   saveDebounced();
   return pinnedCache;
 }
 function unpinPosition(id) {
   delete pinnedCache[id];
+  removedIds.add(id);
+  dirtyIds.delete(id);
+  if (id.startsWith('w:')) {
+    const ws = workstreamByWaveId[id.slice(2)];
+    if (ws) {
+      const hasOtherWavePin = ws.waves.some(wave => {
+        const key = wavePositionKey(wave.id);
+        return key !== id && isPinnedRecord(pinnedCache[key]);
+      });
+      if (!hasOtherWavePin) {
+        const anchorKey = workstreamAnchorId(ws.id);
+        if (pinnedCache[anchorKey]) {
+          delete pinnedCache[anchorKey];
+          removedIds.add(anchorKey);
+          dirtyIds.delete(anchorKey);
+        }
+      }
+    }
+  }
   saveDebounced();
   return pinnedCache;
 }
 function clearAllPinned() {
+  // Intentional bulk wipe of the user's view. Mark every currently-known id
+  // for deletion; positions added by other writers since boot survive.
+  for (const id of Object.keys(pinnedCache)) {
+    removedIds.add(id);
+    dirtyIds.delete(id);
+  }
   pinnedCache = {};
   saveDebounced();
   return pinnedCache;
 }
 function pinnedIds() {
-  return new Set(Object.keys(pinnedCache).filter(k => pinnedCache[k].manuallyMoved));
+  return new Set(Object.keys(pinnedCache).filter(k => isNodePositionId(k) && isPinnedRecord(pinnedCache[k])));
 }
 
 async function computeElkLayout() {
@@ -840,6 +1761,96 @@ function statusBg(s) {
   }
 }
 
+function normalizeProgressStatus(value) {
+  const normalized = String(value || '').trim().toLowerCase().replace(/[\s_]+/g, '-');
+  switch (normalized) {
+    case 'done':
+    case 'complete':
+    case 'completed':
+    case 'closed':
+      return 'done';
+    case 'in-progress':
+    case 'active':
+    case 'running':
+      return 'in-progress';
+    case 'ready':
+      return 'ready';
+    case 'blocked':
+      return 'blocked';
+    case 'planned':
+    case 'not-started':
+    case 'todo':
+    case 'pending':
+      return 'not-started';
+    default:
+      return null;
+  }
+}
+
+function evidenceIdentityText(entry) {
+  return [entry.ref, entry.name, entry.title, entry.id]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+}
+
+function isGateEvidence(entry) {
+  return entry?.kind === 'task' && /\bgate\b/.test(evidenceIdentityText(entry));
+}
+
+function inferTaskStatusFromWave(wave, index, count) {
+  switch (wave.status) {
+    case 'done':
+      return 'done';
+    case 'in-progress':
+      if (count === 1) return 'in-progress';
+      if (index === 0) return 'done';
+      if (index === 1) return 'in-progress';
+      if (index === 2) return 'ready';
+      return 'not-started';
+    case 'ready':
+      return index === 0 ? 'ready' : 'not-started';
+    case 'blocked':
+      if (index === 0 && count > 2) return 'done';
+      if (index === 1 && count > 2) return 'ready';
+      if (index === Math.min(2, count - 1)) return 'blocked';
+      return 'not-started';
+    default:
+      return 'not-started';
+  }
+}
+
+function gateStateForWave(wave) {
+  if (wave.status === 'done') return 'closed';
+  if (wave.status === 'blocked') return 'blocked';
+  return 'open';
+}
+
+function deriveWaveProgress(wave) {
+  const taskEvidence = (wave.evidence || []).filter(entry => entry?.kind === 'task');
+  if (!taskEvidence.length) return null;
+
+  const gateEntry = [...taskEvidence].reverse().find(isGateEvidence) || null;
+  const taskEntries = gateEntry && taskEvidence.length > 1
+    ? taskEvidence.filter(entry => entry !== gateEntry)
+    : taskEvidence;
+  const tasks = taskEntries.map((entry, index) => {
+    const explicitStatus = normalizeProgressStatus(entry.status || entry.state);
+    const status = explicitStatus || inferTaskStatusFromWave(wave, index, taskEntries.length);
+    return {
+      status,
+      label: entry.ref || entry.name || entry.title || `Task ${index + 1}`,
+      inferred: !explicitStatus,
+    };
+  });
+
+  return {
+    tasks,
+    gateState: gateEntry ? gateStateForWave(wave) : null,
+    gateLabel: gateEntry?.ref || gateEntry?.name || gateEntry?.title || 'Gate',
+  };
+}
+
 // ---------- Node components ----------
 function WaveNode({ data }) {
   const wv = data.wave;
@@ -850,15 +1861,31 @@ function WaveNode({ data }) {
   const inCount = data.inboundEdges.length;
   const outCount = data.outboundEdges.length;
   const wsColorFull = wsColor(ws.id, 1);
+  const theme = themeFor(ws.id);
+  const progress = deriveWaveProgress(wv);
+  const hasProgress = Boolean(progress && (progress.tasks.length || progress.gateState));
+  const doneCount = progress?.tasks.filter(task => task.status === 'done').length || 0;
+  const progressLabel = progress
+    ? `${doneCount}/${progress.tasks.length} tasks${progress.gateState ? ` · gate ${progress.gateState}` : ''}`
+    : '';
   return html`
     <div
       className=${'wave-node status-' + wv.status
+        + (hasProgress ? ' has-progress' : '')
+        + (progress?.gateState ? ' has-gate gate-' + progress.gateState : '')
         + (data.selected ? ' selected' : '')
         + (ws.attention === 'hot' ? ' attn-hot' : '')
         + (ws.attention === 'focus' ? ' attn-focus' : '')
         + (data.pinned ? ' pinned' : '')
+        + (data.completedDim ? ' completed-dim' : '')
         + (data.filterState && data.filterState !== 'none' ? ' filter-' + data.filterState : '')}
-      style=${{ borderLeft: '4px solid ' + wsColorFull }}
+      style=${{
+        borderLeft: '4px solid ' + wsColorFull,
+        // Workstream theme tint overrides the status-specific background
+        // gradient. Status info stays visible through the .status-* border-
+        // color and (for ready) the box-shadow glow, plus the status pill.
+        background: `linear-gradient(180deg, ${theme.tint}, rgba(255,255,255,0.95))`,
+      }}
       onClick=${data.onClick}
     >
       ${!isFirst ? html`<${Handle} type="target" position=${Position.Top}    id="spine-in"  className="spine" />` : null}
@@ -866,14 +1893,7 @@ function WaveNode({ data }) {
       <${Handle} type="target" position=${Position.Top} id="ext-in" className="spine" style=${{ opacity: 0, pointerEvents: 'none' }} />
       ${inCount > 0  ? html`<${Handle} type="target" position=${Position.Left}  id="import" className="import" />` : null}
       ${outCount > 0 ? html`<${Handle} type="source" position=${Position.Right} id="export" className="export" />` : null}
-
-      ${data.pinned ? html`
-        <button
-          className="pin-badge"
-          onClick=${(e) => { e.stopPropagation(); data.onUnpin(); }}
-          title="Pinned to manual position. Click to unpin and let layout reposition."
-        >📌</button>
-      ` : null}
+      ${progress?.gateState ? html`<span className=${'gate-cap ' + progress.gateState} aria-hidden="true"></span>` : null}
 
       <div className="ws-badge" style=${{ color: wsColorFull, background: wsColorMuted(ws.id) }}>
         ${ws.title}
@@ -886,6 +1906,24 @@ function WaveNode({ data }) {
         <span className="wave-status-pill">${wv.status}</span>
       </div>
       <p className="wave-summary">${wv.summary || ''}</p>
+      ${hasProgress ? html`
+        <div className="wave-progress" title=${progressLabel}>
+          <div className="task-beads" aria-label=${progressLabel}>
+            ${progress.tasks.map((task, taskIndex) => html`
+              <span
+                key=${taskIndex}
+                className=${'task-dot ' + task.status}
+                title=${task.label + (task.inferred ? ' · status inferred from wave' : '')}
+              ></span>
+            `)}
+          </div>
+          ${progress.gateState ? html`
+            <span className="gate-status" title=${progress.gateLabel}>
+              <span className=${'gate-marker ' + progress.gateState}></span>${progress.gateState}
+            </span>
+          ` : html`<span className="no-gate-status">no gate</span>`}
+        </div>
+      ` : null}
       ${(inCount + outCount > 0) ? html`
         <div className="wave-edges">
           ${inCount  ? html`<span key="in"  className="ec in">↘ ${inCount}</span>` : null}
@@ -905,13 +1943,6 @@ function ExternalNode({ data }) {
       onClick=${data.onClick}>
       <${Handle} type="source" position=${Position.Bottom} id="ext-out" className="export" />
       <${Handle} type="source" position=${Position.Right} id="ext-out-r" className="export" />
-      ${data.pinned ? html`
-        <button
-          className="pin-badge"
-          onClick=${(e) => { e.stopPropagation(); data.onUnpin(); }}
-          title="Pinned. Click to unpin."
-        >📌</button>
-      ` : null}
       <div className="ext-tag">EXT · blocks ${data.blocksCount}</div>
       <div className="ext-label">${data.label}</div>
     </div>
@@ -923,16 +1954,24 @@ function ExternalNode({ data }) {
 // workstream's waves are spread across the canvas.
 function WorkstreamGroupNode({ data }) {
   const ws = data.workstream;
-  const wsColorFull = wsColor(ws.id, 1);
+  const theme = themeFor(ws.id);
+  const terminalActive = WS_TERMINAL_ACTIVE.has(ws.id);
   return html`
     <div
       className=${'ws-group-node ws-group-' + ws.stage}
       style=${{
-        borderColor: wsColor(ws.id, 0.55),
-        background: `linear-gradient(180deg, ${wsColor(ws.id, 0.10)}, ${wsColor(ws.id, 0.04)})`,
+        borderColor: theme.border,
+        borderStyle: 'solid',
+        borderWidth: '2px',
+        background: theme.fill,
       }}
     >
-      <div className="ws-group-label" style=${{ color: wsColorFull, background: wsColorMuted(ws.id), borderColor: wsColor(ws.id, 0.45) }}>
+      ${terminalActive ? html`
+        <div className="ws-term-bar" aria-hidden="true">
+          <div className="caption"><span className="live" />terminal</div>
+        </div>
+      ` : null}
+      <div className="ws-group-label" style=${{ color: theme.accent, background: theme.chip, borderColor: theme.border }}>
         <span className="ws-group-stage">${ws.stage}</span>
         ${ws.title}
         <span className="ws-group-count">${ws.waves.length} ${ws.waves.length === 1 ? 'wave' : 'waves'}</span>
@@ -1125,13 +2164,16 @@ function buildNodes(positions, selection, pinned) {
   return nodes;
 }
 
-function buildEdges(edgeFilters, fulfilledMode, showCandidateEdges, focusedIds, neighborIds) {
+function buildEdges(edgeFilters, fulfilledMode, showCandidateEdges, focusedIds, neighborIds, completedMode) {
   const edges = [];
   // Spine: only between consecutive waves of same workstream
   for (const ws of PORTFOLIO.workstreams) {
     for (let i = 0; i < ws.waves.length - 1; i++) {
       const from = ws.waves[i];
       const to = ws.waves[i + 1];
+      // When done waves are hidden, also drop any spine segment they touch
+      // so we don't leave dangling stubs.
+      if (completedMode === 'hide' && (from.status === 'done' || to.status === 'done')) continue;
       const fc = edgeFilterClass('w:' + from.id, 'w:' + to.id, focusedIds, neighborIds);
       edges.push({
         id: 'spine:' + from.id + '->' + to.id,
@@ -1160,6 +2202,9 @@ function buildEdges(edgeFilters, fulfilledMode, showCandidateEdges, focusedIds, 
       if (fromWs?.type === 'candidate' || toWs?.type === 'candidate') continue;
     }
     const fulfilled = fromW.status === 'done';
+    // completedMode 'hide' suppresses any cross-workstream edge that touches a
+    // done wave, on either end, so hidden done nodes don't leave orphan edges.
+    if (completedMode === 'hide' && (fromW.status === 'done' || toW.status === 'done')) continue;
     // fulfilledMode: 'on' shows edge normally · 'dim' adds .fulfilled class
     // (low-opacity, thin) · 'off' hides the edge entirely. Only applies when
     // the upstream wave is done — in-flight edges are never affected.
@@ -1216,6 +2261,94 @@ function typeColor(t) {
 // Hoisted selection setter so node onClick handlers can call it.
 let selection_set = () => {};
 let unpin_handler = () => {};
+// Hoisted brief-request setter so inspector "View Brief" buttons can open the
+// floating doc pane without prop-drilling.
+let brief_request_set = () => {};
+
+// ---------- Floating brief/candidate viewer ----------
+// Renders the workstream's brief.md (formed) or shaping/candidates/<id>.md
+// (candidate) as scrollable, selectable markdown. Non-modal: the canvas
+// remains pannable/clickable while the pane is open. Esc or the × button
+// closes it.
+function BriefPane({ request, onClose }) {
+  const [state, setState] = useState({ status: 'loading' });
+
+  useEffect(() => {
+    if (!request) return;
+    let cancelled = false;
+    setState({ status: 'loading' });
+    fetch('/api/_proto/canvas/workstream-doc?id=' + encodeURIComponent(request.id)
+      + (request.type ? '&type=' + encodeURIComponent(request.type === 'candidate' ? 'candidate' : 'formed') : ''))
+      .then(async (r) => {
+        const body = await r.json().catch(() => ({}));
+        if (cancelled) return;
+        if (!r.ok) {
+          setState({
+            status: 'error',
+            message: body.error || ('Request failed with HTTP ' + r.status),
+            triedPaths: body.triedPaths || null,
+          });
+          return;
+        }
+        setState({
+          status: 'ready',
+          kind: body.kind,
+          path: body.path,
+          content: body.content || '',
+        });
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setState({ status: 'error', message: err?.message || String(err) });
+      });
+    return () => { cancelled = true; };
+  }, [request?.id]);
+
+  useEffect(() => {
+    if (!request) return;
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [request, onClose]);
+
+  if (!request) return null;
+
+  const kindLabel = state.status === 'ready'
+    ? (state.kind === 'candidate' ? 'candidate' : 'brief')
+    : (request.type === 'candidate' ? 'candidate' : 'brief');
+
+  return html`
+    <div className="doc-pane" role="dialog" aria-label=${'Workstream ' + kindLabel + ': ' + request.title}>
+      <div className="doc-pane-header">
+        <div className="title">
+          ${request.title}
+          <span className="kind">${kindLabel}</span>
+        </div>
+        ${state.status === 'ready' ? html`<div className="path" title=${state.path}>${state.path}</div>` : null}
+        <button type="button" className="close-btn" onClick=${onClose} aria-label="Close" title="Close (Esc)">×</button>
+      </div>
+      ${state.status === 'loading' ? html`
+        <div className="doc-pane-body loading">Loading ${kindLabel} for <code>${request.id}</code>…</div>
+      ` : null}
+      ${state.status === 'error' ? html`
+        <div className="doc-pane-body error">
+          <div>${state.message}</div>
+          ${Array.isArray(state.triedPaths) && state.triedPaths.length > 0 ? html`
+            <p style=${{marginTop:'10px',fontSize:'0.74rem',color:'var(--muted)',fontStyle:'normal'}}>Looked for:</p>
+            <ul style=${{fontSize:'0.74rem',color:'var(--muted)',fontStyle:'normal'}}>
+              ${state.triedPaths.map((p, i) => html`<li key=${i}><code>${p}</code></li>`)}
+            </ul>
+          ` : null}
+        </div>
+      ` : null}
+      ${state.status === 'ready' ? html`
+        <div className="doc-pane-body">
+          <${ReactMarkdown}>${state.content}<//>
+        </div>
+      ` : null}
+    </div>
+  `;
+}
 
 // ---------- Inspector ----------
 function Inspector({ selection }) {
@@ -1227,7 +2360,7 @@ function Inspector({ selection }) {
       <p>Each wave card has a <b>colored left border</b> identifying its workstream, and a workstream badge at the top. A <b>candidate</b> shows as a single ★-marked card. A <b>formed workstream</b> shows each wave separately so you can tell which waves are ready while later ones wait.</p>
       <p>Status: <b style=${{color:'var(--yellow)'}}>ready</b> (yellow glow) = all hard deps done; <b style=${{color:'var(--blue)'}}>in-progress</b> = blue; <b style=${{color:'var(--green)'}}>done</b> = green; <b style=${{color:'var(--red)'}}>blocked</b> = red dashed; <b>planned</b> = gray dashed.</p>
       <p>Edges: <b style=${{color:'var(--green)'}}>green</b> = hard import, <b style=${{color:'var(--blue)'}}>blue dashed</b> = soft-data, <b style=${{color:'var(--purple)'}}>purple dotted</b> = soft-coord, <b style=${{color:'var(--red)'}}>red dashed</b> = external. Workstream-colored lines are intra-workstream spine (wave-to-next-wave). Fulfilled edges (upstream done) dim. Edges from an in-progress wave to a downstream ready/planned/blocked wave highlight to surface the next-launch surface.</p>
-      <p><b>Drag any node</b> to pin its position. Pinned positions are auto-saved to the Streamliner filesystem (1-second debounce after the last drag) and persist across page reloads, browser changes, machines (when committed), and reconciliation updates. Pinned nodes show a 📌 badge — click to unpin a single node, or "Reset N pinned" (top-left) to clear and re-run ELK.</p>
+      <p><b>Drag any node</b> to pin its position. Pinned positions are auto-saved to the Streamliner filesystem (1-second debounce after the last drag) and persist across page reloads, browser changes, machines (when committed), and reconciliation updates.</p>
       <p><b>Filter bar at top</b>: pick Ready / In progress / Blocked / Done / Planned / Hot to focus the graph on a subset. Focus-set nodes stay fully bright; 1-hop neighbors dim partially (so you can see what connects to the focus set); everything else fades but stays in place. Edges between focus and neighbor are still drawn so the connection structure is visible.</p>
     </aside>`;
   }
@@ -1235,6 +2368,97 @@ function Inspector({ selection }) {
   if (selection.kind === 'workstream') return html`<${WorkstreamInspector} id=${selection.id} />`;
   if (selection.kind === 'external') return html`<${ExternalInspector} id=${selection.id} />`;
   return null;
+}
+
+function WorkstreamColorPicker({ workstreamId }) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef(null);
+  const current = (WS_COLOR_OVERRIDES[workstreamId] || '').toLowerCase();
+  const hasOverride = Boolean(current);
+  // The trigger swatch shows the actual hex when an override is set, or the
+  // checker-pattern (transparent default) when on auto so it's clearly
+  // distinguishable from a real color choice.
+  const triggerStyle = current
+    ? { background: current }
+    : {};
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        setOpen(false);
+      }
+    };
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  return html`
+    <span className="ws-color-menu" ref=${containerRef}>
+      <button
+        type="button"
+        className="ws-color-trigger"
+        aria-label=${hasOverride ? 'Change workstream color (currently ' + current + ')' : 'Pick a workstream color (currently auto)'}
+        aria-expanded=${open}
+        title=${hasOverride ? 'Workstream color: ' + current : 'Workstream color: auto'}
+        onClick=${() => setOpen((v) => !v)}
+      >
+        <span className="ws-color-trigger-swatch" style=${triggerStyle} />
+        <span>${hasOverride ? current : 'auto'}</span>
+        <span className="ws-color-trigger-caret">▾</span>
+      </button>
+      ${open ? html`
+        <div className="ws-color-popover" role="dialog" aria-label="Workstream color picker">
+          <div className="grid">
+            ${TERMINAL_COLOR_PALETTE.map((hex) => html`
+              <button
+                key=${hex}
+                type="button"
+                className=${'swatch' + (current === hex ? ' selected' : '')}
+                style=${{ background: hex }}
+                aria-label=${'Use color ' + hex}
+                aria-pressed=${current === hex}
+                onClick=${() => { setWorkstreamColor(workstreamId, hex); setOpen(false); }}
+              />
+            `)}
+          </div>
+          <div className="actions">
+            <button
+              type="button"
+              className="reset"
+              disabled=${!hasOverride}
+              onClick=${() => { setWorkstreamColor(workstreamId, null); setOpen(false); }}
+              title="Clear the explicit color and fall back to auto-hue"
+            >Auto</button>
+            <span className="current">${hasOverride ? current : 'auto'}</span>
+          </div>
+        </div>
+      ` : null}
+    </span>
+  `;
+}
+
+function WorkstreamTerminalToggle({ workstreamId }) {
+  const active = WS_TERMINAL_ACTIVE.has(workstreamId);
+  return html`
+    <button
+      type="button"
+      className="ws-term-toggle"
+      aria-pressed=${active}
+      title=${active
+        ? 'Marked as having an open terminal window. Click to unmark.'
+        : 'Mark this workstream as having an open terminal window.'}
+      onClick=${() => setWorkstreamTerminalActive(workstreamId, !active)}
+    >
+      <span className="live" />
+      ${active ? 'terminal open' : 'mark terminal open'}
+    </button>
+  `;
 }
 
 function WorkstreamInspector({ id }) {
@@ -1247,6 +2471,18 @@ function WorkstreamInspector({ id }) {
       <span className="pill" style=${{color:'var(--muted)',background:'rgba(20,60,130,0.06)'}}>L${ws.layer}</span>
     </p>
     <p>${ws.summary || ''}</p>
+    <button
+      type="button"
+      className="doc-open-btn"
+      onClick=${() => brief_request_set({ id: ws.id, type: ws.type, title: ws.title })}
+      title=${ws.type === 'candidate'
+        ? 'Open the candidate shaping markdown for this workstream'
+        : 'Open the workstream brief.md'}
+    >
+      ${ws.type === 'candidate' ? '📄 View candidate' : '📄 View brief'}
+    </button>
+    <${WorkstreamColorPicker} workstreamId=${ws.id} />
+    <${WorkstreamTerminalToggle} workstreamId=${ws.id} />
     <h3>Repos</h3>
     <p>${(ws.repos || []).join(' · ')}</p>
     ${ws.branch ? html`<h3>Branch</h3><p>${ws.branch}</p>` : null}
@@ -1277,6 +2513,20 @@ function WaveInspector({ id }) {
       <span className="pill" style=${{color:statusColor(wv.status), background:statusBg(wv.status)}}>${wv.status}</span>
     </p>
     <p>${wv.summary || ''}</p>
+    ${ws ? html`
+      <button
+        type="button"
+        className="doc-open-btn"
+        onClick=${() => brief_request_set({ id: ws.id, type: ws.type, title: ws.title })}
+        title=${ws.type === 'candidate'
+          ? 'Open the candidate shaping markdown for this wave\u2019s workstream'
+          : 'Open this wave\u2019s workstream brief.md'}
+      >
+        ${ws.type === 'candidate' ? '📄 View candidate' : '📄 View brief'}
+      </button>
+    ` : null}
+    ${ws ? html`<${WorkstreamColorPicker} workstreamId=${ws.id} />` : null}
+    ${ws ? html`<${WorkstreamTerminalToggle} workstreamId=${ws.id} />` : null}
     ${wv.deps && wv.deps.length ? html`
       <h3>Hard dependencies</h3>
       ${wv.deps.map(d => {
@@ -1356,13 +2606,47 @@ function App() {
   saveStatusSetter = setSaveStatus;
   const [selection, setSelection] = useState(null);
   selection_set = setSelection;
-  const [edgeFilters, setEdgeFilters] = useState({
-    'hard': true, 'soft-data': true, 'soft-coord': true, 'external': true
-  });
-  const [fulfilledMode, setFulfilledMode] = useState('dim'); // 'on' | 'dim' | 'off'
-  const [showCandidateEdges, setShowCandidateEdges] = useState(true);
-  const [inspectorVisible, setInspectorVisible] = useState(true);
-  const [showGroups, setShowGroups] = useState(true);
+  const [briefRequest, setBriefRequest] = useState(null); // { id, type, title } | null
+  brief_request_set = setBriefRequest;
+  // colorsVersion bumps whenever the workstream color overrides change so
+  // that React Flow nodes re-render their workstream-themed visuals.
+  const [colorsVersion, setColorsVersion] = useState(0);
+  useEffect(() => {
+    colorsChangeListener = () => setColorsVersion((v) => v + 1);
+    return () => { colorsChangeListener = () => {}; };
+  }, []);
+  // terminalVersion does the same for the WS_TERMINAL_ACTIVE set so the
+  // TB-C marker on workstream containers updates when the user toggles a
+  // workstream's "terminal window open" state.
+  const [terminalVersion, setTerminalVersion] = useState(0);
+  useEffect(() => {
+    terminalChangeListener = () => setTerminalVersion((v) => v + 1);
+    return () => { terminalChangeListener = () => {}; };
+  }, []);
+  // View-state toggles read their initial values from localStorage so they
+  // survive page reloads and (when running against `npm run dev:stable`) any
+  // API restarts. A single useEffect below persists the bundle whenever any
+  // toggle changes.
+  const [edgeFilters, setEdgeFilters] = useState(
+    INITIAL_FILTER_PREFS.edgeFilters && typeof INITIAL_FILTER_PREFS.edgeFilters === 'object'
+      ? { 'hard': true, 'soft-data': true, 'soft-coord': true, 'external': true, ...INITIAL_FILTER_PREFS.edgeFilters }
+      : { 'hard': true, 'soft-data': true, 'soft-coord': true, 'external': true }
+  );
+  const [fulfilledMode, setFulfilledMode] = useState(
+    ['on', 'dim', 'off'].includes(INITIAL_FILTER_PREFS.fulfilledMode) ? INITIAL_FILTER_PREFS.fulfilledMode : 'dim'
+  );
+  const [completedMode, setCompletedMode] = useState(
+    ['show', 'dim', 'hide'].includes(INITIAL_FILTER_PREFS.completedMode) ? INITIAL_FILTER_PREFS.completedMode : 'show'
+  );
+  const [showCandidateEdges, setShowCandidateEdges] = useState(
+    typeof INITIAL_FILTER_PREFS.showCandidateEdges === 'boolean' ? INITIAL_FILTER_PREFS.showCandidateEdges : true
+  );
+  const [inspectorVisible, setInspectorVisible] = useState(
+    typeof INITIAL_FILTER_PREFS.inspectorVisible === 'boolean' ? INITIAL_FILTER_PREFS.inspectorVisible : true
+  );
+  const [showGroups, setShowGroups] = useState(
+    typeof INITIAL_FILTER_PREFS.showGroups === 'boolean' ? INITIAL_FILTER_PREFS.showGroups : true
+  );
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [layoutReady, setLayoutReady] = useState(false);
@@ -1370,18 +2654,38 @@ function App() {
   pinnedSetSetter = setPinnedSet;
   const [pinnedCount, setPinnedCount] = useState(0);
   pinnedCountSetter = setPinnedCount;
-  const [nodeFilter, setNodeFilter] = useState('all');
+  const [nodeFilter, setNodeFilter] = useState(
+    typeof INITIAL_FILTER_PREFS.nodeFilter === 'string' ? INITIAL_FILTER_PREFS.nodeFilter : 'all'
+  );
 
-  // Boot: fetch portfolio + positions before anything else.
+  // Persist the whole filter bundle whenever any toggle changes. Cheap and
+  // synchronous; localStorage writes are O(small) for this payload.
+  useEffect(() => {
+    saveFilterPrefs({
+      edgeFilters,
+      fulfilledMode,
+      completedMode,
+      showCandidateEdges,
+      showGroups,
+      inspectorVisible,
+      nodeFilter,
+    });
+  }, [edgeFilters, fulfilledMode, completedMode, showCandidateEdges, showGroups, inspectorVisible, nodeFilter]);
+
+  // Boot: fetch portfolio + positions + colors before anything else.
   useEffect(() => {
     (async () => {
       try {
-        const [portfolio, positions] = await Promise.all([
+        const [portfolio, positions, colors, terminalActive] = await Promise.all([
           fetchPortfolio(),
           fetchPositions(),
+          fetchColors(),
+          fetchTerminalActive(),
         ]);
         PORTFOLIO = portfolio;
         pinnedCache = positions || {};
+        WS_COLOR_OVERRIDES = colors || {};
+        WS_TERMINAL_ACTIVE = new Set(terminalActive || []);
         buildIndexes();
         buildHues();
         setBootState({ status: 'ready', error: null });
@@ -1415,15 +2719,15 @@ function App() {
     try {
       const elkPositions = await computeElkLayout();
       const pinned = loadPinned();
-      const merged = { ...elkPositions };
+      const merged = applyWorkstreamAnchors(elkPositions, pinned);
       for (const [id, p] of Object.entries(pinned)) {
-        if (p.manuallyMoved) merged[id] = { x: p.x, y: p.y };
+        if (isNodePositionId(id) && isPinnedRecord(p)) merged[id] = { x: p.x, y: p.y };
       }
       const pSet = pinnedIds();
       setPinnedSet(pSet);
       setPinnedCount(pSet.size);
       setNodes(buildNodes(merged, null, pSet));
-      setEdges(buildEdges(edgeFilters, fulfilledMode, showCandidateEdges, focusedIds, neighborIds));
+      setEdges(buildEdges(edgeFilters, fulfilledMode, showCandidateEdges, focusedIds, neighborIds, completedMode));
       setLayoutReady(true);
     } catch (err) {
       console.error('ELK layout failed:', err);
@@ -1438,14 +2742,16 @@ function App() {
         y = 40;
       }
       const pinned = loadPinned();
+      const anchoredFallback = applyWorkstreamAnchors(fallback, pinned);
+      Object.assign(fallback, anchoredFallback);
       for (const [id, p] of Object.entries(pinned)) {
-        if (p.manuallyMoved) fallback[id] = { x: p.x, y: p.y };
+        if (isNodePositionId(id) && isPinnedRecord(p)) fallback[id] = { x: p.x, y: p.y };
       }
       const pSet = pinnedIds();
       setPinnedSet(pSet);
       setPinnedCount(pSet.size);
       setNodes(buildNodes(fallback, null, pSet));
-      setEdges(buildEdges(edgeFilters, fulfilledMode, showCandidateEdges, focusedIds, neighborIds));
+      setEdges(buildEdges(edgeFilters, fulfilledMode, showCandidateEdges, focusedIds, neighborIds, completedMode));
       setLayoutReady(true);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1469,17 +2775,20 @@ function App() {
   }, [computeAndApply]);
 
 
-  // Re-build node data (selection / pinned / filter) when those change.
+  // Re-build node data (selection / pinned / filter / completed-dim) when those change.
   useEffect(() => {
     setNodes(prev => prev.map(n => {
       const isPinned = pinnedSet.has(n.id);
       const filterState = nodeFilterState(n.id, focusedIds, neighborIds);
       if (n.type === 'wave') {
+        const completedDim = completedMode === 'dim' && n.data.wave.status === 'done';
         return { ...n, data: {
           ...n.data,
           selected: selection?.kind === 'wave' && selection.id === n.data.wave.id,
           pinned: isPinned,
-          filterState
+          filterState,
+          completedDim,
+          colorsVersion,
         } };
       }
       if (n.type === 'external') {
@@ -1490,15 +2799,18 @@ function App() {
           filterState
         } };
       }
+      if (n.type === 'workstreamGroup') {
+        return { ...n, data: { ...n.data, colorsVersion, terminalVersion } };
+      }
       return n;
     }));
-  }, [selection, pinnedSet, focusedIds, neighborIds]);
+  }, [selection, pinnedSet, focusedIds, neighborIds, completedMode, colorsVersion, terminalVersion]);
 
   // Re-build edges when filters change.
   useEffect(() => {
     if (!layoutReady) return;
-    setEdges(buildEdges(edgeFilters, fulfilledMode, showCandidateEdges, focusedIds, neighborIds));
-  }, [edgeFilters, fulfilledMode, showCandidateEdges, focusedIds, neighborIds, layoutReady]);
+    setEdges(buildEdges(edgeFilters, fulfilledMode, showCandidateEdges, focusedIds, neighborIds, completedMode));
+  }, [edgeFilters, fulfilledMode, showCandidateEdges, focusedIds, neighborIds, completedMode, layoutReady]);
 
   const onNodesChange = useCallback((changes) => {
     // Filter out any change events that target group nodes — they're decorative
@@ -1512,15 +2824,21 @@ function App() {
 
   // Derived nodes for React Flow: prepend workstream-group backdrops (when
   // toggled on) so they render BEHIND wave/external nodes. Recomputed on
-  // every wave drag so groups follow their waves.
+  // every wave drag so groups follow their waves. When completedMode is
+  // 'hide', done waves are filtered out so they no longer occupy space or
+  // attention on the canvas (their edges are dropped in buildEdges).
   const displayedNodes = useMemo(() => {
-    if (!showGroups) return nodes;
-    const groups = buildWorkstreamGroupNodes(nodes);
+    const filtered = completedMode === 'hide'
+      ? nodes.filter(n => !(n.type === 'wave' && n.data?.wave?.status === 'done'))
+      : nodes;
+    if (!showGroups) return filtered;
+    const groups = buildWorkstreamGroupNodes(filtered);
     // Group nodes first so React Flow stacks them under regular nodes.
-    return [...groups, ...nodes];
-  }, [nodes, showGroups]);
+    return [...groups, ...filtered];
+  }, [nodes, showGroups, completedMode]);
 
   const onNodeDragStop = useCallback((event, node) => {
+    pinWorkstreamAnchorsFromDrag(nodes, [node]);
     pinPosition(node.id, node.position.x, node.position.y);
     setPinnedSet(prev => {
       const next = new Set(prev);
@@ -1528,7 +2846,7 @@ function App() {
       return next;
     });
     setPinnedCount(prev => prev + (pinnedSet.has(node.id) ? 0 : 1));
-  }, [pinnedSet]);
+  }, [nodes, pinnedSet]);
 
   // When the user shift-clicks (or otherwise multi-selects) a set of nodes
   // and drags any of them, React Flow moves the whole selection together but
@@ -1538,6 +2856,7 @@ function App() {
   // workstreamGroup nodes are selectable: false, so they never appear here.
   const onSelectionDragStop = useCallback((event, draggedNodes) => {
     if (!Array.isArray(draggedNodes) || draggedNodes.length === 0) return;
+    pinWorkstreamAnchorsFromDrag(nodes, draggedNodes);
     let added = 0;
     for (const node of draggedNodes) {
       if (!pinnedSet.has(node.id)) added++;
@@ -1549,7 +2868,7 @@ function App() {
       return next;
     });
     if (added > 0) setPinnedCount(prev => prev + added);
-  }, [pinnedSet]);
+  }, [nodes, pinnedSet]);
 
   const FILTER_BUTTONS = [
     { id: 'all',         label: 'All',         className: '' },
@@ -1605,7 +2924,6 @@ function App() {
           <span className="it"><span className="ln" style=${{borderColor:'var(--purple)', borderTopStyle:'dotted'}} />soft-coord</span>
           <span className="it"><span className="ln" style=${{borderColor:'var(--red)', borderTopStyle:'dashed'}} />external</span>
           <span className="it"><span className="ln" style=${{borderColor:'rgba(20,60,130,0.45)'}} />spine (workstream-colored)</span>
-          <span className="it">📌 pinned</span>
         </div>
       </div>
     </header>
@@ -1688,6 +3006,19 @@ function App() {
                   </select>
                 </label>
                 <label>
+                  <span>completed waves</span>
+                  <select
+                    className="control-select"
+                    value=${completedMode}
+                    onChange=${e => setCompletedMode(e.target.value)}
+                    title="How done waves are rendered. 'dim' fades them in place; 'hide' removes them and any edges that touch them."
+                  >
+                    <option value="show">show</option>
+                    <option value="dim">dim</option>
+                    <option value="hide">hide</option>
+                  </select>
+                </label>
+                <label>
                   <input
                     type="checkbox"
                     checked=${showGroups}
@@ -1736,6 +3067,7 @@ function App() {
         </div>
       ` : null}
     </section>
+    <${BriefPane} request=${briefRequest} onClose=${() => setBriefRequest(null)} />
   `;
 }
 
@@ -1743,4 +3075,3 @@ createRoot(document.getElementById('root')).render(html`<${App}/>`);
 </script>
 </body>
 </html>
-

@@ -62,6 +62,10 @@ function requestConfiguration(body: unknown): WorkstreamConfigurationUpdateInput
   }
   const configuration: WorkstreamConfigurationUpdateInput = {};
   let hasConfigurationField = false;
+  if (hasOwn(body, "presentation")) {
+    hasConfigurationField = true;
+    configuration.presentation = body.presentation as WorkstreamConfigurationUpdateInput["presentation"];
+  }
   if (hasOwn(body, "launchPolicy")) {
     hasConfigurationField = true;
     configuration.launchPolicy = body.launchPolicy as WorkstreamConfigurationUpdateInput["launchPolicy"];
@@ -277,6 +281,11 @@ export function createWorkstreamsRouter(options: WorkstreamRegistryOptions = {})
         configuration,
         now: options.now,
       });
+      if (graph.entry.source === "source") {
+        await scanWorkstreamSources(options);
+      } else {
+        await registerWorkstreamPath(graph.entry.path, options);
+      }
       res.setHeader("Last-Modified", result.lastModified);
       res.json({ workstream: result.workstream });
     } catch (error: unknown) {

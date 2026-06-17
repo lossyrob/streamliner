@@ -112,7 +112,7 @@ export function SessionLaunchSettingsPage({
         </div>
 
         <label className="sl-field">
-          <span>One option token per line</span>
+          <span>Option tokens; --prefer-version may include a value</span>
           <textarea
             aria-label="Default Copilot CLI args"
             value={cliArgsText}
@@ -122,7 +122,7 @@ export function SessionLaunchSettingsPage({
               setStatus(null);
               setActionError(null);
             }}
-            placeholder={"--yolo\n--model=gpt-5.5"}
+            placeholder={"--yolo\n--prefer-version 1.0.52-config-hardening-patch"}
             rows={8}
             disabled={busy}
           />
@@ -130,7 +130,7 @@ export function SessionLaunchSettingsPage({
 
         <p className="sl-summary">
           Streamliner appends its own <code>--resume=&lt;session&gt;</code> argument during relaunch.
-          Use <code>--flag=value</code> for values; kickoff prompts belong in launch instructions, not defaults.
+          Use <code>--prefer-version &lt;version&gt;</code> for Copilot version pinning; kickoff prompts belong in launch instructions, not defaults.
         </p>
 
         <div className="sl-profile-editor-actions">

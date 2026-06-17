@@ -631,6 +631,36 @@ describe("SessionRegistryFileStore", () => {
     );
   });
 
+  it("rejects builder graphBinding patches that would clobber a launch claim binding", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+
+    const launched = store.upsertSession({
+      title: "Launched worker",
+      description: "",
+      color: null,
+      cwd: "C:\\repo",
+      origin: { kind: "launched", launchClaimId: "claim-1" },
+      graphBinding: {
+        workstreamId: "sessions",
+        nodeId: "node-a",
+        launchClaimId: "claim-1",
+      },
+    });
+
+    expect(() =>
+      store.patchSession(launched.id, {
+        graphBinding: { workstreamId: "sessions", nodeId: null },
+      })
+    ).toThrow(/changed before this update/);
+    expect(store.getSession(launched.id)?.graphBinding).toEqual({
+      workstreamId: "sessions",
+      nodeId: "node-a",
+      launchClaimId: "claim-1",
+    });
+  });
+
   it("updates auto-managed observed titles during rediscovery", () => {
     const rootDir = createRootDir();
     createdRoots.push(rootDir);

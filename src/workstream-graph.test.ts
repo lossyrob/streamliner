@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { WorkstreamDocument } from "./workstream-schema";
 import { buildWorkstreamViewModel } from "./workstream-view-model";
 import {
+  applyWorkstreamGraphSelection,
+  buildWorkstreamGraphBaseLayout,
   buildWorkstreamGraphLayout,
   reduceTransitiveEdges,
 } from "./workstream-graph";
@@ -137,6 +139,77 @@ describe("buildWorkstreamGraphLayout", () => {
       "b->c",
       "c->d",
     ]);
+  });
+
+  it("applies selection highlights without changing base layout geometry", () => {
+    const workstream = buildFixture([
+      {
+        id: "a",
+        type: "task",
+        title: "A",
+        summary: "A",
+        status: "completed",
+        attention: "focus",
+        repoIds: ["main"],
+        dependsOn: [],
+      },
+      {
+        id: "b",
+        type: "task",
+        title: "B",
+        summary: "B",
+        status: "completed",
+        attention: "focus",
+        repoIds: ["main"],
+        dependsOn: ["a"],
+      },
+      {
+        id: "c",
+        type: "task",
+        title: "C",
+        summary: "C",
+        status: "in-progress",
+        attention: "focus",
+        repoIds: ["main"],
+        dependsOn: ["b"],
+      },
+    ]);
+    const viewModel = buildWorkstreamViewModel(
+      workstream,
+      undefined,
+      new Date("2026-03-30T20:06:10.348Z"),
+    );
+    const baseLayout = buildWorkstreamGraphBaseLayout(workstream, viewModel);
+    const selectedLayout = applyWorkstreamGraphSelection(baseLayout, "b");
+
+    expect(applyWorkstreamGraphSelection(baseLayout, null)).toBe(baseLayout);
+    expect(selectedLayout.checkpointLanes).toBe(baseLayout.checkpointLanes);
+    expect(selectedLayout.dependenciesByNode).toBe(baseLayout.dependenciesByNode);
+    expect(selectedLayout.dependentsByNode).toBe(baseLayout.dependentsByNode);
+    expect(
+      selectedLayout.nodes.map(({ id, x, y, width, height }) => ({
+        id,
+        x,
+        y,
+        width,
+        height,
+      })),
+    ).toEqual(
+      baseLayout.nodes.map(({ id, x, y, width, height }) => ({
+        id,
+        x,
+        y,
+        width,
+        height,
+      })),
+    );
+    expect(new Map(selectedLayout.nodes.map((node) => [node.id, node.highlight]))).toEqual(
+      new Map([
+        ["a", "ancestor"],
+        ["b", "selected"],
+        ["c", "descendant"],
+      ]),
+    );
   });
 
   it("keeps checkpoint lanes ordered even when dependencies would share a rank", () => {

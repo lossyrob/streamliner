@@ -449,9 +449,10 @@ function ensureOptionalGraphBinding(
     throw new Error(`Expected ${fieldName} to be an object or null.`);
   }
 
+  const nodeId = ensureOptionalString(value.nodeId, `${fieldName}.nodeId`);
   return {
     workstreamId: ensureString(value.workstreamId, `${fieldName}.workstreamId`),
-    nodeId: ensureString(value.nodeId, `${fieldName}.nodeId`),
+    nodeId: nodeId && nodeId.trim().length > 0 ? nodeId : null,
     launchClaimId: ensureOptionalString(
       value.launchClaimId,
       `${fieldName}.launchClaimId`,
@@ -1980,6 +1981,7 @@ function matchesText(
     | "cwd"
     | "repo"
     | "branch"
+    | "copilotSessionId"
     | "derivedBranch"
     | "derivedWorktreePath"
     | "derivedGithubRefs"
@@ -2071,6 +2073,21 @@ function getBuilderConflictFields(patch: SessionRegistryPatch): string[] {
     }
   }
   return fields;
+}
+
+function graphBindingsEqual(
+  left: SessionRegistryGraphBinding | null,
+  right: SessionRegistryGraphBinding | null,
+): boolean {
+  return (
+    (left?.workstreamId ?? null) === (right?.workstreamId ?? null) &&
+    (left?.nodeId ?? null) === (right?.nodeId ?? null) &&
+    (left?.launchClaimId ?? null) === (right?.launchClaimId ?? null)
+  );
+}
+
+function isProtectedGraphBinding(binding: SessionRegistryGraphBinding | null): boolean {
+  return Boolean(binding?.launchClaimId);
 }
 
 function writeJsonFile(path: string, payload: unknown): void {
@@ -2645,6 +2662,16 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         throw new SessionRegistryConflictError(
           cloneValue(existingRecord),
           conflictFields,
+        );
+      }
+      if (
+        validatedPatch.graphBinding !== undefined &&
+        isProtectedGraphBinding(existingRecord.graphBinding) &&
+        !graphBindingsEqual(existingRecord.graphBinding, validatedPatch.graphBinding)
+      ) {
+        throw new SessionRegistryConflictError(
+          cloneValue(existingRecord),
+          ["graphBinding"],
         );
       }
 

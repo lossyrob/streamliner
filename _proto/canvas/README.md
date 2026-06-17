@@ -3,17 +3,17 @@
 > Quick-and-dirty prototype that uses Streamliner's API server to give the
 > DBAgent portfolio canvas filesystem-backed position persistence.
 >
-> Hard-coded paths. Single page. Will be promoted into a proper Streamliner
-> feature later — at that point the contract that should survive is
-> "portfolio document + positions overlay keyed by node ID + atomic
-> whole-file replace."
+> Project-specific paths. Single page. Will be promoted into a proper Streamliner
+> feature later - at that point the contract that should survive is
+> "portfolio document + positions overlay keyed by node/workstream anchor ID
+> + atomic writes."
 
 ## What this is
 
 A single static page (`index.html`) that loads the DBAgent portfolio data
-from a hard-coded planning-repo file and renders it as a draggable React
+from the dbagent planning repo and renders it as a draggable React
 Flow canvas. Drag positions are auto-saved (1s debounce) to a
-filesystem-backed positions file via three new API endpoints under
+filesystem-backed positions file via API endpoints under
 `/api/_proto/canvas/`.
 
 This replaces the previous `localStorage`-backed prototype that lived in
@@ -22,16 +22,18 @@ the planning repo at
 That file remains usable as the standalone fallback; this prototype is
 the durable workspace for layout work.
 
-## Hard-coded paths
+## Project-configured paths
 
 | Resource | Path |
 |---|---|
 | Portfolio source (read-only) | `C:\Users\robemanuele\proj\planning\planning\streamliner\dbagent\portfolio\portfolio.json` |
-| Positions store (read/write) | `_proto/canvas/state/positions.json` (committed to streamliner repo so layout work persists across machines) |
+| Portfolio state store (read/write) | `C:\Users\robemanuele\proj\planning\planning\streamliner\dbagent\portfolio\state\` |
 
-Both paths are baked into `src/server/routes/proto-canvas.ts`. To repoint
-the prototype at a different portfolio, edit those two constants. When
-this graduates, both should become arguments / config.
+The route reads `portfolio.path` and `portfolio.stateDir` from
+`C:\Users\robemanuele\proj\planning\planning\streamliner\dbagent\streamliner.json`.
+Relative paths are resolved from the dbagent project root. If the config
+is absent, the prototype falls back to `portfolio\portfolio.json` and
+`portfolio\state`.
 
 ## Endpoints
 
@@ -39,7 +41,13 @@ this graduates, both should become arguments / config.
 |---|---|---|
 | `GET` | `/api/_proto/canvas/portfolio` | Returns the raw `portfolio.json` from the planning repo. |
 | `GET` | `/api/_proto/canvas/positions` | Returns `{ path, positions: { id: { x, y, manuallyMoved, ts } } }`. Returns `{}` for `positions` if the file doesn't exist yet. |
-| `PUT` | `/api/_proto/canvas/positions` | Body: `{ positions: { id: { x, y, ... }, ... } }`. Atomic whole-file replace (write to `.tmp`, rename). Light validation: ignores entries without numeric `x`/`y`. |
+| `PUT` | `/api/_proto/canvas/positions` | Legacy full-overlay upsert. Body: `{ positions: { id: { x, y, ... }, ... } }`. Merges entries over the current file and never deletes. |
+| `PATCH` | `/api/_proto/canvas/positions` | Routine save path. Body: `{ upsert?: { id: { x, y, ... } }, remove?: [id] }`. Applies partial updates atomically. |
+| `POST` | `/api/_proto/canvas/positions?method=patch` | `sendBeacon` unload fallback for the same partial update shape as `PATCH`. |
+| `GET` | `/api/_proto/canvas/colors` | Returns `{ path, colors }` from the portfolio state directory. |
+| `PUT` | `/api/_proto/canvas/colors` | Replaces the color overlay. |
+| `GET` | `/api/_proto/canvas/terminal-active` | Returns `{ path, activeIds }` from the portfolio state directory. |
+| `PUT` | `/api/_proto/canvas/terminal-active` | Replaces the active terminal marker set. |
 
 Mounted in `src/server/app.ts`. The static page is served from
 `/_proto/canvas/` via `express.static()` against the `_proto/canvas/`
@@ -66,15 +74,22 @@ this prototype.
    `saveDebounced()` which schedules a save 1 second later.
 3. The save status indicator in the top-left controls panel shows
    `● change pending — saving in 1s`.
-4. After 1s of inactivity, the cache is `PUT` to
+4. After 1s of inactivity, the changed entries are `PATCH`ed to
    `/api/_proto/canvas/positions`. Status flips to
    `● saving N positions…` then `● saved N · HH:MM:SS`.
-5. The server writes to `_proto/canvas/state/positions.json.tmp` then
+5. The server writes to `portfolio\state\positions.json.tmp` then
    renames over the live file (atomic on Windows + Unix).
 6. On page reload the page re-fetches portfolio + positions from the
    API; pinned positions take precedence over ELK-computed positions.
 7. On `beforeunload` (tab close), pending saves are flushed via
    `navigator.sendBeacon` as a best-effort last-chance write.
+
+The positions file also stores `ws:<workstreamId>` anchors. A drag of any
+wave records the workstream's current top-left alongside the exact node pin.
+On later portfolio reconciliation, if wave IDs are added or renamed, the
+canvas translates the current ELK layout back near the saved workstream
+anchor before applying exact per-node pins. This keeps a workstream's visual
+location stable even when a candidate becomes a multi-wave workstream.
 
 ## Migrating positions from the older localStorage prototype
 
@@ -84,7 +99,7 @@ the **Export N pinned** button (green button under the existing Reset
 button), save the downloaded JSON to:
 
 ```
-C:\Users\robemanuele\proj\streamliner\streamliner\_proto\canvas\state\positions.json
+C:\Users\robemanuele\proj\planning\planning\streamliner\dbagent\portfolio\state\positions.json
 ```
 
 Reload the prototype — your positions are loaded. The format is
@@ -95,7 +110,7 @@ identical between the two prototypes.
 When this graduates to a real Streamliner feature, the parts worth
 keeping:
 
-- **Three-endpoint contract** (portfolio, GET positions, PUT positions)
+- **Positions contract** (portfolio, GET positions, PATCH positions)
   generalized to per-document positions overlays
 - **Atomic write pattern** (tmp + rename) for positions
 - **Debounced save with visible status indicator** + `sendBeacon`
@@ -107,8 +122,8 @@ keeping:
 
 What needs to change:
 
-- **No more hard-coded paths** — accept portfolio + positions paths from
-  config or query string
+- **No more project-specific route constants** — accept portfolio +
+  positions paths from first-class Streamliner config
 - **TypeScript + Vite-built bundle** instead of esm.sh imports for
   production
 - **Multi-document support** — register multiple canvases, switch
@@ -124,10 +139,11 @@ What needs to change:
 _proto/canvas/
 ├── README.md                      ← this file
 ├── index.html                     ← the canvas page (~60KB, no build step)
-└── state/
-    └── positions.json             ← committed; created on first save
+└── wave-progress-prototype.html   ← static design sheet for wave progress markers
 src/server/routes/
-└── proto-canvas.ts                ← Express router for the three endpoints
+└── proto-canvas.ts                ← Express router for the prototype endpoints
+C:\Users\robemanuele\proj\planning\planning\streamliner\dbagent\portfolio\state\
+└── positions.json / colors.json / terminal-active.json
 ```
 
 The static-file middleware mount lives in

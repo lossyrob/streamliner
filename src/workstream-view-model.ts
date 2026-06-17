@@ -15,6 +15,7 @@ import type {
   WorkstreamLaunchTerminalPreference,
   WorkstreamNode,
   WorkstreamNodeStatus,
+  WorkstreamPresentation,
   WorkstreamTracker,
   WorkstreamTrackerType,
   WorkstreamNodeType,
@@ -298,6 +299,16 @@ function parseLaunchTerminalDefaults(
   };
 }
 
+function parseOptionalBoolean(value: unknown, label: string): boolean | undefined {
+  if (typeof value === "undefined") {
+    return undefined;
+  }
+  if (typeof value !== "boolean") {
+    throw new Error(`Expected ${label} to be a boolean.`);
+  }
+  return value;
+}
+
 function parseLaunchDefaults(value: unknown, label: string): WorkstreamLaunchDefaults {
   const record = asObject(value, label);
   const terminal = record.terminal;
@@ -307,6 +318,37 @@ function parseLaunchDefaults(value: unknown, label: string): WorkstreamLaunchDef
       typeof terminal === "undefined"
         ? undefined
         : parseLaunchTerminalDefaults(terminal, `${label}.terminal`),
+    launchAfterInit: parseOptionalBoolean(record.launchAfterInit, `${label}.launchAfterInit`),
+    reviewCompanion: parseOptionalBoolean(record.reviewCompanion, `${label}.reviewCompanion`),
+    reviewPromptTemplateId: parseOptionalKebabCaseId(
+      record.reviewPromptTemplateId,
+      `${label}.reviewPromptTemplateId`,
+    ),
+  };
+}
+
+function parsePresentation(value: unknown, label: string): WorkstreamPresentation {
+  const record = asObject(value, label);
+  return {
+    shortName: parseOptionalString(record.shortName, `${label}.shortName`),
+    color: parseOptionalHexColor(record.color, `${label}.color`),
+  };
+}
+
+function presentationWithLegacyColorFallback(
+  presentation: WorkstreamPresentation | undefined,
+  launchDefaults: WorkstreamLaunchDefaults | undefined,
+): WorkstreamPresentation | undefined {
+  const shortName = presentation?.shortName;
+  const color = presentation && presentation.color !== undefined
+    ? presentation.color
+    : launchDefaults?.terminal?.tabColor;
+  if (shortName === undefined && color === undefined) {
+    return undefined;
+  }
+  return {
+    ...(shortName !== undefined ? { shortName } : {}),
+    ...(color !== undefined ? { color } : {}),
   };
 }
 
@@ -498,9 +540,20 @@ export function parseWorkstreamDocument(
   const record = asObject(parsed, "workstream");
   const projectKey = record.projectKey;
   const trackingIssue = record.trackingIssue;
+  const presentation = record.presentation;
   const launchPolicy = record.launchPolicy;
   const launchDefaults = record.launchDefaults;
   const designRefs = record.designRefs;
+  const parsedLaunchDefaults =
+    typeof launchDefaults === "undefined"
+      ? undefined
+      : parseLaunchDefaults(launchDefaults, "workstream.launchDefaults");
+  const parsedPresentation = presentationWithLegacyColorFallback(
+    typeof presentation === "undefined"
+      ? undefined
+      : parsePresentation(presentation, "workstream.presentation"),
+    parsedLaunchDefaults,
+  );
 
   return assertSemanticallyValid({
     schemaVersion:
@@ -534,14 +587,12 @@ export function parseWorkstreamDocument(
       typeof trackingIssue === "undefined"
         ? undefined
         : parseIssue(trackingIssue, "workstream.trackingIssue"),
+    presentation: parsedPresentation,
     launchPolicy:
       typeof launchPolicy === "undefined"
         ? undefined
         : parseLaunchPolicy(launchPolicy, "workstream.launchPolicy"),
-    launchDefaults:
-      typeof launchDefaults === "undefined"
-        ? undefined
-        : parseLaunchDefaults(launchDefaults, "workstream.launchDefaults"),
+    launchDefaults: parsedLaunchDefaults,
     repos: parseArray(record.repos, "workstream.repos", parseRepo),
     designRefs:
       typeof designRefs === "undefined"
