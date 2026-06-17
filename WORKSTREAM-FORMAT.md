@@ -549,10 +549,9 @@ the original shaping did not make the dependency explicit enough.
 
 ### Guidelines
 
-- **Target length:** Under 400 lines. Compact and learning-shaped, not narrative.
-  Brushing against the cap is also a shaping signal: consider whether the
-  workstream itself should have been split, not only whether the note is too
-  verbose.
+- **Keep it compact and learning-shaped, not narrative.** If the note starts to
+  sprawl, treat that as a shaping signal — the workstream itself may have wanted
+  splitting — rather than only a length problem.
 - **Single file per workstream, rewritten in place.** Intermediate wave-gate
   reconciliations may add or revise sections; the file always reads as the
   current best understanding. Git history is the audit trail.

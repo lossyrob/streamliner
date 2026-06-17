@@ -365,22 +365,16 @@ the builder learn why reality diverged from the plan.
 ### Reconciliation notes and promotion
 
 When a wave, gate, hot-work burst, or completed workstream teaches something
-about the work geometry, reconciliation emits a compact reconciliation note.
-This is not a generic retrospective. It is a lower-authority learning artifact
-about boundaries, contracts, context gaps, gate timing, attention allocation,
-and downstream impact.
+about the work geometry, reconciliation emits a compact reconciliation note: a
+lower-authority learning artifact about boundaries, contracts, context gaps,
+gate timing, attention allocation, and downstream impact, written from
+plan/reality divergence rather than as a completed-work inventory.
 
-Write the note from plan/reality divergence and future shaping lessons, not from
-a completed-work inventory. Evidence can come from standard worker `### Field
-report` comments, but if those are missing or non-standard, cite equivalent
-signals such as PR bodies, diffs, issue comments, tracker closeout notes,
-coverage-routing reports, or committed artifact changes.
-
-The reconciliation note is a durable workstream artifact. It lives at
-`<workstream>/reconciliation-note.md`, follows the structure in
-[WORKSTREAM-FORMAT.md](WORKSTREAM-FORMAT.md#the-reconciliation-note-reconciliation-notemd),
-and is rewritten in place — a single learning summary per workstream that
-deepens as the work progresses.
+The note is a durable workstream artifact at
+`<workstream>/reconciliation-note.md`, rewritten in place. Its structure,
+disposition vocabulary, promotion targets, and worked examples live in
+[WORKSTREAM-FORMAT.md](WORKSTREAM-FORMAT.md#the-reconciliation-note-reconciliation-notemd);
+this section covers only when the note is produced and how it gates closure.
 
 #### When it is produced
 
@@ -396,58 +390,32 @@ deepens as the work progresses.
 A workstream's final closure gate does not pass until:
 
 1. `reconciliation-note.md` exists for this workstream.
-2. Every actionable `Closeout Observation` in the brief, or equivalent closure
-   parking lane such as a `Closeout Punch List` or coverage-routing report, has
-   a disposition (completed, deferred with rationale, promoted, or dropped).
-   This is the existing closeout observation lane rule, surfaced here because
-   closure depends on it. Record these in the reconciliation note's
-   `Closeout observation dispositions` section when such a lane exists, rather
-   than force-fitting closure-boundary facts into promotion candidates.
-3. Every promotion candidate in the reconciliation note has an explicit
-   disposition: landed (with a link to where it landed), deferred with
-   rationale, or dropped because reconciliation showed it does not matter.
+2. Every actionable closeout observation — in the brief's `Closeout
+   Observations` or an equivalent closure lane — has a disposition.
+3. Every promotion candidate in the note has an explicit disposition.
 
-`Deferred with rationale` is a closed disposition. The gate blocks on missing
-or ambiguous dispositions, not on intentionally deferred work that names why it
-is not landing in this workstream.
-This includes lessons that need operator pickup, doctrine-backlog work, or
-another authority surface outside the closing workstream. A workstream-design
-lesson is closed whether it is promoted now or deferred, as long as the
-disposition names the corroborating signal — which may be future workstreams or
-several distinct instances within this one.
-
-These rules apply to *the closure gate*, not to every reconciliation pass. A
-mid-workstream reconciliation that does not change the closure picture does
-not need to revise the note.
+See the [reconciliation note spec](WORKSTREAM-FORMAT.md#the-reconciliation-note-reconciliation-notemd)
+for what counts as a valid disposition, including why `deferred with rationale`
+is a closed disposition and where closeout-observation dispositions are recorded.
+These rules apply to *the closure gate*, not to every reconciliation pass: a
+mid-workstream reconciliation that does not change the closure picture does not
+need to revise the note.
 
 #### Promotion
 
-Promotion keeps authority explicit. A lesson may remain a workstream-local
-note, become a workstream-local brief decision, turn into node-spec guidance,
-become a checkpoint contract, become a workstream-design lesson, or be promoted
-into the design layer or a decision record. Nothing becomes authoritative merely
-because an agent wrote it down.
-
-Each promotion candidate names its target authority so the disposition is
-verifiable: "Brief decision in workstream X", "New section in
-`docs/design/Y.md`", "ADR draft at `docs/design/decisions/NNN-Z.md`", "New
-shaping candidate at `.streamliner/shaping/candidates/W.md`", "Workstream-design
-lesson (`builder`, `project`, or `streamliner`) — deferred until…", or "Out of
-scope — dropped because…".
-
-Use workstream-design lesson for pattern-shaped operating heuristics that may
-need to accumulate before they deserve a concrete doctrine, project, or builder
-habit artifact. The reconciliation note is the capture point; the disposition
-either links to where the audience now curates the lesson or names what
-additional signal would justify promotion later.
+Promotion keeps authority explicit — nothing becomes authoritative merely
+because an agent wrote it down. Each promotion candidate names a target authority
+(a brief decision, node-spec guidance, a design doc or decision record, a shaping
+candidate, or a workstream-design lesson) so its disposition is verifiable. The
+[reconciliation note spec](WORKSTREAM-FORMAT.md#the-reconciliation-note-reconciliation-notemd)
+defines the full target list and how workstream-design lessons accumulate before
+they earn promotion.
 
 #### Distinct from any closeout narrative
 
 A workstream may also produce a longer-form prose narrative under `docs/` for
-reflective consumption (for example, feeding an external podcast generator).
-That artifact is optional, story-shaped, and intended for the operator's own
-consolidation away from in-the-moment work. It does not satisfy the
-closure-gate rule — the reconciliation note does. The two artifacts can
+reflective consumption. That artifact is optional, story-shaped, and never
+satisfies the closure-gate rule — the reconciliation note does. The two can
 reference each other but serve different audiences.
 
 ## Authority boundaries
