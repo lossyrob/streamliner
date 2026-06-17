@@ -65,6 +65,52 @@ And:
 
 > Git is the ledger, not the live cursor.
 
+## Messaging substrate: Telex
+
+The coordination and messaging layer of this north star is not hypothetical.
+[Telex](https://github.com/lossyrob/telex) is a CLI-first message fabric for
+agent sessions, built as the substrate this vision depends on. Streamliner
+should rely on Telex for cross-environment messaging rather than invent its own
+relay.
+
+Telex's model maps directly onto the concepts below:
+
+- An **address** names a durable responsibility: a project, workstream, role,
+  node, checkpoint, or session. It is the thing you message, independent of
+  whichever process currently serves it.
+- A **lease** binds a live session (an *actor*, below) to an address and
+  supplies answerback: infrastructure-level liveness, so a working agent is not
+  interrupted by "are you there?" pings.
+- A **message** is typed, bounded coordination delivered to an address. Under a
+  `streamliner` profile, messages carry Streamliner kinds and metadata.
+- A **disposition** records what the recipient did (acknowledged, handled,
+  deferred, closed, rejected, or escalated), a richer contract than bare
+  delivery.
+
+Telex is store-and-forward and poll-based: a local waiter holds a lease against
+a shared backend (local SQLite, or networked Postgres with Microsoft Entra
+auth) and receives messages without any inbound connection to the machine. That
+matches the outbound-only bias this document wants for dev boxes behind NAT and
+firewalls.
+
+Critically, Telex stays **lower and dumber** than the agents using it. It owns
+the message plane (addresses, leases, delivery, disposition, audit) and
+deliberately does **not** own Streamliner's work geometry, active workstream
+state, environment registry, local execution, or UI. That boundary is exactly
+the seam this north star wants:
+
+- **Coordination / message plane** -> Telex (addresses, leases, messages,
+  dispositions, audit).
+- **Work-geometry / active-state plane** -> Streamliner's backend, exportable
+  to Git.
+- **Execution plane** -> local Streamliner agents and actors that hold Telex
+  leases and do the machine-specific work.
+- **Ledger** -> Git, for state that becomes worth preserving.
+
+Streamliner remains the owner of work geometry and reconciliation decisions.
+Telex is the fabric that lets sessions coordinate around that geometry, and it
+treats Streamliner as a reference profile rather than a dependency.
+
 ## Architecture sketch
 
 The long-term architecture has three layers.
@@ -73,8 +119,8 @@ The long-term architecture has three layers.
 Remote Streamliner API / Relay
   shared project and workstream coordination
   environment and actor registration
-  message delivery and acknowledgement
-  audit events
+  message delivery and acknowledgement (Telex message fabric)
+  audit events (Telex message record)
   optional active Streamliner state store
   hosted UI eventually
 
@@ -95,8 +141,8 @@ Git repositories
   durable audit checkpoints
 ```
 
-The remote API coordinates. The local agent executes. Git records what has become
-worth preserving.
+The remote API coordinates and Telex carries its messages and acknowledgements.
+The local agent executes. Git records what has become worth preserving.
 
 ## Core concepts
 
@@ -148,6 +194,12 @@ A useful rule:
 
 > A session actor is a visible runtime attached to durable work geometry.
 
+In Telex terms, the durable work geometry an actor serves is an **address**, and
+the actor itself is the **lease** currently occupying it. The durable fields
+above (`workstreamId`, `role`) describe the address; the ephemeral fields
+(`status`, `lastHeartbeatAt`, `environmentId`, `runtimeKind`) describe the
+lease. Keeping that split avoids treating a runtime session as durable truth.
+
 ### Message
 
 A message is a structured instruction, note, or attention request delivered to an
@@ -178,7 +230,9 @@ actor or environment.
 ```
 
 Messages should be typed and bounded. They should not be raw remote shell
-commands.
+commands. These are Telex messages: delivered to an address, carried by the
+Telex fabric, and tagged with a `streamliner` profile and a message `kind` so
+the recipient can route them.
 
 ### Acknowledgement
 
@@ -194,9 +248,11 @@ Acks make cross-environment coordination reliable enough to trust.
 }
 ```
 
-The expected actor loop is peek, act, ack. A check can report actionable work
-without consuming it. The actor handles the work, then acknowledges only after the
-action succeeds.
+The expected actor loop is peek, act, ack, the same loop a Telex waiter runs. A
+check can report actionable work without consuming it. The actor handles the
+work, then acknowledges only after the action succeeds. An acknowledgement is a
+Telex **disposition**, which can be richer than a binary ack: handled, deferred,
+closed, rejected, or escalated.
 
 ## Principles
 
@@ -216,8 +272,9 @@ commit/push/pull cycle.
 
 Remote services should not directly launch terminals, run shell commands, mutate
 worktrees, or own local credentials. They should send structured messages or
-commands to local agents. Local agents decide what can be done in that
-environment and perform the machine-specific work.
+commands to local agents. Telex carries those messages but never executes them;
+local agents decide what can be done in that environment and perform the
+machine-specific work.
 
 ### Sessions become actors
 
@@ -228,8 +285,10 @@ to work geometry, not durable project memory.
 ### Relay first, database later
 
 The first remote slice should be message relay and environment/actor
-registration. Moving active workstream data into a remote store is a later,
-separate decision.
+registration. Telex already provides the relay (addresses, leases, typed
+messages, and dispositions), so this slice is mostly integration rather than a
+greenfield build. Moving active workstream data into a remote store is a later,
+separate decision, and is explicitly outside Telex's scope.
 
 ### Export over lock-in
 
@@ -250,11 +309,11 @@ The north star implies a clearer ladder of authority.
 
 | Layer | Likely home | Purpose |
 |---|---|---|
-| Runtime state | local agent and/or remote API | live session, actor, progress, and attention state |
-| Active coordination | remote API | current candidate/workstream operational state, messages, acks, assignments |
+| Runtime state | local agent and Telex leases | live session, actor, progress, and attention state |
+| Active coordination | Telex for messages/acks/assignments; remote API for workstream state | current candidate/workstream operational state and the coordination flowing around it |
 | Durable design | Git/docs repo | intended system design and decision records |
 | Gate snapshots | Git export or remote audit event | reviewable confidence transitions |
-| Historical audit | remote event log, optionally exported to Git | who/what changed active state and why |
+| Historical audit | Telex message record / remote event log, optionally exported to Git | who/what changed active state and why |
 
 This does not require abandoning current `.streamliner` artifacts. It reframes
 them as one storage/export mode rather than the only possible source of active
@@ -289,7 +348,8 @@ policy because it can become noisy.
 ## Message types to prefer
 
 Start with narrow message types that express work intent without becoming remote
-shell execution:
+shell execution. These become Telex message `kind`s under a `streamliner`
+profile:
 
 ```text
 note.read
@@ -312,7 +372,9 @@ rewrite_history
 ```
 
 Those actions may still happen locally through an actor playbook or local agent
-command, but the remote message should stay structured and policy-aware.
+command, but the remote message should stay structured and policy-aware. Telex
+deliberately stays lower and dumber than the agents using it, so this policy is
+enforced in the Streamliner profile and actor playbooks, not in the fabric.
 
 ## Candidate seeds, not backlog
 
@@ -322,11 +384,14 @@ current workflow friction justifies them.
 ### Session Actor Control Plane
 
 Local messageable sessions with inbox, ack/fail, heartbeat, playbook identity,
-and loop-compatible commands.
+and loop-compatible commands. These actors are Telex leaseholders: they attach
+to an address, wait on the Telex inbox, and disposition each message.
 
 ### Streamliner Relay
 
-Remote message delivery between environments and actors.
+Remote message delivery between environments and actors. This is Telex: rather
+than build a relay, Streamliner adopts the Telex fabric and defines its
+`streamliner` profile (address grammar and message kinds) on top.
 
 ### Environment Agents
 
@@ -364,7 +429,8 @@ When shaping candidates or workstreams, consider whether the work:
 - keeps terminal and SDK actors visible, interruptible, and attached to work
   geometry;
 - avoids putting local execution or credentials into the remote service;
-- makes future relay, environment-agent, or remote-state evolution easier;
+- builds on Telex for cross-environment messaging instead of reinventing a relay;
+- makes future environment-agent or remote-state evolution easier;
 - avoids coupling too early to one storage authority;
 - supports explicit export or snapshot when active state becomes durable project
   memory.
@@ -375,22 +441,24 @@ is to chip away at current workflow friction in a direction that compounds.
 ## First slice bias
 
 If this direction becomes actionable, the first useful slice should probably be
-Streamliner Relay plus local actor mailboxes, not remote workstream storage.
+Telex integration plus local actor mailboxes, not remote workstream storage.
+Telex already supplies the message send, poll, ack, addressing, and liveness
+primitives, so the first slice is mostly wiring Streamliner into it.
 
 A minimal first slice could include:
 
-- environment registration;
-- actor registration;
-- message send;
-- message poll;
-- ack/fail;
+- environment registration (Streamliner-owned; Telex has no environment object);
+- actor registration as Telex address/lease attachment;
+- message send (Telex);
+- message poll (Telex wait/inbox);
+- ack/fail as Telex disposition;
 - local agent delivery into an actor mailbox;
-- UI or CLI action to send a message to an actor.
+- UI or CLI action to send a message to an actor (a thin shim over Telex send).
 
 That slice proves cross-environment coordination without changing storage
 authority for workstream artifacts. Only after the message path is useful should
 Streamliner consider moving active candidate or workstream state into a remote
-shared store.
+shared store, which Telex deliberately does not provide.
 
 ## Directional summary
 
@@ -403,5 +471,6 @@ plane.
 The durable statement:
 
 > Streamliner's backend should own the work geometry. Local terminal and SDK
-> actors should be allowed to operate it. A relay can connect those actors across
-> environments. Git records the parts that become durable enough to keep.
+> actors should be allowed to operate it. Telex, the message fabric, connects
+> those actors across environments. Git records the parts that become durable
+> enough to keep.
