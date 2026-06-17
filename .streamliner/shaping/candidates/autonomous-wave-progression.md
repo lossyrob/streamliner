@@ -2,7 +2,13 @@
 
 ## Stage
 
-Seeded; shaped enough for candidate discussion.
+Parked (2026-06 coverage partition).
+
+## Coverage Partition (2026-06 refactor)
+
+> **Parked** — named debt, not dropped. Resume after the PAW track plus WS-C (actor fabric) and
+> WS-F (checkpoint/closeout) land: autonomous progression should consume a proven local actor
+> substrate and a real closure gate rather than inventing them.
 
 ## Seed Idea
 

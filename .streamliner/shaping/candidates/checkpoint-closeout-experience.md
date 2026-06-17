@@ -2,7 +2,22 @@
 
 ## Stage
 
-Shaping; closeout materialization model captured.
+Shaping; primary for WS-F (2026-06 coverage partition; folds validation playbooks + closeout narrative).
+
+## Coverage Partition (2026-06 refactor)
+
+**Workstream:** WS-F — Checkpoint & Closeout Experience. **Owns (C6-interaction):** the
+builder-facing gate/checkpoint validation surface, the **closeout batch node/issue**, and the
+**no-open-debt closure gate**. **Operationalizes the shipped closure-gate rule (#114)** ("every
+promotion candidate has a disposition before the closure gate") in product.
+
+**Folds in:** Convergent Validation Playbooks (`convergent-validation-playbooks.md`) as the
+validation-loop wave pattern. **Associates:** Workstream Closeout Narrative
+(`workstream-closeout-narrative.md`) as the optional long-form artifact.
+
+**Seam with WS-D:** WS-D **creates** debt (node-level deferral); WS-F **validates** that no
+undisposed debt remains at the gate (the #124 split). **Depends on:** WS-A, WS-D.
+**Enables:** WS-G (export availability), Autonomous Wave Progression.
 
 ## Seed Idea
 

@@ -1,8 +1,22 @@
-# Multi-Workstream Dependencies
+# Cross-Workstream Dependencies & Geometry
 
 ## Stage
 
-Shaped; ready for formation.
+Shaped; reframed under 2026-06 coverage partition (cedes Project to WS-E; folds external deps).
+
+## Coverage Partition (2026-06 refactor)
+
+**Workstream:** WS-G — Cross-Workstream Dependencies & Geometry. **Owns (C6-export):** the
+import/export model, export **availability** states, and the project-scoped dependency graph.
+**Folds in:** External Dependency Tracking (`external-dependency-tracking.md`) for non-workstream
+blockers (approvals, access, decisions).
+
+**Project ownership CEDED to WS-E:** the "Project grouping" content below is now a **consumer** of
+the Project boundary owned by WS-E Project Surface — not an owner. Treat those sections as
+historical context; the durable Project owner is WS-E.
+
+**Depends on:** WS-A (schema fields), WS-E (Project frame). **Enables:** Work Geometry Canvas
+(downstream renderer of this model).
 
 ## Seed Idea
 

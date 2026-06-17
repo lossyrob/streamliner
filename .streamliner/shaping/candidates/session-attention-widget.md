@@ -2,7 +2,14 @@
 
 ## Stage
 
-Seeded
+Seeded; downstream of WS-C (2026-06 coverage partition).
+
+## Coverage Partition (2026-06 refactor)
+
+**Downstream candidate of WS-C Local Actor Fabric.** Consumes WS-C **attention levels** and worker
+**lifecycle** signals (and #122 desktop toast). Note the convergence: Telex already defines the
+same attention levels (interrupt / next-checkpoint / background / fyi) this widget should surface
+OS-natively.
 
 ## Seed Idea
 

@@ -1,8 +1,23 @@
-# Project Surface and Issue Launches
+# Project Surface & Orientation
 
 ## Stage
 
-Seeded; shaped enough for candidate discussion.
+Shaped under 2026-06 coverage partition (owns Project boundary; gains orientation view).
+
+## Coverage Partition (2026-06 refactor)
+
+**Workstream:** WS-E — Project Surface & Orientation. **Owns (C2):** the **Project** boundary and
+config (repo mappings, design entry points, grouping) — the single owner other workstreams import.
+Adds the **orientation view** (ready / working / blocked / needs-launch across workstreams, with
+per-repo group collapse) as an **early** wave, because re-orientation after context-switching is
+the highest-pain need.
+
+**Issue launches = a later wave** of this one workstream (not a peer), since both orientation and
+issue-launches consume the same Project boundary. A spin-out into its own workstream is preserved
+**only if** issue-launches later needs parallel execution.
+
+**Seam:** WS-G Cross-Workstream Dependencies **consumes Project from here** (Project ceded to WS-E).
+**Depends on:** WS-A; pairs with WS-C (actor + orientation signals).
 
 ## Seed Idea
 

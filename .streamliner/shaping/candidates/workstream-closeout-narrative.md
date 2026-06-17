@@ -2,7 +2,14 @@
 
 ## Stage
 
-Seeded.
+Seeded; associated with WS-F (2026-06 coverage partition).
+
+## Coverage Partition (2026-06 refactor)
+
+**Associated with WS-F Checkpoint & Closeout Experience** as the **optional long-form** closeout
+artifact — distinct from the required, structured `reconciliation-note.md` (#114). The MVP is an
+orchestrator runbook that ships standalone now (no product code); a Streamliner UI surface for
+generating/viewing it is the deferred part that rides on WS-F.
 
 ## Seed Idea
 

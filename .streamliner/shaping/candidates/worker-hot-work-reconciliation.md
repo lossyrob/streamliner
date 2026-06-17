@@ -1,8 +1,27 @@
-# Worker Hot Work and Reconciliation
+# Node Handoff, Boundary Pressure & Reconciliation
 
 ## Stage
 
-Shaped; ready to move on.
+Shaped; expanded under 2026-06 coverage partition (adds boundary pressure + node-level work-loss).
+
+## Coverage Partition (2026-06 refactor)
+
+**Workstream:** WS-D — Node Handoff, Boundary Pressure & Reconciliation. **One outcome:** node
+discoveries (divergence, blockage, completion) become legible, owned, and reconciled — nothing
+silently lost. **Owns (C4 content):** the node **field-report** content + lifecycle, typed
+**boundary pressure / split requests**, **node-level deferral->debt** (#124 residual), hot-work
+support, and orchestrator reconciliation.
+
+**Builds on shipped doctrine (#114):** the required `reconciliation-note.md` and its disposition
+vocabulary already exist in `WORKSTREAM-FORMAT.md`; this workstream operationalizes them in
+runtime/product — it does **not** re-author the note.
+
+**Wave sequencing:** (1) field reports + reconciliation runtime; (2) hot-work support; (3) boundary
+pressure / split requests — **surfacing-only first** (a node raises a typed pressure message; the
+orchestrator disposes manually) before any automated geometry mutation.
+
+**Seams:** field-report **transport** = WS-C; **no-open-debt gate** at close = WS-F; **artifact
+slot** = WS-A. **Depends on:** WS-A, WS-C, Role & Context Packages.
 
 ## Seed Idea
 

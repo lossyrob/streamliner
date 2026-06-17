@@ -2,7 +2,13 @@
 
 ## Stage
 
-Shaping; next-up after Session Launching and Tracking.
+Out of scope here — PAW track (2026-06 coverage partition).
+
+## Coverage Partition (2026-06 refactor)
+
+> **Out of scope for this partition** — handled on the separate **PAW track**. The review-loop
+> automation is coupled to PAW workflow evolution, so it is intentionally excluded from the
+> Streamliner coverage workstreams and tracked with PAW work.
 
 ## Seed Idea
 

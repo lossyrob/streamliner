@@ -1,8 +1,22 @@
-# Streamliner Agent and Skill Context
+# Role & Context Packages
 
 ## Stage
 
-Shaped; ready to move on.
+Shaped; foundational candidate (2026-06 coverage partition; un-merged from Workstream Design).
+
+## Coverage Partition (2026-06 refactor)
+
+**Foundational candidate** (sibling of WS-A). **Owns (C3-roles):** the role + context packages for
+Streamliner-aware sessions — designer, workstream-formation, orchestrator, worker, and
+closure-review — plus helper distribution edges.
+
+**Un-merged from WS-B Workstream Design Altitude** so the widely-consumed role contract has a
+single owner. **Consumed by:** WS-C Local Actor Fabric (binds the orchestrator/worker role to an
+actor at launch), WS-D Node Handoff (worker hot-work guidance), WS-E Project Surface (issue-worker
+role).
+
+> **Watch (builder):** if this proves too small at formation/implementation, reconsider folding it
+> back into WS-B Workstream Design Altitude. Tracked as a learning check, not a blocker.
 
 ## Seed Idea
 

@@ -2,7 +2,15 @@
 
 ## Stage
 
-Shaping.
+Consolidated (2026-06 coverage partition).
+
+## Coverage Partition (2026-06 refactor)
+
+> **Consolidated into WS-F Checkpoint & Closeout Experience**
+> (`checkpoint-closeout-experience.md`). Retained as a historical pointer.
+
+The Validation Loop Wave pattern (playbook -> findings -> repair tasks -> rerun -> convergence
+policy) becomes WS-F's validation-loop wave. The vocabulary defined here is carried forward.
 
 ## Seed Idea
 
