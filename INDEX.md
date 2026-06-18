@@ -44,7 +44,7 @@
 
 | Document | What it covers |
 |---|---|
-| [WORKSTREAM-ROADMAP.md](WORKSTREAM-ROADMAP.md) | Suggested next waves of Streamliner workstreams: what makes a good workstream boundary, Wave 1 (dev box observability, portfolio shell, graph session overlays), Wave 2 (WSL observability, session curation, launch/recovery), parallelization model through exported checkpoints, and rules of thumb. |
+| [ROADMAP.md](ROADMAP.md) | The current campaigns: the workstreams committed to (or proposed) next, the standalone work, and the loose issues around them — the single document to work through. Applies the campaign concept from [CAMPAIGNS.md](CAMPAIGNS.md) to the work in front of us. |
 
 ## Design docs (under `docs/design/`)
 

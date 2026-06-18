@@ -16,6 +16,10 @@ Shaping notes are not project-level design authority. Durable product and archit
 
 ## Current candidates
 
+> For how a subset of these candidates is grouped into the current campaigns (and
+> which is the main effort), see [ROADMAP.md](../../ROADMAP.md). Candidates are the
+> durable backlog; the roadmap selects and shapes a subset without modifying them.
+
 | Candidate | Stage | Summary |
 |---|---|---|
 | [Workstream Format & Coverage Substrate](candidates/workstream-format-coverage-substrate.md) | Shaped | Foundational substrate: a canonical `graph.json` JSON Schema with validate-on-load, waves as first-class objects, node kind/size, debt/deferral state, and artifact-attachment slots. |
