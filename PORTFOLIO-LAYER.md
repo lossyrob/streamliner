@@ -18,7 +18,8 @@ into the right graph or session.
 | Entity | Meaning |
 |---|---|
 | **Portfolio** | The top-level operator surface across projects, workstreams, and sessions. Primarily a UI and runtime concept. |
-| **Project** | A logical body of work with its own design context and participating repositories. Contains one or more concurrent workstreams. |
+| **Project** | A logical body of work with its own design context and participating repositories. Contains one or more concurrent workstreams, organized over time into campaigns. |
+| **Campaign** | A committed, intent-bounded group of workstreams (plus side issues) shaped together to cover a declared body of intent. The portfolio-level unit of committed work; see [CAMPAIGNS.md](CAMPAIGNS.md). |
 | **Workstream** | The existing execution unit: brief, dependency graph, and nodes. |
 | **Public checkpoint** | A milestone or contract that a workstream exports for others to depend on. The preferred unit of cross-workstream coordination. |
 | **Session** | A live AI execution context, whether Streamliner launched it or not. |
