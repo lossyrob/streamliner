@@ -6,7 +6,7 @@
 
 This is the **instance** layer. The campaign *concept* — what a campaign is, how
 it relates to releases, the main effort, the lens-over-the-backlog principle — is
-defined in [CAMPAIGNS.md](CAMPAIGNS.md). This document applies that concept to the
+defined in [CAMPAIGNS.md](../../CAMPAIGNS.md). This document applies that concept to the
 work in front of us right now. It is a point-in-time view and is expected to be
 revised as campaigns progress.
 
@@ -21,7 +21,7 @@ one standalone workstream, and a set of side issues.
   effort** (priority of attention); the others are **proposed** until they become
   the main effort.
 - Each **workstream** maps to a durable candidate under
-  [`.streamliner/shaping/candidates/`](.streamliner/shaping/index.md). The
+  [`.streamliner/shaping/candidates/`](index.md). The
   candidates are the backlog; this roadmap *selects and shapes* a subset of them
   into campaigns. It does not modify the candidates.
 - **Seams** are the contracts a workstream or campaign exports for others to
@@ -171,7 +171,7 @@ control-plane north star (#102/#123).
 ## Workstream boundary rules of thumb
 
 Evergreen guidance for shaping the workstreams above (see
-[PRODUCT-THESIS.md](PRODUCT-THESIS.md) and [WORKSTREAM-DESIGN.md](WORKSTREAM-DESIGN.md)
+[PRODUCT-THESIS.md](../../PRODUCT-THESIS.md) and [WORKSTREAM-DESIGN.md](../../WORKSTREAM-DESIGN.md)
 for depth):
 
 - A good workstream has **one outcome, one review question, one owner** of its core

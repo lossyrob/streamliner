@@ -17,7 +17,7 @@ Shaping notes are not project-level design authority. Durable product and archit
 ## Current candidates
 
 > For how a subset of these candidates is grouped into the current campaigns (and
-> which is the main effort), see [ROADMAP.md](../../ROADMAP.md). Candidates are the
+> which is the main effort), see [roadmap.md](roadmap.md). Candidates are the
 > durable backlog; the roadmap selects and shapes a subset without modifying them.
 
 | Candidate | Stage | Summary |

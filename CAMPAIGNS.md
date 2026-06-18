@@ -9,8 +9,8 @@ accumulated intent has grown large enough to need several coordinated
 workstreams, but is still one coherent push of work.
 
 This document defines the concept. A specific campaign — its declared intent and
-the workstreams that cover it — lives in the roadmap and in shaping artifacts,
-not here.
+the workstreams that cover it — lives in the current roadmap, a working shaping
+artifact at `.streamliner/shaping/roadmap.md`, not here.
 
 ## What a campaign is
 

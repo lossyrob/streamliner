@@ -44,7 +44,7 @@
 
 | Document | What it covers |
 |---|---|
-| [ROADMAP.md](ROADMAP.md) | The current campaigns: the workstreams committed to (or proposed) next, the standalone work, and the loose issues around them — the single document to work through. Applies the campaign concept from [CAMPAIGNS.md](CAMPAIGNS.md) to the work in front of us. |
+| [.streamliner/shaping/roadmap.md](.streamliner/shaping/roadmap.md) | Working shaping artifact (not durable doctrine): the current campaign roadmap — the workstreams committed to (or proposed) next, the standalone work, and the loose issues around them. The campaign concept it applies is in [CAMPAIGNS.md](CAMPAIGNS.md). |
 
 ## Design docs (under `docs/design/`)
 
