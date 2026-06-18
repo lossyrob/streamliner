@@ -16,56 +16,26 @@ Shaping notes are not project-level design authority. Durable product and archit
 
 ## Current candidates
 
-> **2026-06 coverage partition.** Candidates are organized into a settled partition of owned
-> workstreams plus downstream/parked work. Each candidate carries a `## Coverage Partition`
-> section with its workstream id, owned contract, and seams. See the per-candidate notes for detail.
-
-### Core + foundational workstreams
-
-| Candidate | Stage | Coverage role |
+| Candidate | Stage | Summary |
 |---|---|---|
-| [Workstream Format & Coverage Substrate](candidates/workstream-format-coverage-substrate.md) | Shaped | **WS-A (NEW, foundational)** — graph.json schema, waves-as-objects, node kind/size, debt/deferral, artifact slots, validate-on-load. Absorbs #125, #7, #120. |
-| [Role & Context Packages](candidates/streamliner-agent-skill-context.md) | Shaped | **Foundational** — designer/orchestrator/worker/closure role + context packages. Consumed by WS-C/WS-D/WS-E. |
-| [Workstream Design Altitude](candidates/workstream-design-mode.md) | Shaped | **WS-B** — design doc above the brief, top-level shareable workstream issue, project=portfolio language. |
-| [Session Actor Control Plane](candidates/session-actor-control-plane.md) | Seeded | **WS-C** — local actor fabric + bound orchestrator. **Adopts Telex** as transport. |
-| [Node Handoff, Boundary Pressure & Reconciliation](candidates/worker-hot-work-reconciliation.md) | Shaped | **WS-D** — field reports, boundary pressure/split requests, node-level deferral→debt, reconciliation. Builds on #114. |
-| [Project Surface & Orientation](candidates/project-surface-and-issue-launches.md) | Shaped | **WS-E** — owns the Project boundary; orientation view (early wave); issue launches (later wave). |
-| [Checkpoint and Closeout Experience](candidates/checkpoint-closeout-experience.md) | Shaping | **WS-F** — gate validation, closeout batch node, no-open-debt gate. Folds validation playbooks; operationalizes #114. |
-| [Cross-Workstream Dependencies & Geometry](candidates/multi-workstream-dependencies.md) | Shaped | **WS-G** — import/export/availability + external blockers. Consumes Project from WS-E. |
-
-### Downstream candidates (consume a core workstream)
-
-| Candidate | Stage | Coverage role |
-|---|---|---|
-| [Work Geometry Canvas](candidates/work-geometry-canvas.md) | Shaping | **Downstream of WS-G** — renders the dependency/availability model; visual spikes available. |
-| [Session Attention Widget](candidates/session-attention-widget.md) | Seeded | **Downstream of WS-C** — attention/lifecycle surfaces (#122); Telex attention-level convergence. |
-| [Workstream Closeout Narrative](candidates/workstream-closeout-narrative.md) | Seeded | **Associated with WS-F** — optional long-form artifact; MVP runbook ships standalone. |
-
-### Consolidated (folded into a workstream; historical pointers)
-
-| Candidate | Stage | Coverage role |
-|---|---|---|
-| [External Dependency Tracking](candidates/external-dependency-tracking.md) | Consolidated | → **WS-G** (external/non-workstream blockers). |
-| [Convergent Validation Playbooks](candidates/convergent-validation-playbooks.md) | Consolidated | → **WS-F** (validation-loop wave). |
-
-### Parked / out of scope
-
-| Candidate | Stage | Coverage role |
-|---|---|---|
-| [Autonomous Wave Progression](candidates/autonomous-wave-progression.md) | Parked | Resume after PAW track + WS-C + WS-F. |
-| [Automated PAW Review Loop](candidates/automated-paw-review-loop.md) | Out of scope | Handled on the separate PAW track. |
-
-### In-flight / promoted (unchanged by this refactor)
-
-| Candidate | Stage | Coverage role |
-|---|---|---|
-| [Documentation System](candidates/documentation-system.md) | Promoted | Formed under `.streamliner/workstreams/documentation-system/`. |
-| [SDK-Managed Worker Runtime](candidates/sdk-managed-worker-runtime.md) | Promoted | Formed; WS-C coordinates/imports the managed runtime. |
-| [Streamliner Performance and Robustness](candidates/streamliner-performance-robustness.md) | Seeded | Operational hardening; tracked separately. |
-
-> **Not dropped — tracked elsewhere.** Managed-runtime open issues (#85/#95/#98), devbox spikes
-> (#15/#23/#24/#27/#28/#26), and the distributed-control-plane north star (#102/#123, cross-env
-> devbox/WSL) belong to their existing workstreams or the north-star track, not to this partition.
+| [Workstream Format & Coverage Substrate](candidates/workstream-format-coverage-substrate.md) | Shaped | Foundational substrate: a canonical `graph.json` JSON Schema with validate-on-load, waves as first-class objects, node kind/size, debt/deferral state, and artifact-attachment slots. |
+| [Workstream Design Mode](candidates/workstream-design-mode.md) | Shaped | Dogfood this session as a mode for turning ambiguous intent into candidate workstreams, dependency maps, and handoff briefs. |
+| [Documentation System](candidates/documentation-system.md) | Promoted | Formed as `.streamliner/workstreams/documentation-system/`: unified docs site plus Streamliner product support for design, architecture, and user-guide doc families. |
+| [Streamliner Agent and Skill Context](candidates/streamliner-agent-skill-context.md) | Shaped | Define Streamliner role context for designer, orchestrator, worker, closure review, and helper distribution edges. |
+| [Worker Hot Work and Reconciliation](candidates/worker-hot-work-reconciliation.md) | Shaped | Support builder-directed hot work, PR/issue narration, and post-node reconciliation without worker guardrails. |
+| [Multi-Workstream Dependencies](candidates/multi-workstream-dependencies.md) | Shaped | Define project-scoped import/export dependency semantics, availability states, and artifact authority boundaries. |
+| [Work Geometry Canvas](candidates/work-geometry-canvas.md) | Shaping | Visualize multiple connected workstreams and their dependency/export geometry on one canvas; visual spikes are available for comparison. |
+| [External Dependency Tracking](candidates/external-dependency-tracking.md) | Seeded | Represent approvals, access grants, stakeholder decisions, and other non-workstream blockers as part of work geometry. |
+| [Automated PAW Review Loop](candidates/automated-paw-review-loop.md) | Shaping | Next-up after Session Launching: move former Wave 5 review automation into a dedicated review-orchestration workstream. |
+| [Convergent Validation Playbooks](candidates/convergent-validation-playbooks.md) | Shaping | Add a validation-loop wave pattern that repeatedly runs executable validation playbooks, dispatches repair work from structured findings, and converges toward acceptance. |
+| [SDK-Managed Worker Runtime](candidates/sdk-managed-worker-runtime.md) | Promoted | Formed as `.streamliner/workstreams/sdk-managed-worker-runtime/`: foundational SDK-managed graph-node runtime with local Wave 1 specs and export gate for Automated PAW Review Loop. |
+| [Autonomous Wave Progression](candidates/autonomous-wave-progression.md) | Seeded | High-autonomy wave execution: SDK workers run nodes, PAW review hardens node PRs, a wave integrator merges into a wave branch, and the builder reviews at the wave gate. |
+| [Project Surface and Issue Launches](candidates/project-surface-and-issue-launches.md) | Seeded | Add a first-class Project surface with project issue lists and PAW launch support for scoped GitHub issues that do not need full workstreams. |
+| [Checkpoint and Closeout Experience](candidates/checkpoint-closeout-experience.md) | Shaping | Make checkpoints builder-facing validation surfaces; model closeout observations materializing into normal closeout batch nodes/issues before gates pass. |
+| [Streamliner Performance and Robustness](candidates/streamliner-performance-robustness.md) | Seeded | Improve local API, multi-tab, backing-store, and background-worker responsiveness under real multi-workstream usage. |
+| [Session Attention Widget](candidates/session-attention-widget.md) | Seeded | Provide tray/notification and always-on-top overlay surfaces for actionable session attention states outside browser tabs. |
+| [Session Actor Control Plane](candidates/session-actor-control-plane.md) | Seeded | Treat selected terminal and SDK sessions as ephemeral, role-bound runtime actors with scoped autonomy, field reports, and local message/heartbeat semantics attached to work geometry. |
+| [Workstream Closeout Narrative](candidates/workstream-closeout-narrative.md) | Seeded | Generate a chronological closeout narrative per workstream that an orchestrator session can produce on demand; consumed via an external GenAI podcast generator for zoomed-out reflection. |
 
 ## Operating notes
 

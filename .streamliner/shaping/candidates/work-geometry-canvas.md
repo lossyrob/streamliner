@@ -2,13 +2,7 @@
 
 ## Stage
 
-Shaping; downstream of WS-G (2026-06 coverage partition).
-
-## Coverage Partition (2026-06 refactor)
-
-**Downstream candidate of WS-G Cross-Workstream Dependencies & Geometry.** The canvas **imports**
-WS-G's dependency / availability model and renders project-scoped multi-workstream geometry; it is
-**not** folded into WS-G. The existing visual spikes remain the comparison basis.
+Shaping; visual spike available for review.
 
 ## Seed Idea
 

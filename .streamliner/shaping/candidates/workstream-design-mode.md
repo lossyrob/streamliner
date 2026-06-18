@@ -1,22 +1,8 @@
-# Workstream Design Altitude
+# Workstream Design Mode
 
 ## Stage
 
-Shaped; reframed under 2026-06 coverage partition (role-context split out).
-
-## Coverage Partition (2026-06 refactor)
-
-**Workstream:** WS-B — Workstream Design Altitude. **Owns (C3-design):** the durable,
-human-authored design layer *above* the brief — a workstream-level design document that carries
-decisions across waves, the top-level shareable workstream GitHub issue, and project = repos +
-portfolio-of-workstreams language.
-
-**Moved out:** the role/context packages (designer / orchestrator / worker / closure) are **no
-longer in this candidate** — they are owned by the foundational **Role & Context Packages**
-candidate (`streamliner-agent-skill-context.md`) and consumed by WS-C/WS-D/WS-E.
-
-**Depends on:** WS-A (where the design doc + top-level issue attach in the format).
-**Enables:** every workstream's formation by carrying design altitude into briefs and graphs.
+Shaped, still evolving through dogfooding.
 
 ## Seed Idea
 

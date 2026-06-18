@@ -2,16 +2,7 @@
 
 ## Stage
 
-Consolidated (2026-06 coverage partition).
-
-## Coverage Partition (2026-06 refactor)
-
-> **Consolidated into WS-G Cross-Workstream Dependencies & Geometry**
-> (`multi-workstream-dependencies.md`). Retained as a historical pointer per the shaping
-> "mark, don't delete" convention.
-
-External (non-workstream) blockers — approvals, access grants, PM/design decisions, upstream
-processes — become a **dependency category** owned by WS-G, alongside workstream import/export edges.
+Seeded
 
 ## Seed Idea
 

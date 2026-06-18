@@ -2,7 +2,7 @@
 
 ## Stage
 
-Shaped; foundational candidate (2026-06 coverage partition).
+Shaped; foundational candidate.
 
 ## Seed Idea
 
@@ -44,35 +44,22 @@ substrate coherent and lets the others consume a stable, versioned shape.
 - **Node kind** (design / implementation / validation) and **size** (S/M/L) fields.
 - **Debt / deferral** state so uncovered or deferred obligation is representable, not silently lost.
 - **Artifact-attachment slots** on nodes (where a field report / visual briefing / demo playbook
-  reference lives), so WS-D content and the briefing feature have a home.
+  reference lives), so node field reports and the visual-briefing feature have a home.
 - Schema **versioning + migration** guidance for the existing deprecated-field cleanup (#7) and
   artifact-placement conventions (#120).
 
 ### Out of Scope
 
-- The field-report **content / lifecycle / reconciliation** behavior (owned by WS-D).
-- The gate/closeout builder **interaction** (owned by WS-F).
-- Cross-workstream import/export **semantics** (owned by WS-G) — though the schema must provide the
-  fields those semantics attach to.
+- The field-report **content / lifecycle / reconciliation** behavior (the reconciliation candidate).
+- The gate/closeout builder **interaction** (the checkpoint/closeout candidate).
+- Cross-workstream import/export **semantics** (the cross-workstream dependencies candidate) — though
+  the schema must provide the fields those semantics attach to.
 - Runtime/registry state shape beyond the committed document.
 
 ### Deferred
 
 - Rich schema-driven editing UI.
 - Automated migration tooling beyond a documented path.
-
-## Coverage Partition (2026-06 refactor)
-
-**Workstream:** WS-A — Workstream Format & Coverage Substrate (NEW, foundational). **Owns (C1):**
-the schema/version, waves-as-objects, node kind + size, debt/deferral state, artifact-attachment
-slots, and validate-on-load.
-
-**Absorbs issues:** #125 (graph.json JSON Schema + validate-on-load, filed), #7 (remove deprecated
-schema fields), #120 (artifact-placement guidance).
-
-**Enables:** WS-D (debt state + artifact slot for field reports), WS-E (node fields the surfaces
-read), WS-F (debt at the closure gate), WS-G (fields import/export attach to), and the visual
-briefing feature (artifact slot). **First, cheapest, unblocks the most.**
 
 ## Dependencies
 
@@ -82,12 +69,13 @@ briefing feature (artifact slot). **First, cheapest, unblocks the most.**
 
 ### Enables
 
-- WS-D Node Handoff, WS-E Project Surface, WS-F Checkpoint & Closeout, WS-G Cross-Workstream
-  Dependencies, and the node visual-briefing feature.
+- The reconciliation, project-surface, checkpoint/closeout, and cross-workstream-dependency
+  candidates (each consumes schema fields, debt state, or artifact slots), and the node
+  visual-briefing feature.
 
 ### Related Candidates
 
-- Role & Context Packages (the other foundational candidate).
+- The role/context packages candidate (the other foundational substrate).
 
 ## Workstream Shape
 
@@ -111,4 +99,5 @@ documents against a canonical JSON Schema with actionable errors. Land the schem
 slice first (it absorbs filed issue #125), then extend with waves-as-objects, node fields and
 artifact slots, and debt state plus deprecated-field cleanup (#7) and a migration path. Keep the
 schema the single source of truth referenced by `WORKSTREAM-FORMAT.md`. This workstream exports a
-stable, versioned document shape consumed by WS-D, WS-E, WS-F, WS-G, and the visual-briefing feature.
+stable, versioned document shape consumed by the downstream reconciliation, project-surface,
+checkpoint/closeout, and cross-workstream-dependency workstreams, and the visual-briefing feature.

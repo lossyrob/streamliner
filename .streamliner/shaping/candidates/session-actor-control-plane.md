@@ -2,25 +2,7 @@
 
 ## Status
 
-Seeded; primary candidate for WS-C (2026-06 coverage partition).
-
-## Coverage Partition (2026-06 refactor)
-
-**Workstream:** WS-C — Local Actor Fabric & Bound Orchestrator. **Owns (C5):** addressable actors,
-leases, the local mailbox + structured messages, attention levels, the **bound** workstream-
-orchestrator launch (can't-launch-two), terminal-window binding, and worker lifecycle
-notifications (#121).
-
-**Telex — FULLY ADOPTED (settled):** the message fabric is **Telex** (a separate project built for
-exactly this purpose), modeled as a cross-project import `telex-v0`. No native mailbox; Telex and
-Streamliner evolve in parallel and the builder owns any telex changes WS-C needs. First node = a
-Telex <-> Streamliner integration spike (launch a telex-holding actor session; project its mailbox
-in the UI).
-
-**Field reports — seam with WS-D:** this candidate owns field-report **emit/transport** (the actor
-reports via the mailbox); WS-D owns field-report **content + reconciliation**; WS-A owns the durable
-**artifact slot**. **Depends on:** Role & Context Packages (the role an actor binds).
-**Consumed by:** Session Attention Widget (attention/lifecycle signals).
+Seeded
 
 ## Summary
 
