@@ -28,8 +28,8 @@ sequenceDiagram
     participant GH as GitHub
 
     Note over B,WO: Builder sets the operating point (care · posture · stakes)<br/>→ which gates fire + how much independence to buy
-    B->>WO: Shape workstream; set node operating point
-    WO->>IMP: Launch node (spec + context package; model/review depth by size & kind)
+    B->>WO: Shape workstream, set node operating point
+    WO->>IMP: Launch node (spec + context package, model/review depth by size & kind)
 
     rect rgb(235,243,255)
     Note over IMP,WO: Gate 1 — Plan review (before code is written)
@@ -72,7 +72,7 @@ sequenceDiagram
     end
 
     rect rgb(255,250,232)
-    Note over WO,AUD: Gate 3 — Independent audit (cold read; frame-origin independent)
+    Note over WO,AUD: Gate 3 — Independent audit (cold read, frame-origin independent)
     opt stakes warrant (operating point)
         WO-)AUD: audit-requested (telex)
         AUD->>GH: cold-read PR vs node intent
@@ -84,7 +84,7 @@ sequenceDiagram
     end
 
     rect rgb(255,250,232)
-    Note over WO,VAL: Gate 4 — Validation (one EIG-chosen probe; not the full defeater DAG)
+    Note over WO,VAL: Gate 4 — Validation (one EIG-chosen probe, not the full defeater DAG)
     opt stakes warrant (operating point)
         WO-)VAL: validate (telex)
         VAL->>VAL: run the realistic probe most likely to falsify the claim
@@ -116,7 +116,7 @@ sequenceDiagram
 
     rect rgb(235,243,255)
     Note over WO,B: Gate 6 — Closeout / reconciliation
-    WO->>WO: reconcile field report; disposition deferred work (file→backlog / fold / drop)
+    WO->>WO: reconcile field report, then disposition deferred work (file→backlog / fold / drop)
     opt residual risk / coverage gap
         WO-)B: surface for closure decision (telex: next-checkpoint)
     end
