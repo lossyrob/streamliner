@@ -43,6 +43,16 @@ Shaping notes are not project-level design authority. Durable product and archit
 | [Session Actor Control Plane](candidates/session-actor-control-plane.md) | Seeded | Treat selected terminal and SDK sessions as ephemeral, role-bound runtime actors with scoped autonomy, field reports, and local message/heartbeat semantics attached to work geometry. |
 | [Workstream Closeout Narrative](candidates/workstream-closeout-narrative.md) | Seeded | Generate a chronological closeout narrative per workstream that an orchestrator session can produce on demand; consumed via an external GenAI podcast generator for zoomed-out reflection. |
 
+## Shaping references
+
+Cross-cutting design sketches that inform several candidates (not committed design):
+
+- [Node Gate Flow](node-gate-flow.md) — mermaid sequence of a node through the gate
+  ladder (plan review → implement → PR review → audit → validation → merge → closeout)
+  between the orchestrator, implementer/reviewer/auditor/validator sessions, and the
+  builder, over telex. Grounds Operating Point & Attention, Node Handoff &
+  Reconciliation, Checkpoint & Closeout, and Backlog / Autonomous Execution.
+
 ## Operating notes
 
 - Create a candidate note as soon as a distinct workstream idea appears.
