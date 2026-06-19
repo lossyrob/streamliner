@@ -168,6 +168,18 @@ The cycle repeats. Each turn, the builder crafts the intent as declared, covers
 it, and learns where the coverage was wrong — the same feedback loop Streamliner
 runs at every other altitude.
 
+**Not all accumulated intent becomes a campaign — and the Backlog is its other
+output.** Consolidation sorts intent by size. Workstream-sized intent becomes
+candidate workstreams and, eventually, campaigns. *Issue-sized* intent — loose
+work, work deferred out of a workstream, and high-spread notes the builder set
+aside in the moment — lands in the **Backlog**: a first-class holding surface for
+*out-of-geometry work* (work that is not inside any workstream's tree), a peer to
+the candidate backlog. The backlog is drained by autonomous runs or promoted up
+into a workstream when an item grows. So the consolidation cycle has two outputs,
+not one — campaigns (workstream-sized) and backlog items (issue-sized) — and the
+work-loss discipline holds at both: every deferral reaches a terminal disposition
+rather than being lost.
+
 ## The same shape at every altitude
 
 A campaign is not a new kind of thing. It is the Streamliner shape — **declare

@@ -77,6 +77,7 @@ reconciliation, closeout.
 | Workstream Format & Coverage Substrate | `workstream-format-coverage-substrate` | Exports `schema-v2` **early** (contract-first): JSON Schema + validate-on-load, waves-as-objects, node kind/size, debt state, artifact slots. |
 | Node Handoff, Boundary Pressure & Reconciliation | `worker-hot-work-reconciliation` | Field reports, boundary pressure/split requests, node-level deferral→debt. Imports field-report transport from C1; builds on the shipped `reconciliation-note.md` (#114). |
 | Checkpoint & Closeout Experience | `checkpoint-closeout-experience` | Gate validation, closeout batch node, no-open-debt gate. Folds in `convergent-validation-playbooks`; operationalizes the #114 closure-gate rule. Associates `workstream-closeout-narrative` (optional). |
+| Operating Point & Attention | `operating-point-attention` | Foundational values & attention layer: care knob, posture, sizing routing, preference-debt, encoded beliefs, human-floor surfacing. Exports `operating-point-v1`; consumed by WS-D/WS-F surfacing here and by C4's merge gate. |
 
 **Side issues.** #125 (schema validation — filed, the substrate's first node),
 #127 (visual briefing — needs the artifact slot), #129 (closeout animation).
@@ -107,6 +108,34 @@ work.
 
 **Imports.** `schema-v2` (C2), orientation signals (C1).
 
+## Campaign 4 — Autonomous Execution *(proposed, later)*
+
+**Declared intent.** Streamliner drives sets of work items to merged PRs
+autonomously — both a workstream's wave of nodes and the loose backlog — spending
+builder attention only at the human floor.
+
+**Review question.** Can the builder run work hands-off, with attention spent only
+where it matters?
+
+**Theater.** The autonomous execution engine and the Backlog.
+
+**One engine, two sources.** The orchestration loop (orchestrator actor → PAW
+workers over telex → human-floor merge gate → deferred-work disposition → advance)
+is source-agnostic. Build it once with **source adapters**: a workstream wave
+(committed geometry) or the backlog (out-of-geometry). The backlog-orchestrator
+skill in `lossyrob/skills` is the reference implementation, shipped natively.
+
+**Covering workstreams.**
+
+| Workstream | Candidate | Notes |
+|---|---|---|
+| Backlog Orchestration | `backlog-orchestration` | The Backlog as a first-class surface for out-of-geometry work + backlog runs (the engine's backlog source adapter). |
+| Autonomous Wave Progression | `autonomous-wave-progression` | The workstream-source face of the same engine. |
+| Automated PAW Review (reviewer mode) | `automated-paw-review-loop` | The optional reviewer inside a run; live thread is automatic review between background/SDK sessions. |
+
+**Imports.** Actor fabric + telex (C1), `operating-point-v1` (C2), deferred capture
++ field reports (C2), the gate (C2), the project issue list (C3).
+
 ---
 
 ## Standalone workstream — Workstream Design Altitude
@@ -126,6 +155,8 @@ Not part of a campaign this round; low-dependency, can run independently.
 | field-report transport | C1 Actor Fabric | C2 Node Handoff (its content/reconciliation) |
 | Project boundary | C3 Project Surface | C3 Cross-Workstream Dependencies |
 | #124 deferral→debt | C2 reconciliation (creates) | C2 closeout (validates no open debt) |
+| `operating-point-v1` (care/posture/preference/human-floor) | C2 Operating Point & Attention | C2 (WS-D/WS-F surfacing), C4 (merge gate) |
+| `filed` deferrals → the Backlog | C2 reconciliation | C4 Backlog (drains or promotes them) |
 
 ## Loose issues
 
@@ -144,14 +175,9 @@ Already open, mapped:
 
 ## Not in a campaign this round
 
-These remain durable candidates with unchanged stages — simply not selected for
-these three campaigns:
+These remain durable candidates with unchanged stages — not selected for the
+campaigns above:
 
-- `autonomous-wave-progression` — picked up once the actor fabric and closeout
-  exist.
-- `automated-paw-review-loop` — the live thread here is **automatic review between
-  background/SDK sessions**, a separate line of work to resume later (not a PAW-repo
-  concern, not done).
 - `documentation-system`, `sdk-managed-worker-runtime` (both promoted/in-flight),
   and `streamliner-performance-robustness` — tracked on their own.
 
@@ -166,6 +192,9 @@ control-plane north star (#102/#123).
 - **Inside C2:** the Format & Coverage Substrate workstream goes first and exports
   `schema-v2` early (contract-first), so the other two can build against a stable
   shape.
+- **C4 (Autonomous Execution)** sequences last: it needs the actor fabric (C1), the
+  deferred-capture + Operating Point layer (C2), and the project issue surface (C3).
+  The backlog-orchestrator skill is its reference implementation.
 - **Design Altitude** can run at any time.
 
 ## Workstream boundary rules of thumb
