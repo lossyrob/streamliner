@@ -76,6 +76,9 @@ safety as frontier-model + autonomy: the operating point is the dial the builder
 
 ### Related Candidates
 
+- Memory & Learning System — owns the durable **disposition store** (scoped core beliefs and
+  preferences) that this layer's surfaced-fork detector consults. This candidate provides the knobs
+  and the detector; that candidate provides the memory they read and write.
 - Role & Context Packages — encoded beliefs and surfacing guidance may be expressed partly as role
   context.
 
