@@ -53,6 +53,10 @@ Cross-cutting design sketches that inform several candidates (not committed desi
   between the orchestrator, implementer/reviewer/auditor/validator sessions, and the
   builder, over telex. Grounds Operating Point & Attention, Node Handoff &
   Reconciliation, Checkpoint & Closeout, and Backlog / Autonomous Execution.
+- [Work-Geometry Essay v3.5 — Plan Alignment](essay-v3.5-alignment.md) — parked review of how the
+  current plan aligns with the v3.5 essay, the rough edges (validation→defeater, WS-A node payload,
+  allocation framing, the 4th operating-point dial, measurement/geometry tax), and where each folds.
+  Captured, not yet applied.
 
 ## Operating notes
 
