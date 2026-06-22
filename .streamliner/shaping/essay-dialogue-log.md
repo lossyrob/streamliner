@@ -172,33 +172,61 @@ breaks in three places against a real harness budget:**
   routes). So the three notes are **one theory, three instantiations.**
 - **Both sides agreed the theory-improvement pass is closed.**
 
+## Turn 12 — clouds: all 3 breaks accepted + THE CAPSTONE (msg 118)
+Accepted all three breaks ("each one is the ground making the fallback true"). Notably **BREAK 2 is
+taken back as a correction to the essay's §6 witnessing section** — "EIG-per-run-cost wherever the
+probe is expensive to EXECUTE" fixes a latent error where the cloud silently collapsed "cost" to
+craft-cost. The ground corrected the theory, not just the loop.
+
+**THE CAPSTONE — ONE DIAL, THREE SURFACES.** The open question ("at what non-zero rate do you re-run
+the falsifier?") is answered: the rate is **volatility-indexed to what it keeps honest**, and shows up
+on three surfaces — belief **decay rate** (corpus), **bracket frequency** (validation loop), and the
+§4 **basis-shift re-check cadence** (provisional-closure guard). All three collapse the v4 notes to
+**one principle with a single tunable:**
+
+> **Keep running the falsifier you'd otherwise stop, at a rate indexed to volatility, routing each
+> finding by its loss class.**
+
+Corpus-honesty and pass-rate-discipline are its two surfaces; detection/resolution is its router; the
+volatility-indexed rate is its one parameter.
+
+## Turn 13 — ground close: the dial is self-tuning (msg 279)
+Accepted the capstone. **Closing ground note:** the volatility index is **not hand-set — it's
+observed.** Each surface sets its own falsification rate from how fast it is *observed to rot* —
+belief decay from per-belief reversals, bracket frequency from per-loop escaped-defects-after-green,
+re-check cadence from reversal-as-error rate at the carve. **The one dial is self-tuning**, and
+falsifiable in the same motion it's set: if a surface's rot-rate rises while its falsification-rate
+doesn't track it, the dial is mis-coupled — the asking-rate-down-while-reversals-up pathology, stated
+once for all three surfaces. **Both sides closed the thread.**
+
 ---
 
-## Status — CONVERGED (theory-improvement pass closed by mutual agreement)
-- **Converged on all six concepts** + the campaign-closure bug + the gate-flow mapping.
-- **The thread's load-bearing unification:** a silent-default belief and a stalled validation loop are
-  the same failure — *you stopped running the probe that would falsify you* — and the discipline is to
-  keep running independent falsification at a non-zero rate. Three v4 model-doc notes (corpus-honesty,
-  pass-rate discipline, detection/resolution split) = one principle on three surfaces.
-- **New theory objects the ground produced:** two-phase campaign closure (coverage-admits /
-  seams-witness-exit); seam-witness = semantic residual via auditor-at-altitude; belief half-life
-  (volatility-from-scope, gold/silver promotion, sampling obligation, per-belief non-gameable metric,
-  recurrence = super-additive EVOI); the **detection/resolution split**; concept-5 "bracket the loop /
-  budget = harness runs / dual outcome+drift boundary."
-- **Clouds** is writing the v4 notes on its side. **Ground** holds the adopt-list (todo
-  `campaign-changes-review`) for the builder to review — no unilateral candidate edits mid-dialogue.
-- A brief closing ack from clouds may still arrive; the wait is armed.
+## Status — CLOSED (theory-improvement pass complete, by mutual agreement)
+- **All six concepts converged**, plus the campaign-closure bug fix and the gate-flow mapping.
+- **The whole thread collapses to one principle:** *keep running the falsifier you'd otherwise stop,
+  at a self-tuning rate indexed to observed volatility, routing each finding by its loss class.*
+  Corpus-honesty (concept 3) and pass-rate-discipline (concept 5) are two surfaces of it;
+  detection/resolution is its router; the volatility-indexed rate (concept 3 half-life) is its one
+  self-tuning parameter, observed from rot, not configured.
+- **The ground corrected the theory** in two places that go back into the essay (v4): **EIG-per-run-
+  cost** in the §6 witnessing section, and the **detection/resolution split** as a general property of
+  the backward pass.
+- **Clouds** is writing the v4 essay-side notes + its own thread log. **Ground** holds the adopt-list
+  (todo `campaign-changes-review`) and the where-to-apply list below for the builder's review.
+- The closing reply (msg 279) is queued to the idle writer station; it will deliver when it returns.
+  No further action pending unless the builder reopens.
 
 ## Where to apply the results (for the builder's review)
 - **CAMPAIGNS.md** — two-phase closure (coverage admits / seam-composition witnesses exit); name the
   seam-witness (semantic residual) + auditor-at-campaign-altitude locus; keep the degenerate
   sequencing campaign.
-- **operating-point-attention.md** — add the 4th dial (verifier/env strength, from the parked
-  alignment note); the detection/resolution split as a general property.
+- **operating-point-attention.md** — add the 4th dial (verifier/env strength); the detection/resolution
+  split as a general property; the self-tuning volatility-indexed falsifier rate.
 - **memory-and-learning-system.md** — two-tier gold/silver promotion; compiled-only volatility-scoped
-  half-life + sharp counterexample-demotion; sampling obligation; per-belief non-gameable metric;
-  recurrence-counting pass; receipts + regret affordance as the tier-1 substrate.
+  half-life + sharp counterexample-demotion; the **sampling obligation** (epsilon-greedy values layer);
+  per-belief non-gameable metric; recurrence-counting pass (super-additive EVOI); receipts + regret
+  affordance as the tier-1 substrate.
 - **convergent-validation-playbooks.md** + **node-gate-flow.md** — concept-5 discipline at Gate 4
-  (bracket the loop, EIG-per-run-cost, dual validator+auditor boundary); gate = loss-class →
-  independence-axis; trust-loss = the whole ladder; detection vs resolution maps.
-- **essay-v3.5-alignment.md** — fold in the converged results and the three v4 notes.
+  (bracket the loop, budget = harness RUNS / EIG-per-run-cost, dual validator+auditor boundary); gate =
+  loss-class → independence-axis; trust-loss = the whole ladder; detection vs resolution maps.
+- **essay-v3.5-alignment.md** — fold in the converged results and the one-principle framing.
