@@ -5,6 +5,7 @@ import type { SessionRegistryStore } from "../session-registry-contract";
 import {
   buildCopilotResumeCommand,
   isSafeCopilotResumeSessionId,
+  type CopilotPluginPreflightOptions,
   type TerminalLaunchOptions,
   type TerminalLaunchResult,
   launchCopilotTerminal,
@@ -47,6 +48,12 @@ export interface RelaunchDeps {
   existsSync: (path: string) => boolean;
   launchTerminal: (options: TerminalLaunchOptions) => TerminalLaunchResult;
   loadDefaultCliArgs: () => string[];
+  /**
+   * Override or disable the Copilot plugin preflight run during a resume launch.
+   * Defaults to the real preflight in production; tests pass `false` to stay
+   * hermetic instead of reading the host's `~/.copilot` plugin configuration.
+   */
+  pluginPreflight: false | CopilotPluginPreflightOptions | undefined;
 }
 
 function defaultDeps(store: SessionRegistryStore): RelaunchDeps {
@@ -55,6 +62,7 @@ function defaultDeps(store: SessionRegistryStore): RelaunchDeps {
     existsSync,
     launchTerminal,
     loadDefaultCliArgs: () => [...DEFAULT_COPILOT_CLI_ARGS],
+    pluginPreflight: undefined,
   };
 }
 
@@ -193,6 +201,7 @@ export async function relaunchSession(
       ? await launchCopilotTerminal(launchOptions, {
         launchTerminal: resolved.launchTerminal,
         cooldownMs: deps?.launchTerminal ? 0 : undefined,
+        pluginPreflight: resolved.pluginPreflight,
       })
       : resolved.launchTerminal(launchOptions);
 

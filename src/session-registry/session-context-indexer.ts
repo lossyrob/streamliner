@@ -270,6 +270,13 @@ function extractCandidatePaths(text: string): string[] {
   for (const match of text.matchAll(/\b[A-Za-z]:(?:\\|\/)[^"'`<>\r\n]+/g)) {
     paths.push(match[0].replace(/[),.;\]\s]+$/g, ""));
   }
+  // POSIX absolute paths (macOS/Linux). Avoid matching the `/` inside URL
+  // schemes like `https://` by rejecting a `/` preceded by an alphanumeric,
+  // `:` or another `/`. Whitespace is excluded so the match stops at the path
+  // boundary in free-form text such as "Edited /repo/src/file.ts".
+  for (const match of text.matchAll(/(?<![A-Za-z0-9_:/])\/[^"'`<>\r\n\s\\]+/g)) {
+    paths.push(match[0].replace(/[),.;\]]+$/g, ""));
+  }
   for (const match of text.matchAll(/\bgit\s+-C\s+["']?([^"'\s]+)["']?/gi)) {
     paths.push(match[1].replace(/[),.;\]\s]+$/g, ""));
   }
@@ -354,7 +361,12 @@ function resolveExistingPath(candidate: string): string | null {
       return current;
     }
     const parent = dirname(current);
-    if (parent === current) {
+    // Stop when there is no real parent to walk to. `dirname` returns "." for a
+    // path it cannot decompose on this OS — notably a foreign-OS absolute path
+    // such as a Windows `C:\...` value inspected from POSIX. Treating "." as a
+    // parent would silently resolve to the process cwd (often a real git repo)
+    // and attribute unrelated context to the session.
+    if (parent === current || parent === "." || parent === "") {
       return null;
     }
     current = parent;

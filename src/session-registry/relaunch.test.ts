@@ -91,6 +91,7 @@ function fakeDeps(
     deps: {
       existsSync: () => true,
       launchTerminal: fakeLaunchTerminal,
+      pluginPreflight: false,
       ...overrides,
     },
   };

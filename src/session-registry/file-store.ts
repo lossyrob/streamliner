@@ -32,6 +32,7 @@ import {
   type SessionRegistryUpsertInput,
 } from "../session-registry-contract";
 import { sessionRegistryRecordTextMatches } from "../session-registry-filter";
+import { basenameCrossOs } from "../cross-os-path";
 import {
   mergeSessionRegistryRuntimeMetadata,
   normalizeSessionRegistryRuntimeMetadata,
@@ -307,8 +308,17 @@ function fingerprintMapsEqual(left: Map<string, string>, right: Map<string, stri
   return true;
 }
 
+let lastIsoNowMs = 0;
+
+// Strictly monotonic per process so two registry writes that land in the same
+// millisecond still receive distinct, increasing timestamps. The freshness sort
+// keys on updatedAt, and on fast filesystems (e.g. APFS) back-to-back writes
+// could otherwise collide and produce non-deterministic ordering.
 function isoNow(): string {
-  return new Date().toISOString();
+  const nowMs = Date.now();
+  const ms = nowMs > lastIsoNowMs ? nowMs : lastIsoNowMs + 1;
+  lastIsoNowMs = ms;
+  return new Date(ms).toISOString();
 }
 
 function ensureString(value: unknown, fieldName: string): string {
@@ -1221,7 +1231,7 @@ function inferLegacyTitleSource(value: {
   const title = value.title.trim();
   const candidates = new Set<string>();
   const repoName = value.repo?.split("/").at(-1)?.trim();
-  const cwdName = basename(value.cwd).trim();
+  const cwdName = basenameCrossOs(value.cwd).trim();
   const helperSuffix =
     value.observedSessionKind === "helper" ? " helper session" : "";
   for (const candidate of [repoName, cwdName, value.copilotSessionId]) {
@@ -2779,7 +2789,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         input.event === "session.started" && signalTime >= existingEndTime;
       const appliesEnd = input.event === "session.ended";
       const appliesPrompt = input.event === "prompt.submitted" && !isEnded;
-      const cwdName = basename(cwd).trim();
+      const cwdName = basenameCrossOs(cwd).trim();
       const lifecycleStatus: SessionRegistryLifecycleStatus =
         appliesEnd
           ? "ended"
