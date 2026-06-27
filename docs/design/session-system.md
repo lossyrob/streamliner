@@ -1,7 +1,7 @@
 ---
 kind: design-doc
 status: draft
-last_updated: 2026-05-22
+last_updated: 2026-06-27
 update_semantics: rewrite-in-place
 authoritative_for: "Session launching, lifecycle, registry contract, tracking, and runtime overlay"
 scope_tags:
@@ -55,8 +55,8 @@ The Wave 3 launch MVP is **PAW-only graph launch**. The contract is the interfac
 | Launch instructions | Builder edit + default text | Natural-language guidance for the graph-launched PAW session. PAW init may use it to derive work title, work ID, target branch, review policy, and model settings, but general operating guidance belongs in the kickoff prompt rather than verbatim `Custom Workflow Instructions`. |
 | PAW prompt profile | Local Streamliner state + graph `launchDefaults.promptProfileId` | Optional reusable text snippet that can populate or update the launch instructions field. A workstream may store a local profile id as a best-effort default selection. |
 | CLI arguments | Default + builder override | Copilot CLI flags for the later worker launch; an explicit empty list is valid |
-| Terminal preference | Graph `launchDefaults` + builder edit | Preferred visible terminal host for the worker launch |
-| Terminal presentation | Graph `launchDefaults` + builder edit | Optional default tab title template and tab/session color for the worker launch |
+| Terminal preference | Graph `launchDefaults` + builder edit | Preferred visible terminal host for the worker launch (`default`, `windows-terminal`, `powershell`, `mac-terminal`, or `iterm2`) |
+| Terminal presentation | Graph `launchDefaults` + builder edit | Optional default tab title template and tab/session color for the worker launch; color application is adapter-dependent |
 | Launch nonce | Graph launch caller | Token preserved across preparation, claim creation, and final Copilot prompt binding |
 
 The builder selects a node in the graph and opens launch context from the inspector when the selected `WorkstreamDerivedNode` is operationally ready, the active workstream registry entry is backend-readable, and the selected node satisfies any configured workstream `launchPolicy`. Browser-directory workstreams remain visible in the graph UI, but they are not launchable in this MVP because the backend cannot read their graph file. If `launchPolicy.requiredTracker` is `"github-issue"`, Streamliner disables launch for nodes without a GitHub issue tracker and explains that the node needs an issue first or the policy should be edited if untracked launches are intentional. Active or already-bound launch claims keep the dialog available for issue and prepared-launch context, but disable new PAW init or terminal launch actions for that node. Failed launch claims remain visible and retryable.
@@ -125,7 +125,7 @@ After PAW launch initialization completes, terminal integration re-reads the cur
 1. **Reject duplicate active launches** — before creating a new claim, check launch-claim diagnostics for the same workstream/node and reject non-terminal active-window or bound claims with a typed conflict. This is enforced in the backend service so future CLI, skill, or MCP callers get the same protection as the graph UI.
 2. **Record launch claim** — write a launch claim to Streamliner's runtime state binding the node to the expected session location before the worker session starts. The claim uses the nonce from the prepared handoff when one exists; otherwise the claim-minted nonce becomes the final launch nonce.
 3. **Finalize binding prompt** — preserve the prepared kickoff prompt, replace descriptive launch metadata with the concrete claim id where present, and append exactly one canonical `kickoffNonceLine(claim.launchNonce)` line (`Streamliner launch nonce: ...`) plus the concrete claim id line. The descriptive `- Launch nonce: ...` metadata in the preparation prompt is not the Tier 1 scanner contract; the terminal launch service owns the canonical scanner line.
-4. **Launch Copilot CLI** — reuse the lower-level terminal spawning path used by session relaunch, opening a visible terminal in the returned `cwd` and starting Copilot CLI interactive mode with the selected/default CLI arguments. Streamliner-owned Copilot CLI starts enter the process-wide Copilot terminal launch queue before spawning so node launches, review companions, session resumes, and managed terminal takeovers do not start at the same instant. The service passes `STREAMLINER_LAUNCH_CLAIM_ID` into the spawned process environment so the Copilot plugin hook can emit Tier 2 trusted claim evidence on `session.started`.
+4. **Launch Copilot CLI** — reuse the lower-level terminal spawning path used by session relaunch, opening a visible terminal in the returned `cwd` through the platform adapter (Windows Terminal or PowerShell on Windows; Apple Terminal.app by default, or explicit iTerm2, on macOS) and starting Copilot CLI interactive mode with the selected/default CLI arguments. Streamliner-owned Copilot CLI starts enter the process-wide Copilot terminal launch queue before spawning so node launches, review companions, session resumes, and managed terminal takeovers do not start at the same instant. The service passes `STREAMLINER_LAUNCH_CLAIM_ID` into the spawned process environment so the Copilot plugin hook can emit Tier 2 trusted claim evidence on `session.started`.
 5. **Bind on trusted signal or discovery** — when the hook signal or session watcher detects the new Copilot session, bind it to the launch claim and reserved registry row.
 6. **Fail honestly** — if terminal spawn fails after claim creation, transition the claim with failure code `terminal-spawn-failed`, clean up the reserved row through the claim-failure contract, log the failure, and return a typed error instead of a success-shaped pending state.
 
@@ -168,7 +168,7 @@ The implemented launch surface is a text-guided PAW init dialog, not the full PA
 - PAW should use `gpt-5.5`, `claude-opus-4.7`, and `claude-opus-4.6-1m` where it asks for concrete multi-model planning or review choices.
 - PAW should proceed through implementation and documentation, then create the final PR.
 - CLI args default to `--yolo`; an explicit empty override remains empty.
-- Terminal launch mode is `manual` with a default terminal preference; `default` means "use Windows Terminal when available, otherwise PowerShell," not an alias for PowerShell. After PAW init completes, Streamliner uses those values to open the visible worker terminal.
+- Terminal launch mode is `manual` with a default terminal preference; `default` is platform-selected ("use Windows Terminal when available, otherwise PowerShell" on Windows, Apple Terminal.app on macOS), not an alias for PowerShell. `mac-terminal` explicitly selects Apple Terminal.app on macOS, and `iterm2` explicitly selects iTerm2. After PAW init completes, Streamliner uses those values to open the visible worker terminal.
 
 The dialog supports lightweight PAW prompt profiles: named reusable text snippets stored at the local Streamliner server state level. Profiles are not PAW-owned metadata and do not encode structured constraints; selecting one only replaces the free-text launch instructions, and the builder can edit the text before running PAW init. The dialog can save the current text as a new profile or update the selected profile. If the workstream's `launchDefaults.promptProfileId` matches a local profile, the dialog preselects it once while opening; if the profile is missing or later deleted, launch falls back to custom instructions without blocking the node.
 
@@ -1123,7 +1123,7 @@ Promotion happens when the orchestrator reviews the session's output (PR, code c
 
 Sessions run in visible terminals. The builder sees:
 
-- A terminal tab or window per session (in VS Code, iTerm, Windows Terminal, etc.)
+- A terminal tab or window per session (Apple Terminal.app, iTerm2, Windows Terminal, PowerShell, etc.)
 - Each launched session starts with a kickoff prompt already sent, rather than an idle shell in the target directory
 - Streamliner's UI shows a session list with node binding, status, and terminal reference
 
@@ -1136,14 +1136,19 @@ Launch claims, registry binding, graph-node handoff parsing, node launch records
 and relaunch validation are Streamliner API/session concepts; terminal host
 selection and shell command encoding are adapter concerns.
 
-The current adapter is Windows-only. It owns Windows Terminal discovery, `wt.exe`
-argument construction, PowerShell Core detection, PowerShell fallback,
+Platform adapters own visible terminal host discovery, command encoding, and
+host-specific presentation. The Windows adapter owns Windows Terminal discovery,
+`wt.exe` argument construction, PowerShell Core detection, PowerShell fallback,
 PowerShell launch-script creation, and the PowerShell command strings used for
-`copilot -i` and `copilot --resume=<id>`. The public compatibility values remain
-`default`, `windows-terminal`, and `powershell`; `default` currently means
-"prefer Windows Terminal when available, otherwise PowerShell." Future macOS or
-Linux adapters should implement the same launch request shape rather than
-changing launch claims, graph binding, node launch records, or relaunch state.
+`copilot -i` and `copilot --resume=<id>`. The macOS adapter owns Apple
+Terminal.app and iTerm2 launch command construction and shell quoting for the
+same Copilot CLI commands. The public compatibility values are `default`,
+`windows-terminal`, `powershell`, `mac-terminal`, and `iterm2`; `default` means
+"choose the platform default" (prefer Windows Terminal when available, otherwise
+PowerShell on Windows; Apple Terminal.app on macOS). Terminal color support is
+adapter-dependent. Future Linux adapters should implement the same launch
+request shape rather than changing launch claims, graph binding, node launch
+records, or relaunch state.
 
 ### Copilot Terminal Launch Serialization
 
@@ -1156,7 +1161,8 @@ directly and are not delayed.
 
 The queue waits for a configurable cooldown after each terminal spawn attempt
 returns before the next queued Copilot launch may spawn. This delay is a
-contention-reduction heuristic between `wt.exe`/PowerShell starts; it is not a
+contention-reduction heuristic between terminal host starts (`wt.exe`,
+PowerShell, Apple Terminal.app, iTerm2, etc.); it is not a
 readiness proof that the nested Copilot process has finished initializing
 shared plugin or cache state. Spawn failures reject only the caller whose launch
 failed and do not poison the process-wide queue for later launches. Launch
@@ -1210,9 +1216,9 @@ Streamliner API process owns this action per Decision 006.
 |-------|------|-------------|
 | `sessionId` | string | Registry entry ID |
 | `cwd` | string | Resolved working directory used |
-| `method` | `"windows-terminal"` \| `"powershell"` | Terminal method used |
+| `method` | `"windows-terminal"` \| `"powershell"` \| `"mac-terminal"` \| `"iterm2"` | Terminal method used |
 | `copilotResumed` | boolean | Whether `copilot --resume=<id>` was attempted |
-| `colorApplied` | boolean | Whether tab color was applied |
+| `colorApplied` | boolean | Whether tab/session color was applied by the adapter |
 | `pid` | number \| undefined | PID of spawned terminal process |
 
 **Error response** (400 / 404 / 500):
@@ -1237,9 +1243,10 @@ No positional path argument is passed to Copilot.
 
 **Node launch display metadata**: the PAW launch dialog lets the user choose
 the terminal tab title and a color from the same quick-pick palette used by the
-Sessions view. Streamliner uses those values for the Windows Terminal tab and
-for the launch claim's reserved session row, so later claim binding can preserve
-the same display identity in Sessions. Users may also opt into launching the
+Sessions view. Streamliner passes those values to the platform terminal adapter
+and stores them on the launch claim's reserved session row, so later claim
+binding can preserve the same display identity in Sessions even when the host
+does not support every presentation hint. Users may also opt into launching the
 terminal immediately after PAW init completes, bypassing the prepared-context
 review step for routine launches.
 
@@ -1253,15 +1260,25 @@ node when present, and makes the node retryable without requiring direct state
 file edits.
 
 **Terminal selection**:
-1. If Windows Terminal (`wt.exe`) is in PATH → `wt new-tab` with `--title`,
-   `--tabColor` (valid `#RRGGBB` only), `-d <cwd>`, and optionally
+1. `default` delegates to the platform adapter. On Windows, it prefers Windows
+   Terminal (`wt.exe`) and falls back to PowerShell. On macOS, it opens
+   Apple Terminal.app.
+2. `windows-terminal` explicitly requests `wt new-tab` on Windows with
+   `--title`, `--tabColor` (valid `#RRGGBB` only), `-d <cwd>`, and optionally
    positional `pwsh.exe -NoExit -File <streamliner-launch.ps1>` against a
-   transient, self-deleting Streamliner launch script so the new tab
-   keeps the builder's Windows Terminal profile appearance while command
-   execution is explicit and not parsed as additional `wt` subcommands.
-2. Otherwise → `pwsh.exe` when available, falling back to `powershell.exe`,
-   with `-NoExit -Command "Set-Location ..."` for cwd-only launches or
-   `-NoExit -File <streamliner-launch.ps1>` for command launches.
+   transient, self-deleting Streamliner launch script so the new tab keeps the
+   builder's Windows Terminal profile appearance while command execution is
+   explicit and not parsed as additional `wt` subcommands.
+3. `powershell` explicitly requests `pwsh.exe` when available, falling back to
+   `powershell.exe`, with `-NoExit -Command "Set-Location ..."` for cwd-only
+   launches or `-NoExit -File <streamliner-launch.ps1>` for command launches.
+4. `mac-terminal` explicitly requests Apple Terminal.app on macOS. It starts in
+   the resolved `cwd` and runs the same Copilot CLI interactive or resume
+   command; title and color handling are limited to what the adapter and host
+   expose.
+5. `iterm2` explicitly requests iTerm2 on macOS. It starts in the resolved `cwd`
+   and runs the same Copilot CLI interactive or resume command; title and color
+   handling are limited to what the adapter and host expose.
 
 **Process lifecycle**: Terminals are spawned `detached` with `stdio: 'ignore'`
 and `unref()`'d so they outlive the Streamliner API process. The relaunch
@@ -1271,8 +1288,8 @@ endpoint does not track the spawned process after returning the PID.
 - No `copilotSessionId` → open terminal at cwd without resume (still a
   successful relaunch; the issue spec principle is "correct cwd beats full
   resume").
-- No Windows Terminal → PowerShell fallback.
-- Invalid or missing `color` → launch without tab color.
+- No Windows Terminal while using Windows `default` → PowerShell fallback.
+- Invalid, missing, or unsupported `color` → launch without applying terminal color.
 - Missing cwd directory → fail with `cwd_not_found`.
 
 ### Non-Mutating

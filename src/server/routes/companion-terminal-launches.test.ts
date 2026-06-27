@@ -1,4 +1,4 @@
-import express from "express";
+import express, { type NextFunction, type Request, type Response } from "express";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,7 +11,16 @@ import {
 } from "./companion-terminal-launches";
 import { LaunchClaimFileStore } from "../../session-registry/launch-claim-store";
 import { SessionRegistryFileStore } from "../../session-registry/file-store";
-import type { TerminalLaunchOptions } from "../terminal-launch";
+import type { TerminalLaunchOptions, TerminalLaunchResult } from "../terminal-launch";
+
+type TerminalLaunchMethodForTest = TerminalLaunchResult["method"];
+
+function terminalResult(
+  method: TerminalLaunchMethodForTest,
+  pid: number,
+): TerminalLaunchResult {
+  return { method, pid };
+}
 
 function createApp() {
   const launchTerminal = vi.fn((options: TerminalLaunchOptions) => {
@@ -24,6 +33,15 @@ function createApp() {
   const app = express();
   app.use(express.json());
   app.use("/api", createCompanionTerminalLaunchesRouter({ launchTerminal }));
+  app.use((
+    error: Error & { statusCode?: number },
+    _req: Request,
+    res: Response,
+    _next: NextFunction,
+  ) => {
+    void _next;
+    res.status(error.statusCode ?? 500).json({ error: error.message });
+  });
   return { app, launchTerminal };
 }
 
@@ -69,7 +87,54 @@ describe("companion terminal launches route", () => {
     expect(options.command).toContain("copilot");
     expect(options.command).toContain("--agent=PAW-Review");
     expect(options.command).toContain("--yolo");
-    expect(options.command).toContain("Review issue 413");
+    expect(options.command).toContain("-i");
+  });
+
+  it.each(["mac-terminal", "iterm2"] as const)(
+    "passes %s preference through to launchTerminal options",
+    async (preferredTerminal) => {
+      const launchTerminal = vi.fn((options: TerminalLaunchOptions) => {
+        void options;
+        return terminalResult(preferredTerminal, 2345);
+      });
+      const app = express();
+      app.use(express.json());
+      app.use("/api", createCompanionTerminalLaunchesRouter({ launchTerminal }));
+
+      const response = await request(app)
+        .post("/api/companion-terminal-launches")
+        .send({
+          cwd: "C:\\repo",
+          kickoffPrompt: "Review issue 421",
+          preferredTerminal,
+        })
+        .expect(201);
+
+      expect(response.body.terminal).toEqual({ method: preferredTerminal, pid: 2345 });
+      const options = launchTerminal.mock.calls[0][0] as TerminalLaunchOptions;
+      expect(options.preferredTerminal).toBe(preferredTerminal);
+      expect(options.prepareCopilotCli).toBe(true);
+      expect(options.command).toContain("--agent=PAW-Review");
+      expect(options.command).toContain("-i");
+    },
+  );
+
+  it("rejects unknown preferred terminals with the accepted values", async () => {
+    const { app, launchTerminal } = createApp();
+
+    const response = await request(app)
+      .post("/api/companion-terminal-launches")
+      .send({
+        cwd: "C:\\repo",
+        kickoffPrompt: "Review issue 421",
+        preferredTerminal: "fish",
+      })
+      .expect(400);
+
+    expect(response.body.error).toBe(
+      "preferredTerminal must be one of: default, mac-terminal, iterm2, windows-terminal, powershell.",
+    );
+    expect(launchTerminal).not.toHaveBeenCalled();
   });
 
   it("forces --agent=PAW-Review even when no cliArgs are supplied", async () => {
@@ -200,7 +265,8 @@ describe("companion terminal launches route", () => {
     expect(options.env).toEqual(expect.objectContaining({
       STREAMLINER_LAUNCH_CLAIM_ID: response.body.launchClaim.launchClaimId,
     }));
-    expect(options.command).toContain("Streamliner launch claim:");
+    expect(options.prepareCopilotCli).toBe(true);
+    expect(options.command).toContain("-i");
   });
 
   it("fails instead of silently skipping binding when launchBinding is supplied without stores", async () => {

@@ -10,6 +10,7 @@ import {
   type TerminalLaunchResult,
   launchCopilotTerminal,
   launchTerminal,
+  selectTerminalCommandShellDialect,
 } from "../server/terminal-launch";
 import { DEFAULT_COPILOT_CLI_ARGS } from "../server/session-launch-settings";
 
@@ -28,7 +29,7 @@ export type RelaunchErrorCode = (typeof RELAUNCH_ERROR_CODES)[number];
 export interface RelaunchResult {
   sessionId: string;
   cwd: string;
-  method: "windows-terminal" | "powershell";
+  method: TerminalLaunchResult["method"];
   copilotResumed: boolean;
   colorApplied: boolean;
   pid: number | undefined;
@@ -142,7 +143,11 @@ export function buildRelaunchParams(
   const options: TerminalLaunchOptions = { cwd };
 
   if (session.copilotSessionId) {
-    options.command = buildCopilotResumeCommand(session.copilotSessionId, cliArgs);
+    options.command = buildCopilotResumeCommand(
+      session.copilotSessionId,
+      cliArgs,
+      selectTerminalCommandShellDialect(),
+    );
     options.prepareCopilotCli = true;
   }
 

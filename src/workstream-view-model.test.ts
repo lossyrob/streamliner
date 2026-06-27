@@ -74,7 +74,7 @@ describe("parseWorkstreamDocument launchDefaults", () => {
       launchDefaults: {
         promptProfileId: "final-pr-only",
         terminal: {
-          preferredTerminal: "windows-terminal",
+          preferredTerminal: "mac-terminal",
           titleTemplate: "{githubIssue} - {nodeTitle}",
           tabColor: "#4891C8",
         },
@@ -84,12 +84,32 @@ describe("parseWorkstreamDocument launchDefaults", () => {
     expect(parsed.launchDefaults).toEqual({
       promptProfileId: "final-pr-only",
       terminal: {
-        preferredTerminal: "windows-terminal",
+        preferredTerminal: "mac-terminal",
         titleTemplate: "{githubIssue} - {nodeTitle}",
         tabColor: "#4891c8",
       },
     });
     expect(parsed.presentation).toEqual({ color: "#4891c8" });
+  });
+
+  it("accepts every terminal preference value", () => {
+    const preferences = [
+      "default",
+      "windows-terminal",
+      "powershell",
+      "mac-terminal",
+      "iterm2",
+    ] as const;
+
+    for (const preferredTerminal of preferences) {
+      const parsed = parseWorkstreamDocument(graph({
+        launchDefaults: {
+          terminal: { preferredTerminal },
+        },
+      }));
+
+      expect(parsed.launchDefaults?.terminal?.preferredTerminal).toBe(preferredTerminal);
+    }
   });
 
   it("rejects invalid terminal defaults", () => {
@@ -103,7 +123,7 @@ describe("parseWorkstreamDocument launchDefaults", () => {
         },
       }))
     ).toThrow(
-      "Expected workstream.launchDefaults.terminal.preferredTerminal to be one of: default, windows-terminal, powershell.",
+      "Expected workstream.launchDefaults.terminal.preferredTerminal to be one of: default, windows-terminal, powershell, mac-terminal, iterm2.",
     );
   });
 

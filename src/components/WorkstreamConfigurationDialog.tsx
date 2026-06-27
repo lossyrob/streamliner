@@ -41,6 +41,10 @@ function terminalPreferenceLabel(preference: WorkstreamLaunchTerminalPreference)
       return "Windows Terminal";
     case "powershell":
       return "PowerShell";
+    case "mac-terminal":
+      return "macOS Terminal";
+    case "iterm2":
+      return "iTerm2";
     case "default":
       return "System default";
   }
@@ -52,6 +56,10 @@ function terminalPreferenceHelp(preference: WorkstreamLaunchTerminalPreference):
       return "Prefer Windows Terminal when it is available.";
     case "powershell":
       return "Launch worker sessions in a PowerShell window.";
+    case "mac-terminal":
+      return "Launch worker sessions in macOS Terminal.";
+    case "iterm2":
+      return "Launch worker sessions in iTerm2.";
     case "default":
       return "Let Streamliner choose the best available local terminal.";
   }

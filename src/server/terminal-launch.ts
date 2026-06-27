@@ -4,12 +4,19 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { quotePowerShellLiteral } from "../terminal-command";
+import {
+  quotePosixShellLiteral,
+  quotePowerShellLiteral,
+  type CopilotCommandShellDialect,
+} from "../terminal-command";
 import { getApiLogger } from "./logger";
 export {
   buildCopilotResumeCommand,
+  buildCopilotResumePosixCommand,
   isSafeCopilotResumeSessionId,
+  quotePosixShellLiteral,
   quotePowerShellLiteral,
+  type CopilotCommandShellDialect,
 } from "../terminal-command";
 
 export const DEFAULT_COPILOT_TERMINAL_LAUNCH_COOLDOWN_MS = 15_000;
@@ -17,12 +24,14 @@ const DEFAULT_COPILOT_REQUIRED_PLUGINS = ["streamliner@streamliner-local"] as co
 
 export const TERMINAL_HOST_PREFERENCES = [
   "default",
+  "mac-terminal",
+  "iterm2",
   "windows-terminal",
   "powershell",
 ] as const;
 export type TerminalHostPreference = (typeof TERMINAL_HOST_PREFERENCES)[number];
 
-export type TerminalLaunchMethod = "windows-terminal" | "powershell";
+export type TerminalLaunchMethod = "windows-terminal" | "powershell" | "mac-terminal" | "iterm2";
 
 /** Result of a terminal launch attempt */
 export interface TerminalLaunchResult {
@@ -55,7 +64,7 @@ export interface TerminalLaunchRequest {
 
 /** Options for launching a terminal */
 export interface TerminalLaunchOptions extends Omit<TerminalLaunchRequest, "hostPreference"> {
-  /** Preferred terminal host. Defaults to Windows Terminal with PowerShell fallback. */
+  /** Preferred terminal host. Defaults to the platform adapter. */
   preferredTerminal?: TerminalHostPreference;
 }
 
@@ -75,6 +84,8 @@ export interface CopilotTerminalLaunchQueueOptions {
   delay?: (ms: number) => Promise<void>;
   /** Override or disable Copilot plugin preflight; mainly used by tests. */
   pluginPreflight?: false | CopilotPluginPreflightOptions;
+  /** Override command quoting dialect for plugin preflight; mainly used by tests. */
+  commandShellDialect?: CopilotCommandShellDialect;
 }
 
 export interface CopilotPluginPreflightOptions {
@@ -444,10 +455,60 @@ function createPowerShellLaunchScript(request: TerminalLaunchRequest): string {
   return scriptPath;
 }
 
+const POSIX_ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+function buildTerminalLaunchScriptEnv(request: TerminalLaunchRequest): Record<string, string> {
+  return request.prepareCopilotCli
+    ? {
+      ...(request.env ?? {}),
+      ...copilotPromptBypassEnv(request.command),
+    }
+    : { ...(request.env ?? {}) };
+}
+
+function createMacTerminalLaunchScript(request: TerminalLaunchRequest): string {
+  const root = terminalLaunchScriptRoot();
+  mkdirSync(root, { recursive: true });
+  const scriptPath = join(root, `launch-${Date.now()}-${randomUUID()}.sh`);
+  const lines = [
+    "#!/bin/zsh",
+    "set -euo pipefail",
+    "rm -f -- \"$0\"",
+    `cd -- ${quotePosixShellLiteral(request.cwd)}`,
+  ];
+
+  for (const [name, value] of Object.entries(buildTerminalLaunchScriptEnv(request))) {
+    if (!POSIX_ENV_NAME_PATTERN.test(name)) {
+      throw new Error(`Cannot export invalid POSIX environment variable name: ${name}`);
+    }
+    lines.push(`export ${name}=${quotePosixShellLiteral(value)}`);
+  }
+
+  if (request.title) {
+    lines.push(`printf '\\033]0;%s\\007' ${quotePosixShellLiteral(request.title)}`);
+  }
+
+  if (request.command) {
+    lines.push(
+      "set +e",
+      request.command,
+      "streamliner_command_status=$?",
+      "set -e",
+      "printf '\\n[streamliner] Command exited with status %s. Starting interactive shell.\\n' \"$streamliner_command_status\"",
+      "exec /bin/zsh -l",
+    );
+  } else {
+    lines.push("exec /bin/zsh -l");
+  }
+
+  writeFileSync(scriptPath, `${lines.join("\n")}\n`, { encoding: "utf8", mode: 0o700 });
+  return scriptPath;
+}
+
 export interface CopilotInteractiveCommandOptions {
-  /** Copilot CLI flags kept as distinct argv-style values and PowerShell-literal quoted. */
+  /** Copilot CLI flags kept as distinct argv-style values and shell-literal quoted. */
   cliArgs: string[];
-  /** Arbitrary prompt text; JSON-escaped before embedding so multiline/user text is never shell-interpolated. */
+  /** Arbitrary prompt text; shell-escaped before embedding so multiline/user text is never shell-interpolated. */
   kickoffPrompt: string;
 }
 
@@ -456,14 +517,14 @@ export interface CopilotInteractiveCommandOptions {
  * visible Copilot CLI worker launches.
  *
  * The kickoff prompt and CLI args intentionally use different encoding paths:
- * prompt text is serialized as JSON and parsed inside PowerShell because it may
- * contain arbitrary multiline prose, while `cliArgs` remain individual Copilot
- * CLI flags that are PowerShell-literal quoted and parsed normally by Copilot.
+ * prompt text is base64-encoded before embedding because it may contain
+ * arbitrary multiline prose, while `cliArgs` remain individual Copilot CLI flags
+ * that are PowerShell-literal quoted and parsed normally by Copilot.
  */
 export function buildCopilotInteractiveCommand(options: CopilotInteractiveCommandOptions): string {
-  const promptJson = JSON.stringify(options.kickoffPrompt);
+  const promptBase64 = Buffer.from(options.kickoffPrompt, "utf8").toString("base64");
   const decodedPrompt =
-    `$streamlinerKickoffPrompt = ConvertFrom-Json ${quotePowerShellLiteral(promptJson)}`;
+    `$streamlinerKickoffPrompt = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String(${quotePowerShellLiteral(promptBase64)}))`;
   const cliArgs = options.cliArgs.map(quotePowerShellLiteral).join(" ");
   const commandParts = [
     "copilot",
@@ -474,17 +535,66 @@ export function buildCopilotInteractiveCommand(options: CopilotInteractiveComman
   return `${decodedPrompt}; ${commandParts.join(" ")}`;
 }
 
-function addCopilotPluginDirArgs(command: string | undefined, pluginDirs: readonly string[]): string | undefined {
+/**
+ * Builds the zsh-compatible command used by the macOS Terminal adapter for
+ * visible Copilot CLI worker launches.
+ */
+export function buildCopilotInteractivePosixCommand(options: CopilotInteractiveCommandOptions): string {
+  const promptBase64 = Buffer.from(options.kickoffPrompt, "utf8").toString("base64");
+  const promptSetup = [
+    `streamliner_kickoff_prompt_base64=${quotePosixShellLiteral(promptBase64)}`,
+    "if streamliner_kickoff_prompt=$(printf '%s' \"$streamliner_kickoff_prompt_base64\" | base64 --decode 2>/dev/null); then",
+    "  :",
+    "else",
+    "  streamliner_kickoff_prompt=$(printf '%s' \"$streamliner_kickoff_prompt_base64\" | base64 -D)",
+    "fi",
+  ].join("\n");
+  const cliArgs = options.cliArgs.map(quotePosixShellLiteral).join(" ");
+  const commandParts = [
+    "copilot",
+    cliArgs,
+    "-i",
+    "\"$streamliner_kickoff_prompt\"",
+  ].filter((part) => part.length > 0);
+  return `${promptSetup}\n${commandParts.join(" ")}`;
+}
+
+export function buildCopilotInteractiveCommandForShell(
+  options: CopilotInteractiveCommandOptions,
+  shellDialect: CopilotCommandShellDialect,
+): string {
+  return shellDialect === "posix"
+    ? buildCopilotInteractivePosixCommand(options)
+    : buildCopilotInteractiveCommand(options);
+}
+
+function quoteCommandShellLiteral(
+  value: string,
+  shellDialect: CopilotCommandShellDialect,
+): string {
+  return shellDialect === "posix"
+    ? quotePosixShellLiteral(value)
+    : quotePowerShellLiteral(value);
+}
+
+function addCopilotPluginDirArgs(
+  command: string | undefined,
+  pluginDirs: readonly string[],
+  shellDialect: CopilotCommandShellDialect = "powershell",
+): string | undefined {
   if (!command || pluginDirs.length === 0) {
     return command;
   }
   const pluginArgs = pluginDirs
     .flatMap((pluginDir) => ["--plugin-dir", pluginDir])
-    .map(quotePowerShellLiteral)
+    .map((arg) => quoteCommandShellLiteral(arg, shellDialect))
     .join(" ");
+  const copilotCommandPattern = shellDialect === "posix"
+    ? /(^|[;\n]\s*)copilot(?=\s|$)/
+    : /(^|;\s*)copilot(?=\s|$)/;
   return command.replace(
-    /(^|;\s*)copilot(?=\s|$)/,
-    `$1copilot ${pluginArgs}`,
+    copilotCommandPattern,
+    (_match, prefix: string) => `${prefix}copilot ${pluginArgs}`,
   );
 }
 
@@ -569,10 +679,90 @@ export class WindowsTerminalLaunchAdapter implements TerminalLaunchAdapter {
   }
 }
 
-const WINDOWS_TERMINAL_LAUNCH_ADAPTER = new WindowsTerminalLaunchAdapter();
+function quoteAppleScriptString(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`;
+}
 
-export function getDefaultTerminalLaunchAdapter(): TerminalLaunchAdapter {
-  return WINDOWS_TERMINAL_LAUNCH_ADAPTER;
+function buildMacTerminalCommand(scriptPath: string): string {
+  return `/bin/zsh ${quotePosixShellLiteral(scriptPath)}`;
+}
+
+export class MacTerminalLaunchAdapter implements TerminalLaunchAdapter {
+  readonly id = "mac";
+
+  launch(request: TerminalLaunchRequest): TerminalLaunchResult {
+    const scriptPath = createMacTerminalLaunchScript(request);
+    const terminalCommand = buildMacTerminalCommand(scriptPath);
+
+    if (request.hostPreference === "iterm2") {
+      return this.launchITerm2(request, terminalCommand);
+    }
+
+    return this.launchTerminalApp(request, terminalCommand);
+  }
+
+  private launchTerminalApp(
+    request: TerminalLaunchRequest,
+    terminalCommand: string,
+  ): TerminalLaunchResult {
+    const appleScript =
+      `tell application "Terminal" to do script ${quoteAppleScriptString(terminalCommand)}`;
+    return this.spawnAppleScript(request, appleScript, "mac-terminal", "macOS Terminal");
+  }
+
+  private launchITerm2(
+    request: TerminalLaunchRequest,
+    terminalCommand: string,
+  ): TerminalLaunchResult {
+    const appleScript =
+      `tell application "iTerm2" to create window with default profile command ${quoteAppleScriptString(terminalCommand)}`;
+    return this.spawnAppleScript(request, appleScript, "iterm2", "iTerm2");
+  }
+
+  private spawnAppleScript(
+    request: TerminalLaunchRequest,
+    appleScript: string,
+    method: TerminalLaunchMethod,
+    terminalName: string,
+  ): TerminalLaunchResult {
+    const child = spawn("osascript", ["-e", appleScript], {
+      detached: true,
+      stdio: "ignore",
+      env: buildTerminalSpawnEnv(request),
+    });
+
+    child.unref();
+
+    if (child.pid === undefined) {
+      throw new Error(`Failed to spawn ${terminalName} process`);
+    }
+
+    return {
+      method,
+      pid: child.pid,
+    };
+  }
+}
+
+const WINDOWS_TERMINAL_LAUNCH_ADAPTER = new WindowsTerminalLaunchAdapter();
+const MAC_TERMINAL_LAUNCH_ADAPTER = new MacTerminalLaunchAdapter();
+
+export function selectDefaultTerminalLaunchAdapter(platform: NodeJS.Platform): TerminalLaunchAdapter {
+  return platform === "darwin"
+    ? MAC_TERMINAL_LAUNCH_ADAPTER
+    : WINDOWS_TERMINAL_LAUNCH_ADAPTER;
+}
+
+export function getDefaultTerminalLaunchAdapter(
+  platform: NodeJS.Platform = process.platform,
+): TerminalLaunchAdapter {
+  return selectDefaultTerminalLaunchAdapter(platform);
+}
+
+export function selectTerminalCommandShellDialect(
+  platform: NodeJS.Platform = process.platform,
+): CopilotCommandShellDialect {
+  return platform === "darwin" ? "posix" : "powershell";
 }
 
 /**
@@ -615,9 +805,11 @@ export async function launchCopilotTerminal(
     if (queueOptions.pluginPreflight !== false) {
       const pluginDirs = resolveCopilotPluginDirsForLaunch(queueOptions.pluginPreflight);
       if (pluginDirs.length > 0 && options.command) {
+        const shellDialect = queueOptions.commandShellDialect
+          ?? selectTerminalCommandShellDialect(process.platform);
         launchOptions = {
           ...options,
-          command: addCopilotPluginDirArgs(options.command, pluginDirs),
+          command: addCopilotPluginDirArgs(options.command, pluginDirs, shellDialect),
         };
       }
     }

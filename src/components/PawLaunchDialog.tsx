@@ -111,6 +111,8 @@ const TERMINAL_OPTIONS: Option<PreferredTerminal>[] = [
   { value: "default", label: "Default" },
   { value: "windows-terminal", label: "Windows Terminal" },
   { value: "powershell", label: "PowerShell" },
+  { value: "mac-terminal", label: "macOS Terminal" },
+  { value: "iterm2", label: "iTerm2" },
 ];
 
 const RUNTIME_OPTIONS: Array<{

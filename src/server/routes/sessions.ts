@@ -46,6 +46,7 @@ import {
   isSafeCopilotResumeSessionId,
   launchCopilotTerminal,
   launchTerminal,
+  selectTerminalCommandShellDialect,
   type TerminalLaunchOptions,
   type TerminalLaunchResult,
 } from "../terminal-launch";
@@ -540,7 +541,7 @@ export function createSessionsRouter(options: {
     }
     const terminalOptions: TerminalLaunchOptions = {
       cwd,
-      command: buildCopilotResumeCommand(sdkSessionId),
+      command: buildCopilotResumeCommand(sdkSessionId, [], selectTerminalCommandShellDialect()),
       prepareCopilotCli: true,
       title: prebound.title,
       tabColor: prebound.color ?? undefined,
@@ -550,6 +551,8 @@ export function createSessionsRouter(options: {
       terminal = await launchCopilotTerminal(terminalOptions, {
         launchTerminal: options.relaunchDeps?.launchTerminal ?? launchTerminal,
         cooldownMs: options.relaunchDeps?.launchTerminal ? 0 : undefined,
+        pluginPreflight: options.relaunchDeps?.pluginPreflight
+          ?? (options.relaunchDeps?.launchTerminal ? false : undefined),
       });
     } catch (error: unknown) {
       const message = `Failed to launch terminal takeover: ${error instanceof Error ? error.message : String(error)}`;

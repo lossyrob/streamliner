@@ -9,8 +9,9 @@ import {
 import { SessionRegistryFileStore } from "../../session-registry/file-store";
 import { isLoopbackAddress } from "../config";
 import {
-  buildCopilotInteractiveCommand,
+  buildCopilotInteractiveCommandForShell,
   launchCopilotTerminal,
+  selectTerminalCommandShellDialect,
   TERMINAL_HOST_PREFERENCES,
   type TerminalHostPreference,
   type TerminalLaunchOptions,
@@ -165,7 +166,10 @@ function terminalHostPreference(value: unknown): TerminalHostPreference {
   ) {
     return value as TerminalHostPreference;
   }
-  throw Object.assign(new Error("preferredTerminal must be default, windows-terminal, or powershell."), { statusCode: 400 });
+  throw Object.assign(
+    new Error(`preferredTerminal must be one of: ${TERMINAL_HOST_PREFERENCES.join(", ")}.`),
+    { statusCode: 400 },
+  );
 }
 
 export async function launchCompanionTerminal(
@@ -215,10 +219,10 @@ export async function launchCompanionTerminal(
   try {
     terminal = await launchCopilotTerminal({
       cwd: input.cwd,
-      command: buildCopilotInteractiveCommand({
+      command: buildCopilotInteractiveCommandForShell({
         cliArgs,
         kickoffPrompt,
-      }),
+      }, selectTerminalCommandShellDialect()),
       env: claim ? { STREAMLINER_LAUNCH_CLAIM_ID: claim.launchClaimId } : undefined,
       prepareCopilotCli: true,
       preferredTerminal: input.preferredTerminal ?? "default",
@@ -227,6 +231,7 @@ export async function launchCompanionTerminal(
     }, {
       launchTerminal: deps.launchTerminal,
       cooldownMs: deps.launchTerminal ? 0 : undefined,
+      pluginPreflight: deps.launchTerminal ? false : undefined,
     });
   } catch (error: unknown) {
     if (claim && deps.registryStore && deps.claimStore) {
