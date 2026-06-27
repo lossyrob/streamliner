@@ -684,7 +684,13 @@ function quoteAppleScriptString(value: string): string {
 }
 
 function buildMacTerminalCommand(scriptPath: string): string {
-  return `/bin/zsh ${quotePosixShellLiteral(scriptPath)}`;
+  return [
+    "/bin/zsh",
+    "-lc",
+    quotePosixShellLiteral("exec \"$1\""),
+    "streamliner-launch",
+    quotePosixShellLiteral(scriptPath),
+  ].join(" ");
 }
 
 export class MacTerminalLaunchAdapter implements TerminalLaunchAdapter {

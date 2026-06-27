@@ -81,7 +81,7 @@ function readAppleScriptFromSpawnCall(callIndex = 0): string {
 
 function readMacLaunchScriptFromSpawnCall(callIndex = 0): { path: string; content: string } {
   const appleScript = readAppleScriptFromSpawnCall(callIndex);
-  const scriptPath = appleScript?.match(/\/bin\/zsh '([^']+\.sh)'/)?.[1];
+  const scriptPath = appleScript?.match(/streamliner-launch '([^']+\.sh)'/)?.[1];
   if (!scriptPath) {
     throw new Error(`Missing macOS launch script path in spawn call ${callIndex}.`);
   }
@@ -606,11 +606,13 @@ describe("terminal-launch", () => {
         expect.objectContaining({ detached: true, stdio: "ignore" }),
       );
       expect(vi.mocked(spawn).mock.calls[0][1]).toEqual(expect.arrayContaining([
-        expect.stringContaining("/bin/zsh '"),
+        expect.stringContaining("streamliner-launch '"),
       ]));
-      expect(readAppleScriptFromSpawnCall()).toMatch(
-        /^tell application "Terminal" to do script "\/bin\/zsh '[^"]+\.sh'"$/,
-      );
+      const appleScript = readAppleScriptFromSpawnCall();
+      expect(appleScript).toContain("tell application \"Terminal\" to do script");
+      expect(appleScript).toContain("/bin/zsh -lc");
+      expect(appleScript).toContain("exec \\\"$1\\\"");
+      expect(appleScript).toContain("streamliner-launch '");
       expect(mockChild.unref).toHaveBeenCalled();
       expect(result).toEqual({ method: "mac-terminal", pid: 24680 });
     });
@@ -652,9 +654,9 @@ describe("terminal-launch", () => {
         ],
         expect.objectContaining({ detached: true, stdio: "ignore" }),
       );
-      expect(appleScript).toMatch(
-        /^tell application "iTerm2" to create window with default profile command "\/bin\/zsh '[^"]+\.sh'"$/,
-      );
+      expect(appleScript).toContain("/bin/zsh -lc");
+      expect(appleScript).toContain("exec \\\"$1\\\"");
+      expect(appleScript).toContain("streamliner-launch '");
       expect(appleScript).not.toContain("Terminal\" to do script");
       expect(mockChild.unref).toHaveBeenCalled();
       expect(result).toEqual({ method: "iterm2", pid: 13579 });
