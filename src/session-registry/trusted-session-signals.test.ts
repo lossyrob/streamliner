@@ -339,7 +339,7 @@ describe("trusted session signal spool", () => {
     );
     writeFileSync(
       join(registryRoot, "registry.lock"),
-      JSON.stringify({ pid: process.pid, acquiredAt: "2026-04-24T20:00:00.000Z" }),
+      JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() }),
       "utf8",
     );
 
@@ -362,6 +362,48 @@ describe("trusted session signal spool", () => {
     expect(store.getSession("locked-session")).toEqual(
       expect.objectContaining({ lifecycleStatus: "active" }),
     );
+  });
+
+  it("logs a single retry warning when the registry is locked with many pending signals", () => {
+    const signalRoot = createRootDir();
+    const registryRoot = createRootDir();
+    const store = new SessionRegistryFileStore({
+      rootDir: registryRoot,
+      writeLockWaitTimeoutMs: 0,
+    });
+    const warnings: string[] = [];
+
+    for (let index = 0; index < 5; index += 1) {
+      writeTrustedSessionSignalSpoolFile(
+        {
+          event: "session.started",
+          source: "copilot-cli-hook",
+          sessionId: `locked-session-${index}`,
+          timestamp: "2026-04-24T20:00:00.000Z",
+          cwd: "C:\\repo",
+        },
+        { rootDir: signalRoot },
+      );
+    }
+    writeFileSync(
+      join(registryRoot, "registry.lock"),
+      JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() }),
+      "utf8",
+    );
+
+    expect(
+      drainTrustedSessionSignalSpool(store, {
+        rootDir: signalRoot,
+        logger: { warn: (message) => warnings.push(message) },
+      }),
+    ).toEqual({ processed: 0, failed: 0 });
+
+    // One warning for the whole pass, not one line per pending signal.
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("registry locked; will retry");
+    expect(
+      readdirSync(join(signalRoot, SESSION_REGISTRY_SIGNAL_PENDING_DIR)),
+    ).toHaveLength(5);
   });
 
   it("preserves repo and branch when later drained signals omit them", () => {

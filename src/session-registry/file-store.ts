@@ -36,6 +36,7 @@ import {
   mergeSessionRegistryRuntimeMetadata,
   normalizeSessionRegistryRuntimeMetadata,
 } from "./managed-runtime";
+import { isProcessLockStale } from "./lock-liveness";
 import {
   DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
   SESSION_REGISTRY_ACTIVITY_CONFIDENCES,
@@ -249,23 +250,6 @@ export function getDefaultSessionRegistryRoot(): string {
 
 function sleepSync(milliseconds: number): void {
   Atomics.wait(SHARED_SLEEP_ARRAY, 0, 0, milliseconds);
-}
-
-function processExists(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error: unknown) {
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      (error as NodeJS.ErrnoException).code === "EPERM"
-    ) {
-      return true;
-    }
-    return false;
-  }
 }
 
 function renameWithRetries(fromPath: string, toPath: string): void {
@@ -3799,7 +3783,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
 
   private removeStaleLock(): boolean {
     const lockMetadata = this.readLockMetadata();
-    if (!lockMetadata || processExists(lockMetadata.pid)) {
+    if (!lockMetadata || !isProcessLockStale(lockMetadata)) {
       return false;
     }
 
@@ -3809,7 +3793,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
 
   private hasActiveRegistryLock(): boolean {
     const lockMetadata = this.readLockMetadata();
-    return lockMetadata !== null && processExists(lockMetadata.pid);
+    return lockMetadata !== null && !isProcessLockStale(lockMetadata);
   }
 
   private acquireRecoveryLock(): number | null {
@@ -3874,7 +3858,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       return false;
     }
 
-    if (processExists(metadata.pid)) {
+    if (!isProcessLockStale(metadata)) {
       return true;
     }
 

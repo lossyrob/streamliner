@@ -34,6 +34,7 @@ import {
   LaunchClaimNotFoundError,
   type LaunchClaimStore,
 } from "../launch-claim-contract";
+import { isProcessLockStale } from "./lock-liveness";
 
 const DEFAULT_LAUNCH_CLAIMS_ROOT = resolve(
   homedir(),
@@ -73,23 +74,6 @@ interface LockMetadata {
 
 function sleepSync(ms: number): void {
   Atomics.wait(SHARED_SLEEP_ARRAY, 0, 0, ms);
-}
-
-function processExists(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error: unknown) {
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      (error as NodeJS.ErrnoException).code === "EPERM"
-    ) {
-      return true;
-    }
-    return false;
-  }
 }
 
 function renameWithRetries(from: string, to: string): void {
@@ -496,7 +480,7 @@ export class LaunchClaimFileStore implements LaunchClaimStore {
 
   private removeStaleLock(): boolean {
     const meta = this.readLockMetadata(this.lockPath);
-    if (!meta || processExists(meta.pid)) {
+    if (!meta || !isProcessLockStale(meta)) {
       return false;
     }
     rmSync(this.lockPath, { force: true });
@@ -558,7 +542,7 @@ export class LaunchClaimFileStore implements LaunchClaimStore {
     if (!meta) {
       return false;
     }
-    if (processExists(meta.pid)) {
+    if (!isProcessLockStale(meta)) {
       return true;
     }
     rmSync(this.recoveryLockPath, { force: true });
