@@ -1,7 +1,7 @@
 ---
 kind: design-doc
 status: draft
-last_updated: 2026-05-22
+last_updated: 2026-07-06
 update_semantics: rewrite-in-place
 authoritative_for: "Session launching, lifecycle, registry contract, tracking, and runtime overlay"
 scope_tags:
@@ -759,8 +759,8 @@ The registry lives under a global subtree of Streamliner's local runtime-state r
 
 - **`entries/{registry-id}.json` is authoritative.** Each file holds one full `SessionRegistryRecord`.
 - **`index.json` is a denormalized summary, not the source of truth.** It exists for fast list rendering and rebuilds from the entry files whenever it is missing, malformed, version-incompatible, or observably stale. It carries the exact list-surface fields needed by `listSessions()`, including `version`, `title`, `description`, `tags`, lifecycle, origin, freshness, and graph-binding metadata.
-- **`registry.lock` is an advisory single-writer lock.** Exactly one process is expected to mutate registry files at a time; readers never require the lock.
-- **`api.lock` is the standalone API process lock.** It prevents accidental duplicate Streamliner API processes from owning the same registry worker and live event stream.
+- **`registry.lock` is an advisory single-writer lock.** Exactly one process is expected to mutate registry files at a time; readers never require the lock. A lock left by a crashed or rebooted owner is reclaimed automatically — when the recorded owner PID no longer exists, or the lock was acquired during a previous boot session (detected by comparing the recorded `os.uptime()` against the current uptime, which is immune to wall-clock changes) — so PID reuse across a restart cannot wedge writers into a permanent read-only state. Reclamation errs toward safety: an unprovable lock held by a live PID is never stolen.
+- **`api.lock` is the standalone API process lock.** It prevents accidental duplicate Streamliner API processes from owning the same registry worker and live event stream. A stale `api.lock` left by a crashed or rebooted owner is reclaimed on startup using the same uptime-based liveness rule (dead PID, or acquired during a previous boot), so a restart does not require manually deleting the lock file.
 - **`quarantine/` holds bad inputs.** Malformed JSON, unsupported schema versions, and partially written files are moved here and excluded from normal reads until the builder repairs or deletes them.
 
 Hand-edited files are tolerated when they still parse and match the supported schema version. Unknown extra fields are preserved on rewrite rather than dropped opportunistically. If an entry file and `index.json` disagree, the entry file wins: missing index rows are rebuilt from entries, and orphaned index rows are dropped on rebuild.

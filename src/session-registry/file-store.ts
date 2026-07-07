@@ -37,6 +37,12 @@ import {
   normalizeSessionRegistryRuntimeMetadata,
 } from "./managed-runtime";
 import {
+  isProcessLockStale,
+  newLockMetadata,
+  type ProcessLockMetadata,
+  readLockMetadataFile,
+} from "./lock-liveness";
+import {
   DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
   SESSION_REGISTRY_ACTIVITY_CONFIDENCES,
   SESSION_REGISTRY_ACTIVITY_DIAGNOSTIC_CODES,
@@ -175,10 +181,6 @@ const OBSERVED_SESSION_UPSERT_KEYS = [
 
 type StoredSessionRegistryRecord = SessionRegistryRecord & Record<string, unknown>;
 type JsonObject = Record<string, unknown>;
-interface SessionRegistryLockMetadata {
-  pid: number;
-  acquiredAt: string;
-}
 
 export class SessionRegistryNotFoundError extends Error {
   constructor(id: string) {
@@ -249,23 +251,6 @@ export function getDefaultSessionRegistryRoot(): string {
 
 function sleepSync(milliseconds: number): void {
   Atomics.wait(SHARED_SLEEP_ARRAY, 0, 0, milliseconds);
-}
-
-function processExists(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error: unknown) {
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      (error as NodeJS.ErrnoException).code === "EPERM"
-    ) {
-      return true;
-    }
-    return false;
-  }
 }
 
 function renameWithRetries(fromPath: string, toPath: string): void {
@@ -3746,10 +3731,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         try {
           writeFileSync(
             fd,
-            JSON.stringify({
-              pid: process.pid,
-              acquiredAt: isoNow(),
-            }),
+            JSON.stringify(newLockMetadata()),
             "utf8",
           );
         } catch (error: unknown) {
@@ -3799,7 +3781,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
 
   private removeStaleLock(): boolean {
     const lockMetadata = this.readLockMetadata();
-    if (!lockMetadata || processExists(lockMetadata.pid)) {
+    if (!lockMetadata || !isProcessLockStale(lockMetadata)) {
       return false;
     }
 
@@ -3809,7 +3791,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
 
   private hasActiveRegistryLock(): boolean {
     const lockMetadata = this.readLockMetadata();
-    return lockMetadata !== null && processExists(lockMetadata.pid);
+    return lockMetadata !== null && !isProcessLockStale(lockMetadata);
   }
 
   private acquireRecoveryLock(): number | null {
@@ -3834,10 +3816,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       try {
         writeFileSync(
           fd,
-          JSON.stringify({
-            pid: process.pid,
-            acquiredAt: isoNow(),
-          }),
+          JSON.stringify(newLockMetadata()),
           "utf8",
         );
       } catch (error: unknown) {
@@ -3874,7 +3853,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       return false;
     }
 
-    if (processExists(metadata.pid)) {
+    if (!isProcessLockStale(metadata)) {
       return true;
     }
 
@@ -3882,32 +3861,8 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
     return false;
   }
 
-  private readLockMetadata(lockPath = this.lockPath): SessionRegistryLockMetadata | null {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(readFileSync(lockPath, "utf8"));
-    } catch {
-      return null;
-    }
-
-    if (!parsed || typeof parsed !== "object") {
-      return null;
-    }
-
-    const candidate = parsed as Record<string, unknown>;
-    if (
-      typeof candidate.pid !== "number" ||
-      !Number.isInteger(candidate.pid) ||
-      candidate.pid <= 0 ||
-      typeof candidate.acquiredAt !== "string"
-    ) {
-      return null;
-    }
-
-    return {
-      pid: candidate.pid,
-      acquiredAt: candidate.acquiredAt,
-    };
+  private readLockMetadata(lockPath = this.lockPath): ProcessLockMetadata | null {
+    return readLockMetadataFile(lockPath);
   }
 
   private findRecordIdByCopilotSessionId(

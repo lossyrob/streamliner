@@ -1,5 +1,5 @@
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir, uptime } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -17,6 +17,7 @@ import {
   LaunchClaimAlreadyExistsError,
   type LaunchClaimChangeEvent,
   type LaunchClaimCreateInput,
+  LaunchClaimLockedError,
   LaunchClaimNotFoundError,
 } from "../launch-claim-contract";
 import {
@@ -266,5 +267,82 @@ describe("LaunchClaimFileStore", () => {
     const parsed = parseLaunchClaim(minimal);
     expect(parsed.seenCandidateCopilotSessionIds).toEqual([]);
     expect(parsed.evidence.attempts).toEqual([]);
+  });
+});
+
+describe("LaunchClaimFileStore advisory lock liveness", () => {
+  const roots: string[] = [];
+
+  afterEach(() => {
+    for (const root of roots.splice(0)) {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  function freshRoot(): string {
+    const root = makeRoot();
+    roots.push(root);
+    return root;
+  }
+
+  // acquiredUptimeMs beyond the current uptime can only come from a previous,
+  // longer-running boot session, so a live (reused) PID owning it is stale.
+  function previousBootUptimeMs(): number {
+    return Math.round(uptime() * 1000) + 600_000;
+  }
+
+  it("reclaims a stale launch-claims.lock from a previous boot even when the PID is reused", () => {
+    const rootDir = freshRoot();
+    const store = new LaunchClaimFileStore({ rootDir });
+    writeFileSync(
+      join(rootDir, "launch-claims.lock"),
+      JSON.stringify({ pid: process.pid, acquiredUptimeMs: previousBootUptimeMs() }),
+      "utf8",
+    );
+
+    const claim = store.createClaim(makeInput());
+
+    expect(claim.launchClaimId).toBe("claim-001");
+    expect(existsSync(join(rootDir, "launch-claims.lock"))).toBe(false);
+  });
+
+  it("blocks on a fresh live launch-claims.lock", () => {
+    const rootDir = freshRoot();
+    const store = new LaunchClaimFileStore({ rootDir, writeLockWaitTimeoutMs: 0 });
+    writeFileSync(
+      join(rootDir, "launch-claims.lock"),
+      JSON.stringify({ pid: process.pid, acquiredUptimeMs: 1_000 }),
+      "utf8",
+    );
+
+    expect(() => store.createClaim(makeInput())).toThrow(LaunchClaimLockedError);
+    expect(existsSync(join(rootDir, "launch-claims.lock"))).toBe(true);
+  });
+
+  it("reclaims a stale launch-claims.lock.recovery from a previous boot", () => {
+    const rootDir = freshRoot();
+    const store = new LaunchClaimFileStore({ rootDir });
+    writeFileSync(
+      join(rootDir, "launch-claims.lock.recovery"),
+      JSON.stringify({ pid: process.pid, acquiredUptimeMs: previousBootUptimeMs() }),
+      "utf8",
+    );
+
+    const claim = store.createClaim(makeInput());
+
+    expect(claim.launchClaimId).toBe("claim-001");
+    expect(existsSync(join(rootDir, "launch-claims.lock.recovery"))).toBe(false);
+  });
+
+  it("blocks while a fresh live launch-claims.lock.recovery is held", () => {
+    const rootDir = freshRoot();
+    const store = new LaunchClaimFileStore({ rootDir, writeLockWaitTimeoutMs: 0 });
+    writeFileSync(
+      join(rootDir, "launch-claims.lock.recovery"),
+      JSON.stringify({ pid: process.pid, acquiredUptimeMs: 1_000 }),
+      "utf8",
+    );
+
+    expect(() => store.createClaim(makeInput())).toThrow(LaunchClaimLockedError);
   });
 });
