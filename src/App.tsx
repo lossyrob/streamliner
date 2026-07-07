@@ -1652,6 +1652,7 @@ function useReviewPromptTemplatesState() {
   const requestRef = useRef<Promise<void> | null>(null);
   const mountedRef = useRef(true);
   const mutationVersionRef = useRef(0);
+  const deletedTemplateIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     mountedRef.current = true;
@@ -1662,10 +1663,14 @@ function useReviewPromptTemplatesState() {
 
   const noteTemplatesChanged = useCallback((changedTemplates: PawReviewPromptTemplate[]) => {
     mutationVersionRef.current += 1;
+    for (const template of changedTemplates) {
+      deletedTemplateIdsRef.current.delete(template.id);
+    }
     setTemplates((current) => mergeReviewPromptTemplates(current, changedTemplates));
   }, []);
   const noteTemplateDeleted = useCallback((templateId: string) => {
     mutationVersionRef.current += 1;
+    deletedTemplateIdsRef.current.add(templateId);
     setTemplates((current) => current.filter((template) => template.id !== templateId));
   }, []);
 
@@ -1680,9 +1685,12 @@ function useReviewPromptTemplatesState() {
       .then((loadedTemplates) => {
         if (mountedRef.current) {
           if (mutationVersionRef.current === requestMutationVersion) {
+            deletedTemplateIdsRef.current.clear();
             setTemplates(() => mergeReviewPromptTemplates([], loadedTemplates));
           } else {
-            setTemplates((current) => mergeReviewPromptTemplates(current, loadedTemplates));
+            const deletedTemplateIds = deletedTemplateIdsRef.current;
+            const retainedTemplates = loadedTemplates.filter((template) => !deletedTemplateIds.has(template.id));
+            setTemplates((current) => mergeReviewPromptTemplates(current, retainedTemplates));
           }
         }
       })

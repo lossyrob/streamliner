@@ -925,6 +925,73 @@ describe("App sessions route", () => {
     15_000,
   );
 
+  it(
+    "does not restore a deleted review template when an older refresh resolves later",
+    async () => {
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      const staleTemplate = {
+        id: "heavy-review",
+        name: "Heavy Review",
+        prompt: "Review issue {{githubRepo}}#{{githubIssue}}.",
+        updatedAt: "2026-05-03T18:00:00.000Z",
+      };
+      let resolveRefresh!: (response: Response) => void;
+      const refreshPromise = new Promise<Response>((resolve) => {
+        resolveRefresh = resolve;
+      });
+      let getCount = 0;
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({ version: 1, migrationWarnings: [], workstreams: [] });
+        }
+        if (path === "/api/paw-review-prompt-templates" && (!init?.method || init.method === "GET")) {
+          getCount += 1;
+          return getCount === 1
+            ? jsonResponse({ templates: [staleTemplate] })
+            : refreshPromise;
+        }
+        if (path === "/api/paw-review-prompt-templates/heavy-review" && init?.method === "DELETE") {
+          return new Response(null, { status: 204 });
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState({}, "", "/settings/review-templates");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      act(() => {
+        findButtonByLabel(container, "Select review template Heavy Review").click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Refresh").click();
+      });
+      await settle();
+      expect(findButton(container, "Refreshing...")).toBeInstanceOf(HTMLButtonElement);
+
+      act(() => {
+        findButton(container, "Delete template").click();
+      });
+      await settle(100);
+      expect(container.textContent).toContain('Deleted "Heavy Review".');
+
+      act(() => {
+        resolveRefresh(jsonResponse({ templates: [staleTemplate] }));
+      });
+      await settle(100);
+
+      const listedTemplateIds = [...container.querySelectorAll(".sl-profile-list-item code")]
+        .map((code) => code.textContent?.trim());
+      expect(listedTemplateIds).not.toContain("heavy-review");
+    },
+    15_000,
+  );
+
   it("renders managed runtime state in My Sessions rows and details", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = requestPath(input);
