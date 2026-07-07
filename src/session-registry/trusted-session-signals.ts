@@ -285,7 +285,9 @@ export function drainTrustedSessionSignalSpool(
         // The registry lock is store-wide, so every remaining signal would hit
         // the same lock this pass. Log once and stop; the worker retries the
         // whole spool next cycle instead of emitting one line per file.
-        const remaining = files.length - processed;
+        // Exclude already-processed and already-failed files so the count
+        // reflects only signals still pending (including the current one).
+        const remaining = files.length - processed - failed;
         options.logger?.warn(
           `[session-signals] registry locked; will retry ${remaining} pending signal(s) next cycle (paused at ${fileName}): ${
             error instanceof Error ? error.message : String(error)

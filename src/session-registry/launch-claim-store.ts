@@ -1,6 +1,5 @@
 import {
   closeSync,
-  existsSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -34,7 +33,12 @@ import {
   LaunchClaimNotFoundError,
   type LaunchClaimStore,
 } from "../launch-claim-contract";
-import { isProcessLockStale } from "./lock-liveness";
+import {
+  isProcessLockStale,
+  newLockMetadata,
+  type ProcessLockMetadata,
+  readLockMetadataFile,
+} from "./lock-liveness";
 
 const DEFAULT_LAUNCH_CLAIMS_ROOT = resolve(
   homedir(),
@@ -65,11 +69,6 @@ export function getEnvLaunchClaimRoot(env: NodeJS.ProcessEnv = process.env): str
     return resolve(override.trim());
   }
   return DEFAULT_LAUNCH_CLAIMS_ROOT;
-}
-
-interface LockMetadata {
-  pid: number;
-  acquiredAt: string;
 }
 
 function sleepSync(ms: number): void {
@@ -441,7 +440,7 @@ export class LaunchClaimFileStore implements LaunchClaimStore {
         try {
           writeFileSync(
             fd,
-            JSON.stringify({ pid: process.pid, acquiredAt: isoNow() }),
+            JSON.stringify(newLockMetadata()),
             "utf8",
           );
         } catch (error: unknown) {
@@ -508,7 +507,7 @@ export class LaunchClaimFileStore implements LaunchClaimStore {
       try {
         writeFileSync(
           fd,
-          JSON.stringify({ pid: process.pid, acquiredAt: isoNow() }),
+          JSON.stringify(newLockMetadata()),
           "utf8",
         );
       } catch (error: unknown) {
@@ -549,28 +548,8 @@ export class LaunchClaimFileStore implements LaunchClaimStore {
     return false;
   }
 
-  private readLockMetadata(lockPath: string): LockMetadata | null {
-    if (!existsSync(lockPath)) {
-      return null;
-    }
-    try {
-      const raw = readFileSync(lockPath, "utf8");
-      const parsed = JSON.parse(raw);
-      if (
-        parsed &&
-        typeof parsed === "object" &&
-        typeof (parsed as { pid?: unknown }).pid === "number" &&
-        typeof (parsed as { acquiredAt?: unknown }).acquiredAt === "string"
-      ) {
-        return {
-          pid: (parsed as LockMetadata).pid,
-          acquiredAt: (parsed as LockMetadata).acquiredAt,
-        };
-      }
-    } catch {
-      // fall through
-    }
-    return null;
+  private readLockMetadata(lockPath: string): ProcessLockMetadata | null {
+    return readLockMetadataFile(lockPath);
   }
 
   /**

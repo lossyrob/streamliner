@@ -7,7 +7,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, uptime } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 
@@ -1454,12 +1454,17 @@ setTimeout(() => process.exit(0), holdMs + 50);
     createdRoots.push(rootDir);
     const store = new SessionRegistryFileStore({ rootDir });
     // Simulate a reboot with PID reuse: the lock file survives holding this
-    // live process's PID (as if the OS reassigned the dead owner's PID) but an
-    // acquiredAt that predates any plausible boot. Without the boot-time
-    // heuristic the live PID would keep the registry wedged forever.
+    // live process's PID (as if the OS reassigned the dead owner's PID) with an
+    // acquiredUptimeMs beyond the current uptime — only possible from a
+    // previous, longer-running boot session. Without the reboot heuristic the
+    // live PID would keep the registry wedged forever.
     writeFileSync(
       join(rootDir, "registry.lock"),
-      JSON.stringify({ pid: process.pid, acquiredAt: "2000-01-01T00:00:00.000Z" }),
+      JSON.stringify({
+        pid: process.pid,
+        acquiredAt: "2000-01-01T00:00:00.000Z",
+        acquiredUptimeMs: Math.round(uptime() * 1000) + 600_000,
+      }),
       "utf8",
     );
 
@@ -1493,6 +1498,34 @@ setTimeout(() => process.exit(0), holdMs + 50);
         origin: { kind: "manual" },
       }),
     ).toThrow();
+    expect(existsSync(join(rootDir, "registry.lock"))).toBe(false);
+  });
+
+  it("reclaims a stale registry.lock.recovery from a previous boot", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+    // A recovery lock held by a live (reused) PID but stamped with an uptime
+    // beyond the current one is left over from a previous boot. If it were not
+    // reclaimed it would wedge every registry write via the recovery gate.
+    writeFileSync(
+      join(rootDir, "registry.lock.recovery"),
+      JSON.stringify({
+        pid: process.pid,
+        acquiredAt: "2000-01-01T00:00:00.000Z",
+        acquiredUptimeMs: Math.round(uptime() * 1000) + 600_000,
+      }),
+      "utf8",
+    );
+
+    const created = store.upsertSession({
+      title: "Recovered past stale recovery lock",
+      cwd: "C:\\repo",
+      origin: { kind: "manual" },
+    });
+
+    expect(created.title).toBe("Recovered past stale recovery lock");
+    expect(existsSync(join(rootDir, "registry.lock.recovery"))).toBe(false);
     expect(existsSync(join(rootDir, "registry.lock"))).toBe(false);
   });
 
