@@ -220,6 +220,8 @@ function lifecycleForSdkEvent(event: SessionEvent): SessionRegistryManagedLifecy
       return "failed";
     case "abort":
       return "interrupted";
+    case "tool.execution_start":
+      return "running";
     default:
       return null;
   }

@@ -1,8 +1,13 @@
 import type { SessionRegistryListItem } from "../session-registry-contract";
+import { isManagedRuntimeLifecycleCleanlyEnded } from "../managed-runtime-contract";
 import {
   buildCopilotResumeCommand,
+  quotePosixShellLiteral,
   quotePowerShellLiteral,
+  type CopilotCommandShellDialect,
 } from "../terminal-command";
+
+export type RestartCommandDialect = CopilotCommandShellDialect;
 
 export function getDisplaySessionId(session: SessionRegistryListItem): string {
   return session.copilotSessionId ?? session.id;
@@ -16,20 +21,42 @@ function normalizePathForPowerShell(value: string): string {
   return trimmed;
 }
 
+function detectRestartCommandDialect(): RestartCommandDialect {
+  if (typeof navigator === "undefined") {
+    return "powershell";
+  }
+  if (/^Node\.js/i.test(navigator.userAgent)) {
+    return "powershell";
+  }
+  const extendedNavigator = navigator as Navigator & {
+    userAgentData?: { platform?: string };
+  };
+  const platform = [
+    extendedNavigator.userAgentData?.platform,
+    navigator.platform,
+    navigator.userAgent,
+  ].find((value): value is string => typeof value === "string" && value.length > 0) ?? "";
+  return /win/i.test(platform) ? "powershell" : "posix";
+}
+
 export function buildRestartCommand(
   session: SessionRegistryListItem,
   defaultCliArgs: readonly string[] = [],
+  dialect: RestartCommandDialect = detectRestartCommandDialect(),
 ): string | null {
   if (!session.copilotSessionId) {
     return null;
   }
-  const worktree = normalizePathForPowerShell(session.derivedWorktreePath ?? session.cwd);
   const cliArgs = session.launchCliArgs ?? defaultCliArgs;
-  const resumeCommand = buildCopilotResumeCommand(session.copilotSessionId, cliArgs);
+  const resumeCommand = buildCopilotResumeCommand(session.copilotSessionId, cliArgs, dialect);
+  const worktree = (session.derivedWorktreePath ?? session.cwd).trim();
   if (worktree.length === 0) {
     return resumeCommand;
   }
-  return `Set-Location -LiteralPath ${quotePowerShellLiteral(worktree)}; ${resumeCommand}`;
+  if (dialect === "powershell") {
+    return `Set-Location -LiteralPath ${quotePowerShellLiteral(normalizePathForPowerShell(worktree))}; ${resumeCommand}`;
+  }
+  return `cd ${quotePosixShellLiteral(worktree)} && ${resumeCommand}`;
 }
 
 export function canRelaunch(session: SessionRegistryListItem): boolean {
@@ -88,6 +115,12 @@ export function isTrustedInterruptedSession(session: SessionRegistryListItem): b
 
 export function isCleanlyEndedSession(session: SessionRegistryListItem): boolean {
   if (isTrustedInterruptedSession(session)) {
+    return false;
+  }
+  const managedLifecycleState = session.runtime?.runtimeKind === "managed-sdk"
+    ? session.runtime.lifecycleState
+    : null;
+  if (managedLifecycleState && !isManagedRuntimeLifecycleCleanlyEnded(managedLifecycleState)) {
     return false;
   }
   return (

@@ -3,11 +3,11 @@
   "id": "sdk-managed-worker-runtime",
   "projectKey": "streamliner",
   "title": "SDK-Managed Worker Runtime",
-  "summary": "Wave 2 backend substrate and builder-facing UI are complete through PRs #79 and #78. Terminal takeover/cleanup remains ready, startup reconciliation is promoted as a Wave 2 safety node, managed-session console captures the read-only Copilot-CLI-like monitoring surface, and a Wave 2 punch-list node collects closeout tweaks before the usability gate.",
+  "summary": "Wave 2 backend substrate, builder-facing UI, and terminal takeover/cleanup actions are complete through PRs #79, #78, and #86. Startup reconciliation and API responsiveness hardening are the next ready Wave 2 safety nodes; supervisor isolation, managed-session console, and the Wave 2 punch list remain before the usability gate.",
   "status": "active",
   "attention": "focus",
   "createdAt": "2026-05-06T03:50:15.082Z",
-  "updatedAt": "2026-05-09T17:49:29.028Z",
+  "updatedAt": "2026-05-10T04:06:20.372Z",
   "trackingIssue": {
     "owner": "lossyrob",
     "repo": "streamliner",
@@ -81,6 +81,10 @@
     {
       "repoId": "streamliner",
       "path": "docs/design/decisions/009-sdk-managed-worker-runtime.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/010-terminal-takeover-and-cleanup.md"
     }
   ],
   "nodes": [
@@ -186,8 +190,8 @@
       "id": "terminal-takeover-cleanup-actions",
       "type": "task",
       "title": "Terminal takeover and cleanup actions",
-      "summary": "Ship the operational lifecycle actions that make managed SDK sessions usable: interrupt and open one-way Copilot CLI takeover, plus cleanup-after-merge for linked worktrees/local branches without requiring terminal interaction for simple autonomous runs.",
-      "status": "ready",
+      "summary": "Completed via PR #86: added managed interrupt/cancel, one-way visible Copilot CLI takeover via `copilot --resume <sdkSessionId>`, trusted observation rebinding to the same registry row, cleanup-after-merge guardrails for linked worktrees/local branches, state-aware UI actions, and Decision 010 for takeover/cleanup semantics.",
+      "status": "completed",
       "attention": "focus",
       "repoIds": [
         "streamliner"
@@ -224,10 +228,50 @@
       ]
     },
     {
+      "id": "managed-runtime-api-responsiveness",
+      "type": "task",
+      "title": "Managed runtime API responsiveness hardening",
+      "summary": "Bound API load from noisy managed SDK sessions before adding the terminal-like console: coalesce and throttle progress writes, flush important lifecycle/evidence transitions promptly, reduce full-snapshot SSE/UI polling chatter, and validate that multiple managed sessions no longer stall local API requests.",
+      "status": "ready",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "tracker": {
+        "type": "github",
+        "owner": "lossyrob",
+        "repo": "streamliner",
+        "number": 94
+      },
+      "dependsOn": [
+        "terminal-takeover-cleanup-actions"
+      ]
+    },
+    {
+      "id": "managed-runtime-supervisor-isolation",
+      "type": "task",
+      "title": "Managed runtime supervisor isolation boundary",
+      "summary": "Use the API responsiveness evidence to decide whether same-process coalescing is enough for Wave 2; if not, introduce a local supervisor child process that owns Copilot SDK sessions and sends compact lifecycle/progress/evidence updates back to the API while preserving managed actions and crash recovery.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "tracker": {
+        "type": "github",
+        "owner": "lossyrob",
+        "repo": "streamliner",
+        "number": 95
+      },
+      "dependsOn": [
+        "managed-runtime-api-responsiveness"
+      ]
+    },
+    {
       "id": "managed-session-console",
       "type": "task",
       "title": "Managed session console",
-      "summary": "Implement the missing read-only, terminal-looking console for Streamliner-managed work: live/replayed sanitized activity for PAW launch preparation and SDK-managed background sessions, typed waiting-for-builder reasons, PR-ready trust markers, and entry points from launch, graph/node, and My Sessions surfaces without becoming an interactive terminal or raw event stream.",
+      "summary": "Implement the missing read-only, terminal-looking console for Streamliner-managed work on top of bounded API-safe progress projections: live/replayed sanitized activity for PAW launch preparation and SDK-managed background sessions, typed waiting-for-builder reasons, PR-ready trust markers, and entry points from launch, graph/node, and My Sessions surfaces without becoming an interactive terminal or raw event stream.",
       "status": "planned",
       "attention": "focus",
       "repoIds": [
@@ -240,7 +284,7 @@
         "number": 85
       },
       "dependsOn": [
-        "terminal-takeover-cleanup-actions"
+        "managed-runtime-api-responsiveness"
       ]
     },
     {
@@ -267,7 +311,7 @@
       "id": "managed-runtime-usability-gate",
       "type": "gate",
       "title": "Managed runtime usability gate",
-      "summary": "Builder validates that the SDK-managed launch, terminal-like read-only monitoring, takeover, and cleanup experience is usable and safe enough to proceed into dogfood hardening and downstream export work.",
+      "summary": "Builder validates that the SDK-managed launch, API responsiveness under active managed work, terminal-like read-only monitoring, takeover, and cleanup experience is usable and safe enough to proceed into dogfood hardening and downstream export work.",
       "status": "planned",
       "attention": "focus",
       "repoIds": [
@@ -281,6 +325,7 @@
       },
       "dependsOn": [
         "managed-runtime-startup-reconciliation",
+        "managed-runtime-supervisor-isolation",
         "managed-runtime-wave-2-punch-list"
       ]
     },
@@ -328,13 +373,15 @@
     {
       "id": "managed-runtime-usable",
       "title": "Managed runtime usable",
-      "summary": "The builder has validated the usable SDK-managed runtime: node launch selection, managed execution, read-only terminal-like monitoring, terminal takeover, and cleanup after merge.",
+      "summary": "The builder has validated the usable SDK-managed runtime: node launch selection, managed execution, API responsiveness while managed sessions are active, read-only terminal-like monitoring, terminal takeover, and cleanup after merge.",
       "status": "planned",
       "nodeIds": [
         "managed-execution-substrate",
         "builder-managed-runtime-ui",
         "terminal-takeover-cleanup-actions",
         "managed-runtime-startup-reconciliation",
+        "managed-runtime-api-responsiveness",
+        "managed-runtime-supervisor-isolation",
         "managed-session-console",
         "managed-runtime-wave-2-punch-list",
         "managed-runtime-usability-gate"
@@ -355,6 +402,7 @@
     "requiredTracker": "github-issue"
   },
   "launchDefaults": {
+    "promptProfileId": "paw-lite-2",
     "terminal": {
       "titleTemplate": "SLR-A {githubIssue}",
       "tabColor": "#41b878"

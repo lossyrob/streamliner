@@ -70,6 +70,23 @@ without relying on live terminal scrollback.
 - Add or refine diagnostics for workstream-source scans, graph loads, registry
   refreshes, launch-claim stores, node launch records, PAW/context/activity
   indexing, and other file-backed store hot paths identified by the baseline.
+- **Persistent event-loop lag monitor.** A small `setInterval`-based drift
+  sampler that emits a structured log line whenever lag exceeds a configurable
+  threshold (e.g. 200ms). Strong baseline-supported quick-win candidate; the
+  brief's observed-symptoms section shows that today operators have no way to
+  tell the event loop is starved other than noticing post-hoc that
+  `durationMs` got large. This monitor would have made today's triage 10x
+  faster.
+- **Slow-request log triage helper.** A `tail-slow.ps1` (or `tail-slow.sh`)
+  script that decodes the JSONL logs and surfaces the slowest N requests in
+  the last M minutes. Today, PowerShell's auto-conversion of `ts` to
+  `[DateTime]` breaks naive parsing, and log triage requires custom code.
+  Document the helper in `docs/operations/logging.md`.
+- **API-recovery runbook entry.** Document the "find listening node PID by
+  port and `Stop-Process -Force`" procedure in `docs/operations/logging.md`
+  or a new operations doc. `Ctrl+C` on `npm run dev` doesn't reliably kill
+  child node processes on Windows, leaving 4319/5173 bound to stale procs;
+  operators hitting performance work will need this workflow.
 - Keep diagnostics low overhead and useful under many-tab load.
 - Update existing documentation when operators need new commands, log scopes, or
   interpretation guidance.
@@ -107,6 +124,9 @@ runtime model, API contract, or background ownership semantics.
 - The diagnostics cover the specific gaps identified by the baseline report.
 - Operators can find slow endpoints, request storms, background scans, and hot
   store paths from durable logs or documented diagnostic outputs.
+- Operators can answer **"is the server currently overloaded?"** from a single
+  log line, endpoint, or short script — not by inferring from after-the-fact
+  request durations.
 - The added diagnostics do not create meaningful overhead under the accepted
   multi-tab load shape.
 - Later optimization nodes can use the diagnostics to compare before/after

@@ -5,16 +5,20 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
-import type {
-  NodeLaunchHandoff,
-  NodeLaunchOperation,
-  NodeLaunchOperationError,
-  NodeLaunchOperationProgressEvent,
-  NodeLaunchOperationStatus,
-  NodeLaunchRecord,
-  NodeLaunchRecordPathStatus,
-  NodeManagedSdkLaunchResponse,
-  NodeTerminalLaunchResponse,
+import {
+  isBlockingNodeLaunchOperation,
+  isPendingPostPreparationTerminalLaunchOperation,
+  type NodeLaunchHandoff,
+  type NodeCompanionTerminalLaunchResponse,
+  type NodeLaunchOperation,
+  type NodeLaunchOperationError,
+  type NodeLaunchOperationProgressEvent,
+  type NodeLaunchOperationStatus,
+  type NodePostPreparationIntent,
+  type NodeLaunchRecord,
+  type NodeLaunchRecordPathStatus,
+  type NodeManagedSdkLaunchResponse,
+  type NodeTerminalLaunchResponse,
 } from "../node-launch-record-contract";
 import type { PawLaunchHandoff, PawLaunchProgressEvent } from "./launch-preparation";
 
@@ -50,6 +54,14 @@ interface OperationErrorInput {
   input?: string;
 }
 
+type OperationUpdateFields = Pick<
+  StoredNodeLaunchOperation,
+  "completedAt" | "error" | "terminalLaunch" | "managedLaunch"
+> & Partial<Pick<
+  StoredNodeLaunchOperation,
+  "postPreparation" | "companionLaunch" | "companionError"
+>>;
+
 type ReplaceFile = (source: string, destination: string) => Promise<void>;
 
 interface AtomicWriteOptions {
@@ -62,6 +74,23 @@ const ACTIVE_LAUNCH_OPERATION_STATUSES = new Set<NodeLaunchOperationStatus>([
   "launching",
   "managed_starting",
 ]);
+
+function isRecoverableOrReleasableOperation(operation: NodeLaunchOperation): boolean {
+  return (
+    ACTIVE_LAUNCH_OPERATION_STATUSES.has(operation.status) ||
+    isPendingPostPreparationTerminalLaunchOperation(operation)
+  );
+}
+
+function hasOrphanedCompanionLaunch(operation: NodeLaunchOperation): boolean {
+  return Boolean(
+    operation.status === "launched_pending_binding" &&
+    operation.postPreparation?.launchCompanion &&
+    operation.terminalLaunch &&
+    !operation.companionLaunch &&
+    !operation.companionError
+  );
+}
 
 interface NodeErrnoException extends Error {
   code?: string;
@@ -117,6 +146,11 @@ function nullableStringField(record: Record<string, unknown>, key: string): stri
 function optionalStringField(record: Record<string, unknown>, key: string): string | undefined {
   const value = record[key];
   return typeof value === "string" ? value : undefined;
+}
+
+function optionalBooleanField(record: Record<string, unknown>, key: string): boolean | undefined {
+  const value = record[key];
+  return typeof value === "boolean" ? value : undefined;
 }
 
 function normalizeStoredRecord(value: unknown): StoredNodeLaunchRecord | null {
@@ -205,6 +239,43 @@ function normalizeOperationError(value: unknown): NodeLaunchOperationError | nul
   return operationError;
 }
 
+function normalizePostPreparationIntent(value: unknown): NodePostPreparationIntent | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const intent: NodePostPreparationIntent = {};
+  if (isRecord(value.launchTerminal)) {
+    const launchTerminal: NodePostPreparationIntent["launchTerminal"] = {};
+    const kickoffPrompt = nullableStringField(value.launchTerminal, "kickoffPrompt");
+    const terminalTitle = nullableStringField(value.launchTerminal, "terminalTitle");
+    const terminalColor = nullableStringField(value.launchTerminal, "terminalColor");
+    if (kickoffPrompt !== null) {
+      launchTerminal.kickoffPrompt = kickoffPrompt;
+    }
+    if (terminalTitle !== null) {
+      launchTerminal.terminalTitle = terminalTitle;
+    }
+    if (terminalColor !== null) {
+      launchTerminal.terminalColor = terminalColor;
+    }
+    intent.launchTerminal = launchTerminal;
+  }
+  if (isRecord(value.launchCompanion)) {
+    const kickoffPrompt = stringField(value.launchCompanion, "kickoffPrompt");
+    if (kickoffPrompt) {
+      const usePawReviewAgent = optionalBooleanField(
+        value.launchCompanion,
+        "usePawReviewAgent",
+      );
+      intent.launchCompanion = {
+        kickoffPrompt,
+        ...(usePawReviewAgent !== undefined ? { usePawReviewAgent } : {}),
+      };
+    }
+  }
+  return intent.launchTerminal || intent.launchCompanion ? intent : null;
+}
+
 function normalizeStoredOperation(value: unknown): StoredNodeLaunchOperation | null {
   if (!isRecord(value)) {
     return null;
@@ -227,8 +298,11 @@ function normalizeStoredOperation(value: unknown): StoredNodeLaunchOperation | n
     updatedAt,
     completedAt: nullableStringField(value, "completedAt"),
     handoff: isRecord(value.handoff) ? value.handoff as unknown as NodeLaunchHandoff : null,
+    postPreparation: normalizePostPreparationIntent(value.postPreparation),
     terminalLaunch: isRecord(value.terminalLaunch) ? value.terminalLaunch as unknown as NodeTerminalLaunchResponse : null,
     managedLaunch: isRecord(value.managedLaunch) ? value.managedLaunch as unknown as NodeManagedSdkLaunchResponse : null,
+    companionLaunch: isRecord(value.companionLaunch) ? value.companionLaunch as unknown as NodeCompanionTerminalLaunchResponse : null,
+    companionError: normalizeOperationError(value.companionError),
     error: normalizeOperationError(value.error),
     progressEvents: Array.isArray(value.progressEvents)
       ? value.progressEvents
@@ -355,6 +429,167 @@ export class NodeLaunchRecordStore {
     return operation ? { ...operation, progressEvents: [...operation.progressEvents] } : null;
   }
 
+  async clearNodeLaunchState(input: {
+    graphPath: string;
+    nodeId: string;
+  }): Promise<{
+    record: NodeLaunchRecord | null;
+    operation: NodeLaunchOperation | null;
+  }> {
+    return await this.updateDocument((document) => {
+      const key = normalizeGraphPathForKey(input.graphPath);
+      const recordIndex = document.records.findIndex((candidate) =>
+        candidate.nodeId === input.nodeId && normalizeGraphPathForKey(candidate.graphPath) === key
+      );
+      const operationIndex = document.operations.findIndex((candidate) =>
+        candidate.nodeId === input.nodeId && normalizeGraphPathForKey(candidate.graphPath) === key
+      );
+      const [record] = recordIndex >= 0 ? document.records.splice(recordIndex, 1) : [];
+      const [operation] = operationIndex >= 0 ? document.operations.splice(operationIndex, 1) : [];
+      return {
+        record: record ? withPathStatus(record) : null,
+        operation: operation ? { ...operation, progressEvents: [...operation.progressEvents] } : null,
+      };
+    });
+  }
+
+  /**
+   * Mark every persisted operation that is in an in-memory-controlled state
+   * as recoverable. That includes active statuses (`preparing`, `launching`,
+   * `managed_starting`) and prepared operations waiting for server-side
+   * post-preparation launch. Intended to run once on API startup so that
+   * operations whose in-memory run state was lost do not appear stuck in the
+   * UI forever.
+   *
+   * Returns the operations that were recovered so callers can log them.
+   */
+  async recoverOrphanedOperations(now = new Date()): Promise<NodeLaunchOperation[]> {
+    const recovered: NodeLaunchOperation[] = [];
+    await this.updateDocument((document) => {
+      const timestamp = now.toISOString();
+      for (const operation of document.operations) {
+        if (isRecoverableOrReleasableOperation(operation)) {
+          operation.status = "preparation_failed";
+          operation.completedAt = timestamp;
+          operation.updatedAt = timestamp;
+          operation.terminalLaunch = null;
+          operation.managedLaunch = null;
+          operation.companionLaunch = null;
+          operation.companionError = null;
+          operation.error = operationError(
+            {
+              code: "operation_orphaned",
+              error:
+                "Operation was in flight when the API restarted; in-memory run state was lost. Released so the node can be re-launched.",
+            },
+            timestamp,
+          );
+          recovered.push({ ...operation, progressEvents: [...operation.progressEvents] });
+          continue;
+        }
+        if (hasOrphanedCompanionLaunch(operation)) {
+          operation.updatedAt = timestamp;
+          operation.companionError = operationError(
+            {
+              code: "companion_operation_orphaned",
+              error:
+                "Companion launch status was in flight when the API restarted; in-memory run state was lost.",
+            },
+            timestamp,
+          );
+          recovered.push({ ...operation, progressEvents: [...operation.progressEvents] });
+        }
+      }
+      return undefined;
+    });
+    return recovered;
+  }
+
+  /**
+   * Manually release a stuck active or pending post-preparation operation,
+   * marking it `preparation_failed` with a user-cancellation error code so
+   * the UI can unblock without a server restart. Returns null if the
+   * operation is not found OR is not eligible for release.
+   */
+  async releaseActiveOperation(input: {
+    graphPath: string;
+    nodeId: string;
+    reason?: string;
+    now?: Date;
+  }): Promise<NodeLaunchOperation | null> {
+    return await this.updateDocument((document) => {
+      const operation = findStoredOperation(document, input.graphPath, input.nodeId);
+      if (!operation || !isRecoverableOrReleasableOperation(operation)) {
+        return null;
+      }
+      const timestamp = (input.now ?? new Date()).toISOString();
+      operation.status = "preparation_failed";
+      operation.completedAt = timestamp;
+      operation.updatedAt = timestamp;
+      operation.terminalLaunch = null;
+      operation.managedLaunch = null;
+      operation.companionLaunch = null;
+      operation.companionError = null;
+      operation.error = operationError(
+        {
+          code: "operation_released_by_user",
+          error: input.reason ?? "Manually released by the user.",
+        },
+        timestamp,
+      );
+      return operation;
+    });
+  }
+
+  async markLaunchedPendingBindingBound(input: {
+    graphPath: string;
+    nodeId: string;
+    now?: Date;
+  }): Promise<NodeLaunchOperation | null> {
+    return await this.updateDocument((document) => {
+      const operation = findStoredOperation(document, input.graphPath, input.nodeId);
+      if (!operation || operation.status !== "launched_pending_binding") {
+        return null;
+      }
+      const timestamp = (input.now ?? new Date()).toISOString();
+      operation.status = "bound";
+      operation.completedAt = operation.completedAt ?? timestamp;
+      operation.updatedAt = timestamp;
+      operation.error = null;
+      return { ...operation, progressEvents: [...operation.progressEvents] };
+    });
+  }
+
+  async releaseLaunchedPendingBindingOperation(input: {
+    graphPath: string;
+    nodeId: string;
+    reason?: string;
+    now?: Date;
+  }): Promise<NodeLaunchOperation | null> {
+    return await this.updateDocument((document) => {
+      const operation = findStoredOperation(document, input.graphPath, input.nodeId);
+      if (!operation || operation.status !== "launched_pending_binding") {
+        return null;
+      }
+      const timestamp = (input.now ?? new Date()).toISOString();
+      operation.status = "preparation_failed";
+      operation.completedAt = timestamp;
+      operation.updatedAt = timestamp;
+      operation.terminalLaunch = null;
+      operation.managedLaunch = null;
+      operation.companionLaunch = null;
+      operation.companionError = null;
+      operation.error = operationError(
+        {
+          code: "operation_released_by_user",
+          error: input.reason ?? "Manually released by the user.",
+        },
+        timestamp,
+      );
+      return { ...operation, progressEvents: [...operation.progressEvents] };
+    });
+  }
+
   async hasWorkflowContextPath(path: string): Promise<boolean> {
     const document = await this.readDocument();
     const normalizedPath = normalizePathForComparison(path);
@@ -370,6 +605,7 @@ export class NodeLaunchRecordStore {
     graphPath: string;
     nodeId: string;
     runId: string;
+    postPreparation?: NodePostPreparationIntent | null;
     now?: Date;
   }): Promise<NodeLaunchOperation> {
     return await this.updateDocument((document) => {
@@ -385,8 +621,11 @@ export class NodeLaunchRecordStore {
         updatedAt: timestamp,
         completedAt: null,
         handoff: null,
+        postPreparation: input.postPreparation ?? null,
         terminalLaunch: null,
         managedLaunch: null,
+        companionLaunch: null,
+        companionError: null,
         error: null,
         progressEvents: [],
       };
@@ -431,6 +670,8 @@ export class NodeLaunchRecordStore {
         error: null,
         terminalLaunch: null,
         managedLaunch: null,
+        companionLaunch: null,
+        companionError: null,
       });
     });
   }
@@ -454,8 +695,11 @@ export class NodeLaunchRecordStore {
         updatedAt: timestamp,
         completedAt: timestamp,
         handoff: null,
+        postPreparation: existing?.postPreparation ?? null,
         terminalLaunch: null,
         managedLaunch: null,
+        companionLaunch: null,
+        companionError: null,
         error: operationError(input.error, timestamp),
         progressEvents: existing?.progressEvents ?? [],
       };
@@ -476,6 +720,46 @@ export class NodeLaunchRecordStore {
     });
   }
 
+  async markPostPreparationTerminalLaunching(
+    handoff: PawLaunchHandoff,
+    now = new Date(),
+  ): Promise<NodeLaunchOperation> {
+    return await this.updateDocument((document) => {
+      const graphPath = handoff.launchMetadata.graphPath;
+      const nodeId = handoff.launchMetadata.nodeId;
+      const existing = findStoredOperation(document, graphPath, nodeId);
+      if (!existing?.postPreparation?.launchTerminal || existing.status !== "prepared") {
+        throw new DuplicateActiveNodeLaunchOperationError(existing ?? {
+          id: recordId(graphPath, nodeId),
+          graphPath,
+          nodeId,
+          status: "launching",
+          preparationRunId: null,
+          startedAt: now.toISOString(),
+          updatedAt: now.toISOString(),
+          completedAt: null,
+          handoff: null,
+          postPreparation: null,
+          terminalLaunch: null,
+          managedLaunch: null,
+          companionLaunch: null,
+          companionError: null,
+          error: null,
+          progressEvents: [],
+        });
+      }
+      const timestamp = now.toISOString();
+      return operationFromHandoff(document, handoff, "launching", timestamp, {
+        completedAt: null,
+        error: null,
+        terminalLaunch: null,
+        managedLaunch: null,
+        companionLaunch: null,
+        companionError: null,
+      });
+    });
+  }
+
   async markTerminalLaunched(
     handoff: PawLaunchHandoff,
     terminalLaunch: NodeTerminalLaunchResponse,
@@ -486,6 +770,52 @@ export class NodeLaunchRecordStore {
       error: null,
       terminalLaunch,
       managedLaunch: null,
+    });
+  }
+
+  async markCompanionLaunched(input: {
+    handoff: PawLaunchHandoff;
+    companionLaunch: NodeCompanionTerminalLaunchResponse;
+    now?: Date;
+  }): Promise<NodeLaunchOperation> {
+    return await this.updateDocument((document) => {
+      const graphPath = input.handoff.launchMetadata.graphPath;
+      const nodeId = input.handoff.launchMetadata.nodeId;
+      const operation = findStoredOperation(document, graphPath, nodeId);
+      if (!operation) {
+        throw Object.assign(new Error(`Node ${nodeId} does not have a launch operation.`), {
+          statusCode: 404,
+          code: "node_launch_operation_not_found",
+        });
+      }
+      const timestamp = (input.now ?? new Date()).toISOString();
+      operation.updatedAt = timestamp;
+      operation.companionLaunch = input.companionLaunch;
+      operation.companionError = null;
+      return { ...operation, progressEvents: [...operation.progressEvents] };
+    });
+  }
+
+  async markCompanionFailed(input: {
+    handoff: PawLaunchHandoff;
+    error: OperationErrorInput;
+    now?: Date;
+  }): Promise<NodeLaunchOperation> {
+    return await this.updateDocument((document) => {
+      const graphPath = input.handoff.launchMetadata.graphPath;
+      const nodeId = input.handoff.launchMetadata.nodeId;
+      const operation = findStoredOperation(document, graphPath, nodeId);
+      if (!operation) {
+        throw Object.assign(new Error(`Node ${nodeId} does not have a launch operation.`), {
+          statusCode: 404,
+          code: "node_launch_operation_not_found",
+        });
+      }
+      const timestamp = (input.now ?? new Date()).toISOString();
+      operation.updatedAt = timestamp;
+      operation.companionLaunch = null;
+      operation.companionError = operationError(input.error, timestamp);
+      return { ...operation, progressEvents: [...operation.progressEvents] };
     });
   }
 
@@ -536,6 +866,8 @@ export class NodeLaunchRecordStore {
         error: operationError(input.error, timestamp),
         terminalLaunch: null,
         managedLaunch: null,
+        companionLaunch: null,
+        companionError: null,
       });
     });
   }
@@ -558,6 +890,8 @@ export class NodeLaunchRecordStore {
         error: operationError(input.error, timestamp),
         terminalLaunch: null,
         managedLaunch: null,
+        companionLaunch: null,
+        companionError: null,
       });
     });
   }
@@ -575,7 +909,7 @@ export class NodeLaunchRecordStore {
     handoff: PawLaunchHandoff,
     status: NodeLaunchOperationStatus,
     now: Date,
-    updates: Pick<StoredNodeLaunchOperation, "completedAt" | "error" | "terminalLaunch" | "managedLaunch">,
+    updates: OperationUpdateFields,
   ): Promise<NodeLaunchOperation> {
     return await this.updateDocument((document) => {
       const timestamp = now.toISOString();
@@ -587,13 +921,13 @@ export class NodeLaunchRecordStore {
     handoff: PawLaunchHandoff,
     status: NodeLaunchOperationStatus,
     now: Date,
-    updates: Pick<StoredNodeLaunchOperation, "completedAt" | "error" | "terminalLaunch" | "managedLaunch">,
+    updates: OperationUpdateFields,
   ): Promise<NodeLaunchOperation> {
     return await this.updateDocument((document) => {
       const graphPath = handoff.launchMetadata.graphPath;
       const nodeId = handoff.launchMetadata.nodeId;
       const existing = findStoredOperation(document, graphPath, nodeId);
-      if (existing && ACTIVE_LAUNCH_OPERATION_STATUSES.has(existing.status)) {
+      if (existing && isBlockingNodeLaunchOperation(existing)) {
         throw new DuplicateActiveNodeLaunchOperationError({
           ...existing,
           progressEvents: [...existing.progressEvents],
@@ -715,7 +1049,7 @@ function operationFromHandoff(
   handoff: PawLaunchHandoff,
   status: NodeLaunchOperationStatus,
   timestamp: string,
-  updates: Pick<StoredNodeLaunchOperation, "completedAt" | "error" | "terminalLaunch" | "managedLaunch">,
+  updates: OperationUpdateFields,
 ): StoredNodeLaunchOperation {
   const graphPath = handoff.launchMetadata.graphPath;
   const nodeId = handoff.launchMetadata.nodeId;
@@ -731,8 +1065,17 @@ function operationFromHandoff(
     updatedAt: timestamp,
     completedAt: updates.completedAt,
     handoff: launchHandoff,
+    postPreparation: Object.prototype.hasOwnProperty.call(updates, "postPreparation")
+      ? updates.postPreparation ?? null
+      : existing?.postPreparation ?? null,
     terminalLaunch: updates.terminalLaunch,
     managedLaunch: updates.managedLaunch,
+    companionLaunch: Object.prototype.hasOwnProperty.call(updates, "companionLaunch")
+      ? updates.companionLaunch ?? null
+      : existing?.companionLaunch ?? null,
+    companionError: Object.prototype.hasOwnProperty.call(updates, "companionError")
+      ? updates.companionError ?? null
+      : existing?.companionError ?? null,
     error: updates.error,
     progressEvents: existing?.progressEvents ?? [],
   };

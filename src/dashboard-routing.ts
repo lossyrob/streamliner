@@ -3,7 +3,7 @@ import type { MouseEvent } from "react";
 export type DashboardRoute =
   | { view: "landing"; message?: string }
   | { view: "workstreams"; message?: string }
-  | { view: "settings"; section?: "profiles" | "session-launch" }
+  | { view: "settings"; section?: "profiles" | "review-templates" | "session-launch" }
   | { view: "prototype"; prototype: "managed-consoles" }
   | {
       view: "sessions";
@@ -53,7 +53,11 @@ export function routePath(route: DashboardRoute): string {
     case "sessions":
       return sessionsRoutePath(route);
     case "settings":
-      return route.section === "profiles" ? "/settings/profiles" : "/settings/session-launch";
+      return route.section === "profiles"
+        ? "/settings/profiles"
+        : route.section === "review-templates"
+          ? "/settings/review-templates"
+          : "/settings/session-launch";
     case "prototype":
       return "/__prototype/managed-consoles";
     case "workstream":

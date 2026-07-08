@@ -39,11 +39,14 @@ import type {
   ManagedSdkOwnershipTransferResult,
   ManagedSdkRunner,
 } from "../managed-sdk-runner";
+import type { ManagedRuntimePatchCoalescer } from "../managed-runtime-patch-coalescer";
 import { SessionRegistryEventStream } from "../session-events";
 import {
   buildCopilotResumeCommand,
   isSafeCopilotResumeSessionId,
+  launchCopilotTerminal,
   launchTerminal,
+  selectTerminalCommandShellDialect,
   type TerminalLaunchOptions,
   type TerminalLaunchResult,
 } from "../terminal-launch";
@@ -68,6 +71,7 @@ export function createSessionsRouter(options: {
   eventStream: SessionRegistryEventStream;
   relaunchDeps?: Partial<RelaunchDeps>;
   managedSdkRunner?: ManagedSdkRunner;
+  runtimePatchCoalescer: ManagedRuntimePatchCoalescer;
   managedCleanupDeps?: Partial<ManagedCleanupDeps>;
   now?: () => Date;
   /**
@@ -86,6 +90,10 @@ export function createSessionsRouter(options: {
   const claimBindingLogger = options.launchClaimStore
     ? getApiLogger().withScope("launch-claim.binding")
     : null;
+  const quiesceRuntimePatchQueue = (sessionId: string): void => {
+    options.runtimePatchCoalescer.flush(sessionId);
+    options.runtimePatchCoalescer.close(sessionId);
+  };
 
   const onTrustedSignalApplied:
     | ((signal: SessionRegistryTrustedSignalInput) => void)
@@ -154,45 +162,49 @@ export function createSessionsRouter(options: {
   // Loopback-only: relaunch spawns local processes.
   // Requires non-simple request (Content-Type header) to prevent CSRF from
   // cross-origin pages that can POST to loopback without preflight.
-  router.post("/:id/relaunch", (req, res) => {
+  router.post("/:id/relaunch", async (req, res, next) => {
     const sessionId = req.params.id;
 
-    if (isNonLoopbackRequest(req)) {
-      relaunchLogger.warn("rejected: non-loopback", { sessionId });
-      res.status(403).json({ error: "Session relaunch must originate from loopback." });
-      return;
-    }
+    try {
+      if (isNonLoopbackRequest(req)) {
+        relaunchLogger.warn("rejected: non-loopback", { sessionId });
+        res.status(403).json({ error: "Session relaunch must originate from loopback." });
+        return;
+      }
 
-    const contentType = req.headers["content-type"] ?? "";
-    if (!contentType.startsWith("application/json")) {
-      relaunchLogger.warn("rejected: bad content-type", { sessionId, contentType });
-      res.status(415).json({ error: "Content-Type must be application/json." });
-      return;
-    }
+      const contentType = req.headers["content-type"] ?? "";
+      if (!contentType.startsWith("application/json")) {
+        relaunchLogger.warn("rejected: bad content-type", { sessionId, contentType });
+        res.status(415).json({ error: "Content-Type must be application/json." });
+        return;
+      }
 
-    relaunchLogger.info("attempt", { sessionId });
-    const outcome = relaunchSession(options.store, sessionId, options.relaunchDeps);
-    if (outcome.ok) {
-      relaunchLogger.info("success", {
-        sessionId,
-        method: outcome.result.method,
-        copilotResumed: outcome.result.copilotResumed,
-        colorApplied: outcome.result.colorApplied,
-        pid: outcome.result.pid,
-      });
-      res.json(outcome.result);
-    } else {
-      const statusCode =
-        outcome.error.code === "session_not_found" ? 404
-          : outcome.error.code === "spawn_failed" || outcome.error.code === "default_args_unavailable" ? 500
-            : 400;
-      relaunchLogger.warn("failed", {
-        sessionId,
-        code: outcome.error.code,
-        message: outcome.error.message,
-        statusCode,
-      });
-      res.status(statusCode).json(outcome.error);
+      relaunchLogger.info("attempt", { sessionId });
+      const outcome = await relaunchSession(options.store, sessionId, options.relaunchDeps);
+      if (outcome.ok) {
+        relaunchLogger.info("success", {
+          sessionId,
+          method: outcome.result.method,
+          copilotResumed: outcome.result.copilotResumed,
+          colorApplied: outcome.result.colorApplied,
+          pid: outcome.result.pid,
+        });
+        res.json(outcome.result);
+      } else {
+        const statusCode =
+          outcome.error.code === "session_not_found" ? 404
+            : outcome.error.code === "spawn_failed" || outcome.error.code === "default_args_unavailable" ? 500
+              : 400;
+        relaunchLogger.warn("failed", {
+          sessionId,
+          code: outcome.error.code,
+          message: outcome.error.message,
+          statusCode,
+        });
+        res.status(statusCode).json(outcome.error);
+      }
+    } catch (error) {
+      next(error);
     }
   });
 
@@ -266,6 +278,7 @@ export function createSessionsRouter(options: {
     const reason = typeof body.reason === "string" ? body.reason : undefined;
     let requested: SessionRegistryRecord;
     try {
+      quiesceRuntimePatchQueue(sessionId);
       requested = target.store.patchRuntimeMetadata(sessionId, {
         lifecycleState: "interrupt_requested",
         forceLifecycleState: true,
@@ -288,6 +301,7 @@ export function createSessionsRouter(options: {
     const outcome = await interruptManagedSdkRunner(options.managedSdkRunner, sessionId, reason);
     const finalState = outcome.ok ? outcome.evidenceState : "interrupt_requested";
     try {
+      quiesceRuntimePatchQueue(sessionId);
       const finalRecord = target.store.patchRuntimeMetadata(sessionId, {
         lifecycleState: finalState,
         forceLifecycleState: true,
@@ -355,6 +369,7 @@ export function createSessionsRouter(options: {
     }
     let requested: SessionRegistryRecord;
     try {
+      quiesceRuntimePatchQueue(sessionId);
       requested = target.store.patchRuntimeMetadata(sessionId, {
         lifecycleState: "interrupt_requested",
         forceLifecycleState: true,
@@ -383,6 +398,7 @@ export function createSessionsRouter(options: {
       ? "canceled"
       : "interrupt_requested";
     try {
+      quiesceRuntimePatchQueue(sessionId);
       const record = target.store.patchRuntimeMetadata(sessionId, {
         lifecycleState: finalState,
         forceLifecycleState: true,
@@ -393,6 +409,9 @@ export function createSessionsRouter(options: {
             : `Managed SDK cancellation failed; runtime remains active for retry: ${outcome.message}`,
         }],
       });
+      if (finalState === "canceled") {
+        options.runtimePatchCoalescer.close(sessionId);
+      }
       assertManagedRuntimePatch(record, {
         lifecycleState: finalState,
         context: "cancel",
@@ -457,6 +476,7 @@ export function createSessionsRouter(options: {
     const sdkSessionId = runtime?.sdkSessionId;
     if (!sdkSessionId) {
       try {
+        quiesceRuntimePatchQueue(sessionId);
         const failed = target.store.patchRuntimeMetadata(sessionId, {
           lifecycleState: "failed",
           progressEvents: [{
@@ -476,6 +496,7 @@ export function createSessionsRouter(options: {
     }
     if (!isSafeCopilotResumeSessionId(sdkSessionId)) {
       try {
+        quiesceRuntimePatchQueue(sessionId);
         const failed = target.store.patchRuntimeMetadata(sessionId, {
           lifecycleState: "failed",
           progressEvents: [{
@@ -498,6 +519,7 @@ export function createSessionsRouter(options: {
     const timestamp = (options.now?.() ?? new Date()).toISOString();
     let prebound: SessionRegistryRecord;
     try {
+      quiesceRuntimePatchQueue(sessionId);
       // Pre-bind before launch so a fast resume hook attaches to this managed row
       // instead of creating a duplicate observed session.
       prebound = target.store.attachObservedSession(sessionId, {
@@ -519,13 +541,19 @@ export function createSessionsRouter(options: {
     }
     const terminalOptions: TerminalLaunchOptions = {
       cwd,
-      command: buildCopilotResumeCommand(sdkSessionId),
+      command: buildCopilotResumeCommand(sdkSessionId, [], selectTerminalCommandShellDialect()),
+      prepareCopilotCli: true,
       title: prebound.title,
       tabColor: prebound.color ?? undefined,
     };
     let terminal: TerminalLaunchResult;
     try {
-      terminal = (options.relaunchDeps?.launchTerminal ?? launchTerminal)(terminalOptions);
+      terminal = await launchCopilotTerminal(terminalOptions, {
+        launchTerminal: options.relaunchDeps?.launchTerminal ?? launchTerminal,
+        cooldownMs: options.relaunchDeps?.launchTerminal ? 0 : undefined,
+        pluginPreflight: options.relaunchDeps?.pluginPreflight
+          ?? (options.relaunchDeps?.launchTerminal ? false : undefined),
+      });
     } catch (error: unknown) {
       const message = `Failed to launch terminal takeover: ${error instanceof Error ? error.message : String(error)}`;
       try {
@@ -544,6 +572,7 @@ export function createSessionsRouter(options: {
       return;
     }
     try {
+      quiesceRuntimePatchQueue(sessionId);
       const reason = "Terminal takeover requested by builder action.";
       const runnerSettlement = await releaseManagedSdkRunnerForTerminal(
         options.managedSdkRunner,
@@ -581,6 +610,7 @@ export function createSessionsRouter(options: {
           },
         }],
       });
+      options.runtimePatchCoalescer.close(sessionId);
       assertManagedRuntimePatch(withTakeoverRuntime, {
         runtimeOwner: "builder-terminal",
         lifecycleState: "terminal_takeover",
@@ -649,6 +679,7 @@ export function createSessionsRouter(options: {
     }
     try {
       await withManagedCleanupLock(sessionId, async () => {
+        options.runtimePatchCoalescer.flush(sessionId);
         const target = managedRuntimeTarget(options.store, sessionId, {
           allowedOwners: ["streamliner-sdk", "builder-terminal"],
         });
@@ -671,6 +702,7 @@ export function createSessionsRouter(options: {
         );
         if (!validation.ok) {
           const message = validation.blockers[0]?.message ?? "Cleanup is blocked by managed runtime guardrails.";
+          quiesceRuntimePatchQueue(sessionId);
           const blocked = target.store.patchRuntimeMetadata(sessionId, {
             lifecycleState: "waiting_for_builder",
             progressEvents: [{
@@ -694,6 +726,7 @@ export function createSessionsRouter(options: {
           return;
         }
 
+        quiesceRuntimePatchQueue(sessionId);
         const cleaning = target.store.patchRuntimeMetadata(sessionId, {
           lifecycleState: "cleaning_up",
           progressEvents: [{
@@ -707,6 +740,7 @@ export function createSessionsRouter(options: {
         });
         const cleanup = await executeManagedCleanup(validation.plan, options.managedCleanupDeps);
         if (!cleanup.ok) {
+          quiesceRuntimePatchQueue(sessionId);
           const failed = target.store.patchRuntimeMetadata(sessionId, {
             lifecycleState: "waiting_for_builder",
             progressEvents: [{
@@ -734,6 +768,7 @@ export function createSessionsRouter(options: {
           return;
         }
         const summary = managedCleanupSummary(validation.plan, cleanup);
+        quiesceRuntimePatchQueue(sessionId);
         const cleaned = target.store.patchRuntimeMetadata(sessionId, {
           lifecycleState: "cleaned_up",
           evidence: [{
@@ -754,6 +789,7 @@ export function createSessionsRouter(options: {
             },
           }],
         });
+        options.runtimePatchCoalescer.close(sessionId);
         assertManagedRuntimePatch(cleaned, {
           lifecycleState: "cleaned_up",
           context: "cleanup finish",
@@ -818,6 +854,7 @@ export function createSessionsRouter(options: {
       return;
     }
     try {
+      quiesceRuntimePatchQueue(sessionId);
       const record = target.store.patchRuntimeMetadata(sessionId, {
         lifecycleState: evidence.kind,
         evidence: [evidence],

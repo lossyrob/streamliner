@@ -16,6 +16,7 @@ import {
   type LaunchClaimStore,
   LaunchClaimNotFoundError,
 } from "../launch-claim-contract";
+import { buildLaunchedSessionDescription } from "../session-registry-filter";
 import type {
   SessionRegistryGraphBinding,
   SessionRegistryPawLaunch,
@@ -23,7 +24,10 @@ import type {
 } from "../session-registry-schema";
 import { SessionRegistryFileStore } from "./file-store";
 
-type RecoveredLaunchGraphBinding = SessionRegistryGraphBinding & { launchClaimId: string };
+type RecoveredLaunchGraphBinding = SessionRegistryGraphBinding & {
+  nodeId: string;
+  launchClaimId: string;
+};
 
 export const LAUNCH_NONCE_PROMPT_LINE_PREFIX = "Streamliner launch nonce: ";
 
@@ -140,7 +144,7 @@ function buildReservedRowDescription(input: CreateLaunchClaimInput): string {
   if (input.reservedRowDescription !== undefined && input.reservedRowDescription !== null) {
     return input.reservedRowDescription;
   }
-  return `Launch claim for workstream ${input.workstreamId}, node ${input.nodeId}.`;
+  return buildLaunchedSessionDescription(input.workstreamId, input.nodeId);
 }
 
 /**
@@ -400,12 +404,16 @@ export function applyReservedRowCleanup(
  * whose `origin.launchClaimId` does not appear in the launch-claim
  * store and conditionally reconciles them:
  *
- *   - If `copilotSessionId === null`: delete the row (orphan reserved
- *     row, no real session ever attached). Deletion is conditional on
- *     the predicate evaluated under the lock.
- *   - Else: preserve the row and its durable `graphBinding` because a
- *     real launched session attached. If an older reconciliation cleared
- *     `graphBinding`, restore it from durable launch metadata when possible.
+ *   - If `copilotSessionId === null` and the row has no managed runtime:
+ *     delete the row (orphan reserved row, no real session ever
+ *     attached). Deletion is conditional on the predicate evaluated
+ *     under the lock.
+ *   - Else: preserve the row and its `graphBinding` (the row had a real
+ *     terminal session attach or is a managed runtime row whose history
+ *     should remain associated with the launched node after the
+ *     short-lived claim file is pruned). If an older reconciliation
+ *     cleared `graphBinding`, restore it from durable launch metadata
+ *     when possible.
  *
  * Also handles the inverse case: claims whose `reservedRegistryId`
  * points at a missing row are left intact (the binding pass and sweep
@@ -439,10 +447,15 @@ export function reconcileOrphanReservedRows(
     const claim = claimStore.getClaim(launchClaimId);
     if (claim) continue; // claim still exists; not orphan
     // Orphan row.
-    if (fullRecord.copilotSessionId === null) {
+    if (
+      fullRecord.copilotSessionId === null &&
+      fullRecord.runtime?.runtimeKind !== "managed-sdk"
+    ) {
       const deleteResult = registryStore.deleteSessionIf(
         fullRecord.id,
-        (current) => current.copilotSessionId === null,
+        (current) =>
+          current.copilotSessionId === null &&
+          current.runtime?.runtimeKind !== "managed-sdk",
       );
       if (deleteResult.deleted) {
         rowsDeleted += 1;
@@ -461,9 +474,9 @@ export function reconcileOrphanReservedRows(
         }
       }
     } else {
-      // Has copilotSessionId: the launch claim may have been pruned after
-      // successful binding. Keep the durable graph binding so historical
-      // consoles remain reachable from the graph node after an API restart.
+      // Preserve observed terminal sessions and managed runtime rows with
+      // their durable binding. Restore bindings that older cleanup logic
+      // cleared after the short-lived claim file was pruned.
       if (
         restoreMissingGraphBindingForLaunchedSession(
           registryStore,

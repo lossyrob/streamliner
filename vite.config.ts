@@ -46,12 +46,14 @@ export default defineConfig({
     host: STREAMLINER_VITE_HOST,
     proxy: {
       '/api': apiProxy,
+      '/_proto': apiProxy,
     },
   },
   preview: {
     host: STREAMLINER_VITE_HOST,
     proxy: {
       '/api': apiProxy,
+      '/_proto': apiProxy,
     },
   },
   test: {

@@ -102,6 +102,37 @@ not tune or redesign the system yet. The `baseline-findings-gate` blocks
 downstream optimization until the builder accepts the observed bottlenecks and
 priority order.
 
+### Observed symptoms (anecdotal, pre-baseline)
+
+An interactive session on 2026-05-14 (prototype work in `_proto/canvas`)
+observed the local API process serving requests with widely variable latency
+within a single process lifetime, no restart between observations:
+
+- `GET /api/health` (a one-line handler) returned in 1ms early, then in
+  226,815ms (~4 minutes) during a degraded window.
+- `GET /_proto/canvas/` (a static file via `express.static`, no business
+  logic) returned in 6ms early, then in 13,197ms during a separate degraded
+  window.
+- `GET /api/workstreams` returned 304 in 116,111ms in the same degraded
+  window as the slow `/api/health`.
+- Slow windows correlated with `signals` scope events received from an
+  active Copilot CLI session driving `prompt.submitted` traffic.
+- The signal handler itself (`POST /api/sessions/signals`) returned in
+  ~487ms — fast — but subsequent requests stalled, suggesting downstream
+  work scheduled by the signal continued to occupy the event loop after the
+  response.
+
+Static-file slowness within the same process rules out per-endpoint
+business logic, store IO, and individual background jobs as the dominant
+cause. The shape points at **Node event-loop blocking** — synchronous
+compute or blocking IO somewhere in the request or signal pipeline that
+starves later requests. The baseline node should treat event-loop lag as a
+primary measurement target alongside per-endpoint timing.
+
+These are observations, not measurements. Wave 1 should reproduce them
+under controlled load, confirm or refute the event-loop-blocking hypothesis,
+and identify which scope/handler is the actual blocker.
+
 ## Decisions
 
 - Use local Wave 1 specs first. GitHub issue promotion can happen after formation
@@ -124,6 +155,14 @@ priority order.
 - What concrete symptom dominates current pain: slow endpoint responses, high
   CPU, excessive disk IO, stale UI, browser overload, EventSource churn, or API
   request backlog?
+- Is **event-loop lag** the dominant symptom shape (the same process serves
+  requests fast then catastrophically slow without restart), and which scope or
+  handler is the actual blocker?
+- Does the Copilot CLI `signals` handler trigger downstream synchronous work
+  (PAW indexing, graph reload, activity update, registry rescan) that runs
+  after the response and starves later requests?
+- Is there a way to surface "the server is currently busy with X" as a live
+  operator signal, not just slow request log lines after the fact?
 - How many concurrent tabs/views should Streamliner comfortably support on the
   builder's local machine?
 - Which endpoints and background jobs dominate request volume and latency under

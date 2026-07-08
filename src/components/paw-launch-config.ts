@@ -8,7 +8,12 @@ export const DEFAULT_PAW_WORKFLOW_INSTRUCTIONS = [
 ].join("\n");
 
 export type TerminalLaunchMode = "manual";
-export type PreferredTerminal = "default" | "windows-terminal" | "powershell";
+export type PreferredTerminal =
+  | "default"
+  | "windows-terminal"
+  | "powershell"
+  | "mac-terminal"
+  | "iterm2";
 
 export interface PawLaunchTerminalConfiguration {
   launchMode: TerminalLaunchMode;
@@ -33,6 +38,8 @@ export interface PawLaunchDialogDefaults {
   cwdPreferenceKey: string | null;
   graphPath: string;
   terminalPreference: string;
+  githubIssueNumber?: number | null;
+  githubIssueRepo?: string | null;
   githubIssueLabel?: string | null;
   githubIssueUrl?: string | null;
   terminal: PawLaunchTerminalConfiguration;
@@ -45,4 +52,8 @@ export interface PawLaunchDialogConfiguration {
   cliArgs: string[];
   terminal: PawLaunchTerminalConfiguration;
   launchAfterInit: boolean;
+  reviewCompanion: {
+    kickoffPrompt: string;
+    usePawReviewAgent: boolean;
+  } | null;
 }

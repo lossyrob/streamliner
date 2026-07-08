@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { parseWorkstreamDocument } from "./workstream-view-model";
+import {
+  buildWorkstreamViewModel,
+  parseWorkstreamDocument,
+} from "./workstream-view-model";
 
 function graph(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
@@ -71,7 +74,7 @@ describe("parseWorkstreamDocument launchDefaults", () => {
       launchDefaults: {
         promptProfileId: "final-pr-only",
         terminal: {
-          preferredTerminal: "windows-terminal",
+          preferredTerminal: "mac-terminal",
           titleTemplate: "{githubIssue} - {nodeTitle}",
           tabColor: "#4891C8",
         },
@@ -81,11 +84,32 @@ describe("parseWorkstreamDocument launchDefaults", () => {
     expect(parsed.launchDefaults).toEqual({
       promptProfileId: "final-pr-only",
       terminal: {
-        preferredTerminal: "windows-terminal",
+        preferredTerminal: "mac-terminal",
         titleTemplate: "{githubIssue} - {nodeTitle}",
         tabColor: "#4891c8",
       },
     });
+    expect(parsed.presentation).toEqual({ color: "#4891c8" });
+  });
+
+  it("accepts every terminal preference value", () => {
+    const preferences = [
+      "default",
+      "windows-terminal",
+      "powershell",
+      "mac-terminal",
+      "iterm2",
+    ] as const;
+
+    for (const preferredTerminal of preferences) {
+      const parsed = parseWorkstreamDocument(graph({
+        launchDefaults: {
+          terminal: { preferredTerminal },
+        },
+      }));
+
+      expect(parsed.launchDefaults?.terminal?.preferredTerminal).toBe(preferredTerminal);
+    }
   });
 
   it("rejects invalid terminal defaults", () => {
@@ -99,8 +123,55 @@ describe("parseWorkstreamDocument launchDefaults", () => {
         },
       }))
     ).toThrow(
-      "Expected workstream.launchDefaults.terminal.preferredTerminal to be one of: default, windows-terminal, powershell.",
+      "Expected workstream.launchDefaults.terminal.preferredTerminal to be one of: default, windows-terminal, powershell, mac-terminal, iterm2.",
     );
+  });
+
+  describe("parseWorkstreamDocument presentation", () => {
+    it("parses workstream presentation metadata", () => {
+      const parsed = parseWorkstreamDocument(graph({
+        presentation: {
+          shortName: "API",
+          color: "#FF8C0A",
+        },
+      }));
+
+      expect(parsed.presentation).toEqual({
+        shortName: "API",
+        color: "#ff8c0a",
+      });
+    });
+
+    it("prefers presentation color over legacy terminal tab color", () => {
+      const parsed = parseWorkstreamDocument(graph({
+        presentation: {
+          shortName: "API",
+          color: "#41b878",
+        },
+        launchDefaults: {
+          terminal: {
+            tabColor: "#4891c8",
+          },
+        },
+      }));
+
+      expect(parsed.presentation).toEqual({
+        shortName: "API",
+        color: "#41b878",
+      });
+      expect(parsed.launchDefaults?.terminal?.tabColor).toBe("#4891c8");
+    });
+
+    it("rejects invalid presentation fields", () => {
+      expect(() =>
+        parseWorkstreamDocument(graph({
+          presentation: {
+            shortName: "",
+            color: "blue",
+          },
+        }))
+      ).toThrow("Expected workstream.presentation.shortName to be a non-empty string.");
+    });
   });
 
   it("rejects invalid prompt profile defaults", () => {
@@ -113,5 +184,146 @@ describe("parseWorkstreamDocument launchDefaults", () => {
     ).toThrow(
       "Expected workstream.launchDefaults.promptProfileId to be a kebab-case id.",
     );
+  });
+});
+
+function nodeOverride(extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "first-node",
+    type: "task",
+    title: "First node",
+    summary: "First node summary.",
+    status: "ready",
+    attention: "focus",
+    repoIds: ["streamliner"],
+    dependsOn: [],
+    ...extra,
+  };
+}
+
+describe("parseWorkstreamDocument node status", () => {
+  it("accepts the new 'retired' node status", () => {
+    const parsed = parseWorkstreamDocument(
+      graph({ nodes: [nodeOverride({ status: "retired" })] }),
+    );
+    expect(parsed.nodes[0]?.status).toBe("retired");
+  });
+
+  it("throws on unknown node statuses by default (strict mode)", () => {
+    expect(() =>
+      parseWorkstreamDocument(
+        graph({ nodes: [nodeOverride({ status: "scrapped" })] }),
+      ),
+    ).toThrow(
+      /Expected workstream\.nodes\[0\]\.status to be one of: planned, ready, in-progress, blocked, completed, retired\./,
+    );
+  });
+
+  it("tolerates unknown node statuses when onParseWarning is provided", () => {
+    const warnings: Array<{ label: string; received: string | null; fallback: string }> = [];
+    const parsed = parseWorkstreamDocument(
+      graph({ nodes: [nodeOverride({ status: "scrapped" })] }),
+      {
+        onParseWarning: (warning) => {
+          warnings.push({
+            label: warning.label,
+            received: warning.received,
+            fallback: warning.fallback,
+          });
+        },
+      },
+    );
+    expect(parsed.nodes[0]?.status).toBe("blocked");
+    expect(warnings).toEqual([
+      {
+        label: "workstream.nodes[0].status",
+        received: "scrapped",
+        fallback: "blocked",
+      },
+    ]);
+  });
+
+  it("does not emit a warning when the node status is canonical, even with onParseWarning provided", () => {
+    const warnings: unknown[] = [];
+    parseWorkstreamDocument(
+      graph({ nodes: [nodeOverride({ status: "retired" })] }),
+      { onParseWarning: (w) => warnings.push(w) },
+    );
+    expect(warnings).toEqual([]);
+  });
+});
+
+describe("buildWorkstreamViewModel retired-node semantics", () => {
+  it("marks retired nodes as artifact-satisfied so downstream gating treats them as met", () => {
+    // The artifact-only view-model exposes the per-node completionSource that
+    // downstream gating uses ("artifact" / "github" / null). A retired node
+    // must be "artifact" — that is the contract by which dependents see the
+    // upstream as satisfied (transitive dependencyReady is computed in the
+    // GitHub-augmented path; here we assert the source-of-truth field).
+    const document = parseWorkstreamDocument(
+      graph({
+        nodes: [
+          nodeOverride({ id: "upstream", status: "retired", title: "Upstream (retired)" }),
+          nodeOverride({
+            id: "downstream",
+            status: "planned",
+            title: "Downstream",
+            dependsOn: ["upstream"],
+          }),
+        ],
+      }),
+    );
+    const viewModel = buildWorkstreamViewModel(document);
+    const upstream = viewModel.derivedNodes.find(
+      (entry) => entry.node.id === "upstream",
+    );
+    expect(upstream?.completionSource).toBe("artifact");
+  });
+
+  it("preserves operationalStatus 'retired' (does not promote to 'completed')", () => {
+    const document = parseWorkstreamDocument(
+      graph({ nodes: [nodeOverride({ status: "retired" })] }),
+    );
+    const viewModel = buildWorkstreamViewModel(document);
+    expect(viewModel.derivedNodes[0]?.operationalStatus).toBe("retired");
+  });
+
+  it("counts a retired node toward checkpoint completion", () => {
+    const document = parseWorkstreamDocument(
+      graph({
+        nodes: [
+          nodeOverride({ id: "n1", status: "completed" }),
+          nodeOverride({ id: "n2", status: "retired" }),
+        ],
+        checkpoints: [
+          {
+            id: "cp",
+            title: "Closure",
+            summary: "All work in scope is satisfied (completed or retired).",
+            status: "planned",
+            nodeIds: ["n1", "n2"],
+          },
+        ],
+      }),
+    );
+    const viewModel = buildWorkstreamViewModel(document);
+    const checkpoint = viewModel.checkpoints[0];
+    expect(checkpoint?.completedNodes).toBe(2);
+    expect(checkpoint?.totalNodes).toBe(2);
+  });
+
+  it("excludes retired nodes from blockedOrAttention bucket", () => {
+    const document = parseWorkstreamDocument(
+      graph({
+        nodes: [
+          nodeOverride({ id: "active", status: "blocked", title: "Still blocked" }),
+          nodeOverride({ id: "gone", status: "retired", title: "Out of scope" }),
+        ],
+      }),
+    );
+    const viewModel = buildWorkstreamViewModel(document);
+    const ids = viewModel.blockedOrAttention.map((node) => node.id);
+    expect(ids).toContain("active");
+    expect(ids).not.toContain("gone");
   });
 });

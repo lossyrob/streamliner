@@ -67,15 +67,12 @@ workstream outputs before the graph is marked completed.
 ## Current State
 
 The shaped candidate in `.streamliner/shaping/candidates/documentation-system.md`
-has been promoted into this formed workstream. Wave 1 is ready to start from a
-single local task spec. Later waves are intentionally sketched as coarse
-PAW-sized nodes and should be promoted by the orchestrator only after the
-preceding gate has passed and the actual outputs are known.
-
-No GitHub tracker issues have been created. The local task spec is the current
-Wave 1 node spec. If the orchestrator wants GitHub-backed execution, it should
-create a parent issue and child issue during wave promotion, then replace the
-local tracker in `graph.json` with a GitHub tracker reference.
+has been promoted into this formed workstream. Wave 1 is ready to start from
+GitHub issue [#93](https://github.com/lossyrob/streamliner/issues/93), which
+mirrors the original local task spec for `documentation-foundation-design`.
+Later waves are intentionally sketched as coarse PAW-sized nodes and should be
+promoted by the orchestrator only after the preceding gate has passed and the
+actual outputs are known.
 
 The immediate next node is `documentation-foundation-design`. After it completes,
 the builder should pass or fail `documentation-foundation-gate` before

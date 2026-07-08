@@ -22,6 +22,12 @@ import {
   savePromptProfile,
   type PawPromptProfile,
 } from "./paw-prompt-profiles";
+import {
+  mergeReviewPromptTemplates,
+  renderReviewPromptTemplate,
+  saveReviewPromptTemplate,
+  type PawReviewPromptTemplate,
+} from "./paw-review-prompt-templates";
 import { TerminalColorQuickPicker } from "./SessionColorPicker";
 
 export type PawLaunchDialogHandoff = NodeLaunchHandoff;
@@ -33,6 +39,10 @@ export interface PawTerminalLaunchInput {
   kickoffPrompt: string;
   terminalTitle: string;
   terminalColor: string | null;
+  reviewCompanion: {
+    kickoffPrompt: string;
+    usePawReviewAgent: boolean;
+  } | null;
 }
 
 export interface PawLaunchProgressEvent {
@@ -46,9 +56,15 @@ interface PawLaunchDialogProps {
   nodeTitle: string;
   defaults: PawLaunchDialogDefaults;
   defaultPromptProfileId?: string | null;
+  defaultLaunchAfterInit?: boolean;
+  defaultReviewCompanion?: boolean;
+  defaultReviewPromptTemplateId?: string | null;
   promptProfiles?: PawPromptProfile[];
   promptProfilesLoading?: boolean;
   promptProfilesError?: string | null;
+  reviewPromptTemplates?: PawReviewPromptTemplate[];
+  reviewPromptTemplatesLoading?: boolean;
+  reviewPromptTemplatesError?: string | null;
   preparing: boolean;
   launching: boolean;
   launchStatus: NodeLaunchOperationStatus | null;
@@ -65,10 +81,14 @@ interface PawLaunchDialogProps {
   resumingLaunch?: boolean;
   resumeError?: string | null;
   resumeStatus?: string | null;
+  companionLaunching?: boolean;
+  companionLaunchError?: string | null;
+  companionLaunchResult?: { terminal: { method: string; pid?: number } } | null;
   onCancel: () => void;
   onSubmit: (configuration: PawLaunchDialogConfiguration) => void | Promise<void>;
   onLaunchTerminal: (input: PawTerminalLaunchInput) => void;
   onPromptProfilesChanged?: (profiles: PawPromptProfile[]) => void;
+  onReviewPromptTemplatesChanged?: (templates: PawReviewPromptTemplate[]) => void;
   onReleaseLaunch?: () => void;
   onResumeLaunch?: () => void;
 }
@@ -93,6 +113,8 @@ const TERMINAL_OPTIONS: Option<PreferredTerminal>[] = [
   { value: "default", label: "Default" },
   { value: "windows-terminal", label: "Windows Terminal" },
   { value: "powershell", label: "PowerShell" },
+  { value: "mac-terminal", label: "macOS Terminal" },
+  { value: "iterm2", label: "iTerm2" },
 ];
 
 const RUNTIME_OPTIONS: Array<{
@@ -296,9 +318,15 @@ export function PawLaunchDialog({
   nodeTitle,
   defaults,
   defaultPromptProfileId = null,
+  defaultLaunchAfterInit = false,
+  defaultReviewCompanion = false,
+  defaultReviewPromptTemplateId = null,
   promptProfiles = [],
   promptProfilesLoading = false,
   promptProfilesError = null,
+  reviewPromptTemplates = [],
+  reviewPromptTemplatesLoading = false,
+  reviewPromptTemplatesError = null,
   preparing,
   launching,
   launchStatus,
@@ -315,10 +343,14 @@ export function PawLaunchDialog({
   resumingLaunch = false,
   resumeError,
   resumeStatus,
+  companionLaunching = false,
+  companionLaunchError = null,
+  companionLaunchResult = null,
   onCancel,
   onSubmit,
   onLaunchTerminal,
   onPromptProfilesChanged,
+  onReviewPromptTemplatesChanged,
   onReleaseLaunch,
   onResumeLaunch,
 }: PawLaunchDialogProps) {
@@ -333,8 +365,10 @@ export function PawLaunchDialog({
   const [terminalColor, setTerminalColor] = useState(defaults.terminal.tabColor ?? "");
   const [terminalTitleEdited, setTerminalTitleEdited] = useState(false);
   const [terminalColorEdited, setTerminalColorEdited] = useState(false);
-  const [launchAfterInit, setLaunchAfterInit] = useState(false);
-  const [terminalLaunchAfterInitPreference, setTerminalLaunchAfterInitPreference] = useState(false);
+  const [launchAfterInit, setLaunchAfterInit] = useState(defaultLaunchAfterInit);
+  const [terminalLaunchAfterInitPreference, setTerminalLaunchAfterInitPreference] = useState(
+    defaultLaunchAfterInit,
+  );
   const submittingRef = useRef(false);
   const [profiles, setProfiles] = useState<PawPromptProfile[]>(() =>
     mergePromptProfiles([], promptProfiles)
@@ -344,6 +378,17 @@ export function PawLaunchDialog({
   const [profileBusy, setProfileBusy] = useState(false);
   const [profileStatus, setProfileStatus] = useState<string | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
+  const [reviewTemplates, setReviewTemplates] = useState<PawReviewPromptTemplate[]>(() =>
+    mergeReviewPromptTemplates([], reviewPromptTemplates)
+  );
+  const [reviewTemplateId, setReviewTemplateId] = useState("");
+  const [reviewTemplateName, setReviewTemplateName] = useState("");
+  const [reviewTemplatePrompt, setReviewTemplatePrompt] = useState("");
+  const [reviewTemplateBusy, setReviewTemplateBusy] = useState(false);
+  const [reviewTemplateStatus, setReviewTemplateStatus] = useState<string | null>(null);
+  const [reviewTemplateError, setReviewTemplateError] = useState<string | null>(null);
+  const [reviewCompanionEnabled, setReviewCompanionEnabled] = useState(defaultReviewCompanion);
+  const [reviewCompanionUsePawReviewAgent, setReviewCompanionUsePawReviewAgent] = useState(true);
   const [workflowContext, setWorkflowContext] = useState<WorkflowContextDocument | null>(null);
   const [workflowContextText, setWorkflowContextText] = useState("");
   const [workflowContextLoading, setWorkflowContextLoading] = useState(false);
@@ -383,6 +428,23 @@ export function PawLaunchDialog({
   const terminalTitleError = terminalHandoffSelected && trimmedTerminalTitle.length === 0
     ? "Terminal tab title is required before launching the terminal."
     : null;
+  const reviewCompanionAvailable = !managedRuntimeSelected &&
+    typeof defaults.githubIssueNumber === "number";
+  const trimmedReviewTemplatePrompt = reviewTemplatePrompt.trim();
+  const reviewCompanionError = reviewCompanionEnabled
+    ? !reviewCompanionAvailable
+      ? "A GitHub issue tracker is required before launching a PAW Review companion terminal."
+      : trimmedReviewTemplatePrompt.length === 0
+        ? "A PAW Review prompt template is required before launching the companion terminal."
+        : null
+    : null;
+  const renderedReviewCompanionPrompt = reviewCompanionAvailable && defaults.githubIssueNumber !== null &&
+      defaults.githubIssueNumber !== undefined
+    ? renderReviewPromptTemplate(trimmedReviewTemplatePrompt, {
+      githubIssue: String(defaults.githubIssueNumber),
+      githubRepo: defaults.githubIssueRepo ?? "",
+    })
+    : "";
   const terminalColorValue = terminalColor.trim();
   const terminalTabColor = terminalColorValue.length > 0 ? terminalColorValue : null;
   const latestProgress = progressEvents.at(-1) ?? null;
@@ -391,6 +453,10 @@ export function PawLaunchDialog({
   useEffect(() => {
     setProfiles((current) => mergePromptProfiles(current, promptProfiles));
   }, [promptProfiles]);
+
+  useEffect(() => {
+    setReviewTemplates((current) => mergeReviewPromptTemplates(current, reviewPromptTemplates));
+  }, [reviewPromptTemplates]);
 
   useEffect(() => {
     if (
@@ -409,6 +475,28 @@ export function PawLaunchDialog({
     setProfileName(defaultProfile.name);
     setWorkflowInstructions(defaultProfile.instructions);
   }, [defaultPromptProfileId, profiles]);
+
+  const defaultReviewTemplateAppliedRef = useRef(false);
+  const reviewTemplateSelectionTouchedRef = useRef(false);
+  useEffect(() => {
+    if (
+      defaultReviewTemplateAppliedRef.current ||
+      reviewTemplateSelectionTouchedRef.current ||
+      !defaultReviewPromptTemplateId
+    ) {
+      return;
+    }
+    const defaultTemplate = reviewTemplates.find(
+      (template) => template.id === defaultReviewPromptTemplateId,
+    );
+    if (!defaultTemplate) {
+      return;
+    }
+    defaultReviewTemplateAppliedRef.current = true;
+    setReviewTemplateId(defaultTemplate.id);
+    setReviewTemplateName(defaultTemplate.name);
+    setReviewTemplatePrompt(defaultTemplate.prompt);
+  }, [defaultReviewPromptTemplateId, reviewTemplates]);
 
   useEffect(() => {
     if (!handoff) {
@@ -461,11 +549,18 @@ export function PawLaunchDialog({
   }, [handoff, terminalColorEdited, terminalTitleEdited]);
 
   const selectedProfile = profiles.find((profile) => profile.id === selectedProfileId) ?? null;
+  const selectedReviewTemplate = reviewTemplates.find((template) => template.id === reviewTemplateId) ?? null;
   const trimmedProfileName = profileName.trim();
+  const trimmedReviewTemplateName = reviewTemplateName.trim();
   const selectedProfileNameChanged = Boolean(
     selectedProfile &&
       trimmedProfileName &&
       profileNameKey(trimmedProfileName) !== profileNameKey(selectedProfile.name),
+  );
+  const selectedReviewTemplateNameChanged = Boolean(
+    selectedReviewTemplate &&
+      trimmedReviewTemplateName &&
+      profileNameKey(trimmedReviewTemplateName) !== profileNameKey(selectedReviewTemplate.name),
   );
   const duplicateProfile = trimmedProfileName
     ? profiles.find((profile) =>
@@ -473,15 +568,32 @@ export function PawLaunchDialog({
         profile.id !== selectedProfile?.id
       ) ?? null
     : null;
+  const duplicateReviewTemplate = trimmedReviewTemplateName
+    ? reviewTemplates.find((template) =>
+        profileNameKey(template.name) === profileNameKey(trimmedReviewTemplateName) &&
+        template.id !== selectedReviewTemplate?.id
+      ) ?? null
+    : null;
   const canSaveProfile = !profileBusy && !instructionError && Boolean(trimmedProfileName);
+  const canSaveReviewTemplate = !reviewTemplateBusy &&
+    Boolean(trimmedReviewTemplateName) &&
+    trimmedReviewTemplatePrompt.length > 0;
   const profileSaveLabel = selectedProfile && !selectedProfileNameChanged
     ? "Update profile"
     : "Save as new profile";
+  const reviewTemplateSaveLabel = selectedReviewTemplate && !selectedReviewTemplateNameChanged
+    ? "Update template"
+    : "Save as new template";
   const profileSaveHelp = selectedProfile
     ? selectedProfileNameChanged
       ? `Saving creates a new profile and leaves "${selectedProfile.name}" unchanged.`
       : `Saving updates "${selectedProfile.name}". Change the save name to create a new profile.`
     : "Choose a saved profile to update it, or enter a save name for a new profile.";
+  const reviewTemplateSaveHelp = selectedReviewTemplate
+    ? selectedReviewTemplateNameChanged
+      ? `Saving creates a new template and leaves "${selectedReviewTemplate.name}" unchanged.`
+      : `Saving updates "${selectedReviewTemplate.name}". Change the save name to create a new template.`
+    : "Choose a saved PAW Review template to update it, or enter a save name for a new template.";
 
   const applyProfile = (profileId: string) => {
     profileSelectionTouchedRef.current = true;
@@ -503,6 +615,56 @@ export function PawLaunchDialog({
   const handleWorkflowInstructionsChange = (value: string) => {
     profileSelectionTouchedRef.current = true;
     setWorkflowInstructions(value);
+  };
+
+  const applyReviewTemplate = (templateId: string) => {
+    reviewTemplateSelectionTouchedRef.current = true;
+    setReviewTemplateId(templateId);
+    setReviewTemplateStatus(null);
+    setReviewTemplateError(null);
+    const template = reviewTemplates.find((candidate) => candidate.id === templateId);
+    if (template) {
+      setReviewTemplatePrompt(template.prompt);
+      setReviewTemplateName(template.name);
+    }
+  };
+
+  const handleSaveReviewTemplate = async () => {
+    setReviewTemplateBusy(true);
+    setReviewTemplateStatus(null);
+    setReviewTemplateError(null);
+    try {
+      if (!trimmedReviewTemplateName) {
+        throw new Error("Review prompt template name is required.");
+      }
+      if (!trimmedReviewTemplatePrompt) {
+        throw new Error("Review prompt template text is required.");
+      }
+      if (selectedReviewTemplateNameChanged && duplicateReviewTemplate) {
+        throw new Error(`A review prompt template named "${duplicateReviewTemplate.name}" already exists. Select it to update it, or choose a different name.`);
+      }
+
+      const targetTemplate = selectedReviewTemplate && !selectedReviewTemplateNameChanged
+        ? selectedReviewTemplate
+        : !selectedReviewTemplate
+          ? duplicateReviewTemplate
+          : null;
+      const saved = await saveReviewPromptTemplate({
+        id: targetTemplate?.id,
+        name: trimmedReviewTemplateName,
+        prompt: trimmedReviewTemplatePrompt,
+      });
+      setReviewTemplates((current) => mergeReviewPromptTemplates(current, [saved]));
+      onReviewPromptTemplatesChanged?.([saved]);
+      setReviewTemplateId(saved.id);
+      setReviewTemplateName(saved.name);
+      setReviewTemplatePrompt(saved.prompt);
+      setReviewTemplateStatus(`${targetTemplate ? "Updated" : "Saved"} "${saved.name}".`);
+    } catch (saveError: unknown) {
+      setReviewTemplateError(saveError instanceof Error ? saveError.message : String(saveError));
+    } finally {
+      setReviewTemplateBusy(false);
+    }
   };
 
   const handleSaveProfile = async () => {
@@ -560,7 +722,7 @@ export function PawLaunchDialog({
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (busy || instructionError || actionDisabledReason) {
+    if (busy || instructionError || reviewCompanionError || actionDisabledReason) {
       return;
     }
     if (submittingRef.current) {
@@ -579,6 +741,12 @@ export function PawLaunchDialog({
           tabColor: terminalTabColor,
         },
         launchAfterInit: managedRuntimeSelected ? false : launchAfterInit,
+        reviewCompanion: reviewCompanionEnabled
+          ? {
+              kickoffPrompt: renderedReviewCompanionPrompt,
+              usePawReviewAgent: reviewCompanionUsePawReviewAgent,
+            }
+          : null,
       });
     } finally {
       submittingRef.current = false;
@@ -593,6 +761,7 @@ export function PawLaunchDialog({
     if (nextRuntimeKind === "managed-sdk") {
       setTerminalLaunchAfterInitPreference(launchAfterInit);
       setLaunchAfterInit(false);
+      setReviewCompanionEnabled(false);
     } else {
       setLaunchAfterInit(terminalLaunchAfterInitPreference);
     }
@@ -873,12 +1042,13 @@ export function PawLaunchDialog({
                 options={TERMINAL_OPTIONS}
                 onChange={(value) => setTerminal((current) => ({ ...current, preferredTerminal: value }))}
               />
-              <TextField
+              <TextAreaField
                 label="Copilot CLI args"
                 ariaLabel="Copilot CLI args"
                 value={cliArgsText}
                 onChange={setCliArgsText}
-                placeholder="Leave empty for no CLI args"
+                placeholder={"Leave empty for no CLI args\n--yolo\n--model=gpt-5.5"}
+                rows={3}
               />
               <div className="sl-field sl-paw-launch-color-field">
                 <span>Terminal tab color</span>
@@ -908,6 +1078,122 @@ export function PawLaunchDialog({
                 </small>
               </span>
             </label>
+            <div className="sl-paw-review-companion">
+              <label className="sl-checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={reviewCompanionEnabled}
+                  disabled={
+                    managedRuntimeSelected ||
+                    busy ||
+                    Boolean(terminalLaunchResult) ||
+                    !reviewCompanionAvailable
+                  }
+                  aria-label="Launch PAW Review companion terminal"
+                  onChange={(event) => setReviewCompanionEnabled(event.target.checked)}
+                />
+                <span>
+                  <strong>Launch PAW Review companion terminal</strong>
+                  <small>
+                    {reviewCompanionAvailable
+                      ? "After the main terminal starts, open a second terminal with the same color and a REVIEW title suffix."
+                      : "Requires a GitHub issue tracker on the selected node."}
+                  </small>
+                </span>
+              </label>
+              {reviewCompanionEnabled && (
+                <label className="sl-checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={reviewCompanionUsePawReviewAgent}
+                    disabled={busy || Boolean(terminalLaunchResult)}
+                    aria-label="Use PAW-Review agent"
+                    onChange={(event) =>
+                      setReviewCompanionUsePawReviewAgent(event.target.checked)
+                    }
+                  />
+                  <span>
+                    <strong>Use PAW-Review agent</strong>
+                    <small>
+                      Adds <code>--agent=PAW-Review</code>. Turn this off for ad hoc review
+                      terminals that should use the default Copilot session behavior.
+                    </small>
+                  </span>
+                </label>
+              )}
+              {reviewCompanionEnabled && (
+                <div className="sl-paw-profile-tools">
+                  <label className="sl-field">
+                    <span>Load review template</span>
+                    <select
+                      value={reviewTemplateId}
+                      aria-label="Load review template"
+                      disabled={Boolean(terminalLaunchResult)}
+                      onChange={(event) => applyReviewTemplate(event.target.value)}
+                    >
+                      <option value="">Custom PAW Review prompt</option>
+                      {reviewPromptTemplatesLoading && reviewTemplates.length === 0 && (
+                        <option value="" disabled>
+                          Loading saved templates...
+                        </option>
+                      )}
+                      {reviewTemplates.map((template) => (
+                        <option key={template.id} value={template.id}>
+                          {template.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <TextField
+                    label="Template save name"
+                    ariaLabel="Template save name"
+                    value={reviewTemplateName}
+                    onChange={setReviewTemplateName}
+                    placeholder="Name this reusable review prompt"
+                  />
+                  <div className="sl-paw-profile-actions">
+                    <button
+                      type="button"
+                      className="sl-action-btn"
+                      disabled={!canSaveReviewTemplate}
+                      onClick={handleSaveReviewTemplate}
+                    >
+                      {reviewTemplateSaveLabel}
+                    </button>
+                  </div>
+                </div>
+              )}
+              {reviewCompanionEnabled && (
+                <>
+                  <p className="sl-field-note">{reviewTemplateSaveHelp}</p>
+                  {(reviewPromptTemplatesLoading || reviewTemplateStatus || reviewTemplateError || reviewPromptTemplatesError) && (
+                    <p className={reviewTemplateError || reviewPromptTemplatesError ? "sl-action-error" : "sl-inline-status"}>
+                      {reviewTemplateError ?? reviewPromptTemplatesError ?? reviewTemplateStatus ?? "Loading saved templates..."}
+                    </p>
+                  )}
+                  <TextAreaField
+                    label="PAW Review prompt template"
+                    ariaLabel="PAW Review prompt template"
+                    value={reviewTemplatePrompt}
+                    onChange={setReviewTemplatePrompt}
+                    rows={8}
+                    placeholder="Example: Review {{githubRepo}}#{{githubIssue}}"
+                  />
+                  <p className="sl-field-note">
+                    Uses <code>{"{{githubIssue}}"}</code> for the selected node's issue number
+                    {typeof defaults.githubIssueNumber === "number"
+                      ? ` (${defaults.githubIssueNumber})`
+                      : ""}
+                    {" and "}
+                    <code>{"{{githubRepo}}"}</code> for the tracker repository
+                    {defaults.githubIssueRepo ? ` (${defaults.githubIssueRepo}).` : "."}
+                  </p>
+                </>
+              )}
+            </div>
+            {reviewCompanionError && (
+              <div className="sl-action-error">{reviewCompanionError}</div>
+            )}
             {terminalTitleError && (
               <div className="sl-action-error">{terminalTitleError}</div>
             )}
@@ -1119,6 +1405,21 @@ export function PawLaunchDialog({
                           <p className="sl-field-note">{terminalLaunchClaimDisplay.detail}</p>
                         )}
                       </div>
+                      {(companionLaunching || companionLaunchResult || companionLaunchError) && (
+                        <div>
+                          <span className="sl-section-label">PAW Review companion</span>
+                          {companionLaunching ? (
+                            <p>Launching review companion terminal...</p>
+                          ) : companionLaunchResult ? (
+                            <p>
+                              Started with {companionLaunchResult.terminal.method}
+                              {companionLaunchResult.terminal.pid ? ` (PID ${companionLaunchResult.terminal.pid})` : ""}.
+                            </p>
+                          ) : (
+                            <p className="sl-action-error">{companionLaunchError}</p>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
                 </>
@@ -1142,10 +1443,11 @@ export function PawLaunchDialog({
               className="sl-action-btn primary"
               disabled={
                 busy ||
-                workflowContextSaving ||
-                (terminalHandoffSelected && Boolean(kickoffPromptError)) ||
-                (terminalHandoffSelected && Boolean(terminalTitleError)) ||
-                terminalLaunchActive ||
+                 workflowContextSaving ||
+                 (terminalHandoffSelected && Boolean(kickoffPromptError)) ||
+                 (terminalHandoffSelected && Boolean(terminalTitleError)) ||
+                 Boolean(reviewCompanionError) ||
+                 terminalLaunchActive ||
                 managedLaunchActive ||
                 Boolean(actionDisabledReason) ||
                 releasingLaunch ||
@@ -1156,6 +1458,12 @@ export function PawLaunchDialog({
                   kickoffPrompt: trimmedKickoffPrompt,
                   terminalTitle: trimmedTerminalTitle,
                   terminalColor: terminalTabColor,
+                  reviewCompanion: reviewCompanionEnabled
+                    ? {
+                        kickoffPrompt: renderedReviewCompanionPrompt,
+                        usePawReviewAgent: reviewCompanionUsePawReviewAgent,
+                      }
+                    : null,
                 })
               }
             >
@@ -1175,7 +1483,7 @@ export function PawLaunchDialog({
             <button
               type="submit"
               className="sl-action-btn primary"
-              disabled={preparing || releasingLaunch || resumingLaunch || Boolean(instructionError) || Boolean(actionDisabledReason)}
+              disabled={preparing || releasingLaunch || resumingLaunch || Boolean(instructionError) || Boolean(reviewCompanionError) || Boolean(actionDisabledReason)}
             >
               {busy
                 ? managedRuntimeSelected

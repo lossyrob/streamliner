@@ -58,6 +58,7 @@ export type WorkstreamRuntimeOverlayReasonCode =
   | "paw-evidence-unavailable"
   | "paw-evidence-unknown"
   | "paw-not-streamliner-launched"
+  | "tracker-snapshot-error"
   | "tracker-snapshot-missing";
 
 export type WorkstreamRuntimeNodeStatus =
@@ -228,6 +229,7 @@ function emptyStatusCounts(): Record<WorkstreamRuntimeNodeStatus, number> {
     "in-progress": 0,
     blocked: 0,
     completed: 0,
+    retired: 0,
     "waiting-for-review": 0,
     "waiting-for-validation": 0,
     launching: 0,
@@ -501,10 +503,10 @@ function isTerminalManagedRuntimeLifecycle(
   state: ManagedRuntimeLifecycleState,
 ): boolean {
   switch (state) {
-    case "completed":
-    case "cleaned_up":
     case "terminal_takeover":
       return true;
+    case "completed":
+    case "cleaned_up":
     case "failed":
     case "canceled":
     case "preparing":
@@ -749,6 +751,23 @@ function buildTrackerOverlay(
   }
 
   if (entry.githubIssue) {
+    if (entry.githubIssue.error) {
+      issues.push(
+        nodeIssue(
+          entry.node.id,
+          "tracker-snapshot-error",
+          "warning",
+          "degraded",
+          `The node's GitHub tracker snapshot is degraded: ${entry.githubIssue.error}`,
+        ),
+      );
+      return {
+        status: "degraded",
+        tracker: entry.node.tracker,
+        githubIssue: entry.githubIssue,
+        activePullRequest: entry.activePullRequest ?? null,
+      };
+    }
     return {
       status: "snapshot",
       tracker: entry.node.tracker,

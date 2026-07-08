@@ -58,6 +58,15 @@ wins to address next.
   graph/runtime overlay, context/activity, and PAW artifact runtime stores.
 - Any builder-provided description of the exact tab/session/workstream mix that
   currently feels slow.
+- Anecdotal symptom evidence captured in the workstream brief's "Observed
+  symptoms" section: a 2026-05-14 prototype-development session in
+  `_proto/canvas` saw the same API process serve a static file
+  (`/_proto/canvas/`) in 6ms early and 13,197ms during a degraded window, with
+  `/api/health` ranging from 1ms to 226,815ms in the same lifetime, and
+  `/api/workstreams` returning 304 in 116,111ms during the slow window.
+  Slow windows correlated with `signals` scope events from an active Copilot
+  CLI session. Use as a starting hypothesis (event-loop blocking), not as
+  a substitute for measurement.
 
 ## Exports
 
@@ -88,6 +97,18 @@ wins to address next.
   launch-claim scans, workstream-source scans, and graph/source loading.
 - Inspect file-backed store behavior enough to distinguish repeated disk refresh,
   write contention, large reads, and derived-index rebuilds.
+- Measure **Node event-loop lag** during normal usage with a cheap
+  `setInterval`-based drift sampler. The brief's observed-symptoms evidence
+  suggests this is the dominant symptom shape (same process, static-file
+  fetches ranging from 6ms to 13s within one lifetime). Confirm or refute
+  the hypothesis. If event-loop lag spikes correlate with specific scopes
+  (signals, indexing, scans), surface the correlation in the report.
+- Inspect what runs **after** signal-handler responses return.
+  `POST /api/sessions/signals` itself returns fast, but downstream
+  synchronous work (indexing, registry rescans, graph reloads triggered by
+  the signal) can starve the next request batch and produce the
+  "fast-then-slow" pattern observed in the brief. Identify whether such
+  trailing work exists and what triggers it.
 - Use temporary profiling scripts, browser/devtools traces, log filters, or
   one-off diagnostics when useful, provided the final report explains what was
   measured and what remains unknown.

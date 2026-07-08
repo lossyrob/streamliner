@@ -4,7 +4,12 @@ import type {
 } from "./launch-claim-schema";
 import type { WorkstreamLaunchPolicy } from "./workstream-schema";
 
-export type NodeLaunchPreferredTerminal = "default" | "windows-terminal" | "powershell";
+export type NodeLaunchPreferredTerminal =
+  | "default"
+  | "windows-terminal"
+  | "powershell"
+  | "mac-terminal"
+  | "iterm2";
 export type NodeLaunchRuntimeKind = "terminal-cli" | "managed-sdk";
 
 export interface NodeLaunchTerminalPreferences {
@@ -12,6 +17,22 @@ export interface NodeLaunchTerminalPreferences {
   preferredTerminal: NodeLaunchPreferredTerminal;
   title?: string | null;
   tabColor?: string | null;
+}
+
+export interface NodePostPreparationTerminalIntent {
+  kickoffPrompt?: string | null;
+  terminalTitle?: string | null;
+  terminalColor?: string | null;
+}
+
+export interface NodePostPreparationCompanionIntent {
+  kickoffPrompt: string;
+  usePawReviewAgent?: boolean;
+}
+
+export interface NodePostPreparationIntent {
+  launchTerminal?: NodePostPreparationTerminalIntent;
+  launchCompanion?: NodePostPreparationCompanionIntent;
 }
 
 export interface NodeLaunchMetadata {
@@ -109,6 +130,22 @@ export function isActiveNodeLaunchOperationStatus(status: string): boolean {
   return status === "preparing" || status === "launching" || status === "managed_starting";
 }
 
+export function isPendingPostPreparationTerminalLaunchOperation(
+  operation: Pick<NodeLaunchOperation, "status" | "postPreparation" | "terminalLaunch" | "error">,
+): boolean {
+  return operation.status === "prepared" &&
+    Boolean(operation.postPreparation?.launchTerminal) &&
+    !operation.terminalLaunch &&
+    !operation.error;
+}
+
+export function isBlockingNodeLaunchOperation(
+  operation: Pick<NodeLaunchOperation, "status" | "postPreparation" | "terminalLaunch" | "error">,
+): boolean {
+  return isActiveNodeLaunchOperationStatus(operation.status) ||
+    isPendingPostPreparationTerminalLaunchOperation(operation);
+}
+
 export interface NodeLaunchOperationProgressEvent {
   type: string;
   message: string;
@@ -127,7 +164,7 @@ export interface NodeLaunchOperationError {
 export interface NodeTerminalLaunchResponse {
   launchClaim: NodeLaunchClaimState;
   terminal: {
-    method: "windows-terminal" | "powershell";
+    method: "windows-terminal" | "powershell" | "mac-terminal" | "iterm2";
     pid?: number;
   };
   cwd: string;
@@ -135,6 +172,18 @@ export interface NodeTerminalLaunchResponse {
   command: {
     cliArgs: string[];
     promptNonceLine: string;
+  };
+}
+
+export interface NodeCompanionTerminalLaunchResponse {
+  launchClaim?: NodeLaunchClaimState;
+  terminal: {
+    method: "windows-terminal" | "powershell" | "mac-terminal" | "iterm2";
+    pid?: number;
+  };
+  cwd: string;
+  command: {
+    cliArgs: string[];
   };
 }
 
@@ -158,8 +207,11 @@ export interface NodeLaunchOperation {
   updatedAt: string;
   completedAt: string | null;
   handoff: NodeLaunchHandoff | null;
+  postPreparation?: NodePostPreparationIntent | null;
   terminalLaunch: NodeTerminalLaunchResponse | null;
   managedLaunch?: NodeManagedSdkLaunchResponse | null;
+  companionLaunch?: NodeCompanionTerminalLaunchResponse | null;
+  companionError?: NodeLaunchOperationError | null;
   error: NodeLaunchOperationError | null;
   progressEvents: NodeLaunchOperationProgressEvent[];
   latestClaim?: NodeLaunchClaimState | null;
@@ -199,4 +251,11 @@ export interface NodeLaunchRecordResponse {
 
 export interface NodeLaunchRecordListResponse {
   records: NodeLaunchRecord[];
+}
+
+export interface NodeLaunchRecordResetResponse {
+  clearedRecord: NodeLaunchRecord | null;
+  clearedOperation: NodeLaunchOperation | null;
+  releasedLaunchClaims: NodeLaunchClaimState[];
+  detachedRegistryIds: string[];
 }

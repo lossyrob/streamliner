@@ -535,6 +535,44 @@ describe("buildWorkstreamRuntimeOverlay", () => {
     );
   });
 
+  it("degrades tracker overlays when a GitHub snapshot has a fetch error", () => {
+    const entry = buildDerivedNode({
+      node: {
+        id: "tracker-error-node",
+        status: "ready",
+        tracker: {
+          type: "github",
+          owner: "lossyrob",
+          repo: "streamliner",
+          number: 69,
+        },
+      },
+      operationalStatus: "ready",
+      githubIssue: {
+        owner: "lossyrob",
+        repo: "streamliner",
+        number: 69,
+        state: "unknown",
+        title: "Show live GitHub status",
+        url: "https://github.com/lossyrob/streamliner/issues/69",
+        linkedPullRequests: [],
+        fetchedAt: TEST_TIMESTAMP,
+        error: "GitHub rate limit reached while fetching issue #69.",
+      },
+    });
+
+    const overlay = buildOverlay([entry]);
+    const node = overlay.nodesById.get("tracker-error-node");
+
+    expect(node?.tracker.status).toBe("degraded");
+    expect(node?.degradationReasons.map((reason) => reason.code)).toContain(
+      "tracker-snapshot-error",
+    );
+    expect(overlay.summary.counts.degradedNodes).toBe(1);
+    expect(overlay.summary.counts.trackerDegradedNodes).toBe(1);
+    expect(overlay.gateReadiness.status).toBe("degraded");
+  });
+
   it("marks a bound blocking launch claim without a visible session as bound-session-missing", () => {
     const entry = buildDerivedNode({
       node: { id: "unresolved-node", status: "ready" },
@@ -633,7 +671,7 @@ describe("buildWorkstreamRuntimeOverlay", () => {
     );
   });
 
-  it("projects managed runtime lifecycle without promoting committed graph status", () => {
+  it("projects completed managed runtime lifecycle without promoting committed graph status", () => {
     const entry = buildDerivedNode({
       node: { id: "managed-node", status: "ready" },
       operationalStatus: "ready",
@@ -676,7 +714,7 @@ describe("buildWorkstreamRuntimeOverlay", () => {
     const node = overlay.nodesById.get("managed-node");
 
     expect(node?.committedStatus).toBe("ready");
-    expect(node?.runtimeStatus).toBe("active");
+    expect(node?.runtimeStatus).toBe("ended");
     expect(node?.managedRuntime?.lifecycleState).toBe("completed");
     expect(node?.managedRuntime?.progress).toHaveLength(8);
     expect(node?.managedRuntime?.progress.at(-1)?.summary).toBe("Safe progress 11");
@@ -864,6 +902,49 @@ describe("buildWorkstreamRuntimeOverlay", () => {
     expect(node?.degradationReasons.map((reason) => reason.code)).toContain(
       "managed-runtime-waiting-for-builder",
     );
+  });
+
+  it("surfaces startup-reconciled managed runtime rows as interrupted diagnostics, not active work", () => {
+    const entry = buildDerivedNode({
+      node: { id: "managed-reconciled-node", status: "ready" },
+      operationalStatus: "ready",
+    });
+    const diagnosticMessage =
+      "Managed SDK startup reconciliation marked this background session interrupted because no live SDK owner could be verified.";
+    const session = buildSession({
+      graphBinding: {
+        workstreamId: "runtime-overlay-ui",
+        nodeId: "managed-reconciled-node",
+        launchClaimId: "claim-managed",
+      },
+      runtime: buildManagedRuntime({
+        lifecycleState: "interrupted",
+        lastStateChangedAt: TEST_TIMESTAMP,
+        progressEvents: [{
+          id: "progress-startup-reconciliation",
+          sequence: 1,
+          type: "lifecycle",
+          message: diagnosticMessage,
+          timestamp: TEST_TIMESTAMP,
+          data: {
+            reason: "startup-reconciliation-sdk-owner-unverified",
+            action: "marked-interrupted-for-builder-recovery",
+            previousLifecycleState: "running",
+          },
+        }],
+      }),
+    });
+
+    const overlay = buildOverlay([entry], {
+      sessions: new Map([[entry.node.id, buildSessionSummary(entry.node.id, [session])]]),
+    });
+    const node = overlay.nodesById.get("managed-reconciled-node");
+
+    expect(node?.runtimeStatus).toBe("interrupted");
+    expect(node?.managedRuntime?.lifecycleState).toBe("interrupted");
+    expect(node?.managedRuntime?.projection.summary).toBe(diagnosticMessage);
+    expect(node?.managedRuntime?.progress.at(-1)?.summary).toBe(diagnosticMessage);
+    expect(overlay.summary.counts.byStatus.active).toBe(0);
   });
 
   it("reports registry loading as degraded and registry errors as not-usable", () => {

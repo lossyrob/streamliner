@@ -59,7 +59,27 @@ function invalidSettingsInput(message: string): SessionLaunchSettingsError {
   return new SessionLaunchSettingsError("invalid_session_launch_settings", 400, message);
 }
 
-function validateCliArgToken(value: string): void {
+const SEPARATE_VALUE_CLI_OPTIONS = new Set(["--prefer-version"]);
+
+function splitCliArgToken(value: string): string[] {
+  for (const option of SEPARATE_VALUE_CLI_OPTIONS) {
+    const prefix = `${option}=`;
+    if (value.startsWith(prefix)) {
+      const optionValue = value.slice(prefix.length);
+      if (!optionValue) {
+        throw invalidSettingsInput(`${option} requires a value.`);
+      }
+      return [option, optionValue];
+    }
+  }
+  return [value];
+}
+
+function expandCliArgInput(value: string): string[] {
+  return value.split(/\s+/g).flatMap(splitCliArgToken);
+}
+
+function validateCliArgToken(value: string, expectingValueFor: string | null): string | null {
   if (!value) {
     throw invalidSettingsInput("Default launch args cannot contain empty values.");
   }
@@ -67,13 +87,33 @@ function validateCliArgToken(value: string): void {
     throw invalidSettingsInput(`Default launch args must be ${MAX_CLI_ARG_LENGTH} characters or less.`);
   }
   if (/\s/.test(value)) {
-    throw invalidSettingsInput("Default launch args must be option tokens without whitespace. Use --flag=value for values.");
+    throw invalidSettingsInput("Default launch args must use whitespace only to separate option tokens from values.");
+  }
+  if (value === "--resume" || value.startsWith("--resume=")) {
+    throw invalidSettingsInput("Streamliner owns --resume during relaunch; remove it from default launch args.");
+  }
+  if (expectingValueFor) {
+    if (value.startsWith("-")) {
+      throw invalidSettingsInput(`${expectingValueFor} requires a value.`);
+    }
+    return null;
   }
   if (!value.startsWith("-")) {
     throw invalidSettingsInput("Default launch args must be option tokens, not positional prompts.");
   }
-  if (value === "--resume" || value.startsWith("--resume=")) {
-    throw invalidSettingsInput("Streamliner owns --resume during relaunch; remove it from default launch args.");
+  if (SEPARATE_VALUE_CLI_OPTIONS.has(value)) {
+    return value;
+  }
+  return null;
+}
+
+function validateCliArgs(args: readonly string[]): void {
+  let expectingValueFor: string | null = null;
+  for (const arg of args) {
+    expectingValueFor = validateCliArgToken(arg, expectingValueFor);
+  }
+  if (expectingValueFor) {
+    throw invalidSettingsInput(`${expectingValueFor} requires a value.`);
   }
 }
 
@@ -84,14 +124,21 @@ export function normalizeDefaultCliArgs(value: unknown): string[] {
   if (value.length > MAX_CLI_ARGS) {
     throw invalidSettingsInput(`defaultCliArgs must contain ${MAX_CLI_ARGS} items or fewer.`);
   }
-  return value.map((item) => {
+  const args = value.flatMap((item) => {
     if (typeof item !== "string") {
       throw invalidSettingsInput("defaultCliArgs must be an array of strings.");
     }
     const trimmed = item.trim();
-    validateCliArgToken(trimmed);
-    return trimmed;
+    if (!trimmed) {
+      throw invalidSettingsInput("Default launch args cannot contain empty values.");
+    }
+    return expandCliArgInput(trimmed);
   });
+  if (args.length > MAX_CLI_ARGS) {
+    throw invalidSettingsInput(`defaultCliArgs must contain ${MAX_CLI_ARGS} items or fewer.`);
+  }
+  validateCliArgs(args);
+  return args;
 }
 
 function normalizeStoredDefaultCliArgs(value: unknown, path: string): string[] {

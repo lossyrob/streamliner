@@ -261,7 +261,8 @@ export type SessionRegistryGithubRefType =
 
 export interface SessionRegistryGraphBinding {
   workstreamId: string;
-  nodeId: string;
+  /** Optional for sessions assigned to a workstream but not to a specific graph node. */
+  nodeId?: string | null;
   launchClaimId?: string | null;
 }
 

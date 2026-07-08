@@ -12,7 +12,10 @@ import {
   parseWorkstreamDocument,
   buildWorkstreamViewModel,
 } from "./workstream-view-model";
-import { buildWorkstreamGraphLayout } from "./workstream-graph";
+import {
+  applyWorkstreamGraphSelection,
+  buildWorkstreamGraphBaseLayout,
+} from "./workstream-graph";
 import type { WorkstreamDocument } from "./workstream-schema";
 import {
   buildGraphNodeSessionStatusMap,
@@ -38,12 +41,18 @@ import {
   type PawLaunchProgressEvent,
 } from "./components/PawLaunchDialog";
 import { PawProfilesPage } from "./components/PawProfilesPage";
+import { PawReviewTemplatesPage } from "./components/PawReviewTemplatesPage";
 import { SessionLaunchSettingsPage } from "./components/SessionLaunchSettingsPage";
 import {
   loadPromptProfiles,
   mergePromptProfiles,
   type PawPromptProfile,
 } from "./components/paw-prompt-profiles";
+import {
+  loadReviewPromptTemplates,
+  mergeReviewPromptTemplates,
+  type PawReviewPromptTemplate,
+} from "./components/paw-review-prompt-templates";
 import {
   FALLBACK_SESSION_LAUNCH_DEFAULT_CLI_ARGS,
   formatSessionLaunchCliArgsText,
@@ -76,7 +85,10 @@ import {
   type NodeLaunchOperation,
   type NodeLaunchRecord,
   type NodeLaunchRecordResponse,
+  type NodeLaunchRecordResetResponse,
   type NodeManagedSdkLaunchResponse,
+  type NodeCompanionTerminalLaunchResponse,
+  type NodePostPreparationIntent,
   type NodeTerminalLaunchResponse,
 } from "./node-launch-record-contract";
 import { loadGraphNodeLaunchRecords } from "./node-launch-record-client";
@@ -94,6 +106,7 @@ import {
 import { renderWorkstreamTerminalTitleTemplate } from "./workstream-launch-templates";
 import { evaluateNodeLaunchPolicy } from "./workstream-launch-policy";
 import { useSessionRegistryList } from "./session-registry-client";
+import { useIsDocumentVisible } from "./use-document-visibility";
 import {
   sessionRegistryRecordToListItem,
   type SessionRegistryListItem,
@@ -103,8 +116,16 @@ import {
   buildWorkstreamRuntimeOverlay,
   type WorkstreamRuntimeOverlay,
 } from "./workstream-runtime-overlay";
+import {
+  githubStatusRefsForWorkstream,
+  useGithubStatusLookup,
+  workstreamGithubSnapshotFromStatuses,
+} from "./github-status-client";
 
-const POLL_INTERVAL_MS = 2000;
+const WORKSTREAM_EVENT_STALE_MS = 45_000;
+const WORKSTREAM_FALLBACK_POLL_INTERVAL_MS = 60_000;
+const WORKSTREAM_FALLBACK_JITTER_RATIO = 0.2;
+const GITHUB_STATUS_REFRESH_INTERVAL_MS = 60_000;
 const LAST_GRAPH_KEY = "streamliner:lastGraphPath";
 const PAW_LAUNCH_CWD_OVERRIDES_KEY = "streamliner:pawLaunchCwdByRepo";
 const STREAMLINER_LOGO_URL = "/streamliner-logo.png";
@@ -115,6 +136,14 @@ interface GraphLoadError {
 }
 
 type PawLaunchPreparationResponse = NodeLaunchHandoff;
+
+type CompanionTerminalLaunchResponse = NodeCompanionTerminalLaunchResponse;
+
+interface CompanionLaunchState {
+  launching: boolean;
+  result: CompanionTerminalLaunchResponse | null;
+  error: string | null;
+}
 
 interface PawLaunchRunStartResponse {
   runId?: string;
@@ -132,6 +161,35 @@ interface PawLaunchRunError {
 interface PawLaunchRunFinishedPayload {
   result?: PawLaunchPreparationResponse;
   error?: PawLaunchRunError;
+  postPreparation?: PawLaunchRunPostPreparationOutcome;
+  operation?: NodeLaunchOperation | null;
+}
+
+interface PawLaunchRunPostPreparationError {
+  code?: string;
+  error: string;
+}
+
+type PawLaunchRunTerminalOutcome =
+  | { status: "launched"; result: NodeTerminalLaunchResponse }
+  | { status: "failed"; error: PawLaunchRunPostPreparationError }
+  | { status: "skipped" };
+
+type PawLaunchRunCompanionOutcome =
+  | { status: "launched"; result: CompanionTerminalLaunchResponse }
+  | { status: "failed"; error: PawLaunchRunPostPreparationError }
+  | { status: "skipped" };
+
+interface PawLaunchRunPostPreparationOutcome {
+  terminal?: PawLaunchRunTerminalOutcome;
+  companion?: PawLaunchRunCompanionOutcome;
+  operation?: NodeLaunchOperation | null;
+}
+
+interface PawLaunchRunCompletion {
+  handoff: PawLaunchPreparationResponse;
+  postPreparation?: PawLaunchRunPostPreparationOutcome;
+  operation?: NodeLaunchOperation | null;
 }
 
 interface LoadedNodeLaunchState {
@@ -153,6 +211,7 @@ interface ManagedSdkLaunchApiResponse {
 
 interface LaunchOperationTarget {
   graphPath: string;
+  workstreamId: string;
   nodeId: string;
 }
 
@@ -190,6 +249,9 @@ function readDashboardRoute(): DashboardRoute {
   }
   if (window.location.pathname === "/__prototype/managed-consoles") {
     return { view: "prototype", prototype: "managed-consoles" };
+  }
+  if (window.location.pathname === "/settings/review-templates") {
+    return { view: "settings", section: "review-templates" };
   }
   if (
     window.location.pathname === "/settings" ||
@@ -419,6 +481,73 @@ function operationError(
   };
 }
 
+function postPreparationIntentFromConfiguration(
+  configuration: PawLaunchDialogConfiguration,
+): NodePostPreparationIntent | undefined {
+  if (configuration.runtimeKind !== "terminal-cli" || !configuration.launchAfterInit) {
+    return undefined;
+  }
+  const terminalTitle = configuration.terminal.title.trim();
+  return {
+    launchTerminal: {
+      ...(terminalTitle ? { terminalTitle } : {}),
+      ...(configuration.terminal.tabColor ? { terminalColor: configuration.terminal.tabColor } : {}),
+    },
+    ...(configuration.reviewCompanion
+      ? {
+        launchCompanion: {
+          kickoffPrompt: configuration.reviewCompanion.kickoffPrompt,
+          ...(configuration.reviewCompanion.usePawReviewAgent
+            ? {}
+            : { usePawReviewAgent: false }),
+        },
+      }
+      : {}),
+  };
+}
+
+function companionStateFromOperation(operation: NodeLaunchOperation): CompanionLaunchState | null {
+  if (operation.companionLaunch) {
+    return { launching: false, result: operation.companionLaunch, error: null };
+  }
+  if (operation.companionError) {
+    return { launching: false, result: null, error: operation.companionError.error };
+  }
+  if (operation.postPreparation?.launchCompanion) {
+    const launching = operation.status === "preparing" ||
+      operation.status === "prepared" ||
+      operation.status === "launching" ||
+      operation.status === "launched_pending_binding";
+    return { launching, result: null, error: null };
+  }
+  return null;
+}
+
+function companionStateFromPostPreparationOutcome(
+  outcome: PawLaunchRunPostPreparationOutcome | undefined,
+): CompanionLaunchState | null {
+  if (!outcome?.companion) {
+    return null;
+  }
+  if (outcome.companion.status === "launched") {
+    return { launching: false, result: outcome.companion.result, error: null };
+  }
+  if (outcome.companion.status === "failed") {
+    return { launching: false, result: null, error: outcome.companion.error.error };
+  }
+  return { launching: false, result: null, error: null };
+}
+
+function sameCompanionLaunchState(
+  left: CompanionLaunchState | undefined,
+  right: CompanionLaunchState,
+): boolean {
+  return Boolean(left) &&
+    left?.launching === right.launching &&
+    left?.result === right.result &&
+    left?.error === right.error;
+}
+
 function managedLaunchFromApiResponse(
   result: ManagedSdkLaunchApiResponse,
 ): NodeManagedSdkLaunchResponse {
@@ -579,6 +708,25 @@ async function releaseNodeLaunchClaim(launchClaimId: string): Promise<NodeLaunch
   return await response.json() as NodeLaunchReleaseResponse;
 }
 
+async function clearPreviousNodeLaunchInit(
+  target: LaunchOperationTarget,
+): Promise<NodeLaunchRecordResetResponse> {
+  const response = await fetch("/api/node-launch-records/clear", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      graphPath: target.graphPath,
+      workstreamId: target.workstreamId,
+      nodeId: target.nodeId,
+    }),
+  });
+  if (!response.ok) {
+    const parsed = await parseErrorResponse(response);
+    throw new Error(parsed.message);
+  }
+  return await response.json() as NodeLaunchRecordResetResponse;
+}
+
 function normalizeRegistryListResponse(
   body: Partial<WorkstreamRegistryListResponse>,
 ): WorkstreamRegistryListResponse {
@@ -591,6 +739,35 @@ function normalizeRegistryListResponse(
     sources: body.sources,
     conflicts: body.conflicts,
   };
+}
+
+function isJsonRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseWorkstreamGraphChange(event: Event): { projectKey: string; workstreamId: string } | null {
+  let payload: unknown;
+  try {
+    payload = parseMessageEventData<unknown>(event);
+  } catch {
+    return null;
+  }
+  if (!isJsonRecord(payload)) {
+    return null;
+  }
+  const { projectKey, workstreamId } = payload;
+  return typeof projectKey === "string" && typeof workstreamId === "string"
+    ? { projectKey, workstreamId }
+    : null;
+}
+
+function jitteredWorkstreamFallbackDelay(): number {
+  const spread = WORKSTREAM_FALLBACK_POLL_INTERVAL_MS * WORKSTREAM_FALLBACK_JITTER_RATIO;
+  return Math.round(
+    WORKSTREAM_FALLBACK_POLL_INTERVAL_MS -
+      spread +
+      Math.random() * spread * 2,
+  );
 }
 
 function useGraphLoader(route: DashboardRoute, enabled: boolean) {
@@ -607,17 +784,28 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
   const [error, setError] = useState<GraphLoadError | null>(null);
   const [registryError, setRegistryError] = useState<string | null>(null);
   const [workstreams, setWorkstreams] = useState<WorkstreamRegistryListEntry[]>([]);
-  const [archivedWorkstreams, setArchivedWorkstreams] = useState<WorkstreamRegistryListEntry[]>([]);
+  const [archivedWorkstreams, setArchivedWorkstreams] = useState<
+    WorkstreamRegistryListEntry[]
+  >([]);
   const [sources, setSources] = useState<WorkstreamSourceListEntry[]>([]);
   const [conflicts, setConflicts] = useState<WorkstreamConflict[]>([]);
   const [migrationWarnings, setMigrationWarnings] = useState<WorkstreamRegistryWarning[]>([]);
   const [registryLoaded, setRegistryLoaded] = useState(false);
+  const [githubStatusRefreshKey, setGithubStatusRefreshKey] = useState(0);
   const workstreamsRef = useRef<WorkstreamRegistryListEntry[]>([]);
   const lastModifiedRef = useRef<string | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const fallbackPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const graphPollInFlightRef = useRef(false);
+  const workstreamEventLiveRef = useRef(false);
+  const lastWorkstreamEventAtRef = useRef(0);
+  const registryRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isDocumentVisible = useIsDocumentVisible();
 
   const applyRegistryResponse = useCallback((body: WorkstreamRegistryListResponse) => {
-    const mergedWorkstreams = mergeWorkstreamEntries(body.workstreams, listBrowserWorkstreamEntries());
+    const mergedWorkstreams = mergeWorkstreamEntries(
+      body.workstreams,
+      listBrowserWorkstreamEntries(),
+    );
     workstreamsRef.current = mergedWorkstreams;
     setWorkstreams(mergedWorkstreams);
     setArchivedWorkstreams(body.archivedWorkstreams ?? []);
@@ -635,9 +823,11 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
       const parsed = await parseErrorResponse(res);
       throw new Error(parsed.message);
     }
-    return applyRegistryResponse(normalizeRegistryListResponse(
-      await res.json() as Partial<WorkstreamRegistryListResponse>,
-    ));
+    return applyRegistryResponse(
+      normalizeRegistryListResponse(
+        (await res.json()) as Partial<WorkstreamRegistryListResponse>,
+      ),
+    );
   }, [applyRegistryResponse]);
 
   const loadRegistered = useCallback(
@@ -660,6 +850,7 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
           const doc = parseWorkstreamDocument(graph.content ?? "");
           lastModifiedRef.current = graph.lastModified;
           setWorkstream(doc);
+          setGithubStatusRefreshKey((current) => current + 1);
           setError(null);
           const nextEntries = mergeWorkstreamEntries(
             workstreamsRef.current.filter((candidate) => !isBrowserWorkstreamEntry(candidate)),
@@ -696,10 +887,10 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
       const doc = parseWorkstreamDocument(text);
       lastModifiedRef.current = res.headers.get("Last-Modified");
       setWorkstream(doc);
+      setGithubStatusRefreshKey((current) => current + 1);
       setError(null);
-      await fetchRegistry();
     },
-    [fetchRegistry],
+    [],
   );
 
   useEffect(() => {
@@ -727,21 +918,213 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
     })();
   }, [activeWorkstream, enabled, fetchRegistry, loadRegistered]);
 
+  const markWorkstreamEvent = useCallback(() => {
+    workstreamEventLiveRef.current = true;
+    lastWorkstreamEventAtRef.current = Date.now();
+  }, []);
+
+  const workstreamEventIsStale = useCallback(() => (
+    !workstreamEventLiveRef.current ||
+      Date.now() - lastWorkstreamEventAtRef.current > WORKSTREAM_EVENT_STALE_MS
+  ), []);
+
+  const loadActiveWorkstreamQuietly = useCallback(
+    async (
+      entry: { projectKey: string; workstreamId: string },
+      options: { entries?: WorkstreamRegistryListEntry[] } = {},
+    ) => {
+      if (graphPollInFlightRef.current) {
+        return;
+      }
+      graphPollInFlightRef.current = true;
+      try {
+        await loadRegistered(entry, { quiet: true, entries: options.entries });
+      } finally {
+        graphPollInFlightRef.current = false;
+      }
+    },
+    [loadRegistered],
+  );
+
+  const refreshRegistryFromEvent = useCallback(
+    (delayMs = 100) => {
+      if (!activeWorkstream) {
+        return;
+      }
+      if (registryRefreshTimerRef.current) {
+        clearTimeout(registryRefreshTimerRef.current);
+      }
+      registryRefreshTimerRef.current = setTimeout(() => {
+        registryRefreshTimerRef.current = null;
+        void (async () => {
+          try {
+            const entries = await fetchRegistry();
+            await loadActiveWorkstreamQuietly(activeWorkstream, { entries });
+          } catch (nextError) {
+            setRegistryError(nextError instanceof Error ? nextError.message : String(nextError));
+          }
+        })();
+      }, delayMs);
+    },
+    [activeWorkstream, fetchRegistry, loadActiveWorkstreamQuietly],
+  );
+
+  useEffect(() => {
+    if (!enabled || !activeWorkstream || error || !isDocumentVisible) {
+      workstreamEventLiveRef.current = false;
+      return;
+    }
+    if (typeof EventSource === "undefined") {
+      workstreamEventLiveRef.current = false;
+      return;
+    }
+
+    const source = new EventSource("/api/workstreams/events");
+    let closed = false;
+
+    const handleOpen = () => {
+      if (!closed) {
+        markWorkstreamEvent();
+      }
+    };
+    const handleHeartbeat = () => {
+      if (!closed) {
+        markWorkstreamEvent();
+      }
+    };
+    const handleSnapshot = () => {
+      if (closed) {
+        return;
+      }
+      markWorkstreamEvent();
+    };
+    const handleRegistryChanged = () => {
+      if (closed) {
+        return;
+      }
+      markWorkstreamEvent();
+      refreshRegistryFromEvent();
+    };
+    const handleGraphChanged = (event: Event) => {
+      if (closed) {
+        return;
+      }
+      markWorkstreamEvent();
+      const payload = parseWorkstreamGraphChange(event);
+      if (!payload || registryKey(payload) !== registryKey(activeWorkstream)) {
+        return;
+      }
+      void loadActiveWorkstreamQuietly(activeWorkstream);
+    };
+    const handleError = () => {
+      if (closed) {
+        return;
+      }
+      workstreamEventLiveRef.current = false;
+      refreshRegistryFromEvent(0);
+    };
+
+    source.addEventListener("open", handleOpen);
+    source.addEventListener("heartbeat", handleHeartbeat);
+    source.addEventListener("snapshot", handleSnapshot);
+    source.addEventListener("workstream.registry.changed", handleRegistryChanged);
+    source.addEventListener("workstream.source.changed", handleRegistryChanged);
+    source.addEventListener("workstream.graph.changed", handleGraphChanged);
+    source.onerror = handleError;
+
+    return () => {
+      closed = true;
+      source.close();
+    };
+  }, [
+    activeWorkstream,
+    enabled,
+    error,
+    isDocumentVisible,
+    loadActiveWorkstreamQuietly,
+    markWorkstreamEvent,
+    refreshRegistryFromEvent,
+  ]);
+
+  useEffect(() => {
+    if (!enabled || !activeWorkstream || error || !isDocumentVisible) {
+      return;
+    }
+
+    let cancelled = false;
+    const scheduleNextFallback = () => {
+      fallbackPollRef.current = setTimeout(() => {
+        fallbackPollRef.current = null;
+        if (cancelled) {
+          return;
+        }
+        if (workstreamEventIsStale()) {
+          void loadActiveWorkstreamQuietly(activeWorkstream);
+        }
+        scheduleNextFallback();
+      }, jitteredWorkstreamFallbackDelay());
+    };
+    scheduleNextFallback();
+
+    return () => {
+      cancelled = true;
+      if (fallbackPollRef.current) {
+        clearTimeout(fallbackPollRef.current);
+        fallbackPollRef.current = null;
+      }
+    };
+  }, [
+    activeWorkstream,
+    enabled,
+    error,
+    isDocumentVisible,
+    loadActiveWorkstreamQuietly,
+    workstreamEventIsStale,
+  ]);
+
   useEffect(() => {
     if (!enabled || !activeWorkstream || error) {
       return;
     }
-
-    pollRef.current = setInterval(() => {
-      void loadRegistered(activeWorkstream, { quiet: true });
-    }, POLL_INTERVAL_MS);
-
-    return () => {
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "hidden") {
+        return;
+      }
+      if (workstreamEventIsStale()) {
+        refreshRegistryFromEvent(0);
       }
     };
-  }, [activeWorkstream, enabled, error, loadRegistered]);
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      if (registryRefreshTimerRef.current) {
+        clearTimeout(registryRefreshTimerRef.current);
+        registryRefreshTimerRef.current = null;
+      }
+    };
+  }, [
+    activeWorkstream,
+    enabled,
+    error,
+    refreshRegistryFromEvent,
+    workstreamEventIsStale,
+  ]);
+
+  useEffect(() => {
+    if (!enabled || !activeWorkstream || error || !isDocumentVisible) {
+      return;
+    }
+
+    const timer = setInterval(() => {
+      setGithubStatusRefreshKey((current) => current + 1);
+    }, GITHUB_STATUS_REFRESH_INTERVAL_MS);
+
+    return () => {
+      clearInterval(timer);
+    };
+  }, [activeWorkstream, enabled, error, isDocumentVisible]);
 
   const addSource = useCallback(
     async (type: WorkstreamSourceType, path: string) => {
@@ -843,10 +1226,11 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
       if (typeof body.workstream !== "object" || body.workstream === null) {
         throw new Error("Configuration update did not return a workstream graph.");
       }
-      const parsed = parseWorkstreamDocument(JSON.stringify(body.workstream));
-      lastModifiedRef.current = res.headers.get("Last-Modified");
-      setWorkstream(parsed);
-      setError(null);
+       const parsed = parseWorkstreamDocument(JSON.stringify(body.workstream));
+       lastModifiedRef.current = res.headers.get("Last-Modified");
+       setWorkstream(parsed);
+       setGithubStatusRefreshKey((current) => current + 1);
+       setError(null);
       await fetchRegistry();
     },
     [fetchRegistry],
@@ -862,6 +1246,7 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
     conflicts,
     migrationWarnings,
     registryLoading: !registryLoaded,
+    githubStatusRefreshKey,
     activeWorkstream,
     addSource,
     refreshSources,
@@ -991,55 +1376,69 @@ function WorkstreamHome({
     });
   };
 
-  const renderWorkstreamCard = (entry: WorkstreamRegistryListEntry, archived = false) => (
-    <div className="sl-workstream-card" key={`${archived ? "archived" : "active"}-${registryKey(entry)}`}>
-      <a
-        className="sl-workstream-card-main"
-        href={workstreamRoutePath(entry)}
-        onClick={(event) => handleInAppLinkClick(event, () => onOpenWorkstream(entry))}
-      >
-        <span className="sl-workstream-card-title">{entry.title}</span>
-        <span className="sl-workstream-card-id">{registryKey(entry)}</span>
-        <span className="sl-workstream-card-meta">
-          <span className={`sl-pill ${entry.fileStatus === "available" ? "green" : "amber"}`}>
-            {entry.fileStatus}
+  const renderWorkstreamCard = (entry: WorkstreamRegistryListEntry, archived = false) => {
+    const shortName = entry.presentation?.shortName?.trim();
+    const color = entry.presentation?.color;
+    return (
+      <div className="sl-workstream-card" key={`${archived ? "archived" : "active"}-${registryKey(entry)}`}>
+        <a
+          className="sl-workstream-card-main"
+          href={workstreamRoutePath(entry)}
+          onClick={(event) => handleInAppLinkClick(event, () => onOpenWorkstream(entry))}
+        >
+          <span className="sl-workstream-card-title-row">
+            {color && (
+              <span
+                className="sl-workstream-color-swatch"
+                style={{ backgroundColor: color }}
+                aria-label={`Workstream color ${color}`}
+              />
+            )}
+            {shortName && <span className="sl-workstream-short-name">{shortName}</span>}
+            <span className="sl-workstream-card-title">{entry.title}</span>
           </span>
-          <span className="sl-pill muted">{entry.source ?? "path"}</span>
-          {entry.sourceId && <span className="sl-pill muted">{entry.sourceId}</span>}
-        </span>
-        <span className="sl-path-value">{entry.path}</span>
-      </a>
-      <div className="sl-workstream-card-actions">
-        {archived ? (
-          <button
-            className="sl-action-btn"
-            disabled={busy}
-            onClick={() => void runAction(() => onRestoreWorkstream(entry))}
-          >
-            Restore
-          </button>
-        ) : (
-          <button
-            className="sl-action-btn"
-            disabled={busy}
-            onClick={() => void runAction(() => onArchiveWorkstream(entry))}
-          >
-            Archive
-          </button>
-        )}
-        {!archived && (isPathWorkstreamEntry(entry) || isBrowserWorkstreamEntry(entry)) && (
-          <button
-            className="sl-action-btn danger"
-            disabled={busy}
-            onClick={() => void runAction(() => onUntrackWorkstream(entry))}
-            aria-label={`Untrack ${entry.title}`}
-          >
-            Untrack
-          </button>
-        )}
+          <span className="sl-workstream-card-id">{registryKey(entry)}</span>
+          <span className="sl-workstream-card-meta">
+            <span className={`sl-pill ${entry.fileStatus === "available" ? "green" : "amber"}`}>
+              {entry.fileStatus}
+            </span>
+            <span className="sl-pill muted">{entry.source ?? "path"}</span>
+            {entry.sourceId && <span className="sl-pill muted">{entry.sourceId}</span>}
+          </span>
+          <span className="sl-path-value">{entry.path}</span>
+        </a>
+        <div className="sl-workstream-card-actions">
+          {archived ? (
+            <button
+              className="sl-action-btn"
+              disabled={busy}
+              onClick={() => void runAction(() => onRestoreWorkstream(entry))}
+            >
+              Restore
+            </button>
+          ) : (
+            <button
+              className="sl-action-btn"
+              disabled={busy}
+              onClick={() => void runAction(() => onArchiveWorkstream(entry))}
+            >
+              Archive
+            </button>
+          )}
+          {!archived && (isPathWorkstreamEntry(entry) || isBrowserWorkstreamEntry(entry)) && (
+            <button
+              className="sl-action-btn danger"
+              disabled={busy}
+              onClick={() => void runAction(() => onUntrackWorkstream(entry))}
+              aria-label={`Untrack ${entry.title}`}
+            >
+              Untrack
+            </button>
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div className="sl-shell-panel">
@@ -1258,6 +1657,80 @@ function usePromptProfilesState() {
   };
 }
 
+function useReviewPromptTemplatesState() {
+  const [templates, setTemplates] = useState<PawReviewPromptTemplate[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const requestRef = useRef<Promise<void> | null>(null);
+  const mountedRef = useRef(true);
+  const mutationVersionRef = useRef(0);
+  const deletedTemplateIdsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const noteTemplatesChanged = useCallback((changedTemplates: PawReviewPromptTemplate[]) => {
+    mutationVersionRef.current += 1;
+    for (const template of changedTemplates) {
+      deletedTemplateIdsRef.current.delete(template.id);
+    }
+    setTemplates((current) => mergeReviewPromptTemplates(current, changedTemplates));
+  }, []);
+  const noteTemplateDeleted = useCallback((templateId: string) => {
+    mutationVersionRef.current += 1;
+    deletedTemplateIdsRef.current.add(templateId);
+    setTemplates((current) => current.filter((template) => template.id !== templateId));
+  }, []);
+
+  const refresh = useCallback(() => {
+    if (requestRef.current) {
+      return requestRef.current;
+    }
+    setLoading(true);
+    setError(null);
+    const requestMutationVersion = mutationVersionRef.current;
+    const request = loadReviewPromptTemplates()
+      .then((loadedTemplates) => {
+        if (mountedRef.current) {
+          if (mutationVersionRef.current === requestMutationVersion) {
+            deletedTemplateIdsRef.current.clear();
+            setTemplates(() => mergeReviewPromptTemplates([], loadedTemplates));
+          } else {
+            const deletedTemplateIds = deletedTemplateIdsRef.current;
+            const retainedTemplates = loadedTemplates.filter((template) => !deletedTemplateIds.has(template.id));
+            setTemplates((current) => mergeReviewPromptTemplates(current, retainedTemplates));
+          }
+        }
+      })
+      .catch((loadError: unknown) => {
+        if (mountedRef.current) {
+          setError(loadError instanceof Error ? loadError.message : String(loadError));
+        }
+      })
+      .finally(() => {
+        requestRef.current = null;
+        if (mountedRef.current) {
+          setLoading(false);
+        }
+      });
+    requestRef.current = request;
+    return request;
+  }, []);
+
+  return {
+    templates,
+    loading,
+    error,
+    refresh,
+    noteTemplatesChanged,
+    noteTemplateDeleted,
+  };
+}
+
 function useSessionLaunchSettingsState() {
   const [settings, setSettings] = useState<SessionLaunchSettings>({
     defaultCliArgs: [...FALLBACK_SESSION_LAUNCH_DEFAULT_CLI_ARGS],
@@ -1348,6 +1821,7 @@ function GraphDashboard({
   error,
   workstreams,
   activeWorkstream,
+  githubStatusRefreshKey,
   archive,
   untrack,
   saveWorkstreamConfiguration,
@@ -1361,6 +1835,11 @@ function GraphDashboard({
   promptProfilesError,
   onRefreshPromptProfiles,
   onPromptProfilesChanged,
+  reviewPromptTemplates,
+  reviewPromptTemplatesLoading,
+  reviewPromptTemplatesError,
+  onRefreshReviewPromptTemplates,
+  onReviewPromptTemplatesChanged,
   sessionLaunchSettings,
 }: ReturnType<typeof useGraphLoader> & {
   onOpenWorkstream: (entry: WorkstreamRegistryListEntry) => void | Promise<void>;
@@ -1377,6 +1856,11 @@ function GraphDashboard({
   promptProfilesError: string | null;
   onRefreshPromptProfiles: () => Promise<void> | void;
   onPromptProfilesChanged: (profiles: PawPromptProfile[]) => void;
+  reviewPromptTemplates: PawReviewPromptTemplate[];
+  reviewPromptTemplatesLoading: boolean;
+  reviewPromptTemplatesError: string | null;
+  onRefreshReviewPromptTemplates: () => Promise<void> | void;
+  onReviewPromptTemplatesChanged: (templates: PawReviewPromptTemplate[]) => void;
   sessionLaunchSettings: SessionLaunchSettings;
 }) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(
@@ -1386,6 +1870,7 @@ function GraphDashboard({
   const [launchDialogOpen, setLaunchDialogOpen] = useState(false);
   const [launchDialogTarget, setLaunchDialogTarget] = useState<LaunchOperationTarget | null>(null);
   const [launchOperationByKey, setLaunchOperationByKey] = useState<Record<string, NodeLaunchOperation>>({});
+  const [companionLaunchByKey, setCompanionLaunchByKey] = useState<Record<string, CompanionLaunchState>>({});
   const [launchReleasing, setLaunchReleasing] = useState(false);
   const [launchReleaseError, setLaunchReleaseError] = useState<string | null>(null);
   const [launchReleaseStatus, setLaunchReleaseStatus] = useState<string | null>(null);
@@ -1406,11 +1891,13 @@ function GraphDashboard({
   const [configurationError, setConfigurationError] = useState<string | null>(null);
   const failedRunReattachRef = useRef<Set<string>>(new Set());
   const localRunStreamsRef = useRef<Set<string>>(new Set());
+  const isDocumentVisible = useIsDocumentVisible();
   const activeWorkstreamKey = activeWorkstream ? registryKey(activeWorkstream) : "";
   const sessionList = useSessionRegistryList(
     { workstreamId: activeWorkstream?.workstreamId ?? null },
     { enabled: Boolean(activeWorkstream) },
   );
+  const refreshSessions = sessionList.refresh;
   const nodeSessionStatuses = useMemo(
     () =>
       activeWorkstream
@@ -1436,15 +1923,31 @@ function GraphDashboard({
     setSelectedNodeId(selectedNodeIdFromRoute ?? null);
   }, [activeWorkstreamKey, selectedNodeIdFromRoute]);
 
+  const githubStatusRefs = useMemo(
+    () => githubStatusRefsForWorkstream(workstream),
+    [workstream],
+  );
+  const githubStatusLookup = useGithubStatusLookup(
+    githubStatusRefs,
+    githubStatusRefreshKey,
+  );
+  const githubSnapshot = useMemo(
+    () => workstreamGithubSnapshotFromStatuses(githubStatusLookup.statuses.values()),
+    [githubStatusLookup.statuses],
+  );
   const viewModel = useMemo(() => {
     if (!workstream) return null;
-    return buildWorkstreamViewModel(workstream);
-  }, [workstream]);
+    return buildWorkstreamViewModel(workstream, githubSnapshot);
+  }, [githubSnapshot, workstream]);
 
-  const layout = useMemo(() => {
+  const baseLayout = useMemo(() => {
     if (!workstream || !viewModel) return null;
-    return buildWorkstreamGraphLayout(workstream, viewModel, selectedNodeId);
-  }, [selectedNodeId, viewModel, workstream]);
+    return buildWorkstreamGraphBaseLayout(workstream, viewModel);
+  }, [viewModel, workstream]);
+  const layout = useMemo(() => {
+    if (!baseLayout) return null;
+    return applyWorkstreamGraphSelection(baseLayout, selectedNodeId);
+  }, [baseLayout, selectedNodeId]);
 
   const selectedEntry = useMemo(() => {
     if (!selectedNodeId || !viewModel) return null;
@@ -1458,6 +1961,7 @@ function GraphDashboard({
     if (!activeWorkstream) return null;
     return workstreams.find((entry) => registryKey(entry) === registryKey(activeWorkstream)) ?? null;
   }, [activeWorkstream, workstreams]);
+  const activeWorkstreamEntryPath = activeWorkstreamEntry?.path ?? null;
   const runtimeOverlay = useMemo<WorkstreamRuntimeOverlay | null>(() => {
     if (!viewModel) {
       return null;
@@ -1579,15 +2083,34 @@ function GraphDashboard({
     }
   }, [selectedRuntimeOverlay?.managedRuntime]);
 
+  // Derive the launch target from stable string primitives so its identity
+  // only changes when the underlying graph path or node id actually changes.
+  // Depending on activeWorkstreamEntry/selectedEntry directly churns this
+  // object every time the viewModel rebuilds (e.g. on each github-status
+  // poll), which cascades into prefetch effects and keeps the
+  // "Loading saved profiles" / "Loading launch details" placeholders pinned
+  // on while a fetch is briefly in flight.
+  const selectedLaunchGraphPath = activeWorkstreamEntry?.path ?? null;
+  const selectedLaunchWorkstreamId = activeWorkstream?.workstreamId ?? null;
+  const selectedLaunchNodeId = selectedEntry?.node.id ?? null;
   const selectedLaunchTarget = useMemo<LaunchOperationTarget | null>(() => {
-    if (!selectedEntry || !activeWorkstreamEntry) {
+    if (!selectedLaunchGraphPath || !selectedLaunchWorkstreamId || !selectedLaunchNodeId) {
       return null;
     }
     return {
-      graphPath: activeWorkstreamEntry.path,
-      nodeId: selectedEntry.node.id,
+      graphPath: selectedLaunchGraphPath,
+      workstreamId: selectedLaunchWorkstreamId,
+      nodeId: selectedLaunchNodeId,
     };
-  }, [activeWorkstreamEntry, selectedEntry]);
+  }, [selectedLaunchGraphPath, selectedLaunchWorkstreamId, selectedLaunchNodeId]);
+
+  // Mirror selectedLaunchTarget into a ref so async closures (e.g. the SSE
+  // reattach effect below) can read the latest value without taking a
+  // reactive dependency on it. selectedLaunchTarget is now identity-stable
+  // by graphPath+nodeId, but we still want event handlers that only need
+  // a snapshot to avoid re-subscribing when the user navigates.
+  const selectedLaunchTargetRef = useRef(selectedLaunchTarget);
+  selectedLaunchTargetRef.current = selectedLaunchTarget;
 
   const selectedLaunchOperation = selectedLaunchTarget
     ? launchOperationByKey[launchOperationKey(selectedLaunchTarget)] ?? null
@@ -1603,6 +2126,9 @@ function GraphDashboard({
   const launchDialogOperation = launchDialogTarget
     ? launchOperationByKey[launchOperationKey(launchDialogTarget)] ?? null
     : null;
+  const launchDialogCompanion = launchDialogTarget
+    ? companionLaunchByKey[launchOperationKey(launchDialogTarget)] ?? null
+    : null;
 
   const launchDialogLatestClaim = launchDialogOperation?.latestClaim
     ?? (sameLaunchTarget(launchDialogTarget, selectedLaunchTarget) ? nodeLaunchRecord?.latestClaim ?? null : null);
@@ -1612,17 +2138,17 @@ function GraphDashboard({
 
   const launchOperationsByNodeId = useMemo(() => {
     const operations = new Map<string, NodeLaunchOperation>();
-    if (!activeWorkstreamEntry) {
+    if (!activeWorkstreamEntryPath) {
       return operations;
     }
-    const graphPath = activeWorkstreamEntry.path.toLowerCase();
+    const graphPath = activeWorkstreamEntryPath.toLowerCase();
     for (const operation of Object.values(launchOperationByKey)) {
       if (operation.graphPath.toLowerCase() === graphPath) {
         operations.set(operation.nodeId, operation);
       }
     }
     return operations;
-  }, [activeWorkstreamEntry, launchOperationByKey]);
+  }, [activeWorkstreamEntryPath, launchOperationByKey]);
 
   const configureDisabledReason = useMemo(() => {
     if (!activeWorkstreamEntry || !isBackendReadableWorkstreamEntry(activeWorkstreamEntry)) {
@@ -1740,13 +2266,20 @@ function GraphDashboard({
   ]);
 
   const launchDefaults = useMemo<PawLaunchDialogDefaults | null>(() => {
-    const defaultsEntry = launchDialogTarget ? launchDialogEntry : selectedEntry;
+    // Resolve the defaults target from primitive ids and the source-of-truth
+    // workstream document, NOT from the viewModel-derived selectedEntry /
+    // launchDialogEntry objects. Those rebuild whenever the live GitHub
+    // status snapshot churns even though the underlying node data is
+    // unchanged, which previously caused launchDefaults to get a fresh
+    // object reference on every poll and ripple through PawLaunchDialog
+    // props.
+    const defaultsNodeId = launchDialogTarget?.nodeId ?? selectedNodeId;
     const graphPath = launchDialogTarget?.graphPath ?? activeWorkstreamEntry?.path;
-    if (!defaultsEntry || !graphPath) return null;
+    if (!defaultsNodeId || !graphPath || !workstream) return null;
+    const defaultsNode = workstream.nodes.find((node) => node.id === defaultsNodeId);
+    if (!defaultsNode) return null;
     const inferredCwd = "";
-    const cwdPreferenceKey = workstream
-      ? launchCwdRepoKey(workstream, defaultsEntry.node.repoIds)
-      : null;
+    const cwdPreferenceKey = launchCwdRepoKey(workstream, defaultsNode.repoIds);
     const savedCwd = readLaunchCwdOverride(cwdPreferenceKey);
     return {
       workflowInstructions: DEFAULT_PAW_WORKFLOW_INSTRUCTIONS,
@@ -1757,10 +2290,16 @@ function GraphDashboard({
       cwdPreferenceKey,
       graphPath,
       terminalPreference: "Manual terminal launch after preparation",
-      githubIssueLabel: defaultsEntry.node.tracker?.type === "github"
-        ? workstreamTrackerLabel(defaultsEntry.node.tracker)
+      githubIssueNumber: defaultsNode.tracker?.type === "github"
+        ? defaultsNode.tracker.number
         : null,
-      githubIssueUrl: workstreamTrackerUrl(defaultsEntry.node.tracker),
+      githubIssueRepo: defaultsNode.tracker?.type === "github"
+        ? `${defaultsNode.tracker.owner}/${defaultsNode.tracker.repo}`
+        : null,
+      githubIssueLabel: defaultsNode.tracker?.type === "github"
+        ? workstreamTrackerLabel(defaultsNode.tracker)
+        : null,
+      githubIssueUrl: workstreamTrackerUrl(defaultsNode.tracker),
       terminal: {
         ...DEFAULT_PAW_TERMINAL_CONFIGURATION,
         preferredTerminal:
@@ -1769,22 +2308,32 @@ function GraphDashboard({
         title:
           renderWorkstreamTerminalTitleTemplate(
             workstream?.launchDefaults?.terminal?.titleTemplate,
-            defaultsEntry.node,
-          ) ?? defaultsEntry.node.title,
-        tabColor: workstream?.launchDefaults?.terminal?.tabColor ?? null,
+            defaultsNode,
+            workstream,
+          ) ?? defaultsNode.title,
+        tabColor: workstream?.presentation?.color ?? workstream?.launchDefaults?.terminal?.tabColor ?? null,
       },
     };
   }, [
     activeWorkstreamEntry?.path,
-    launchDialogEntry,
     launchDialogTarget,
-    selectedEntry,
+    selectedNodeId,
     sessionLaunchSettings?.defaultCliArgs,
     workstream,
   ]);
 
+  // Re-fetch graph-wide launch records only when the workstream we care about
+  // actually changes (path + backend-readability + identity), NOT when its
+  // surrounding object reference churns. Polling features upstream (e.g., the
+  // live GitHub-status snapshot) can rebuild `activeWorkstreamEntry` reference
+  // on every tick, which previously re-fired this effect indefinitely and
+  // kept the "Loading launch details..." state stuck on.
+  const activeWorkstreamPath =
+    activeWorkstreamEntry && isBackendReadableWorkstreamEntry(activeWorkstreamEntry)
+      ? activeWorkstreamEntry.path
+      : null;
   useEffect(() => {
-    if (!activeWorkstreamEntry || !isBackendReadableWorkstreamEntry(activeWorkstreamEntry)) {
+    if (!activeWorkstreamPath) {
       setNodeLaunchRecords([]);
       setNodeLaunchRecordLoading(false);
       setNodeLaunchRecordError(null);
@@ -1794,7 +2343,7 @@ function GraphDashboard({
     setNodeLaunchRecords([]);
     setNodeLaunchRecordLoading(true);
     setNodeLaunchRecordError(null);
-    loadGraphNodeLaunchRecords(activeWorkstreamEntry.path)
+    loadGraphNodeLaunchRecords(activeWorkstreamPath)
       .then((records) => {
         if (!cancelled) {
           setNodeLaunchRecords(records);
@@ -1814,21 +2363,21 @@ function GraphDashboard({
     return () => {
       cancelled = true;
     };
-  }, [activeWorkstreamEntry, nodeLaunchRecordRefreshKey]);
+  }, [activeWorkstreamPath, nodeLaunchRecordRefreshKey]);
 
+  // Same stability fix for the per-selected-node launch record fetch: depend
+  // on the node id (a stable primitive) instead of the derived entry object,
+  // which gets a fresh reference every time the view-model rebuilds.
   useEffect(() => {
-    if (
-      !activeWorkstreamEntry ||
-      !isBackendReadableWorkstreamEntry(activeWorkstreamEntry) ||
-      !selectedEntry
-    ) {
+    if (!activeWorkstreamPath || !selectedLaunchWorkstreamId || !selectedNodeId) {
       setSelectedNodeLaunchRecordLoading(false);
       setSelectedNodeLaunchRecordError(null);
       return;
     }
-    const target = {
-      graphPath: activeWorkstreamEntry.path,
-      nodeId: selectedEntry.node.id,
+    const target: LaunchOperationTarget = {
+      graphPath: activeWorkstreamPath,
+      workstreamId: selectedLaunchWorkstreamId,
+      nodeId: selectedNodeId,
     };
     let cancelled = false;
     setSelectedNodeLaunchRecordLoading(true);
@@ -1882,7 +2431,7 @@ function GraphDashboard({
     return () => {
       cancelled = true;
     };
-  }, [activeWorkstreamEntry, nodeLaunchRecordRefreshKey, selectedEntry]);
+  }, [activeWorkstreamPath, nodeLaunchRecordRefreshKey, selectedLaunchWorkstreamId, selectedNodeId]);
 
   const setLaunchOperation = useCallback((
     target: LaunchOperationTarget,
@@ -1893,7 +2442,30 @@ function GraphDashboard({
       ...current,
       [key]: nextOperation,
     }));
+    const companionState = companionStateFromOperation(nextOperation);
+    if (companionState) {
+      setCompanionLaunchByKey((current) => ({
+        ...current,
+        [key]: companionState,
+      }));
+    }
   }, []);
+
+  useEffect(() => {
+    setCompanionLaunchByKey((current) => {
+      let next: Record<string, CompanionLaunchState> | null = null;
+      for (const [key, operation] of Object.entries(launchOperationByKey)) {
+        const companionState = companionStateFromOperation(operation);
+        if (companionState && !sameCompanionLaunchState((next ?? current)[key], companionState)) {
+          next = {
+            ...(next ?? current),
+            [key]: companionState,
+          };
+        }
+      }
+      return next ?? current;
+    });
+  }, [launchOperationByKey]);
 
   const updateLaunchOperation = useCallback((
     target: LaunchOperationTarget,
@@ -1906,9 +2478,133 @@ function GraphDashboard({
     }));
   }, []);
 
+  // SSE progress events from /api/launch-preparations/runs/:id/events can
+  // arrive at 5-10+ events/sec per active preparation (one event per
+  // tool.started / tool.completed in the underlying Copilot SDK session).
+  // Each setLaunchOperationByKey call re-renders App and cascades through
+  // viewModel / runtimeOverlay / React Flow; with two simultaneous
+  // preparations this is enough to starve the 2-second graph polling and
+  // make the dashboard appear hung. Throttle by coalescing bursts into a
+  // single setState per PROGRESS_FLUSH_INTERVAL_MS window.
+  const PROGRESS_FLUSH_INTERVAL_MS = 120;
+  const pendingProgressEventsRef = useRef<
+    Map<string, { target: LaunchOperationTarget; events: PawLaunchProgressEvent[] }>
+  >(new Map());
+  const lastProgressFlushAtRef = useRef<number>(0);
+  const progressFlushTimerRef = useRef<number | null>(null);
+
+  const flushPendingProgressEvents = useCallback(() => {
+    if (progressFlushTimerRef.current !== null) {
+      window.clearTimeout(progressFlushTimerRef.current);
+      progressFlushTimerRef.current = null;
+    }
+    const pending = pendingProgressEventsRef.current;
+    if (pending.size === 0) {
+      return;
+    }
+    pendingProgressEventsRef.current = new Map();
+    lastProgressFlushAtRef.current = Date.now();
+    setLaunchOperationByKey((current) => {
+      let next: Record<string, NodeLaunchOperation> | null = null;
+      for (const [key, { target, events }] of pending) {
+        const op = (next ?? current)[key];
+        const baseOp = op ?? createClientLaunchOperation(target, "preparing");
+        const mergedProgress = events.reduce(appendProgressEvent, baseOp.progressEvents);
+        const latestTimestamp = events[events.length - 1]?.timestamp ?? baseOp.updatedAt;
+        const updated: NodeLaunchOperation = {
+          ...baseOp,
+          status: "preparing",
+          error: null,
+          updatedAt: latestTimestamp,
+          progressEvents: mergedProgress,
+        };
+        next = { ...(next ?? current), [key]: updated };
+      }
+      return next ?? current;
+    });
+  }, []);
+
+  const enqueueProgressEvent = useCallback(
+    (target: LaunchOperationTarget, event: PawLaunchProgressEvent) => {
+      const key = launchOperationKey(target);
+      const existing = pendingProgressEventsRef.current.get(key);
+      if (existing) {
+        existing.events.push(event);
+      } else {
+        pendingProgressEventsRef.current.set(key, { target, events: [event] });
+      }
+      const elapsed = Date.now() - lastProgressFlushAtRef.current;
+      if (elapsed >= PROGRESS_FLUSH_INTERVAL_MS) {
+        // First event after a quiet period (or the cooldown has elapsed
+        // since the previous flush) — apply immediately so single events
+        // feel responsive and tests that emit one progress event still see
+        // it without needing to advance fake timers.
+        flushPendingProgressEvents();
+      } else if (progressFlushTimerRef.current === null) {
+        progressFlushTimerRef.current = window.setTimeout(
+          flushPendingProgressEvents,
+          PROGRESS_FLUSH_INTERVAL_MS - elapsed,
+        );
+      }
+    },
+    [flushPendingProgressEvents],
+  );
+
+  const releaseStuckLaunchOperation = useCallback(
+    async (target: LaunchOperationTarget): Promise<void> => {
+      const response = await fetch("/api/node-launch-records/operations/release", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          graphPath: target.graphPath,
+          nodeId: target.nodeId,
+          reason: "Manually released from the node inspector.",
+        }),
+      });
+      if (!response.ok) {
+        const parsed = await parseErrorResponse(response);
+        throw new Error(parsed.message);
+      }
+      const body = (await response.json()) as { operation: NodeLaunchOperation };
+      setLaunchOperationByKey((current) => ({
+        ...current,
+        [launchOperationKey(target)]: body.operation,
+      }));
+    },
+    [],
+  );
+
+  const clearPreviousInit = useCallback(
+    async (target: LaunchOperationTarget): Promise<void> => {
+      await clearPreviousNodeLaunchInit(target);
+      const key = launchOperationKey(target);
+      setNodeLaunchRecords((current) => mergeNodeLaunchRecord(current, target, null));
+      setLaunchOperationByKey((current) => {
+        if (!Object.prototype.hasOwnProperty.call(current, key)) {
+          return current;
+        }
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+      setCompanionLaunchByKey((current) => {
+        if (!Object.prototype.hasOwnProperty.call(current, key)) {
+          return current;
+        }
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+      setNodeLaunchRecordRefreshKey((current) => current + 1);
+      await refreshSessions();
+    },
+    [refreshSessions],
+  );
+
   const prefetchPromptProfiles = useCallback(() => {
-    return onRefreshPromptProfiles();
-  }, [onRefreshPromptProfiles]);
+    void onRefreshPromptProfiles();
+    return onRefreshReviewPromptTemplates();
+  }, [onRefreshPromptProfiles, onRefreshReviewPromptTemplates]);
 
   useEffect(() => {
     if (!selectedLaunchTarget || !canLaunchSelectedNode) {
@@ -1954,6 +2650,59 @@ function GraphDashboard({
     );
     return message;
   }, [updateLaunchOperation]);
+
+  const applyPostPreparationUpdate = useCallback((
+    target: LaunchOperationTarget,
+    payload: PawLaunchRunFinishedPayload,
+    handoff?: PawLaunchPreparationResponse,
+  ) => {
+    if (payload.operation) {
+      setLaunchOperation(target, payload.operation);
+    } else if (payload.postPreparation?.terminal?.status === "launched") {
+      updateLaunchOperation(target, (current) =>
+        createClientLaunchOperation(target, "launched_pending_binding", {
+          ...(current ?? {}),
+          status: "launched_pending_binding",
+          handoff: handoff ?? current?.handoff ?? null,
+          terminalLaunch: payload.postPreparation?.terminal?.status === "launched"
+            ? payload.postPreparation.terminal.result
+            : current?.terminalLaunch ?? null,
+          error: null,
+          completedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        })
+      );
+    } else if (payload.postPreparation?.terminal?.status === "failed") {
+      updateLaunchOperation(target, (current) =>
+        createClientLaunchOperation(target, "terminal_failed", {
+          ...(current ?? {}),
+          status: "terminal_failed",
+          handoff: handoff ?? current?.handoff ?? null,
+          terminalLaunch: null,
+          error: operationError(
+            payload.postPreparation?.terminal?.status === "failed"
+              ? payload.postPreparation.terminal.error.code ?? "terminal_launch_failed"
+              : "terminal_launch_failed",
+            payload.postPreparation?.terminal?.status === "failed"
+              ? payload.postPreparation.terminal.error.error
+              : "Terminal launch failed.",
+          ),
+          completedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        })
+      );
+    }
+    const companionState = companionStateFromPostPreparationOutcome(payload.postPreparation);
+    if (companionState) {
+      setCompanionLaunchByKey((current) => ({
+        ...current,
+        [launchOperationKey(target)]: companionState,
+      }));
+    }
+    if (payload.operation || payload.postPreparation) {
+      setNodeLaunchRecordRefreshKey((current) => current + 1);
+    }
+  }, [setLaunchOperation, updateLaunchOperation]);
 
   const handleArchiveCurrent = async () => {
     if (!activeWorkstream) {
@@ -2157,6 +2906,11 @@ function GraphDashboard({
     input: PawTerminalLaunchInput,
     target: LaunchOperationTarget,
   ) => {
+    const operationKey = launchOperationKey(target);
+    setCompanionLaunchByKey((current) => ({
+      ...current,
+      [operationKey]: { launching: false, result: null, error: null },
+    }));
     updateLaunchOperation(target, (current) =>
       createClientLaunchOperation(target, "launching", {
         ...(current ?? {}),
@@ -2200,6 +2954,51 @@ function GraphDashboard({
         })
       );
       setNodeLaunchRecordRefreshKey((current) => current + 1);
+      if (input.reviewCompanion) {
+        setCompanionLaunchByKey((current) => ({
+          ...current,
+          [operationKey]: { launching: true, result: null, error: null },
+        }));
+        try {
+          const companionResponse = await fetch("/api/companion-terminal-launches", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              cwd: handoff.cwd,
+              kickoffPrompt: input.reviewCompanion.kickoffPrompt,
+              cliArgs: handoff.cliArgs,
+              preferredTerminal: handoff.terminal.preferredTerminal,
+              title: `${input.terminalTitle} REVIEW`,
+              tabColor: input.terminalColor,
+              launchBinding: {
+                workstreamId: handoff.launchMetadata.workstreamId,
+                nodeId: handoff.launchMetadata.nodeId,
+                branch: handoff.branch,
+                contextId: handoff.contextPackage.contextId,
+              },
+              ...(input.reviewCompanion.usePawReviewAgent ? {} : { usePawReviewAgent: false }),
+            }),
+          });
+          if (!companionResponse.ok) {
+            const parsed = await parseErrorResponse(companionResponse);
+            throw new Error(parsed.message);
+          }
+          const companionResult = await companionResponse.json() as CompanionTerminalLaunchResponse;
+          setCompanionLaunchByKey((current) => ({
+            ...current,
+            [operationKey]: { launching: false, result: companionResult, error: null },
+          }));
+        } catch (companionError: unknown) {
+          setCompanionLaunchByKey((current) => ({
+            ...current,
+            [operationKey]: {
+              launching: false,
+              result: null,
+              error: companionError instanceof Error ? companionError.message : String(companionError),
+            },
+          }));
+        }
+      }
     } catch (nextError) {
       updateLaunchOperation(target, (current) =>
         createClientLaunchOperation(target, "terminal_failed", {
@@ -2312,6 +3111,7 @@ function GraphDashboard({
     const cwdOverride = trimmedCwd && trimmedCwd !== trimmedInferredCwd
       ? trimmedCwd
       : undefined;
+    const postPreparation = postPreparationIntentFromConfiguration(configuration);
     writeLaunchCwdOverride(launchDefaults.cwdPreferenceKey, cwdOverride ?? null);
     updateLaunchOperation(target, (current) =>
       createClientLaunchOperation(target, "preparing", {
@@ -2344,6 +3144,7 @@ function GraphDashboard({
             cliArgs: configuration.cliArgs,
             terminal: configuration.terminal,
           },
+          ...(postPreparation ? { postPreparation } : {}),
         }),
       });
       if (!response.ok) {
@@ -2369,35 +3170,45 @@ function GraphDashboard({
         );
       }
 
-      const preparedHandoff = await new Promise<PawLaunchPreparationResponse>((resolve, reject) => {
+      const completion = await new Promise<PawLaunchRunCompletion>((resolve, reject) => {
         const source = new EventSource(
           `/api/launch-preparations/runs/${encodeURIComponent(started.runId ?? "")}/events`,
         );
         closeProgressStream = () => source.close();
         source.addEventListener("progress", (event) => {
           const progress = parseMessageEventData<PawLaunchProgressEvent>(event);
-          updateLaunchOperation(target, (current) => {
-            const operation = current ?? createClientLaunchOperation(target, "preparing");
-            return {
-              ...operation,
-              status: "preparing",
-              error: null,
-              updatedAt: progress.timestamp,
-              progressEvents: appendProgressEvent(operation.progressEvents, progress),
-            };
-          });
+          enqueueProgressEvent(target, progress);
         });
+        const handlePostPreparationEvent = (event: Event) => {
+          flushPendingProgressEvents();
+          applyPostPreparationUpdate(target, parseMessageEventData<PawLaunchRunFinishedPayload>(event));
+        };
+        source.addEventListener("terminal_launched", handlePostPreparationEvent);
+        source.addEventListener("terminal_failed", handlePostPreparationEvent);
+        source.addEventListener("companion_launched", handlePostPreparationEvent);
+        source.addEventListener("companion_failed", handlePostPreparationEvent);
         source.addEventListener("completed", (event) => {
+          flushPendingProgressEvents();
           const payload = parseMessageEventData<PawLaunchRunFinishedPayload>(event);
           const handoff = payload.result;
           if (!handoff) {
             reject(new Error("Launch preparation completed without a handoff."));
             return;
           }
-          const nextHandoff = applyPreparedLaunchHandoff(target, handoff);
-          resolve(nextHandoff);
+          const nextHandoff = clientHandoffFromPreparation(handoff);
+          if (payload.postPreparation || payload.operation) {
+            applyPostPreparationUpdate(target, payload, nextHandoff);
+          } else {
+            applyPreparedLaunchHandoff(target, handoff);
+          }
+          resolve({
+            handoff: nextHandoff,
+            postPreparation: payload.postPreparation,
+            operation: payload.operation,
+          });
         });
         source.addEventListener("failed", (event) => {
+          flushPendingProgressEvents();
           const payload = parseMessageEventData<PawLaunchRunFinishedPayload>(event);
           const message = applyPreparationFailure(target, payload);
           reject(new Error(message));
@@ -2406,13 +3217,14 @@ function GraphDashboard({
           reject(new Error("Lost connection to launch preparation progress stream."));
         };
       });
-      if (preparedHandoff.runtimeKind === "managed-sdk") {
-        await launchManagedSdkFromHandoff(preparedHandoff, target);
-      } else if (configuration.launchAfterInit) {
-        await launchTerminalFromHandoff(preparedHandoff, {
-          kickoffPrompt: preparedHandoff.kickoffPrompt,
-          terminalTitle: preparedHandoff.terminal.title ?? preparedHandoff.launchMetadata.workTitle,
-          terminalColor: preparedHandoff.terminal.tabColor ?? null,
+      if (completion.handoff.runtimeKind === "managed-sdk") {
+        await launchManagedSdkFromHandoff(completion.handoff, target);
+      } else if (configuration.launchAfterInit && !postPreparation) {
+        await launchTerminalFromHandoff(completion.handoff, {
+          kickoffPrompt: completion.handoff.kickoffPrompt,
+          terminalTitle: completion.handoff.terminal.title ?? completion.handoff.launchMetadata.workTitle,
+          terminalColor: completion.handoff.terminal.tabColor ?? null,
+          reviewCompanion: configuration.reviewCompanion,
         }, target);
       }
     } catch (nextError) {
@@ -2460,6 +3272,14 @@ function GraphDashboard({
     ) {
       return;
     }
+    if (!isDocumentVisible) {
+      // Tab is hidden — don't open a fresh preparation-progress SSE that
+      // would burn one of the browser's per-origin HTTP/1.1 connection
+      // slots. When the tab becomes visible again this effect re-runs and
+      // the reattach picks up wherever the backend run is at; status
+      // updates persisted server-side mean nothing is lost.
+      return;
+    }
     const runId = launchDialogOperation.preparationRunId;
     if (localRunStreamsRef.current.has(runId) || failedRunReattachRef.current.has(runId)) {
       return;
@@ -2474,25 +3294,33 @@ function GraphDashboard({
         return;
       }
       const progress = parseMessageEventData<PawLaunchProgressEvent>(event);
-      updateLaunchOperation(target, (current) => {
-        const operation = current ?? createClientLaunchOperation(target, "preparing");
-        return {
-          ...operation,
-          status: "preparing",
-          error: null,
-          updatedAt: progress.timestamp,
-          progressEvents: appendProgressEvent(operation.progressEvents, progress),
-        };
-      });
+      enqueueProgressEvent(target, progress);
     });
+    const handlePostPreparationEvent = (event: Event) => {
+      if (closed) {
+        return;
+      }
+      flushPendingProgressEvents();
+      applyPostPreparationUpdate(target, parseMessageEventData<PawLaunchRunFinishedPayload>(event));
+    };
+    source.addEventListener("terminal_launched", handlePostPreparationEvent);
+    source.addEventListener("terminal_failed", handlePostPreparationEvent);
+    source.addEventListener("companion_launched", handlePostPreparationEvent);
+    source.addEventListener("companion_failed", handlePostPreparationEvent);
     source.addEventListener("completed", (event) => {
       if (closed) {
         return;
       }
+      flushPendingProgressEvents();
       const payload = parseMessageEventData<PawLaunchRunFinishedPayload>(event);
       if (payload.result) {
-        const nextHandoff = applyPreparedLaunchHandoff(target, payload.result);
-        if (nextHandoff.runtimeKind === "managed-sdk") {
+        const nextHandoff = clientHandoffFromPreparation(payload.result);
+        if (payload.postPreparation || payload.operation) {
+          applyPostPreparationUpdate(target, payload, nextHandoff);
+        } else {
+          applyPreparedLaunchHandoff(target, payload.result);
+        }
+        if (nextHandoff.runtimeKind === "managed-sdk" && !payload.postPreparation) {
           void launchManagedSdkFromHandoff(nextHandoff, target);
         }
       }
@@ -2502,6 +3330,7 @@ function GraphDashboard({
       if (closed) {
         return;
       }
+      flushPendingProgressEvents();
       applyPreparationFailure(target, parseMessageEventData<PawLaunchRunFinishedPayload>(event));
       source.close();
     });
@@ -2516,7 +3345,7 @@ function GraphDashboard({
           if (closed) {
             return;
           }
-          if (sameLaunchTarget(target, selectedLaunchTarget)) {
+          if (sameLaunchTarget(target, selectedLaunchTargetRef.current)) {
             setNodeLaunchRecords((current) =>
               mergeNodeLaunchRecord(current, target, state.record)
             );
@@ -2537,13 +3366,16 @@ function GraphDashboard({
     };
   }, [
     applyPreparationFailure,
+    applyPostPreparationUpdate,
     applyPreparedLaunchHandoff,
+    enqueueProgressEvent,
+    flushPendingProgressEvents,
+    isDocumentVisible,
     launchDialogOpen,
     launchDialogOperation?.preparationRunId,
     launchDialogOperation?.status,
     launchDialogTarget,
     launchManagedSdkFromHandoff,
-    selectedLaunchTarget,
     setLaunchOperation,
     updateLaunchOperation,
   ]);
@@ -2642,6 +3474,16 @@ function GraphDashboard({
             onOpenConsole={() => setManagedConsoleOverlayOpen(true)}
             onOpenConsoleInSessions={openSelectedConsoleInSessions}
             onManagedRuntimeActionComplete={sessionList.refresh}
+            onReleaseStuckOperation={
+              selectedLaunchTarget
+                ? () => releaseStuckLaunchOperation(selectedLaunchTarget)
+                : undefined
+            }
+            onClearPreviousInit={
+              selectedLaunchTarget
+                ? () => clearPreviousInit(selectedLaunchTarget)
+                : undefined
+            }
           />
         </div>
       </div>
@@ -2651,9 +3493,15 @@ function GraphDashboard({
           nodeTitle={launchDialogEntry.node.title}
           defaults={launchDefaults}
           defaultPromptProfileId={workstream.launchDefaults?.promptProfileId ?? null}
+          defaultLaunchAfterInit={workstream.launchDefaults?.launchAfterInit ?? false}
+          defaultReviewCompanion={workstream.launchDefaults?.reviewCompanion ?? false}
+          defaultReviewPromptTemplateId={workstream.launchDefaults?.reviewPromptTemplateId ?? null}
           promptProfiles={promptProfiles}
           promptProfilesLoading={promptProfilesLoading}
           promptProfilesError={promptProfilesError}
+          reviewPromptTemplates={reviewPromptTemplates}
+          reviewPromptTemplatesLoading={reviewPromptTemplatesLoading}
+          reviewPromptTemplatesError={reviewPromptTemplatesError}
           preparing={
             launchDialogOperation?.status === "preparing"
           }
@@ -2672,10 +3520,14 @@ function GraphDashboard({
           resumingLaunch={launchResuming}
           resumeError={launchResumeError}
           resumeStatus={launchResumeStatus}
+          companionLaunching={launchDialogCompanion?.launching ?? false}
+          companionLaunchError={launchDialogCompanion?.error ?? null}
+          companionLaunchResult={launchDialogCompanion?.result ?? null}
           onCancel={handleCloseLaunchDialog}
           onSubmit={handleSubmitLaunch}
           onLaunchTerminal={handleLaunchTerminal}
           onPromptProfilesChanged={onPromptProfilesChanged}
+          onReviewPromptTemplatesChanged={onReviewPromptTemplatesChanged}
           onReleaseLaunch={launchDialogLatestClaim?.blocksLaunch ? handleReleaseLaunch : undefined}
           onResumeLaunch={canResumeBackgroundLaunch ? handleResumeBackgroundLaunch : undefined}
         />
@@ -2700,6 +3552,9 @@ function GraphDashboard({
           promptProfiles={promptProfiles}
           promptProfilesLoading={promptProfilesLoading}
           promptProfilesError={promptProfilesError}
+          reviewPromptTemplates={reviewPromptTemplates}
+          reviewPromptTemplatesLoading={reviewPromptTemplatesLoading}
+          reviewPromptTemplatesError={reviewPromptTemplatesError}
           saving={configurationSaving}
           error={configurationError}
           onCancel={handleCloseConfigurationDialog}
@@ -2739,13 +3594,19 @@ function SettingsPage({
   onRefreshProfiles,
   onProfilesChanged,
   onProfileDeleted,
+  reviewTemplates,
+  reviewTemplatesLoading,
+  reviewTemplatesError,
+  onRefreshReviewTemplates,
+  onReviewTemplatesChanged,
+  onReviewTemplateDeleted,
   sessionLaunchSettings,
   sessionLaunchSettingsLoading,
   sessionLaunchSettingsError,
   onRefreshSessionLaunchSettings,
   onSessionLaunchSettingsChanged,
 }: {
-  section: "profiles" | "session-launch";
+  section: "profiles" | "review-templates" | "session-launch";
   onRouteChange: (route: DashboardRoute) => void | Promise<void>;
   profiles: PawPromptProfile[];
   profilesLoading: boolean;
@@ -2753,6 +3614,12 @@ function SettingsPage({
   onRefreshProfiles: () => Promise<void>;
   onProfilesChanged: (profiles: PawPromptProfile[]) => void;
   onProfileDeleted: (profileId: string) => void;
+  reviewTemplates: PawReviewPromptTemplate[];
+  reviewTemplatesLoading: boolean;
+  reviewTemplatesError: string | null;
+  onRefreshReviewTemplates: () => Promise<void>;
+  onReviewTemplatesChanged: (templates: PawReviewPromptTemplate[]) => void;
+  onReviewTemplateDeleted: (templateId: string) => void;
   sessionLaunchSettings: SessionLaunchSettings | null;
   sessionLaunchSettingsLoading: boolean;
   sessionLaunchSettingsError: string | null;
@@ -2760,7 +3627,7 @@ function SettingsPage({
   onSessionLaunchSettingsChanged: (settings: SessionLaunchSettings) => void;
 }) {
   const renderNavItem = (
-    itemSection: "profiles" | "session-launch",
+    itemSection: "profiles" | "review-templates" | "session-launch",
     label: string,
     description: string,
   ) => {
@@ -2788,6 +3655,7 @@ function SettingsPage({
           <nav className="sl-settings-nav" aria-label="Streamliner settings">
             {renderNavItem("session-launch", "Session launch", "Copilot CLI defaults")}
             {renderNavItem("profiles", "PAW profiles", "Launch prompt defaults")}
+            {renderNavItem("review-templates", "PAW Review templates", "Companion review prompts")}
           </nav>
         </aside>
         <main className="sl-settings-content">
@@ -2799,6 +3667,15 @@ function SettingsPage({
               onRefresh={onRefreshProfiles}
               onProfilesChanged={onProfilesChanged}
               onProfileDeleted={onProfileDeleted}
+            />
+          ) : section === "review-templates" ? (
+            <PawReviewTemplatesPage
+              templates={reviewTemplates}
+              loading={reviewTemplatesLoading}
+              error={reviewTemplatesError}
+              onRefresh={onRefreshReviewTemplates}
+              onTemplatesChanged={onReviewTemplatesChanged}
+              onTemplateDeleted={onReviewTemplateDeleted}
             />
           ) : (
             <SessionLaunchSettingsPage
@@ -2903,8 +3780,50 @@ export default function App() {
   const { route, setRoute } = useDashboardRoute();
   const graphLoader = useGraphLoader(route, true);
   const promptProfileState = usePromptProfilesState();
+  const reviewPromptTemplateState = useReviewPromptTemplatesState();
   const sessionLaunchSettingsState = useSessionLaunchSettingsState();
   const beforeLeaveRef = useRef<(() => Promise<boolean>) | null>(null);
+
+  // Keep the browser tab title in sync with the active route + workstream so
+  // the user can pick the right tab when several Streamliner views are open.
+  useEffect(() => {
+    const base = "Streamliner";
+    let suffix: string | null = null;
+    switch (route.view) {
+      case "landing":
+        suffix = null;
+        break;
+      case "workstreams":
+        suffix = "Workstreams";
+        break;
+      case "sessions":
+        suffix = "Sessions";
+        break;
+      case "settings":
+        suffix = route.section === "profiles"
+          ? "Settings · PAW profiles"
+          : route.section === "review-templates"
+            ? "Settings · PAW Review templates"
+          : "Settings · Session launch";
+        break;
+      case "workstream": {
+        // Prefer the loaded document title; fall back to the workstreamId
+        // segment so the tab still differentiates while the document is
+        // still loading or failed to load.
+        const loaded = graphLoader.workstream;
+        const matchesRoute =
+          loaded
+          && loaded.projectKey === route.projectKey
+          && loaded.id === route.workstreamId;
+        suffix = matchesRoute ? loaded.title : route.workstreamId;
+        break;
+      }
+    }
+    document.title = suffix ? `${base}: ${suffix}` : base;
+  }, [
+    route,
+    graphLoader.workstream,
+  ]);
 
   const handleRouteChange = useCallback(
     async (nextRoute: DashboardRoute) => {
@@ -2982,6 +3901,12 @@ export default function App() {
           onRefreshProfiles={promptProfileState.refresh}
           onProfilesChanged={promptProfileState.noteProfilesChanged}
           onProfileDeleted={promptProfileState.noteProfileDeleted}
+          reviewTemplates={reviewPromptTemplateState.templates}
+          reviewTemplatesLoading={reviewPromptTemplateState.loading}
+          reviewTemplatesError={reviewPromptTemplateState.error}
+          onRefreshReviewTemplates={reviewPromptTemplateState.refresh}
+          onReviewTemplatesChanged={reviewPromptTemplateState.noteTemplatesChanged}
+          onReviewTemplateDeleted={reviewPromptTemplateState.noteTemplateDeleted}
           sessionLaunchSettings={sessionLaunchSettingsState.responseError ? null : sessionLaunchSettingsState.settings}
           sessionLaunchSettingsLoading={sessionLaunchSettingsState.loading}
           sessionLaunchSettingsError={sessionLaunchSettingsState.error}
@@ -3015,6 +3940,11 @@ export default function App() {
           promptProfilesError={promptProfileState.error}
           onRefreshPromptProfiles={promptProfileState.refresh}
           onPromptProfilesChanged={promptProfileState.noteProfilesChanged}
+          reviewPromptTemplates={reviewPromptTemplateState.templates}
+          reviewPromptTemplatesLoading={reviewPromptTemplateState.loading}
+          reviewPromptTemplatesError={reviewPromptTemplateState.error}
+          onRefreshReviewPromptTemplates={reviewPromptTemplateState.refresh}
+          onReviewPromptTemplatesChanged={reviewPromptTemplateState.noteTemplatesChanged}
           sessionLaunchSettings={sessionLaunchSettingsState.settings}
         />
       ) : route.view === "workstreams" ? (

@@ -248,6 +248,32 @@ describe("DefaultManagedSdkRunner", () => {
     await flushManagedTurn();
   });
 
+  it("maps a tool execution start event to progress and running lifecycle in the same tick", async () => {
+    sdkMock.session.sendAndWait.mockImplementationOnce(() => new Promise(() => undefined));
+    const capture = createCapture();
+    const runner = new DefaultManagedSdkRunner();
+    await runner.start(createStartInput(capture));
+    const config = sdkMock.sessionConfigs[0] as {
+      onEvent?: (event: { type: string; data?: Record<string, unknown> }) => unknown;
+    };
+
+    const progressCount = capture.progress.length;
+    const stateCount = capture.states.length;
+    config.onEvent?.({
+      type: "tool.execution_start",
+      data: { toolName: "powershell", args: "raw command" },
+    });
+
+    expect(capture.progress.slice(progressCount)).toEqual([
+      expect.objectContaining({
+        type: "tool_started",
+        message: "Run shell command",
+        data: expect.objectContaining({ toolName: "powershell" }),
+      }),
+    ]);
+    expect(capture.states.slice(stateCount)).toEqual(["running"]);
+  });
+
   it("coalesces concurrent interrupts into one SDK abort", async () => {
     sdkMock.session.sendAndWait.mockImplementationOnce(() => new Promise(() => undefined));
     let releaseAbort: (() => void) | undefined;

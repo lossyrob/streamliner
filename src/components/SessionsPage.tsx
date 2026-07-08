@@ -12,6 +12,7 @@ import {
 import {
   sessionRegistryRecordToListItem,
   type SessionRegistryListItem,
+  type SessionRegistryListOptions,
   type SessionRegistryPatch,
 } from "../session-registry-contract";
 import type { SessionRegistryRecord } from "../session-registry-schema";
@@ -29,13 +30,16 @@ import {
   canLoadWorkstreamGraph,
   findGraphBindingWorkstreamMatches,
   resolveSessionWorkstreamLinkage,
+  UNBOUND_SESSION_WORKSTREAM_GROUP,
   workstreamRegistryKey,
   type SessionWorkstreamLinkageResolution,
   type WorkstreamGraphLoadState,
   type WorkstreamRouteTarget,
 } from "../session-workstream-linkage";
+import { sessionRegistryEffectiveGraphBinding } from "../session-registry-filter";
 import type { WorkstreamRegistryListEntry } from "../workstream-registry-contract";
 import { parseWorkstreamDocument } from "../workstream-view-model";
+import { useIsDocumentVisible } from "../use-document-visibility";
 import {
   buildRestartCommand,
   canManuallyStop,
@@ -49,6 +53,7 @@ import {
   activitySignalClass,
   activityStatusClass,
   activityStatusHint,
+  getEffectiveActivityStatus,
   getActivityStatusDescription,
   getActivityStatusLabel,
   getActivityTimestamp,
@@ -65,13 +70,33 @@ import {
   ManagedRuntimeConsolePanel,
 } from "./ManagedRuntimeConsolePanel";
 import { isManagedRuntimeConsoleLive } from "./ManagedSessionConsoleEvents";
-import { sessionRegistryListUrl } from "../session-registry-client";
+import {
+  eventRegistryId,
+  runtimeUpdatedPayload,
+  sessionFromEventPayload,
+  sessionMatchesQuery,
+  sessionRegistryEventsUrl,
+  sessionRegistryListUrl,
+  sessionsFromSnapshotPayload,
+} from "../session-registry-client";
+import {
+  githubStatusForRef,
+  useGithubStatusLookup,
+} from "../github-status-client";
+import {
+  type GithubStatusRef,
+  type GithubStatusResult,
+  githubStatusTone,
+} from "../github-status";
 
 const SESSION_POLL_INTERVAL_MS = 15_000;
 const SESSION_EVENT_REFETCH_DEBOUNCE_MS = 150;
+const SESSION_EVENT_STALE_MS = 35_000;
+const SESSION_QUERY_DEBOUNCE_MS = 250;
 const DEFAULT_STALE_SESSION_DAYS = 7;
 const SESSION_STALE_DAYS_STORAGE_KEY = "streamliner:sessionsStaleDays";
 const SESSION_GROUP_MODE_STORAGE_KEY = "streamliner:sessionsGroupMode";
+const SESSION_FACET_ALL = "__all__";
 
 type GroupMode = "recency" | "repo" | "folder" | "workstream" | "flat";
 type SessionsViewTab = "list" | "consoles";
@@ -97,6 +122,7 @@ interface SessionDraft {
   branch: string;
   tagsText: string;
   lifecycleStatus: "active" | "paused" | "archived" | "ended";
+  graphBinding: SessionRegistryListItem["graphBinding"];
 }
 
 type SaveState = "idle" | "saving" | "saved" | "error";
@@ -121,6 +147,7 @@ function draftFromSession(session: SessionRegistryListItem): SessionDraft {
     branch: session.branch ?? "",
     tagsText: session.tags.join(", "),
     lifecycleStatus: session.lifecycleStatus,
+    graphBinding: session.graphBinding ? { ...session.graphBinding } : null,
   };
 }
 
@@ -134,6 +161,7 @@ function createEmptyDraft(): SessionDraft {
     branch: "",
     tagsText: "",
     lifecycleStatus: "active",
+    graphBinding: null,
   };
 }
 
@@ -157,6 +185,7 @@ function draftKey(draft: SessionDraft): string {
     branch: draft.branch,
     tags: normalizeTags(draft.tagsText),
     lifecycleStatus: draft.lifecycleStatus,
+    graphBinding: draft.graphBinding,
   });
 }
 
@@ -181,6 +210,9 @@ function buildPatch(
   const nextTags = normalizeTags(draft.tagsText);
   if (JSON.stringify(nextTags) !== JSON.stringify(session.tags)) {
     patch.tags = nextTags;
+  }
+  if (JSON.stringify(draft.graphBinding ?? null) !== JSON.stringify(session.graphBinding ?? null)) {
+    patch.graphBinding = draft.graphBinding;
   }
 
   if (
@@ -268,7 +300,6 @@ function builderSnapshotKey(session: SessionRegistryListItem | null): string | n
   }
   return JSON.stringify({
     id: session.id,
-    version: session.version,
     title: session.title,
     description: session.description,
     lifecycleStatus: session.lifecycleStatus,
@@ -276,6 +307,15 @@ function builderSnapshotKey(session: SessionRegistryListItem | null): string | n
     tags: session.tags,
     graphBinding: session.graphBinding,
   });
+}
+
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedValue(value), delayMs);
+    return () => clearTimeout(timer);
+  }, [delayMs, value]);
+  return debouncedValue;
 }
 
 function statusClass(status: SessionRegistryListItem["lifecycleStatus"]): string {
@@ -635,6 +675,15 @@ function githubRefRepo(ref: DerivedGithubRef, session: SessionRegistryListItem):
   return ref.repo ?? session.repo;
 }
 
+function githubRepoParts(repo: string | null): { owner: string; repo: string } | null {
+  const trimmed = repo?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const match = trimmed.match(/^([\w.-]+)\/([\w.-]+)$/);
+  return match ? { owner: match[1], repo: match[2] } : null;
+}
+
 function normalizeGithubRepoForUrl(repo: string | null): string | null {
   const trimmed = repo?.trim();
   if (!trimmed) {
@@ -666,6 +715,51 @@ function safeGithubRefUrl(url: string | null): string | null {
   return null;
 }
 
+function githubStatusRefForDerivedRef(
+  ref: DerivedGithubRef,
+  session: SessionRegistryListItem,
+): GithubStatusRef | null {
+  if (ref.type !== "issue" && ref.type !== "pr") {
+    return null;
+  }
+  const repo = githubRepoParts(githubRefRepo(ref, session));
+  if (!repo) {
+    return null;
+  }
+  return {
+    type: ref.type,
+    owner: repo.owner,
+    repo: repo.repo,
+    number: ref.number,
+  };
+}
+
+function githubStatusRefsForSessions(
+  sessions: readonly SessionRegistryListItem[],
+  selectedSession: SessionRegistryListItem | null,
+): GithubStatusRef[] {
+  const seen = new Set<string>();
+  const refs: GithubStatusRef[] = [];
+  const sourceSessions = selectedSession
+    ? [...sessions, selectedSession]
+    : sessions;
+  for (const session of sourceSessions) {
+    for (const ref of session.derivedGithubRefs) {
+      const statusRef = githubStatusRefForDerivedRef(ref, session);
+      if (!statusRef) {
+        continue;
+      }
+      const key = `${statusRef.type}:${statusRef.owner}/${statusRef.repo}#${statusRef.number}`.toLowerCase();
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      refs.push(statusRef);
+    }
+  }
+  return refs;
+}
+
 function githubRefUrl(ref: DerivedGithubRef, session: SessionRegistryListItem): string | null {
   const explicitUrl = safeGithubRefUrl(ref.url);
   if (explicitUrl) {
@@ -686,31 +780,48 @@ interface GithubRefChipProps {
   refItem: DerivedGithubRef;
   session: SessionRegistryListItem;
   className: string;
+  status?: GithubStatusResult | null;
   showRepo?: boolean;
 }
 
-function GithubRefChip({ refItem, session, className, showRepo = false }: GithubRefChipProps) {
+function GithubRefChip({
+  refItem,
+  session,
+  className,
+  status = null,
+  showRepo = false,
+}: GithubRefChipProps) {
   const label = githubRefLabel(refItem);
   const repo = githubRefRepo(refItem, session);
   const url = githubRefUrl(refItem, session);
+  const statusClass = status ? ` github-status ${githubStatusTone(status)}` : "";
+  const statusTitle = status?.error
+    ? `${status.statusLabel}: ${status.error.message}`
+    : status?.statusLabel;
   const content = (
     <>
       {label}
       {showRepo && repo ? ` · ${repo}` : ""}
+      {status ? ` · ${status.statusLabel}` : ""}
     </>
   );
 
   if (!url) {
-    return <span className={className}>{content}</span>;
+    return (
+      <span className={`${className}${statusClass}`} title={statusTitle}>
+        {content}
+      </span>
+    );
   }
 
   return (
     <a
-      className={`${className} linkable`}
+      className={`${className}${statusClass} linkable`}
       href={url}
       target="_blank"
       rel="noopener noreferrer"
-      aria-label={`Open ${label} in GitHub`}
+      aria-label={`Open ${statusTitle ? `${label} (${statusTitle})` : label} in GitHub`}
+      title={statusTitle}
       onClick={(event) => event.stopPropagation()}
     >
       {content}
@@ -767,6 +878,8 @@ function workstreamLinkageTitle(
   switch (linkage.status) {
     case "resolved":
       return "Open bound workstream node";
+    case "workstream-only":
+      return "Open assigned workstream";
     case "graph-loading":
       return linkage.note ?? "Resolving bound workstream node";
     case "graph-unavailable":
@@ -785,6 +898,8 @@ function workstreamLinkageStatusLabel(
   switch (linkage.status) {
     case "resolved":
       return "Resolved";
+    case "workstream-only":
+      return "Workstream assigned";
     case "graph-loading":
       return "Resolving node";
     case "graph-unavailable":
@@ -946,6 +1061,12 @@ interface SessionGroup {
   sessions: SessionRegistryListItem[];
 }
 
+interface SessionFacetOption {
+  value: string;
+  label: string;
+  count: number;
+}
+
 function repoGroupKey(session: SessionRegistryListItem): string {
   return session.repo ?? "__no_repo__";
 }
@@ -960,6 +1081,42 @@ function displayRepoLabel(repoKey: string): { label: string; code: string | null
   }
   const shortName = repoKey.includes("/") ? repoKey.split("/").slice(-1)[0] : repoKey;
   return { label: shortName, code: repoKey };
+}
+
+function buildRepoFacetOptions(sessions: readonly SessionRegistryListItem[]): SessionFacetOption[] {
+  const counts = new Map<string, number>();
+  for (const session of sessions) {
+    const key = repoGroupKey(session);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([value, count]) => {
+      const display = displayRepoLabel(value);
+      return {
+        value,
+        label: display.code ?? display.label,
+        count,
+      };
+    })
+    .sort((left, right) => left.label.localeCompare(right.label));
+}
+
+function buildWorkstreamFacetOptions(
+  sessions: readonly SessionRegistryListItem[],
+  linkages: ReadonlyMap<string, SessionWorkstreamLinkageResolution>,
+): SessionFacetOption[] {
+  const counts = new Map<string, { label: string; count: number }>();
+  for (const session of sessions) {
+    const group = linkages.get(session.id)?.group ?? UNBOUND_SESSION_WORKSTREAM_GROUP;
+    const existing = counts.get(group.key);
+    counts.set(group.key, {
+      label: group.code ?? group.label,
+      count: (existing?.count ?? 0) + 1,
+    });
+  }
+  return [...counts.entries()]
+    .map(([value, option]) => ({ value, ...option }))
+    .sort((left, right) => left.label.localeCompare(right.label));
 }
 
 function displayFolderLabel(folderKey: string): { label: string; code: string | null } {
@@ -1081,6 +1238,12 @@ function groupSessions(
     groups.sort((a, b) => (order[a.key as RecencyBucketKey] ?? 99) - (order[b.key as RecencyBucketKey] ?? 99));
   } else if (mode === "workstream") {
     groups.sort((a, b) => {
+      if (a.key === UNBOUND_SESSION_WORKSTREAM_GROUP.key && b.key !== UNBOUND_SESSION_WORKSTREAM_GROUP.key) {
+        return 1;
+      }
+      if (b.key === UNBOUND_SESSION_WORKSTREAM_GROUP.key && a.key !== UNBOUND_SESSION_WORKSTREAM_GROUP.key) {
+        return -1;
+      }
       if (a.order !== b.order) {
         return a.order - b.order;
       }
@@ -1202,6 +1365,8 @@ export function SessionsPage({
   const [viewTab, setViewTab] = useState<SessionsViewTab>(
     routeTab === "consoles" ? "consoles" : "list",
   );
+  const [repoFacet, setRepoFacet] = useState(SESSION_FACET_ALL);
+  const [workstreamFacet, setWorkstreamFacet] = useState(SESSION_FACET_ALL);
   const [staleSessionDays, setStaleSessionDays] = useState(readStaleSessionDays);
   const [groupMode, setGroupMode] = useState<GroupMode>(readGroupMode);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -1221,12 +1386,17 @@ export function SessionsPage({
   const [syncState, setSyncState] = useState<SyncState>("connecting");
   const [conflictPending, setConflictPending] = useState<SessionConflictState | null>(null);
   const [creatingState, setCreatingState] = useState<SaveState>("idle");
+  const [githubStatusRefreshKey, setGithubStatusRefreshKey] = useState(0);
   const eventRefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const eventStreamLiveRef = useRef(false);
+  const lastStreamEventAtRef = useRef(0);
+  const isDocumentVisible = useIsDocumentVisible();
   const skipUnmountFlushRef = useRef(false);
   const saveRequestIdRef = useRef(0);
   // Frozen group order per mode. Filled lazily on first render for a mode; cleared by Resort.
   const frozenOrderRef = useRef<Partial<Record<GroupMode, string[]>>>({});
   const creatingRef = useLatestValue(creating);
+  const sessionsRef = useLatestValue(sessions);
   const selectedIdRef = useLatestValue(selectedId);
   const draftRef = useLatestValue(draft);
   const selectedSnapshotRef = useLatestValue(selectedSnapshot);
@@ -1235,91 +1405,117 @@ export function SessionsPage({
   const workstreamGraphsRef = useLatestValue(workstreamGraphs);
   const mountedRef = useRef(false);
   const loadingWorkstreamGraphKeysRef = useRef(new Set<string>());
+  const debouncedQuery = useDebouncedValue(query, SESSION_QUERY_DEBOUNCE_MS);
+
+  const sessionListQuery = useMemo(
+    () => ({
+      includeArchived: showArchived,
+      text: debouncedQuery,
+      workstreamId: routeWorkstreamId,
+      nodeId: routeNodeId,
+    }),
+    [debouncedQuery, routeNodeId, routeWorkstreamId, showArchived],
+  );
+  const sessionMatchOptions = useMemo<SessionRegistryListOptions>(
+    () => ({
+      includeArchived: showArchived,
+      text: debouncedQuery,
+      workstreamId: routeWorkstreamId?.trim() ? routeWorkstreamId : undefined,
+      nodeId: routeNodeId?.trim() ? routeNodeId : undefined,
+    }),
+    [debouncedQuery, routeNodeId, routeWorkstreamId, showArchived],
+  );
+  const sessionEventsUrl = useMemo(
+    () => sessionRegistryEventsUrl(sessionListQuery),
+    [sessionListQuery],
+  );
 
   const applySessionList = useCallback(
     (nextSessions: SessionRegistryListItem[], keepSelection = true) => {
+      sessionsRef.current = nextSessions;
       setSessions(nextSessions);
+      setGithubStatusRefreshKey((current) => current + 1);
       setError(null);
-        const currentCreating = creatingRef.current;
-        const currentSelectedId = selectedIdRef.current;
-        const currentSelectedSnapshot = selectedSnapshotRef.current;
-        const currentDraft = draftRef.current;
-        const currentSaveState = saveStateRef.current;
-        if (!keepSelection) {
-          return;
-        }
-        if (currentCreating) {
+      const currentCreating = creatingRef.current;
+      const currentSelectedId = selectedIdRef.current;
+      const currentSelectedSnapshot = selectedSnapshotRef.current;
+      const currentDraft = draftRef.current;
+      const currentSaveState = saveStateRef.current;
+      if (!keepSelection) {
+        return;
+      }
+      if (currentCreating) {
+        return;
+      }
+
+      if (currentSelectedId) {
+        const matching =
+          nextSessions.find((session) => session.id === currentSelectedId) ?? null;
+        if (!matching) {
+          setSelectedId(null);
+          setSelectedSnapshot(null);
+          setDraft(createEmptyDraft());
+          setSaveState("idle");
+          setConflictPending(null);
+          setSheetOpen(false);
           return;
         }
 
-        if (currentSelectedId) {
-          const matching =
-            nextSessions.find((session) => session.id === currentSelectedId) ?? null;
-          if (!matching) {
-            setSelectedId(null);
-            setSelectedSnapshot(null);
-            setDraft(createEmptyDraft());
-            setSaveState("idle");
-            setConflictPending(null);
-            setSheetOpen(false);
-            return;
+        const currentDraftKey = draftKey(currentDraft);
+        const snapshotDraftKey = currentSelectedSnapshot
+          ? draftKey(draftFromSession(currentSelectedSnapshot))
+          : null;
+        const nextSnapshotKey = sessionSnapshotKey(matching);
+        const currentSnapshotKey = sessionSnapshotKey(currentSelectedSnapshot);
+        const nextBuilderKey = builderSnapshotKey(matching);
+        const currentBuilderKey = builderSnapshotKey(currentSelectedSnapshot);
+        if (
+          currentSaveState !== "saving" &&
+          currentSelectedSnapshot &&
+          currentDraftKey === snapshotDraftKey
+        ) {
+          const nextDraft = draftFromSession(matching);
+          if (currentSnapshotKey !== nextSnapshotKey) {
+            setSelectedSnapshot(matching);
+            setSaveError(null);
           }
-
-          const currentDraftKey = draftKey(currentDraft);
-          const snapshotDraftKey = currentSelectedSnapshot
-            ? draftKey(draftFromSession(currentSelectedSnapshot))
-            : null;
-          const nextSnapshotKey = sessionSnapshotKey(matching);
-          const currentSnapshotKey = sessionSnapshotKey(currentSelectedSnapshot);
-          const nextBuilderKey = builderSnapshotKey(matching);
-          const currentBuilderKey = builderSnapshotKey(currentSelectedSnapshot);
-          if (
-            currentSaveState !== "saving" &&
-            currentSelectedSnapshot &&
-            currentDraftKey === snapshotDraftKey
-          ) {
-            const nextDraft = draftFromSession(matching);
-            if (currentSnapshotKey !== nextSnapshotKey) {
-              setSelectedSnapshot(matching);
-              setSaveError(null);
-            }
-            if (currentDraftKey !== draftKey(nextDraft)) {
-              setDraft(nextDraft);
-            }
-            setConflictPending((current) =>
-              current?.sessionId === matching.id ? null : current,
-            );
-          } else if (
-            currentSaveState !== "saving" &&
-            currentSelectedSnapshot &&
-            currentBuilderKey !== nextBuilderKey
-          ) {
-            const message =
-              "This session changed elsewhere. Your unsaved edits are preserved; edit a field to re-apply them after reviewing the latest row.";
-            setConflictPending({
-              sessionId: matching.id,
-              latest: matching,
-              fields: ["builder-owned fields"],
-              message,
-            });
-            setSaveError(message);
+          if (currentDraftKey !== draftKey(nextDraft)) {
+            setDraft(nextDraft);
           }
+          setConflictPending((current) =>
+            current?.sessionId === matching.id ? null : current,
+          );
+        } else if (
+          currentSaveState !== "saving" &&
+          currentSelectedSnapshot &&
+          currentBuilderKey !== nextBuilderKey
+        ) {
+          const message =
+            "This session changed elsewhere. Your unsaved edits are preserved; edit a field to re-apply them after reviewing the latest row.";
+          setConflictPending({
+            sessionId: matching.id,
+            latest: matching,
+            fields: ["builder-owned fields"],
+            message,
+          });
+          setSaveError(message);
         }
+      }
     },
-    [creatingRef, draftRef, saveStateRef, selectedIdRef, selectedSnapshotRef],
+    [
+      creatingRef,
+      draftRef,
+      saveStateRef,
+      selectedIdRef,
+      selectedSnapshotRef,
+      sessionsRef,
+    ],
   );
 
   const fetchSessions = useCallback(
     async (keepSelection = true) => {
       try {
-        const response = await fetch(
-          sessionRegistryListUrl({
-            includeArchived: showArchived,
-            text: query,
-            workstreamId: routeWorkstreamId,
-            nodeId: routeNodeId,
-          }),
-        );
+        const response = await fetch(sessionRegistryListUrl(sessionListQuery));
         if (!response.ok) {
           throw new Error(`Failed to load sessions (${response.status})`);
         }
@@ -1331,8 +1527,20 @@ export function SessionsPage({
         setLoading(false);
       }
     },
-    [applySessionList, query, routeNodeId, routeWorkstreamId, showArchived],
+    [applySessionList, sessionListQuery],
   );
+
+  const shouldPoll = useCallback(() => {
+    if (!eventStreamLiveRef.current) {
+      return true;
+    }
+    return Date.now() - lastStreamEventAtRef.current > SESSION_EVENT_STALE_MS;
+  }, []);
+
+  const markStreamEvent = useCallback(() => {
+    eventStreamLiveRef.current = true;
+    lastStreamEventAtRef.current = Date.now();
+  }, []);
 
   const scheduleEventRefetch = useCallback(
     (delayMs = SESSION_EVENT_REFETCH_DEBOUNCE_MS) => {
@@ -1363,10 +1571,12 @@ export function SessionsPage({
   useEffect(() => {
     void fetchSessions();
     const timer = setInterval(() => {
-      void fetchSessions();
+      if (shouldPoll()) {
+        void fetchSessions();
+      }
     }, SESSION_POLL_INTERVAL_MS);
     const refreshWhenVisible = () => {
-      if (document.visibilityState !== "hidden") {
+      if (document.visibilityState !== "hidden" && shouldPoll()) {
         void fetchSessions();
       }
     };
@@ -1377,33 +1587,44 @@ export function SessionsPage({
       window.removeEventListener("focus", refreshWhenVisible);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
-  }, [fetchSessions]);
+  }, [fetchSessions, shouldPoll]);
 
   useEffect(() => {
     if (typeof EventSource === "undefined") {
+      eventStreamLiveRef.current = false;
+      setSyncState("polling");
+      return;
+    }
+    if (!isDocumentVisible) {
+      // Tab is backgrounded; drop the long-lived SSE so it stops consuming
+      // one of the browser's six per-origin HTTP/1.1 connections while doing
+      // no useful work. Effect re-runs on visibilitychange to reconnect.
+      eventStreamLiveRef.current = false;
       setSyncState("polling");
       return;
     }
 
     let closed = false;
-    const source = new EventSource("/api/sessions/events");
+    const source = new EventSource(sessionEventsUrl);
     setSyncState("connecting");
 
-    const handleChange = () => {
+    const handleRefetchChange = () => {
+      markStreamEvent();
       scheduleEventRefetch();
     };
+    const handleHeartbeat = () => {
+      markStreamEvent();
+      setSyncState("live");
+    };
     const handleSnapshot = (event: MessageEvent) => {
-      if (query.trim().length > 0 || showArchived || routeWorkstreamId || routeNodeId) {
-        scheduleEventRefetch(0);
-        return;
-      }
+      markStreamEvent();
       try {
-        const payload = JSON.parse(event.data) as { sessions?: unknown };
-        if (!Array.isArray(payload.sessions)) {
+        const nextSessions = sessionsFromSnapshotPayload(JSON.parse(event.data) as unknown);
+        if (!nextSessions) {
           scheduleEventRefetch(0);
           return;
         }
-        applySessionList(payload.sessions as SessionRegistryListItem[]);
+        applySessionList(nextSessions);
         setLoading(false);
       } catch {
         scheduleEventRefetch(0);
@@ -1411,24 +1632,128 @@ export function SessionsPage({
     };
     const handleOpen = () => {
       if (!closed) {
+        markStreamEvent();
         setSyncState("live");
       }
     };
     const handleError = () => {
       if (!closed) {
+        eventStreamLiveRef.current = false;
         setSyncState("reconnecting");
+        void fetchSessions();
       }
+    };
+    const handleUpsert = (event: MessageEvent) => {
+      markStreamEvent();
+      let payload: unknown;
+      try {
+        payload = JSON.parse(event.data) as unknown;
+      } catch {
+        scheduleEventRefetch();
+        return;
+      }
+      const nextSession =
+        typeof payload === "object" && payload !== null && !Array.isArray(payload)
+          ? sessionFromEventPayload((payload as { session?: unknown }).session)
+          : null;
+      if (!nextSession) {
+        scheduleEventRefetch();
+        return;
+      }
+      const currentSessions = sessionsRef.current;
+      const existingIndex = currentSessions.findIndex(
+        (session) => session.id === nextSession.id,
+      );
+      const matches = sessionMatchesQuery(nextSession, sessionMatchOptions);
+      if (existingIndex === -1) {
+        if (matches) {
+          applySessionList([nextSession, ...currentSessions]);
+        }
+      } else if (matches) {
+        const nextSessions = [...currentSessions];
+        nextSessions[existingIndex] = nextSession;
+        applySessionList(nextSessions);
+      } else {
+        applySessionList(
+          currentSessions.filter((session) => session.id !== nextSession.id),
+        );
+      }
+      setLoading(false);
+    };
+    const handleRuntimeUpdate = (event: MessageEvent) => {
+      markStreamEvent();
+      let payload: ReturnType<typeof runtimeUpdatedPayload> = null;
+      try {
+        payload = runtimeUpdatedPayload(JSON.parse(event.data) as unknown);
+      } catch {
+        scheduleEventRefetch();
+        return;
+      }
+      if (!payload) {
+        scheduleEventRefetch();
+        return;
+      }
+      const currentSessions = sessionsRef.current;
+      const existingIndex = currentSessions.findIndex(
+        (session) => session.id === payload.registryId,
+      );
+      if (existingIndex === -1) {
+        scheduleEventRefetch();
+        return;
+      }
+      const existing = currentSessions[existingIndex];
+      if (
+        payload.version !== undefined &&
+        payload.version <= existing.version
+      ) {
+        return;
+      }
+      const updatedSession: SessionRegistryListItem = {
+        ...existing,
+        runtime: payload.runtime,
+        updatedAt: payload.updatedAt ?? existing.updatedAt,
+        version: payload.version ?? existing.version,
+      };
+      const nextSessions = [...currentSessions];
+      if (sessionMatchesQuery(updatedSession, sessionMatchOptions)) {
+        nextSessions[existingIndex] = updatedSession;
+      } else {
+        nextSessions.splice(existingIndex, 1);
+      }
+      applySessionList(nextSessions);
+      setLoading(false);
+    };
+    const handleDelete = (event: MessageEvent) => {
+      markStreamEvent();
+      let registryId: string | null = null;
+      try {
+        registryId = eventRegistryId(JSON.parse(event.data) as unknown);
+      } catch {
+        scheduleEventRefetch();
+        return;
+      }
+      if (!registryId) {
+        scheduleEventRefetch();
+        return;
+      }
+      applySessionList(
+        sessionsRef.current.filter((session) => session.id !== registryId),
+      );
+      setLoading(false);
     };
 
     source.addEventListener("open", handleOpen);
     source.addEventListener("error", handleError);
+    source.addEventListener("heartbeat", handleHeartbeat);
     source.addEventListener("snapshot", handleSnapshot);
-    source.addEventListener("session.upserted", handleChange);
-    source.addEventListener("session.deleted", handleChange);
-    source.addEventListener("session.rebuilt", handleChange);
+    source.addEventListener("session.upserted", handleUpsert);
+    source.addEventListener("session.runtime.updated", handleRuntimeUpdate);
+    source.addEventListener("session.deleted", handleDelete);
+    source.addEventListener("session.rebuilt", handleRefetchChange);
 
     return () => {
       closed = true;
+      eventStreamLiveRef.current = false;
       source.close();
       if (eventRefetchTimerRef.current) {
         clearTimeout(eventRefetchTimerRef.current);
@@ -1437,11 +1762,13 @@ export function SessionsPage({
     };
   }, [
     applySessionList,
-    query,
-    routeNodeId,
-    routeWorkstreamId,
+    fetchSessions,
+    isDocumentVisible,
+    markStreamEvent,
     scheduleEventRefetch,
-    showArchived,
+    sessionEventsUrl,
+    sessionMatchOptions,
+    sessionsRef,
   ]);
 
   const selectedSession = useMemo(
@@ -1468,23 +1795,12 @@ export function SessionsPage({
     () => filterEndedSessions(relevanceFilteredSessions, showEnded),
     [relevanceFilteredSessions, showEnded],
   );
-  const visibleSessions = useMemo(
+  const staleFilteredSessions = useMemo(
     () =>
       endedFilteredSessions.filter(
         (session) => !isSessionStale(session, staleSessionDays),
       ),
     [endedFilteredSessions, staleSessionDays],
-  );
-  const consoleSessions = useMemo(
-    () => sortManagedConsoleSessions(visibleSessions),
-    [visibleSessions],
-  );
-  const selectedConsoleSession = useMemo(
-    () =>
-      consoleSessions.find((session) => session.id === selectedConsoleId) ??
-      consoleSessions[0] ??
-      null,
-    [consoleSessions, selectedConsoleId],
   );
   const hiddenGraphScopedManualCount = sessions.length - graphScopedSessions.length;
   const hiddenObservedSessionCount =
@@ -1492,7 +1808,7 @@ export function SessionsPage({
   const hiddenEndedSessionCount =
     relevanceFilteredSessions.length - endedFilteredSessions.length;
   const hiddenStaleSessionCount =
-    endedFilteredSessions.length - visibleSessions.length;
+    endedFilteredSessions.length - staleFilteredSessions.length;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -1515,8 +1831,8 @@ export function SessionsPage({
   useEffect(() => {
     const entriesToLoad = new Map<string, WorkstreamRegistryListEntry>();
     const graphStateSnapshot = workstreamGraphsRef.current;
-    for (const session of visibleSessions) {
-      const binding = session.graphBinding;
+    for (const session of staleFilteredSessions) {
+      const binding = sessionRegistryEffectiveGraphBinding(session);
       if (!binding) {
         continue;
       }
@@ -1530,6 +1846,14 @@ export function SessionsPage({
       const key = workstreamRegistryKey(matches[0]);
       if (!graphStateSnapshot[key] && !loadingWorkstreamGraphKeysRef.current.has(key)) {
         entriesToLoad.set(key, matches[0]);
+        // Claim the key synchronously so rapid re-fires of this effect
+        // (e.g., from an SSE-driven visibleSessions burst at startup) see
+        // it as in-flight and skip. Previously this `add` lived inside the
+        // setWorkstreamGraphs updater, which runs during React's batched
+        // state-update phase -- the ref stayed empty between effect runs,
+        // and every fire issued another duplicate fetch for the same
+        // workstream graph.
+        loadingWorkstreamGraphKeysRef.current.add(key);
       }
     }
 
@@ -1541,7 +1865,6 @@ export function SessionsPage({
       const next = { ...current };
       for (const key of entriesToLoad.keys()) {
         next[key] = { status: "loading" };
-        loadingWorkstreamGraphKeysRef.current.add(key);
       }
       return next;
     });
@@ -1576,7 +1899,7 @@ export function SessionsPage({
         }
       })();
     }
-  }, [visibleSessions, workstreamGraphsRef, workstreams]);
+  }, [staleFilteredSessions, workstreamGraphsRef, workstreams]);
 
   const workstreamGraphStateMap = useMemo(
     () => new Map(Object.entries(workstreamGraphs)),
@@ -1608,6 +1931,68 @@ export function SessionsPage({
           )
         : null,
     [selectedSession, workstreamGraphStateMap, workstreams],
+  );
+
+  const repoFacetOptions = useMemo(
+    () => buildRepoFacetOptions(staleFilteredSessions),
+    [staleFilteredSessions],
+  );
+  const workstreamFacetOptions = useMemo(
+    () => buildWorkstreamFacetOptions(staleFilteredSessions, sessionLinkages),
+    [staleFilteredSessions, sessionLinkages],
+  );
+  useEffect(() => {
+    if (
+      repoFacet !== SESSION_FACET_ALL &&
+      !repoFacetOptions.some((option) => option.value === repoFacet)
+    ) {
+      setRepoFacet(SESSION_FACET_ALL);
+    }
+  }, [repoFacet, repoFacetOptions]);
+  useEffect(() => {
+    if (
+      workstreamFacet !== SESSION_FACET_ALL &&
+      !workstreamFacetOptions.some((option) => option.value === workstreamFacet)
+    ) {
+      setWorkstreamFacet(SESSION_FACET_ALL);
+    }
+  }, [workstreamFacet, workstreamFacetOptions]);
+  const visibleSessions = useMemo(
+    () =>
+      staleFilteredSessions.filter((session) => {
+        if (repoFacet !== SESSION_FACET_ALL && repoGroupKey(session) !== repoFacet) {
+          return false;
+        }
+        if (
+          workstreamFacet !== SESSION_FACET_ALL &&
+          (sessionLinkages.get(session.id)?.group.key ?? UNBOUND_SESSION_WORKSTREAM_GROUP.key) !==
+            workstreamFacet
+        ) {
+          return false;
+        }
+        return true;
+      }),
+    [repoFacet, sessionLinkages, staleFilteredSessions, workstreamFacet],
+  );
+  const consoleSessions = useMemo(
+    () => sortManagedConsoleSessions(visibleSessions),
+    [visibleSessions],
+  );
+  const selectedConsoleSession = useMemo(
+    () =>
+      consoleSessions.find((session) => session.id === selectedConsoleId) ??
+      consoleSessions[0] ??
+      null,
+    [consoleSessions, selectedConsoleId],
+  );
+  const hiddenFacetSessionCount = staleFilteredSessions.length - visibleSessions.length;
+  const githubStatusRefs = useMemo(
+    () => githubStatusRefsForSessions(visibleSessions, selectedSession),
+    [selectedSession, visibleSessions],
+  );
+  const githubStatuses = useGithubStatusLookup(
+    githubStatusRefs,
+    githubStatusRefreshKey,
   );
 
   const computedGroups = useMemo(
@@ -2081,7 +2466,7 @@ export function SessionsPage({
       : groupMode === "flat"
         ? "No grouping — rows sorted by most recent activity"
         : groupMode === "workstream"
-          ? "Workstream groups — unbound first, then tracked order"
+          ? "Workstream groups — tracked workstreams first, unbound last"
           : "Group order frozen at page load · use ↻ Resort to refresh";
 
   return (
@@ -2147,7 +2532,7 @@ export function SessionsPage({
           className="sl-text-field"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search sessions, repos, tags…"
+          placeholder="Search sessions, repos, tags, Copilot session ID…"
         />
         <label className="sl-session-stale-filter">
           <span className="sl-field-label">Old after</span>
@@ -2169,6 +2554,38 @@ export function SessionsPage({
             />
             <span className="sl-session-stale-suffix">days</span>
           </div>
+        </label>
+        <label className="sl-session-facet-filter">
+          <span className="sl-field-label">Repo</span>
+          <select
+            className="sl-text-field"
+            value={repoFacet}
+            onChange={(event) => setRepoFacet(event.target.value)}
+          >
+            <option value={SESSION_FACET_ALL}>All repos ({staleFilteredSessions.length})</option>
+            {repoFacetOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label} ({option.count})
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="sl-session-facet-filter">
+          <span className="sl-field-label">Workstream</span>
+          <select
+            className="sl-text-field"
+            value={workstreamFacet}
+            onChange={(event) => setWorkstreamFacet(event.target.value)}
+          >
+            <option value={SESSION_FACET_ALL}>
+              All workstreams ({staleFilteredSessions.length})
+            </option>
+            {workstreamFacetOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label} ({option.count})
+              </option>
+            ))}
+          </select>
         </label>
       </div>
 
@@ -2249,6 +2666,13 @@ export function SessionsPage({
         </div>
       )}
 
+      {hiddenFacetSessionCount > 0 && (
+        <div className="sl-sessions-filter-note">
+          Hiding {hiddenFacetSessionCount} session
+          {hiddenFacetSessionCount === 1 ? "" : "s"} outside the selected repo/workstream filters.
+        </div>
+      )}
+
       {syncNote && <div className="sl-sessions-filter-note">{syncNote}</div>}
 
       {error && <div className="sl-action-error">{error}</div>}
@@ -2280,11 +2704,16 @@ export function SessionsPage({
             No open or interrupted Copilot CLI sessions right now. Show ended to inspect
             sessions that closed cleanly.
           </div>
-        ) : visibleSessions.length === 0 ? (
+        ) : staleFilteredSessions.length === 0 ? (
           <div className="sl-empty-state">
             No sessions updated in the last {staleSessionDays} day
             {staleSessionDays === 1 ? "" : "s"}. Increase the stale window to show
             older sessions.
+          </div>
+        ) : visibleSessions.length === 0 ? (
+          <div className="sl-empty-state">
+            No sessions match the selected repo/workstream filters. Choose All repos
+            or All workstreams to widen the list.
           </div>
         ) : (
           orderedGroups.map((group) => (
@@ -2311,8 +2740,9 @@ export function SessionsPage({
                     const rowWorktree = displayWorktree(session);
                     const rowRestartCommand = buildVisibleRestartCommand(session, defaultCliArgs);
                     const activityLabel = getActivityStatusLabel(session);
-                    const activityHint = activityStatusHint(session.activityStatus);
-                    const signalClass = activitySignalClass(session.activityStatus);
+                    const effectiveActivityStatus = getEffectiveActivityStatus(session);
+                    const activityHint = activityStatusHint(effectiveActivityStatus);
+                    const signalClass = activitySignalClass(effectiveActivityStatus);
                     const signalDetail = trustedStatus ?? observedStatus ?? session.originKind;
                     const rowFolderLeaf = leafName(rowWorktree ?? session.cwd);
                     const rowManagedRuntime = getManagedRuntime(session);
@@ -2422,6 +2852,10 @@ export function SessionsPage({
                                   refItem={ref}
                                   session={session}
                                   className="sl-session-row-context-chip important"
+                                  status={githubStatusForRef(
+                                    githubStatuses.statuses,
+                                    githubStatusRefForDerivedRef(ref, session),
+                                  )}
                                 />
                               ))}
                               {session.tags.map((tag) => (
@@ -2492,7 +2926,7 @@ export function SessionsPage({
                   {selectedSession && (
                     <>
                       <span
-                        className={`sl-pill ${activityStatusClass(selectedSession.activityStatus)}`}
+                        className={`sl-pill ${activityStatusClass(getEffectiveActivityStatus(selectedSession))}`}
                       >
                         {getActivityStatusLabel(selectedSession)}
                       </span>
@@ -2622,6 +3056,7 @@ export function SessionsPage({
                 <SessionOverview
                   session={selectedSession}
                   workstreamLinkage={selectedSessionLinkage}
+                  githubStatuses={githubStatuses.statuses}
                   defaultCliArgs={defaultCliArgs}
                   onOpenWorkstream={onOpenWorkstream}
                   onSessionActionComplete={fetchSessions}
@@ -2637,6 +3072,7 @@ export function SessionsPage({
                   draft={draft}
                   creating={creating}
                   selectedSession={selectedSession}
+                  workstreams={workstreams}
                   onChange={updateDraft}
                   onCommit={() => {
                     void (creating ? handleCreate() : closeSheet());
@@ -2696,6 +3132,7 @@ export function SessionsPage({
 interface SessionOverviewProps {
   session: SessionRegistryListItem;
   workstreamLinkage: SessionWorkstreamLinkageResolution | null;
+  githubStatuses: ReadonlyMap<string, GithubStatusResult>;
   defaultCliArgs: readonly string[] | null;
   onOpenWorkstream?: (target: WorkstreamRouteTarget) => void | Promise<void>;
   onSessionActionComplete?: () => void | Promise<void>;
@@ -3139,6 +3576,7 @@ function ManagedRuntimeOverview({
 function SessionOverview({
   session,
   workstreamLinkage,
+  githubStatuses,
   defaultCliArgs,
   onOpenWorkstream,
   onSessionActionComplete,
@@ -3335,6 +3773,10 @@ function SessionOverview({
                         refItem={ref}
                         session={session}
                         className="sl-session-context-ref"
+                        status={githubStatusForRef(
+                          githubStatuses,
+                          githubStatusRefForDerivedRef(ref, session),
+                        )}
                         showRepo
                       />
                     ))}
@@ -3487,6 +3929,7 @@ interface SessionSettingsFormProps {
   draft: SessionDraft;
   creating: boolean;
   selectedSession: SessionRegistryListItem | null;
+  workstreams: WorkstreamRegistryListEntry[];
   onChange: (updater: (current: SessionDraft) => SessionDraft) => void;
   onCommit: () => void;
 }
@@ -3495,10 +3938,23 @@ function SessionSettingsForm({
   draft,
   creating,
   selectedSession,
+  workstreams,
   onChange,
   onCommit,
 }: SessionSettingsFormProps) {
   const lifecycleLocked = selectedSession?.lifecycleStatus === "ended";
+  const workstreamAssignmentLocked = Boolean(
+    selectedSession?.graphBinding?.nodeId || selectedSession?.graphBinding?.launchClaimId,
+  );
+  const workstreamOptions = useMemo(
+    () =>
+      [...workstreams].sort((left, right) =>
+        `${left.title} ${workstreamRegistryKey(left)}`.localeCompare(
+          `${right.title} ${workstreamRegistryKey(right)}`,
+        )
+      ),
+    [workstreams],
+  );
   const setColor = (color: string) => {
     onChange((current) => ({ ...current, color }));
   };
@@ -3621,6 +4077,38 @@ function SessionSettingsForm({
           placeholder="paw-lite, ui, session-registry"
         />
       </label>
+      {!creating && (
+        <label className="sl-field">
+          <span className="sl-field-label">Workstream assignment</span>
+          <select
+            className="sl-select-field"
+            aria-label="Workstream assignment"
+            value={draft.graphBinding?.workstreamId ?? ""}
+            disabled={workstreamAssignmentLocked}
+            onChange={(event) => {
+              const workstreamId = event.target.value;
+              onChange((current) => ({
+                ...current,
+                graphBinding: workstreamId
+                  ? { workstreamId, nodeId: null, launchClaimId: null }
+                  : null,
+              }));
+            }}
+          >
+            <option value="">Unassigned</option>
+            {workstreamOptions.map((entry) => (
+              <option key={workstreamRegistryKey(entry)} value={entry.workstreamId}>
+                {entry.title} ({workstreamRegistryKey(entry)})
+              </option>
+            ))}
+          </select>
+          <p className="sl-field-note">
+            {workstreamAssignmentLocked
+              ? "This session is already bound to a graph node or launch claim; clear that binding through the node/session recovery flow before changing it here."
+              : "Assign orchestrator or manually discovered sessions to a workstream without attaching them to a specific graph node."}
+          </p>
+        </label>
+      )}
     </div>
   );
 }

@@ -227,18 +227,16 @@ describe("Launch Claim Binding — end-to-end integration", () => {
     });
     expect(prune.claimsPruned).toBe(1);
     expect(claimStore.getClaim("claim-INTEGRATION")).toBeNull();
-    // The bound registry row is preserved (only the claim file is pruned).
+    // The bound registry row and durable graph binding survive claim-file pruning
+    // and the next startup reconciliation pass.
     expect(registryStore.getSession("reg-INTEGRATION")?.graphBinding).toEqual({
       workstreamId: "session-launching-and-tracking",
       nodeId: "launch-claim-binding",
       launchClaimId: "claim-INTEGRATION",
     });
-
-    // Startup reconciliation after claim pruning must not detach the
-    // historical session from its graph node.
-    const startupReconcile = reconcileOrphanReservedRows(registryStore, claimStore);
-    expect(startupReconcile.rowsDeleted).toBe(0);
-    expect(startupReconcile.rowsGraphBindingCleared).toBe(0);
+    const reconcile = reconcileOrphanReservedRows(registryStore, claimStore);
+    expect(reconcile.rowsDeleted).toBe(0);
+    expect(reconcile.rowsGraphBindingCleared).toBe(0);
     expect(registryStore.getSession("reg-INTEGRATION")?.graphBinding).toEqual({
       workstreamId: "session-launching-and-tracking",
       nodeId: "launch-claim-binding",

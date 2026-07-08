@@ -48,6 +48,8 @@ function minimapNodeColor(node: Node): string {
   switch (data?.entry?.operationalStatus) {
     case "completed":
       return "#2fa66f";
+    case "retired":
+      return "#8d9bb5";
     case "in-progress":
       return "#1f7ae0";
     case "ready":
@@ -115,7 +117,7 @@ export function WorkstreamCanvas({
         focusable: false,
         zIndex: -1,
       })),
-    [layout],
+    [layout.checkpointLanes],
   );
   const taskNodes = useMemo<Node<WorkstreamGraphNodeData>[]>(
     () =>
@@ -144,7 +146,7 @@ export function WorkstreamCanvas({
         };
       }),
     [
-      layout,
+      layout.nodes,
       nodeSessionStatusState,
       nodeSessionStatuses,
       runtimeOverlay,
@@ -186,7 +188,7 @@ export function WorkstreamCanvas({
       width: maxX - minX,
       height: maxY - minY,
     };
-  }, [layout, viewportFocusIds]);
+  }, [layout.checkpointLanes, layout.nodes, viewportFocusIds]);
 
   const initialFitPadding = selectedNodeId ? 0.24 : 0.22;
 
@@ -215,7 +217,7 @@ export function WorkstreamCanvas({
         animated:
           le.highlight === "ancestor" || le.highlight === "descendant",
       })),
-    [layout],
+    [layout.edges],
   );
 
   const handleNodeClick = useCallback(

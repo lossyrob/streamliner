@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import request from "supertest";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { LaunchClaimFileStore } from "../session-registry/launch-claim-store";
 import type { LaunchClaimStore } from "../launch-claim-contract";
@@ -22,14 +22,25 @@ import {
   DuplicateActiveNodeLaunchOperationError,
   NodeLaunchRecordStore,
 } from "./node-launch-record-store";
+import type { TerminalLaunchOptions, TerminalLaunchResult } from "./terminal-launch";
 import type {
   ManagedSdkRunner,
   ManagedSdkRunnerResumeInput,
   ManagedSdkRunnerStartInput,
 } from "./managed-sdk-runner";
+import { ManagedRuntimePatchCoalescer } from "./managed-runtime-patch-coalescer";
 
 const createdRoots: string[] = [];
 const activeApps: StreamlinerApiApp[] = [];
+
+type TerminalLaunchMethodForTest = TerminalLaunchResult["method"];
+
+function terminalResult(
+  method: TerminalLaunchMethodForTest,
+  pid: number,
+): TerminalLaunchResult {
+  return { method, pid };
+}
 
 function createRootDir(): string {
   const root = join(tmpdir(), `streamliner-node-launch-${process.pid}-${createdRoots.length}`);
@@ -37,6 +48,14 @@ function createRootDir(): string {
   mkdirSync(root, { recursive: true });
   createdRoots.push(root);
   return root;
+}
+
+function managedRuntimePatchCoalescer(
+  registryStore: SessionRegistryFileStore,
+): ManagedRuntimePatchCoalescer {
+  return new ManagedRuntimePatchCoalescer({
+    patchRuntimeMetadata: registryStore.patchRuntimeMetadata.bind(registryStore),
+  });
 }
 
 function normalizePath(path: string): string {
@@ -161,6 +180,13 @@ function fakeHandoff(root: string, overrides: Partial<PawLaunchHandoff> = {}): P
         contextPackagePath,
         contextFilePath,
         contextModel: "test",
+        repoInstructions: {
+          repoId: "streamliner",
+          repoRoot: normalizePath(root),
+          path: ".github/copilot-instructions.md",
+          exists: false,
+          unavailableReason: "missing",
+        },
         sourceReferences: [],
         unavailableInputs: [],
       },
@@ -204,6 +230,7 @@ function bindManagedClaimToSdkSession(
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   for (const app of activeApps.splice(0)) {
     app.close();
   }
@@ -306,6 +333,7 @@ describe("launchPreparedNode", () => {
       preferredTerminal: "powershell",
       title: "Terminal Launch",
       tabColor: "#4891c8",
+      prepareCopilotCli: true,
       env: expect.objectContaining({
         STREAMLINER_LOG_LEVEL: "debug",
         STREAMLINER_LAUNCH_CLAIM_ID: result.launchClaim.launchClaimId,
@@ -336,6 +364,44 @@ describe("launchPreparedNode", () => {
       cliArgs: ["--yolo"],
     });
   });
+
+  it.each(["mac-terminal", "iterm2"] as const)(
+    "passes %s preference through to launchTerminal options",
+    async (preferredTerminal) => {
+      const root = createRootDir();
+      const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+      const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+      const handoff = fakeHandoff(root);
+      handoff.terminal.preferredTerminal = preferredTerminal;
+      const terminalCalls: TerminalLaunchOptions[] = [];
+
+      const result = await launchPreparedNode(
+        registryStore,
+        claimStore,
+        handoff,
+        {
+          now: () => new Date("2026-05-04T00:00:00.000Z"),
+          launchTerminal: (options) => {
+            terminalCalls.push(options);
+            return terminalResult(preferredTerminal, 5678);
+          },
+        },
+      );
+
+      expect(result.terminal).toEqual({ method: preferredTerminal, pid: 5678 });
+      expect(terminalCalls).toHaveLength(1);
+      expect(terminalCalls[0]).toEqual(expect.objectContaining({
+        preferredTerminal,
+        prepareCopilotCli: true,
+        env: expect.objectContaining({
+          STREAMLINER_LOG_LEVEL: "debug",
+          STREAMLINER_LAUNCH_CLAIM_ID: result.launchClaim.launchClaimId,
+        }),
+      }));
+      expect(terminalCalls[0]?.command).toContain("copilot");
+      expect(terminalCalls[0]?.command).toContain("-i");
+    },
+  );
 
   it("marks the claim failed when terminal spawn fails", async () => {
     const root = createRootDir();
@@ -466,7 +532,10 @@ describe("launchPreparedNode", () => {
       registryStore,
       claimStore,
       fakeHandoff(root, { runtimeKind: "managed-sdk" }),
-      { managedSdkRunner: runner },
+      {
+        managedSdkRunner: runner,
+        runtimePatchCoalescer: managedRuntimePatchCoalescer(registryStore),
+      },
     )).rejects.toThrow(/sdk exploded; also failed to record managed runtime failure/);
 
     const [claimEntry] = claimStore.listClaims();
@@ -626,6 +695,7 @@ describe("launchManagedSdkNode", () => {
       {
         now: () => new Date("2026-05-07T12:00:00.000Z"),
         managedSdkRunner: runner,
+        runtimePatchCoalescer: managedRuntimePatchCoalescer(registryStore),
       },
     );
 
@@ -669,6 +739,61 @@ describe("launchManagedSdkNode", () => {
       }),
     ]);
   });
+
+  it("coalesces same-event managed progress and lifecycle callbacks into one registry patch", async () => {
+    vi.useFakeTimers();
+    const root = createRootDir();
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const patchSpy = vi.spyOn(registryStore, "patchRuntimeMetadata");
+    const runner: ManagedSdkRunner = {
+      start: async (input) => {
+        const result = {
+          registryId: input.registryId,
+          sdkSessionId: "sdk-session-coalesced",
+          sdkWorkspacePath: normalizePath(join(root, "sdk", "workspace.yaml")),
+          sdkStateRoot: normalizePath(join(root, "sdk")),
+        };
+        input.onStarted(result);
+        input.onProgress({
+          type: "tool_started",
+          message: "Tool execution started.",
+          data: { toolName: "powershell" },
+        });
+        input.onLifecycleState("running", "Managed SDK lifecycle changed to running.");
+        return result;
+      },
+    };
+
+    const result = await launchManagedSdkNode(
+      registryStore,
+      claimStore,
+      fakeHandoff(root, { runtimeKind: "managed-sdk" }),
+      {
+        now: () => new Date("2026-05-07T12:00:00.000Z"),
+        managedSdkRunner: runner,
+        runtimePatchCoalescer: managedRuntimePatchCoalescer(registryStore),
+      },
+    );
+    const callsBeforeRoutineFlush = patchSpy.mock.calls.length;
+
+    await vi.advanceTimersByTimeAsync(250);
+    await Promise.resolve();
+
+    expect(patchSpy).toHaveBeenCalledTimes(callsBeforeRoutineFlush + 1);
+    const routinePatch = patchSpy.mock.calls.at(-1)?.[1];
+    expect(routinePatch).toEqual(expect.objectContaining({
+      lifecycleState: "running",
+      progressEvents: [
+        expect.objectContaining({ type: "tool_started" }),
+        expect.objectContaining({ type: "lifecycle" }),
+      ],
+    }));
+    const record = registryStore.getSession(result.managedSdk.registryId);
+    expect(record?.runtime?.progressEvents.some((event) =>
+      event.type === "tool_started" && event.data?.toolName === "powershell"
+    )).toBe(true);
+  });
 });
 
 describe("resumeManagedSdkNode", () => {
@@ -701,8 +826,10 @@ describe("resumeManagedSdkNode", () => {
       },
     };
     const handoff = fakeHandoff(root, { runtimeKind: "managed-sdk" });
+    const runtimePatchCoalescer = managedRuntimePatchCoalescer(registryStore);
     const launched = await launchManagedSdkNode(registryStore, claimStore, handoff, {
       managedSdkRunner: runner,
+      runtimePatchCoalescer,
       now: () => new Date("2026-05-07T12:00:00.000Z"),
     });
     bindManagedClaimToSdkSession(registryStore, claimStore, {
@@ -718,6 +845,16 @@ describe("resumeManagedSdkNode", () => {
         message: "Managed SDK worker interrupted.",
       }],
     });
+    registryStore.recordTrustedSessionSignal({
+      event: "session.ended",
+      source: "copilot-cli-hook",
+      sessionId: "sdk-resume-source",
+      timestamp: "2026-05-07T12:03:00.000Z",
+      cwd: handoff.cwd,
+      branch: handoff.branch,
+      endReason: "user_exit",
+      executionKind: "agency",
+    });
 
     const resumed = await resumeManagedSdkNode(
       registryStore,
@@ -726,6 +863,7 @@ describe("resumeManagedSdkNode", () => {
       launched.launchClaim.launchClaimId,
       {
         managedSdkRunner: runner,
+        runtimePatchCoalescer,
         now: () => new Date("2026-05-07T12:05:00.000Z"),
       },
     );
@@ -744,7 +882,16 @@ describe("resumeManagedSdkNode", () => {
     const claims = claimStore.listClaims();
     expect(claims).toHaveLength(1);
     expect(claimStore.getClaim(launched.launchClaim.launchClaimId)?.status).toBe("bound");
-    expect(registryStore.getSession(launched.managedSdk.registryId)?.runtime).toEqual(
+    const resumedRecord = registryStore.getSession(launched.managedSdk.registryId);
+    expect(resumedRecord).toEqual(expect.objectContaining({
+      lifecycleStatus: "active",
+      activityStatus: "working",
+      copilotProcessState: "live",
+      trustedEndedAt: null,
+      trustedStartSource: "resume",
+      trustedEndReason: null,
+    }));
+    expect(resumedRecord?.runtime).toEqual(
       expect.objectContaining({
         lifecycleState: "running",
         sdkSessionId: "sdk-resume-source",
@@ -835,6 +982,70 @@ describe("node launch API route", () => {
         blocksLaunch: true,
       }),
     }));
+  });
+
+  it.each(["mac-terminal", "iterm2"] as const)(
+    "accepts %s in prepared handoffs through POST /api/node-launches",
+    async (preferredTerminal) => {
+      const root = createRootDir();
+      const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+      const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+      const launchTerminal = vi.fn((options: TerminalLaunchOptions) => {
+        void options;
+        return terminalResult("powershell", 777);
+      });
+      const api = createStreamlinerApiApp({
+        store: registryStore,
+        launchClaimStore: claimStore,
+        nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
+        nodeLaunchDeps: { launchTerminal },
+      });
+      activeApps.push(api);
+      const baseHandoff = fakeHandoff(root);
+      const handoff = {
+        ...baseHandoff,
+        terminal: {
+          ...baseHandoff.terminal,
+          preferredTerminal,
+        },
+      };
+
+      await request(api.app)
+        .post("/api/node-launches")
+        .send({ handoff })
+        .expect(201);
+
+      expect(launchTerminal).toHaveBeenCalledTimes(1);
+      expect(launchTerminal.mock.calls[0]?.[0].preferredTerminal).toBe(preferredTerminal);
+    },
+  );
+
+  it("rejects unknown preferred terminals with the accepted values", async () => {
+    const root = createRootDir();
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const launchTerminal = vi.fn(() => terminalResult("powershell", 777));
+    const api = createStreamlinerApiApp({
+      store: registryStore,
+      launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
+      nodeLaunchDeps: { launchTerminal },
+    });
+    activeApps.push(api);
+    const handoff = fakeHandoff(root);
+    handoff.terminal.preferredTerminal = "fish" as never;
+
+    const response = await request(api.app)
+      .post("/api/node-launches")
+      .send({ handoff })
+      .expect(400);
+
+    expect(response.body).toEqual(expect.objectContaining({
+      code: "invalid_node_launch_handoff",
+      error: 'handoff.terminal.preferredTerminal must be one of: "default", "windows-terminal", "powershell", "mac-terminal", "iterm2".',
+      input: "handoff.terminal.preferredTerminal",
+    }));
+    expect(launchTerminal).not.toHaveBeenCalled();
   });
 
   it("launches a managed SDK handoff through POST /api/node-launches", async () => {
@@ -1491,6 +1702,7 @@ describe("managed runtime session API routes", () => {
     const interrupts: string[] = [];
     const transfers: string[] = [];
     let launchedCommand: string | undefined;
+    let launchedPrepareCopilotCli: boolean | undefined;
     const runner: ManagedSdkRunner = {
       start: async (input) => ({
         registryId: input.registryId,
@@ -1522,6 +1734,7 @@ describe("managed runtime session API routes", () => {
       relaunchDeps: {
         launchTerminal: (options) => {
           launchedCommand = options.command;
+          launchedPrepareCopilotCli = options.prepareCopilotCli;
           registryStore.recordTrustedSessionSignal({
             event: "session.started",
             source: "copilot-cli-hook",
@@ -1571,6 +1784,7 @@ describe("managed runtime session API routes", () => {
     expect(interrupts).toEqual([]);
     expect(transfers).toEqual([record.id]);
     expect(launchedCommand).toContain("sdk-session-123");
+    expect(launchedPrepareCopilotCli).toBe(true);
     expect(takeoverResponse.body).toEqual(expect.objectContaining({
       outcome: expect.objectContaining({
         ok: true,
