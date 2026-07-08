@@ -81,6 +81,8 @@ import {
   type PawLaunchDialogDefaults,
 } from "./components/paw-launch-config";
 import { SessionsPage } from "./components/SessionsPage";
+import { ManagedConsolesPrototypePage } from "./components/ManagedConsolesPrototypePage";
+import { ManagedRuntimeConsoleOverlay } from "./components/ManagedRuntimeConsoleOverlay";
 import {
   deleteBrowserWorkstreamEntry,
   listBrowserWorkstreamEntries,
@@ -115,6 +117,11 @@ import { renderWorkstreamTerminalTitleTemplate } from "./workstream-launch-templ
 import { evaluateNodeLaunchPolicy } from "./workstream-launch-policy";
 import { useSessionRegistryList } from "./session-registry-client";
 import { useIsDocumentVisible } from "./use-document-visibility";
+import {
+  sessionRegistryRecordToListItem,
+  type SessionRegistryListItem,
+} from "./session-registry-contract";
+import type { SessionRegistryRecord } from "./session-registry-schema";
 import {
   buildWorkstreamRuntimeOverlay,
   type WorkstreamRuntimeOverlay,
@@ -251,14 +258,19 @@ function readDashboardRoute(): DashboardRoute {
   if (searchParams.get("view") === "sessions" || window.location.pathname === "/sessions") {
     const workstreamId = searchParams.get("workstreamId");
     const nodeId = searchParams.get("nodeId");
+    const tab = searchParams.get("tab");
     return {
       view: "sessions",
       workstreamId: workstreamId && isKebabCaseId(workstreamId) ? workstreamId : null,
       nodeId: nodeId && isKebabCaseId(nodeId) ? nodeId : null,
+      tab: tab === "consoles" ? "consoles" : null,
     };
   }
   if (window.location.pathname === "/settings/session-launch") {
     return { view: "settings", section: "session-launch" };
+  }
+  if (window.location.pathname === "/__prototype/managed-consoles") {
+    return { view: "prototype", prototype: "managed-consoles" };
   }
   if (window.location.pathname === "/settings/review-templates") {
     return { view: "settings", section: "review-templates" };
@@ -2262,7 +2274,11 @@ function GraphDashboard({
   sessionLaunchSettings,
 }: ReturnType<typeof useGraphLoader> & {
   onOpenWorkstream: (entry: { projectKey: string; workstreamId: string; nodeId?: string | null }) => void | Promise<void>;
-  onOpenSessions: (target?: { workstreamId?: string | null; nodeId?: string | null }) => void | Promise<void>;
+  onOpenSessions: (target?: {
+    workstreamId?: string | null;
+    nodeId?: string | null;
+    tab?: "list" | "consoles" | null;
+  }) => void | Promise<void>;
   onManageSources: () => void;
   onRouteHome: () => void;
   selectedNodeIdFromRoute?: string | null;
@@ -2292,12 +2308,15 @@ function GraphDashboard({
   const [launchResuming, setLaunchResuming] = useState(false);
   const [launchResumeError, setLaunchResumeError] = useState<string | null>(null);
   const [launchResumeStatus, setLaunchResumeStatus] = useState<string | null>(null);
+  const [managedConsoleOverlayOpen, setManagedConsoleOverlayOpen] = useState(false);
   const [nodeLaunchRecords, setNodeLaunchRecords] = useState<NodeLaunchRecord[]>([]);
   const [nodeLaunchRecordLoading, setNodeLaunchRecordLoading] = useState(false);
   const [nodeLaunchRecordError, setNodeLaunchRecordError] = useState<string | null>(null);
   const [selectedNodeLaunchRecordLoading, setSelectedNodeLaunchRecordLoading] = useState(false);
   const [selectedNodeLaunchRecordError, setSelectedNodeLaunchRecordError] = useState<string | null>(null);
   const [nodeLaunchRecordRefreshKey, setNodeLaunchRecordRefreshKey] = useState(0);
+  const [selectedBoundSession, setSelectedBoundSession] =
+    useState<SessionRegistryListItem | null>(null);
   const [configurationDialogOpen, setConfigurationDialogOpen] = useState(false);
   const [configurationSaving, setConfigurationSaving] = useState(false);
   const [configurationError, setConfigurationError] = useState<string | null>(null);
@@ -2421,9 +2440,100 @@ function GraphDashboard({
     sessionList.error,
     viewModel,
   ]);
-  const selectedRuntimeOverlay = selectedEntry
+  const selectedRuntimeOverlayBase = selectedEntry
     ? runtimeOverlay?.nodesById.get(selectedEntry.node.id) ?? null
     : null;
+  const selectedBoundSessionId =
+    selectedRuntimeOverlayBase?.session.primarySession
+      ? null
+      : selectedRuntimeOverlayBase?.launch.latestClaim?.boundRegistryId ?? null;
+  const selectedRuntimeOverlay = useMemo(() => {
+    if (
+      !selectedBoundSession ||
+      !activeWorkstream ||
+      !viewModel ||
+      !selectedEntry ||
+      !selectedRuntimeOverlayBase
+    ) {
+      return selectedRuntimeOverlayBase;
+    }
+    const historicNodeStatuses = buildGraphNodeSessionStatusMap(
+      [...sessionList.sessions, selectedBoundSession],
+      activeWorkstream.workstreamId,
+    );
+    return buildWorkstreamRuntimeOverlay({
+      viewModel,
+      nodeSessionStatuses: historicNodeStatuses,
+      sessionStatusState: nodeSessionStatusState,
+      sessionStatusError: sessionList.error,
+      nodeLaunchRecords: nodeLaunchRecordsByNodeId,
+      launchRecordsState: nodeLaunchRecordLoading
+        ? "loading"
+        : nodeLaunchRecordError
+          ? "error"
+          : "ready",
+      launchRecordsError: nodeLaunchRecordError,
+    }).nodesById.get(selectedEntry.node.id) ?? selectedRuntimeOverlayBase;
+  }, [
+    activeWorkstream,
+    nodeLaunchRecordError,
+    nodeLaunchRecordLoading,
+    nodeLaunchRecordsByNodeId,
+    nodeSessionStatusState,
+    selectedBoundSession,
+    selectedEntry,
+    selectedRuntimeOverlayBase,
+    sessionList.error,
+    sessionList.sessions,
+    viewModel,
+  ]);
+
+  useEffect(() => {
+    setSelectedBoundSession(null);
+    if (!selectedBoundSessionId || !activeWorkstream || !selectedEntry) {
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/sessions/${encodeURIComponent(selectedBoundSessionId)}`)
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`Session ${selectedBoundSessionId} could not be loaded.`);
+        }
+        return sessionRegistryRecordToListItem(
+          (await response.json()) as SessionRegistryRecord,
+        );
+      })
+      .then((session) => {
+        if (cancelled) {
+          return;
+        }
+        const binding = session.graphBinding;
+        setSelectedBoundSession(
+          binding?.workstreamId === activeWorkstream.workstreamId &&
+            binding.nodeId === selectedEntry.node.id
+            ? session
+            : null,
+        );
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSelectedBoundSession(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeWorkstream,
+    selectedBoundSessionId,
+    selectedEntry,
+  ]);
+
+  useEffect(() => {
+    if (!selectedRuntimeOverlay?.managedRuntime) {
+      setManagedConsoleOverlayOpen(false);
+    }
+  }, [selectedRuntimeOverlay?.managedRuntime]);
 
   // Derive the launch target from stable string primitives so its identity
   // only changes when the underlying graph path or node id actually changes.
@@ -2562,6 +2672,17 @@ function GraphDashboard({
       return null;
     },
     [onOpenWorkstream],
+  );
+
+  const openSelectedConsoleInSessions = useCallback(
+    async () => {
+      await onOpenSessions({
+        workstreamId: activeWorkstream?.workstreamId ?? null,
+        nodeId: selectedEntry?.node.id ?? null,
+        tab: "consoles",
+      });
+    },
+    [activeWorkstream?.workstreamId, onOpenSessions, selectedEntry?.node.id],
   );
 
   const launchActionDisabledReason = useMemo(() => {
@@ -3835,6 +3956,9 @@ function GraphDashboard({
             launchRecordError={nodeLaunchRecordError ?? selectedNodeLaunchRecordError}
             runtimeOverlay={selectedRuntimeOverlay}
             onLaunch={handleOpenLaunchDialog}
+            onOpenConsole={() => setManagedConsoleOverlayOpen(true)}
+            onOpenConsoleInSessions={openSelectedConsoleInSessions}
+            onManagedRuntimeActionComplete={sessionList.refresh}
             onReleaseStuckOperation={
               selectedLaunchTarget
                 ? () => releaseStuckLaunchOperation(selectedLaunchTarget)
@@ -3891,6 +4015,19 @@ function GraphDashboard({
           onReviewPromptTemplatesChanged={onReviewPromptTemplatesChanged}
           onReleaseLaunch={launchDialogLatestClaim?.blocksLaunch ? handleReleaseLaunch : undefined}
           onResumeLaunch={canResumeBackgroundLaunch ? handleResumeBackgroundLaunch : undefined}
+        />
+      ) : null}
+      {managedConsoleOverlayOpen && selectedRuntimeOverlay?.managedRuntime ? (
+        <ManagedRuntimeConsoleOverlay
+          title={selectedRuntimeOverlay.node.title}
+          subtitle={`${activeWorkstream?.workstreamId ?? "workstream"} / ${
+            selectedRuntimeOverlay.node.id
+          }`}
+          runtime={selectedRuntimeOverlay.managedRuntime.projection}
+          sessionId={selectedRuntimeOverlay.session.primarySession?.id ?? null}
+          onClose={() => setManagedConsoleOverlayOpen(false)}
+          onOpenInSessions={openSelectedConsoleInSessions}
+          onActionComplete={sessionList.refresh}
         />
       ) : null}
       {configurationDialogOpen && workstream ? (
@@ -4049,6 +4186,7 @@ function DashboardNav({
 }) {
   const workstreamsActive = route.view === "workstreams" || route.view === "workstream";
   const settingsActive = route.view === "settings";
+  const prototypeActive = route.view === "prototype";
 
   return (
     <div className="sl-shell-nav">
@@ -4104,6 +4242,20 @@ function DashboardNav({
           </svg>
           <span className="sl-visually-hidden">Streamliner settings</span>
         </a>
+        {import.meta.env.DEV && (
+          <a
+            className={`sl-action-btn${prototypeActive ? " active" : ""}`}
+            href={routePath({ view: "prototype", prototype: "managed-consoles" })}
+            aria-current={prototypeActive ? "page" : undefined}
+            onClick={(event) =>
+              handleInAppLinkClick(event, () =>
+                onRouteChange({ view: "prototype", prototype: "managed-consoles" })
+              )
+            }
+          >
+            Prototype
+          </a>
+        )}
       </div>
     </div>
   );
@@ -4191,11 +4343,16 @@ export default function App() {
   );
 
   const openSessions = useCallback(
-    async (target?: { workstreamId?: string | null; nodeId?: string | null }) => {
+    async (target?: {
+      workstreamId?: string | null;
+      nodeId?: string | null;
+      tab?: "list" | "consoles" | null;
+    }) => {
       await handleRouteChange({
         view: "sessions",
         workstreamId: target?.workstreamId ?? null,
         nodeId: target?.nodeId ?? null,
+        tab: target?.tab ?? null,
       });
     },
     [handleRouteChange],
@@ -4217,7 +4374,9 @@ export default function App() {
     <div className="sl-root">
       <DashboardNav route={route} onRouteChange={handleRouteChange} />
       <MigrationWarningsBanner warnings={graphLoader.migrationWarnings} />
-      {route.view === "settings" ? (
+      {route.view === "prototype" ? (
+        <ManagedConsolesPrototypePage />
+      ) : route.view === "settings" ? (
         <SettingsPage
           section={route.section ?? "session-launch"}
           onRouteChange={handleRouteChange}
@@ -4251,6 +4410,7 @@ export default function App() {
           onOpenWorkstream={openWorkstream}
           routeWorkstreamId={route.workstreamId ?? null}
           routeNodeId={route.nodeId ?? null}
+          routeTab={route.tab ?? null}
         />
       ) : route.view === "workstream" ? (
         <GraphDashboard

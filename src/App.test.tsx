@@ -1064,6 +1064,9 @@ describe("App sessions route", () => {
     await settle();
 
     expect(container.textContent).toContain("Background session");
+    expect(container.textContent).toContain("Managed session console");
+    expect(container.textContent).toContain("Prepared final review handoff.");
+    expect(container.textContent).toContain("read-only");
     expect(container.textContent).toContain("managed autonomous");
     expect(container.textContent).toContain("sdk-session-123");
     expect(container.textContent).toContain("Terminal takeover");
@@ -3090,6 +3093,8 @@ describe("App sessions route", () => {
       });
       await settle();
       expect(container.textContent).toContain("Creating WorkflowContext.md");
+      expect(container.textContent).toContain("Agent Message");
+      expect(container.textContent).toContain("read-only");
       act(() => {
         nodeLaunchRecord = {
           id: "launch-prompt-profiles-record",
@@ -4581,6 +4586,8 @@ describe("App sessions route", () => {
       await settle();
 
       expect(container.textContent).toContain("Snapshot progress before reopen.");
+      expect(container.textContent).toContain("PAW init progress");
+      expect(container.textContent).toContain("read-only");
       const source = MockEventSource.instances.find((candidate) => candidate.url.includes("run-reattach"));
       expect(source?.url).toBe("/api/launch-preparations/runs/run-reattach/events");
 

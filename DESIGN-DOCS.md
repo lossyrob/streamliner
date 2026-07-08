@@ -159,47 +159,29 @@ The workstream references the design layer; it does not duplicate it.
 
 ## Minimal document format
 
-Every design document carries YAML frontmatter. Streamliner derives a machine-readable catalog from that frontmatter rather than asking authors to maintain a second artifact by hand.
+Design documents do not require YAML frontmatter. They start with a `# Title`
+heading and keep metadata in places humans already maintain:
 
-### Required fields on all design docs
+| Metadata | Source |
+|---|---|
+| Title | The document's `# H1` |
+| Living-doc status, authority, and reading order | `docs/design/index.md` reading order and satellite-documents table |
+| Decision number, title, status, and date | Decision filename, decision `# H1`, and decision log tables |
+| Last updated and changelog | Git history |
+| Relationships | Inline Markdown links, index tables, decision tables, and workstream `designRefs` |
 
-| Field | Type | Purpose |
-|---|---|---|
-| `kind` | `design-index` \| `design-doc` \| `decision` | Document family |
-| `status` | kind-specific enum | Whether the document is binding, draft, or historical |
-| `last_updated` | `YYYY-MM-DD` | Last substantive update |
-| `update_semantics` | `rewrite-in-place` \| `append-only` | How the document evolves |
+Frontmatter is not a prerequisite for design authority or worker context. If
+Streamliner later needs a machine-readable design catalog, that catalog is future
+product work and should derive from the maintained markdown surfaces, git, and
+workstream references rather than making authors maintain duplicate metadata on
+every file.
 
-### Additional fields for living design docs
-
-| Field | Type | Purpose |
-|---|---|---|
-| `authoritative_for` | string | Human-readable statement of what this doc owns |
-| `scope_tags` | string[] | Short machine-readable labels for the design area |
-| `code_paths` | string[] | Repo-relative globs approximating which code areas this doc covers |
-| `references_decisions` | number[] | Accepted decision records this doc depends on |
-
-This is intentionally lean. The earlier proposal's `depends_on` and `audience` metadata are useful, but they are not required for the initial component and are easy to let rot.
-
-### Additional fields for decision records
-
-| Field | Type | Purpose |
-|---|---|---|
-| `number` | number | Sequential decision number |
-| `date` | `YYYY-MM-DD` | Decision date |
-| `superseded_by` | number \| null | Replacement decision, if any |
-| `supersedes` | number \| null | Earlier decision replaced by this one, if any |
+Existing frontmatter in older design docs is not authoritative and can be removed
+later as metadata-only cleanup. New or revised design docs should not add it.
 
 ### Design index template
 
 ```markdown
----
-kind: design-index
-status: current
-last_updated: 2026-04-09
-update_semantics: rewrite-in-place
----
-
 # {Project Name} - Design
 
 {1-2 paragraph overview of the system being designed.}
@@ -227,23 +209,6 @@ update_semantics: rewrite-in-place
 ### Living design doc template
 
 ```markdown
----
-kind: design-doc
-status: current
-last_updated: 2026-04-09
-update_semantics: rewrite-in-place
-authoritative_for: "Session lifecycle, launch, and crash recovery"
-scope_tags:
-  - sessions
-  - crash-recovery
-code_paths:
-  - src/session/**
-  - src/server/session/**
-references_decisions:
-  - 3
-  - 8
----
-
 # {Title}
 
 {Write the intended design in declarative present tense.}
@@ -252,17 +217,9 @@ references_decisions:
 ### Decision record template
 
 ```markdown
----
-kind: decision
-number: 3
-status: accepted
-date: 2026-03-15
-update_semantics: append-only
-superseded_by: null
-supersedes: null
----
-
 # 003. {Title}
+
+> Supersedes: [002-previous-decision](002-previous-decision.md) *(if applicable)*
 
 ## Context
 {Why this decision was needed.}
@@ -283,6 +240,9 @@ supersedes: null
 
 ### Design index and living design docs
 
+Living design-doc status is maintained in the design index's satellite-documents
+table.
+
 | Status | Meaning | Default consumers |
 |---|---|---|
 | `current` | Binding design authority for its scope | Operator, orchestrator, worker |
@@ -298,38 +258,6 @@ Workers should only receive a `draft` design doc when the workstream or issue ex
 | `proposed` | Under consideration; not binding | Operator, orchestrator |
 | `accepted` | Binding rationale for current design direction | Operator, orchestrator, worker |
 | `superseded` | Historical reference only | Reference only |
-
----
-
-## Derived design catalog
-
-Streamliner derives a repo-scoped design catalog from frontmatter. The markdown remains authoritative; the catalog exists so context assembly and UI surfaces can be deterministic.
-
-```json
-{
-  "repoId": "streamliner",
-  "rootPath": "docs/design",
-  "indexPath": "docs/design/index.md",
-  "docs": [
-    {
-      "path": "docs/design/session-system.md",
-      "kind": "design-doc",
-      "status": "current",
-      "updateSemantics": "rewrite-in-place",
-      "authoritativeFor": "Session lifecycle, launch, and crash recovery",
-      "scopeTags": ["sessions", "crash-recovery"],
-      "codePaths": ["src/session/**", "src/server/session/**"],
-      "referencesDecisions": [3, 8]
-    }
-  ]
-}
-```
-
-This catalog is how Streamliner answers questions like:
-
-- which design docs are relevant to this workstream?
-- which docs cover the code touched by this node?
-- which accepted decisions should travel with the context package?
 
 ---
 
@@ -428,7 +356,7 @@ This declaration can live in PR metadata, worker completion output, or another r
 The initial first-class design-doc component should include:
 
 1. repo-level configuration for where design docs live
-2. derived design catalog generation from frontmatter
+2. design index and decision log parsing from maintained markdown tables
 3. a design index viewer
 4. a design doc viewer
 5. design-aware node inspection using `designRefs`
@@ -439,7 +367,8 @@ The initial first-class design-doc component should include:
 
 Useful, but not part of the initial component:
 
-1. staleness heuristics based on recent code changes in `code_paths`
+1. a machine-readable design catalog derived from the index, decision tables,
+   links, git history, and workstream references
 2. automated "significant code diff with no design diff" warnings
 3. a built-in design-doc editor
 4. fitness functions that validate implementation against design
@@ -472,6 +401,6 @@ The design-doc component adds a project-level design layer above Streamliner's e
 - workstreams reference the design layer explicitly through a brief section and graph `designRefs`
 - the context package gains **Layer 0 - Project Design Context**
 - `draft` docs are opt-in, not default worker truth
-- the model starts with lean metadata and explicit references before heavier freshness and validation automation
+- the model starts with maintained markdown tables and explicit references before heavier freshness and validation automation
 
 This is the smallest design system that stays coherent when one operator and many cold-starting agents work in parallel on an evolving codebase.

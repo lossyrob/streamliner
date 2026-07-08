@@ -225,6 +225,7 @@ export class SessionRegistryBackgroundWorker {
     if (this.timer) {
       return;
     }
+    this.runStartupReconciliation();
     this.initialTimer = setTimeout(() => {
       this.initialTimer = null;
       void this.runCycle();
@@ -259,9 +260,13 @@ export class SessionRegistryBackgroundWorker {
       if (this.claimStore) {
         try {
           const result = reconcileOrphanReservedRows(this.store, this.claimStore);
-          if (result.rowsDeleted > 0 || result.rowsGraphBindingCleared > 0) {
+          if (
+            result.rowsDeleted > 0 ||
+            result.rowsGraphBindingCleared > 0 ||
+            result.rowsGraphBindingRestored > 0
+          ) {
             this.logger.info(
-              `[session-worker] launch-claim startup reconciliation: deleted=${result.rowsDeleted} graphBindingCleared=${result.rowsGraphBindingCleared}`,
+              `[session-worker] launch-claim startup reconciliation: deleted=${result.rowsDeleted} graphBindingCleared=${result.rowsGraphBindingCleared} graphBindingRestored=${result.rowsGraphBindingRestored}`,
             );
           }
         } catch (error) {

@@ -61,4 +61,3 @@ Out of scope:
   clear builder-facing recovery actions.
 - The usability gate can cite either measured same-process sufficiency or shipped
   supervisor isolation before passing.
-

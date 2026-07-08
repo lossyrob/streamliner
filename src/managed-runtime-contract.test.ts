@@ -5,10 +5,12 @@ import {
   MANAGED_RUNTIME_ACTION_ROUTE_SUFFIXES,
   MANAGED_RUNTIME_PROGRESS_EVENT_INPUT_CAP,
   MANAGED_RUNTIME_PROGRESS_SUMMARY_MAX_LENGTH,
+  MANAGED_RUNTIME_REPLAY_RETAINED_EVENT_LIMIT,
   defaultManagedRuntimeActions,
   isManagedRuntimeCleanupAvailable,
   managedLifecycleStatusClass,
   managedRuntimeProjectionFromMetadata,
+  managedRuntimeProjectionFromSession,
   managedRuntimeProgressEvents,
   resolveManagedRuntimeActions,
   sanitizeManagedRuntimeProjection,
@@ -240,6 +242,202 @@ describe("managed runtime contract", () => {
     ).every((action) => action.available === false)).toBe(true);
   });
 
+  it("projects typed waiting reasons and replay metadata from sanitized runtime progress", () => {
+    const projection = managedRuntimeProjectionFromMetadata(managedRuntime({
+      lifecycleState: "waiting_for_builder",
+      progressEvents: [{
+        id: "progress-cleanup-blocked",
+        sequence: 1,
+        timestamp: "2026-05-05T12:03:00.000Z",
+        type: "error",
+        message: "Cleanup is blocked by managed runtime guardrails.",
+        data: {
+          firstBlockerCode: "dirty-worktree",
+          rawPrompt: "do not expose",
+        },
+      }],
+    }));
+
+    expect(projection?.waitingReason).toEqual(expect.objectContaining({
+      code: "cleanup_blocked",
+      label: "Cleanup blocked",
+      blockerCode: "dirty-worktree",
+    }));
+    expect(projection?.replay).toEqual({
+      retainedEventCount: 1,
+      retainedEventLimit: MANAGED_RUNTIME_REPLAY_RETAINED_EVENT_LIMIT,
+      truncated: false,
+    });
+  });
+
+  it("projects PR-ready trust context from evidence, progress, and session context", () => {
+    const projection = managedRuntimeProjectionFromSession({
+      runtime: managedRuntime({
+        lifecycleState: "pr_ready",
+        progressEvents: [{
+          id: "progress-pr-ready",
+          sequence: 1,
+          timestamp: "2026-05-05T12:03:00.000Z",
+          type: "evidence",
+          message: "PR trust context updated.",
+          data: {
+            baseBranch: "main",
+            worktreeClean: true,
+            headSha: "abc123",
+            prHeadSha: "abc123",
+            prHeadMatchesBranch: true,
+          },
+        }],
+        evidence: [{
+          id: "evidence-pr",
+          kind: "pr_ready",
+          source: "test",
+          detectedAt: "2026-05-05T12:04:00.000Z",
+          url: "https://github.com/lossyrob/streamliner/pull/85",
+          repo: "lossyrob/streamliner",
+          number: 85,
+          sha: "abc123",
+          summary: "PR ready.",
+        }],
+      }),
+      branch: "feature/managed-session-console",
+      derivedWorktreePath: "C:\\repo\\streamliner-managed-session-console",
+    });
+
+    expect(projection?.prReady).toEqual(expect.objectContaining({
+      url: "https://github.com/lossyrob/streamliner/pull/85",
+      repo: "lossyrob/streamliner",
+      number: 85,
+      summary: "PR ready.",
+      branchName: "feature/managed-session-console",
+      baseBranch: "main",
+      branchToBaseDiffUrl:
+        "https://github.com/lossyrob/streamliner/compare/main...feature%2Fmanaged-session-console",
+      worktreeClean: true,
+      prHeadMatchesBranch: true,
+    }));
+    expect(projection?.prReady?.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: "Branch-to-base diff", status: "pass" }),
+      expect.objectContaining({ label: "Worktree cleanliness", status: "pass" }),
+      expect.objectContaining({ label: "PR/head-state check", status: "pass" }),
+    ]));
+  });
+
+  it("does not show PR trust context for ordinary running sessions", () => {
+    const projection = managedRuntimeProjectionFromSession({
+      runtime: managedRuntime({
+        lifecycleState: "running",
+        progressEvents: [{
+          id: "progress-running",
+          sequence: 1,
+          timestamp: "2026-05-05T12:03:00.000Z",
+          type: "assistant_status",
+          message: "Assistant status updated.",
+        }],
+      }),
+      repo: "lossyrob/streamliner",
+      branch: "feature/managed-session-console",
+      derivedGithubRefs: [{
+        type: "pr",
+        repo: "lossyrob/streamliner",
+        number: 73,
+        url: "https://github.com/lossyrob/streamliner/pull/73",
+        firstSeenAt: "2026-05-05T12:03:00.000Z",
+        lastSeenAt: "2026-05-05T12:03:00.000Z",
+        source: "gh",
+      }],
+    });
+
+    expect(projection?.prReady).toBeNull();
+  });
+
+  it("uses display-safe assistant messages and skips noisy lifecycle summaries", () => {
+    const projection = managedRuntimeProjectionFromMetadata(managedRuntime({
+      progressEvents: [
+        {
+          id: "progress-running",
+          sequence: 1,
+          timestamp: "2026-05-05T12:02:00.000Z",
+          type: "lifecycle",
+          message: "Managed SDK lifecycle changed to running.",
+        },
+        {
+          id: "progress-assistant",
+          sequence: 2,
+          timestamp: "2026-05-05T12:03:00.000Z",
+          type: "assistant_status",
+          message: "Assistant responded.",
+          data: {
+            assistantEventKind: "message",
+            displayMessage: "The implementation is complete.",
+          },
+        },
+      ],
+    }));
+
+    expect(projection?.summary).toBe("The implementation is complete.");
+    expect(projection?.progress?.at(-1)?.summary).toBe("The implementation is complete.");
+  });
+
+  it("drops unsafe PR-ready URLs while preserving derived GitHub links", () => {
+    const projection = managedRuntimeProjectionFromSession({
+      runtime: managedRuntime({
+        lifecycleState: "pr_ready",
+        progressEvents: [{
+          id: "progress-pr-ready",
+          sequence: 1,
+          timestamp: "2026-05-05T12:03:00.000Z",
+          type: "evidence",
+          message: "PR trust context updated.",
+          data: {
+            baseBranch: "main",
+            diffUrl: "javascript:alert(1)",
+          },
+        }],
+        evidence: [{
+          id: "evidence-pr",
+          kind: "pr_ready",
+          source: "test",
+          detectedAt: "2026-05-05T12:04:00.000Z",
+          url: "javascript:alert(1)",
+          repo: "lossyrob/streamliner",
+          number: 85,
+          sha: "abc123",
+          summary: "PR ready.",
+        }],
+      }),
+      branch: "feature/managed-session-console",
+    });
+
+    expect(projection?.prReady?.url).toBe(
+      "https://github.com/lossyrob/streamliner/pull/85",
+    );
+    expect(projection?.prReady?.branchToBaseDiffUrl).toBe(
+      "https://github.com/lossyrob/streamliner/compare/main...feature%2Fmanaged-session-console",
+    );
+    expect(projection?.prReady?.headSha).toBeNull();
+    expect(projection?.prReady?.prHeadSha).toBe("abc123");
+    expect(projection?.prReady?.prHeadMatchesBranch).toBeNull();
+    expect(projection?.prReady?.checks.some((check) =>
+      check.label === "PR/head-state check"
+    )).toBe(false);
+
+    const sanitized = sanitizeManagedRuntimeProjection({
+      runtimeKind: "managed-sdk",
+      runtimeOwner: "streamliner-sdk",
+      permissionProfile: "managed-autonomous",
+      lifecycleState: "pr_ready",
+      prReady: {
+        url: "javascript:alert(1)",
+        branchToBaseDiffUrl: "javascript:alert(1)",
+        checks: [],
+      },
+    });
+
+    expect(sanitized?.prReady?.url).toBeNull();
+    expect(sanitized?.prReady?.branchToBaseDiffUrl).toBeNull();
+  });
+
   it("sanitizes managed runtime projection fields before API projection", () => {
     const projection = sanitizeManagedRuntimeProjection({
       runtimeKind: "managed-sdk",
@@ -272,6 +470,36 @@ describe("managed runtime contract", () => {
           available: false,
         },
       ],
+      waitingReason: {
+        code: "sdk_process_loss",
+        label: "SDK process lost",
+        suggestedAction: "Resume the background session.",
+        detail: "No active managed SDK session is attached.",
+        rawPrompt: "do not expose",
+      },
+      prReady: {
+        url: "https://github.com/lossyrob/streamliner/pull/85",
+        repo: "lossyrob/streamliner",
+        number: 85,
+        summary: "PR ready.",
+        branchName: "feature/managed-session-console",
+        baseBranch: "main",
+        branchToBaseDiffUrl:
+          "https://github.com/lossyrob/streamliner/compare/main...feature%2Fmanaged-session-console",
+        worktreeClean: true,
+        prHeadMatchesBranch: true,
+        checks: [{
+          label: "PR/head-state check",
+          status: "pass",
+          summary: "Recorded PR head matches the branch head.",
+          rawOutput: "do not expose",
+        }],
+      },
+      replay: {
+        retainedEventCount: 8,
+        retainedEventLimit: 50,
+        truncated: false,
+      },
     });
 
     expect(projection).not.toBeNull();
@@ -280,5 +508,11 @@ describe("managed runtime contract", () => {
     expect(projection?.sdk).not.toHaveProperty("rawState");
     expect(projection?.progress?.[0]).not.toHaveProperty("stdout");
     expect(projection?.actions?.map((action) => action.action)).toEqual(["interrupt", "cancel"]);
+    expect(projection?.waitingReason).toEqual(expect.objectContaining({
+      code: "sdk_process_loss",
+    }));
+    expect(projection?.waitingReason).not.toHaveProperty("rawPrompt");
+    expect(projection?.prReady?.checks[0]).not.toHaveProperty("rawOutput");
+    expect(projection?.replay?.retainedEventCount).toBe(8);
   });
 });

@@ -672,7 +672,7 @@ describe("buildWorkstreamRuntimeOverlay", () => {
     );
   });
 
-  it("projects managed runtime lifecycle without promoting committed graph status", () => {
+  it("projects completed managed runtime lifecycle without promoting committed graph status", () => {
     const entry = buildDerivedNode({
       node: { id: "managed-node", status: "ready" },
       operationalStatus: "ready",
@@ -715,7 +715,7 @@ describe("buildWorkstreamRuntimeOverlay", () => {
     const node = overlay.nodesById.get("managed-node");
 
     expect(node?.committedStatus).toBe("ready");
-    expect(node?.runtimeStatus).toBe("active");
+    expect(node?.runtimeStatus).toBe("ended");
     expect(node?.managedRuntime?.lifecycleState).toBe("completed");
     expect(node?.managedRuntime?.progress).toHaveLength(8);
     expect(node?.managedRuntime?.progress.at(-1)?.summary).toBe("Safe progress 11");
