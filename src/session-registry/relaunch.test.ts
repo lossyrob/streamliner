@@ -421,6 +421,7 @@ describe("relaunchSession", () => {
     const result = await relaunchSession(store, session.id, {
       existsSync: () => true,
       launchTerminal: fakeLaunchTerminal,
+      pluginPreflight: false,
     });
     expect(result.ok).toBe(true);
   });

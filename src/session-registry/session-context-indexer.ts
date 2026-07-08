@@ -2,11 +2,11 @@ import {
   closeSync,
   existsSync,
   openSync,
+  readFileSync,
   readSync,
   statSync,
 } from "node:fs";
-import { dirname, normalize } from "node:path";
-import { spawnSync } from "node:child_process";
+import { dirname, isAbsolute, join, normalize, resolve } from "node:path";
 
 import type { SessionRegistryListItem } from "../session-registry-contract";
 import type { SessionRegistryGithubRef } from "../session-registry-schema";
@@ -14,7 +14,6 @@ import type { SessionRegistryDerivedStatePatch } from "./file-store";
 
 export const SESSION_CONTEXT_INDEX_MAX_BYTES_PER_CYCLE = 1024 * 1024;
 export const SESSION_CONTEXT_INDEX_MAX_OVERSIZED_RECORD_SKIP_BYTES = 16 * 1024 * 1024;
-const GIT_COMMAND_TIMEOUT_MS = 5000;
 
 interface SessionContextIndexOptions {
   maxBytesPerCycle?: number;
@@ -41,6 +40,11 @@ interface GitContext {
   worktreePath: string;
   branch: string | null;
   repo: string | null;
+}
+
+interface GitDirectory {
+  worktreePath: string;
+  gitDir: string;
 }
 
 function readRange(path: string, start: number, length: number): Buffer {
@@ -374,29 +378,108 @@ function resolveExistingPath(candidate: string): string | null {
   return null;
 }
 
-function runGit(cwd: string, args: string[]): string | null {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const result = spawnSync("git", ["-C", cwd, ...args], {
-      encoding: "utf8",
-      timeout: GIT_COMMAND_TIMEOUT_MS,
-      windowsHide: true,
-    });
-    if (result.status === 0) {
-      const output = result.stdout.trim();
-      return output.length > 0 ? output : null;
+function readTextFile(path: string): string | null {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+function resolveGitDir(dotGitPath: string): string | null {
+  try {
+    if (statSync(dotGitPath).isDirectory()) {
+      return dotGitPath;
     }
-    if (!result.error && !result.signal) {
+  } catch {
+    return null;
+  }
+
+  const content = readTextFile(dotGitPath)?.trim();
+  const match = content?.match(/^gitdir:\s*(.+)$/i);
+  if (!match) {
+    return null;
+  }
+  const rawGitDir = match[1].trim();
+  return isAbsolute(rawGitDir)
+    ? normalize(rawGitDir)
+    : resolve(dirname(dotGitPath), rawGitDir);
+}
+
+function findGitDirectory(startPath: string): GitDirectory | null {
+  let current = normalize(startPath);
+  try {
+    if (!statSync(current).isDirectory()) {
+      current = dirname(current);
+    }
+  } catch {
+    return null;
+  }
+
+  for (;;) {
+    const gitDir = resolveGitDir(join(current, ".git"));
+    if (gitDir) {
+      return { worktreePath: current, gitDir };
+    }
+    const parent = dirname(current);
+    if (parent === current) {
       return null;
     }
+    current = parent;
+  }
+}
+
+function resolveCommonGitDir(gitDir: string): string {
+  const commonDir = readTextFile(join(gitDir, "commondir"))?.trim();
+  if (!commonDir) {
+    return gitDir;
+  }
+  return isAbsolute(commonDir) ? normalize(commonDir) : resolve(gitDir, commonDir);
+}
+
+function resolveGitBranch(gitDir: string): string | null {
+  const head = readTextFile(join(gitDir, "HEAD"))?.trim();
+  const prefix = "ref: refs/heads/";
+  return head?.startsWith(prefix) ? head.slice(prefix.length) || null : null;
+}
+
+function readGitConfigValue(configText: string | null, sectionName: string, keyName: string): string | null {
+  if (!configText) {
+    return null;
+  }
+  let inSection = false;
+  for (const rawLine of configText.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#") || line.startsWith(";")) {
+      continue;
+    }
+    const section = line.match(/^\[([^\]]+)\]$/);
+    if (section) {
+      inSection = section[1].trim() === sectionName;
+      continue;
+    }
+    if (!inSection) {
+      continue;
+    }
+    const equalsIndex = line.indexOf("=");
+    if (equalsIndex < 0) {
+      continue;
+    }
+    const key = line.slice(0, equalsIndex).trim();
+    if (key !== keyName) {
+      continue;
+    }
+    const value = line.slice(equalsIndex + 1).trim();
+    return value.length > 0 ? value : null;
   }
   return null;
 }
 
-function resolveGitBranch(gitCwd: string): string | null {
+function resolveGitRemote(gitDir: string): string | null {
+  const commonGitDir = resolveCommonGitDir(gitDir);
   return (
-    runGit(gitCwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]) ??
-    runGit(gitCwd, ["branch", "--show-current"]) ??
-    runGit(gitCwd, ["rev-parse", "--abbrev-ref", "HEAD"])
+    readGitConfigValue(readTextFile(join(gitDir, "config")), 'remote "origin"', "url") ??
+    readGitConfigValue(readTextFile(join(commonGitDir, "config")), 'remote "origin"', "url")
   );
 }
 
@@ -408,15 +491,14 @@ function resolveGitContext(candidatePaths: readonly string[]): GitContext | null
       continue;
     }
     seen.add(existingPath);
-    const gitCwd = statSync(existingPath).isDirectory() ? existingPath : dirname(existingPath);
-    const worktreePath = runGit(gitCwd, ["rev-parse", "--show-toplevel"]);
-    if (!worktreePath) {
+    const gitDirectory = findGitDirectory(existingPath);
+    if (!gitDirectory) {
       continue;
     }
-    const branch = resolveGitBranch(gitCwd);
-    const repo = repoFromGitRemote(runGit(gitCwd, ["remote", "get-url", "origin"]));
+    const branch = resolveGitBranch(gitDirectory.gitDir);
+    const repo = repoFromGitRemote(resolveGitRemote(gitDirectory.gitDir));
     return {
-      worktreePath,
+      worktreePath: gitDirectory.worktreePath,
       branch: branch && branch !== "HEAD" ? branch : null,
       repo,
     };

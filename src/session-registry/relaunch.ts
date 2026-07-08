@@ -4,8 +4,8 @@ import type { SessionRegistryRecord } from "../session-registry-schema";
 import type { SessionRegistryStore } from "../session-registry-contract";
 import {
   buildCopilotResumeCommand,
-  isSafeCopilotResumeSessionId,
   type CopilotPluginPreflightOptions,
+  isSafeCopilotResumeSessionId,
   type TerminalLaunchOptions,
   type TerminalLaunchResult,
   launchCopilotTerminal,
@@ -54,7 +54,7 @@ export interface RelaunchDeps {
    * Defaults to the real preflight in production; tests pass `false` to stay
    * hermetic instead of reading the host's `~/.copilot` plugin configuration.
    */
-  pluginPreflight: false | CopilotPluginPreflightOptions | undefined;
+  pluginPreflight?: false | CopilotPluginPreflightOptions;
 }
 
 function defaultDeps(store: SessionRegistryStore): RelaunchDeps {
@@ -63,7 +63,6 @@ function defaultDeps(store: SessionRegistryStore): RelaunchDeps {
     existsSync,
     launchTerminal,
     loadDefaultCliArgs: () => [...DEFAULT_COPILOT_CLI_ARGS],
-    pluginPreflight: undefined,
   };
 }
 
