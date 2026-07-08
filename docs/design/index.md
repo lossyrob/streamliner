@@ -1,26 +1,3 @@
----
-kind: design-doc
-status: current
-last_updated: 2026-05-02
-update_semantics: rewrite-in-place
-authoritative_for: "Design documentation entry point, reading order, and decision log"
-scope_tags:
-  - design-docs
-  - navigation
-code_paths: []
-references_decisions:
-  - 1
-  - 2
-  - 3
-  - 4
-  - 5
-  - 6
-  - 7
-  - 8
-  - 9
-  - 10
----
-
 # Streamliner — Design
 
 This is the entry point for Streamliner's project-level design documentation. Start here to understand the system, then follow the reading order into the detail pages.
@@ -42,15 +19,15 @@ Streamliner helps a single builder direct many concurrent AI coding agent workst
 
 ## Satellite documents
 
-| Document | Authoritative for |
-|---|---|
-| [product.md](product.md) | Product scope and architecture |
-| [operating-model.md](operating-model.md) | Operating model: roles, information flow, and operating rhythm |
-| [design-layer.md](design-layer.md) | Design-doc system: document families and interaction with workstreams |
-| [workstream-format.md](workstream-format.md) | Workstream artifact format: brief, graph, config, and runtime state separation |
-| [session-system.md](session-system.md) | Session launching, lifecycle, registry contract, tracking, and runtime overlay (draft) |
-| [concepts/context-package.md](concepts/context-package.md) | Context package: layered context model for agent sessions |
-| [concepts/waves.md](concepts/waves.md) | Waves: wave-based planning, promotion, and gate boundaries |
+| Document | Status | Authoritative for |
+|---|---|---|
+| [product.md](product.md) | current | Product scope and architecture |
+| [operating-model.md](operating-model.md) | current | Operating model: roles, information flow, and operating rhythm |
+| [design-layer.md](design-layer.md) | current | Design-doc system: document families and interaction with workstreams |
+| [workstream-format.md](workstream-format.md) | current | Workstream artifact format: brief, graph, config, and runtime state separation |
+| [session-system.md](session-system.md) | draft | Session launching, lifecycle, registry contract, tracking, and runtime overlay |
+| [concepts/context-package.md](concepts/context-package.md) | current | Context package: layered context model for agent sessions |
+| [concepts/waves.md](concepts/waves.md) | current | Waves: wave-based planning, promotion, and gate boundaries |
 
 ## Decision log
 
@@ -66,6 +43,7 @@ Streamliner helps a single builder direct many concurrent AI coding agent workst
 | 008 | [PAW artifacts for workflow status](decisions/008-paw-artifacts-for-workflow-status.md) | accepted | 2026-05-02 |
 | 009 | [SDK-managed graph-node worker runtime](decisions/009-sdk-managed-worker-runtime.md) | accepted | 2026-05-07 |
 | 010 | [Terminal takeover and managed cleanup actions](decisions/010-terminal-takeover-and-cleanup.md) | accepted | 2026-05-09 |
+| 011 | [Documentation family foundation](decisions/011-documentation-family-foundation.md) | accepted | 2026-05-10 |
 
 ## Open questions
 

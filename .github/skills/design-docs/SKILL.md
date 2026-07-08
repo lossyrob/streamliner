@@ -2,7 +2,7 @@
 name: design-docs
 description: >
   Guides modifications to Streamliner's design documentation under docs/design/.
-  Ensures VitePress sidebar config, design index, and frontmatter stay consistent
+  Ensures VitePress sidebar config and design index stay consistent
   when design docs or decision records are added, removed, or renamed. Activate
   whenever work touches docs/design/ files.
 ---
@@ -10,7 +10,7 @@ description: >
 # Design Docs Skill
 
 When adding, removing, or renaming files under `docs/design/`, you **must** keep
-three coordination points in sync.
+the navigation coordination points in sync.
 
 ## 1. VitePress sidebar — `docs/design/.vitepress/config.ts`
 
@@ -29,30 +29,16 @@ Removed or renamed files must also be updated in the sidebar.
 - Concept docs are already listed in the reading order under "Concepts" — add new ones there.
 - Remove entries for deleted docs.
 
-## 3. Frontmatter
+## 3. No YAML frontmatter
 
-Every file under `docs/design/` must have YAML frontmatter:
+Do not add YAML frontmatter to design docs or decision records. Design metadata
+lives in maintained markdown surfaces:
 
-```yaml
-# Living design docs
-kind: design-doc
-status: current | draft | superseded
-last_updated: YYYY-MM-DD
-update_semantics: rewrite-in-place
-authoritative_for: "Short description of what this doc owns"
-scope_tags: [tag1, tag2]
-code_paths: [src/relevant/**]
-references_decisions: [1, 2]
-
-# Decision records
-kind: decision
-number: NNN
-status: proposed | accepted | superseded
-date: YYYY-MM-DD
-update_semantics: append-only
-superseded_by: null
-supersedes: null
-```
+- document title: `# H1`
+- design-doc authority and reading order: `docs/design/index.md`
+- decision number/title/status/date: filename, `# H1`, and decision log tables
+- last-updated/changelog: git history
+- relationships: inline links, index tables, decision tables, and workstream refs
 
 ## Decision numbering
 
