@@ -78,6 +78,7 @@ afterEach(() => {
     rmSync(root, { recursive: true, force: true });
   }
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 describe("GitHub status API", () => {
@@ -176,6 +177,8 @@ describe("GitHub status API", () => {
   });
 
   it("selects a configured gh auth profile for the requested repository", async () => {
+    vi.stubEnv("GITHUB_TOKEN", "");
+    vi.stubEnv("GH_TOKEN", "");
     const authSettingsPath = join(createRoot(), "github-auth.json");
     writeFileSync(
       authSettingsPath,

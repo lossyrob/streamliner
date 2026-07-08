@@ -34,6 +34,8 @@ export const WORKSTREAM_LAUNCH_TERMINAL_PREFERENCES = [
   "default",
   "windows-terminal",
   "powershell",
+  "mac-terminal",
+  "iterm2",
 ] as const;
 export type WorkstreamLaunchTerminalPreference =
   (typeof WORKSTREAM_LAUNCH_TERMINAL_PREFERENCES)[number];

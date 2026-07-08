@@ -27,10 +27,20 @@ import {
   type StreamlinerApiAppOptions,
 } from "./app";
 import { SessionRegistryEventStream } from "./session-events";
+import type { TerminalLaunchOptions, TerminalLaunchResult } from "./terminal-launch";
 
 const createdRoots: string[] = [];
 const activeApps: StreamlinerApiApp[] = [];
 const activeServers: Server[] = [];
+
+type TerminalLaunchMethodForTest = TerminalLaunchResult["method"];
+
+function terminalResult(
+  method: TerminalLaunchMethodForTest,
+  pid: number,
+): TerminalLaunchResult {
+  return { method, pid };
+}
 
 class FakeSseRequest extends EventEmitter {
   private readonly lastEventId?: string;
@@ -1561,6 +1571,46 @@ describe("createStreamlinerApiApp", () => {
         cwd: rootDir,
         method: "windows-terminal",
         pid: 99999,
+      }),
+    );
+  });
+
+  it("relaunch endpoint returns mac-terminal method for resumed sessions", async () => {
+    const rootDir = createRootDir();
+    const store = new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") });
+    const session = store.upsertSession({
+      title: "macOS relaunch target",
+      cwd: rootDir,
+      origin: { kind: "observed" },
+      copilotSessionId: "mac-session-123",
+    });
+    let launchOptions: TerminalLaunchOptions | undefined;
+    const api = createStreamlinerApiApp({
+      store,
+      relaunchDeps: {
+        launchTerminal: (options) => {
+          launchOptions = options;
+          return terminalResult("mac-terminal", 42424);
+        },
+        existsSync: () => true,
+        pluginPreflight: false,
+      },
+    });
+    activeApps.push(api);
+
+    const response = await request(api.app)
+      .post(`/api/sessions/${session.id}/relaunch`)
+      .set("Content-Type", "application/json")
+      .expect(200);
+
+    expect(launchOptions?.command).toContain("--resume=mac-session-123");
+    expect(launchOptions?.prepareCopilotCli).toBe(true);
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        sessionId: session.id,
+        method: "mac-terminal",
+        pid: 42424,
+        copilotResumed: true,
       }),
     );
   });

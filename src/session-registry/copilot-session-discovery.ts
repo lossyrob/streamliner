@@ -1,7 +1,8 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 
+import { basenameCrossOs } from "../cross-os-path";
 import type { SessionRegistryListItem, SessionRegistryObservedLinkInput } from "../session-registry-contract";
 import type { SessionRegistryObservedLifecycleStatus } from "../session-registry-contract";
 import type {
@@ -163,7 +164,7 @@ function deriveTitle(
       return observedSessionKind === "helper" ? `${repoName} helper session` : repoName;
     }
   }
-  const cwdName = basename(cwd).trim();
+  const cwdName = basenameCrossOs(cwd).trim();
   if (cwdName.length > 0) {
     return observedSessionKind === "helper" ? `${cwdName} helper session` : cwdName;
   }
