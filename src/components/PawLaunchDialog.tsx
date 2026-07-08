@@ -14,6 +14,8 @@ import type {
 } from "../node-launch-record-contract";
 import type { WorkstreamRuntimeKind } from "../managed-runtime-contract";
 import { humanizeLaunchClaim } from "./launch-claim-display";
+import { ManagedSessionConsole } from "./ManagedSessionConsole";
+import { launchProgressConsoleEvents } from "./ManagedSessionConsoleEvents";
 import {
   mergePromptProfiles,
   responseErrorMessage,
@@ -446,7 +448,6 @@ export function PawLaunchDialog({
   const terminalColorValue = terminalColor.trim();
   const terminalTabColor = terminalColorValue.length > 0 ? terminalColorValue : null;
   const latestProgress = progressEvents.at(-1) ?? null;
-  const recentProgress = progressEvents.slice(-8);
   const debugPaths = collectDebugPaths(progressEvents);
 
   useEffect(() => {
@@ -832,42 +833,26 @@ export function PawLaunchDialog({
 
         <div className="sl-sheet-body sl-paw-launch-body">
           {(busy || progressEvents.length > 0) && (!handoff || managedStarting) && (
-            <section className="sl-paw-launch-progress" aria-live="polite">
-              <div className="sl-paw-config-section-head">
-                <div>
-                  <span className="sl-section-label">
-                    {managedStarting ? "Background session launch" : "PAW init progress"}
-                  </span>
-                  <p>
-                    {managedStarting
-                      ? "PAW init is complete. Streamliner is creating the background SDK session and waiting for its session id."
-                      : managedRuntimeSelected
-                      ? "Streamliner is starting a background session for this node."
-                      : "Streamliner is running one internal Copilot SDK session for context assembly and PAW init."}
-                  </p>
-                </div>
-                <span className="sl-pill accent">
-                  {latestProgress ? progressLabel(latestProgress.type) : "Starting"}
-                </span>
-              </div>
-              <div className="sl-paw-progress-current">
-                {latestProgress?.message ??
-                  (managedStarting
-                    ? "Submitting background session launch request..."
-                    : "Starting Streamliner PAW launch preparation...")}
-              </div>
-              {recentProgress.length > 0 && (
-                <ol className="sl-paw-progress-list">
-                  {recentProgress.map((event, index) => (
-                    <li key={`${event.timestamp}-${event.type}-${index}`}>
-                      <span>{progressLabel(event.type)}</span>
-                      <p>{event.message}</p>
-                    </li>
-                  ))}
-                </ol>
-              )}
-              {!error && <PawLaunchDebugPaths paths={debugPaths} />}
-            </section>
+            <ManagedSessionConsole
+              title={managedStarting ? "Background session launch" : "PAW init progress"}
+              subtitle={
+                managedStarting
+                  ? "PAW init is complete. Streamliner is creating the background SDK session and waiting for its session id."
+                  : managedRuntimeSelected
+                    ? "Streamliner is starting a background session for this node."
+                    : "Streamliner is running one internal Copilot SDK session for context assembly and PAW init."
+              }
+              stateLabel={latestProgress ? progressLabel(latestProgress.type) : "Starting"}
+              stateTone="accent"
+              currentMessage={latestProgress?.message ??
+                (managedStarting
+                  ? "Submitting background session launch request..."
+                  : "Starting Streamliner PAW launch preparation...")}
+              events={launchProgressConsoleEvents(progressEvents)}
+              emptyMessage="Sanitized launch preparation activity will appear here."
+              live
+              footer={!error ? <PawLaunchDebugPaths paths={debugPaths} /> : null}
+            />
           )}
 
           {error && (

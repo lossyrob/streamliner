@@ -22,11 +22,12 @@ import {
 import {
   formatManagedRuntimeLabel,
   managedLifecycleStatusClass,
-  resolveManagedRuntimeActions,
 } from "../managed-runtime-contract";
 import { trackerLabel, trackerUrl } from "../workstream-links";
 import { humanizeLaunchClaim } from "./launch-claim-display";
-import { ManagedRuntimeActionButton } from "./ManagedRuntimeActionButton";
+import {
+  ManagedRuntimeConsolePanel,
+} from "./ManagedRuntimeConsolePanel";
 
 interface NodeInspectorProps {
   entry: WorkstreamDerivedNode | null;
@@ -40,6 +41,9 @@ interface NodeInspectorProps {
   launchRecordError?: string | null;
   runtimeOverlay?: WorkstreamRuntimeNodeOverlay | null;
   onLaunch?: () => void;
+  onOpenConsole?: () => void;
+  onOpenConsoleInSessions?: () => void | Promise<void>;
+  onManagedRuntimeActionComplete?: () => void | Promise<void>;
   /**
    * Optional handler for releasing a stuck active launch operation or
    * resolving a stale terminal launch that is no longer blocked by a claim.
@@ -220,7 +224,17 @@ function RuntimeIssueList({
   );
 }
 
-function RuntimeDetails({ overlay }: { overlay: WorkstreamRuntimeNodeOverlay | null }) {
+function RuntimeDetails({
+  overlay,
+  onOpenConsole,
+  onOpenConsoleInSessions,
+  onManagedRuntimeActionComplete,
+}: {
+  overlay: WorkstreamRuntimeNodeOverlay | null;
+  onOpenConsole?: () => void;
+  onOpenConsoleInSessions?: () => void | Promise<void>;
+  onManagedRuntimeActionComplete?: () => void | Promise<void>;
+}) {
   if (!overlay) {
     return null;
   }
@@ -312,40 +326,34 @@ function RuntimeDetails({ overlay }: { overlay: WorkstreamRuntimeNodeOverlay | n
         </dl>
         {managedRuntime && (
           <div className="sl-managed-runtime-inspector">
-            <div className="sl-runtime-issue muted">
-              <span className="sl-runtime-issue-code">
-                {formatManagedRuntimeLabel(managedRuntime.projection.permissionProfile)}
-              </span>
-              <span>
-                {managedRuntime.projection.summary ??
-                  managedRuntime.projection.blockerSummary ??
-                  managedRuntime.projection.errorSummary ??
-                  "Background session progress is summarized from sanitized lifecycle events."}
-              </span>
+            <div className="sl-managed-runtime-inspector-actions">
+              <button
+                className="sl-action-btn primary"
+                type="button"
+                disabled={!onOpenConsole}
+                onClick={onOpenConsole}
+              >
+                Open console
+              </button>
+              <button
+                className="sl-action-btn"
+                type="button"
+                disabled={!onOpenConsoleInSessions}
+                onClick={() => void onOpenConsoleInSessions?.()}
+              >
+                Open in Sessions
+              </button>
             </div>
-            {managedRuntime.progress.length > 0 && (
-              <ol>
-                {managedRuntime.progress.slice(-3).map((event) => (
-                  <li key={`${event.timestamp}-${event.phase}-${event.summary}`}>
-                    <span>{formatManagedRuntimeLabel(event.phase)}</span>
-                    <span>{event.summary}</span>
-                  </li>
-                ))}
-              </ol>
-            )}
-            <div className="sl-managed-runtime-placeholder-actions">
-              {resolveManagedRuntimeActions(managedRuntime.projection).map((action) => (
-                <ManagedRuntimeActionButton
-                  key={action.action}
-                  sessionId={primarySession?.id ?? ""}
-                  action={
-                    primarySession
-                      ? action
-                      : { ...action, available: false, reason: "No bound session." }
-                  }
-                />
-              ))}
-            </div>
+            <ManagedRuntimeConsolePanel
+              runtime={managedRuntime.projection}
+              sessionId={primarySession?.id ?? null}
+              title="Background session console"
+              subtitle={`${formatManagedRuntimeLabel(
+                managedRuntime.projection.permissionProfile,
+              )}; sanitized Streamliner activity only.`}
+              compact
+              onActionComplete={onManagedRuntimeActionComplete}
+            />
           </div>
         )}
         <RuntimeIssueList issues={overlay.degradationReasons} />
@@ -388,6 +396,9 @@ export function NodeInspector({
   launchRecordError,
   runtimeOverlay = null,
   onLaunch,
+  onOpenConsole,
+  onOpenConsoleInSessions,
+  onManagedRuntimeActionComplete,
   onReleaseStuckOperation,
   onClearPreviousInit,
 }: NodeInspectorProps) {
@@ -547,7 +558,12 @@ export function NodeInspector({
         </div>
       </div>
 
-      <RuntimeDetails overlay={runtimeOverlay} />
+      <RuntimeDetails
+        overlay={runtimeOverlay}
+        onOpenConsole={onOpenConsole}
+        onOpenConsoleInSessions={onOpenConsoleInSessions}
+        onManagedRuntimeActionComplete={onManagedRuntimeActionComplete}
+      />
 
       {(launchRecordLoading || launchRecordError || launchRecord || launchOperation || latestClaim) && (
         <div className="sl-sidebar-section">

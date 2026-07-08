@@ -2,8 +2,6 @@ import { dirname } from "node:path";
 
 import type {
   PermissionHandler,
-  PermissionRequest,
-  PermissionRequestResult,
   SessionEvent,
 } from "@github/copilot-sdk";
 
@@ -116,13 +114,24 @@ interface ManagedUserInputRequest {
   choices?: string[];
 }
 
+interface ToolCallDisplayState {
+  toolCallId: string;
+  toolName?: string;
+  displayTitle?: string;
+  displayDetail?: string;
+  outputLineCount?: number;
+}
+
 type RuntimeEvidenceLifecycleState = Extract<
   SessionRegistryManagedLifecycleState,
   SessionRegistryRuntimeEvidenceKind
 >;
 
-const PR_URL_PATTERN =
-  /https:\/\/(?<host>[^/\s<>)]+)\/(?<repo>[^/\s<>)]+\/[^/\s<>)]+)\/(?:pull|pulls|pull-requests)\/(?<number>\d+)/i;
+const GITHUB_REPO_SEGMENT_PATTERN = String.raw`[A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?`;
+const PR_URL_PATTERN = new RegExp(
+  String.raw`https:\/\/github\.com\/(?<repo>${GITHUB_REPO_SEGMENT_PATTERN}\/${GITHUB_REPO_SEGMENT_PATTERN})\/pull\/(?<number>[1-9]\d*)\b`,
+  "i",
+);
 
 const MANAGED_LIFECYCLE_STATE_SET = new Set<string>(SESSION_REGISTRY_MANAGED_LIFECYCLE_STATES);
 for (const kind of SESSION_REGISTRY_RUNTIME_EVIDENCE_KINDS) {
@@ -135,6 +144,10 @@ function errorLogDetails(error: unknown): Record<string, string> | string {
   return error instanceof Error
     ? { name: error.name, message: error.message }
     : String(error);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function createSafeManagedCallbacks(input: ManagedSdkRunnerStartInput): SafeManagedCallbacks {
@@ -199,100 +212,315 @@ function managedSdkTurnIdleTimeoutMs(): number {
   return DEFAULT_MANAGED_SDK_TURN_IDLE_TIMEOUT_MS;
 }
 
-function permissionRequestData(
-  request: PermissionRequest,
-  decision: PermissionRequestResult,
-): Record<string, unknown> {
-  return {
-    kind: request.kind,
-    toolCallId: request.toolCallId,
-    decision: decision.kind,
-  };
-}
-
 function lifecycleForSdkEvent(event: SessionEvent): SessionRegistryManagedLifecycleState | null {
   switch (event.type) {
-    case "tool.execution_start":
-      return "running";
     case "session.idle":
       return "idle";
     case "session.error":
       return "failed";
     case "abort":
       return "interrupted";
+    case "tool.execution_start":
+      return "running";
     default:
       return null;
   }
 }
 
-function progressForSdkEvent(event: SessionEvent): SessionRegistryRuntimeProgressEventInput | null {
-  const data = event.data && typeof event.data === "object" && !Array.isArray(event.data)
-    ? event.data as Record<string, unknown>
-    : {};
+function eventText(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : fallback;
+}
+
+function toolDisplayName(value: unknown): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return "tool";
+  }
+  return value.trim().replace(/^functions\./, "");
+}
+
+function optionalDisplayString(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return undefined;
+  }
+  return value.trim();
+}
+
+function optionalDisplayNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : undefined;
+}
+
+function assistantDisplayContent(data: Record<string, unknown>): string | undefined {
+  return optionalDisplayString(data.content) ??
+    optionalDisplayString(data.message) ??
+    optionalDisplayString(data.text);
+}
+
+function outputLineCount(value: unknown): number | undefined {
+  if (typeof value !== "string" || value.length === 0) {
+    return undefined;
+  }
+  return value.split(/\r?\n/).length;
+}
+
+function outputLineCountFromResult(value: unknown): number | undefined {
+  if (!isRecord(value)) {
+    return outputLineCount(value);
+  }
+  const direct = outputLineCount(value.detailedContent) ?? outputLineCount(value.content);
+  if (direct !== undefined) {
+    return direct;
+  }
+  const contents = Array.isArray(value.contents) ? value.contents : [];
+  let count = 0;
+  for (const block of contents) {
+    if (isRecord(block) && typeof block.text === "string") {
+      count += outputLineCount(block.text) ?? 0;
+    }
+  }
+  return count > 0 ? count : undefined;
+}
+
+function argumentRecord(data: Record<string, unknown>): Record<string, unknown> {
+  return isRecord(data.arguments) ? data.arguments : {};
+}
+
+function argumentCount(data: Record<string, unknown>): number | undefined {
+  const args = argumentRecord(data);
+  const count = Object.keys(args).length;
+  return count > 0 ? count : undefined;
+}
+
+function toolDisplayTitle(
+  data: Record<string, unknown>,
+  toolName: unknown,
+  fallbackVerb: "Run" | "Ran" | "Failed",
+): string {
+  const args = argumentRecord(data);
+  const description = optionalDisplayString(args.description) ??
+    optionalDisplayString(data.description);
+  if (description) {
+    const suffix = toolDisplayName(toolName);
+    return suffix === "tool" ? description : `${description} (${suffix})`;
+  }
+  const defaultTitle = defaultToolDisplayTitle(toolName, fallbackVerb);
+  if (defaultTitle) {
+    return defaultTitle;
+  }
+  return `${fallbackVerb} ${toolDisplayName(toolName)}`;
+}
+
+function defaultToolDisplayTitle(
+  toolName: unknown,
+  fallbackVerb: "Run" | "Ran" | "Failed",
+): string | undefined {
+  const name = toolDisplayName(toolName);
+  const prefix = fallbackVerb === "Ran"
+    ? "Read"
+    : fallbackVerb === "Failed"
+      ? "Failed"
+      : "Read";
+  switch (name) {
+    case "view":
+      return fallbackVerb === "Failed" ? "Failed reading file" : `${prefix} file`;
+    case "rg":
+      return fallbackVerb === "Failed" ? "Failed code search" : "Search code";
+    case "glob":
+      return fallbackVerb === "Failed" ? "Failed file search" : "Find files";
+    case "apply_patch":
+      return fallbackVerb === "Ran"
+        ? "Edited files"
+        : fallbackVerb === "Failed"
+          ? "Failed editing files"
+          : "Edit files";
+    case "powershell":
+      return fallbackVerb === "Ran"
+        ? "Ran shell command"
+        : fallbackVerb === "Failed"
+          ? "Failed shell command"
+          : "Run shell command";
+    default:
+      return undefined;
+  }
+}
+
+function toolDisplayDetail(data: Record<string, unknown>): string | undefined {
+  const args = argumentRecord(data);
+  return optionalDisplayString(args.command) ??
+    optionalDisplayString(args.path) ??
+    optionalDisplayString(args.filePath) ??
+    optionalDisplayString(data.command) ??
+    optionalDisplayString(data.path) ??
+    optionalDisplayString(data.filePath);
+}
+
+function progressForSdkEvent(
+  event: SessionEvent,
+  toolCalls: Map<string, ToolCallDisplayState>,
+): SessionRegistryRuntimeProgressEventInput | null {
+  const data = isRecord(event.data) ? event.data : {};
   switch (event.type) {
     case "assistant.intent":
       return {
         type: "assistant_status",
-        message: "Assistant status updated.",
-        data: { intentLength: typeof data.intent === "string" ? data.intent.length : undefined },
+        message: eventText(data.intent, "Thinking..."),
+        data: {
+          assistantEventKind: "intent",
+          intent: typeof data.intent === "string" ? data.intent : undefined,
+          agentId: event.agentId,
+        },
       };
-    case "assistant.message":
+    case "assistant.reasoning":
       return {
         type: "assistant_status",
-        message: "Assistant message received.",
-        data: { contentLength: typeof data.content === "string" ? data.content.length : undefined },
+        message: "Thinking...",
+        data: {
+          assistantEventKind: "reasoning",
+          contentLength: typeof data.content === "string" ? data.content.length : undefined,
+          reasoningId: data.reasoningId,
+          agentId: event.agentId,
+        },
       };
-    case "tool.execution_start":
+    case "assistant.reasoning_delta":
+      return null;
+    case "assistant.message": {
+      const displayMessage = assistantDisplayContent(data);
+      return {
+        type: "assistant_status",
+        message: eventText(displayMessage, "Assistant responded."),
+        data: {
+          assistantEventKind: "message",
+          displayMessage,
+          contentLength: displayMessage?.length,
+          outputTokens: optionalDisplayNumber(data.outputTokens),
+          agentId: event.agentId,
+        },
+      };
+    }
+    case "tool.execution_start": {
+      const toolName = data.toolName ?? data.name;
+      const toolCallId = optionalDisplayString(data.toolCallId);
+      const displayTitle = toolDisplayTitle(data, toolName, "Run");
+      const displayDetail = toolDisplayDetail(data);
+      if (toolCallId) {
+        toolCalls.set(toolCallId, {
+          toolCallId,
+          toolName: optionalDisplayString(toolName),
+          displayTitle,
+          displayDetail,
+        });
+      }
       return {
         type: "tool_started",
-        message: "Tool execution started.",
+        message: displayTitle,
         data: {
+          displayTitle,
+          displayDetail,
+          argumentCount: argumentCount(data),
           toolCallId: data.toolCallId,
-          toolName: data.toolName ?? data.name,
+          toolName,
+          agentId: event.agentId,
         },
       };
-    case "tool.execution_complete":
+    }
+    case "tool.execution_partial_result": {
+      const toolCallId = optionalDisplayString(data.toolCallId);
+      if (toolCallId) {
+        const state = toolCalls.get(toolCallId) ?? { toolCallId };
+        const nextCount = (state.outputLineCount ?? 0) +
+          (outputLineCount(data.partialOutput) ?? 0);
+        toolCalls.set(toolCallId, { ...state, outputLineCount: nextCount });
+      }
+      return null;
+    }
+    case "tool.execution_progress":
+      return null;
+    case "tool.execution_complete": {
+      const toolCallId = optionalDisplayString(data.toolCallId);
+      const state = toolCallId ? toolCalls.get(toolCallId) : undefined;
+      const toolName = state?.toolName ?? optionalDisplayString(data.toolName) ??
+        optionalDisplayString(data.name);
+      const success = data.success !== false;
+      const displayTitle = success
+        ? state?.displayTitle?.replace(/^Run\b/, "Ran") ?? toolDisplayTitle(data, toolName, "Ran")
+        : state?.displayTitle?.replace(/^Run\b/, "Failed") ?? toolDisplayTitle(data, toolName, "Failed");
+      const outputLines = outputLineCountFromResult(data.result) ??
+        outputLineCountFromResult(data.output) ??
+        state?.outputLineCount;
       return {
         type: "tool_completed",
-        message: "Tool execution completed.",
+        message: displayTitle,
         data: {
+          displayTitle,
+          displayDetail: state?.displayDetail ?? toolDisplayDetail(data),
+          outputLineCount: outputLines,
           toolCallId: data.toolCallId,
+          toolName,
+          agentId: event.agentId,
           success: data.success,
         },
       };
+    }
+    case "subagent.started": {
+      const displayName = eventText(data.agentDisplayName ?? data.agentName, "background agent");
+      return {
+        type: "subagent_status",
+        message: `Started ${displayName}.`,
+        data: {
+          displayTitle: `Started ${displayName}.`,
+          displayDetail: optionalDisplayString(data.agentDescription),
+          agentId: event.agentId,
+          agentName: data.agentName,
+          toolCallId: data.toolCallId,
+        },
+      };
+    }
+    case "subagent.completed": {
+      const displayName = eventText(data.agentDisplayName ?? data.agentName, "background agent");
+      return {
+        type: "subagent_status",
+        message: `Finished ${displayName}.`,
+        data: {
+          displayTitle: `Finished ${displayName}.`,
+          displayDetail: optionalDisplayString(data.model),
+          agentId: event.agentId,
+          agentName: data.agentName,
+          toolCallId: data.toolCallId,
+          durationMs: optionalDisplayNumber(data.durationMs),
+          totalToolCalls: optionalDisplayNumber(data.totalToolCalls),
+          success: true,
+        },
+      };
+    }
+    case "subagent.failed": {
+      const displayName = eventText(data.agentDisplayName ?? data.agentName, "background agent");
+      return {
+        type: "subagent_status",
+        message: `Failed ${displayName}.`,
+        data: {
+          displayTitle: `Failed ${displayName}.`,
+          displayDetail: optionalDisplayString(data.error),
+          agentId: event.agentId,
+          agentName: data.agentName,
+          toolCallId: data.toolCallId,
+          durationMs: optionalDisplayNumber(data.durationMs),
+          totalToolCalls: optionalDisplayNumber(data.totalToolCalls),
+          success: false,
+        },
+      };
+    }
     case "session.mcp_servers_loaded":
     case "session.mcp_server_status_changed":
-      return {
-        type: "mcp_status",
-        message: "MCP status updated.",
-        data,
-      };
     case "session.skills_loaded":
-    case "skill.invoked":
-      return {
-        type: "skill_status",
-        message: "Skill status updated.",
-        data,
-      };
     case "hook.start":
     case "hook.end":
-      return {
-        type: "evidence",
-        message: "Hook event observed.",
-        data: {
-          hookType: data.hookType,
-          success: data.success,
-        },
-      };
     case "session.usage_info":
-      return {
-        type: "usage",
-        message: "Usage counters updated.",
-        data: {
-          inputTokens: data.inputTokens,
-          outputTokens: data.outputTokens,
-        },
-      };
+      return null;
+    case "skill.invoked":
+      return null;
     case "session.error":
       return {
         type: "error",
@@ -363,6 +591,8 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
     const sdk = await import("@github/copilot-sdk");
     const callbacks = createSafeManagedCallbacks(input);
     let activeRun: ActiveManagedRun | null = null;
+    const lastAssistantMessage = { value: null as string | null };
+    const toolCalls = new Map<string, ToolCallDisplayState>();
     const client = new sdk.CopilotClient({
       cwd: input.cwd,
       cliArgs: [...input.cliArgs],
@@ -376,13 +606,6 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
       clientStarted = true;
       const permissionHandler: PermissionHandler = async (request, invocation) => {
         const decision = await sdk.approveAll(request, invocation);
-        if (!activeRun?.ownershipTransferred) {
-          callbacks.onProgress({
-            type: "permission_decision",
-            message: "Managed-autonomous permission approved.",
-            data: permissionRequestData(request, decision),
-          });
-        }
         return decision;
       };
       const sessionConfig = {
@@ -415,7 +638,11 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
           if (activeRun?.ownershipTransferred) {
             return;
           }
-          const progress = progressForSdkEvent(event);
+          if (event.type === "assistant.message" && isRecord(event.data)) {
+            lastAssistantMessage.value = assistantDisplayContent(event.data) ??
+              lastAssistantMessage.value;
+          }
+          const progress = progressForSdkEvent(event, toolCalls);
           if (progress) {
             callbacks.onProgress(progress);
           }
@@ -447,7 +674,7 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
     callbacks.onStarted(result);
     activeRun = { client, session, interrupted: false, ownershipTransferred: false };
     this.activeRuns.set(input.registryId, activeRun);
-    void this.runTurn(input, activeRun, callbacks);
+    void this.runTurn(input, activeRun, callbacks, lastAssistantMessage);
     return result;
   }
 
@@ -538,6 +765,7 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
     input: ManagedSdkRunnerStartInput,
     active: ActiveManagedRun,
     callbacks: SafeManagedCallbacks,
+    lastAssistantMessage: { value: string | null },
   ): Promise<void> {
     try {
       callbacks.onLifecycleState("running", "Managed SDK worker started.");
@@ -549,6 +777,18 @@ export class DefaultManagedSdkRunner implements ManagedSdkRunner {
         return;
       }
       const content = assistantContent(response);
+      if (content && content !== lastAssistantMessage.value) {
+        callbacks.onProgress({
+          type: "assistant_status",
+          message: content,
+          data: {
+            assistantEventKind: "message",
+            displayMessage: content,
+            contentLength: content.length,
+          },
+        });
+        lastAssistantMessage.value = content;
+      }
       const detectedEvidence = evidenceFromAssistantContent(content);
       for (const evidence of detectedEvidence) {
         callbacks.onEvidence(evidence);

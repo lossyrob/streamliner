@@ -267,7 +267,7 @@ describe("DefaultManagedSdkRunner", () => {
     expect(capture.progress.slice(progressCount)).toEqual([
       expect.objectContaining({
         type: "tool_started",
-        message: "Tool execution started.",
+        message: "Run shell command",
         data: expect.objectContaining({ toolName: "powershell" }),
       }),
     ]);
@@ -390,13 +390,20 @@ describe("DefaultManagedSdkRunner", () => {
 
     expect(capture.evidence).toEqual([]);
     expect(capture.states).not.toContain("review_ready");
+    expect(capture.progress).toContainEqual(expect.objectContaining({
+      type: "assistant_status",
+      data: expect.objectContaining({
+        assistantEventKind: "message",
+        displayMessage: "The implementation is done and ready for review.",
+      }),
+    }));
   });
 
-  it("detects supported PR URL formats as PR-ready evidence", async () => {
+  it("detects canonical GitHub PR URLs as PR-ready evidence", async () => {
     const capture = createCapture();
     sdkMock.session.sendAndWait.mockResolvedValueOnce({
       data: {
-        content: "Created [the PR](https://github.example.com/lossyrob/streamliner/pull-requests/987).",
+        content: "Created https://github.com/lossyrob/streamliner/pull/987.",
       },
     });
 
@@ -409,10 +416,45 @@ describe("DefaultManagedSdkRunner", () => {
         kind: "pr_ready",
         repo: "lossyrob/streamliner",
         number: 987,
-        url: "https://github.example.com/lossyrob/streamliner/pull-requests/987",
+        url: "https://github.com/lossyrob/streamliner/pull/987",
       }),
     ]);
     expect(capture.states).toContain("pr_ready");
+  });
+
+  it("ignores non-canonical PR-looking URLs", async () => {
+    const capture = createCapture();
+    sdkMock.session.sendAndWait.mockResolvedValueOnce({
+      data: {
+        content: "Created [the PR](https://github.example.com/lossyrob/streamliner/pull-requests/987).",
+      },
+    });
+
+    const runner = new DefaultManagedSdkRunner();
+    await runner.start(createStartInput(capture));
+    await flushManagedTurn();
+
+    expect(capture.evidence).toEqual([]);
+    expect(capture.states).not.toContain("pr_ready");
+  });
+
+  it("ignores GitHub PR URLs with invalid owner or repository slugs", async () => {
+    const capture = createCapture();
+    sdkMock.session.sendAndWait.mockResolvedValueOnce({
+      data: {
+        content: [
+          "Created https://github.com/_lossyrob/streamliner/pull/987.",
+          "Created https://github.com/lossyrob/-streamliner/pull/988.",
+        ].join("\n"),
+      },
+    });
+
+    const runner = new DefaultManagedSdkRunner();
+    await runner.start(createStartInput(capture));
+    await flushManagedTurn();
+
+    expect(capture.evidence).toEqual([]);
+    expect(capture.states).not.toContain("pr_ready");
   });
 
   it("ignores PR URLs with unsafe integer pull request numbers", async () => {
@@ -426,13 +468,15 @@ describe("DefaultManagedSdkRunner", () => {
     const runner = new DefaultManagedSdkRunner();
     await runner.start(createStartInput(capture));
     await flushManagedTurn();
+    capture.progress.length = 0;
 
     expect(capture.evidence).toEqual([]);
     expect(capture.states).not.toContain("pr_ready");
   });
 
-  it("emits assistant and usage summary telemetry that survives runtime sanitization", async () => {
+  it("emits concise SDK console telemetry that survives runtime sanitization", async () => {
     const capture = createCapture();
+    sdkMock.session.sendAndWait.mockResolvedValueOnce({ data: { content: "" } });
     const runner = new DefaultManagedSdkRunner();
     await runner.start(createStartInput(capture));
     await flushManagedTurn();
@@ -441,8 +485,64 @@ describe("DefaultManagedSdkRunner", () => {
       onEvent?: (event: { type: string; data?: Record<string, unknown> }) => unknown;
     };
     config.onEvent?.({
+      type: "assistant.intent",
+      data: { intent: "Inspecting files before editing." },
+    });
+    config.onEvent?.({
+      type: "assistant.reasoning",
+      data: { content: "private reasoning text that must not persist", reasoningId: "r1" },
+    });
+    config.onEvent?.({
       type: "assistant.message",
-      data: { content: "raw assistant text that must not persist" },
+      data: { content: "Implemented the console update.", outputTokens: 42 },
+    });
+    config.onEvent?.({
+      type: "tool.execution_start",
+      data: {
+        toolName: "functions.powershell",
+        toolCallId: "tool-1",
+        arguments: {
+          description: "Run ESLint",
+          command: "npm run lint",
+        },
+      },
+    });
+    config.onEvent?.({
+      type: "tool.execution_partial_result",
+      data: {
+        toolCallId: "tool-1",
+        partialOutput: "line one\nline two",
+      },
+    });
+    config.onEvent?.({
+      type: "tool.execution_complete",
+      data: {
+        toolCallId: "tool-1",
+        success: true,
+        result: {
+          content: "summary",
+          detailedContent: "line one\nline two\nline three",
+        },
+      },
+    });
+    config.onEvent?.({
+      type: "subagent.started",
+      data: {
+        agentDisplayName: "Rubber Duck",
+        agentName: "rubber-duck",
+        agentDescription: "Reviews the implementation.",
+        toolCallId: "agent-tool-1",
+      },
+    });
+    config.onEvent?.({
+      type: "subagent.completed",
+      data: {
+        agentDisplayName: "Rubber Duck",
+        agentName: "rubber-duck",
+        model: "test-model",
+        toolCallId: "agent-tool-1",
+        totalToolCalls: 3,
+      },
     });
     config.onEvent?.({
       type: "session.usage_info",
@@ -454,20 +554,90 @@ describe("DefaultManagedSdkRunner", () => {
       {
         runtimeKind: "managed-sdk",
         runtimeOwner: "streamliner-sdk",
-        progressEvents: capture.progress.slice(-2),
+        progressEvents: capture.progress,
       },
       new Date("2026-05-07T12:00:00.000Z"),
     );
 
+    expect(runtime.progressEvents.map((event) => event.type)).toEqual([
+      "assistant_status",
+      "assistant_status",
+      "assistant_status",
+      "tool_started",
+      "tool_completed",
+      "subagent_status",
+      "subagent_status",
+    ]);
     expect(runtime.progressEvents).toEqual([
       expect.objectContaining({
         type: "assistant_status",
-        data: { contentLength: 40 },
+        data: expect.objectContaining({
+          assistantEventKind: "intent",
+          intent: "Inspecting files before editing.",
+        }),
       }),
       expect.objectContaining({
-        type: "usage",
-        data: { inputTokens: 12, outputTokens: 34 },
+        type: "assistant_status",
+        data: {
+          assistantEventKind: "reasoning",
+          contentLength: expect.any(Number),
+          reasoningId: "r1",
+        },
+      }),
+      expect.objectContaining({
+        type: "assistant_status",
+        data: expect.objectContaining({
+          assistantEventKind: "message",
+          contentLength: 31,
+          displayMessage: "Implemented the console update.",
+          outputTokens: 42,
+        }),
+      }),
+      expect.objectContaining({
+        type: "tool_started",
+        message: "Run ESLint (powershell)",
+        data: expect.objectContaining({
+          argumentCount: 2,
+          displayDetail: "npm run lint",
+          displayTitle: "Run ESLint (powershell)",
+          toolCallId: "tool-1",
+          toolName: "functions.powershell",
+        }),
+      }),
+      expect.objectContaining({
+        type: "tool_completed",
+        message: "Ran ESLint (powershell)",
+        data: expect.objectContaining({
+          displayDetail: "npm run lint",
+          displayTitle: "Ran ESLint (powershell)",
+          outputLineCount: 3,
+          success: true,
+          toolCallId: "tool-1",
+        }),
+      }),
+      expect.objectContaining({
+        type: "subagent_status",
+        message: "Started Rubber Duck.",
+        data: expect.objectContaining({
+          agentName: "rubber-duck",
+          displayDetail: "Reviews the implementation.",
+          displayTitle: "Started Rubber Duck.",
+        }),
+      }),
+      expect.objectContaining({
+        type: "subagent_status",
+        message: "Finished Rubber Duck.",
+        data: expect.objectContaining({
+          displayDetail: "test-model",
+          displayTitle: "Finished Rubber Duck.",
+          success: true,
+          totalToolCalls: 3,
+        }),
       }),
     ]);
+    expect(runtime.progressEvents.some((event) => event.type === "usage")).toBe(false);
+    expect(JSON.stringify(runtime.progressEvents)).not.toContain("private reasoning text");
+    expect(JSON.stringify(runtime.progressEvents)).not.toContain("arguments");
+    expect(JSON.stringify(runtime.progressEvents)).not.toContain("detailedContent");
   });
 });
