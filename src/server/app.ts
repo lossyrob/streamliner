@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { join, resolve as resolvePath } from "node:path";
 
 import express, { type ErrorRequestHandler, type Express } from "express";
 
@@ -13,7 +13,9 @@ import type { ManagedCleanupDeps } from "./managed-cleanup";
 import { getApiLogger } from "./logger";
 import { createAccessLogMiddleware } from "./middleware/access-log";
 import { NodeLaunchRecordStore } from "./node-launch-record-store";
+import type { GithubStatusServiceOptions } from "./github-status-service";
 import { createGraphRouter } from "./routes/graph";
+import { createGithubStatusRouter } from "./routes/github-status";
 import {
   createLaunchContextsRouter,
   type LaunchContextRouteDeps,
@@ -26,14 +28,19 @@ import { createLaunchClaimsRouter } from "./routes/launch-claims";
 import { createNodeLaunchesRouter } from "./routes/node-launches";
 import { createNodeLaunchRecordsRouter } from "./routes/node-launch-records";
 import { createPawLaunchPromptProfilesRouter } from "./routes/paw-launch-prompt-profiles";
+import { createPawReviewPromptTemplatesRouter } from "./routes/paw-review-prompt-templates";
 import { createPawWorkflowContextRouter } from "./routes/paw-workflow-context";
+import { createCompanionTerminalLaunchesRouter } from "./routes/companion-terminal-launches";
+import { createProtoCanvasRouter } from "./routes/proto-canvas";
 import { createRecentsRouter } from "./routes/recents";
 import { createSessionLaunchSettingsRouter } from "./routes/session-launch-settings";
 import { createSessionsRouter } from "./routes/sessions";
 import { createWorkstreamsRouter } from "./routes/workstreams";
 import { SessionRegistryEventStream } from "./session-events";
+import { WorkstreamEventStream } from "./workstream-events";
 import type { NodeLaunchDeps } from "./node-launch";
 import { DefaultManagedSdkRunner } from "./managed-sdk-runner";
+import { ManagedRuntimePatchCoalescer } from "./managed-runtime-patch-coalescer";
 import {
   DEFAULT_COPILOT_CLI_ARGS,
   readSessionLaunchSettings,
@@ -44,6 +51,7 @@ import {
 export interface StreamlinerApiApp {
   app: Express;
   eventStream: SessionRegistryEventStream;
+  workstreamEventStream: WorkstreamEventStream;
   close: () => void;
 }
 
@@ -74,6 +82,7 @@ export interface StreamlinerApiAppOptions {
   launchPreparationDeps?: LaunchPreparationRouteDeps;
   managedCleanupDeps?: Partial<ManagedCleanupDeps>;
   promptProfilesPath?: string;
+  reviewPromptTemplatesPath?: string;
   sessionLaunchSettingsPath?: string;
   nodeLaunchRecordsPath?: string;
   pawWorkRoot?: string;
@@ -81,6 +90,10 @@ export interface StreamlinerApiAppOptions {
    * `GET /api/launch-claims[/:id]` for diagnostic UI consumption. */
   launchClaimStore?: LaunchClaimStore;
   nodeLaunchDeps?: NodeLaunchDeps;
+  githubStatusDeps?: GithubStatusServiceOptions;
+  workstreamEventDebounceMs?: number;
+  workstreamEventWatchIntervalMs?: number;
+  workstreamEventHeartbeatIntervalMs?: number;
 }
 
 const malformedJsonHandler: ErrorRequestHandler = (error, _req, res, next) => {
@@ -115,6 +128,15 @@ export function createStreamlinerApiApp(
   const app = express();
   const store = options.store ?? getSessionRegistryStore();
   const eventStream = new SessionRegistryEventStream(store);
+  const workstreamEventStream = new WorkstreamEventStream({
+    registryPath: options.workstreamRegistryPath,
+    sourceRegistryPath: options.workstreamSourceRegistryPath,
+    recentsPath: options.recentsPath,
+    now: options.now,
+    debounceMs: options.workstreamEventDebounceMs,
+    watchIntervalMs: options.workstreamEventWatchIntervalMs,
+    heartbeatIntervalMs: options.workstreamEventHeartbeatIntervalMs,
+  });
   const nodeLaunchRecordStore = options.launchPreparationDeps?.nodeLaunchRecordStore
     ?? new NodeLaunchRecordStore({
       recordsPath: options.nodeLaunchRecordsPath ?? (
@@ -123,11 +145,48 @@ export function createStreamlinerApiApp(
           : undefined
       ),
     });
+  // Recover orphaned launch operations from the previous API process.
+  // LaunchPreparationRunManager state lives in memory only, so any operation
+  // persisted as active or prepared with pending post-preparation launch intent
+  // at the moment the server restarts has no live run to attach to. Mark them
+  // failed up front so the UI doesn't render them as forever-stuck.
+  void nodeLaunchRecordStore
+    .recoverOrphanedOperations()
+    .then((recovered) => {
+      if (recovered.length === 0) {
+        return;
+      }
+      getApiLogger().withScope("node-launch-records").warn(
+        "Recovered orphaned launch operations on startup.",
+        {
+          count: recovered.length,
+          operations: recovered.map((operation) => ({
+            graphPath: operation.graphPath,
+            nodeId: operation.nodeId,
+            previousStatus: "preparing|launching|managed_starting",
+            preparationRunId: operation.preparationRunId,
+            startedAt: operation.startedAt,
+          })),
+        },
+      );
+    })
+    .catch((error: unknown) => {
+      getApiLogger().withScope("node-launch-records").error(
+        "Failed to recover orphaned launch operations on startup.",
+        { error: error instanceof Error ? error.message : String(error) },
+      );
+    });
   const managedSdkRunner =
     options.nodeLaunchDeps?.managedSdkRunner ?? new DefaultManagedSdkRunner();
+  const runtimePatchCoalescer =
+    options.nodeLaunchDeps?.runtimePatchCoalescer ??
+    new ManagedRuntimePatchCoalescer({
+      patchRuntimeMetadata: store.patchRuntimeMetadata.bind(store),
+    });
   const nodeLaunchDeps: NodeLaunchDeps = {
     ...options.nodeLaunchDeps,
     managedSdkRunner,
+    runtimePatchCoalescer,
   };
 
   app.disable("x-powered-by");
@@ -138,6 +197,7 @@ export function createStreamlinerApiApp(
       logger: getApiLogger().withScope("http"),
       skip: (path) =>
         path.startsWith(`${SESSION_REGISTRY_API_BASE_PATH}/events`) ||
+        path.startsWith("/api/workstreams/events") ||
         /^\/api\/launch-preparations\/runs\/[^/]+\/events(?:\?|$)/.test(path),
     }),
   );
@@ -145,6 +205,7 @@ export function createStreamlinerApiApp(
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true });
   });
+  app.get("/api/workstreams/events", workstreamEventStream.handle);
   if (options.readonlyMode) {
     app.use((req, res, next) => {
       if (READONLY_METHODS.has(req.method)) {
@@ -172,6 +233,12 @@ export function createStreamlinerApiApp(
     createGraphRouter({
       defaultGraphPath: options.graphPath,
       recentsPath: options.recentsPath,
+    }),
+  );
+  app.use(
+    "/api",
+    createGithubStatusRouter({
+      serviceOptions: options.githubStatusDeps,
     }),
   );
   app.use(
@@ -212,6 +279,9 @@ export function createStreamlinerApiApp(
       deps: {
         ...options.launchPreparationDeps,
         nodeLaunchRecordStore,
+        registryStore: store instanceof SessionRegistryFileStore ? store : undefined,
+        launchClaimStore: options.launchClaimStore,
+        nodeLaunchDeps,
         loadDefaultCliArgs: options.launchPreparationDeps?.loadDefaultCliArgs
           ?? (async () => {
             const settings = await readSessionLaunchSettings(options.sessionLaunchSettingsPath);
@@ -232,6 +302,20 @@ export function createStreamlinerApiApp(
     "/api",
     createPawLaunchPromptProfilesRouter({
       profilesPath: options.promptProfilesPath,
+    }),
+  );
+  app.use(
+    "/api",
+    createPawReviewPromptTemplatesRouter({
+      templatesPath: options.reviewPromptTemplatesPath,
+    }),
+  );
+  app.use(
+    "/api",
+    createCompanionTerminalLaunchesRouter({
+      launchTerminal: options.nodeLaunchDeps?.launchTerminal,
+      registryStore: store instanceof SessionRegistryFileStore ? store : undefined,
+      claimStore: options.launchClaimStore,
     }),
   );
   app.use(
@@ -262,17 +346,42 @@ export function createStreamlinerApiApp(
           ?? (() => loadRelaunchDefaultCliArgs(options.sessionLaunchSettingsPath)),
       },
       managedSdkRunner,
+      runtimePatchCoalescer,
       managedCleanupDeps: options.managedCleanupDeps,
       now: options.now,
       launchClaimStore: options.launchClaimStore,
     }),
   );
+  app.use(
+    "/api/_proto/canvas",
+    createProtoCanvasRouter(),
+  );
+
+  // Static prototype page. Visit http://<api-host>:<api-port>/_proto/canvas/
+  // for the DBAgent portfolio canvas. Hard-coded to read from the planning
+  // repo via the /api/_proto/canvas/* routes above.
+  app.use(
+    "/_proto/canvas",
+    express.static(resolvePath(process.cwd(), "_proto", "canvas"), {
+      etag: false,
+      lastModified: false,
+      setHeaders: (res) => {
+        // Aggressive no-cache so prototype iteration is immediate.
+        res.setHeader("Cache-Control", "no-store");
+      },
+    }),
+  );
+
   app.use(malformedJsonHandler);
   app.use(jsonErrorHandler);
 
   return {
     app,
     eventStream,
-    close: () => eventStream.close(),
+    workstreamEventStream,
+    close: () => {
+      eventStream.close();
+      workstreamEventStream.close();
+    },
   };
 }

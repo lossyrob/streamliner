@@ -24,6 +24,7 @@ export type LaunchPolicyEvaluationResult =
       ok: true;
       launchPolicy: WorkstreamLaunchPolicy | null;
       launchDefaults: WorkstreamLaunchDefaults | null;
+      workstream: WorkstreamDocument;
       node: WorkstreamNode;
     }
   | { ok: false; kind: "blocked"; violation: WorkstreamLaunchPolicyViolation }
@@ -108,6 +109,7 @@ export function evaluateLaunchPolicyFromGraph(input: {
         ok: true,
         launchPolicy: workstream.launchPolicy ?? null,
         launchDefaults: workstream.launchDefaults ?? null,
+        workstream,
         node,
       }
     : { ok: false, kind: "blocked", violation: decision.violation };

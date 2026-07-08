@@ -6,6 +6,7 @@ import type {
   SessionRegistryRecord,
 } from "../session-registry-schema";
 import type { SessionRegistryStore } from "../session-registry-contract";
+import { buildLaunchedSessionDescription } from "../session-registry-filter";
 import type { SessionRegistryFileStore } from "../session-registry/file-store";
 import { isManagedRuntimeActive } from "../session-registry/managed-runtime";
 import {
@@ -16,8 +17,9 @@ import {
 } from "../session-registry/launch-claims";
 import type { PawLaunchHandoff } from "./launch-preparation";
 import {
-  buildCopilotInteractiveCommand,
-  launchTerminal,
+  buildCopilotInteractiveCommandForShell,
+  launchCopilotTerminal,
+  selectTerminalCommandShellDialect,
   type TerminalLaunchOptions,
   type TerminalLaunchResult,
 } from "./terminal-launch";
@@ -31,6 +33,7 @@ import {
   type ManagedSdkRunner,
   type ManagedSdkRunnerStartResult,
 } from "./managed-sdk-runner";
+import { ManagedRuntimePatchCoalescer } from "./managed-runtime-patch-coalescer";
 
 export type NodeLaunchErrorCode =
   | "launch_policy_blocked"
@@ -114,6 +117,7 @@ export interface NodeManagedSdkLaunchResult {
 export interface NodeLaunchDeps {
   launchTerminal?: (options: TerminalLaunchOptions) => TerminalLaunchResult;
   managedSdkRunner?: ManagedSdkRunner;
+  runtimePatchCoalescer?: ManagedRuntimePatchCoalescer;
   now?: () => Date;
 }
 
@@ -268,6 +272,15 @@ function lifecycleProgressMessage(state: SessionRegistryManagedLifecycleState): 
   return `Managed SDK lifecycle changed to ${state}.`;
 }
 
+function runtimePatchCoalescerFor(
+  deps: NodeLaunchDeps,
+): ManagedRuntimePatchCoalescer {
+  if (!deps.runtimePatchCoalescer) {
+    throw new Error("Managed runtime patch coalescer dependency is required.");
+  }
+  return deps.runtimePatchCoalescer;
+}
+
 function isNonResumableManagedLifecycle(
   state: SessionRegistryManagedLifecycleState | null,
 ): boolean {
@@ -420,7 +433,10 @@ function reserveLaunchClaimForHandoff(
     launchNonce: handoff.launchMetadata.launchNonce,
     reservedRowTitle: terminalTitle,
     reservedRowColor: handoff.terminal.tabColor ?? null,
-    reservedRowDescription: `Graph launch for workstream ${handoff.launchMetadata.workstreamId}, node ${handoff.launchMetadata.nodeId}.`,
+    reservedRowDescription: buildLaunchedSessionDescription(
+      handoff.launchMetadata.workstreamId,
+      handoff.launchMetadata.nodeId,
+    ),
     pawLaunch: pawLaunchFor(handoff),
     ...(options.recordCliArgs ? { cliArgs: [...handoff.cliArgs] } : {}),
     lineageMetadata: lineageMetadataFor(handoff),
@@ -454,10 +470,10 @@ export async function launchPreparedNode(
     claim.launchNonce,
     claim.launchClaimId,
   );
-  const command = buildCopilotInteractiveCommand({
+  const command = buildCopilotInteractiveCommandForShell({
     cliArgs: handoff.cliArgs,
     kickoffPrompt,
-  });
+  }, selectTerminalCommandShellDialect());
   const terminalOptions: TerminalLaunchOptions = {
     cwd: handoff.cwd,
     command,
@@ -465,13 +481,18 @@ export async function launchPreparedNode(
       ...handoff.environment,
       STREAMLINER_LAUNCH_CLAIM_ID: claim.launchClaimId,
     },
+    prepareCopilotCli: true,
     preferredTerminal: handoff.terminal.preferredTerminal,
     title: terminalTitle,
     tabColor: handoff.terminal.tabColor ?? undefined,
   };
 
   try {
-    const terminal = (deps.launchTerminal ?? launchTerminal)(terminalOptions);
+    const terminal = await launchCopilotTerminal(terminalOptions, {
+      launchTerminal: deps.launchTerminal,
+      cooldownMs: deps.launchTerminal ? 0 : undefined,
+      pluginPreflight: deps.launchTerminal ? false : undefined,
+    });
     return {
       runtimeKind: "terminal-cli",
       launchClaim: summarizeLaunchClaim(claim, now),
@@ -664,6 +685,8 @@ export async function launchManagedSdkNode(
       },
     }],
   }, now);
+  const runtimePatches = runtimePatchCoalescerFor(deps);
+  runtimePatches.begin(registryId, "preparing");
   const runner = deps.managedSdkRunner ?? new DefaultManagedSdkRunner();
   let startResult: ManagedSdkRunnerStartResult;
   try {
@@ -683,7 +706,7 @@ export async function launchManagedSdkNode(
       },
       sessionStateRoot: handoff.sessionStateRoot,
       onLifecycleState: (state, message) => {
-        registryStore.patchRuntimeMetadata(registryId, {
+        runtimePatches.enqueue(registryId, {
           lifecycleState: state,
           progressEvents: [{
             type: "lifecycle",
@@ -692,12 +715,12 @@ export async function launchManagedSdkNode(
         });
       },
       onProgress: (event) => {
-        registryStore.patchRuntimeMetadata(registryId, {
+        runtimePatches.enqueue(registryId, {
           progressEvents: [event],
         });
       },
       onEvidence: (evidence) => {
-        registryStore.patchRuntimeMetadata(registryId, {
+        runtimePatches.enqueue(registryId, {
           evidence: [evidence],
           progressEvents: [{
             type: "evidence",
@@ -706,7 +729,7 @@ export async function launchManagedSdkNode(
         });
       },
       onStarted: (details) => {
-        registryStore.patchRuntimeMetadata(registryId, {
+        runtimePatches.patchNow(registryId, {
           lifecycleState: "running",
           sdkSessionId: details.sdkSessionId,
           sdkWorkspacePath: details.sdkWorkspacePath,
@@ -727,7 +750,7 @@ export async function launchManagedSdkNode(
     const logger = getApiLogger().withScope("node-launch");
     const cleanupFailures: string[] = [];
     try {
-      registryStore.patchRuntimeMetadata(registryId, {
+      runtimePatches.patchNow(registryId, {
         lifecycleState: "failed",
         progressEvents: [{
           type: "error",
@@ -879,6 +902,8 @@ export async function resumeManagedSdkNode(
       },
     }],
   }, now);
+  const runtimePatches = runtimePatchCoalescerFor(deps);
+  runtimePatches.begin(registryId, "starting");
 
   const resumePrompt = resumePromptForManagedSdkNode(handoff, claim);
   let startResult: ManagedSdkRunnerStartResult;
@@ -900,7 +925,7 @@ export async function resumeManagedSdkNode(
       },
       sessionStateRoot: handoff.sessionStateRoot,
       onLifecycleState: (state, message) => {
-        registryStore.patchRuntimeMetadata(registryId, {
+        runtimePatches.enqueue(registryId, {
           lifecycleState: state,
           progressEvents: [{
             type: "lifecycle",
@@ -909,12 +934,12 @@ export async function resumeManagedSdkNode(
         });
       },
       onProgress: (event) => {
-        registryStore.patchRuntimeMetadata(registryId, {
+        runtimePatches.enqueue(registryId, {
           progressEvents: [event],
         });
       },
       onEvidence: (evidence) => {
-        registryStore.patchRuntimeMetadata(registryId, {
+        runtimePatches.enqueue(registryId, {
           evidence: [evidence],
           progressEvents: [{
             type: "evidence",
@@ -923,7 +948,7 @@ export async function resumeManagedSdkNode(
         });
       },
       onStarted: (details) => {
-        registryStore.patchRuntimeMetadata(registryId, {
+        runtimePatches.patchNow(registryId, {
           lifecycleState: "running",
           sdkSessionId: details.sdkSessionId,
           sdkWorkspacePath: details.sdkWorkspacePath,
@@ -939,11 +964,53 @@ export async function resumeManagedSdkNode(
         });
       },
     });
+    try {
+      const resumedSdkSessionId = startResult.sdkSessionId ?? sdkSessionId;
+      registryStore.attachObservedSession(registryId, {
+        copilotSessionId: resumedSdkSessionId,
+        cwd: session.cwd,
+        repo: claim.expectedRepo ?? session.repo,
+        branch: claim.expectedBranch ?? session.branch,
+        lastSeenAt: now.toISOString(),
+        lifecycleStatus: "active",
+        observedSessionKind: "interactive",
+        copilotProcessState: "live",
+        trustedSignalSource: "copilot-cli-hook",
+        trustedStartedAt: now.toISOString(),
+        trustedEndedAt: null,
+        trustedLastSignalAt: now.toISOString(),
+        trustedStartSource: "resume",
+        trustedEndReason: null,
+        trustedExecutionKind: session.trustedExecutionKind ?? "agency",
+        trustedInitialPromptLength: resumePrompt.length,
+      });
+      registryStore.recordTrustedSessionSignal({
+        event: "session.started",
+        source: "copilot-cli-hook",
+        sessionId: resumedSdkSessionId,
+        timestamp: now.toISOString(),
+        cwd: session.cwd,
+        repo: claim.expectedRepo ?? session.repo,
+        branch: claim.expectedBranch ?? session.branch,
+        hookSource: "resume",
+        executionKind: session.trustedExecutionKind ?? "agency",
+        initialPromptLength: resumePrompt.length,
+      });
+    } catch (signalError: unknown) {
+      getApiLogger().withScope("node-launch").warn("managed SDK resume signal synthesis failed", {
+        launchClaimId: claim.launchClaimId,
+        workstreamId: claim.workstreamId,
+        nodeId: claim.nodeId,
+        registryId,
+        sdkSessionId: startResult.sdkSessionId ?? sdkSessionId,
+        err: errorLogDetails(signalError),
+      });
+    }
   } catch (error: unknown) {
     const message = errorMessage(error);
     const logger = getApiLogger().withScope("node-launch");
     try {
-      registryStore.patchRuntimeMetadata(registryId, {
+      runtimePatches.patchNow(registryId, {
         lifecycleState: "failed",
         progressEvents: [{
           type: "error",

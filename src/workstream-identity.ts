@@ -1,4 +1,4 @@
-import type { WorkstreamDocument } from "./workstream-schema";
+import type { WorkstreamDocument, WorkstreamPresentation } from "./workstream-schema";
 
 const ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -7,6 +7,7 @@ export interface WorkstreamGraphSummary {
   workstreamId: string;
   title: string;
   summary: string;
+  presentation?: WorkstreamPresentation;
 }
 
 export function validateWorkstreamRouteSegment(value: string, label: string): void {
@@ -40,5 +41,6 @@ export function summarizeWorkstreamDocument(
     workstreamId: workstream.id,
     title: workstream.title,
     summary: workstream.summary,
+    presentation: workstream.presentation,
   };
 }

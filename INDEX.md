@@ -13,6 +13,8 @@
 | [PRODUCT-THESIS.md](PRODUCT-THESIS.md) | **Start here.** Why Streamliner exists: execution compression relocates the bottleneck from doing work to designing work geometry. The three-stage cognitive transition (task conductor → workstream architect → portfolio operator), the failure modes of poorly designed parallel work, and what Streamliner is for. |
 | [PRODUCT-SPEC.md](PRODUCT-SPEC.md) | The full product specification: who it's for, core concepts (design layer, workstreams, work geometry, briefs, nodes, waves, context package, attention levels), the three pillars, operating rhythm, architecture, V1 scope, and open questions. |
 | [PORTFOLIO-LAYER.md](PORTFOLIO-LAYER.md) | Working draft for the product layer above individual workstreams: startup shell, cross-workstream coordination through public checkpoints, session visibility across environments, ad-hoc session handling, and UI direction. |
+| [CAMPAIGNS.md](CAMPAIGNS.md) | The portfolio-level unit of committed work: a campaign is an intent-bounded group of workstreams (plus side issues) shaped together to cover a declared body of intent. Covers the hierarchy (project → campaign → workstream → wave → node), intent- vs time-bounding (campaigns vs releases), concurrency and the main effort, the campaign as a lens over the candidate backlog, and the consolidation cycle. |
+| [WORK-GEOMETRY-MODEL.md](WORK-GEOMETRY-MODEL.md) | **In-progress conceptual model** behind Streamliner's design — guiding, not a settled spec. The theory of work geometry that drives current development: the four-layer intent chain, forward/backward passes, witnessing and defeaters, the human floor, boundary pressure and disposition, mesh-vs-tree messaging, the deterministic controller over indeterministic workers, the values layer (preference vs permission, spread, posture/care), captured-determinacy regimes, the operating point (capability × stakes × attention) and structure-substitutes-for-capability, and the allocation-not-guarantee stance. Marks which parts are build-driving vs influence-only. |
 
 ## Operating model
 
@@ -20,7 +22,8 @@
 |---|---|
 | [DOCTRINE.md](DOCTRINE.md) | How the operating model makes workstream-level thinking work in practice. Roles (developer, orchestrator, worker), the Layer 0–3 context package, information flow through artifacts, presence and engagement spectrum, the operating rhythm (shape → execute → wave transition → gate review), feedback loops, context authority, and design influences from military command doctrine. |
 | [ORCHESTRATION.md](ORCHESTRATION.md) | How workstream-level orchestration happens when interactive sessions, SDK-backed tasks, UI actions, runtime state, and artifact reconciliation coexist. Orchestration as a workstream function rather than a single session's authority, with reconciliation as work-geometry feedback. |
-| [WORKSTREAM-DESIGN.md](WORKSTREAM-DESIGN.md) | Working philosophy for shaping Streamliner work geometry: confidence transitions, sequential waves, parallel nodes, PAW-sized worker missions, and split/merge heuristics. |
+| [WORKSTREAM-DESIGN.md](WORKSTREAM-DESIGN.md) | Working philosophy for shaping Streamliner work geometry: confidence transitions, sequential waves, parallel nodes, PAW-sized worker missions, validation-loop waves, demonstration gates, and split/merge heuristics. |
+| [VALIDATION-LOOPS.md](VALIDATION-LOOPS.md) | Operating guidance for validation-loop waves: realistic exercise, discovered gaps, bounded repairs, reruns, earned confidence, and gate evidence. |
 | [HOT-WORK.md](HOT-WORK.md) | The phase-change moment when steady autonomous execution gives way to rapid, high-context developer–agent iteration. What hot work is, why it's a named concept, and how the operating model accounts for it. |
 
 ## Artifact formats and references
@@ -42,7 +45,7 @@
 
 | Document | What it covers |
 |---|---|
-| [WORKSTREAM-ROADMAP.md](WORKSTREAM-ROADMAP.md) | Suggested next waves of Streamliner workstreams: what makes a good workstream boundary, Wave 1 (dev box observability, portfolio shell, graph session overlays), Wave 2 (WSL observability, session curation, launch/recovery), parallelization model through exported checkpoints, and rules of thumb. |
+| [.streamliner/shaping/roadmap.md](.streamliner/shaping/roadmap.md) | Working shaping artifact (not durable doctrine): the current campaign roadmap — the workstreams committed to (or proposed) next, the standalone work, and the loose issues around them. The campaign concept it applies is in [CAMPAIGNS.md](CAMPAIGNS.md). |
 
 ## Design docs (under `docs/design/`)
 

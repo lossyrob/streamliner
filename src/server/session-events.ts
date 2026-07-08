@@ -5,6 +5,8 @@ import type {
   SessionRegistryChangeEvent,
   SessionRegistryStore,
 } from "../session-registry-contract";
+import type { SessionRegistryRecord } from "../session-registry-schema";
+import { sessionRegistryRecordMatchesOptions } from "../session-registry-filter";
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const REPLAY_BUFFER_SIZE = 100;
@@ -12,6 +14,7 @@ const REPLAY_BUFFER_SIZE = 100;
 type StreamEventName =
   | "snapshot"
   | "session.upserted"
+  | "session.runtime.updated"
   | "session.deleted"
   | "session.rebuilt"
   | "heartbeat";
@@ -20,26 +23,46 @@ interface BufferedStreamEvent {
   id: number;
   name: StreamEventName;
   payload: unknown;
+  registryId?: string;
+  filterRecord?: SessionRegistryRecord;
 }
 
 interface StreamClient {
   res: Response;
   heartbeat: ReturnType<typeof setInterval>;
+  options: SessionRegistryListOptions;
 }
 
 function toStreamEvent(event: SessionRegistryChangeEvent): Omit<BufferedStreamEvent, "id"> {
   switch (event.kind) {
-    case "upsert":
+    case "upsert": {
+      if (event.changeScope === "runtime" && event.snapshot.runtime?.runtimeKind === "managed-sdk") {
+        return {
+          name: "session.runtime.updated",
+          registryId: event.registryId,
+          filterRecord: event.snapshot,
+          payload: {
+            registryId: event.registryId,
+            runtime: event.snapshot.runtime,
+            updatedAt: event.snapshot.updatedAt,
+            version: event.snapshot.version,
+          },
+        };
+      }
       return {
         name: "session.upserted",
+        registryId: event.registryId,
+        filterRecord: event.snapshot,
         payload: {
           registryId: event.registryId,
           session: event.snapshot,
         },
       };
+    }
     case "delete":
       return {
         name: "session.deleted",
+        registryId: event.registryId,
         payload: {
           registryId: event.registryId,
         },
@@ -129,14 +152,15 @@ export class SessionRegistryEventStream {
     const heartbeat = setInterval(() => {
       writeHeartbeat(res);
     }, HEARTBEAT_INTERVAL_MS);
-    this.clients.set(res, { res, heartbeat });
+    const options = parseSnapshotOptions(req);
+    this.clients.set(res, { res, heartbeat, options });
 
     const lastEventId = parseLastEventId(req.header("last-event-id"));
     const replayed = lastEventId !== null
-      ? this.replayAfter(lastEventId, res)
+      ? this.replayAfter(lastEventId, res, options)
       : false;
     if (!replayed) {
-      this.writeSnapshot(res, parseSnapshotOptions(req));
+      this.writeSnapshot(res, options);
     }
 
     req.on("close", () => {
@@ -145,7 +169,11 @@ export class SessionRegistryEventStream {
     });
   };
 
-  private replayAfter(lastEventId: number, res: Response): boolean {
+  private replayAfter(
+    lastEventId: number,
+    res: Response,
+    options: SessionRegistryListOptions,
+  ): boolean {
     const firstBufferedId = this.buffer[0]?.id;
     if (firstBufferedId !== undefined && lastEventId < firstBufferedId - 1) {
       return false;
@@ -153,7 +181,10 @@ export class SessionRegistryEventStream {
     if (lastEventId >= this.nextEventId) {
       return false;
     }
-    const replay = this.buffer.filter((event) => event.id > lastEventId);
+    const replay = this.buffer
+      .filter((event) => event.id > lastEventId)
+      .map((event) => eventForClient(event, options))
+      .filter((event): event is BufferedStreamEvent => event !== null);
     if (replay.length === 0) {
       return false;
     }
@@ -173,23 +204,58 @@ export class SessionRegistryEventStream {
   }
 
   private publish(event: Omit<BufferedStreamEvent, "id">): void {
-    const bufferedEvent = this.buildEvent(event.name, event.payload);
+    const bufferedEvent = this.buildEvent(event.name, event.payload, {
+      registryId: event.registryId,
+      filterRecord: event.filterRecord,
+    });
     this.buffer.push(bufferedEvent);
     if (this.buffer.length > REPLAY_BUFFER_SIZE) {
       this.buffer.splice(0, this.buffer.length - REPLAY_BUFFER_SIZE);
     }
     for (const client of this.clients.values()) {
-      writeSse(client.res, bufferedEvent);
+      const clientEvent = eventForClient(bufferedEvent, client.options);
+      if (clientEvent) {
+        writeSse(client.res, clientEvent);
+      }
     }
   }
 
-  private buildEvent(name: StreamEventName, payload: unknown): BufferedStreamEvent {
+  private buildEvent(
+    name: StreamEventName,
+    payload: unknown,
+    metadata: Pick<BufferedStreamEvent, "registryId" | "filterRecord"> = {},
+  ): BufferedStreamEvent {
     const event = {
       id: this.nextEventId,
       name,
       payload,
+      ...metadata,
     };
     this.nextEventId += 1;
     return event;
   }
+}
+
+function eventForClient(
+  event: BufferedStreamEvent,
+  options: SessionRegistryListOptions,
+): BufferedStreamEvent | null {
+  if (!event.filterRecord) {
+    return event;
+  }
+  if (sessionRegistryRecordMatchesOptions(event.filterRecord, options)) {
+    return event;
+  }
+  if (
+    (event.name === "session.upserted" || event.name === "session.runtime.updated") &&
+    event.registryId
+  ) {
+    return {
+      id: event.id,
+      name: "session.deleted",
+      registryId: event.registryId,
+      payload: { registryId: event.registryId },
+    };
+  }
+  return null;
 }

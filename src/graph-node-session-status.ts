@@ -90,7 +90,7 @@ export function buildGraphNodeSessionStatusMap(
       continue;
     }
     const binding = session.graphBinding;
-    if (!binding || binding.workstreamId !== workstreamId) {
+    if (!binding || binding.workstreamId !== workstreamId || !binding.nodeId) {
       continue;
     }
     const existing = sessionsByNodeId.get(binding.nodeId);

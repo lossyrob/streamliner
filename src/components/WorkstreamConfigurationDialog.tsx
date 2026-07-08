@@ -8,12 +8,15 @@ import {
   type WorkstreamLaunchPolicy,
   type WorkstreamLaunchRequiredTracker,
   type WorkstreamLaunchTerminalPreference,
+  type WorkstreamPresentation,
 } from "../workstream-schema";
 import { WORKSTREAM_TERMINAL_TITLE_TEMPLATE_HELP } from "../workstream-launch-templates";
 import type { PawPromptProfile } from "./paw-prompt-profiles";
+import type { PawReviewPromptTemplate } from "./paw-review-prompt-templates";
 import { TerminalColorQuickPicker } from "./SessionColorPicker";
 
 export interface WorkstreamConfigurationValues {
+  presentation: WorkstreamPresentation | null;
   launchPolicy: WorkstreamLaunchPolicy | null;
   launchDefaults: WorkstreamLaunchDefaults | null;
 }
@@ -23,6 +26,9 @@ interface WorkstreamConfigurationDialogProps {
   promptProfiles?: PawPromptProfile[];
   promptProfilesLoading?: boolean;
   promptProfilesError?: string | null;
+  reviewPromptTemplates?: PawReviewPromptTemplate[];
+  reviewPromptTemplatesLoading?: boolean;
+  reviewPromptTemplatesError?: string | null;
   saving: boolean;
   error?: string | null;
   onCancel: () => void;
@@ -35,6 +41,10 @@ function terminalPreferenceLabel(preference: WorkstreamLaunchTerminalPreference)
       return "Windows Terminal";
     case "powershell":
       return "PowerShell";
+    case "mac-terminal":
+      return "macOS Terminal";
+    case "iterm2":
+      return "iTerm2";
     case "default":
       return "System default";
   }
@@ -46,6 +56,10 @@ function terminalPreferenceHelp(preference: WorkstreamLaunchTerminalPreference):
       return "Prefer Windows Terminal when it is available.";
     case "powershell":
       return "Launch worker sessions in a PowerShell window.";
+    case "mac-terminal":
+      return "Launch worker sessions in macOS Terminal.";
+    case "iterm2":
+      return "Launch worker sessions in iTerm2.";
     case "default":
       return "Let Streamliner choose the best available local terminal.";
   }
@@ -56,6 +70,9 @@ export function WorkstreamConfigurationDialog({
   promptProfiles = [],
   promptProfilesLoading = false,
   promptProfilesError = null,
+  reviewPromptTemplates = [],
+  reviewPromptTemplatesLoading = false,
+  reviewPromptTemplatesError = null,
   saving,
   error,
   onCancel,
@@ -64,31 +81,50 @@ export function WorkstreamConfigurationDialog({
   const [requiredTracker, setRequiredTracker] = useState<WorkstreamLaunchRequiredTracker | "">(
     workstream.launchPolicy?.requiredTracker ?? "",
   );
+  const [shortName, setShortName] = useState(
+    workstream.presentation?.shortName ?? "",
+  );
+  const [workstreamColor, setWorkstreamColor] = useState(
+    workstream.presentation?.color ?? "",
+  );
   const [preferredTerminal, setPreferredTerminal] = useState<WorkstreamLaunchTerminalPreference>(
     workstream.launchDefaults?.terminal?.preferredTerminal ?? "default",
   );
   const [titleTemplate, setTitleTemplate] = useState(
     workstream.launchDefaults?.terminal?.titleTemplate ?? "",
   );
-  const [terminalColor, setTerminalColor] = useState(
-    workstream.launchDefaults?.terminal?.tabColor ?? "",
-  );
   const [defaultPromptProfileId, setDefaultPromptProfileId] = useState(
     workstream.launchDefaults?.promptProfileId ?? "",
   );
+  const [defaultLaunchAfterInit, setDefaultLaunchAfterInit] = useState(
+    workstream.launchDefaults?.launchAfterInit ?? false,
+  );
+  const [defaultReviewCompanion, setDefaultReviewCompanion] = useState(
+    workstream.launchDefaults?.reviewCompanion ?? false,
+  );
+  const [defaultReviewPromptTemplateId, setDefaultReviewPromptTemplateId] = useState(
+    workstream.launchDefaults?.reviewPromptTemplateId ?? "",
+  );
   const [validationError, setValidationError] = useState<string | null>(null);
   const promptProfilesInitialLoadPending = promptProfilesLoading && promptProfiles.length === 0;
+  const reviewPromptTemplatesInitialLoadPending =
+    reviewPromptTemplatesLoading && reviewPromptTemplates.length === 0;
   const selectedDefaultMissing = Boolean(
     defaultPromptProfileId &&
       !promptProfilesInitialLoadPending &&
       !promptProfiles.some((profile) => profile.id === defaultPromptProfileId),
   );
+  const selectedDefaultTemplateMissing = Boolean(
+    defaultReviewPromptTemplateId &&
+      !reviewPromptTemplatesInitialLoadPending &&
+      !reviewPromptTemplates.some((template) => template.id === defaultReviewPromptTemplateId),
+  );
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const color = terminalColor.trim();
+    const color = workstreamColor.trim();
     if (color && !/^#[0-9a-f]{6}$/i.test(color)) {
-      setValidationError("Terminal tab color must be a #RRGGBB color.");
+      setValidationError("Workstream color must be a #RRGGBB color.");
       return;
     }
     setValidationError(null);
@@ -96,13 +132,22 @@ export function WorkstreamConfigurationDialog({
     const terminal = {
       ...(preferredTerminal !== "default" ? { preferredTerminal } : {}),
       ...(titleTemplate.trim() ? { titleTemplate: titleTemplate.trim() } : {}),
-      ...(color ? { tabColor: color.toLowerCase() } : {}),
     };
-    const launchDefaults = {
+    const presentation: WorkstreamPresentation = {
+      ...(shortName.trim() ? { shortName: shortName.trim() } : {}),
+      ...(color ? { color: color.toLowerCase() } : {}),
+    };
+    const launchDefaults: WorkstreamLaunchDefaults = {
       ...(defaultPromptProfileId ? { promptProfileId: defaultPromptProfileId } : {}),
       ...(Object.keys(terminal).length > 0 ? { terminal } : {}),
+      ...(defaultLaunchAfterInit ? { launchAfterInit: true } : {}),
+      ...(defaultReviewCompanion ? { reviewCompanion: true } : {}),
+      ...(defaultReviewPromptTemplateId
+        ? { reviewPromptTemplateId: defaultReviewPromptTemplateId }
+        : {}),
     };
     void onSave({
+      presentation: Object.keys(presentation).length > 0 ? presentation : null,
       launchPolicy: requiredTracker ? { requiredTracker } : null,
       launchDefaults: Object.keys(launchDefaults).length > 0 ? launchDefaults : null,
     });
@@ -124,7 +169,7 @@ export function WorkstreamConfigurationDialog({
             </div>
             <h2 className="sl-sheet-title">Configure {workstream.title}</h2>
             <p className="sl-paw-launch-subtitle">
-              Save durable launch policy and terminal defaults to this workstream graph.
+              Save durable presentation metadata, launch policy, and terminal defaults to this workstream graph.
               These settings apply to every graph-launch caller.
             </p>
           </div>
@@ -140,6 +185,47 @@ export function WorkstreamConfigurationDialog({
         </div>
 
         <div className="sl-sheet-body sl-workstream-config-body">
+          <section className="sl-workstream-config-section">
+            <div>
+              <span className="sl-section-label">PRESENTATION</span>
+              <h3 className="sl-workstream-config-title">Workstream identity</h3>
+              <p className="sl-field-note">
+                Add compact recognition metadata for dense workstream lists and launch defaults.
+              </p>
+            </div>
+            <div className="sl-paw-launch-grid">
+              <label className="sl-field">
+                <span>Short name</span>
+                <input
+                  aria-label="Workstream short name"
+                  value={shortName}
+                  onChange={(event) => setShortName(event.target.value)}
+                  placeholder="SDK runtime"
+                  disabled={saving}
+                />
+                <span className="sl-field-note">
+                  Used on compact workstream cards and as {"{workstreamShortName}"} in terminal title templates.
+                </span>
+              </label>
+              <label className="sl-field sl-paw-launch-color-field">
+                <span>Workstream color</span>
+                <input
+                  aria-label="Workstream color"
+                  value={workstreamColor}
+                  onChange={(event) => setWorkstreamColor(event.target.value)}
+                  placeholder="#4891c8"
+                  disabled={saving}
+                />
+                <TerminalColorQuickPicker
+                  value={workstreamColor}
+                  onChange={setWorkstreamColor}
+                  ariaLabel="Workstream color quick picks"
+                  buttonLabelPrefix="Use workstream color"
+                />
+              </label>
+            </div>
+          </section>
+
           <section className="sl-workstream-config-section">
             <div>
               <span className="sl-section-label">LAUNCH POLICY</span>
@@ -217,6 +303,85 @@ export function WorkstreamConfigurationDialog({
 
           <section className="sl-workstream-config-section">
             <div>
+              <span className="sl-section-label">LAUNCH BEHAVIOR DEFAULTS</span>
+              <h3 className="sl-workstream-config-title">Per-launch checkboxes &amp; review template</h3>
+              <p className="sl-field-note">
+                Preselect the PAW launch dialog's "Launch after init", "Launch PAW Review
+                companion", and review prompt template. Builders can still override per launch.
+              </p>
+            </div>
+            <label className="sl-checkbox-row">
+              <input
+                type="checkbox"
+                aria-label="Default to launch terminal after PAW init"
+                checked={defaultLaunchAfterInit}
+                onChange={(event) => setDefaultLaunchAfterInit(event.target.checked)}
+                disabled={saving}
+              />
+              <span>
+                <strong>Default to "Launch after init"</strong>
+                <small>
+                  When checked, the terminal launches automatically when PAW init finishes
+                  instead of pausing for prompt review.
+                </small>
+              </span>
+            </label>
+            <label className="sl-checkbox-row">
+              <input
+                type="checkbox"
+                aria-label="Default to launch PAW Review companion terminal"
+                checked={defaultReviewCompanion}
+                onChange={(event) => setDefaultReviewCompanion(event.target.checked)}
+                disabled={saving}
+              />
+              <span>
+                <strong>Default to "Launch PAW Review companion terminal"</strong>
+                <small>
+                  When checked, a second REVIEW terminal opens alongside the main launch
+                  using the review prompt template below.
+                </small>
+              </span>
+            </label>
+            <label className="sl-field">
+              <span>Default review prompt template</span>
+              <select
+                aria-label="Default review prompt template"
+                value={defaultReviewPromptTemplateId}
+                onChange={(event) => setDefaultReviewPromptTemplateId(event.target.value)}
+                disabled={saving}
+              >
+                <option value="">Custom PAW Review prompt</option>
+                {defaultReviewPromptTemplateId && reviewPromptTemplatesInitialLoadPending && (
+                  <option value={defaultReviewPromptTemplateId}>
+                    Loading template: {defaultReviewPromptTemplateId}
+                  </option>
+                )}
+                {selectedDefaultTemplateMissing && (
+                  <option value={defaultReviewPromptTemplateId}>
+                    Missing template: {defaultReviewPromptTemplateId}
+                  </option>
+                )}
+                {reviewPromptTemplates.map((template) => (
+                  <option key={template.id} value={template.id}>
+                    {template.name} ({template.id})
+                  </option>
+                ))}
+              </select>
+              {reviewPromptTemplatesInitialLoadPending && (
+                <span className="sl-inline-status">Loading saved templates...</span>
+              )}
+              <span className="sl-field-note">
+                Template IDs are local hints stored in graph.json. Deleted or unavailable
+                templates do not block launch.
+              </span>
+              {reviewPromptTemplatesError && (
+                <span className="sl-action-error">{reviewPromptTemplatesError}</span>
+              )}
+            </label>
+          </section>
+
+          <section className="sl-workstream-config-section">
+            <div>
               <span className="sl-section-label">TERMINAL DEFAULTS</span>
               <h3 className="sl-workstream-config-title">Presentation defaults</h3>
               <p className="sl-field-note">
@@ -263,23 +428,9 @@ export function WorkstreamConfigurationDialog({
                   disabled={saving}
                 />
                 <span className="sl-field-note">
-                  Use {"{githubIssue}"}, {"{nodeId}"}, or {"{nodeTitle}"}.
+                  Use {"{githubIssue}"}, {"{nodeId}"}, {"{nodeTitle}"}, or {"{workstreamShortName}"}.
                   Leave empty to use each node title.
                 </span>
-              </label>
-              <label className="sl-field sl-paw-launch-color-field">
-                <span>Terminal tab color</span>
-                <input
-                  aria-label="Default terminal tab color"
-                  value={terminalColor}
-                  onChange={(event) => setTerminalColor(event.target.value)}
-                  placeholder="#4891c8"
-                  disabled={saving}
-                />
-                <TerminalColorQuickPicker
-                  value={terminalColor}
-                  onChange={setTerminalColor}
-                />
               </label>
             </div>
           </section>

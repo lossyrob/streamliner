@@ -76,7 +76,7 @@ describe("session policies", () => {
 
     expect(getDisplaySessionId(manual)).toBe("manual-registry-id");
     expect(buildRestartCommand(manual)).toBeNull();
-    expect(buildRestartCommand(trusted)).toBe(
+    expect(buildRestartCommand(trusted, [], "powershell")).toBe(
       "Set-Location -LiteralPath 'C:\\repo\\worktree'; copilot '--resume=copilot-session-id'",
     );
   });
@@ -87,7 +87,7 @@ describe("session policies", () => {
       launchCliArgs: ["--model=gpt-5.5"],
     });
 
-    expect(buildRestartCommand(session, ["--yolo"])).toBe(
+    expect(buildRestartCommand(session, ["--yolo"], "powershell")).toBe(
       "Set-Location -LiteralPath 'C:\\repo'; copilot '--model=gpt-5.5' '--resume=copilot-session-id'",
     );
   });
@@ -98,8 +98,32 @@ describe("session policies", () => {
       launchCliArgs: null,
     });
 
-    expect(buildRestartCommand(session, ["--yolo"])).toBe(
+    expect(buildRestartCommand(session, ["--yolo"], "powershell")).toBe(
       "Set-Location -LiteralPath 'C:\\repo'; copilot '--yolo' '--resume=copilot-session-id'",
+    );
+  });
+
+  it("builds POSIX restart commands when requested", () => {
+    const session = buildSession({
+      cwd: "/Users/rob/project's worktree",
+      copilotSessionId: "copilot-session-id",
+      launchCliArgs: ["--model=gpt-5.5"],
+    });
+
+    expect(buildRestartCommand(session, [], "posix")).toBe(
+      "cd '/Users/rob/project'\\''s worktree' && copilot '--model=gpt-5.5' '--resume=copilot-session-id'",
+    );
+  });
+
+  it("omits the directory change in POSIX restart commands without a cwd", () => {
+    const session = buildSession({
+      cwd: "",
+      derivedWorktreePath: null,
+      copilotSessionId: "copilot-session-id",
+    });
+
+    expect(buildRestartCommand(session, ["--yolo"], "posix")).toBe(
+      "copilot '--yolo' '--resume=copilot-session-id'",
     );
   });
 

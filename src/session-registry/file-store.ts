@@ -31,10 +31,18 @@ import {
   type SessionRegistryTrustedSignalInput,
   type SessionRegistryUpsertInput,
 } from "../session-registry-contract";
+import { sessionRegistryRecordTextMatches } from "../session-registry-filter";
+import { basenameCrossOs } from "../cross-os-path";
 import {
   mergeSessionRegistryRuntimeMetadata,
   normalizeSessionRegistryRuntimeMetadata,
 } from "./managed-runtime";
+import {
+  isProcessLockStale,
+  newLockMetadata,
+  type ProcessLockMetadata,
+  readLockMetadataFile,
+} from "./lock-liveness";
 import {
   DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
   SESSION_REGISTRY_ACTIVITY_CONFIDENCES,
@@ -174,10 +182,6 @@ const OBSERVED_SESSION_UPSERT_KEYS = [
 
 type StoredSessionRegistryRecord = SessionRegistryRecord & Record<string, unknown>;
 type JsonObject = Record<string, unknown>;
-interface SessionRegistryLockMetadata {
-  pid: number;
-  acquiredAt: string;
-}
 
 export class SessionRegistryNotFoundError extends Error {
   constructor(id: string) {
@@ -250,23 +254,6 @@ function sleepSync(milliseconds: number): void {
   Atomics.wait(SHARED_SLEEP_ARRAY, 0, 0, milliseconds);
 }
 
-function processExists(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error: unknown) {
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      (error as NodeJS.ErrnoException).code === "EPERM"
-    ) {
-      return true;
-    }
-    return false;
-  }
-}
-
 function renameWithRetries(fromPath: string, toPath: string): void {
   let lastError: unknown;
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -306,8 +293,17 @@ function fingerprintMapsEqual(left: Map<string, string>, right: Map<string, stri
   return true;
 }
 
+let lastIsoNowMs = 0;
+
+// Strictly monotonic per process so two registry writes that land in the same
+// millisecond still receive distinct, increasing timestamps. The freshness sort
+// keys on updatedAt, and on fast filesystems (e.g. APFS) back-to-back writes
+// could otherwise collide and produce non-deterministic ordering.
 function isoNow(): string {
-  return new Date().toISOString();
+  const nowMs = Date.now();
+  const ms = nowMs > lastIsoNowMs ? nowMs : lastIsoNowMs + 1;
+  lastIsoNowMs = ms;
+  return new Date(ms).toISOString();
 }
 
 function ensureString(value: unknown, fieldName: string): string {
@@ -448,9 +444,10 @@ function ensureOptionalGraphBinding(
     throw new Error(`Expected ${fieldName} to be an object or null.`);
   }
 
+  const nodeId = ensureOptionalString(value.nodeId, `${fieldName}.nodeId`);
   return {
     workstreamId: ensureString(value.workstreamId, `${fieldName}.workstreamId`),
-    nodeId: ensureString(value.nodeId, `${fieldName}.nodeId`),
+    nodeId: nodeId && nodeId.trim().length > 0 ? nodeId : null,
     launchClaimId: ensureOptionalString(
       value.launchClaimId,
       `${fieldName}.launchClaimId`,
@@ -1219,7 +1216,7 @@ function inferLegacyTitleSource(value: {
   const title = value.title.trim();
   const candidates = new Set<string>();
   const repoName = value.repo?.split("/").at(-1)?.trim();
-  const cwdName = basename(value.cwd).trim();
+  const cwdName = basenameCrossOs(value.cwd).trim();
   const helperSuffix =
     value.observedSessionKind === "helper" ? " helper session" : "";
   for (const candidate of [repoName, cwdName, value.copilotSessionId]) {
@@ -1979,53 +1976,17 @@ function matchesText(
     | "cwd"
     | "repo"
     | "branch"
+    | "copilotSessionId"
     | "derivedBranch"
     | "derivedWorktreePath"
     | "derivedGithubRefs"
+    | "originKind"
     | "pawLaunch"
     | "pawWorkflow"
   >,
   text: string,
 ): boolean {
-  const refs = record.derivedGithubRefs.map((ref) =>
-    [ref.repo, ref.type, `#${ref.number}`, `${ref.type} #${ref.number}`]
-      .filter(Boolean)
-      .join(" "),
-  );
-  const pawWorkflowHaystacks = record.pawWorkflow
-    ? [
-        record.pawWorkflow.status,
-        record.pawWorkflow.stage ?? "",
-        record.pawWorkflow.workflowKind,
-        record.pawWorkflow.workId ?? "",
-        record.pawWorkflow.workTitle ?? "",
-        record.pawWorkflow.workDir ?? "",
-        ...record.pawWorkflow.diagnostics,
-      ]
-    : [];
-  const pawLaunchHaystacks = record.pawLaunch
-    ? [
-        record.pawLaunch.workId,
-        record.pawLaunch.workTitle,
-        record.pawLaunch.workflowKind,
-        record.pawLaunch.pawWorkDir,
-      ]
-    : [];
-  const haystacks = [
-    record.title,
-    record.description,
-    record.aiSummary ?? "",
-    record.cwd,
-    record.repo ?? "",
-    record.branch ?? "",
-    record.derivedBranch ?? "",
-    record.derivedWorktreePath ?? "",
-    ...refs,
-    ...pawWorkflowHaystacks,
-    ...pawLaunchHaystacks,
-    ...record.tags,
-  ];
-  return haystacks.some((value) => value.toLowerCase().includes(text));
+  return sessionRegistryRecordTextMatches(record, text);
 }
 
 function mergeStoredRecord(
@@ -2050,6 +2011,32 @@ function mergeStoredRecord(
     origin: nextOrigin,
     graphBinding: nextGraphBinding,
   };
+}
+
+const RUNTIME_METADATA_PATCH_TOP_LEVEL_FIELDS = new Set<keyof SessionRegistryRecord>([
+  "runtime",
+  "updatedAt",
+  "version",
+]);
+
+function assertRuntimeMetadataPatchScope(
+  before: SessionRegistryRecord,
+  after: SessionRegistryRecord,
+): void {
+  const keys = new Set([
+    ...Object.keys(before),
+    ...Object.keys(after),
+  ] as Array<keyof SessionRegistryRecord>);
+  for (const key of keys) {
+    if (RUNTIME_METADATA_PATCH_TOP_LEVEL_FIELDS.has(key)) {
+      continue;
+    }
+    if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) {
+      throw new Error(
+        `patchRuntimeMetadata changed non-runtime top-level field "${String(key)}".`,
+      );
+    }
+  }
 }
 
 function activityEvidenceForTrustedSignal(
@@ -2081,6 +2068,21 @@ function getBuilderConflictFields(patch: SessionRegistryPatch): string[] {
     }
   }
   return fields;
+}
+
+function graphBindingsEqual(
+  left: SessionRegistryGraphBinding | null,
+  right: SessionRegistryGraphBinding | null,
+): boolean {
+  return (
+    (left?.workstreamId ?? null) === (right?.workstreamId ?? null) &&
+    (left?.nodeId ?? null) === (right?.nodeId ?? null) &&
+    (left?.launchClaimId ?? null) === (right?.launchClaimId ?? null)
+  );
+}
+
+function isProtectedGraphBinding(binding: SessionRegistryGraphBinding | null): boolean {
+  return Boolean(binding?.launchClaimId);
 }
 
 function writeJsonFile(path: string, payload: unknown): void {
@@ -2657,6 +2659,16 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
           conflictFields,
         );
       }
+      if (
+        validatedPatch.graphBinding !== undefined &&
+        isProtectedGraphBinding(existingRecord.graphBinding) &&
+        !graphBindingsEqual(existingRecord.graphBinding, validatedPatch.graphBinding)
+      ) {
+        throw new SessionRegistryConflictError(
+          cloneValue(existingRecord),
+          ["graphBinding"],
+        );
+      }
 
       const nextLifecycle =
         validatedPatch.lifecycleStatus ?? existingRecord.lifecycleStatus;
@@ -2762,7 +2774,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         input.event === "session.started" && signalTime >= existingEndTime;
       const appliesEnd = input.event === "session.ended";
       const appliesPrompt = input.event === "prompt.submitted" && !isEnded;
-      const cwdName = basename(cwd).trim();
+      const cwdName = basenameCrossOs(cwd).trim();
       const lifecycleStatus: SessionRegistryLifecycleStatus =
         appliesEnd
           ? "ended"
@@ -3059,6 +3071,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
 
       const storedRecord = mergeStoredRecord(existingRecord, nextRecord);
       storedRecord.runtime = nextRuntime;
+      assertRuntimeMetadataPatchScope(existingRecord, storedRecord);
       records.set(id, storedRecord);
       const nextIndex = buildIndex(records.values());
       this.persistEntry(storedRecord);
@@ -3067,6 +3080,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       this.emitChange({
         kind: SESSION_REGISTRY_CHANGE_EVENT_KINDS[0],
         registryId: id,
+        changeScope: "runtime",
         snapshot: cloneValue(storedRecord),
       });
       return cloneValue(storedRecord);
@@ -3232,11 +3246,14 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       const desiredBinding = desired.graphBinding;
       const isChange =
         JSON.stringify(current.graphBinding) !== JSON.stringify(desiredBinding);
+      if (!isChange) {
+        return { ok: true as const, record: cloneValue(current) };
+      }
       const nextRecord: SessionRegistryRecord = {
         ...cloneValue(current),
         graphBinding: desiredBinding,
-        version: isChange ? current.version + 1 : current.version,
-        updatedAt: isChange ? isoNow() : current.updatedAt,
+        version: current.version + 1,
+        updatedAt: isoNow(),
       };
       const storedRecord = mergeStoredRecord(current, nextRecord);
       // Force graphBinding to the desired value, defeating the merge's
@@ -3247,13 +3264,11 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       this.persistEntry(storedRecord);
       this.persistIndex(records, nextIndex);
       this.commitSnapshot(records, nextIndex);
-      if (isChange) {
-        this.emitChange({
-          kind: SESSION_REGISTRY_CHANGE_EVENT_KINDS[0],
-          registryId: id,
-          snapshot: cloneValue(storedRecord),
-        });
-      }
+      this.emitChange({
+        kind: SESSION_REGISTRY_CHANGE_EVENT_KINDS[0],
+        registryId: id,
+        snapshot: cloneValue(storedRecord),
+      });
       return { ok: true as const, record: cloneValue(storedRecord) };
     });
   }
@@ -3726,10 +3741,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         try {
           writeFileSync(
             fd,
-            JSON.stringify({
-              pid: process.pid,
-              acquiredAt: isoNow(),
-            }),
+            JSON.stringify(newLockMetadata()),
             "utf8",
           );
         } catch (error: unknown) {
@@ -3779,7 +3791,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
 
   private removeStaleLock(): boolean {
     const lockMetadata = this.readLockMetadata();
-    if (!lockMetadata || processExists(lockMetadata.pid)) {
+    if (!lockMetadata || !isProcessLockStale(lockMetadata)) {
       return false;
     }
 
@@ -3789,7 +3801,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
 
   private hasActiveRegistryLock(): boolean {
     const lockMetadata = this.readLockMetadata();
-    return lockMetadata !== null && processExists(lockMetadata.pid);
+    return lockMetadata !== null && !isProcessLockStale(lockMetadata);
   }
 
   private acquireRecoveryLock(): number | null {
@@ -3814,10 +3826,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       try {
         writeFileSync(
           fd,
-          JSON.stringify({
-            pid: process.pid,
-            acquiredAt: isoNow(),
-          }),
+          JSON.stringify(newLockMetadata()),
           "utf8",
         );
       } catch (error: unknown) {
@@ -3854,7 +3863,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       return false;
     }
 
-    if (processExists(metadata.pid)) {
+    if (!isProcessLockStale(metadata)) {
       return true;
     }
 
@@ -3862,32 +3871,8 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
     return false;
   }
 
-  private readLockMetadata(lockPath = this.lockPath): SessionRegistryLockMetadata | null {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(readFileSync(lockPath, "utf8"));
-    } catch {
-      return null;
-    }
-
-    if (!parsed || typeof parsed !== "object") {
-      return null;
-    }
-
-    const candidate = parsed as Record<string, unknown>;
-    if (
-      typeof candidate.pid !== "number" ||
-      !Number.isInteger(candidate.pid) ||
-      candidate.pid <= 0 ||
-      typeof candidate.acquiredAt !== "string"
-    ) {
-      return null;
-    }
-
-    return {
-      pid: candidate.pid,
-      acquiredAt: candidate.acquiredAt,
-    };
+  private readLockMetadata(lockPath = this.lockPath): ProcessLockMetadata | null {
+    return readLockMetadataFile(lockPath);
   }
 
   private findRecordIdByCopilotSessionId(

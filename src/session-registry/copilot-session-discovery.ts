@@ -1,7 +1,8 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 
+import { basenameCrossOs } from "../cross-os-path";
 import type { SessionRegistryListItem, SessionRegistryObservedLinkInput } from "../session-registry-contract";
 import type { SessionRegistryObservedLifecycleStatus } from "../session-registry-contract";
 import type {
@@ -14,6 +15,7 @@ import {
 } from "./copilot-helper-sessions";
 import { isCopilotSdkSessionFsPath } from "./copilot-sdk-session-paths";
 import { SessionRegistryFileStore } from "./file-store";
+import { processExists } from "./lock-liveness";
 
 const DEFAULT_COPILOT_SESSION_STATE_ROOT = resolve(
   homedir(),
@@ -33,6 +35,12 @@ export interface DiscoveredCopilotSession {
   observedSessionKind: SessionRegistryObservedSessionKind;
   copilotProcessState: SessionRegistryCopilotProcessState;
   copilotProcessId: number | null;
+}
+
+export interface CopilotSessionDiscoveryBatch {
+  sessions: DiscoveredCopilotSession[];
+  nextStartIndex: number;
+  totalDirectories: number;
 }
 
 interface CopilotProcessObservation {
@@ -125,13 +133,28 @@ function normalizeSummary(value: string | undefined): string | null {
   return trimmed;
 }
 
+function normalizeSessionName(value: string | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed === "|" || trimmed === "|-" || trimmed === ">" || trimmed === ">-") {
+    return null;
+  }
+  return trimmed;
+}
+
 function deriveTitle(
   sessionId: string,
+  name: string | null,
   summary: string | null,
   cwd: string,
   repo: string | null,
   observedSessionKind: SessionRegistryObservedSessionKind,
 ): string {
+  if (name && observedSessionKind !== "helper") {
+    return name;
+  }
   if (summary && observedSessionKind !== "helper") {
     return summary;
   }
@@ -141,7 +164,7 @@ function deriveTitle(
       return observedSessionKind === "helper" ? `${repoName} helper session` : repoName;
     }
   }
-  const cwdName = basename(cwd).trim();
+  const cwdName = basenameCrossOs(cwd).trim();
   if (cwdName.length > 0) {
     return observedSessionKind === "helper" ? `${cwdName} helper session` : cwdName;
   }
@@ -216,23 +239,6 @@ function extractLockPids(directoryEntries: string[]): number[] {
     }
   }
   return [...new Set(pids)].sort((left, right) => left - right);
-}
-
-function processExists(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error: unknown) {
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      (error as NodeJS.ErrnoException).code === "EPERM"
-    ) {
-      return true;
-    }
-    return false;
-  }
 }
 
 function observeCopilotProcess(directoryEntries: string[]): CopilotProcessObservation {
@@ -345,6 +351,7 @@ function discoverSessionFromDirectory(
 
   const repo = workspace.repository?.trim() || null;
   const branch = workspace.branch?.trim() || null;
+  const name = normalizeSessionName(workspace.name);
   const summary = normalizeSummary(workspace.summary);
   const observedSessionKind = classifyObservedSessionKind(sessionId, summary, cwd);
   const lastSeenAt = workspace.updated_at?.trim() || workspaceStat.mtime.toISOString();
@@ -353,7 +360,7 @@ function discoverSessionFromDirectory(
 
   const session: DiscoveredCopilotSession = {
     sessionId,
-    title: deriveTitle(sessionId, summary, cwd, repo, observedSessionKind),
+    title: deriveTitle(sessionId, name, summary, cwd, repo, observedSessionKind),
     description: deriveDescription(repo, branch, cwd, observedSessionKind),
     cwd,
     repo,
@@ -410,6 +417,54 @@ export function discoverCopilotSessions(
     return rightSeen - leftSeen;
   });
   return discovered;
+}
+
+export function discoverCopilotSessionsBatch(
+  sessionRoot: string = getDefaultCopilotSessionStateRoot(),
+  options: {
+    startIndex?: number;
+    maxDirectories?: number;
+  } = {},
+): CopilotSessionDiscoveryBatch {
+  if (!existsSync(sessionRoot)) {
+    discoveryCache.clear();
+    return { sessions: [], nextStartIndex: 0, totalDirectories: 0 };
+  }
+
+  const entries = readdirSync(sessionRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .sort((left, right) => left.name.localeCompare(right.name));
+  const totalDirectories = entries.length;
+  if (totalDirectories === 0) {
+    return { sessions: [], nextStartIndex: 0, totalDirectories };
+  }
+
+  const maxDirectories = Math.max(
+    1,
+    Math.min(options.maxDirectories ?? totalDirectories, totalDirectories),
+  );
+  const startIndex = Math.max(0, options.startIndex ?? 0) % totalDirectories;
+  const sessions: DiscoveredCopilotSession[] = [];
+
+  for (let offset = 0; offset < maxDirectories; offset += 1) {
+    const entry = entries[(startIndex + offset) % totalDirectories];
+    const session = discoverSessionFromDirectory(sessionRoot, entry.name);
+    if (session) {
+      sessions.push(session);
+    }
+  }
+
+  sessions.sort((left, right) => {
+    const leftSeen = left.lastSeenAt ? Date.parse(left.lastSeenAt) : Number.NEGATIVE_INFINITY;
+    const rightSeen = right.lastSeenAt ? Date.parse(right.lastSeenAt) : Number.NEGATIVE_INFINITY;
+    return rightSeen - leftSeen;
+  });
+
+  return {
+    sessions,
+    nextStartIndex: (startIndex + maxDirectories) % totalDirectories,
+    totalDirectories,
+  };
 }
 
 function observationMatches(

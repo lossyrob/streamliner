@@ -28,6 +28,10 @@ post-gate dogfood hardening.
    session was ended, so the builder had to enable "show ended" before anything
    appeared, but the UI did not say a session-specific filter was active or what
    criteria were hiding the result.
+2. **Cleanup base-anchor follow-through.** PR #86 shipped branch-tip revalidation
+   and deterministic cleanup guardrails. Verify whether that fully covers the
+   research-inspired base commit/ref anchoring concern; if not, add a small
+   diagnostic improvement or explicitly defer it before #76.
 
 ## Promoted Elsewhere
 
@@ -59,6 +63,8 @@ Out of scope:
 ## Success Criteria
 
 - The Sessions filtered-open clarity issue is resolved.
+- The cleanup base-anchor follow-through item is resolved or explicitly
+  deferred with rationale.
 - Additional small Wave 2 punch-list items captured here are fixed, explicitly
   promoted to separate nodes, or intentionally deferred before #76.
 - The usability gate can run without known small UI/flow clarity issues

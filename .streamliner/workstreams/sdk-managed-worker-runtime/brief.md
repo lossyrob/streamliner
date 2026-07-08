@@ -142,21 +142,37 @@ managed-autonomous consent/profile display, My Sessions and graph/node-inspector
 runtime rendering, sanitized progress display, and disabled placeholders for
 takeover and cleanup follow-on actions.
 
-The next ready node is `terminal-takeover-cleanup-actions` (#75), which should
-finish the operational lifecycle actions. Research-informed review promoted
-`managed-runtime-startup-reconciliation` (#89) as a parallel Wave 2 safety node:
-the current implementation has launch-claim reserved-row startup recovery, but
-active managed SDK runtime rows also need startup reconciliation so stale
-`starting`, `running`, or `interrupt_requested` rows do not appear as phantom
-live background sessions after API restart.
+`terminal-takeover-cleanup-actions` completed in PR #86 and closed issue #75.
+The managed runtime now has operational lifecycle actions: interrupt/cancel,
+one-way visible Copilot CLI takeover through `copilot --resume <sdkSessionId>`,
+trusted observation rebinding to the same registry row, cleanup-after-merge
+guardrails for linked worktrees/local branches, and state-aware UI actions. PR
+#86 also added Decision 010,
+`docs/design/decisions/010-terminal-takeover-and-cleanup.md`, for the durable
+takeover/cleanup semantics.
+
+The next ready nodes are `managed-runtime-startup-reconciliation` (#89) and
+`managed-runtime-api-responsiveness` (#94). Research-informed review promoted
+#89 as a Wave 2 safety node: the current implementation has launch-claim
+reserved-row startup recovery, but active managed SDK runtime rows also need
+startup reconciliation so stale `starting`, `running`, or `interrupt_requested`
+rows do not appear as phantom live background sessions after API restart.
+
+Live dogfood showed that multiple active managed SDK sessions can make the local
+API visibly unresponsive. #94 now blocks the managed session console so Wave 2
+bounds registry writes, SSE/session payload chatter, and redundant UI polling
+before adding a richer terminal-like monitoring surface. #95 follows #94 to
+record whether same-process coalescing is sufficient or whether Streamliner needs
+a local managed-runtime supervisor process before the usability gate.
 
 `managed-session-console` (#85) implements the missing read-only,
-terminal-looking monitoring surface. The Wave 2 punch list,
-`managed-runtime-wave-2-punch-list` (#87), collects small usability and closeout
-tweaks discovered during dogfooding before the usable-runtime gate.
-`managed-runtime-usability-gate` (#76) should validate the integrated path only
-after lifecycle actions, startup reconciliation, the console experience, and the
-punch list are complete.
+terminal-looking monitoring surface after the API-safe progress projection is in
+place. The Wave 2 punch list, `managed-runtime-wave-2-punch-list` (#87),
+collects small usability and closeout tweaks discovered during dogfooding before
+the usable-runtime gate. `managed-runtime-usability-gate` (#76) should validate
+the integrated path only after startup reconciliation, API responsiveness,
+supervisor-boundary disposition, the console experience, and the punch list are
+complete.
 
 Wave 1 nodes may add workstream-local support documents under `docs/` when the
 findings are useful to downstream workers but do not yet belong directly in the
@@ -183,6 +199,13 @@ substrate and its remaining planned exports.
 - Progress visibility should be read-only but familiar to Copilot CLI users:
   terminal-like, message/status oriented, and useful for monitoring without
   becoming an interactive terminal emulator.
+- Managed progress visibility must be API-safe. Noisy SDK event streams should be
+  coalesced into bounded sanitized projections, and the API should remain
+  responsive while multiple managed sessions are active.
+- The API is the builder-facing control plane. If measured same-process
+  coalescing does not keep it responsive, Wave 2 should introduce a local
+  managed-runtime supervisor process that owns SDK sessions and sends compact
+  lifecycle/progress/evidence updates back to the API.
 - Background execution should not feel like an opaque batch job. PAW launch
   preparation and SDK-managed background sessions need a reusable
   terminal-looking console that can stream or replay sanitized activity from
@@ -208,8 +231,10 @@ substrate and its remaining planned exports.
   (`managed-worker-runtime-contract`), and #62 (`foundation-contract-gate`);
   Wave 2 child trackers are #73 (`managed-execution-substrate`), #74
   (`builder-managed-runtime-ui`), #75 (`terminal-takeover-cleanup-actions`), #89
-  (`managed-runtime-startup-reconciliation`), #85 (`managed-session-console`),
-  #87 (`managed-runtime-wave-2-punch-list`), and #76
+  (`managed-runtime-startup-reconciliation`), #94
+  (`managed-runtime-api-responsiveness`), #95
+  (`managed-runtime-supervisor-isolation`), #85 (`managed-session-console`), #87
+  (`managed-runtime-wave-2-punch-list`), and #76
   (`managed-runtime-usability-gate`). Local `tasks/*.md` specs remain durable
   support context.
 - Use gates at the three consequential wave transitions: foundation contract
@@ -219,15 +244,16 @@ substrate and its remaining planned exports.
 
 ## Open Questions
 
-Wave 1 resolved the gate-level contract questions. Remaining questions are Wave 2
-implementation details, not foundation blockers:
+Wave 1 resolved the gate-level contract questions, and PR #86 resolved the
+terminal takeover/cleanup action contract. Remaining questions are Wave 2
+implementation and validation details, not foundation blockers:
 
-- terminal takeover ownership transfer and registry rebinding behavior;
-- cleanup-after-merge guardrails for linked worktrees/local branches;
 - startup reconciliation semantics and diagnostics for active managed SDK rows
   orphaned by API/process restart;
-- base commit/ref anchoring location for managed worktree metadata and cleanup
-  guardrails;
+- API responsiveness and backpressure while multiple managed SDK sessions emit
+  noisy progress events;
+- whether same-process coalescing is sufficient or a local managed-runtime
+  supervisor process is required before the usability gate;
 - terminal-looking console details for sanitized launch/background progress,
   replay, stale/reconnect state, truncation, and takeover closeout;
 - typed `waiting_for_builder` reasons and PR-ready trust markers in the managed
@@ -263,6 +289,12 @@ implementation details, not foundation blockers:
 - **Managed startup reconciliation contract:** active SDK-managed runtime rows
   must not remain displayed as live workers after API restart unless the SDK
   owner/session is verifiably alive.
+- **Managed runtime responsiveness contract:** SDK progress event bursts must be
+  coalesced into bounded sanitized projections so registry writes, SSE delivery,
+  and UI polling do not make the local API unresponsive.
+- **Managed supervisor boundary contract:** Wave 2 must either record measured
+  same-process sufficiency or introduce a local supervisor process that owns SDK
+  sessions while the API remains the builder-facing control plane.
 - **Managed session console contract:** a read-only, Copilot-CLI-like browser
   transcript for PAW launch preparation and SDK-managed background sessions,
   backed by sanitized bounded events, typed blocker reasons, PR-ready trust
@@ -289,14 +321,20 @@ implementation details, not foundation blockers:
 - **Builder-facing managed runtime UI:** Delivered by PR #78 and issue #74.
   Takeover and cleanup UI affordances intentionally remain disabled placeholders
   until #75 wires the backend actions.
-- **Terminal takeover and cleanup actions:** Issue #75 is the next ready node.
-  The managed session console (#85) should consume its interrupt/takeover/cleanup
-  states rather than inventing separate lifecycle semantics. Cleanup work should
-  take inspiration from base-commit anchoring patterns and record enough launch
-  base context to make cleanup/diff checks deterministic.
+- **Terminal takeover and cleanup actions:** Delivered by PR #86 and issue #75.
+  The managed session console (#85) should consume the shipped
+  interrupt/takeover/cleanup states rather than inventing separate lifecycle
+  semantics. PR #86 records durable takeover/cleanup rationale in
+  `docs/design/decisions/010-terminal-takeover-and-cleanup.md`.
 - **Managed runtime startup reconciliation:** Issue #89 is a Wave 2 must-have,
   promoted from the research proposal rather than folded into the punch list
   because stale active rows are a trust/safety risk before #76.
+- **Managed runtime API responsiveness:** Issue #94 is a Wave 2 must-have before
+  #85 because the console should consume bounded API-safe progress projections
+  rather than amplifying raw SDK event chatter through registry writes and SSE.
+- **Managed runtime supervisor isolation:** Issue #95 follows #94 and must record
+  whether same-process coalescing is sufficient or implement a local supervisor
+  boundary before #76.
 - **Managed session console:** Issue #85 should restore the stronger
   read-only terminal-looking monitoring intent before the usability gate,
   including typed waiting reasons and PR-ready trust markers where available.
@@ -319,12 +357,19 @@ Initial item:
    active filter criteria visible. If the target managed session is ended and
    hidden until "show ended" is enabled, the UI should explain that the
    session-specific filter is active and what criteria currently hide the result.
+2. **Cleanup base-anchor follow-through:** PR #86 shipped branch-tip
+   revalidation and deterministic cleanup guardrails. Verify whether that fully
+   covers the research-inspired base commit/ref anchoring concern; if not, add a
+   small diagnostic improvement or explicitly defer it before #76.
 
 Research-inspired items deliberately promoted elsewhere:
 
 - **Managed SDK row startup reconciliation** is tracked as #89, not as a small
   punch-list tweak, because stale active runtime rows would undermine launch and
   monitoring trust before the usability gate.
+- **Managed runtime API responsiveness and supervisor isolation** are tracked as
+  #94 and #95, not as punch-list tweaks, because API stalls under active managed
+  work would undermine the console and the usability gate.
 - **Typed waiting reasons and PR-ready trust markers** belong in
   `managed-session-console` (#85), because they are part of the core monitoring
   surface rather than late polish.
