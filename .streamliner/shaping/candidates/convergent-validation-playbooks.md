@@ -214,6 +214,20 @@ convergence:
 
 - The playbook is the evaluator. It decides whether the target is acceptable.
 - The validation loop owns convergence. Repair sessions do not decide global done-ness.
+- **Convergence means independent confirmation, not self-confirmation.** Re-running the exact
+  playbook that produced the repairs can pass simply because the fixes were patched to that test. The
+  honest stop is when a *fresh* attempt to break the target — different inputs, a different path, or a
+  second evaluator — finds nothing new. Passing the same lens that generated the fixes is the weakest
+  green there is.
+- **Whoever tries to break it is independent of whoever fixes it.** If the session that crafts the
+  failing case is the one that implemented the repair, they share a blind spot and the loop converges
+  on "looks fixed to us." Keep the break-it role separate from the fix-it role.
+- **Pair pass/fail with an occasional check that the checks are right.** The playbook calls pass/fail
+  against its contract; every so often something independent should confirm the contract is still
+  testing the right thing, so a green playbook that quietly tests the wrong thing gets caught rather
+  than trusted.
+- **Budget the loop in validation runs.** The comparable unit of both cost and confidence is how many
+  times the evaluator ran; express budgets primarily as a run count rather than wall-clock time.
 - GitHub issues and PRs are durable coordination artifacts, not the canonical workstream state database.
 - Streamliner should preserve the full chain: validation run, finding, issue, repair session, PR, review session, merge, next validation run.
 - Findings need stable fingerprints or the system will make issue confetti.
@@ -253,6 +267,8 @@ convergence:
 - Should `Validation Playbook` be the only artifact name, or should Streamliner also expose an `Executable Acceptance Contract` concept internally?
 - Should the first slice require structured finding output, or permit log summarization behind an explicit low-confidence mode?
 - How should repeated flaky failures be distinguished from deterministic blockers?
+- How independent must the confirming probe be, and who supplies it — a second playbook, a different
+  environment, or a separate auditor session that checks the playbook itself is testing the right thing?
 - What default iteration, cost, and parallelism budgets are safe?
 - Should the first implementation target workstream integration branches only?
 - How should waivers or accepted risks be represented when validation cannot fully pass?
