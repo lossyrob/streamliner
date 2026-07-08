@@ -148,6 +148,11 @@ function optionalStringField(record: Record<string, unknown>, key: string): stri
   return typeof value === "string" ? value : undefined;
 }
 
+function optionalBooleanField(record: Record<string, unknown>, key: string): boolean | undefined {
+  const value = record[key];
+  return typeof value === "boolean" ? value : undefined;
+}
+
 function normalizeStoredRecord(value: unknown): StoredNodeLaunchRecord | null {
   if (!isRecord(value)) {
     return null;
@@ -258,7 +263,14 @@ function normalizePostPreparationIntent(value: unknown): NodePostPreparationInte
   if (isRecord(value.launchCompanion)) {
     const kickoffPrompt = stringField(value.launchCompanion, "kickoffPrompt");
     if (kickoffPrompt) {
-      intent.launchCompanion = { kickoffPrompt };
+      const usePawReviewAgent = optionalBooleanField(
+        value.launchCompanion,
+        "usePawReviewAgent",
+      );
+      intent.launchCompanion = {
+        kickoffPrompt,
+        ...(usePawReviewAgent !== undefined ? { usePawReviewAgent } : {}),
+      };
     }
   }
   return intent.launchTerminal || intent.launchCompanion ? intent : null;
@@ -417,6 +429,30 @@ export class NodeLaunchRecordStore {
     return operation ? { ...operation, progressEvents: [...operation.progressEvents] } : null;
   }
 
+  async clearNodeLaunchState(input: {
+    graphPath: string;
+    nodeId: string;
+  }): Promise<{
+    record: NodeLaunchRecord | null;
+    operation: NodeLaunchOperation | null;
+  }> {
+    return await this.updateDocument((document) => {
+      const key = normalizeGraphPathForKey(input.graphPath);
+      const recordIndex = document.records.findIndex((candidate) =>
+        candidate.nodeId === input.nodeId && normalizeGraphPathForKey(candidate.graphPath) === key
+      );
+      const operationIndex = document.operations.findIndex((candidate) =>
+        candidate.nodeId === input.nodeId && normalizeGraphPathForKey(candidate.graphPath) === key
+      );
+      const [record] = recordIndex >= 0 ? document.records.splice(recordIndex, 1) : [];
+      const [operation] = operationIndex >= 0 ? document.operations.splice(operationIndex, 1) : [];
+      return {
+        record: record ? withPathStatus(record) : null,
+        operation: operation ? { ...operation, progressEvents: [...operation.progressEvents] } : null,
+      };
+    });
+  }
+
   /**
    * Mark every persisted operation that is in an in-memory-controlled state
    * as recoverable. That includes active statuses (`preparing`, `launching`,
@@ -502,6 +538,55 @@ export class NodeLaunchRecordStore {
         timestamp,
       );
       return operation;
+    });
+  }
+
+  async markLaunchedPendingBindingBound(input: {
+    graphPath: string;
+    nodeId: string;
+    now?: Date;
+  }): Promise<NodeLaunchOperation | null> {
+    return await this.updateDocument((document) => {
+      const operation = findStoredOperation(document, input.graphPath, input.nodeId);
+      if (!operation || operation.status !== "launched_pending_binding") {
+        return null;
+      }
+      const timestamp = (input.now ?? new Date()).toISOString();
+      operation.status = "bound";
+      operation.completedAt = operation.completedAt ?? timestamp;
+      operation.updatedAt = timestamp;
+      operation.error = null;
+      return { ...operation, progressEvents: [...operation.progressEvents] };
+    });
+  }
+
+  async releaseLaunchedPendingBindingOperation(input: {
+    graphPath: string;
+    nodeId: string;
+    reason?: string;
+    now?: Date;
+  }): Promise<NodeLaunchOperation | null> {
+    return await this.updateDocument((document) => {
+      const operation = findStoredOperation(document, input.graphPath, input.nodeId);
+      if (!operation || operation.status !== "launched_pending_binding") {
+        return null;
+      }
+      const timestamp = (input.now ?? new Date()).toISOString();
+      operation.status = "preparation_failed";
+      operation.completedAt = timestamp;
+      operation.updatedAt = timestamp;
+      operation.terminalLaunch = null;
+      operation.managedLaunch = null;
+      operation.companionLaunch = null;
+      operation.companionError = null;
+      operation.error = operationError(
+        {
+          code: "operation_released_by_user",
+          error: input.reason ?? "Manually released by the user.",
+        },
+        timestamp,
+      );
+      return { ...operation, progressEvents: [...operation.progressEvents] };
     });
   }
 

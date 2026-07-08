@@ -34,6 +34,8 @@ export const WORKSTREAM_LAUNCH_TERMINAL_PREFERENCES = [
   "default",
   "windows-terminal",
   "powershell",
+  "mac-terminal",
+  "iterm2",
 ] as const;
 export type WorkstreamLaunchTerminalPreference =
   (typeof WORKSTREAM_LAUNCH_TERMINAL_PREFERENCES)[number];
@@ -141,6 +143,7 @@ export interface WorkstreamLaunchPolicy {
 export interface WorkstreamLaunchTerminalDefaults {
   preferredTerminal?: WorkstreamLaunchTerminalPreference;
   titleTemplate?: string | null;
+  /** @deprecated Use workstream presentation.color instead. */
   tabColor?: string | null;
 }
 
@@ -150,6 +153,11 @@ export interface WorkstreamLaunchDefaults {
   launchAfterInit?: boolean;
   reviewCompanion?: boolean;
   reviewPromptTemplateId?: string | null;
+}
+
+export interface WorkstreamPresentation {
+  shortName?: string | null;
+  color?: string | null;
 }
 
 export interface WorkstreamNode {
@@ -184,6 +192,7 @@ export interface WorkstreamDocument {
   createdAt: string;
   updatedAt: string;
   trackingIssue?: WorkstreamIssue;
+  presentation?: WorkstreamPresentation;
   launchPolicy?: WorkstreamLaunchPolicy;
   launchDefaults?: WorkstreamLaunchDefaults;
   repos: WorkstreamRepo[];

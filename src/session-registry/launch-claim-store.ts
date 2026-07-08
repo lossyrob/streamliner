@@ -1,6 +1,5 @@
 import {
   closeSync,
-  existsSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -34,6 +33,12 @@ import {
   LaunchClaimNotFoundError,
   type LaunchClaimStore,
 } from "../launch-claim-contract";
+import {
+  isProcessLockStale,
+  newLockMetadata,
+  type ProcessLockMetadata,
+  readLockMetadataFile,
+} from "./lock-liveness";
 
 const DEFAULT_LAUNCH_CLAIMS_ROOT = resolve(
   homedir(),
@@ -66,30 +71,8 @@ export function getEnvLaunchClaimRoot(env: NodeJS.ProcessEnv = process.env): str
   return DEFAULT_LAUNCH_CLAIMS_ROOT;
 }
 
-interface LockMetadata {
-  pid: number;
-  acquiredAt: string;
-}
-
 function sleepSync(ms: number): void {
   Atomics.wait(SHARED_SLEEP_ARRAY, 0, 0, ms);
-}
-
-function processExists(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error: unknown) {
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      (error as NodeJS.ErrnoException).code === "EPERM"
-    ) {
-      return true;
-    }
-    return false;
-  }
 }
 
 function renameWithRetries(from: string, to: string): void {
@@ -457,7 +440,7 @@ export class LaunchClaimFileStore implements LaunchClaimStore {
         try {
           writeFileSync(
             fd,
-            JSON.stringify({ pid: process.pid, acquiredAt: isoNow() }),
+            JSON.stringify(newLockMetadata()),
             "utf8",
           );
         } catch (error: unknown) {
@@ -496,7 +479,7 @@ export class LaunchClaimFileStore implements LaunchClaimStore {
 
   private removeStaleLock(): boolean {
     const meta = this.readLockMetadata(this.lockPath);
-    if (!meta || processExists(meta.pid)) {
+    if (!meta || !isProcessLockStale(meta)) {
       return false;
     }
     rmSync(this.lockPath, { force: true });
@@ -524,7 +507,7 @@ export class LaunchClaimFileStore implements LaunchClaimStore {
       try {
         writeFileSync(
           fd,
-          JSON.stringify({ pid: process.pid, acquiredAt: isoNow() }),
+          JSON.stringify(newLockMetadata()),
           "utf8",
         );
       } catch (error: unknown) {
@@ -558,35 +541,15 @@ export class LaunchClaimFileStore implements LaunchClaimStore {
     if (!meta) {
       return false;
     }
-    if (processExists(meta.pid)) {
+    if (!isProcessLockStale(meta)) {
       return true;
     }
     rmSync(this.recoveryLockPath, { force: true });
     return false;
   }
 
-  private readLockMetadata(lockPath: string): LockMetadata | null {
-    if (!existsSync(lockPath)) {
-      return null;
-    }
-    try {
-      const raw = readFileSync(lockPath, "utf8");
-      const parsed = JSON.parse(raw);
-      if (
-        parsed &&
-        typeof parsed === "object" &&
-        typeof (parsed as { pid?: unknown }).pid === "number" &&
-        typeof (parsed as { acquiredAt?: unknown }).acquiredAt === "string"
-      ) {
-        return {
-          pid: (parsed as LockMetadata).pid,
-          acquiredAt: (parsed as LockMetadata).acquiredAt,
-        };
-      }
-    } catch {
-      // fall through
-    }
-    return null;
+  private readLockMetadata(lockPath: string): ProcessLockMetadata | null {
+    return readLockMetadataFile(lockPath);
   }
 
   /**

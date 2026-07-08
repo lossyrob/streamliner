@@ -470,6 +470,22 @@ class MockEventSource extends EventTarget {
   }
 }
 
+function findMockEventSource(url: string): MockEventSource {
+  const source = MockEventSource.instances.find((candidate) => candidate.url === url);
+  if (!source) {
+    throw new Error(`Could not find EventSource for ${url}`);
+  }
+  return source;
+}
+
+function setDocumentVisibility(state: DocumentVisibilityState): void {
+  Object.defineProperty(document, "visibilityState", {
+    configurable: true,
+    value: state,
+  });
+  document.dispatchEvent(new Event("visibilitychange"));
+}
+
 describe("App sessions route", () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -478,6 +494,10 @@ describe("App sessions route", () => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     vi.useRealTimers();
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "visible",
+    });
     (
       globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
     ).IS_REACT_ACT_ENVIRONMENT = true;
@@ -797,6 +817,181 @@ describe("App sessions route", () => {
     15_000,
   );
 
+  it(
+    "manages PAW Review prompt templates from settings",
+    async () => {
+      const copyText = vi.fn(async () => {});
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: { writeText: copyText },
+      });
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      let templates = [{
+        id: "heavy-review",
+        name: "Heavy Review",
+        prompt: "Review issue {{githubRepo}}#{{githubIssue}}.",
+        updatedAt: "2026-05-03T18:00:00.000Z",
+      }];
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({ version: 1, migrationWarnings: [], workstreams: [] });
+        }
+        if (path === "/api/paw-review-prompt-templates" && (!init?.method || init.method === "GET")) {
+          expect(init?.cache).toBe("no-store");
+          return jsonResponse({ templates });
+        }
+        if (path === "/api/paw-review-prompt-templates" && init?.method === "POST") {
+          const body = JSON.parse(String(init.body)) as { name: string; prompt: string };
+          const template = {
+            id: body.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""),
+            name: body.name,
+            prompt: body.prompt,
+            updatedAt: "2026-05-03T18:01:00.000Z",
+          };
+          templates = [...templates, template];
+          return jsonResponse({ template }, 201);
+        }
+        if (path === "/api/paw-review-prompt-templates/heavy-review-copy" && init?.method === "PUT") {
+          const body = JSON.parse(String(init.body)) as { name: string; prompt: string };
+          const template = {
+            id: "heavy-review-copy",
+            name: body.name,
+            prompt: body.prompt,
+            updatedAt: "2026-05-03T18:02:00.000Z",
+          };
+          templates = templates.map((candidate) =>
+            candidate.id === template.id ? template : candidate
+          );
+          return jsonResponse({ template });
+        }
+        if (path === "/api/paw-review-prompt-templates/heavy-review-copy" && init?.method === "DELETE") {
+          templates = templates.filter((template) => template.id !== "heavy-review-copy");
+          return new Response(null, { status: 204 });
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState({}, "", "/settings/review-templates");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      expect(container.querySelector(".sl-settings-sidebar-head")?.textContent?.trim()).toBe("Settings");
+      expect(container.querySelector(".sl-profiles-header")?.textContent).toContain("PAW Review templates");
+      act(() => {
+        findButtonByLabel(container, "Select review template Heavy Review").click();
+      });
+      await settle();
+      expect(findTextareaByLabel(container, "Review template prompt").value).toBe(
+        "Review issue {{githubRepo}}#{{githubIssue}}.",
+      );
+
+      act(() => {
+        findButton(container, "Copy prompt").click();
+      });
+      await settle();
+      expect(copyText).toHaveBeenCalledWith("Review issue {{githubRepo}}#{{githubIssue}}.");
+
+      act(() => {
+        findButton(container, "Duplicate template").click();
+      });
+      await settle(100);
+      expect(findInputByLabel(container, "Review template name").value).toBe("Heavy Review copy");
+
+      setInputValue(findInputByLabel(container, "Review template name"), "Heavy Review updated");
+      setTextareaValue(
+        findTextareaByLabel(container, "Review template prompt"),
+        "Updated review prompt for {{githubRepo}}#{{githubIssue}}.",
+      );
+      act(() => {
+        findButton(container, "Save changes").click();
+      });
+      await settle(100);
+      expect(container.textContent).toContain('Updated "Heavy Review updated".');
+
+      act(() => {
+        findButton(container, "Delete template").click();
+      });
+      await settle(100);
+      expect(window.confirm).toHaveBeenCalledWith(
+        'Delete "Heavy Review updated"? Workstreams configured to use this review template will fall back to custom PAW Review prompts.',
+      );
+      expect(container.textContent).toContain('Deleted "Heavy Review updated".');
+      expect(container.textContent).not.toContain("heavy-review-copy");
+    },
+    15_000,
+  );
+
+  it(
+    "does not restore a deleted review template when an older refresh resolves later",
+    async () => {
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      const staleTemplate = {
+        id: "heavy-review",
+        name: "Heavy Review",
+        prompt: "Review issue {{githubRepo}}#{{githubIssue}}.",
+        updatedAt: "2026-05-03T18:00:00.000Z",
+      };
+      let resolveRefresh!: (response: Response) => void;
+      const refreshPromise = new Promise<Response>((resolve) => {
+        resolveRefresh = resolve;
+      });
+      let getCount = 0;
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({ version: 1, migrationWarnings: [], workstreams: [] });
+        }
+        if (path === "/api/paw-review-prompt-templates" && (!init?.method || init.method === "GET")) {
+          getCount += 1;
+          return getCount === 1
+            ? jsonResponse({ templates: [staleTemplate] })
+            : refreshPromise;
+        }
+        if (path === "/api/paw-review-prompt-templates/heavy-review" && init?.method === "DELETE") {
+          return new Response(null, { status: 204 });
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState({}, "", "/settings/review-templates");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      act(() => {
+        findButtonByLabel(container, "Select review template Heavy Review").click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Refresh").click();
+      });
+      await settle();
+      expect(findButton(container, "Refreshing...")).toBeInstanceOf(HTMLButtonElement);
+
+      act(() => {
+        findButton(container, "Delete template").click();
+      });
+      await settle(100);
+      expect(container.textContent).toContain('Deleted "Heavy Review".');
+
+      act(() => {
+        resolveRefresh(jsonResponse({ templates: [staleTemplate] }));
+      });
+      await settle(100);
+
+      const listedTemplateIds = [...container.querySelectorAll(".sl-profile-list-item code")]
+        .map((code) => code.textContent?.trim());
+      expect(listedTemplateIds).not.toContain("heavy-review");
+    },
+    15_000,
+  );
+
   it("renders managed runtime state in My Sessions rows and details", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = requestPath(input);
@@ -917,6 +1112,39 @@ describe("App sessions route", () => {
 
     expect(container.textContent).not.toContain("Loading workstreams…");
     expect(container.textContent).toContain("No tracked workstreams yet");
+  });
+
+  it("shows compact workstream presentation metadata in the tracked list", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = requestPath(input);
+      if (path === "/api/workstreams") {
+        return jsonResponse({
+          version: 1,
+          migrationWarnings: [],
+          workstreams: [
+            buildTrackedWorkstream({
+              title: "Session launching and tracking",
+              presentation: {
+                shortName: "SLT",
+                color: "#4891c8",
+              },
+            }),
+          ],
+        });
+      }
+      throw new Error(`Unexpected fetch: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.pushState({}, "", "/workstreams");
+
+    act(() => {
+      root.render(<App />);
+    });
+    await settle();
+
+    expect(container.textContent).toContain("SLT");
+    expect(container.textContent).toContain("Session launching and tracking");
+    expect(container.querySelector('[aria-label="Workstream color #4891c8"]')).toBeInstanceOf(HTMLElement);
   });
 
   it(
@@ -1442,6 +1670,9 @@ describe("App sessions route", () => {
       expect(graphNode.textContent).toContain("runtime active");
       expect(graphNode.textContent).toContain("PAW implementation");
       expect(container.textContent).toContain("RUNTIME DETAILS");
+      const inspectorNodeId = container.querySelector(".sl-inspector-node-id");
+      expect(inspectorNodeId?.textContent).toContain("Node ID");
+      expect(inspectorNodeId?.textContent).toContain("launch-prompt-profiles");
       expect(container.textContent).not.toContain("Runtime overlay");
       expect(container.textContent).toContain("PAW overlay worker (working)");
       expect(container.textContent).toContain("pending blocking launch");
@@ -1455,6 +1686,126 @@ describe("App sessions route", () => {
           return path.startsWith("/api/node-launch-records?") && !path.includes("nodeId=");
         }),
       ).toBe(true);
+    },
+    15_000,
+  );
+
+  it(
+    "clears previous PAW init state so a ready node can be initialized again",
+    async () => {
+      const graph = buildLaunchGraph();
+      const launchRecord = {
+        id: "launch-prompt-profiles-record",
+        graphPath: "C:\\graphs\\api-test\\graph.json",
+        projectKey: "streamliner",
+        workstreamId: "api-test",
+        nodeId: "launch-prompt-profiles",
+        workId: "launch-prompt-profiles",
+        workTitle: "Launch prompt profiles",
+        branch: "feature/launch-prompt-profiles",
+        cwd: "C:\\graphs\\api-test",
+        pawWorkDir: "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles",
+        workflowContextPath:
+          "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles\\WorkflowContext.md",
+        streamlinerContextPath:
+          "C:\\graphs\\api-test\\.paw\\work\\launch-prompt-profiles\\streamliner\\context.md",
+        contextPackagePath: "C:\\state\\launch-contexts\\ctx",
+        contextFilePath: "C:\\state\\launch-contexts\\ctx\\context.md",
+        launchNonce: "nonce-1",
+        launchClaimRef: "claim-1",
+        trackerUrl: "https://github.com/lossyrob/streamliner/issues/33",
+        createdAt: "2026-05-03T18:00:00.000Z",
+        updatedAt: "2026-05-03T18:01:00.000Z",
+        pathStatus: {
+          cwdExists: true,
+          pawWorkDirExists: true,
+          workflowContextExists: true,
+          streamlinerContextExists: true,
+          contextPackageExists: true,
+          contextFileExists: true,
+        },
+        latestClaim: {
+          launchClaimId: "claim-1",
+          status: "bound",
+          launchedAt: "2026-05-03T18:00:00.000Z",
+          updatedAt: "2026-05-03T18:01:00.000Z",
+          bindingWindowExpiresAt: "2026-05-03T18:05:00.000Z",
+          reservedRegistryId: "registry-1",
+          boundRegistryId: "registry-1",
+          boundCopilotSessionId: "copilot-1",
+          failureCode: null,
+          failureReason: null,
+          blocksLaunch: true,
+          retryable: false,
+        },
+      };
+      let currentLaunchRecord: typeof launchRecord | null = launchRecord;
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        if (path === "/api/sessions?workstreamId=api-test") {
+          return jsonResponse([]);
+        }
+        if (path === "/api/node-launch-records/clear" && init?.method === "POST") {
+          expect(JSON.parse(String(init.body))).toEqual({
+            graphPath: "C:\\graphs\\api-test\\graph.json",
+            workstreamId: "api-test",
+            nodeId: "launch-prompt-profiles",
+          });
+          currentLaunchRecord = null;
+          return jsonResponse({
+            clearedRecord: launchRecord,
+            clearedOperation: null,
+            releasedLaunchClaims: [launchRecord.latestClaim],
+            detachedRegistryIds: ["registry-1"],
+          });
+        }
+        if (path.startsWith("/api/node-launch-records?") && path.includes("nodeId=")) {
+          return jsonResponse({ record: currentLaunchRecord, operation: null });
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return jsonResponse({ records: currentLaunchRecord ? [currentLaunchRecord] : [] });
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState(
+        {},
+        "",
+        "/workstreams/streamliner/api-test/nodes/launch-prompt-profiles",
+      );
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(300);
+
+      expect(findButton(container, "Open PAW launch")).toBeInstanceOf(HTMLButtonElement);
+      expect(container.textContent).toContain("LATEST PAW LAUNCH");
+      expect(container.textContent).toContain("Bound - terminal active");
+
+      act(() => {
+        findButton(container, "Clear previous init").click();
+      });
+      await settle(150);
+
+      expect(
+        fetchMock.mock.calls.some(
+          ([input]) => requestPath(input as RequestInfo | URL) === "/api/node-launch-records/clear",
+        ),
+      ).toBe(true);
+      expect(findButton(container, "Initialize PAW launch")).toBeInstanceOf(HTMLButtonElement);
+      expect(container.textContent).not.toContain("LATEST PAW LAUNCH");
+      expect(container.textContent).not.toContain("Bound - terminal active");
     },
     15_000,
   );
@@ -1869,6 +2220,179 @@ describe("App sessions route", () => {
           requestPath(input as RequestInfo | URL) === "/api/workstreams/streamliner/api-test/graph",
         ),
       ).toBe(true);
+    },
+    15_000,
+  );
+
+  it(
+    "refreshes the active workstream from workstream SSE without short-interval graph polling",
+    async () => {
+      vi.useFakeTimers();
+      MockEventSource.instances = [];
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+      let graph = buildWorkstreamGraph();
+      let graphRequests = 0;
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          graphRequests += 1;
+          return jsonResponse(graph);
+        }
+        if (path === "/api/sessions?workstreamId=api-test") {
+          return jsonResponse([]);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return emptyNodeLaunchRecordResponse();
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await flushReact();
+      await flushReact();
+
+      expect(container.textContent).toContain("API Test");
+      expect(graphRequests).toBe(1);
+      const source = findMockEventSource("/api/workstreams/events");
+      act(() => {
+        source.emit("open");
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+      await flushReact();
+      expect(graphRequests).toBe(1);
+
+      graph = buildWorkstreamGraph({ title: "API Test SSE Updated" });
+      act(() => {
+        source.emit("workstream.graph.changed", {
+          projectKey: "streamliner",
+          workstreamId: "api-test",
+          lastModified: "Thu, 28 May 2026 15:00:00 GMT",
+        });
+      });
+      await flushReact();
+      await flushReact();
+
+      expect(graphRequests).toBe(2);
+      expect(container.textContent).toContain("API Test SSE Updated");
+    },
+    15_000,
+  );
+
+  it(
+    "uses a slow visible-tab fallback only when workstream SSE is unavailable",
+    async () => {
+      vi.useFakeTimers();
+      vi.spyOn(Math, "random").mockReturnValue(0.5);
+      vi.stubGlobal("EventSource", undefined);
+      let graphRequests = 0;
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          graphRequests += 1;
+          return jsonResponse(buildWorkstreamGraph());
+        }
+        if (path === "/api/sessions?workstreamId=api-test") {
+          return jsonResponse([]);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return emptyNodeLaunchRecordResponse();
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await flushReact();
+      await flushReact();
+
+      expect(graphRequests).toBe(1);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+      await flushReact();
+      expect(graphRequests).toBe(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(45_000);
+      });
+      await flushReact();
+      expect(graphRequests).toBe(2);
+    },
+    15_000,
+  );
+
+  it(
+    "closes the workstream event stream and does not fallback poll while hidden",
+    async () => {
+      vi.useFakeTimers();
+      MockEventSource.instances = [];
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+      let graphRequests = 0;
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [buildTrackedWorkstream()],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          graphRequests += 1;
+          return jsonResponse(buildWorkstreamGraph());
+        }
+        if (path === "/api/sessions?workstreamId=api-test") {
+          return jsonResponse([]);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return emptyNodeLaunchRecordResponse();
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState({}, "", "/workstreams/streamliner/api-test");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await flushReact();
+      await flushReact();
+
+      const source = findMockEventSource("/api/workstreams/events");
+      act(() => {
+        setDocumentVisibility("hidden");
+      });
+      await flushReact();
+
+      expect(source.readyState).toBe(2);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120_000);
+      });
+      await flushReact();
+      expect(graphRequests).toBe(1);
     },
     15_000,
   );
@@ -2295,6 +2819,7 @@ describe("App sessions route", () => {
         "Launch PAW Review companion terminal",
       );
       expect(reviewCompanionInput.checked).toBe(true);
+      expect(findInputByLabel(container, "Use PAW-Review agent").checked).toBe(true);
       expect(findSelectByLabel(container, "Load review template").value).toBe("thorough-review");
     },
     15_000,
@@ -2508,7 +3033,7 @@ describe("App sessions route", () => {
       expect(findTextareaByLabel(container, "Launch instructions").value).toBe(
         "Use saved final PR only workflow text.",
       );
-      setInputValue(findInputByLabel(container, "Copilot CLI args"), "");
+      setTextareaValue(findTextareaByLabel(container, "Copilot CLI args"), "");
       setInputValue(findInputByLabel(container, "Terminal tab title"), "Launch profile worker");
       act(() => {
         findButtonByLabel(container, "Use terminal color #ff8c0a").click();
@@ -3540,7 +4065,31 @@ describe("App sessions route", () => {
   it(
     "asks the server to launch the terminal after preparation when launch after init is checked",
     async () => {
-      const graph = buildLaunchGraph();
+      const graph = buildLaunchGraph("ready", {
+        graph: {
+          repos: [
+            {
+              id: "streamliner",
+              owner: "lossyrob",
+              name: "streamliner",
+              role: "primary",
+            },
+            {
+              id: "planning",
+              owner: "lossyrob",
+              name: "planning",
+            },
+          ],
+        },
+        node: {
+          tracker: {
+            type: "github",
+            owner: "lossyrob",
+            repo: "planning",
+            number: 33,
+          },
+        },
+      });
       const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = requestPath(input);
         if (path === "/api/workstreams") {
@@ -3622,9 +4171,14 @@ describe("App sessions route", () => {
         findInputByLabel(container, "Launch PAW Review companion terminal").click();
       });
       await settle();
+      expect(findInputByLabel(container, "Use PAW-Review agent").checked).toBe(true);
+      act(() => {
+        findInputByLabel(container, "Use PAW-Review agent").click();
+      });
+      await settle();
       setTextareaValue(
         findTextareaByLabel(container, "PAW Review prompt template"),
-        "Review issue {{githubIssue}}.",
+        "Review issue {{githubRepo}}#{{githubIssue}}.",
       );
       await settle();
       expect(findButton(container, "Run PAW init and launch")).toBeDefined();
@@ -3646,7 +4200,8 @@ describe("App sessions route", () => {
               terminalColor: "#4891c8",
             },
             launchCompanion: {
-              kickoffPrompt: "Review issue 33.",
+              kickoffPrompt: "Review issue lossyrob/planning#33.",
+              usePawReviewAgent: false,
             },
           },
         }),
@@ -4923,6 +5478,7 @@ describe("App sessions route", () => {
           savedConfiguration = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
           graph = {
             ...graph,
+            presentation: savedConfiguration.presentation ?? undefined,
             launchPolicy: savedConfiguration.launchPolicy ?? undefined,
             launchDefaults: savedConfiguration.launchDefaults ?? undefined,
             updatedAt: "2026-05-07T18:10:33.000Z",
@@ -4964,6 +5520,7 @@ describe("App sessions route", () => {
       });
       await settle(100);
       setSelectValue(findSelectByLabel(container, "Required tracker"), "github-issue");
+      setInputValue(findInputByLabel(container, "Workstream short name"), "API");
       expect(findSelectByLabel(container, "Default load profile").value).toBe("final-pr-only");
       setSelectValue(findSelectByLabel(container, "Preferred terminal"), "windows-terminal");
       setInputValue(
@@ -4971,7 +5528,7 @@ describe("App sessions route", () => {
         "{githubIssue} - {nodeTitle}",
       );
       act(() => {
-        findButtonByLabel(container, "Use terminal color #ff8c0a").click();
+        findButtonByLabel(container, "Use workstream color #ff8c0a").click();
       });
       await settle();
       act(() => {
@@ -4980,13 +5537,16 @@ describe("App sessions route", () => {
       await settle(100);
 
       expect(savedConfiguration).toEqual({
+        presentation: {
+          shortName: "API",
+          color: "#ff8c0a",
+        },
         launchPolicy: { requiredTracker: "github-issue" },
         launchDefaults: {
           promptProfileId: "final-pr-only",
           terminal: {
             preferredTerminal: "windows-terminal",
             titleTemplate: "{githubIssue} - {nodeTitle}",
-            tabColor: "#ff8c0a",
           },
         },
       });
@@ -5013,6 +5573,8 @@ describe("App sessions route", () => {
   it(
     "adds a workstream source and refreshes graph content from disk",
     async () => {
+      MockEventSource.instances = [];
+      vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
       let graph = buildWorkstreamGraph();
       let sourceAdded = false;
       const trackedSourceWorkstream = buildTrackedWorkstream({
@@ -5066,6 +5628,12 @@ describe("App sessions route", () => {
         if (path === "/api/workstreams/streamliner/api-test/graph") {
           return jsonResponse(graph);
         }
+        if (path === "/api/sessions?workstreamId=api-test") {
+          return jsonResponse([]);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return emptyNodeLaunchRecordResponse();
+        }
         throw new Error(`Unexpected fetch: ${path}`);
       });
       vi.stubGlobal("fetch", fetchMock);
@@ -5099,7 +5667,13 @@ describe("App sessions route", () => {
       expect(window.location.pathname).toBe("/workstreams/streamliner/api-test");
 
       graph = buildWorkstreamGraph({ title: "API Test Updated" });
-      await settle(2_200);
+      act(() => {
+        findMockEventSource("/api/workstreams/events").emit("workstream.graph.changed", {
+          projectKey: "streamliner",
+          workstreamId: "api-test",
+        });
+      });
+      await settle(100);
       expect(container.textContent).toContain("API Test Updated");
       expect(
         fetchMock.mock.calls.some(([input]) =>
@@ -5107,7 +5681,7 @@ describe("App sessions route", () => {
         ),
       ).toBe(false);
     },
-    15_000,
+    30_000,
   );
 
   it(
@@ -5229,6 +5803,13 @@ describe("App sessions route", () => {
           if (path === "/api/sessions") {
             return jsonResponse([session]);
           }
+          if (path === "/api/workstreams") {
+            return jsonResponse({
+              version: 1,
+              migrationWarnings: [],
+              workstreams: [buildTrackedWorkstream()],
+            });
+          }
           if (path === "/api/sessions/trusted-session" && init?.method === "PATCH") {
             const patch = JSON.parse(String(init.body)) as Partial<SessionRegistryListItem>;
             return jsonResponse(
@@ -5272,7 +5853,6 @@ describe("App sessions route", () => {
       expect(container.textContent).toContain("Derived context");
       expect(container.textContent).toContain("Active branch");
       expect(container.textContent).toContain("feature/manual-session-registry");
-
       setInputValue(findInputByLabel(container, "Session title"), "Terminal A session");
       act(() => {
         findButtonByLabel(container, "Show terminal color quick picks").click();
@@ -5285,6 +5865,15 @@ describe("App sessions route", () => {
       expect(
         container.querySelector('[aria-label="Terminal color quick picks"]'),
       ).toBeNull();
+      const settingsTab = [...container.querySelectorAll<HTMLButtonElement>(".sl-sheet-tab")].find(
+        (btn) => btn.textContent?.trim() === "Settings",
+      );
+      expect(settingsTab).toBeDefined();
+      act(() => {
+        settingsTab?.click();
+      });
+      await settle();
+      setSelectValue(findSelectByLabel(container, "Workstream assignment"), "api-test");
       act(() => {
         findButton(container, "Done").click();
       });
@@ -5301,6 +5890,11 @@ describe("App sessions route", () => {
           expectedVersion: session.version,
           title: "Terminal A session",
           color: "#ff8c0a",
+          graphBinding: {
+            workstreamId: "api-test",
+            nodeId: null,
+            launchClaimId: null,
+          },
         }),
       );
     },

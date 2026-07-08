@@ -51,6 +51,7 @@ import {
   type PawLaunchProgressEvent,
 } from "./components/PawLaunchDialog";
 import { PawProfilesPage } from "./components/PawProfilesPage";
+import { PawReviewTemplatesPage } from "./components/PawReviewTemplatesPage";
 import { SessionLaunchSettingsPage } from "./components/SessionLaunchSettingsPage";
 import {
   loadPromptProfiles,
@@ -92,6 +93,7 @@ import {
   type NodeLaunchOperation,
   type NodeLaunchRecord,
   type NodeLaunchRecordResponse,
+  type NodeLaunchRecordResetResponse,
   type NodeManagedSdkLaunchResponse,
   type NodeCompanionTerminalLaunchResponse,
   type NodePostPreparationIntent,
@@ -123,7 +125,9 @@ import {
   workstreamGithubSnapshotFromStatuses,
 } from "./github-status-client";
 
-const POLL_INTERVAL_MS = 2000;
+const WORKSTREAM_EVENT_STALE_MS = 45_000;
+const WORKSTREAM_FALLBACK_POLL_INTERVAL_MS = 60_000;
+const WORKSTREAM_FALLBACK_JITTER_RATIO = 0.2;
 const GITHUB_STATUS_REFRESH_INTERVAL_MS = 60_000;
 const LAST_GRAPH_KEY = "streamliner:lastGraphPath";
 const PAW_LAUNCH_CWD_OVERRIDES_KEY = "streamliner:pawLaunchCwdByRepo";
@@ -215,6 +219,7 @@ interface ManagedSdkLaunchApiResponse {
 
 interface LaunchOperationTarget {
   graphPath: string;
+  workstreamId: string;
   nodeId: string;
 }
 
@@ -254,6 +259,9 @@ function readDashboardRoute(): DashboardRoute {
   }
   if (window.location.pathname === "/settings/session-launch") {
     return { view: "settings", section: "session-launch" };
+  }
+  if (window.location.pathname === "/settings/review-templates") {
+    return { view: "settings", section: "review-templates" };
   }
   if (
     window.location.pathname === "/settings" ||
@@ -500,7 +508,14 @@ function postPreparationIntentFromConfiguration(
       ...(configuration.terminal.tabColor ? { terminalColor: configuration.terminal.tabColor } : {}),
     },
     ...(configuration.reviewCompanion
-      ? { launchCompanion: { kickoffPrompt: configuration.reviewCompanion.kickoffPrompt } }
+      ? {
+        launchCompanion: {
+          kickoffPrompt: configuration.reviewCompanion.kickoffPrompt,
+          ...(configuration.reviewCompanion.usePawReviewAgent
+            ? {}
+            : { usePawReviewAgent: false }),
+        },
+      }
       : {}),
   };
 }
@@ -707,6 +722,25 @@ async function releaseNodeLaunchClaim(launchClaimId: string): Promise<NodeLaunch
   return await response.json() as NodeLaunchReleaseResponse;
 }
 
+async function clearPreviousNodeLaunchInit(
+  target: LaunchOperationTarget,
+): Promise<NodeLaunchRecordResetResponse> {
+  const response = await fetch("/api/node-launch-records/clear", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      graphPath: target.graphPath,
+      workstreamId: target.workstreamId,
+      nodeId: target.nodeId,
+    }),
+  });
+  if (!response.ok) {
+    const parsed = await parseErrorResponse(response);
+    throw new Error(parsed.message);
+  }
+  return await response.json() as NodeLaunchRecordResetResponse;
+}
+
 function normalizeRegistryListResponse(
   body: Partial<WorkstreamRegistryListResponse>,
 ): WorkstreamRegistryListResponse {
@@ -719,6 +753,35 @@ function normalizeRegistryListResponse(
     sources: body.sources,
     conflicts: body.conflicts,
   };
+}
+
+function isJsonRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseWorkstreamGraphChange(event: Event): { projectKey: string; workstreamId: string } | null {
+  let payload: unknown;
+  try {
+    payload = parseMessageEventData<unknown>(event);
+  } catch {
+    return null;
+  }
+  if (!isJsonRecord(payload)) {
+    return null;
+  }
+  const { projectKey, workstreamId } = payload;
+  return typeof projectKey === "string" && typeof workstreamId === "string"
+    ? { projectKey, workstreamId }
+    : null;
+}
+
+function jitteredWorkstreamFallbackDelay(): number {
+  const spread = WORKSTREAM_FALLBACK_POLL_INTERVAL_MS * WORKSTREAM_FALLBACK_JITTER_RATIO;
+  return Math.round(
+    WORKSTREAM_FALLBACK_POLL_INTERVAL_MS -
+      spread +
+      Math.random() * spread * 2,
+  );
 }
 
 function useGraphLoader(route: DashboardRoute, enabled: boolean) {
@@ -745,7 +808,12 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
   const [githubStatusRefreshKey, setGithubStatusRefreshKey] = useState(0);
   const workstreamsRef = useRef<WorkstreamRegistryListEntry[]>([]);
   const lastModifiedRef = useRef<string | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const fallbackPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const graphPollInFlightRef = useRef(false);
+  const workstreamEventLiveRef = useRef(false);
+  const lastWorkstreamEventAtRef = useRef(0);
+  const registryRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isDocumentVisible = useIsDocumentVisible();
 
   const applyRegistryResponse = useCallback((body: WorkstreamRegistryListResponse) => {
     const mergedWorkstreams = mergeWorkstreamEntries(
@@ -835,9 +903,8 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
       setWorkstream(doc);
       setGithubStatusRefreshKey((current) => current + 1);
       setError(null);
-      await fetchRegistry();
     },
-    [fetchRegistry],
+    [],
   );
 
   useEffect(() => {
@@ -865,24 +932,202 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
     })();
   }, [activeWorkstream, enabled, fetchRegistry, loadRegistered]);
 
+  const markWorkstreamEvent = useCallback(() => {
+    workstreamEventLiveRef.current = true;
+    lastWorkstreamEventAtRef.current = Date.now();
+  }, []);
+
+  const workstreamEventIsStale = useCallback(() => (
+    !workstreamEventLiveRef.current ||
+      Date.now() - lastWorkstreamEventAtRef.current > WORKSTREAM_EVENT_STALE_MS
+  ), []);
+
+  const loadActiveWorkstreamQuietly = useCallback(
+    async (
+      entry: { projectKey: string; workstreamId: string },
+      options: { entries?: WorkstreamRegistryListEntry[] } = {},
+    ) => {
+      if (graphPollInFlightRef.current) {
+        return;
+      }
+      graphPollInFlightRef.current = true;
+      try {
+        await loadRegistered(entry, { quiet: true, entries: options.entries });
+      } finally {
+        graphPollInFlightRef.current = false;
+      }
+    },
+    [loadRegistered],
+  );
+
+  const refreshRegistryFromEvent = useCallback(
+    (delayMs = 100) => {
+      if (!activeWorkstream) {
+        return;
+      }
+      if (registryRefreshTimerRef.current) {
+        clearTimeout(registryRefreshTimerRef.current);
+      }
+      registryRefreshTimerRef.current = setTimeout(() => {
+        registryRefreshTimerRef.current = null;
+        void (async () => {
+          try {
+            const entries = await fetchRegistry();
+            await loadActiveWorkstreamQuietly(activeWorkstream, { entries });
+          } catch (nextError) {
+            setRegistryError(nextError instanceof Error ? nextError.message : String(nextError));
+          }
+        })();
+      }, delayMs);
+    },
+    [activeWorkstream, fetchRegistry, loadActiveWorkstreamQuietly],
+  );
+
+  useEffect(() => {
+    if (!enabled || !activeWorkstream || error || !isDocumentVisible) {
+      workstreamEventLiveRef.current = false;
+      return;
+    }
+    if (typeof EventSource === "undefined") {
+      workstreamEventLiveRef.current = false;
+      return;
+    }
+
+    const source = new EventSource("/api/workstreams/events");
+    let closed = false;
+
+    const handleOpen = () => {
+      if (!closed) {
+        markWorkstreamEvent();
+      }
+    };
+    const handleHeartbeat = () => {
+      if (!closed) {
+        markWorkstreamEvent();
+      }
+    };
+    const handleSnapshot = () => {
+      if (closed) {
+        return;
+      }
+      markWorkstreamEvent();
+    };
+    const handleRegistryChanged = () => {
+      if (closed) {
+        return;
+      }
+      markWorkstreamEvent();
+      refreshRegistryFromEvent();
+    };
+    const handleGraphChanged = (event: Event) => {
+      if (closed) {
+        return;
+      }
+      markWorkstreamEvent();
+      const payload = parseWorkstreamGraphChange(event);
+      if (!payload || registryKey(payload) !== registryKey(activeWorkstream)) {
+        return;
+      }
+      void loadActiveWorkstreamQuietly(activeWorkstream);
+    };
+    const handleError = () => {
+      if (closed) {
+        return;
+      }
+      workstreamEventLiveRef.current = false;
+      refreshRegistryFromEvent(0);
+    };
+
+    source.addEventListener("open", handleOpen);
+    source.addEventListener("heartbeat", handleHeartbeat);
+    source.addEventListener("snapshot", handleSnapshot);
+    source.addEventListener("workstream.registry.changed", handleRegistryChanged);
+    source.addEventListener("workstream.source.changed", handleRegistryChanged);
+    source.addEventListener("workstream.graph.changed", handleGraphChanged);
+    source.onerror = handleError;
+
+    return () => {
+      closed = true;
+      source.close();
+    };
+  }, [
+    activeWorkstream,
+    enabled,
+    error,
+    isDocumentVisible,
+    loadActiveWorkstreamQuietly,
+    markWorkstreamEvent,
+    refreshRegistryFromEvent,
+  ]);
+
+  useEffect(() => {
+    if (!enabled || !activeWorkstream || error || !isDocumentVisible) {
+      return;
+    }
+
+    let cancelled = false;
+    const scheduleNextFallback = () => {
+      fallbackPollRef.current = setTimeout(() => {
+        fallbackPollRef.current = null;
+        if (cancelled) {
+          return;
+        }
+        if (workstreamEventIsStale()) {
+          void loadActiveWorkstreamQuietly(activeWorkstream);
+        }
+        scheduleNextFallback();
+      }, jitteredWorkstreamFallbackDelay());
+    };
+    scheduleNextFallback();
+
+    return () => {
+      cancelled = true;
+      if (fallbackPollRef.current) {
+        clearTimeout(fallbackPollRef.current);
+        fallbackPollRef.current = null;
+      }
+    };
+  }, [
+    activeWorkstream,
+    enabled,
+    error,
+    isDocumentVisible,
+    loadActiveWorkstreamQuietly,
+    workstreamEventIsStale,
+  ]);
+
   useEffect(() => {
     if (!enabled || !activeWorkstream || error) {
       return;
     }
-
-    pollRef.current = setInterval(() => {
-      void loadRegistered(activeWorkstream, { quiet: true });
-    }, POLL_INTERVAL_MS);
-
-    return () => {
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "hidden") {
+        return;
+      }
+      if (workstreamEventIsStale()) {
+        refreshRegistryFromEvent(0);
       }
     };
-  }, [activeWorkstream, enabled, error, loadRegistered]);
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      if (registryRefreshTimerRef.current) {
+        clearTimeout(registryRefreshTimerRef.current);
+        registryRefreshTimerRef.current = null;
+      }
+    };
+  }, [
+    activeWorkstream,
+    enabled,
+    error,
+    refreshRegistryFromEvent,
+    workstreamEventIsStale,
+  ]);
 
   useEffect(() => {
-    if (!enabled || !activeWorkstream || error) {
+    if (!enabled || !activeWorkstream || error || !isDocumentVisible) {
       return;
     }
 
@@ -893,7 +1138,7 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
     return () => {
       clearInterval(timer);
     };
-  }, [activeWorkstream, enabled, error]);
+  }, [activeWorkstream, enabled, error, isDocumentVisible]);
 
   const addSource = useCallback(
     async (type: WorkstreamSourceType, path: string) => {
@@ -1145,55 +1390,69 @@ function WorkstreamHome({
     });
   };
 
-  const renderWorkstreamCard = (entry: WorkstreamRegistryListEntry, archived = false) => (
-    <div className="sl-workstream-card" key={`${archived ? "archived" : "active"}-${registryKey(entry)}`}>
-      <a
-        className="sl-workstream-card-main"
-        href={workstreamRoutePath(entry)}
-        onClick={(event) => handleInAppLinkClick(event, () => onOpenWorkstream(entry))}
-      >
-        <span className="sl-workstream-card-title">{entry.title}</span>
-        <span className="sl-workstream-card-id">{registryKey(entry)}</span>
-        <span className="sl-workstream-card-meta">
-          <span className={`sl-pill ${entry.fileStatus === "available" ? "green" : "amber"}`}>
-            {entry.fileStatus}
+  const renderWorkstreamCard = (entry: WorkstreamRegistryListEntry, archived = false) => {
+    const shortName = entry.presentation?.shortName?.trim();
+    const color = entry.presentation?.color;
+    return (
+      <div className="sl-workstream-card" key={`${archived ? "archived" : "active"}-${registryKey(entry)}`}>
+        <a
+          className="sl-workstream-card-main"
+          href={workstreamRoutePath(entry)}
+          onClick={(event) => handleInAppLinkClick(event, () => onOpenWorkstream(entry))}
+        >
+          <span className="sl-workstream-card-title-row">
+            {color && (
+              <span
+                className="sl-workstream-color-swatch"
+                style={{ backgroundColor: color }}
+                aria-label={`Workstream color ${color}`}
+              />
+            )}
+            {shortName && <span className="sl-workstream-short-name">{shortName}</span>}
+            <span className="sl-workstream-card-title">{entry.title}</span>
           </span>
-          <span className="sl-pill muted">{entry.source ?? "path"}</span>
-          {entry.sourceId && <span className="sl-pill muted">{entry.sourceId}</span>}
-        </span>
-        <span className="sl-path-value">{entry.path}</span>
-      </a>
-      <div className="sl-workstream-card-actions">
-        {archived ? (
-          <button
-            className="sl-action-btn"
-            disabled={busy}
-            onClick={() => void runAction(() => onRestoreWorkstream(entry))}
-          >
-            Restore
-          </button>
-        ) : (
-          <button
-            className="sl-action-btn"
-            disabled={busy}
-            onClick={() => void runAction(() => onArchiveWorkstream(entry))}
-          >
-            Archive
-          </button>
-        )}
-        {!archived && (isPathWorkstreamEntry(entry) || isBrowserWorkstreamEntry(entry)) && (
-          <button
-            className="sl-action-btn danger"
-            disabled={busy}
-            onClick={() => void runAction(() => onUntrackWorkstream(entry))}
-            aria-label={`Untrack ${entry.title}`}
-          >
-            Untrack
-          </button>
-        )}
+          <span className="sl-workstream-card-id">{registryKey(entry)}</span>
+          <span className="sl-workstream-card-meta">
+            <span className={`sl-pill ${entry.fileStatus === "available" ? "green" : "amber"}`}>
+              {entry.fileStatus}
+            </span>
+            <span className="sl-pill muted">{entry.source ?? "path"}</span>
+            {entry.sourceId && <span className="sl-pill muted">{entry.sourceId}</span>}
+          </span>
+          <span className="sl-path-value">{entry.path}</span>
+        </a>
+        <div className="sl-workstream-card-actions">
+          {archived ? (
+            <button
+              className="sl-action-btn"
+              disabled={busy}
+              onClick={() => void runAction(() => onRestoreWorkstream(entry))}
+            >
+              Restore
+            </button>
+          ) : (
+            <button
+              className="sl-action-btn"
+              disabled={busy}
+              onClick={() => void runAction(() => onArchiveWorkstream(entry))}
+            >
+              Archive
+            </button>
+          )}
+          {!archived && (isPathWorkstreamEntry(entry) || isBrowserWorkstreamEntry(entry)) && (
+            <button
+              className="sl-action-btn danger"
+              disabled={busy}
+              onClick={() => void runAction(() => onUntrackWorkstream(entry))}
+              aria-label={`Untrack ${entry.title}`}
+            >
+              Untrack
+            </button>
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div className="sl-shell-panel">
@@ -1419,6 +1678,7 @@ function useReviewPromptTemplatesState() {
   const requestRef = useRef<Promise<void> | null>(null);
   const mountedRef = useRef(true);
   const mutationVersionRef = useRef(0);
+  const deletedTemplateIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     mountedRef.current = true;
@@ -1429,7 +1689,15 @@ function useReviewPromptTemplatesState() {
 
   const noteTemplatesChanged = useCallback((changedTemplates: PawReviewPromptTemplate[]) => {
     mutationVersionRef.current += 1;
+    for (const template of changedTemplates) {
+      deletedTemplateIdsRef.current.delete(template.id);
+    }
     setTemplates((current) => mergeReviewPromptTemplates(current, changedTemplates));
+  }, []);
+  const noteTemplateDeleted = useCallback((templateId: string) => {
+    mutationVersionRef.current += 1;
+    deletedTemplateIdsRef.current.add(templateId);
+    setTemplates((current) => current.filter((template) => template.id !== templateId));
   }, []);
 
   const refresh = useCallback(() => {
@@ -1443,9 +1711,12 @@ function useReviewPromptTemplatesState() {
       .then((loadedTemplates) => {
         if (mountedRef.current) {
           if (mutationVersionRef.current === requestMutationVersion) {
+            deletedTemplateIdsRef.current.clear();
             setTemplates(() => mergeReviewPromptTemplates([], loadedTemplates));
           } else {
-            setTemplates((current) => mergeReviewPromptTemplates(current, loadedTemplates));
+            const deletedTemplateIds = deletedTemplateIdsRef.current;
+            const retainedTemplates = loadedTemplates.filter((template) => !deletedTemplateIds.has(template.id));
+            setTemplates((current) => mergeReviewPromptTemplates(current, retainedTemplates));
           }
         }
       })
@@ -1470,6 +1741,7 @@ function useReviewPromptTemplatesState() {
     error,
     refresh,
     noteTemplatesChanged,
+    noteTemplateDeleted,
   };
 }
 
@@ -2048,6 +2320,7 @@ function GraphDashboard({
     { workstreamId: activeWorkstream?.workstreamId ?? null },
     { enabled: Boolean(activeWorkstream) },
   );
+  const refreshSessions = sessionList.refresh;
   const nodeSessionStatuses = useMemo(
     () =>
       activeWorkstream
@@ -2160,16 +2433,18 @@ function GraphDashboard({
   // "Loading saved profiles" / "Loading launch details" placeholders pinned
   // on while a fetch is briefly in flight.
   const selectedLaunchGraphPath = activeWorkstreamEntry?.path ?? null;
+  const selectedLaunchWorkstreamId = activeWorkstream?.workstreamId ?? null;
   const selectedLaunchNodeId = selectedEntry?.node.id ?? null;
   const selectedLaunchTarget = useMemo<LaunchOperationTarget | null>(() => {
-    if (!selectedLaunchGraphPath || !selectedLaunchNodeId) {
+    if (!selectedLaunchGraphPath || !selectedLaunchWorkstreamId || !selectedLaunchNodeId) {
       return null;
     }
     return {
       graphPath: selectedLaunchGraphPath,
+      workstreamId: selectedLaunchWorkstreamId,
       nodeId: selectedLaunchNodeId,
     };
-  }, [selectedLaunchGraphPath, selectedLaunchNodeId]);
+  }, [selectedLaunchGraphPath, selectedLaunchWorkstreamId, selectedLaunchNodeId]);
 
   // Mirror selectedLaunchTarget into a ref so async closures (e.g. the SSE
   // reattach effect below) can read the latest value without taking a
@@ -2376,6 +2651,9 @@ function GraphDashboard({
       githubIssueNumber: defaultsNode.tracker?.type === "github"
         ? defaultsNode.tracker.number
         : null,
+      githubIssueRepo: defaultsNode.tracker?.type === "github"
+        ? `${defaultsNode.tracker.owner}/${defaultsNode.tracker.repo}`
+        : null,
       githubIssueLabel: defaultsNode.tracker?.type === "github"
         ? workstreamTrackerLabel(defaultsNode.tracker)
         : null,
@@ -2389,8 +2667,9 @@ function GraphDashboard({
           renderWorkstreamTerminalTitleTemplate(
             workstream?.launchDefaults?.terminal?.titleTemplate,
             defaultsNode,
+            workstream,
           ) ?? defaultsNode.title,
-        tabColor: workstream?.launchDefaults?.terminal?.tabColor ?? null,
+        tabColor: workstream?.presentation?.color ?? workstream?.launchDefaults?.terminal?.tabColor ?? null,
       },
     };
   }, [
@@ -2448,13 +2727,14 @@ function GraphDashboard({
   // on the node id (a stable primitive) instead of the derived entry object,
   // which gets a fresh reference every time the view-model rebuilds.
   useEffect(() => {
-    if (!activeWorkstreamPath || !selectedLaunchNodeId) {
+    if (!activeWorkstreamPath || !selectedLaunchWorkstreamId || !selectedLaunchNodeId) {
       setSelectedNodeLaunchRecordLoading(false);
       setSelectedNodeLaunchRecordError(null);
       return;
     }
-    const target = {
+    const target: LaunchOperationTarget = {
       graphPath: activeWorkstreamPath,
+      workstreamId: selectedLaunchWorkstreamId,
       nodeId: selectedLaunchNodeId,
     };
     let cancelled = false;
@@ -2509,7 +2789,7 @@ function GraphDashboard({
     return () => {
       cancelled = true;
     };
-  }, [activeWorkstreamPath, nodeLaunchRecordRefreshKey, selectedLaunchNodeId]);
+  }, [activeWorkstreamPath, nodeLaunchRecordRefreshKey, selectedLaunchWorkstreamId, selectedLaunchNodeId]);
 
   const setLaunchOperation = useCallback((
     target: LaunchOperationTarget,
@@ -2650,6 +2930,33 @@ function GraphDashboard({
       }));
     },
     [],
+  );
+
+  const clearPreviousInit = useCallback(
+    async (target: LaunchOperationTarget): Promise<void> => {
+      await clearPreviousNodeLaunchInit(target);
+      const key = launchOperationKey(target);
+      setNodeLaunchRecords((current) => mergeNodeLaunchRecord(current, target, null));
+      setLaunchOperationByKey((current) => {
+        if (!Object.prototype.hasOwnProperty.call(current, key)) {
+          return current;
+        }
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+      setCompanionLaunchByKey((current) => {
+        if (!Object.prototype.hasOwnProperty.call(current, key)) {
+          return current;
+        }
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+      setNodeLaunchRecordRefreshKey((current) => current + 1);
+      await refreshSessions();
+    },
+    [refreshSessions],
   );
 
   const prefetchPromptProfiles = useCallback(() => {
@@ -3021,6 +3328,13 @@ function GraphDashboard({
               preferredTerminal: handoff.terminal.preferredTerminal,
               title: `${input.terminalTitle} REVIEW`,
               tabColor: input.terminalColor,
+              launchBinding: {
+                workstreamId: handoff.launchMetadata.workstreamId,
+                nodeId: handoff.launchMetadata.nodeId,
+                branch: handoff.branch,
+                contextId: handoff.contextPackage.contextId,
+              },
+              ...(input.reviewCompanion.usePawReviewAgent ? {} : { usePawReviewAgent: false }),
             }),
           });
           if (!companionResponse.ok) {
@@ -3526,6 +3840,11 @@ function GraphDashboard({
                 ? () => releaseStuckLaunchOperation(selectedLaunchTarget)
                 : undefined
             }
+            onClearPreviousInit={
+              selectedLaunchTarget
+                ? () => clearPreviousInit(selectedLaunchTarget)
+                : undefined
+            }
           />
         </div>
       </div>
@@ -3623,13 +3942,19 @@ function SettingsPage({
   onRefreshProfiles,
   onProfilesChanged,
   onProfileDeleted,
+  reviewTemplates,
+  reviewTemplatesLoading,
+  reviewTemplatesError,
+  onRefreshReviewTemplates,
+  onReviewTemplatesChanged,
+  onReviewTemplateDeleted,
   sessionLaunchSettings,
   sessionLaunchSettingsLoading,
   sessionLaunchSettingsError,
   onRefreshSessionLaunchSettings,
   onSessionLaunchSettingsChanged,
 }: {
-  section: "profiles" | "session-launch";
+  section: "profiles" | "review-templates" | "session-launch";
   onRouteChange: (route: DashboardRoute) => void | Promise<void>;
   profiles: PawPromptProfile[];
   profilesLoading: boolean;
@@ -3637,6 +3962,12 @@ function SettingsPage({
   onRefreshProfiles: () => Promise<void>;
   onProfilesChanged: (profiles: PawPromptProfile[]) => void;
   onProfileDeleted: (profileId: string) => void;
+  reviewTemplates: PawReviewPromptTemplate[];
+  reviewTemplatesLoading: boolean;
+  reviewTemplatesError: string | null;
+  onRefreshReviewTemplates: () => Promise<void>;
+  onReviewTemplatesChanged: (templates: PawReviewPromptTemplate[]) => void;
+  onReviewTemplateDeleted: (templateId: string) => void;
   sessionLaunchSettings: SessionLaunchSettings | null;
   sessionLaunchSettingsLoading: boolean;
   sessionLaunchSettingsError: string | null;
@@ -3644,7 +3975,7 @@ function SettingsPage({
   onSessionLaunchSettingsChanged: (settings: SessionLaunchSettings) => void;
 }) {
   const renderNavItem = (
-    itemSection: "profiles" | "session-launch",
+    itemSection: "profiles" | "review-templates" | "session-launch",
     label: string,
     description: string,
   ) => {
@@ -3672,6 +4003,7 @@ function SettingsPage({
           <nav className="sl-settings-nav" aria-label="Streamliner settings">
             {renderNavItem("session-launch", "Session launch", "Copilot CLI defaults")}
             {renderNavItem("profiles", "PAW profiles", "Launch prompt defaults")}
+            {renderNavItem("review-templates", "PAW Review templates", "Companion review prompts")}
           </nav>
         </aside>
         <main className="sl-settings-content">
@@ -3683,6 +4015,15 @@ function SettingsPage({
               onRefresh={onRefreshProfiles}
               onProfilesChanged={onProfilesChanged}
               onProfileDeleted={onProfileDeleted}
+            />
+          ) : section === "review-templates" ? (
+            <PawReviewTemplatesPage
+              templates={reviewTemplates}
+              loading={reviewTemplatesLoading}
+              error={reviewTemplatesError}
+              onRefresh={onRefreshReviewTemplates}
+              onTemplatesChanged={onReviewTemplatesChanged}
+              onTemplateDeleted={onReviewTemplateDeleted}
             />
           ) : (
             <SessionLaunchSettingsPage
@@ -3794,6 +4135,8 @@ export default function App() {
       case "settings":
         suffix = route.section === "profiles"
           ? "Settings · PAW profiles"
+          : route.section === "review-templates"
+            ? "Settings · PAW Review templates"
           : "Settings · Session launch";
         break;
       case "workstream": {
@@ -3884,6 +4227,12 @@ export default function App() {
           onRefreshProfiles={promptProfileState.refresh}
           onProfilesChanged={promptProfileState.noteProfilesChanged}
           onProfileDeleted={promptProfileState.noteProfileDeleted}
+          reviewTemplates={reviewPromptTemplateState.templates}
+          reviewTemplatesLoading={reviewPromptTemplateState.loading}
+          reviewTemplatesError={reviewPromptTemplateState.error}
+          onRefreshReviewTemplates={reviewPromptTemplateState.refresh}
+          onReviewTemplatesChanged={reviewPromptTemplateState.noteTemplatesChanged}
+          onReviewTemplateDeleted={reviewPromptTemplateState.noteTemplateDeleted}
           sessionLaunchSettings={sessionLaunchSettingsState.responseError ? null : sessionLaunchSettingsState.settings}
           sessionLaunchSettingsLoading={sessionLaunchSettingsState.loading}
           sessionLaunchSettingsError={sessionLaunchSettingsState.error}

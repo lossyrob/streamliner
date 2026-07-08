@@ -34,9 +34,12 @@ export function mergeReviewPromptTemplates(
 
 export function renderReviewPromptTemplate(
   template: string,
-  values: { githubIssue: string },
+  values: { githubIssue: string; githubRepo: string },
 ): string {
-  return template.replaceAll("{{githubIssue}}", values.githubIssue);
+  return template.replace(
+    /\{\{(githubIssue|githubRepo)\}\}/g,
+    (_match, key: string) => values[key as keyof typeof values],
+  );
 }
 
 export async function loadReviewPromptTemplates(): Promise<PawReviewPromptTemplate[]> {
@@ -74,4 +77,13 @@ export async function saveReviewPromptTemplate(input: {
     throw new Error("Review prompt template response was missing the saved template.");
   }
   return body.template;
+}
+
+export async function deleteReviewPromptTemplate(id: string): Promise<void> {
+  const response = await fetch(`/api/paw-review-prompt-templates/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    throw new Error(responseErrorMessage(response, "Could not delete review prompt template."));
+  }
 }

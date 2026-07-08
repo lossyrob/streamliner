@@ -60,6 +60,25 @@ describe("paw review prompt templates route", () => {
     ]);
   });
 
+  it("deletes templates", async () => {
+    const app = createApp();
+
+    await request(app)
+      .post("/api/paw-review-prompt-templates")
+      .send({ name: "PAW Review", prompt: "Review #{{githubIssue}}" })
+      .expect(201);
+
+    await request(app)
+      .delete("/api/paw-review-prompt-templates/paw-review")
+      .expect(204);
+
+    const listResponse = await request(app)
+      .get("/api/paw-review-prompt-templates")
+      .expect(200);
+
+    expect(listResponse.body.templates).toEqual([]);
+  });
+
   it("rejects duplicate template names", async () => {
     const app = createApp();
 

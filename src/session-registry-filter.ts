@@ -34,8 +34,47 @@ interface SessionRegistryFilterRecord extends SessionRegistryTextRecord {
   lifecycleStatus: SessionRegistryLifecycleStatus;
 }
 
+const LAUNCHED_DESCRIPTION_BINDING_PATTERN =
+  /^Graph launch for workstream ([^,]+), node (.+)\.$/;
+
+export function buildLaunchedSessionDescription(
+  workstreamId: string,
+  nodeId: string,
+): string {
+  return `Graph launch for workstream ${workstreamId}, node ${nodeId}.`;
+}
+
 function originKindFor(record: SessionRegistryTextRecord): SessionRegistryOriginKind | null {
   return record.originKind ?? record.origin?.kind ?? null;
+}
+
+function partialOriginKindFor(
+  record: Pick<SessionRegistryTextRecord, "origin" | "originKind">,
+): SessionRegistryOriginKind | null {
+  return record.originKind ?? record.origin?.kind ?? null;
+}
+
+export function sessionRegistryEffectiveGraphBinding(
+  record: Pick<SessionRegistryFilterRecord, "graphBinding" | "description"> &
+    Pick<SessionRegistryTextRecord, "origin" | "originKind">,
+): SessionRegistryGraphBinding | null {
+  if (record.graphBinding) {
+    return record.graphBinding;
+  }
+  if (partialOriginKindFor(record) !== "launched") {
+    return null;
+  }
+  const match = record.description.match(LAUNCHED_DESCRIPTION_BINDING_PATTERN);
+  if (!match) {
+    return null;
+  }
+  const [, workstreamId, nodeId] = match;
+  return {
+    workstreamId,
+    nodeId,
+    launchClaimId:
+      record.origin?.kind === "launched" ? record.origin.launchClaimId ?? null : null,
+  };
 }
 
 export function sessionRegistryRecordTextMatches(
@@ -100,11 +139,11 @@ export function sessionRegistryRecordMatchesOptions(
   }
   if (
     options.workstreamId &&
-    record.graphBinding?.workstreamId !== options.workstreamId
+    sessionRegistryEffectiveGraphBinding(record)?.workstreamId !== options.workstreamId
   ) {
     return false;
   }
-  if (options.nodeId && record.graphBinding?.nodeId !== options.nodeId) {
+  if (options.nodeId && sessionRegistryEffectiveGraphBinding(record)?.nodeId !== options.nodeId) {
     return false;
   }
   const text = options.text?.trim().toLowerCase();

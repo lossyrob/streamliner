@@ -91,9 +91,8 @@ export interface SessionRegistryBackgroundWorkerOptions {
   summarizer?: Partial<SummarizerDependencies>;
   /** Optional launch-claim store. When provided, the worker runs the
    * launch-claim binding pass + sweep each cycle and runs
-   * reconcileOrphanReservedRows once on startup before the first poll
-   * cycle. When omitted, all launch-claim behavior is skipped (NFR-5
-   * backward compatibility). */
+   * reconcileOrphanReservedRows during the first worker cycle. When omitted,
+   * all launch-claim behavior is skipped (NFR-5 backward compatibility). */
   claimStore?: LaunchClaimStore;
   /** Optional structured logger for launch-claim diagnostics. Required
    * when `claimStore` is provided so binding-pass and sweep events can
@@ -226,9 +225,16 @@ export class SessionRegistryBackgroundWorker {
     if (this.timer) {
       return;
     }
-    // Startup recovery runs synchronously before the first poll cycle so
-    // stale managed runtime rows and orphan launch reservations cannot
-    // masquerade as active work during the first projection pass.
+    this.initialTimer = setTimeout(() => {
+      this.initialTimer = null;
+      void this.runCycle();
+    }, this.initialDelayMs);
+    this.timer = setInterval(() => {
+      void this.runCycle();
+    }, this.pollIntervalMs);
+  }
+
+  private runStartupReconciliation(): void {
     if (!this.hasReconciledOnStartup) {
       try {
         const result = reconcileManagedRuntimeStartupRows(this.store, {
@@ -264,13 +270,6 @@ export class SessionRegistryBackgroundWorker {
       }
       this.hasReconciledOnStartup = true;
     }
-    this.initialTimer = setTimeout(() => {
-      this.initialTimer = null;
-      void this.runCycle();
-    }, this.initialDelayMs);
-    this.timer = setInterval(() => {
-      void this.runCycle();
-    }, this.pollIntervalMs);
   }
 
   async stop(): Promise<void> {
@@ -291,6 +290,8 @@ export class SessionRegistryBackgroundWorker {
     }
     this.running = true;
     try {
+      this.runStartupReconciliation();
+      await yieldToEventLoop();
       try {
         drainTrustedSessionSignalSpool(this.store, {
           rootDir: this.signalSpoolRoot,

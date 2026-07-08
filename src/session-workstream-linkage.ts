@@ -1,4 +1,5 @@
 import type { SessionRegistryListItem } from "./session-registry-contract";
+import { sessionRegistryEffectiveGraphBinding } from "./session-registry-filter";
 import type { WorkstreamRegistryListEntry } from "./workstream-registry-contract";
 import type { WorkstreamDocument, WorkstreamNode } from "./workstream-schema";
 
@@ -17,6 +18,7 @@ export type SessionWorkstreamLinkageStatus =
   | "unbound"
   | "missing-workstream"
   | "ambiguous-workstream"
+  | "workstream-only"
   | "graph-loading"
   | "graph-unavailable"
   | "node-unresolved"
@@ -72,11 +74,14 @@ export function findGraphBindingWorkstreamMatches(
 }
 
 export function resolveSessionWorkstreamLinkage(
-  session: Pick<SessionRegistryListItem, "graphBinding">,
+  session: Pick<
+    SessionRegistryListItem,
+    "graphBinding" | "description" | "originKind"
+  >,
   workstreams: WorkstreamRegistryListEntry[],
   graphStates: ReadonlyMap<string, WorkstreamGraphLoadState> = new Map(),
 ): SessionWorkstreamLinkageResolution {
-  const binding = session.graphBinding;
+  const binding = sessionRegistryEffectiveGraphBinding(session);
   if (!binding) {
     return {
       status: "unbound",
@@ -99,9 +104,9 @@ export function resolveSessionWorkstreamLinkage(
     return {
       status: "missing-workstream",
       workstreamId: binding.workstreamId,
-      nodeId: binding.nodeId,
+      nodeId: binding.nodeId ?? null,
       workstreamLabel: binding.workstreamId,
-      nodeLabel: binding.nodeId,
+      nodeLabel: binding.nodeId ?? null,
       note: "No tracked workstream currently matches this binding.",
       matchCount: 0,
       workstreamEntry: null,
@@ -121,9 +126,9 @@ export function resolveSessionWorkstreamLinkage(
     return {
       status: "ambiguous-workstream",
       workstreamId: binding.workstreamId,
-      nodeId: binding.nodeId,
+      nodeId: binding.nodeId ?? null,
       workstreamLabel: binding.workstreamId,
-      nodeLabel: binding.nodeId,
+      nodeLabel: binding.nodeId ?? null,
       note: `Multiple tracked workstreams match this binding (${matches.length}); Streamliner cannot choose a route safely.`,
       matchCount: matches.length,
       workstreamEntry: null,
@@ -152,6 +157,22 @@ export function resolveSessionWorkstreamLinkage(
     order:
       workstreams.findIndex((entry) => workstreamRegistryKey(entry) === registryKey) + 1,
   };
+  if (!binding.nodeId) {
+    return {
+      status: "workstream-only",
+      workstreamId: binding.workstreamId,
+      nodeId: null,
+      workstreamLabel: workstreamEntry.title,
+      nodeLabel: null,
+      note: "This session is assigned to the workstream but not to a graph node.",
+      matchCount: 1,
+      workstreamEntry,
+      node: null,
+      workstreamRouteTarget,
+      nodeRouteTarget: null,
+      group,
+    };
+  }
   const graphState = graphStates.get(registryKey);
 
   if (graphState?.status === "loaded") {

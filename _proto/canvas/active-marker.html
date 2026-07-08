@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Active-workstream marker — Canvas prototype options</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f2f4f8;
+    --text: #1a2540;
+    --muted: #3a4f70;
+    --faint: #8d9bb5;
+    --accent: #1d6edc;
+    --green: #12945f;
+    --yellow: #b07808;
+    --orange: #c95a1e;
+    --red: #c83232;
+    --purple: #7c3aed;
+    --border: rgba(20, 60, 130, 0.10);
+    --border-strong: rgba(20, 60, 130, 0.16);
+    --shadow-card: 0 8px 30px rgba(31, 58, 105, 0.08);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background:
+      radial-gradient(circle at 20% 0%, rgba(29, 110, 220, 0.07), transparent 30rem),
+      radial-gradient(circle at 82% 8%, rgba(124, 58, 237, 0.05), transparent 32rem),
+      var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", "Inter", sans-serif;
+    padding: 24px 32px 60px;
+  }
+  header { display: flex; align-items: baseline; gap: 16px; margin-bottom: 18px; flex-wrap: wrap; }
+  header h1 { margin: 0; font-size: 1.05rem; font-weight: 700; }
+  header p  { margin: 0; color: var(--muted); font-size: 0.78rem; }
+  .controls {
+    margin-bottom: 18px; padding: 10px 14px;
+    background: rgba(255,255,255,0.92); border: 1px solid var(--border);
+    border-radius: 10px; font-size: 0.72rem; color: var(--muted);
+    display: flex; gap: 18px; align-items: center; flex-wrap: wrap;
+  }
+  .controls label { display: inline-flex; align-items: center; gap: 6px; }
+  .controls .legend { margin-left: auto; }
+  /* Two-column grid — each option occupies one row showing two cards:
+     "inactive" (default styling) vs "active" (with the marker applied). */
+  .grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
+  .option {
+    background: rgba(255,255,255,0.84);
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    padding: 14px 16px;
+    box-shadow: var(--shadow-card);
+  }
+  .option > h2 {
+    margin: 0 0 6px;
+    font-size: 0.86rem;
+    color: var(--text);
+  }
+  .option > p {
+    margin: 0 0 12px;
+    color: var(--muted);
+    font-size: 0.72rem;
+    line-height: 1.5;
+  }
+  .pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+  .pair .label-row {
+    grid-column: 1 / span 2;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+    font-size: 0.62rem; color: var(--faint); text-transform: uppercase;
+    letter-spacing: 0.10em; font-weight: 700;
+  }
+  /* --- Workstream container (matches _proto/canvas .ws-group-node) --- */
+  .ws-group {
+    position: relative;
+    padding: 36px 16px 18px;
+    border: 2px solid var(--ws-border);
+    background: var(--ws-fill);
+    border-radius: 18px;
+  }
+  .ws-group-label {
+    position: absolute;
+    top: -1px; left: -1px;
+    padding: 4px 12px 4px 10px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    line-height: 1.25;
+    border-radius: 18px 0 12px 0;
+    color: var(--ws-accent);
+    background: var(--ws-chip);
+    border: 2px solid var(--ws-border);
+    border-top: none; border-left: none;
+    display: inline-flex; align-items: center; gap: 8px;
+  }
+  .ws-group-label .stage {
+    text-transform: uppercase;
+    font-size: 0.56rem;
+    letter-spacing: 0.09em;
+    padding-right: 6px;
+    border-right: 1px solid currentColor;
+    font-weight: 700;
+  }
+  .ws-group-label .count {
+    margin-left: 6px;
+    padding: 0 6px;
+    font-size: 0.58rem;
+    font-weight: 600;
+    background: rgba(20,60,130,0.08);
+    border-radius: 999px;
+  }
+  /* Live indicator inside the workstream label (Option C). */
+  .ws-group-label .live-dot {
+    width: 8px; height: 8px;
+    border-radius: 999px;
+    background: var(--green);
+    box-shadow: 0 0 0 3px rgba(18,148,95,0.16);
+    margin-right: 4px;
+    animation: live-pulse 1.8s ease-in-out infinite;
+  }
+  @keyframes live-pulse {
+    0%, 100% { box-shadow: 0 0 0 3px rgba(18,148,95,0.16); }
+    50%      { box-shadow: 0 0 0 6px rgba(18,148,95,0.06); }
+  }
+  /* --- Wave node card --- */
+  .wave {
+    position: relative;
+    padding: 8px 12px 10px;
+    margin-bottom: 6px;
+    border-radius: 8px;
+    border: 1px solid var(--border-strong);
+    border-left: 4px solid var(--ws-accent);
+    background: linear-gradient(180deg, var(--ws-tint), rgba(255,255,255,0.95));
+  }
+  .ws-badge {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 999px;
+    font-size: 0.56rem;
+    font-weight: 700;
+    color: var(--ws-accent);
+    background: var(--ws-chip);
+    margin-bottom: 4px;
+  }
+  .wave-title { font-weight: 700; font-size: 0.78rem; color: var(--text); }
+  .wave-status {
+    margin-left: 6px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    font-size: 0.58rem;
+    font-weight: 600;
+  }
+  .wave-status.s-done        { color: var(--green); background: rgba(18,148,95,0.14); }
+  .wave-status.s-in-progress { color: var(--accent); background: rgba(29,110,220,0.12); }
+  .wave-status.s-ready       { color: var(--yellow); background: rgba(176,120,8,0.16); }
+
+  /* =================================================================
+     Common terminal-titlebar treatment — a black strip across the top of
+     the container. Variants differ in extent and decorations.
+     ================================================================= */
+  .term-bar {
+    position: absolute;
+    /* Tuned to match the label chip's outer height exactly so the bar's
+       bottom edge lines up flush with the label and no black strip peeks
+       out below it. */
+    top: 0; height: 22px;
+    background: #111317;
+    display: flex; align-items: center;
+    z-index: 1; pointer-events: none;
+  }
+  .term-bar.full {
+    left: 0; right: 0;
+    border-radius: 16px 16px 0 0;
+  }
+  .term-bar.after-label {
+    /* Starts after the label chip's right edge; the chip stays at z-index
+       above so it floats. The exact starting offset is approximate; the
+       real canvas measures the chip dynamically. */
+    left: 270px; right: 0;
+    border-radius: 0 16px 0 0;
+  }
+  .term-bar .term-caption {
+    margin-left: auto;
+    margin-right: 12px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: #9fdcff;
+    font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+    font-size: 0.62rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+  }
+  .term-bar .term-caption .live {
+    width: 7px; height: 7px;
+    background: #5fdc7a;
+    border-radius: 999px;
+    box-shadow: 0 0 6px rgba(95,220,122,0.65);
+  }
+  .term-bar .traffic-lights {
+    margin-left: auto;
+    margin-right: 12px;
+    display: inline-flex; gap: 6px;
+  }
+  .term-bar .traffic-lights span {
+    width: 10px; height: 10px;
+    border-radius: 999px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.18);
+  }
+  .term-bar .traffic-lights span:nth-child(1) { background: #ff5f57; }
+  .term-bar .traffic-lights span:nth-child(2) { background: #febc2e; }
+  .term-bar .traffic-lights span:nth-child(3) { background: #28c840; }
+  .term-bar .term-scanlines {
+    position: absolute; inset: 0;
+    background-image: radial-gradient(rgba(95,220,255,0.18) 1px, transparent 1px);
+    background-size: 4px 4px;
+    opacity: 0.55;
+    pointer-events: none;
+  }
+  .term-bar .term-title-integrated {
+    display: inline-flex; align-items: center; gap: 8px;
+    margin-left: 12px;
+    color: #f3f5fa;
+    font-size: 0.7rem;
+    font-weight: 700;
+    line-height: 1.2;
+  }
+  .term-bar .term-title-integrated .stage {
+    text-transform: uppercase;
+    font-size: 0.56rem;
+    letter-spacing: 0.09em;
+    color: #9aa6c4;
+    padding-right: 6px;
+    border-right: 1px solid rgba(255,255,255,0.22);
+  }
+  .term-bar .term-title-integrated .count {
+    margin-left: 4px;
+    padding: 0 6px;
+    font-size: 0.58rem;
+    background: rgba(255,255,255,0.10);
+    border-radius: 999px;
+    color: #d8def0;
+  }
+  /* When the bar is integrated, give the container extra top padding so the
+     wave cards don't slip under the chrome. */
+  .has-term-bar .ws-group { padding-top: 38px; }
+
+  /* TB-A: black bar after the label, label stays themed (chip floats). */
+  .opt-TBA.active .ws-group .ws-group-label { z-index: 2; }
+  .opt-TBA.active .ws-group { position: relative; }
+
+  /* TB-B: full-width header, themed label replaced by white-on-black title. */
+  .opt-TBB.active .ws-group .ws-group-label { display: none; }
+
+  /* TB-C: full-width header, themed label stays + small "● terminal" caption. */
+  .opt-TBC.active .ws-group .ws-group-label { z-index: 2; }
+
+  /* TB-D: full-width header with traffic lights, label hidden (integrated). */
+  .opt-TBD.active .ws-group .ws-group-label { display: none; }
+
+  /* TB-E: full-width header with scanline pattern, label hidden. */
+  .opt-TBE.active .ws-group .ws-group-label { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Active-workstream visual markers</h1>
+  <p>Six options for marking workstreams you have an open terminal window for. Each row shows the same workstream — inactive on the left, active on the right — using the same color theme so the marker contrast is the only thing changing.</p>
+</header>
+
+<div class="controls">
+  <label>Container theme
+    <select id="theme">
+      <option value="blue">Blue (#4891c8)</option>
+      <option value="green" selected>Green (#41b878)</option>
+      <option value="orange">Orange (#ff8c0a)</option>
+      <option value="purple">Purple (#9825d7)</option>
+      <option value="gray">Gray (#b8b8b8)</option>
+    </select>
+  </label>
+  <label>Zoom level
+    <select id="zoom">
+      <option value="1">100%</option>
+      <option value="0.7">70%</option>
+      <option value="0.5" selected>50%</option>
+      <option value="0.35">35%</option>
+    </select>
+  </label>
+  <span class="legend">Tip: pick a low zoom to judge "spot-from-orbit" legibility.</span>
+</div>
+
+<div class="grid" id="grid"></div>
+
+<script>
+  const OPTIONS = [
+    {
+      key: 'TBA',
+      title: 'TB-A · Black bar starts after the label, extends to right edge',
+      blurb: 'Workstream label stays themed; a black "terminal chrome" strip fills the rest of the top edge. Minimal change to the existing layout, clear from far away.',
+    },
+    {
+      key: 'TBB',
+      title: 'TB-B · Full-width black header; label re-themed to white-on-black',
+      blurb: 'Whole top bar becomes a terminal title bar. Workstream label sits inside it in white. Reads most strongly as "this is a terminal window".',
+    },
+    {
+      key: 'TBC',
+      title: 'TB-C · Full-width black header + small "● terminal" caption right',
+      blurb: 'Label stays themed (top-left). Right side of the black bar has a green status dot and the text "terminal". Adds semantic without redoing the label.',
+    },
+    {
+      key: 'TBD',
+      title: 'TB-D · Like TB-B but with macOS-style traffic-light dots on the right',
+      blurb: 'Full-width black bar, white label, plus three faux window-control dots. Strongest "this is a window" cue. Trade-off: dots are decorative noise.',
+    },
+    {
+      key: 'TBE',
+      title: 'TB-E · Black bar with a subtle scanline/grid pattern',
+      blurb: 'Full-width black bar overlaid with a faint cyan dot pattern — evokes a CRT terminal. Distinct visual language; risk of feeling kitschy.',
+    },
+  ];
+
+  const THEMES = {
+    blue:   { accent: 'hsl(206, 65%, 38%)', border: 'hsla(206, 65%, 46%, 0.55)', chip: 'hsl(206, 45%, 94%)', fill: 'hsla(206, 65%, 46%, 0.11)', tint: 'hsla(206, 65%, 46%, 0.15)' },
+    green:  { accent: 'hsl(147, 65%, 36%)', border: 'hsla(147, 65%, 44%, 0.55)', chip: 'hsl(147, 45%, 94%)', fill: 'hsla(147, 65%, 44%, 0.11)', tint: 'hsla(147, 65%, 44%, 0.15)' },
+    orange: { accent: 'hsl( 30, 82%, 40%)', border: 'hsla( 30, 75%, 48%, 0.55)', chip: 'hsl( 30, 55%, 94%)', fill: 'hsla( 30, 75%, 48%, 0.11)', tint: 'hsla( 30, 75%, 48%, 0.15)' },
+    purple: { accent: 'hsl(278, 65%, 38%)', border: 'hsla(278, 60%, 46%, 0.55)', chip: 'hsl(278, 45%, 94%)', fill: 'hsla(278, 60%, 46%, 0.11)', tint: 'hsla(278, 60%, 46%, 0.15)' },
+    gray:   { accent: 'hsl(  0,  0%, 36%)', border: 'hsla(  0,  0%, 46%, 0.55)', chip: 'hsl(  0,  0%, 94%)', fill: 'hsla(  0,  0%, 46%, 0.11)', tint: 'hsla(  0,  0%, 46%, 0.15)' },
+  };
+
+  function termBarContent(optionKey) {
+    if (optionKey === 'TBA') {
+      // Black bar after the label; no extra decoration besides the bar itself.
+      return '<div class="term-bar after-label"></div>';
+    }
+    if (optionKey === 'TBB') {
+      // Full-width black header; label re-themed white-on-black, integrated.
+      return `
+        <div class="term-bar full">
+          <div class="term-title-integrated">
+            <span class="stage">Workstream</span>
+            <span>Client-Executed Remediation</span>
+            <span class="count">3</span>
+          </div>
+        </div>`;
+    }
+    if (optionKey === 'TBC') {
+      // Full-width black header behind themed label, with green dot + "terminal" caption.
+      return `
+        <div class="term-bar full">
+          <div class="term-caption"><span class="live"></span>terminal</div>
+        </div>`;
+    }
+    if (optionKey === 'TBD') {
+      // Full-width header; integrated white label + macOS-style traffic-light dots.
+      return `
+        <div class="term-bar full">
+          <div class="term-title-integrated">
+            <span class="stage">Workstream</span>
+            <span>Client-Executed Remediation</span>
+            <span class="count">3</span>
+          </div>
+          <div class="traffic-lights"><span></span><span></span><span></span></div>
+        </div>`;
+    }
+    if (optionKey === 'TBE') {
+      // Full-width header with subtle scanline/dot pattern, integrated label.
+      return `
+        <div class="term-bar full">
+          <div class="term-scanlines"></div>
+          <div class="term-title-integrated">
+            <span class="stage">Workstream</span>
+            <span>Client-Executed Remediation</span>
+            <span class="count">3</span>
+          </div>
+        </div>`;
+    }
+    return '';
+  }
+
+  function renderContainer(theme, optionKey, isActive) {
+    const t = THEMES[theme];
+    const cls = 'opt-' + optionKey + (isActive ? ' active has-term-bar' : '');
+    const bar = isActive ? termBarContent(optionKey) : '';
+    return `
+      <div class="${cls}" style="
+        --ws-accent: ${t.accent};
+        --ws-border: ${t.border};
+        --ws-chip:   ${t.chip};
+        --ws-fill:   ${t.fill};
+        --ws-tint:   ${t.tint};
+      ">
+        <div class="ws-group">
+          ${bar}
+          <div class="ws-group-label">
+            <span class="stage">Workstream</span>
+            <span>Client-Executed Remediation</span>
+            <span class="count">3</span>
+          </div>
+          <div class="wave">
+            <span class="ws-badge">cer/wave-1</span>
+            <div><span class="wave-title">Foundations</span><span class="wave-status s-done">done</span></div>
+          </div>
+          <div class="wave">
+            <span class="ws-badge">cer/wave-2</span>
+            <div><span class="wave-title">Implementation</span><span class="wave-status s-in-progress">in-progress</span></div>
+          </div>
+          <div class="wave">
+            <span class="ws-badge">cer/wave-3</span>
+            <div><span class="wave-title">Validation gate</span><span class="wave-status s-ready">ready</span></div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function render() {
+    const theme = document.getElementById('theme').value;
+    const zoom = document.getElementById('zoom').value;
+    const grid = document.getElementById('grid');
+    grid.innerHTML = OPTIONS.map(opt => `
+      <div class="option">
+        <h2>${opt.title}</h2>
+        <p>${opt.blurb}</p>
+        <div class="pair">
+          <div class="label-row">
+            <div>inactive (default)</div>
+            <div>active (terminal window open)</div>
+          </div>
+          <div style="transform: scale(${zoom}); transform-origin: top left;">
+            ${renderContainer(theme, opt.key, false)}
+          </div>
+          <div style="transform: scale(${zoom}); transform-origin: top left;">
+            ${renderContainer(theme, opt.key, true)}
+          </div>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  document.getElementById('theme').addEventListener('change', render);
+  document.getElementById('zoom').addEventListener('change', render);
+  render();
+</script>
+</body>
+</html>

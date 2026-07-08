@@ -39,8 +39,13 @@ workstreams/
   {workstream-id}/
     brief.md
     graph.json
+    reconciliation-note.md
     docs/
 ```
+
+`reconciliation-note.md` is optional during execution and required at the
+workstream's final closure gate. See [The reconciliation note](#the-reconciliation-note-reconciliation-notemd)
+below.
 
 Where that `workstreams/` directory lives is up to the operator:
 
@@ -309,10 +314,17 @@ layer.}
 
 ## Closeout Observations
 {Optional. Lightweight polish, cleanup, and confidence-gap observations
-discovered while using or executing the workstream. These are not launched work
-yet. When closure work remains, materialize bounded items into a normal closeout
-batch node with a tracker issue; promote anything large, risky, or
-dependency-bearing into its own node, issue, candidate, or follow-on workstream.}
+discovered while using or executing the workstream. Use this exact heading for
+new workstreams. Older or adjacent workstreams may have equivalent closure
+parking lanes such as Closeout Punch List, coverage-routing report, or a named
+closeout checklist; treat those as closeout observations when they collect
+bounded closure items. These are not launched work yet. When closure work
+remains, materialize bounded items into a normal closeout batch node with a
+tracker issue; promote anything large, risky, or dependency-bearing into its
+own node, issue, candidate, or follow-on workstream. If this section is
+intentionally a running narrative log rather than a closure punch list, say so
+in the section and let reconciliation distill its lessons instead of forcing
+every bullet into closure-item vocabulary.}
 ```
 
 ### Guidelines
@@ -328,6 +340,245 @@ dependency-bearing into its own node, issue, candidate, or follow-on workstream.
   work remains, materialize the bounded batch into a normal closeout task node
   with a tracker issue instead of executing from brief prose.
 - **Runtime telemetry lives outside the brief.** Session IDs, heartbeats, node claims, and tracker caches belong in Streamliner's local runtime store.
+
+---
+
+## The reconciliation note (`reconciliation-note.md`)
+
+The reconciliation note is the workstream's lower-authority **learning
+artifact**. It captures what the workstream taught the operator about workstream
+design — boundaries, contracts, context fitness, gate timing, attention
+allocation, and downstream impact — in a form that can be read during the next
+workstream's shaping and selectively promoted into the brief, node specs, or
+the design layer.
+
+It is **not** a status report, an executive summary, or a generic
+retrospective. See [ORCHESTRATION.md](ORCHESTRATION.md#reconciliation-notes-and-promotion)
+for when and how it is produced, and for the closure-gate rule that depends on
+it.
+
+Write it from plan/reality divergence and future shaping lessons, not from a
+completed-work inventory.
+
+### Structure
+
+```markdown
+# {Workstream Title} — Reconciliation
+
+## What changed
+{Initial brief and graph intent compared with shipped reality. Reference
+specific waves, gates, or pivots; do not restate the brief or summarize status
+for its own sake.}
+
+## Boundaries
+- **Held:** {boundaries that worked as drawn}
+- **Leaked:** {boundaries that needed protection during execution}
+- **Expanded:** {boundaries that legitimately moved, with why}
+
+## Contracts and exports
+{Which exports were missing, underdefined, validated cleanly, or had to be
+renegotiated mid-flight. For research or shaping workstreams, interpret exports
+as the decisions, artifacts, or lessons another workstream can rely on.}
+
+## Context fitness
+{Where the original brief/plan or worker context package was stale, missing, or
+over-prescriptive. Where design references pointed cleanly vs. where workers or
+orchestrators had to discover intent.}
+
+## Attention allocation
+{Where operator focus went. Where it should have gone. Which `focus` nodes
+turned out routine; which `watch` nodes needed more presence. For
+coordination-heavy workstreams, describe orchestrator/operator attention,
+research subagents, reviews, and cross-workstream coordination instead of
+forcing graph-node vocabulary.}
+
+## Inspired vs. recovery interventions
+{Named examples of hot work, mid-stream steering, or boundary changes.
+Interventions include operator/orchestrator-level pivots and coordination
+decisions, not only worker hot-work.
+Classify each as inspired (new front-line insight) or recovery (work-design
+failure that future shaping should be able to prevent).}
+
+## Closeout observation dispositions
+- {Closeout observation or equivalent closure-lane item}: {completed |
+  deferred with rationale | promoted to <link> | dropped because…}
+- {Narrative-log summary, if applicable}: {reflected in reconciliation sections |
+  promoted as candidates below | accepted residual captured here}
+
+## Promotion candidates
+- {Lesson}: target authority — {brief decision | node-spec guideline |
+  candidate | follow-on workstream | design doc | decision record |
+  workstream-design lesson (`builder` | `project` | `streamliner`)}
+  - Disposition: {landed at <link> | deferred with rationale | dropped because…}
+```
+
+Use **workstream-design lesson** for pattern-shaped operating heuristics learned
+from this workstream about how future workstreams should be shaped or how the
+builder should engage with them. Tag each one by audience:
+
+- `builder` - the operator's own shaping decisions, attention calibration,
+  interaction patterns, or push-back habits;
+- `project` - project-specific portfolio shaping patterns;
+- `streamliner` - cross-project Streamliner-doctrine candidates.
+
+This target is the capture point, not necessarily the accumulation home. A
+landed disposition links to wherever that audience curates the lesson, such as a
+builder operating-notes file, a project-side workstream-design notes file, a
+Streamliner shaping candidate, or a Streamliner doctrine PR. Deferred with
+rationale is appropriate for single-instance observations whose value depends on
+corroborating workstreams; the disposition names what additional signal would
+justify promotion. A lesson with multiple corroborating instances inside the
+same workstream may be dispositioned as promote now or landed as an
+operator, project, or Streamliner habit without waiting for cross-workstream
+corroboration.
+
+Use **Closeout observation dispositions** for brief `Closeout Observations` and
+equivalent closure parking lanes such as closeout punch lists, coverage-routing
+reports, or named closeout checklists. These items are closure-boundary facts,
+not necessarily promotion candidates. List them separately when the closure gate
+needs a disposition audit; use `None` only when no such lane or equivalent item
+exists. When `Closeout Observations` is a running narrative log, do not list
+every bullet. Instead, summarize how the log was distilled: observations that
+became lessons land in `What changed`, `Boundaries`, `Inspired vs. recovery`, or
+`Promotion candidates`; accepted residuals or accepted deferrals land in
+`Closeout observation dispositions`.
+
+`Deferred with rationale` is a closed disposition. An open candidate is one with
+no disposition, a vague disposition, or an unresolved target authority.
+Deferred-with-rationale covers lessons that need operator pickup, Streamliner
+doctrine backlog work, or another authority surface outside the closing
+workstream, including workstream-design lessons waiting for corroboration.
+
+### Compact example
+
+A compact note may look like:
+
+```markdown
+# Scenario Runner Reliability — Reconciliation
+
+## What changed
+The workstream started as a retry-policy cleanup, but production-like runs
+showed the real boundary was launch-state durability. The final shape moved one
+lesson into the session registry design and left runner ergonomics for later.
+
+## Boundaries
+- **Held:** Runner retry behavior stayed inside the runner.
+- **Leaked:** Launch-state ownership leaked into worker scripts until the
+  registry took it.
+- **Expanded:** Closeout added a coverage-routing check because validation
+  evidence was thinner than expected.
+
+## Contracts and exports
+The durable export is the registry-owned launch-state contract. Downstream
+runner work can rely on the registry, not worker scripts, as the source of truth.
+
+## Context fitness
+Worker field reports were missing on two nodes, so reconciliation used PR bodies,
+diffs, issue comments, and the coverage-routing report as equivalent evidence.
+
+## Attention allocation
+The `watch` nodes stayed routine until validation exposed the launch-state leak;
+the gate should have asked for durability evidence earlier.
+
+## Inspired vs. recovery interventions
+The coverage-routing check was inspired because it exposed a useful validation
+pattern. The launch-state repair was recovery because the original boundary let
+workers own state they should only report.
+
+## Closeout observation dispositions
+- Validate launch-state coverage routing: completed in issue #123 before
+  closure.
+- Keep the old retry checklist: dropped because shipped validation made it
+  obsolete.
+
+## Promotion candidates
+- Launch state belongs to the registry: target authority — design doc
+  - Disposition: landed at `docs/design/session-registry.md`.
+- Runner ergonomics need a separate pass: target authority — follow-on workstream
+  - Disposition: deferred with rationale; not needed to close this workstream.
+- Coverage-routing gaps need tracking: target authority — tracker issue
+  - Disposition: landed at issue #123.
+```
+
+A coordination-shaped note may look like:
+
+```markdown
+# Provider Boundary Promotion — Reconciliation
+
+## What changed
+The workstream began as a narrow model-provider boundary pass, but cross-workstream
+coordination revealed that the real export was a promotion path: the relay
+boundary had to adopt a peer workstream's design plane before it could safely
+move toward main.
+
+## Boundaries
+- **Held:** Provider-specific policy stayed outside the relay boundary.
+- **Leaked:** The original plan assumed the peer design plane would be ready
+  before this workstream needed it.
+- **Expanded:** A pre-promotion integration node became part of the closure path.
+
+## Contracts and exports
+The export is design authority, not runtime code: downstream work can rely on the
+provider-boundary vocabulary and the documented promotion sequence.
+
+## Context fitness
+The original brief under-described cross-workstream timing. Worker context was
+adequate, but the plan needed earlier visibility into the peer design dependency.
+
+## Attention allocation
+The meaningful attention was orchestrator-level: coordinating the peer workstream,
+reviewing the pre-promotion integration point, and deciding that one sketch node
+was skipped by absorption rather than implemented directly.
+
+## Inspired vs. recovery interventions
+Adopting the peer design plane was inspired because it preserved a better
+portfolio shape. The late pre-promotion integration node was recovery because
+the original shaping did not make the dependency explicit enough.
+
+## Promotion candidates
+- Name the peer design plane in future provider-boundary shaping: target
+  authority — workstream-design lesson (`streamliner`)
+  - Disposition: deferred with rationale; needs operator pickup outside this
+    workstream.
+- Parallel promotion proofs should represent independent confidence states:
+  target authority — workstream-design lesson (`builder`)
+  - Disposition: landed as builder operating habit; corroborated by three
+    independent plan-boundary challenges in this workstream.
+- Record skipped-by-absorption as a normal node outcome: target authority —
+  node-spec guideline
+  - Disposition: landed in the closeout node spec.
+```
+
+### Guidelines
+
+- **Keep it compact and learning-shaped, not narrative.** If the note starts to
+  sprawl, treat that as a shaping signal — the workstream itself may have wanted
+  splitting — rather than only a length problem.
+- **Single file per workstream, rewritten in place.** Intermediate wave-gate
+  reconciliations may add or revise sections; the file always reads as the
+  current best understanding. Git history is the audit trail.
+- **Every promotion candidate has a disposition before the closure gate
+  passes.** Open candidates indicate the gate is not actually ready to close.
+  Deferred-with-rationale candidates are disposed; undisposed or vague
+  candidates are still open.
+- **Every actionable closeout item also has a disposition before the closure
+  gate passes.** Put those in `Closeout observation dispositions`, not in
+  `Promotion candidates`, unless the observation also produced a lesson that
+  needs a target authority. Narrative observation logs do not need per-bullet
+  dispositions when their lessons are distilled into the reconciliation note.
+- **Evidence may be equivalent.** Prefer standard worker `### Field report`
+  comments, but when they are missing or non-standard, cite PR bodies, diffs,
+  issue comments, tracker closeout notes, coverage reports, or committed
+  artifact changes instead.
+- **Not a brief replacement.** Workstream-local execution decisions still
+  belong in the brief's `Decisions` section. Design-layer changes still belong
+  in design docs and decision records. The reconciliation note records the
+  *lessons*; the promotion candidates point at where those lessons should land.
+- **Distinct from any closeout narrative.** A workstream may also produce a
+  longer-form prose narrative under `docs/` for reflective consumption (e.g.,
+  feeding an external podcast generator). That artifact is optional and never
+  gating; the reconciliation note is the always-on, structured learning
+  surface.
 
 ---
 
@@ -875,6 +1126,11 @@ The design docs describe the intended system from the operator's perspective. Th
   late-stage polish as closeout observations. When real closure work remains,
   materialize safe batches into a single closeout node with a tracker issue.
   Promote large or dependency-bearing observations into normal work.
+- **Produce a reconciliation note at the closure gate.** Write
+  `reconciliation-note.md` per [The reconciliation note](#the-reconciliation-note-reconciliation-notemd).
+  At wave or checkpoint gates it is recommended when the work taught something
+  nontrivial; at the final closure gate it is required. The closure gate does
+  not pass until every promotion candidate has an explicit disposition.
 - **Use gates at wave boundaries.** A gate marks where the operator evaluates the workstream before the next wave proceeds.
 - **Later-wave nodes are sketches.** They need a title, summary, and rough dependencies, but no tracker or detailed spec.
 - **Keep dependencies minimal.** Only add an edge if the upstream node's output is genuinely required by the downstream node.

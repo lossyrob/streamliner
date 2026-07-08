@@ -78,6 +78,7 @@ afterEach(() => {
     rmSync(root, { recursive: true, force: true });
   }
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 describe("GitHub status API", () => {
@@ -176,6 +177,8 @@ describe("GitHub status API", () => {
   });
 
   it("selects a configured gh auth profile for the requested repository", async () => {
+    vi.stubEnv("GITHUB_TOKEN", "");
+    vi.stubEnv("GH_TOKEN", "");
     const authSettingsPath = join(createRoot(), "github-auth.json");
     writeFileSync(
       authSettingsPath,
@@ -242,7 +245,7 @@ describe("GitHub status API", () => {
       if (url.endsWith("/issues/69/timeline?per_page=100")) {
         return githubResponse([
           {
-            event: "cross-referenced",
+            event: "connected",
             source: {
               issue: {
                 number: 70,
@@ -291,6 +294,75 @@ describe("GitHub status API", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
+  it("ignores cross-referenced timeline events (mere mentions) when listing linked PRs", async () => {
+    // Reproduces the inference-relay-model-provider-boundary regression: a
+    // PR that only mentions the issue in its body (e.g. a "design note"
+    // PR) should NOT show up as a linked PR. Only `connected` events
+    // (GitHub's official "Linked pull requests" sidebar / closing-keyword
+    // signal) are treated as actionable.
+    const fetchMock = vi.fn<GithubStatusFetch>(async (url) => {
+      if (url.endsWith("/issues/69")) {
+        return githubResponse({
+          title: "Issue with only passing mentions",
+          html_url: "https://github.com/lossyrob/streamliner/issues/69",
+          state: "open",
+          state_reason: null,
+        });
+      }
+      if (url.endsWith("/issues/69/timeline?per_page=100")) {
+        return githubResponse([
+          // Unrelated PR mentions the issue in passing — should be ignored.
+          {
+            event: "cross-referenced",
+            source: {
+              issue: {
+                number: 71,
+                repository_url: "https://api.github.com/repos/lossyrob/streamliner",
+                pull_request: {
+                  url: "https://api.github.com/repos/lossyrob/streamliner/pulls/71",
+                },
+              },
+            },
+          },
+          // PR explicitly linked via the sidebar — should be picked up.
+          {
+            event: "connected",
+            source: {
+              issue: {
+                number: 72,
+                repository_url: "https://api.github.com/repos/lossyrob/streamliner",
+                pull_request: {
+                  url: "https://api.github.com/repos/lossyrob/streamliner/pulls/72",
+                },
+              },
+            },
+          },
+        ]);
+      }
+      if (url.endsWith("/pulls/72")) {
+        return githubResponse({
+          title: "Linked PR",
+          html_url: "https://github.com/lossyrob/streamliner/pull/72",
+          state: "open",
+          draft: false,
+          merged: false,
+          mergeable_state: "clean",
+        });
+      }
+      throw new Error(`Unexpected GitHub URL: ${url}`);
+    });
+    const api = createApi(fetchMock);
+
+    const response = await request(api.app)
+      .get("/api/github/status")
+      .query({ ref: "issue:lossyrob/streamliner#69" })
+      .expect(200);
+
+    expect(response.body.statuses[0].linkedPullRequests).toEqual([
+      expect.objectContaining({ key: "pr:lossyrob/streamliner#72" }),
+    ]);
+    expect(response.body.statuses[0].linkedPullRequests).toHaveLength(1);
+  });
   it("bounds GitHub fetch concurrency and coalesces concurrent status misses", async () => {
     const refs = [69, 70, 71, 72].map((number) => ({
       type: "issue" as const,
@@ -354,7 +426,7 @@ describe("GitHub status API", () => {
       if (url.endsWith("/issues/69/timeline?per_page=100")) {
         return githubResponse(
           [70, 71, 72].map((number) => ({
-            event: "cross-referenced",
+            event: "connected",
             source: {
               issue: {
                 number,

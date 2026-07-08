@@ -1,7 +1,7 @@
 ---
 kind: design-doc
 status: draft
-last_updated: 2026-05-11
+last_updated: 2026-07-06
 update_semantics: rewrite-in-place
 authoritative_for: "Session launching, lifecycle, registry contract, tracking, and runtime overlay"
 scope_tags:
@@ -55,8 +55,8 @@ The Wave 3 launch MVP is **PAW-only graph launch**. The contract is the interfac
 | Launch instructions | Builder edit + default text | Natural-language guidance for the graph-launched PAW session. PAW init may use it to derive work title, work ID, target branch, review policy, and model settings, but general operating guidance belongs in the kickoff prompt rather than verbatim `Custom Workflow Instructions`. |
 | PAW prompt profile | Local Streamliner state + graph `launchDefaults.promptProfileId` | Optional reusable text snippet that can populate or update the launch instructions field. A workstream may store a local profile id as a best-effort default selection. |
 | CLI arguments | Default + builder override | Copilot CLI flags for the later worker launch; an explicit empty list is valid |
-| Terminal preference | Graph `launchDefaults` + builder edit | Preferred visible terminal host for the worker launch |
-| Terminal presentation | Graph `launchDefaults` + builder edit | Optional default tab title template and tab/session color for the worker launch |
+| Terminal preference | Graph `launchDefaults` + builder edit | Preferred visible terminal host for the worker launch (`default`, `windows-terminal`, `powershell`, `mac-terminal`, or `iterm2`) |
+| Terminal presentation | Graph `launchDefaults` + builder edit | Optional default tab title template and tab/session color for the worker launch; color application is adapter-dependent |
 | Launch nonce | Graph launch caller | Token preserved across preparation, claim creation, and final Copilot prompt binding |
 
 The builder selects a node in the graph and opens launch context from the inspector when the selected `WorkstreamDerivedNode` is operationally ready, the active workstream registry entry is backend-readable, and the selected node satisfies any configured workstream `launchPolicy`. Browser-directory workstreams remain visible in the graph UI, but they are not launchable in this MVP because the backend cannot read their graph file. If `launchPolicy.requiredTracker` is `"github-issue"`, Streamliner disables launch for nodes without a GitHub issue tracker and explains that the node needs an issue first or the policy should be edited if untracked launches are intentional. Active or already-bound launch claims keep the dialog available for issue and prepared-launch context, but disable new PAW init or terminal launch actions for that node. Failed launch claims remain visible and retryable.
@@ -125,7 +125,7 @@ After PAW launch initialization completes, terminal integration re-reads the cur
 1. **Reject duplicate active launches** — before creating a new claim, check launch-claim diagnostics for the same workstream/node and reject non-terminal active-window or bound claims with a typed conflict. This is enforced in the backend service so future CLI, skill, or MCP callers get the same protection as the graph UI.
 2. **Record launch claim** — write a launch claim to Streamliner's runtime state binding the node to the expected session location before the worker session starts. The claim uses the nonce from the prepared handoff when one exists; otherwise the claim-minted nonce becomes the final launch nonce.
 3. **Finalize binding prompt** — preserve the prepared kickoff prompt, replace descriptive launch metadata with the concrete claim id where present, and append exactly one canonical `kickoffNonceLine(claim.launchNonce)` line (`Streamliner launch nonce: ...`) plus the concrete claim id line. The descriptive `- Launch nonce: ...` metadata in the preparation prompt is not the Tier 1 scanner contract; the terminal launch service owns the canonical scanner line.
-4. **Launch Copilot CLI** — reuse the lower-level terminal spawning path used by session relaunch, opening a visible terminal in the returned `cwd` and starting Copilot CLI interactive mode with the selected/default CLI arguments. The service passes `STREAMLINER_LAUNCH_CLAIM_ID` into the spawned process environment so the Copilot plugin hook can emit Tier 2 trusted claim evidence on `session.started`.
+4. **Launch Copilot CLI** — reuse the lower-level terminal spawning path used by session relaunch, opening a visible terminal in the returned `cwd` through the platform adapter (Windows Terminal or PowerShell on Windows; Apple Terminal.app by default, or explicit iTerm2, on macOS) and starting Copilot CLI interactive mode with the selected/default CLI arguments. Streamliner-owned Copilot CLI starts enter the process-wide Copilot terminal launch queue before spawning so node launches, review companions, session resumes, and managed terminal takeovers do not start at the same instant. The service passes `STREAMLINER_LAUNCH_CLAIM_ID` into the spawned process environment so the Copilot plugin hook can emit Tier 2 trusted claim evidence on `session.started`.
 5. **Bind on trusted signal or discovery** — when the hook signal or session watcher detects the new Copilot session, bind it to the launch claim and reserved registry row.
 6. **Fail honestly** — if terminal spawn fails after claim creation, transition the claim with failure code `terminal-spawn-failed`, clean up the reserved row through the claim-failure contract, log the failure, and return a typed error instead of a success-shaped pending state.
 
@@ -142,18 +142,20 @@ The API projects the following operation states:
 | `prepared` | PAW init produced a handoff, kickoff prompt, and reviewable `WorkflowContext.md` | Builder may review/edit and launch the terminal |
 | `preparation_failed` | PAW init or context preparation failed | Retry is intentional; progress/error details remain visible |
 | `launching` | The terminal-launch request is creating a claim and spawning Copilot CLI | Same-node duplicate terminal launch is blocked |
-| `launched_pending_binding` | Terminal spawn returned and the launch claim is pending within its binding window | Duplicate launch remains blocked by claim state |
+| `launched_pending_binding` | Terminal spawn returned and Streamliner has not yet marked the operation bound | Duplicate launch remains blocked only while the latest claim is still blocking; stale operations can be resolved from the inspector |
 | `managed_starting` | The managed-launch request has reserved the canonical row/claim and is creating the SDK session | Same-node duplicate terminal or managed launch is blocked |
 | `managed_running` | The managed SDK session started and Streamliner owns the worker runtime | Duplicate launch remains blocked while the managed lifecycle remains active |
 | `managed_failed` | Managed SDK startup failed after launch operation creation | Retry is intentional after the failed claim/runtime state is non-blocking |
 | `bound` | Observation bound the launch claim to a registry row/session | Duplicate launch remains blocked while that bound session is active |
 | `terminal_failed` | Claim creation or terminal spawn failed | Retry is intentional after the failed claim is non-blocking |
 
-`launched_pending_binding` and `bound` are projections over launch-claim state. The operation snapshot may remember the terminal-launch result, but launch claims remain authoritative for pending, bound, failed, blocking, and retryable semantics. If a claim is pending within its binding window or already bound, the same node cannot start another launch even if the dialog is reopened. Failed preparation and terminal-spawn failures remain explicit retry states.
+`launched_pending_binding` and `bound` are projections over launch-claim state. The operation snapshot may remember the terminal-launch result, but launch claims remain authoritative for pending, bound, failed, blocking, and retryable semantics while they are retained. If a claim is pending within its binding window or already bound, the same node cannot start another launch even if the dialog is reopened. Failed preparation and terminal-spawn failures remain explicit retry states.
 
 Launch preparation run events are replayable through the existing run SSE endpoint while the API process still has the run buffer. The operation snapshot is the source of truth on dialog reopen: it carries the preparation run id, bounded progress history, last error, prepared handoff, terminal launch result, and claim projection. If the run id is unknown, the SSE buffer has rotated, or the API restarted, the UI falls back to the operation snapshot and presents the appropriate retry, review, or launch action instead of resetting to a blank dialog.
 
 The terminal-launch route remains a synchronous POST. To make that phase reattachable enough for the graph UI, the backend writes `launching` before claim creation/spawn and writes either `launched_pending_binding` with the terminal result or `terminal_failed` with diagnostic details before returning. The managed-launch route uses the same operation store: it writes `managed_starting` before SDK startup and then `managed_running` with the managed session facts or `managed_failed` with diagnostic details. The in-flight terminal-spawn and managed-start windows are bounded by the request, while post-return binding/managed lifecycle state is represented by the operation snapshot plus launch-claim and session-registry runtime projections.
+
+When a retained claim is gone or terminal and a terminal operation still says `launched_pending_binding`, the node inspector can resolve the stale operation. The release route first checks that no latest claim still blocks the node. If registry evidence proves a launched row for the same `launchClaimId` and that row has real session evidence (`copilotSessionId`) or managed SDK runtime evidence, Streamliner restores the row's `graphBinding` when it is missing, transitions any retained matching terminal claim to `bound` so a later sweep cannot detach the verified session again, and marks the operation `bound`. If the evidence is absent or conflicts with another binding, the route marks the operation `preparation_failed` so the node can be launched again. Streamliner intentionally does not run a proactive historical backfill for already-broken rows that have no stale operation or recoverable evidence; those remain manual repair scope.
 
 The launch dialog is non-modal with respect to operation ownership. Closing the dialog or selecting another node only hides/unsubscribes the current view; it does not cancel the server-side preparation run or clear the node's operation. Reopening a prepared operation restores the handoff, kickoff prompt editor, and `WorkflowContext.md` review access. Starting a second node launch uses a separate operation key so progress, errors, terminal results, and claims cannot bleed between nodes.
 
@@ -166,7 +168,7 @@ The implemented launch surface is a text-guided PAW init dialog, not the full PA
 - PAW should use `gpt-5.5`, `claude-opus-4.7`, and `claude-opus-4.6-1m` where it asks for concrete multi-model planning or review choices.
 - PAW should proceed through implementation and documentation, then create the final PR.
 - CLI args default to `--yolo`; an explicit empty override remains empty.
-- Terminal launch mode is `manual` with a default terminal preference; `default` means "use Windows Terminal when available, otherwise PowerShell," not an alias for PowerShell. After PAW init completes, Streamliner uses those values to open the visible worker terminal.
+- Terminal launch mode is `manual` with a default terminal preference; `default` is platform-selected ("use Windows Terminal when available, otherwise PowerShell" on Windows, Apple Terminal.app on macOS), not an alias for PowerShell. `mac-terminal` explicitly selects Apple Terminal.app on macOS, and `iterm2` explicitly selects iTerm2. After PAW init completes, Streamliner uses those values to open the visible worker terminal.
 
 The dialog supports lightweight PAW prompt profiles: named reusable text snippets stored at the local Streamliner server state level. Profiles are not PAW-owned metadata and do not encode structured constraints; selecting one only replaces the free-text launch instructions, and the builder can edit the text before running PAW init. The dialog can save the current text as a new profile or update the selected profile. If the workstream's `launchDefaults.promptProfileId` matches a local profile, the dialog preselects it once while opening; if the profile is missing or later deleted, launch falls back to custom instructions without blocking the node.
 
@@ -332,9 +334,9 @@ The dialog uses the run route. `POST /api/launch-preparations/runs` returns a `r
 
 Internal SDK launch sessions persist under Streamliner's local state rather than the normal Copilot session-state root. The default root is `~/.streamliner/state/copilot-sdk/paw-launch/<context-id>/`, with `STREAMLINER_COPILOT_SDK_STATE_ROOT` available for override. Run progress and API logs surface the SDK `sessionId` and workspace path for debugging, but these internal sessions are not intended to appear in Streamliner's observed Sessions view.
 
-The PAW launch dialog is intentionally text-guided for this MVP. It exposes launch instructions, lightweight reusable text profiles, CLI args, terminal preference, graph source, a GitHub issue link when the selected node has one, and the prepared handoff after backend PAW init. Workstream `launchDefaults.promptProfileId` can preselect a local profile, and `launchDefaults.terminal` pre-fills preferred terminal host, tab title, and tab color; builders can still override those values per launch. The tab title can be derived from `titleTemplate` with `{githubIssue}`, `{nodeId}`, and `{nodeTitle}` variables; `{githubIssue}` renders as `#number` for GitHub-tracked nodes, and the configuration dialog surfaces those variables in inline help. The builder's launch instructions are trusted local intent and appear near the top of the SDK launch-preparation session's first prompt so context assembly and PAW init both weight them heavily. Once preparation completes, the prepared kickoff prompt is editable before terminal launch so the builder can inspect or refine the exact initial prompt sent to the visible worker. The primary action is labeled as running PAW init because the SDK session may read repository files, inspect git/GitHub context, execute shell tools, and write the PAW work artifacts before returning the structured handoff. PAW-owned metadata, structured presets, specialists, and dependent WorkflowContext constraints are deferred to issue #43 so Streamliner does not duplicate PAW's configuration rules.
+The PAW launch dialog is intentionally text-guided for this MVP. It exposes launch instructions, lightweight reusable text profiles, CLI args, terminal preference, graph source, a GitHub issue link when the selected node has one, and the prepared handoff after backend PAW init. Workstream `launchDefaults.promptProfileId` can preselect a local profile, `launchDefaults.terminal` pre-fills preferred terminal host and tab title, and `presentation.color` pre-fills the terminal tab/session color; builders can still override those values per launch. The tab title can be derived from `titleTemplate` with `{githubIssue}`, `{nodeId}`, `{nodeTitle}`, and `{workstreamShortName}` variables; `{githubIssue}` renders as `#number` for GitHub-tracked nodes, `{workstreamShortName}` falls back to the workstream title when no short name is configured, and the configuration dialog surfaces those variables in inline help. The builder's launch instructions are trusted local intent and appear near the top of the SDK launch-preparation session's first prompt so context assembly and PAW init both weight them heavily. Once preparation completes, the prepared kickoff prompt is editable before terminal launch so the builder can inspect or refine the exact initial prompt sent to the visible worker. The primary action is labeled as running PAW init because the SDK session may read repository files, inspect git/GitHub context, execute shell tools, and write the PAW work artifacts before returning the structured handoff. PAW-owned metadata, structured presets, specialists, and dependent WorkflowContext constraints are deferred to issue #43 so Streamliner does not duplicate PAW's configuration rules.
 
-The workstream header exposes a configuration dialog for backend-readable graph files. It edits durable graph launch settings, including `launchPolicy.requiredTracker`, `launchDefaults.promptProfileId`, and `launchDefaults.terminal`, through:
+The workstream header exposes a configuration dialog for backend-readable graph files. It edits durable graph presentation and launch settings, including `presentation.shortName`, `presentation.color`, `launchPolicy.requiredTracker`, `launchDefaults.promptProfileId`, and `launchDefaults.terminal`, through:
 
 ```http
 PATCH /api/workstreams/:projectKey/:workstreamId/configuration
@@ -713,7 +715,7 @@ Each registry entry is a persisted `SessionRegistryRecord`. The stored lifecycle
 | `lastSeenAt` | ISO 8601 string or `null` | yes | Observation | Last observed activity timestamp; `null` for never-observed manual entries. |
 | `activityStatus`, `activityStatusUpdatedAt` | status + ISO 8601 string or `null` | yes | Observation | Coarse liveness/attention status retained for compatibility with existing My Sessions and future graph-node consumers. |
 | `activityEvidence` | object | yes | Observation | Privacy-preserving evidence behind `activityStatus`: `statusReason`, `confidence`, `diagnostics`, `pendingInputRequest`, `pendingInputRequestCount`, last user/assistant turn timestamps, scanned user/assistant-turn counts, and event scan offset/size/mtime metadata. Scan metadata is a snapshot from the most recent material interpreted-state change, not an incremental cursor and not refreshed for bookkeeping-only scans. Manual or never-observed rows use neutral defaults (`confidence: none`, no diagnostics) rather than degraded diagnostics. |
-| `pawLaunch` | object or `null` | yes | Launch pipeline | Durable PAW launch metadata captured when Streamliner starts a PAW-backed node: work id/title, workflow kind, PAW work directory, and context artifact paths. This field remains on the session row after launch-claim retention cleanup and lets `pawWorkflow` resolve the exact work directory even if `graphBinding` is later cleared. |
+| `pawLaunch` | object or `null` | yes | Launch pipeline | Durable PAW launch metadata captured when Streamliner starts a PAW-backed node: work id/title, workflow kind, PAW work directory, and context artifact paths. This field remains on the session row after launch-claim retention cleanup and lets `pawWorkflow` resolve the exact work directory even if `graphBinding` is later cleared by an explicit failed/cancelled launch cleanup or builder repair. |
 | `pawWorkflow` | object or `null` | yes | Artifact indexer | Derived PAW workflow enrichment for Streamliner-launched PAW sessions. `null` means no explicit PAW work directory has been linked. Non-null records include `status`, `stage`, `workflowKind`, work identity/path hints, recognized/unknown artifact evidence, latest artifact path/mtime, scan timestamp, and diagnostics. This field does not drive or replace `activityStatus`. |
 | `managedLifecycle`, `managedProgress`, `managedCompletion` | objects or `null` | yes after managed schema; `null` for non-managed rows | Managed runtime | SDK-managed runtime state pointers and latest sanitized summaries. Detailed progress remains in local runtime state; raw SDK events and prompts are not persisted on the registry row. |
 | `createdAt`, `updatedAt` | ISO 8601 string | yes | Streamliner | Record creation and last persisted update timestamps. |
@@ -727,7 +729,7 @@ Each registry entry is a persisted `SessionRegistryRecord`. The stored lifecycle
 
 Only observed rows may carry `origin.importedFromCopilotSessionId`; only launched rows may carry `origin.launchClaimId`; manual rows carry neither. Persisted schema and API types should encode that constraint directly rather than relying on convention.
 
-`graphBinding` is the shared linkage contract between My Sessions and the graph. The registry stores stable IDs only; display labels, grouping names, and navigation targets are derived by joining `{ workstreamId, nodeId }` against the current workstream catalog and graph. When the workstream or node cannot be resolved, the Sessions view keeps the row visible with degraded "unknown workstream/node" labeling rather than dropping the linkage.
+`graphBinding` is the shared linkage contract between My Sessions and the graph. The registry stores stable IDs only; display labels, grouping names, and navigation targets are derived by joining `{ workstreamId, nodeId }` against the current workstream catalog and graph. When the workstream or node cannot be resolved, the Sessions view keeps the row visible with degraded "unknown workstream/node" labeling rather than dropping the linkage. For Streamliner-launched sessions, this field is durable session linkage: launch-claim files are short-lived coordination records, so claim retention pruning must not clear `graphBinding` from rows that have already attached to a real Copilot session or managed SDK runtime.
 
 Registry entries are created in three ways:
 
@@ -757,8 +759,8 @@ The registry lives under a global subtree of Streamliner's local runtime-state r
 
 - **`entries/{registry-id}.json` is authoritative.** Each file holds one full `SessionRegistryRecord`.
 - **`index.json` is a denormalized summary, not the source of truth.** It exists for fast list rendering and rebuilds from the entry files whenever it is missing, malformed, version-incompatible, or observably stale. It carries the exact list-surface fields needed by `listSessions()`, including `version`, `title`, `description`, `tags`, lifecycle, origin, freshness, and graph-binding metadata.
-- **`registry.lock` is an advisory single-writer lock.** Exactly one process is expected to mutate registry files at a time; readers never require the lock.
-- **`api.lock` is the standalone API process lock.** It prevents accidental duplicate Streamliner API processes from owning the same registry worker and live event stream.
+- **`registry.lock` is an advisory single-writer lock.** Exactly one process is expected to mutate registry files at a time; readers never require the lock. A lock left by a crashed or rebooted owner is reclaimed automatically — when the recorded owner PID no longer exists, or the lock was acquired during a previous boot session (detected by comparing the recorded `os.uptime()` against the current uptime, which is immune to wall-clock changes) — so PID reuse across a restart cannot wedge writers into a permanent read-only state. Reclamation errs toward safety: an unprovable lock held by a live PID is never stolen.
+- **`api.lock` is the standalone API process lock.** It prevents accidental duplicate Streamliner API processes from owning the same registry worker and live event stream. A stale `api.lock` left by a crashed or rebooted owner is reclaimed on startup using the same uptime-based liveness rule (dead PID, or acquired during a previous boot), so a restart does not require manually deleting the lock file.
 - **`quarantine/` holds bad inputs.** Malformed JSON, unsupported schema versions, and partially written files are moved here and excluded from normal reads until the builder repairs or deletes them.
 
 Hand-edited files are tolerated when they still parse and match the supported schema version. Unknown extra fields are preserved on rewrite rather than dropped opportunistically. If an entry file and `index.json` disagree, the entry file wins: missing index rows are rebuilt from entries, and orphaned index rows are dropped on rebuild.
@@ -1008,7 +1010,7 @@ This keeps the binding in Streamliner's domain while relying on Copilot's files 
 
 ### Launch Claim Lifecycle
 
-Launch claims are transient. They must be actively reconciled or aged out, or they become ambient noise that corrupts future bindings.
+Launch claims are transient coordination records. They must be actively reconciled or aged out, or they become ambient noise that corrupts future bindings. The durable graph linkage for a successfully attached session lives on the session-registry row, not in the claim file.
 
 - **Claim creation** writes the claim atomically to runtime state before the terminal launch command runs. Streamliner's `createLaunchClaim` helper uses a row-first, claim-second canonical write order: it pre-mints both the launch-claim id and a reserved `SessionRegistryRecord` id, writes the registry row with `origin.kind = "launched"`, `origin.launchClaimId`, and `graphBinding`, then writes the claim file with `reservedRegistryId` populated. A crash between the two writes is recovered by the `reconcileOrphanReservedRows` startup routine in the background worker. If launch preparation fails before the launch command is issued, the claim is deleted on the same failure path that cleans up the generated context package.
 - **Path A (default) vs Path B**: with row reservation enabled (the default), discovery may transiently produce a duplicate observed row for the same Copilot session id. The binding pass detects this and fuses the duplicate into the reserved row atomically via the `fuseObservedRowIntoReservedRow` registry primitive, then deletes the duplicate. Path B (`reserveRegistryRow: false`, intended only for diagnostic / preview flows) writes `graphBinding` directly onto the existing observed row via `bindClaimToRow`; `origin.kind` stays `"observed"` and `graphBinding.launchClaimId` provides linkage.
@@ -1018,7 +1020,7 @@ Launch claims are transient. They must be actively reconciled or aged out, or th
   - The two tiers are race-safe: whichever wins first marks the claim `bound`; the loser's bind attempt is rejected by the existing atomic primitives (`reserved-row-already-attached` / `graph-binding-conflict` / `already-bound`) and recorded as a deferred outcome in the diagnostic logs.
 - **Binding window**: a claim is eligible for binding only while its launch window is open. The default window is 5 minutes from `launchedAt`. Inside the window, the watcher attempts to bind discovered sessions by nonce plus `cwd`/branch guardrails.
 - **Claim expiry**: if no session binds within the window, the claim transitions to one of two terminal states. `nonce-missing` indicates that at least one Copilot session was observed in `expectedCwd` during the window but never produced a nonce match (recorded in `seenCandidateCopilotSessionIds`). `expired` indicates that no candidate session ever appeared. The legacy term *abandoned* is preserved in older docs but is no longer a status — the two-bucket distinction is more useful for diagnostics. Terminal claims are retained for a short inspection period (default: 1 hour) so the builder can see that a launch failed to attach, then pruned by the sweep.
-- **Reserved-row cleanup**: when a non-`bound` terminal transition happens, the reserved row is conditionally deleted via the `deleteSessionIf(rowId, copilotSessionId === null)` primitive (predicate evaluated under the registry write lock). When a real session attached during the gap, the row is preserved and its `graphBinding` is cleared via `bindClaimToRow(..., { graphBinding: null })`; the row appears in the future "Unbound sessions" surface.
+- **Reserved-row cleanup**: when a non-`bound` terminal transition happens, the reserved row is conditionally deleted via the `deleteSessionIf(rowId, copilotSessionId === null)` primitive (predicate evaluated under the registry write lock). When a real session attached during the gap but the claim never bound, the row is preserved and its `graphBinding` is cleared via `bindClaimToRow(..., { graphBinding: null })`; the row appears in the future "Unbound sessions" surface. This strict terminal-failure path avoids leaking an untrusted node association.
 - **Nonce tampering**: the kickoff prompt includes the launch nonce on a dedicated line (see `kickoffNonceLine` helper). If the builder edits or deletes the nonce token before pressing Enter, Tier 1 binding will not see the expected nonce. When Tier 2 is also in play, the binding still succeeds via the env-var-backed hook path. With only Tier 1, the claim transitions to `nonce-missing` after the binding window closes; the orphan session is surfaced in the UI so the builder can rebind it manually or discard it.
 - **Unbound-session surface**: sessions discovered by the watcher that match no claim within the binding window (or are deliberately launched outside Streamliner) appear in a dedicated "Unbound sessions" panel. The builder can bind them to a node explicitly, ignore them, or let them age out with the rest of the session history.
 - **Single session per claim**: a claim binds at most one session. Once bound, the claim is marked `bound` and subsequent discoveries matching the same nonce are logged via the `launch-claim-rebind-attempt` diagnostic rather than rebinding.
@@ -1032,7 +1034,7 @@ The race-free behavior above relies on three primitives on `SessionRegistryFileS
 - `deleteSessionIf(id, predicate)` — predicate-checked delete under the lock; closes the gap between sweep decision and delete.
 - `fuseObservedRowIntoReservedRow(args)` — atomic transfer of observation fields onto the reserved row plus deletion of the duplicate observed row in a single locked transaction; emits one `upsert` then one `delete` so SSE consumers see a coherent state.
 
-The startup recovery routine `reconcileOrphanReservedRows(claimStore, registryStore)` (in `src/session-registry/launch-claims.ts`) lists launched-origin rows whose `origin.launchClaimId` is missing from the claim store and applies the same conditional cleanup. It runs synchronously inside `SessionRegistryBackgroundWorker.start()` once per process lifecycle, before the first poll cycle.
+The startup recovery routine `reconcileOrphanReservedRows(claimStore, registryStore)` (in `src/session-registry/launch-claims.ts`) lists launched-origin rows whose `origin.launchClaimId` is missing from the claim store. Rows that never attached to a real session and have no managed SDK runtime evidence are deleted as abandoned reservations. Rows with `copilotSessionId` or managed SDK runtime evidence are preserved with their `graphBinding`, because the missing claim may simply have been pruned after a successful launch. It runs synchronously inside `SessionRegistryBackgroundWorker.start()` once per process lifecycle, before the first poll cycle.
 
 The launch-claim store lives at `~/.streamliner/state/launch-claims/` (override via `STREAMLINER_LAUNCH_CLAIMS_ROOT`) with the same advisory-lock + write-then-rename + per-record JSON file layout as the session registry.
 
@@ -1121,7 +1123,7 @@ Promotion happens when the orchestrator reviews the session's output (PR, code c
 
 Sessions run in visible terminals. The builder sees:
 
-- A terminal tab or window per session (in VS Code, iTerm, Windows Terminal, etc.)
+- A terminal tab or window per session (Apple Terminal.app, iTerm2, Windows Terminal, PowerShell, etc.)
 - Each launched session starts with a kickoff prompt already sent, rather than an idle shell in the target directory
 - Streamliner's UI shows a session list with node binding, status, and terminal reference
 
@@ -1134,14 +1136,38 @@ Launch claims, registry binding, graph-node handoff parsing, node launch records
 and relaunch validation are Streamliner API/session concepts; terminal host
 selection and shell command encoding are adapter concerns.
 
-The current adapter is Windows-only. It owns Windows Terminal discovery, `wt.exe`
-argument construction, PowerShell Core detection, PowerShell fallback,
+Platform adapters own visible terminal host discovery, command encoding, and
+host-specific presentation. The Windows adapter owns Windows Terminal discovery,
+`wt.exe` argument construction, PowerShell Core detection, PowerShell fallback,
 PowerShell launch-script creation, and the PowerShell command strings used for
-`copilot -i` and `copilot --resume=<id>`. The public compatibility values remain
-`default`, `windows-terminal`, and `powershell`; `default` currently means
-"prefer Windows Terminal when available, otherwise PowerShell." Future macOS or
-Linux adapters should implement the same launch request shape rather than
-changing launch claims, graph binding, node launch records, or relaunch state.
+`copilot -i` and `copilot --resume=<id>`. The macOS adapter owns Apple
+Terminal.app and iTerm2 launch command construction and shell quoting for the
+same Copilot CLI commands. The public compatibility values are `default`,
+`windows-terminal`, `powershell`, `mac-terminal`, and `iterm2`; `default` means
+"choose the platform default" (prefer Windows Terminal when available, otherwise
+PowerShell on Windows; Apple Terminal.app on macOS). Terminal color support is
+adapter-dependent. Future Linux adapters should implement the same launch
+request shape rather than changing launch claims, graph binding, node launch
+records, or relaunch state.
+
+### Copilot Terminal Launch Serialization
+
+Streamliner-owned visible Copilot CLI starts are serialized through one
+process-wide queue before the terminal adapter spawns the host process. The
+queue covers graph node terminal launches, review companion terminals, session
+relaunches that run `copilot --resume=<id>`, and managed SDK terminal takeover.
+Generic terminal launches that do not start Copilot use the synchronous adapter
+directly and are not delayed.
+
+The queue waits for a configurable cooldown after each terminal spawn attempt
+returns before the next queued Copilot launch may spawn. This delay is a
+contention-reduction heuristic between terminal host starts (`wt.exe`,
+PowerShell, Apple Terminal.app, iTerm2, etc.); it is not a
+readiness proof that the nested Copilot process has finished initializing
+shared plugin or cache state. Spawn failures reject only the caller whose launch
+failed and do not poison the process-wide queue for later launches. Launch
+serialization does not read or mutate Copilot global config, marketplace cache,
+or installed plugin files.
 
 ### Operator Presence
 
@@ -1190,9 +1216,9 @@ Streamliner API process owns this action per Decision 006.
 |-------|------|-------------|
 | `sessionId` | string | Registry entry ID |
 | `cwd` | string | Resolved working directory used |
-| `method` | `"windows-terminal"` \| `"powershell"` | Terminal method used |
+| `method` | `"windows-terminal"` \| `"powershell"` \| `"mac-terminal"` \| `"iterm2"` | Terminal method used |
 | `copilotResumed` | boolean | Whether `copilot --resume=<id>` was attempted |
-| `colorApplied` | boolean | Whether tab color was applied |
+| `colorApplied` | boolean | Whether tab/session color was applied by the adapter |
 | `pid` | number \| undefined | PID of spawned terminal process |
 
 **Error response** (400 / 404 / 500):
@@ -1217,9 +1243,10 @@ No positional path argument is passed to Copilot.
 
 **Node launch display metadata**: the PAW launch dialog lets the user choose
 the terminal tab title and a color from the same quick-pick palette used by the
-Sessions view. Streamliner uses those values for the Windows Terminal tab and
-for the launch claim's reserved session row, so later claim binding can preserve
-the same display identity in Sessions. Users may also opt into launching the
+Sessions view. Streamliner passes those values to the platform terminal adapter
+and stores them on the launch claim's reserved session row, so later claim
+binding can preserve the same display identity in Sessions even when the host
+does not support every presentation hint. Users may also opt into launching the
 terminal immediately after PAW init completes, bypassing the prepared-context
 review step for routine launches.
 
@@ -1233,15 +1260,25 @@ node when present, and makes the node retryable without requiring direct state
 file edits.
 
 **Terminal selection**:
-1. If Windows Terminal (`wt.exe`) is in PATH → `wt new-tab` with `--title`,
-   `--tabColor` (valid `#RRGGBB` only), `-d <cwd>`, and optionally
+1. `default` delegates to the platform adapter. On Windows, it prefers Windows
+   Terminal (`wt.exe`) and falls back to PowerShell. On macOS, it opens
+   Apple Terminal.app.
+2. `windows-terminal` explicitly requests `wt new-tab` on Windows with
+   `--title`, `--tabColor` (valid `#RRGGBB` only), `-d <cwd>`, and optionally
    positional `pwsh.exe -NoExit -File <streamliner-launch.ps1>` against a
-   transient, self-deleting Streamliner launch script so the new tab
-   keeps the builder's Windows Terminal profile appearance while command
-   execution is explicit and not parsed as additional `wt` subcommands.
-2. Otherwise → `pwsh.exe` when available, falling back to `powershell.exe`,
-   with `-NoExit -Command "Set-Location ..."` for cwd-only launches or
-   `-NoExit -File <streamliner-launch.ps1>` for command launches.
+   transient, self-deleting Streamliner launch script so the new tab keeps the
+   builder's Windows Terminal profile appearance while command execution is
+   explicit and not parsed as additional `wt` subcommands.
+3. `powershell` explicitly requests `pwsh.exe` when available, falling back to
+   `powershell.exe`, with `-NoExit -Command "Set-Location ..."` for cwd-only
+   launches or `-NoExit -File <streamliner-launch.ps1>` for command launches.
+4. `mac-terminal` explicitly requests Apple Terminal.app on macOS. It starts in
+   the resolved `cwd` and runs the same Copilot CLI interactive or resume
+   command; title and color handling are limited to what the adapter and host
+   expose.
+5. `iterm2` explicitly requests iTerm2 on macOS. It starts in the resolved `cwd`
+   and runs the same Copilot CLI interactive or resume command; title and color
+   handling are limited to what the adapter and host expose.
 
 **Process lifecycle**: Terminals are spawned `detached` with `stdio: 'ignore'`
 and `unref()`'d so they outlive the Streamliner API process. The relaunch
@@ -1251,8 +1288,8 @@ endpoint does not track the spawned process after returning the PID.
 - No `copilotSessionId` → open terminal at cwd without resume (still a
   successful relaunch; the issue spec principle is "correct cwd beats full
   resume").
-- No Windows Terminal → PowerShell fallback.
-- Invalid or missing `color` → launch without tab color.
+- No Windows Terminal while using Windows `default` → PowerShell fallback.
+- Invalid, missing, or unsupported `color` → launch without applying terminal color.
 - Missing cwd directory → fail with `cwd_not_found`.
 
 ### Non-Mutating

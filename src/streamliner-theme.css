@@ -998,6 +998,27 @@ a.sl-action-btn {
   color: var(--sl-text-dim);
 }
 
+.sl-inspector-node-id {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--sl-text-dim);
+}
+
+.sl-inspector-node-id span {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sl-inspector-node-id code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--sl-mono);
+  color: var(--sl-text-mid);
+}
+
 .sl-inspector-github-status {
   display: inline-flex;
   flex-wrap: wrap;
@@ -1599,10 +1620,44 @@ a.sl-action-btn {
   justify-content: flex-end;
 }
 
+.sl-workstream-card-title-row {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sl-workstream-color-swatch {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(13, 20, 32, 0.16);
+  border-radius: 999px;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.76);
+}
+
+.sl-workstream-short-name {
+  max-width: 140px;
+  overflow: hidden;
+  padding: 3px 7px;
+  border: 1px solid rgba(20, 60, 130, 0.12);
+  border-radius: 999px;
+  background: rgba(29, 110, 220, 0.07);
+  color: var(--sl-text);
+  font-size: 12px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .sl-workstream-card-title {
+  min-width: 0;
+  overflow: hidden;
   color: var(--sl-text);
   font-size: 15px;
   font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sl-workstream-card-id {
@@ -1668,6 +1723,14 @@ a.sl-action-btn {
   flex-direction: column;
   gap: 6px;
   min-width: 160px;
+}
+
+.sl-session-facet-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 220px;
+  flex: 0 1 280px;
 }
 
 .sl-session-stale-input {

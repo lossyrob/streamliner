@@ -7,11 +7,11 @@ import {
 } from "./paw-review-prompt-templates";
 
 describe("review prompt template helpers", () => {
-  it("renders the GitHub issue token and leaves unknown tokens intact", () => {
+  it("renders GitHub issue and repository tokens and leaves unknown tokens intact", () => {
     expect(renderReviewPromptTemplate(
-      "Review issue {{githubIssue}} with {{unknown}}.",
-      { githubIssue: "413" },
-    )).toBe("Review issue 413 with {{unknown}}.");
+      "Review {{githubRepo}}#{{githubIssue}} with {{unknown}}.",
+      { githubIssue: "413", githubRepo: "lossyrob/streamliner" },
+    )).toBe("Review lossyrob/streamliner#413 with {{unknown}}.");
   });
 
   it("keeps the newest template by id and sorts by name", () => {

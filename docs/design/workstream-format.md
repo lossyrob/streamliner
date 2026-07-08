@@ -184,6 +184,7 @@ The graph is the structured, machine-readable representation of the workstream's
 | `createdAt` | string | ✓ | ISO 8601 timestamp |
 | `updatedAt` | string | ✓ | ISO 8601 timestamp of the last committed edit. Bump on intentional committed changes only. |
 | `trackingIssue` | object | | Tracker reference anchoring the workstream (see Tracker Reference) |
+| `presentation` | object | | Optional compact presentation metadata for dense workstream surfaces and launch defaults (see Presentation). |
 | `launchPolicy` | object | | Optional launch preconditions for this workstream (see Launch Policy). If omitted, graph launches keep the default allow behavior for ready nodes regardless of tracker type. |
 | `launchDefaults` | object | | Optional launch defaults for this workstream (see Launch Defaults). These pre-fill launch UI/API configuration without changing per-launch override behavior. |
 | `repos` | array | ✓ | Repositories involved (see Repo) |
@@ -201,6 +202,19 @@ Each design reference points to a project-level design artifact in a declared re
 | `path` | string | ✓ | Path to the design doc, relative to the repo root |
 
 Include the repo's design index when it has a design set, plus the specific docs that are likely to matter first. Do not list every document in the design corpus, and do not treat this field as an allowlist over what a worker may read.
+
+### Presentation
+
+`presentation` is an optional top-level graph configuration object for durable workstream recognition metadata.
+
+Supported fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `shortName` | string | | Compact workstream label for dense surfaces such as tracked workstream cards and terminal title templates. The launch title template variable `{workstreamShortName}` renders this value when present and falls back to `title` when omitted. |
+| `color` | `"#RRGGBB"` | | Workstream-level color used by dense workstream list surfaces and as the default terminal tab/session color for new launches. Explicit per-launch terminal colors still override this default. |
+
+Invalid colors and non-string short names are rejected when the graph is parsed. Existing graphs that still set `launchDefaults.terminal.tabColor` are interpreted as if that value were `presentation.color` when `presentation.color` is absent. Configuration saves migrate that legacy value into `presentation.color` and remove `launchDefaults.terminal.tabColor` from the rewritten graph.
 
 ### Launch Policy
 
@@ -230,8 +244,8 @@ The supported `terminal` fields are:
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `preferredTerminal` | `"default"`, `"windows-terminal"`, or `"powershell"` | | Preferred local terminal host for worker launches. If omitted or `"default"`, Streamliner uses its normal terminal selection. |
-| `titleTemplate` | string | | Default terminal tab title template. Supported variables are `{githubIssue}` (`#number` for GitHub-tracked nodes), `{nodeId}`, and `{nodeTitle}`. If omitted, launches use the selected node title unless the builder overrides the title per launch. |
-| `tabColor` | `"#RRGGBB"` | | Default terminal tab/session color for workstream launches. If omitted, launches use the existing uncolored default unless the builder chooses a color per launch. |
+| `titleTemplate` | string | | Default terminal tab title template. Supported variables are `{githubIssue}` (`#number` for GitHub-tracked nodes), `{nodeId}`, `{nodeTitle}`, and `{workstreamShortName}`. If omitted, launches use the selected node title unless the builder overrides the title per launch. |
+| `tabColor` | `"#RRGGBB"` | | Deprecated compatibility field. Use `presentation.color`; parsers and launch resolution continue to honor this value only when `presentation.color` is absent. Configuration saves migrate it out of `launchDefaults.terminal`. |
 
 Unknown terminal preference values, non-string title templates, invalid tab colors, and non-kebab-case `promptProfileId` values are rejected when the graph is parsed. Omitting `launchDefaults` preserves existing launch dialog defaults.
 

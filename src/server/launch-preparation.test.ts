@@ -19,12 +19,15 @@ import type { TerminalLaunchOptions } from "./terminal-launch";
 import {
   LaunchContextPreparationError,
   type LaunchContextPackage,
+  type LaunchContextRepoInstructions,
   type PrepareLaunchContextPackageOptions,
   type PreparedLaunchContextPackage,
 } from "./launch-context";
 import {
+  buildPawInitPrompt,
   buildStreamlinerContextSavePrompt,
   completePawInitToolParameters,
+  ensureStreamlinerContextAdditionalInput,
   preparePawLaunch,
   resolvePawWorkDirForLaunch,
   validatePawWorktreePolicy,
@@ -51,6 +54,26 @@ function createRootDir(): string {
 
 function normalizePath(path: string): string {
   return path.replace(/\\/g, "/");
+}
+
+function fakeRepoInstructions(
+  root: string,
+  overrides: Partial<LaunchContextRepoInstructions> = {},
+): LaunchContextRepoInstructions {
+  return {
+    repoId: "streamliner",
+    repoRoot: normalizePath(root),
+    path: ".github/copilot-instructions.md",
+    exists: true,
+    content: [
+      "# Repo Instructions",
+      "",
+      "- Create sibling worktrees with `script/worktree-new <name>`.",
+      "- Run the repo worktree environment helper before validation.",
+    ].join("\n"),
+    freshness: { kind: "sha256", value: "repo-instructions-hash" },
+    ...overrides,
+  };
 }
 
 function createGitRepo(root: string, originUrl: string): void {
@@ -98,6 +121,7 @@ function fakeContextPackage(
       contextPackagePath: normalizePath(contextPackagePath),
       contextFilePath: normalizePath(contextFilePath),
       contextModel: "test-model",
+      repoInstructions: fakeRepoInstructions(root),
       sourceReferences: [
         {
           kind: "tracker",
@@ -178,6 +202,7 @@ function fakePreparedContext(root: string): PreparedLaunchContextPackage {
   const contextFilePath = join(contextPackagePath, "context.md");
   const graphPath = join(root, ".streamliner", "workstreams", "session-launching-and-tracking", "graph.json");
   const workstreamDir = join(root, ".streamliner", "workstreams", "session-launching-and-tracking");
+  const repoInstructions = fakeRepoInstructions(root);
   const sourceReferences = [
     {
       kind: "graph" as const,
@@ -225,6 +250,7 @@ function fakePreparedContext(root: string): PreparedLaunchContextPackage {
         reference: sourceReferences[2],
         content: "TRACKER_BODY_SHOULD_NOT_BE_IN_INITIAL_PROMPT",
       },
+      repoInstructions,
       designSelection: [{
         repoId: "streamliner",
         path: "docs/design/session-system.md",
@@ -250,6 +276,7 @@ function fakePreparedContext(root: string): PreparedLaunchContextPackage {
       contextPackagePath: normalizePath(contextPackagePath),
       contextFilePath: normalizePath(contextFilePath),
       contextModel: "gpt-5.5",
+      repoInstructions,
       sourceReferences,
       unavailableInputs: [],
     },
@@ -264,6 +291,7 @@ function writeLaunchPolicyGraph(
   options: {
     nodeId?: string;
     tracker?: Record<string, unknown>;
+    presentation?: Record<string, unknown>;
     launchPolicy?: Record<string, unknown>;
     launchDefaults?: Record<string, unknown>;
   } = {},
@@ -312,6 +340,9 @@ function writeLaunchPolicyGraph(
   };
   if (options.launchPolicy !== undefined) {
     graph.launchPolicy = options.launchPolicy;
+  }
+  if (options.presentation !== undefined) {
+    graph.presentation = options.presentation;
   }
   if (options.launchDefaults !== undefined) {
     graph.launchDefaults = options.launchDefaults;
@@ -412,6 +443,48 @@ describe("preparePawLaunch", () => {
     );
   });
 
+  it("repairs missing Streamliner context input when PAW init leaves Additional Inputs as none", () => {
+    const repaired = ensureStreamlinerContextAdditionalInput(
+      [
+        "# WorkflowContext",
+        "",
+        "Work ID: hidden-prpr-exposure-gating",
+        "Additional Inputs: none",
+        "",
+        "## Control State",
+        "",
+        "TODO Mirror: active-required-items",
+      ].join("\n"),
+      "C:\\repo\\.paw\\work\\hidden-prpr-exposure-gating\\streamliner\\context.md",
+    );
+
+    expect(repaired.changed).toBe(true);
+    expect(repaired.content).toContain(
+      "Additional Inputs: streamliner-context=C:/repo/.paw/work/hidden-prpr-exposure-gating/streamliner/context.md",
+    );
+    expect(repaired.content).toContain("## Control State");
+  });
+
+  it("inserts Streamliner context input before control state when Additional Inputs is absent", () => {
+    const repaired = ensureStreamlinerContextAdditionalInput(
+      [
+        "# WorkflowContext",
+        "",
+        "Work ID: hidden-prpr-exposure-gating",
+        "",
+        "## Control State",
+        "",
+        "TODO Mirror: active-required-items",
+      ].join("\n"),
+      "C:\\repo\\.paw\\work\\hidden-prpr-exposure-gating\\streamliner\\context.md",
+    );
+
+    expect(repaired.changed).toBe(true);
+    expect(repaired.content).toMatch(
+      /Additional Inputs: streamliner-context=C:\/repo\/\.paw\/work\/hidden-prpr-exposure-gating\/streamliner\/context\.md\n\n## Control State/,
+    );
+  });
+
   it("puts trusted builder instructions in the first SDK prompt without source bodies", () => {
     const root = createRootDir();
     const manifestPath = join(root, "state", "copilot-sdk", "launch-manifest.json");
@@ -450,15 +523,103 @@ describe("preparePawLaunch", () => {
 
     expect(prompt).toContain("Builder launch instructions (trusted, high priority)");
     expect(prompt).toContain(workflowInstructions);
+    expect(prompt).toContain("Selected target repo Copilot instructions (.github/copilot-instructions.md)");
+    expect(prompt).toContain("script/worktree-new <name>");
     expect(prompt.indexOf("Builder launch instructions")).toBeLessThan(prompt.indexOf("Launch manifest:"));
     expect(prompt).toContain(normalizePath(manifestPath));
     expect(prompt).toContain("Do not check out the target node branch in the launch cwd.");
     expect(prompt).toContain("create or reuse a sibling worktree");
+    expect(prompt).toContain("Do not retry optional source paths that are missing or marked unavailable");
+    expect(prompt).toContain("Do not assume the selected repo has `docs/design/index.md`");
     expect(prompt).not.toContain("GRAPH_BODY_SHOULD_NOT_BE_IN_INITIAL_PROMPT");
     expect(prompt).not.toContain("BRIEF_BODY_SHOULD_NOT_BE_IN_INITIAL_PROMPT");
     expect(prompt).not.toContain("DESIGN_BODY_SHOULD_NOT_BE_IN_INITIAL_PROMPT");
     expect(prompt).not.toContain("TRACKER_BODY_SHOULD_NOT_BE_IN_INITIAL_PROMPT");
     expect(prompt).not.toContain("Source blocks are delimited");
+  });
+
+  it("puts selected repo Copilot instructions in the PAW init prompt as worktree guidance", () => {
+    const root = createRootDir();
+    const contextPackage = fakeContextPackage(root, {
+      nodeId: "launch-prompt-profiles",
+      graphPath: join(root, ".streamliner", "workstreams", "session-launching-and-tracking", "graph.json"),
+    });
+
+    const prompt = buildPawInitPrompt({
+      nodeId: "launch-prompt-profiles",
+      graphPath: contextPackage.metadata.graphPath,
+      cwd: root,
+      sessionStateRoot: join(root, "state"),
+      issueUrl: "https://github.com/lossyrob/streamliner/issues/33",
+      launchNonce: "nonce-sdk",
+      configuration: {
+        cwd: root,
+        cliArgs: ["--yolo"],
+        environment: {},
+        workflowInstructions: "Use paw-lite with final-pr-only review.",
+        terminal: {
+          launchMode: "manual",
+          preferredTerminal: "default",
+          title: null,
+          tabColor: null,
+        },
+      },
+      stagedContextPackage: contextPackage,
+      existingLaunch: null,
+    });
+
+    expect(prompt).toContain("Selected target repo Copilot instructions (.github/copilot-instructions.md)");
+    expect(prompt).toContain("Create sibling worktrees with `script/worktree-new <name>`.");
+    expect(prompt).not.toContain("use that helper to satisfy Streamliner's sibling-worktree requirement");
+    expect(prompt).not.toContain("Do not copy them into WorkflowContext.md");
+  });
+
+  it("omits repo Copilot instruction prompt text when no instructions file is loaded", () => {
+    const root = createRootDir();
+    const contextPackage = fakeContextPackage(
+      root,
+      {
+        nodeId: "launch-prompt-profiles",
+        graphPath: join(root, ".streamliner", "workstreams", "session-launching-and-tracking", "graph.json"),
+      },
+      {
+        metadata: {
+          repoInstructions: fakeRepoInstructions(root, {
+            exists: false,
+            content: undefined,
+            freshness: undefined,
+            unavailableReason: "missing",
+            unavailableDetail: "ENOENT",
+          }),
+        },
+      },
+    );
+
+    const prompt = buildPawInitPrompt({
+      nodeId: "launch-prompt-profiles",
+      graphPath: contextPackage.metadata.graphPath,
+      cwd: root,
+      sessionStateRoot: join(root, "state"),
+      launchNonce: "nonce-sdk",
+      configuration: {
+        cwd: root,
+        cliArgs: [],
+        environment: {},
+        workflowInstructions: "Use paw-lite with final-pr-only review.",
+        terminal: {
+          launchMode: "manual",
+          preferredTerminal: "default",
+          title: null,
+          tabColor: null,
+        },
+      },
+      stagedContextPackage: contextPackage,
+      existingLaunch: null,
+    });
+
+    expect(prompt).not.toContain("Selected target repo Copilot instructions");
+    expect(prompt).not.toContain(".github/copilot-instructions.md");
+    expect(prompt).not.toContain("Status: unavailable");
   });
 
   it("rejects PAW work dirs inside the launch checkout when the target branch differs", () => {
@@ -701,6 +862,30 @@ describe("preparePawLaunch", () => {
     );
   });
 
+  it.each(["mac-terminal", "iterm2"] as const)(
+    "accepts %s in launch configuration",
+    async (preferredTerminal) => {
+      const root = createRootDir();
+      const pawCalls: PawInitRunnerInput[] = [];
+
+      const result = await preparePawLaunch({
+        nodeId: "launch-prompt-profiles",
+        cwd: root,
+        stateRoot: join(root, "state"),
+        configuration: {
+          terminal: {
+            preferredTerminal,
+          },
+        },
+        pawInitRunner: createPawInitRunner(pawCalls),
+        contextPreparer: createContextPreparer(root),
+      });
+
+      expect(result.terminal.preferredTerminal).toBe(preferredTerminal);
+      expect(pawCalls[0].configuration.terminal.preferredTerminal).toBe(preferredTerminal);
+    },
+  );
+
   it("defaults launch cwd to the graph repo root when the server cwd differs", async () => {
     const root = createRootDir();
     const serverRoot = join(root, "streamliner-server");
@@ -810,6 +995,16 @@ describe("preparePawLaunch", () => {
     const graphPath = join(workstreamDir, "graph.json");
     mkdirSync(workstreamDir, { recursive: true });
     mkdirSync(join(targetRepoRoot, "docs", "design"), { recursive: true });
+    mkdirSync(join(targetRepoRoot, ".github"), { recursive: true });
+    writeFileSync(
+      join(targetRepoRoot, ".github", "copilot-instructions.md"),
+      [
+        "# Extension repo instructions",
+        "",
+        "- Create worktrees with `script/worktree-new <name>`.",
+      ].join("\n"),
+      "utf8",
+    );
     writeFileSync(
       join(orchestrationRoot, ".streamliner", "config.json"),
       JSON.stringify({
@@ -912,6 +1107,12 @@ describe("preparePawLaunch", () => {
     );
     expect(result.cwd).toBe(normalizePath(targetRepoRoot));
     expect(result.contextPackage.metadata.repoRoot).toBe(normalizePath(targetRepoRoot));
+    expect(result.contextPackage.metadata.repoInstructions).toEqual(expect.objectContaining({
+      repoId: "vs-code-postgresql",
+      repoRoot: normalizePath(targetRepoRoot),
+      path: ".github/copilot-instructions.md",
+      content: expect.stringContaining("script/worktree-new <name>"),
+    }));
     expect(result.pawWorkDir).toBe(
       normalizePath(join(targetRepoRoot, ".paw", "work", "extension-table-editing")),
     );
@@ -1014,9 +1215,13 @@ describe("preparePawLaunch", () => {
       launchDefaults: {
         terminal: {
           preferredTerminal: "windows-terminal",
-          titleTemplate: "{githubIssue} - {nodeTitle}",
+          titleTemplate: "{workstreamShortName} - {githubIssue} - {nodeTitle}",
           tabColor: "#4891c8",
         },
+      },
+      presentation: {
+        shortName: "SLT",
+        color: "#41b878",
       },
     });
 
@@ -1034,14 +1239,73 @@ describe("preparePawLaunch", () => {
 
     expect(result.terminal).toEqual(expect.objectContaining({
       preferredTerminal: "windows-terminal",
-      title: "#33 - Launch prompt profiles",
+      title: "SLT - #33 - Launch prompt profiles",
       tabColor: "#ff8c0a",
     }));
     expect(pawInitCalls[0].configuration.terminal).toEqual(expect.objectContaining({
       preferredTerminal: "windows-terminal",
-      title: "#33 - Launch prompt profiles",
+      title: "SLT - #33 - Launch prompt profiles",
       tabColor: "#ff8c0a",
     }));
+  });
+
+  it("defaults terminal color from workstream presentation before legacy tab color", async () => {
+    const root = createRootDir();
+    const graphPath = writeLaunchPolicyGraph(root, {
+      tracker: {
+        type: "github",
+        owner: "lossyrob",
+        repo: "streamliner",
+        number: 33,
+      },
+      presentation: {
+        color: "#41b878",
+      },
+      launchDefaults: {
+        terminal: {
+          tabColor: "#4891c8",
+        },
+      },
+    });
+
+    const result = await preparePawLaunch({
+      nodeId: "launch-prompt-profiles",
+      graphPath,
+      cwd: root,
+      stateRoot: join(root, "state"),
+      pawInitRunner: createPawInitRunner(),
+      contextPreparer: createContextPreparer(root),
+    });
+
+    expect(result.terminal.tabColor).toBe("#41b878");
+  });
+
+  it("uses legacy launch default tab color when presentation color is absent", async () => {
+    const root = createRootDir();
+    const graphPath = writeLaunchPolicyGraph(root, {
+      tracker: {
+        type: "github",
+        owner: "lossyrob",
+        repo: "streamliner",
+        number: 33,
+      },
+      launchDefaults: {
+        terminal: {
+          tabColor: "#4891c8",
+        },
+      },
+    });
+
+    const result = await preparePawLaunch({
+      nodeId: "launch-prompt-profiles",
+      graphPath,
+      cwd: root,
+      stateRoot: join(root, "state"),
+      pawInitRunner: createPawInitRunner(),
+      contextPreparer: createContextPreparer(root),
+    });
+
+    expect(result.terminal.tabColor).toBe("#4891c8");
   });
 
   it("validates launch configuration field types", async () => {
@@ -1078,6 +1342,7 @@ describe("preparePawLaunch", () => {
       }),
     ).rejects.toMatchObject({
       code: "invalid_launch_configuration",
+      message: "configuration.terminal.preferredTerminal must be one of: default, windows-terminal, powershell, mac-terminal, iterm2.",
       statusCode: 400,
       step: "validation",
       input: "configuration.terminal.preferredTerminal",
@@ -1467,11 +1732,11 @@ describe("launch preparation API route", () => {
       preferredTerminal: "default",
     }));
     expect(terminalLaunches[1]).toEqual(expect.objectContaining({
-      title: "Server Launch Review",
+      title: "Server Launch REVIEW",
       tabColor: "#123abc",
     }));
     expect(String(terminalLaunches[1].command)).toContain("--agent=PAW-Review");
-    expect(String(terminalLaunches[1].command)).toContain("Review the prepared implementation.");
+    expect(String(terminalLaunches[1].command)).toContain("-i");
 
     expect(snapshot.body).toEqual(expect.objectContaining({
       status: "succeeded",
@@ -1509,6 +1774,86 @@ describe("launch preparation API route", () => {
       }),
       companionError: null,
     }));
+  });
+
+  it("launches an ad hoc post-preparation companion without PAW-Review agent injection", async () => {
+    const root = createRootDir();
+    const graphPath = normalizePath(writeLaunchPolicyGraph(root));
+    const store = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const terminalLaunches: TerminalLaunchOptions[] = [];
+    const api = createStreamlinerApiApp({
+      store,
+      launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
+      nodeLaunchDeps: {
+        launchTerminal: (options) => {
+          terminalLaunches.push(options);
+          return { method: "powershell", pid: 720 + terminalLaunches.length };
+        },
+      },
+      launchPreparationDeps: {
+        cwd: root,
+        stateRoot: join(root, "state"),
+        pawInitRunner: createPawInitRunner(),
+        contextPreparer: createContextPreparer(root),
+      },
+    });
+    activeApps.push(api);
+
+    const started = await request(api.app)
+      .post("/api/launch-preparations/runs")
+      .send({
+        nodeId: "launch-prompt-profiles",
+        graphPath,
+        configuration: {
+          cliArgs: ["--yolo"],
+          workflowInstructions: "Use PAW with local final-pr-only review.",
+        },
+        postPreparation: {
+          launchTerminal: {
+            terminalTitle: "Server Launch",
+          },
+          launchCompanion: {
+            kickoffPrompt: "Review the prepared implementation.",
+            usePawReviewAgent: false,
+          },
+        },
+      })
+      .expect(202);
+
+    expect(started.body.operation).toEqual(expect.objectContaining({
+      postPreparation: expect.objectContaining({
+        launchCompanion: {
+          kickoffPrompt: "Review the prepared implementation.",
+          usePawReviewAgent: false,
+        },
+      }),
+    }));
+
+    const snapshot = await waitForLaunchPreparationRun(api, started.body.runId);
+
+    expect(terminalLaunches).toHaveLength(2);
+    expect(String(terminalLaunches[1].command)).not.toContain("--agent=PAW-Review");
+    expect(String(terminalLaunches[1].command)).toContain("--yolo");
+    expect(snapshot.body).toEqual(expect.objectContaining({
+      status: "succeeded",
+      postPreparation: expect.objectContaining({
+        companion: expect.objectContaining({ status: "launched" }),
+      }),
+    }));
+
+    const launchRecord = await request(api.app)
+      .get("/api/node-launch-records")
+      .query({
+        graphPath,
+        nodeId: "launch-prompt-profiles",
+      })
+      .expect(200);
+    expect(launchRecord.body.operation.postPreparation.launchCompanion).toEqual({
+      kickoffPrompt: "Review the prepared implementation.",
+      usePawReviewAgent: false,
+    });
   });
 
   it("reports terminal post-preparation failures and skips companion launch", async () => {

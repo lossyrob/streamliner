@@ -116,6 +116,26 @@ and later materializes related entries into a normal closeout node with a tracke
 issue when that is more efficient than many small worker launches, usually near a
 gate or closure point.
 
+The canonical brief heading for new workstreams is `## Closeout Observations`.
+Older or adjacent workstreams may use equivalent closure parking lanes such as
+`Closeout Punch List`, coverage-routing reports, or named closeout checklists.
+Treat those lanes as closeout observations when they collect bounded closure
+items that must be completed, deferred, promoted, or dropped before final
+closure. Do not ignore closure work solely because the heading predates this
+doctrine.
+
+Some workstreams use `Closeout Observations` as a running narrative log of
+field-report lessons rather than as a closure punch list. The closure-gate rule
+applies to actionable closure items, not to every narrative observation bullet.
+If a narrative observation became a lesson, reflect it in the reconciliation
+note's learning sections or promotion candidates; if it records an accepted
+residual or deferral, disposition it in `Closeout observation dispositions`.
+
+Some workstreams legitimately have no separate closeout lane. If bounded closure
+items were resolved inline through the brief's `Decisions` section, graph status
+changes, or normal node closure, and no separate parking lane exists, this rule
+is vacuously satisfied.
+
 The closeout observation lane is gate-owned and conditional. Do not create an
 empty closeout node just because the workstream is nearing closure. The closure
 gate asks whether any closeout work remains. If none exists, the gate can pass.
@@ -137,7 +157,7 @@ The normal process is:
 Each closeout observation should eventually be one of:
 
 - **completed** in the closeout batch;
-- **deferred** explicitly with rationale;
+- **deferred** explicitly with rationale, which is a closed disposition;
 - **promoted** to its own node, tracker issue, candidate, or follow-on workstream;
 - **dropped** because it no longer matters after reconciliation.
 
@@ -345,24 +365,58 @@ the builder learn why reality diverged from the plan.
 ### Reconciliation notes and promotion
 
 When a wave, gate, hot-work burst, or completed workstream teaches something
-about the work geometry, reconciliation should be able to emit a compact
-reconciliation note. This is not a generic retrospective. It is a lower-authority
-learning artifact about boundaries, contracts, context gaps, gate timing,
-attention allocation, and downstream impact.
+about the work geometry, reconciliation emits a compact reconciliation note: a
+lower-authority learning artifact about boundaries, contracts, context gaps,
+gate timing, attention allocation, and downstream impact, written from
+plan/reality divergence rather than as a completed-work inventory.
 
-A reconciliation note can include:
+The note is a durable workstream artifact at
+`<workstream>/reconciliation-note.md`, rewritten in place. Its structure,
+disposition vocabulary, promotion targets, and worked examples live in
+[WORKSTREAM-FORMAT.md](WORKSTREAM-FORMAT.md#the-reconciliation-note-reconciliation-notemd);
+this section covers only when the note is produced and how it gates closure.
 
-- what changed;
-- which boundaries held, leaked, or needed expansion;
-- which contracts or exports were missing, underdefined, or validated;
-- what context was stale, missing, or over-prescriptive;
-- what future shaping should preserve or change;
-- promotion candidates.
+#### When it is produced
 
-Promotion keeps authority explicit. A lesson may remain a notebook lesson, become
-a workstream-local brief decision, turn into node-spec guidance, become a
-checkpoint contract, or be promoted into the design layer or a decision record.
-Nothing becomes authoritative merely because an agent wrote it down.
+| Trigger | Reconciliation note expectation |
+|---|---|
+| Final closure gate | **Required.** Closure does not pass until the note exists and every promotion candidate has an explicit disposition. |
+| Wave or checkpoint gate where the work taught something nontrivial | **Recommended.** Extend the existing note in place. |
+| Hot-work burst that changed plan or scope | **Recommended** when the lesson is durable enough to inform future shaping. |
+| Routine reconciliation with no learning to record | None required. The note should not be edited just to prove reconciliation happened. |
+
+#### Closure-gate rule
+
+A workstream's final closure gate does not pass until:
+
+1. `reconciliation-note.md` exists for this workstream.
+2. Every actionable closeout observation — in the brief's `Closeout
+   Observations` or an equivalent closure lane — has a disposition.
+3. Every promotion candidate in the note has an explicit disposition.
+
+See the [reconciliation note spec](WORKSTREAM-FORMAT.md#the-reconciliation-note-reconciliation-notemd)
+for what counts as a valid disposition, including why `deferred with rationale`
+is a closed disposition and where closeout-observation dispositions are recorded.
+These rules apply to *the closure gate*, not to every reconciliation pass: a
+mid-workstream reconciliation that does not change the closure picture does not
+need to revise the note.
+
+#### Promotion
+
+Promotion keeps authority explicit — nothing becomes authoritative merely
+because an agent wrote it down. Each promotion candidate names a target authority
+(a brief decision, node-spec guidance, a design doc or decision record, a shaping
+candidate, or a workstream-design lesson) so its disposition is verifiable. The
+[reconciliation note spec](WORKSTREAM-FORMAT.md#the-reconciliation-note-reconciliation-notemd)
+defines the full target list and how workstream-design lessons accumulate before
+they earn promotion.
+
+#### Distinct from any closeout narrative
+
+A workstream may also produce a longer-form prose narrative under `docs/` for
+reflective consumption. That artifact is optional, story-shaped, and never
+satisfies the closure-gate rule — the reconciliation note does. The two can
+reference each other but serve different audiences.
 
 ## Authority boundaries
 
