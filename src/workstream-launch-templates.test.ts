@@ -24,10 +24,21 @@ describe("renderWorkstreamTerminalTitleTemplate", () => {
   it("renders supported terminal title template values", () => {
     expect(
       renderWorkstreamTerminalTitleTemplate(
-        "{githubIssue} - {nodeId} - {nodeTitle}",
+        "{githubIssue} - {nodeId} - {nodeTitle} - {workstreamShortName}",
         node,
+        { title: "Session launching and tracking", presentation: { shortName: "SLT" } },
       ),
-    ).toBe("#47 - tracker-required-launch-policy - Tracker-required launch policy");
+    ).toBe("#47 - tracker-required-launch-policy - Tracker-required launch policy - SLT");
+  });
+
+  it("falls back to the full workstream title for missing short names", () => {
+    expect(
+      renderWorkstreamTerminalTitleTemplate(
+        "{workstreamShortName} - {nodeTitle}",
+        node,
+        { title: "Session launching and tracking" },
+      ),
+    ).toBe("Session launching and tracking - Tracker-required launch policy");
   });
 
   it("leaves unknown template values literal and returns null for empty output", () => {

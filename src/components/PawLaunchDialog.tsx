@@ -39,6 +39,7 @@ export interface PawTerminalLaunchInput {
   terminalColor: string | null;
   reviewCompanion: {
     kickoffPrompt: string;
+    usePawReviewAgent: boolean;
   } | null;
 }
 
@@ -53,6 +54,9 @@ interface PawLaunchDialogProps {
   nodeTitle: string;
   defaults: PawLaunchDialogDefaults;
   defaultPromptProfileId?: string | null;
+  defaultLaunchAfterInit?: boolean;
+  defaultReviewCompanion?: boolean;
+  defaultReviewPromptTemplateId?: string | null;
   promptProfiles?: PawPromptProfile[];
   promptProfilesLoading?: boolean;
   promptProfilesError?: string | null;
@@ -107,6 +111,8 @@ const TERMINAL_OPTIONS: Option<PreferredTerminal>[] = [
   { value: "default", label: "Default" },
   { value: "windows-terminal", label: "Windows Terminal" },
   { value: "powershell", label: "PowerShell" },
+  { value: "mac-terminal", label: "macOS Terminal" },
+  { value: "iterm2", label: "iTerm2" },
 ];
 
 const RUNTIME_OPTIONS: Array<{
@@ -310,6 +316,9 @@ export function PawLaunchDialog({
   nodeTitle,
   defaults,
   defaultPromptProfileId = null,
+  defaultLaunchAfterInit = false,
+  defaultReviewCompanion = false,
+  defaultReviewPromptTemplateId = null,
   promptProfiles = [],
   promptProfilesLoading = false,
   promptProfilesError = null,
@@ -354,8 +363,10 @@ export function PawLaunchDialog({
   const [terminalColor, setTerminalColor] = useState(defaults.terminal.tabColor ?? "");
   const [terminalTitleEdited, setTerminalTitleEdited] = useState(false);
   const [terminalColorEdited, setTerminalColorEdited] = useState(false);
-  const [launchAfterInit, setLaunchAfterInit] = useState(false);
-  const [terminalLaunchAfterInitPreference, setTerminalLaunchAfterInitPreference] = useState(false);
+  const [launchAfterInit, setLaunchAfterInit] = useState(defaultLaunchAfterInit);
+  const [terminalLaunchAfterInitPreference, setTerminalLaunchAfterInitPreference] = useState(
+    defaultLaunchAfterInit,
+  );
   const submittingRef = useRef(false);
   const [profiles, setProfiles] = useState<PawPromptProfile[]>(() =>
     mergePromptProfiles([], promptProfiles)
@@ -374,7 +385,8 @@ export function PawLaunchDialog({
   const [reviewTemplateBusy, setReviewTemplateBusy] = useState(false);
   const [reviewTemplateStatus, setReviewTemplateStatus] = useState<string | null>(null);
   const [reviewTemplateError, setReviewTemplateError] = useState<string | null>(null);
-  const [reviewCompanionEnabled, setReviewCompanionEnabled] = useState(false);
+  const [reviewCompanionEnabled, setReviewCompanionEnabled] = useState(defaultReviewCompanion);
+  const [reviewCompanionUsePawReviewAgent, setReviewCompanionUsePawReviewAgent] = useState(true);
   const [workflowContext, setWorkflowContext] = useState<WorkflowContextDocument | null>(null);
   const [workflowContextText, setWorkflowContextText] = useState("");
   const [workflowContextLoading, setWorkflowContextLoading] = useState(false);
@@ -428,6 +440,7 @@ export function PawLaunchDialog({
       defaults.githubIssueNumber !== undefined
     ? renderReviewPromptTemplate(trimmedReviewTemplatePrompt, {
       githubIssue: String(defaults.githubIssueNumber),
+      githubRepo: defaults.githubIssueRepo ?? "",
     })
     : "";
   const terminalColorValue = terminalColor.trim();
@@ -461,6 +474,28 @@ export function PawLaunchDialog({
     setProfileName(defaultProfile.name);
     setWorkflowInstructions(defaultProfile.instructions);
   }, [defaultPromptProfileId, profiles]);
+
+  const defaultReviewTemplateAppliedRef = useRef(false);
+  const reviewTemplateSelectionTouchedRef = useRef(false);
+  useEffect(() => {
+    if (
+      defaultReviewTemplateAppliedRef.current ||
+      reviewTemplateSelectionTouchedRef.current ||
+      !defaultReviewPromptTemplateId
+    ) {
+      return;
+    }
+    const defaultTemplate = reviewTemplates.find(
+      (template) => template.id === defaultReviewPromptTemplateId,
+    );
+    if (!defaultTemplate) {
+      return;
+    }
+    defaultReviewTemplateAppliedRef.current = true;
+    setReviewTemplateId(defaultTemplate.id);
+    setReviewTemplateName(defaultTemplate.name);
+    setReviewTemplatePrompt(defaultTemplate.prompt);
+  }, [defaultReviewPromptTemplateId, reviewTemplates]);
 
   useEffect(() => {
     if (!handoff) {
@@ -582,6 +617,7 @@ export function PawLaunchDialog({
   };
 
   const applyReviewTemplate = (templateId: string) => {
+    reviewTemplateSelectionTouchedRef.current = true;
     setReviewTemplateId(templateId);
     setReviewTemplateStatus(null);
     setReviewTemplateError(null);
@@ -705,7 +741,10 @@ export function PawLaunchDialog({
         },
         launchAfterInit: managedRuntimeSelected ? false : launchAfterInit,
         reviewCompanion: reviewCompanionEnabled
-          ? { kickoffPrompt: renderedReviewCompanionPrompt }
+          ? {
+              kickoffPrompt: renderedReviewCompanionPrompt,
+              usePawReviewAgent: reviewCompanionUsePawReviewAgent,
+            }
           : null,
       });
     } finally {
@@ -1018,12 +1057,13 @@ export function PawLaunchDialog({
                 options={TERMINAL_OPTIONS}
                 onChange={(value) => setTerminal((current) => ({ ...current, preferredTerminal: value }))}
               />
-              <TextField
+              <TextAreaField
                 label="Copilot CLI args"
                 ariaLabel="Copilot CLI args"
                 value={cliArgsText}
                 onChange={setCliArgsText}
-                placeholder="Leave empty for no CLI args"
+                placeholder={"Leave empty for no CLI args\n--yolo\n--model=gpt-5.5"}
+                rows={3}
               />
               <div className="sl-field sl-paw-launch-color-field">
                 <span>Terminal tab color</span>
@@ -1076,6 +1116,26 @@ export function PawLaunchDialog({
                   </small>
                 </span>
               </label>
+              {reviewCompanionEnabled && (
+                <label className="sl-checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={reviewCompanionUsePawReviewAgent}
+                    disabled={busy || Boolean(terminalLaunchResult)}
+                    aria-label="Use PAW-Review agent"
+                    onChange={(event) =>
+                      setReviewCompanionUsePawReviewAgent(event.target.checked)
+                    }
+                  />
+                  <span>
+                    <strong>Use PAW-Review agent</strong>
+                    <small>
+                      Adds <code>--agent=PAW-Review</code>. Turn this off for ad hoc review
+                      terminals that should use the default Copilot session behavior.
+                    </small>
+                  </span>
+                </label>
+              )}
               {reviewCompanionEnabled && (
                 <div className="sl-paw-profile-tools">
                   <label className="sl-field">
@@ -1132,13 +1192,16 @@ export function PawLaunchDialog({
                     value={reviewTemplatePrompt}
                     onChange={setReviewTemplatePrompt}
                     rows={8}
-                    placeholder="Example: GitHub Issue: #{{githubIssue}}"
+                    placeholder="Example: Review {{githubRepo}}#{{githubIssue}}"
                   />
                   <p className="sl-field-note">
                     Uses <code>{"{{githubIssue}}"}</code> for the selected node's issue number
                     {typeof defaults.githubIssueNumber === "number"
-                      ? ` (${defaults.githubIssueNumber}).`
-                      : "."}
+                      ? ` (${defaults.githubIssueNumber})`
+                      : ""}
+                    {" and "}
+                    <code>{"{{githubRepo}}"}</code> for the tracker repository
+                    {defaults.githubIssueRepo ? ` (${defaults.githubIssueRepo}).` : "."}
                   </p>
                 </>
               )}
@@ -1411,7 +1474,10 @@ export function PawLaunchDialog({
                   terminalTitle: trimmedTerminalTitle,
                   terminalColor: terminalTabColor,
                   reviewCompanion: reviewCompanionEnabled
-                    ? { kickoffPrompt: renderedReviewCompanionPrompt }
+                    ? {
+                        kickoffPrompt: renderedReviewCompanionPrompt,
+                        usePawReviewAgent: reviewCompanionUsePawReviewAgent,
+                      }
                     : null,
                 })
               }

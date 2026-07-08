@@ -13,7 +13,9 @@ import type { ManagedCleanupDeps } from "./managed-cleanup";
 import { getApiLogger } from "./logger";
 import { createAccessLogMiddleware } from "./middleware/access-log";
 import { NodeLaunchRecordStore } from "./node-launch-record-store";
+import type { GithubStatusServiceOptions } from "./github-status-service";
 import { createGraphRouter } from "./routes/graph";
+import { createGithubStatusRouter } from "./routes/github-status";
 import {
   createLaunchContextsRouter,
   type LaunchContextRouteDeps,
@@ -35,6 +37,7 @@ import { createSessionLaunchSettingsRouter } from "./routes/session-launch-setti
 import { createSessionsRouter } from "./routes/sessions";
 import { createWorkstreamsRouter } from "./routes/workstreams";
 import { SessionRegistryEventStream } from "./session-events";
+import { WorkstreamEventStream } from "./workstream-events";
 import type { NodeLaunchDeps } from "./node-launch";
 import { DefaultManagedSdkRunner } from "./managed-sdk-runner";
 import { ManagedRuntimePatchCoalescer } from "./managed-runtime-patch-coalescer";
@@ -48,6 +51,7 @@ import {
 export interface StreamlinerApiApp {
   app: Express;
   eventStream: SessionRegistryEventStream;
+  workstreamEventStream: WorkstreamEventStream;
   close: () => void;
 }
 
@@ -86,6 +90,10 @@ export interface StreamlinerApiAppOptions {
    * `GET /api/launch-claims[/:id]` for diagnostic UI consumption. */
   launchClaimStore?: LaunchClaimStore;
   nodeLaunchDeps?: NodeLaunchDeps;
+  githubStatusDeps?: GithubStatusServiceOptions;
+  workstreamEventDebounceMs?: number;
+  workstreamEventWatchIntervalMs?: number;
+  workstreamEventHeartbeatIntervalMs?: number;
 }
 
 const malformedJsonHandler: ErrorRequestHandler = (error, _req, res, next) => {
@@ -120,6 +128,15 @@ export function createStreamlinerApiApp(
   const app = express();
   const store = options.store ?? getSessionRegistryStore();
   const eventStream = new SessionRegistryEventStream(store);
+  const workstreamEventStream = new WorkstreamEventStream({
+    registryPath: options.workstreamRegistryPath,
+    sourceRegistryPath: options.workstreamSourceRegistryPath,
+    recentsPath: options.recentsPath,
+    now: options.now,
+    debounceMs: options.workstreamEventDebounceMs,
+    watchIntervalMs: options.workstreamEventWatchIntervalMs,
+    heartbeatIntervalMs: options.workstreamEventHeartbeatIntervalMs,
+  });
   const nodeLaunchRecordStore = options.launchPreparationDeps?.nodeLaunchRecordStore
     ?? new NodeLaunchRecordStore({
       recordsPath: options.nodeLaunchRecordsPath ?? (
@@ -130,9 +147,9 @@ export function createStreamlinerApiApp(
     });
   // Recover orphaned launch operations from the previous API process.
   // LaunchPreparationRunManager state lives in memory only, so any operation
-  // persisted as `preparing`/`launching`/`managed_starting` at the moment the
-  // server restarts has no live run to attach to. Mark them failed up front so
-  // the UI doesn't render them as forever-stuck.
+  // persisted as active or prepared with pending post-preparation launch intent
+  // at the moment the server restarts has no live run to attach to. Mark them
+  // failed up front so the UI doesn't render them as forever-stuck.
   void nodeLaunchRecordStore
     .recoverOrphanedOperations()
     .then((recovered) => {
@@ -180,6 +197,7 @@ export function createStreamlinerApiApp(
       logger: getApiLogger().withScope("http"),
       skip: (path) =>
         path.startsWith(`${SESSION_REGISTRY_API_BASE_PATH}/events`) ||
+        path.startsWith("/api/workstreams/events") ||
         /^\/api\/launch-preparations\/runs\/[^/]+\/events(?:\?|$)/.test(path),
     }),
   );
@@ -187,6 +205,7 @@ export function createStreamlinerApiApp(
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true });
   });
+  app.get("/api/workstreams/events", workstreamEventStream.handle);
   if (options.readonlyMode) {
     app.use((req, res, next) => {
       if (READONLY_METHODS.has(req.method)) {
@@ -214,6 +233,12 @@ export function createStreamlinerApiApp(
     createGraphRouter({
       defaultGraphPath: options.graphPath,
       recentsPath: options.recentsPath,
+    }),
+  );
+  app.use(
+    "/api",
+    createGithubStatusRouter({
+      serviceOptions: options.githubStatusDeps,
     }),
   );
   app.use(
@@ -254,6 +279,9 @@ export function createStreamlinerApiApp(
       deps: {
         ...options.launchPreparationDeps,
         nodeLaunchRecordStore,
+        registryStore: store instanceof SessionRegistryFileStore ? store : undefined,
+        launchClaimStore: options.launchClaimStore,
+        nodeLaunchDeps,
         loadDefaultCliArgs: options.launchPreparationDeps?.loadDefaultCliArgs
           ?? (async () => {
             const settings = await readSessionLaunchSettings(options.sessionLaunchSettingsPath);
@@ -286,6 +314,8 @@ export function createStreamlinerApiApp(
     "/api",
     createCompanionTerminalLaunchesRouter({
       launchTerminal: options.nodeLaunchDeps?.launchTerminal,
+      registryStore: store instanceof SessionRegistryFileStore ? store : undefined,
+      claimStore: options.launchClaimStore,
     }),
   );
   app.use(
@@ -348,6 +378,10 @@ export function createStreamlinerApiApp(
   return {
     app,
     eventStream,
-    close: () => eventStream.close(),
+    workstreamEventStream,
+    close: () => {
+      eventStream.close();
+      workstreamEventStream.close();
+    },
   };
 }

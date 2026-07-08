@@ -73,6 +73,27 @@ describe("session registry client helpers", () => {
     })).toBe(false);
   });
 
+  it("matches the Copilot session ID (full or substring) in query text filters", () => {
+    const session = buildSession({
+      copilotSessionId: "278f46fd-bb98-4f50-b133-96ee1ded3d16",
+    });
+    // Full ID lookup is the primary use case (paste a session ID into the
+    // sessions filter to find the row that maps to that Copilot session).
+    expect(sessionMatchesQuery(session, {
+      text: "278f46fd-bb98-4f50-b133-96ee1ded3d16",
+    })).toBe(true);
+    // Substring also matches so prefix typing narrows results progressively.
+    expect(sessionMatchesQuery(session, { text: "278f46fd" })).toBe(true);
+    // Case-insensitive (matches the rest of the filter haystacks).
+    expect(sessionMatchesQuery(session, { text: "278F46FD" })).toBe(true);
+    // Sessions without a copilotSessionId still respond to other haystacks
+    // and don't accidentally match an arbitrary UUID.
+    const noCopilot = buildSession({ copilotSessionId: null });
+    expect(sessionMatchesQuery(noCopilot, {
+      text: "278f46fd-bb98-4f50-b133-96ee1ded3d16",
+    })).toBe(false);
+  });
+
   it("rejects runtime update payloads with unsupported runtime enums", () => {
     expect(runtimeUpdatedPayload({
       registryId: "managed-row",

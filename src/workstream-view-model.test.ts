@@ -74,7 +74,7 @@ describe("parseWorkstreamDocument launchDefaults", () => {
       launchDefaults: {
         promptProfileId: "final-pr-only",
         terminal: {
-          preferredTerminal: "windows-terminal",
+          preferredTerminal: "mac-terminal",
           titleTemplate: "{githubIssue} - {nodeTitle}",
           tabColor: "#4891C8",
         },
@@ -84,11 +84,32 @@ describe("parseWorkstreamDocument launchDefaults", () => {
     expect(parsed.launchDefaults).toEqual({
       promptProfileId: "final-pr-only",
       terminal: {
-        preferredTerminal: "windows-terminal",
+        preferredTerminal: "mac-terminal",
         titleTemplate: "{githubIssue} - {nodeTitle}",
         tabColor: "#4891c8",
       },
     });
+    expect(parsed.presentation).toEqual({ color: "#4891c8" });
+  });
+
+  it("accepts every terminal preference value", () => {
+    const preferences = [
+      "default",
+      "windows-terminal",
+      "powershell",
+      "mac-terminal",
+      "iterm2",
+    ] as const;
+
+    for (const preferredTerminal of preferences) {
+      const parsed = parseWorkstreamDocument(graph({
+        launchDefaults: {
+          terminal: { preferredTerminal },
+        },
+      }));
+
+      expect(parsed.launchDefaults?.terminal?.preferredTerminal).toBe(preferredTerminal);
+    }
   });
 
   it("rejects invalid terminal defaults", () => {
@@ -102,8 +123,55 @@ describe("parseWorkstreamDocument launchDefaults", () => {
         },
       }))
     ).toThrow(
-      "Expected workstream.launchDefaults.terminal.preferredTerminal to be one of: default, windows-terminal, powershell.",
+      "Expected workstream.launchDefaults.terminal.preferredTerminal to be one of: default, windows-terminal, powershell, mac-terminal, iterm2.",
     );
+  });
+
+  describe("parseWorkstreamDocument presentation", () => {
+    it("parses workstream presentation metadata", () => {
+      const parsed = parseWorkstreamDocument(graph({
+        presentation: {
+          shortName: "API",
+          color: "#FF8C0A",
+        },
+      }));
+
+      expect(parsed.presentation).toEqual({
+        shortName: "API",
+        color: "#ff8c0a",
+      });
+    });
+
+    it("prefers presentation color over legacy terminal tab color", () => {
+      const parsed = parseWorkstreamDocument(graph({
+        presentation: {
+          shortName: "API",
+          color: "#41b878",
+        },
+        launchDefaults: {
+          terminal: {
+            tabColor: "#4891c8",
+          },
+        },
+      }));
+
+      expect(parsed.presentation).toEqual({
+        shortName: "API",
+        color: "#41b878",
+      });
+      expect(parsed.launchDefaults?.terminal?.tabColor).toBe("#4891c8");
+    });
+
+    it("rejects invalid presentation fields", () => {
+      expect(() =>
+        parseWorkstreamDocument(graph({
+          presentation: {
+            shortName: "",
+            color: "blue",
+          },
+        }))
+      ).toThrow("Expected workstream.presentation.shortName to be a non-empty string.");
+    });
   });
 
   it("rejects invalid prompt profile defaults", () => {

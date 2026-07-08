@@ -230,6 +230,8 @@ describe("copilot session discovery", () => {
         "cwd: C:\\Users\\robemanuele\\proj\\planning",
         "repository: lossyrob/planning",
         "branch: main",
+        "name: Session Rename Command Title",
+        "user_named: true",
         "summary: Plan Manual Session Titles",
         "updated_at: 2026-04-27T13:05:00.000Z",
       ].join("\n"),
@@ -238,8 +240,32 @@ describe("copilot session discovery", () => {
     expect(syncDiscoveredCopilotSessions(store, sessionRoot)).toBe(1);
     expect(store.getSession("trusted-planning-session")).toEqual(
       expect.objectContaining({
-        title: "Plan Manual Session Titles",
+        title: "Session Rename Command Title",
         titleSource: "auto",
+      }),
+    );
+
+    writeWorkspaceFile(
+      sessionRoot,
+      "trusted-planning-session",
+      [
+        "id: trusted-planning-session",
+        "cwd: C:\\Users\\robemanuele\\proj\\planning",
+        "repository: lossyrob/planning",
+        "branch: main",
+        "name: Updated Session Rename Command Title",
+        "user_named: true",
+        "summary: Plan Manual Session Titles",
+        "updated_at: 2026-04-27T13:07:00.000Z",
+      ].join("\n"),
+      { active: true },
+    );
+    expect(syncDiscoveredCopilotSessions(store, sessionRoot)).toBe(1);
+    expect(store.getSession("trusted-planning-session")).toEqual(
+      expect.objectContaining({
+        title: "Updated Session Rename Command Title",
+        titleSource: "auto",
+        lastSeenAt: "2026-04-27T13:07:00.000Z",
       }),
     );
 
@@ -252,6 +278,8 @@ describe("copilot session discovery", () => {
         "cwd: C:\\Users\\robemanuele\\proj\\planning",
         "repository: lossyrob/planning",
         "branch: feature/title-refresh",
+        "name: Copilot Rename Should Not Override Streamliner Title",
+        "user_named: true",
         "summary: Updated Copilot Workspace Title",
         "updated_at: 2026-04-27T13:10:00.000Z",
       ].join("\n"),
@@ -264,6 +292,39 @@ describe("copilot session discovery", () => {
         title: "My planning terminal",
         titleSource: "user",
         branch: "feature/title-refresh",
+      }),
+    );
+
+    const launched = store.upsertSession({
+      id: "workstream-launched-session",
+      title: "Workstream launch title",
+      description: "Launched from a workstream node",
+      cwd: "C:\\Users\\robemanuele\\proj\\planning",
+      repo: "lossyrob/planning",
+      branch: "main",
+      origin: {
+        kind: "launched",
+        launchClaimId: "claim-1",
+      },
+      graphBinding: {
+        workstreamId: "session-launching-and-tracking",
+        nodeId: "launch-node",
+        launchClaimId: "claim-1",
+      },
+    });
+    expect(launched.titleSource).toBe("user");
+    store.attachObservedSession("workstream-launched-session", {
+      copilotSessionId: "workstream-launched-copilot-session",
+      title: "Copilot rename should not override launch title",
+      cwd: "C:\\Users\\robemanuele\\proj\\planning",
+      repo: "lossyrob/planning",
+      branch: "main",
+    });
+    expect(store.getSession("workstream-launched-session")).toEqual(
+      expect.objectContaining({
+        title: "Workstream launch title",
+        titleSource: "user",
+        copilotSessionId: "workstream-launched-copilot-session",
       }),
     );
   });

@@ -1,3 +1,5 @@
+import type { WorkstreamPresentation } from "./workstream-schema";
+
 export const WORKSTREAM_REGISTRY_SCHEMA_VERSION = 1 as const;
 export const WORKSTREAM_SOURCE_REGISTRY_SCHEMA_VERSION = 1 as const;
 
@@ -69,6 +71,7 @@ export interface WorkstreamRegistryEntry {
   workstreamId: string;
   title: string;
   summary: string;
+  presentation?: WorkstreamPresentation;
   path: string;
   browserDirectoryKey?: string;
   browserDirectoryName?: string;

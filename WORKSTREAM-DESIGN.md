@@ -18,6 +18,8 @@ This document complements:
   worker roles.
 - [ORCHESTRATION.md](ORCHESTRATION.md), which describes node creation,
   reconciliation, and wave progression.
+- [VALIDATION-LOOPS.md](VALIDATION-LOOPS.md), which describes the intent and
+  operating shape of validation-loop waves.
 - [NODE-SPEC-FORMAT.md](NODE-SPEC-FORMAT.md), which defines the mission-type
   order a worker receives for one node.
 - [WORKSTREAM-FORMAT.md](WORKSTREAM-FORMAT.md), which defines how workstreams,
@@ -67,13 +69,13 @@ wave is not necessarily "backend first, UI second." A more useful question is:
 substrate and UI monitoring are only useful together, they may be one wave with
 parallel nodes, not two waves.
 
-### Formation is pre-wave work
+### Formation proposes the first executable shape
 
 A formed workstream should not count its own formation as Wave 1. Formation is
-the shaping activity that creates the workstream brief, graph, tracker issue,
-initial node specs, gates, checkpoints, and design references. Those artifacts
-make the workstream executable; they are not themselves the first execution
-wave.
+the shaping activity that creates enough structure to start: the workstream
+brief, graph, tracker issue, initial node specs, gates, checkpoints, and design
+references. Those artifacts make the workstream executable, but they do not mean
+the workstream's design is fully settled.
 
 Wave 1 should start with the first real confidence transition after formation:
 research, design clarification, contract definition, implementation, validation,
@@ -82,6 +84,70 @@ gate, or workstream can rely on. If the only plausible Wave 1 is "form this
 workstream," the candidate is not ready to become an active workstream yet; keep
 shaping it, or create a pre-formation design session outside the workstream's
 wave graph.
+
+For non-trivial or high-autonomy workstreams, Wave 1 is often best treated as a
+design or contract wave. Its job is to turn the formed shape into accepted
+boundaries, design references, validation criteria, authority limits, and
+implementation strategy that later workers can safely rely on. This is often
+where developer presence has the highest leverage. Later autonomous execution
+usually fails because Wave 1 left an important contract, dependency, harness, or
+gate condition ambiguous.
+
+### Common macro-shape
+
+A strong default shape for serious workstreams is:
+
+1. **Design/contract wave:** establish the intended design, contracts,
+   boundaries, validation criteria, and authority limits.
+2. **Implementation wave or waves:** execute under those accepted contracts,
+   splitting nodes only where independent confidence or safe parallelism justifies
+   the coordination cost.
+3. **Validation-loop wave:** harden the result through tests, harnesses,
+   playbooks, scenario runs, or agent-driven loops that exercise realistic use,
+   produce bounded repair work where useful, rerun after repairs, and gather
+   evidence.
+4. **Demonstration gate:** show that the intended capability or confidence state
+   is real, inspectable, and acceptable to the developer or downstream consumer.
+
+This is guidance, not ceremony. Small workstreams may collapse several of these
+steps into one node or gate. Complex workstreams should be explicit about which
+parts of the pattern they are using and why any part is being skipped.
+
+### Validation-loop waves
+
+A validation wave can be more than "run tests." It may create or extend a
+harness, playbook, autonomous loop, scenario runner, or manual-agent loop that
+repeatedly exercises the new behavior, finds gaps, drives repairs, reruns, and
+produces reviewable evidence. The confidence transition is that the work can
+survive realistic use before the developer is asked to accept it.
+
+Use validation-loop waves when the workstream involves autonomy, UI/UX, runtime
+behavior, safety, cross-node integration, or any workflow where a static code
+review is unlikely to expose the important failures.
+
+A validation loop should define the scenario it exercises, the kind of confidence
+it is trying to earn, how discovered gaps become bounded repair work, when the
+loop reruns, and what evidence the final gate should consume. The loop may be
+manual, agent-operated, or eventually managed by Streamliner automation; the
+formation concern is the earned-confidence shape, not the mechanism.
+
+See [VALIDATION-LOOPS.md](VALIDATION-LOOPS.md) for the operating guidance behind
+this wave pattern.
+
+### New operating primitives
+
+Some workstreams introduce a new operating primitive rather than a single product
+surface: a runtime mode, actor model, orchestration loop, storage authority
+model, or cross-environment coordination mechanism.
+
+For these workstreams, avoid splitting concept, substrate, and first dogfood into
+separate workstreams unless each creates an independently consumable confidence
+state. Often the first meaningful transition is that the concept, minimal
+substrate, and one real use together prove the primitive is usable.
+
+Keep the boundary tight. The first workstream should prove the primitive with the
+smallest real loop that exercises it; downstream features that merely consume the
+primitive should usually become later workstreams.
 
 ## Gates and checkpoints
 
@@ -109,6 +175,8 @@ Common reasons to add a gate include:
   must consume or accept an export.
 - **Closure or export:** the workstream is about to declare outputs stable or
   hand them to downstream work.
+- **Demonstrated capability:** the workstream needs to prove that its intended
+  outcome works in a concrete walkthrough, scenario, or end-to-end run.
 
 Not every checkpoint needs a gate. Gates request developer attention, so adding
 one without a meaningful decision can recreate micromanagement. A wave might
@@ -117,7 +185,9 @@ output is verifiable through artifacts or tests, the next work can fail cheaply,
 and no product, safety, or external-consumption decision is being made.
 
 As a formation heuristic, each wave should either end in a gate or have an
-explicit reason why a checkpoint-only transition is sufficient.
+explicit reason why a checkpoint-only transition is sufficient. A workstream's
+final transition should usually include a demonstration or walkthrough gate, not
+merely a statement that nodes landed or issues closed.
 
 ## Node design
 
@@ -137,6 +207,11 @@ The question is:
 
 A node is a worker-session mission. It is not a checklist item, not a phase list,
 and not a mirror of the worker's internal implementation plan.
+
+Design-focused nodes are valid when downstream execution depends on an accepted
+contract, design decision, validation criterion, or authority boundary. They
+should still produce reviewable outputs that change what later workers can
+safely do; they are not essays inside the graph.
 
 ### PAW-sized nodes
 
@@ -172,7 +247,9 @@ states:
 | **UX confidence** | The developer can inspect or use the behavior and judge whether it feels right. |
 | **Integration confidence** | Adjacent systems can rely on the capability behaving coherently across boundaries. |
 | **Operational confidence** | Failure, pause, cleanup, recovery, or safety paths are dependable enough for use. |
+| **Operational-loop confidence** | A new human/agent/system loop works end-to-end with the intended roles, feedback, and authority boundaries. |
 | **Export confidence** | Another node, wave, or workstream can consume a named output. |
+| **Demonstration confidence** | The intended capability can be shown, exercised, or walked through in a way that validates the workstream's purpose. |
 
 If a proposed node does not create one of these states, it is probably an
 internal task inside a larger node.
@@ -267,6 +344,15 @@ When forming or reshaping a workstream, ask:
      Why?
 12. Does Wave 1 begin after formation with executable work, rather than spending
     a wave or node on forming the workstream itself?
+13. For non-trivial work, should Wave 1 establish design, contract, validation,
+    or authority confidence before later implementation proceeds autonomously?
+14. What validation loop, harness, scenario, or playbook will harden the result
+    before final acceptance?
+15. What confidence should the validation loop earn, and what evidence should
+    the gate consume?
+16. How will the final workstream outcome be demonstrated or walked through?
+17. If this workstream creates a new operating primitive, what smallest real use
+    proves the primitive without absorbing every downstream consumer?
 
 The orchestrator can bias toward fewer, heavier nodes during formation, then
 split later-wave sketches when real complexity, contract boundaries, or safe
