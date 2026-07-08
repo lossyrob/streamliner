@@ -862,6 +862,30 @@ describe("preparePawLaunch", () => {
     );
   });
 
+  it.each(["mac-terminal", "iterm2"] as const)(
+    "accepts %s in launch configuration",
+    async (preferredTerminal) => {
+      const root = createRootDir();
+      const pawCalls: PawInitRunnerInput[] = [];
+
+      const result = await preparePawLaunch({
+        nodeId: "launch-prompt-profiles",
+        cwd: root,
+        stateRoot: join(root, "state"),
+        configuration: {
+          terminal: {
+            preferredTerminal,
+          },
+        },
+        pawInitRunner: createPawInitRunner(pawCalls),
+        contextPreparer: createContextPreparer(root),
+      });
+
+      expect(result.terminal.preferredTerminal).toBe(preferredTerminal);
+      expect(pawCalls[0].configuration.terminal.preferredTerminal).toBe(preferredTerminal);
+    },
+  );
+
   it("defaults launch cwd to the graph repo root when the server cwd differs", async () => {
     const root = createRootDir();
     const serverRoot = join(root, "streamliner-server");
@@ -1318,6 +1342,7 @@ describe("preparePawLaunch", () => {
       }),
     ).rejects.toMatchObject({
       code: "invalid_launch_configuration",
+      message: "configuration.terminal.preferredTerminal must be one of: default, windows-terminal, powershell, mac-terminal, iterm2.",
       statusCode: 400,
       step: "validation",
       input: "configuration.terminal.preferredTerminal",
@@ -1711,7 +1736,7 @@ describe("launch preparation API route", () => {
       tabColor: "#123abc",
     }));
     expect(String(terminalLaunches[1].command)).toContain("--agent=PAW-Review");
-    expect(String(terminalLaunches[1].command)).toContain("Review the prepared implementation.");
+    expect(String(terminalLaunches[1].command)).toContain("-i");
 
     expect(snapshot.body).toEqual(expect.objectContaining({
       status: "succeeded",

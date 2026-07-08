@@ -17,8 +17,9 @@ import {
 } from "../session-registry/launch-claims";
 import type { PawLaunchHandoff } from "./launch-preparation";
 import {
-  buildCopilotInteractiveCommand,
+  buildCopilotInteractiveCommandForShell,
   launchCopilotTerminal,
+  selectTerminalCommandShellDialect,
   type TerminalLaunchOptions,
   type TerminalLaunchResult,
 } from "./terminal-launch";
@@ -469,10 +470,10 @@ export async function launchPreparedNode(
     claim.launchNonce,
     claim.launchClaimId,
   );
-  const command = buildCopilotInteractiveCommand({
+  const command = buildCopilotInteractiveCommandForShell({
     cliArgs: handoff.cliArgs,
     kickoffPrompt,
-  });
+  }, selectTerminalCommandShellDialect());
   const terminalOptions: TerminalLaunchOptions = {
     cwd: handoff.cwd,
     command,
@@ -490,6 +491,7 @@ export async function launchPreparedNode(
     const terminal = await launchCopilotTerminal(terminalOptions, {
       launchTerminal: deps.launchTerminal,
       cooldownMs: deps.launchTerminal ? 0 : undefined,
+      pluginPreflight: deps.launchTerminal ? false : undefined,
     });
     return {
       runtimeKind: "terminal-cli",

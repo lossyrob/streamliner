@@ -13,7 +13,11 @@
 | [PRODUCT-THESIS.md](PRODUCT-THESIS.md) | **Start here.** Why Streamliner exists: execution compression relocates the bottleneck from doing work to designing work geometry. The three-stage cognitive transition (task conductor → workstream architect → portfolio operator), the failure modes of poorly designed parallel work, and what Streamliner is for. |
 | [PRODUCT-SPEC.md](PRODUCT-SPEC.md) | The full product specification: who it's for, core concepts (design layer, workstreams, work geometry, briefs, nodes, waves, context package, attention levels), the three pillars, operating rhythm, architecture, V1 scope, and open questions. |
 | [PORTFOLIO-LAYER.md](PORTFOLIO-LAYER.md) | Working draft for the product layer above individual workstreams: startup shell, cross-workstream coordination through public checkpoints, session visibility across environments, ad-hoc session handling, and UI direction. |
+<<<<<<< HEAD
 | [CAMPAIGNS.md](CAMPAIGNS.md) | The portfolio-level unit of committed work: a campaign is an intent-bounded group of workstreams (plus side issues) shaped together to cover a declared body of intent. Covers the hierarchy (project → campaign → workstream → wave → node), intent- vs time-bounding (campaigns vs releases), concurrency and the main effort, the campaign as a lens over the candidate backlog, and the consolidation cycle. |
+=======
+| [WORK-GEOMETRY-MODEL.md](WORK-GEOMETRY-MODEL.md) | **In-progress conceptual model** behind Streamliner's design — guiding, not a settled spec. The theory of work geometry that drives current development: the four-layer intent chain, forward/backward passes, witnessing and defeaters, the human floor, boundary pressure and disposition, mesh-vs-tree messaging, the deterministic controller over indeterministic workers, the values layer (preference vs permission, spread, posture/care), captured-determinacy regimes, the operating point (capability × stakes × attention) and structure-substitutes-for-capability, and the allocation-not-guarantee stance. Marks which parts are build-driving vs influence-only. |
+>>>>>>> origin/main
 
 ## Operating model
 

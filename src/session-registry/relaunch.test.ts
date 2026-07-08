@@ -13,6 +13,8 @@ import {
   validateSessionForRelaunch,
 } from "./relaunch";
 
+type TerminalLaunchMethodForTest = TerminalLaunchResult["method"];
+
 function buildRecord(
   overrides: Partial<SessionRegistryRecord> = {},
 ): SessionRegistryRecord {
@@ -69,9 +71,16 @@ function buildRecord(
   };
 }
 
+function terminalResult(
+  method: TerminalLaunchMethodForTest,
+  pid = 12345,
+): TerminalLaunchResult {
+  return { method, pid };
+}
+
 function fakeLaunchTerminal(options: TerminalLaunchOptions): TerminalLaunchResult {
   void options;
-  return { method: "windows-terminal", pid: 12345 };
+  return terminalResult("windows-terminal");
 }
 
 function fakeDeps(
@@ -91,6 +100,7 @@ function fakeDeps(
     deps: {
       existsSync: () => true,
       launchTerminal: fakeLaunchTerminal,
+      pluginPreflight: false,
       ...overrides,
     },
   };
@@ -252,6 +262,29 @@ describe("relaunchSession", () => {
     }
   });
 
+  it("passes resume launches through when the terminal method is mac-terminal", async () => {
+    const session = buildRecord({ copilotSessionId: "sess-42" });
+    const launchCalls: TerminalLaunchOptions[] = [];
+    const { store, deps } = fakeDeps({ [session.id]: session }, {
+      launchTerminal: (options) => {
+        launchCalls.push(options);
+        return terminalResult("mac-terminal", 54321);
+      },
+    });
+
+    const result = await relaunchSession(store, session.id, deps);
+
+    expect(result.ok).toBe(true);
+    expect(launchCalls).toHaveLength(1);
+    expect(launchCalls[0]?.command).toContain("--resume=sess-42");
+    expect(launchCalls[0]?.prepareCopilotCli).toBe(true);
+    if (result.ok) {
+      expect(result.result.method).toBe("mac-terminal");
+      expect(result.result.copilotResumed).toBe(true);
+      expect(result.result.pid).toBe(54321);
+    }
+  });
+
   it("uses recorded launch args without loading configured defaults", async () => {
     const session = buildRecord({
       copilotSessionId: "sess-42",
@@ -388,6 +421,7 @@ describe("relaunchSession", () => {
     const result = await relaunchSession(store, session.id, {
       existsSync: () => true,
       launchTerminal: fakeLaunchTerminal,
+      pluginPreflight: false,
     });
     expect(result.ok).toBe(true);
   });
@@ -405,7 +439,7 @@ describe("relaunchSession", () => {
   it("reports colorApplied as false for powershell method", async () => {
     const session = buildRecord({ color: "#FF0000" });
     const { store, deps } = fakeDeps({ [session.id]: session }, {
-      launchTerminal: () => ({ method: "powershell", pid: 999 }),
+      launchTerminal: () => terminalResult("powershell", 999),
     });
     const result = await relaunchSession(store, session.id, deps);
     expect(result.ok).toBe(true);

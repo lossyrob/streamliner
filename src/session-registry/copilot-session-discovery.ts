@@ -1,7 +1,8 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 
+import { basenameCrossOs } from "../cross-os-path";
 import type { SessionRegistryListItem, SessionRegistryObservedLinkInput } from "../session-registry-contract";
 import type { SessionRegistryObservedLifecycleStatus } from "../session-registry-contract";
 import type {
@@ -14,6 +15,7 @@ import {
 } from "./copilot-helper-sessions";
 import { isCopilotSdkSessionFsPath } from "./copilot-sdk-session-paths";
 import { SessionRegistryFileStore } from "./file-store";
+import { processExists } from "./lock-liveness";
 
 const DEFAULT_COPILOT_SESSION_STATE_ROOT = resolve(
   homedir(),
@@ -162,7 +164,7 @@ function deriveTitle(
       return observedSessionKind === "helper" ? `${repoName} helper session` : repoName;
     }
   }
-  const cwdName = basename(cwd).trim();
+  const cwdName = basenameCrossOs(cwd).trim();
   if (cwdName.length > 0) {
     return observedSessionKind === "helper" ? `${cwdName} helper session` : cwdName;
   }
@@ -237,23 +239,6 @@ function extractLockPids(directoryEntries: string[]): number[] {
     }
   }
   return [...new Set(pids)].sort((left, right) => left - right);
-}
-
-function processExists(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error: unknown) {
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      (error as NodeJS.ErrnoException).code === "EPERM"
-    ) {
-      return true;
-    }
-    return false;
-  }
 }
 
 function observeCopilotProcess(directoryEntries: string[]): CopilotProcessObservation {

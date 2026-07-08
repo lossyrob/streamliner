@@ -44,7 +44,13 @@ import {
 const DEFAULT_PAW_INIT_MODEL = "gpt-5.5";
 const DEFAULT_PAW_INIT_TIMEOUT_MS = 120_000;
 const TERMINAL_LAUNCH_MODES = ["manual"] as const;
-const TERMINAL_PREFERENCES = ["default", "windows-terminal", "powershell"] as const;
+const TERMINAL_PREFERENCES = [
+  "default",
+  "windows-terminal",
+  "powershell",
+  "mac-terminal",
+  "iterm2",
+] as const;
 const RUNTIME_KINDS = ["terminal-cli", "managed-sdk"] as const;
 const DEFAULT_WORKFLOW_INSTRUCTIONS = [
   "Use PAW with a local final-pr-only review policy.",
@@ -99,7 +105,12 @@ export class LaunchPreparationError extends Error {
 
 export interface PawLaunchTerminalPreferences {
   launchMode: "manual";
-  preferredTerminal: "default" | "windows-terminal" | "powershell";
+  preferredTerminal:
+    | "default"
+    | "windows-terminal"
+    | "powershell"
+    | "mac-terminal"
+    | "iterm2";
   title: string | null;
   tabColor: string | null;
 }

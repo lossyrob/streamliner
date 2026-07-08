@@ -99,6 +99,13 @@ then current configured defaults for historical sessions without recorded args.
 Streamliner appends its own `--resume=<session>` argument during relaunch, so do
 not include `--resume` in the defaults.
 
+Visible worker terminal launches use platform adapters. Terminal preferences are
+`default`, `windows-terminal`, `powershell`, `mac-terminal`, and `iterm2`: on
+Windows, `default` prefers Windows Terminal and falls back to PowerShell; on
+macOS, `default` and `mac-terminal` use Apple Terminal.app, while `iterm2`
+explicitly selects iTerm2. Terminal titles and colors are best-effort and depend
+on the host adapter.
+
 ## Worktree preview instances
 
 Use a worktree preview when you want to inspect a PR without stopping the main
