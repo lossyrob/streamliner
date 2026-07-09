@@ -56,6 +56,7 @@ function buildDerivedNode(
     operationalStatus: overrides.operationalStatus ?? node.status,
     dependencyReady: true,
     completionSource: node.status === "completed" ? "artifact" : null,
+    externalDependencies: [],
     githubIssue: overrides.githubIssue,
   };
 }

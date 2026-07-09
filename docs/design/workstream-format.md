@@ -39,11 +39,12 @@ Fast-changing operational data is not part of the committed artifact set. Stream
     runtime.json
     sessions.json
     tracker-cache.json
+    positions.json
 ```
 
 The global `session-registry/` subtree is graph-independent and persists the builder's tracked-session catalog. Its authoritative file rules, merge behavior, and API contract live in [session-system.md](session-system.md).
 
-`projectKey` comes from `graph.json`. If omitted, it derives from the primary repo ID or the sole repo ID. The per-workstream subtree holds runtime overlay data such as active session IDs, observed session state, tracker snapshots, and transient node claims.
+`projectKey` comes from `graph.json`. If omitted, it derives from the primary repo ID or the sole repo ID. The per-workstream subtree holds runtime overlay data such as active session IDs, observed session state, tracker snapshots, transient node claims, and manual graph-node positions.
 
 Runtime state contracts:
 
@@ -405,6 +406,7 @@ Each node is a unit of work in the dependency graph.
 | `repoIds` | string[] | ✓ | References to declared repos (can be empty) |
 | `tracker` | object | | Where the node's spec lives (see Tracker Reference) |
 | `dependsOn` | string[] | ✓ | IDs of nodes that must complete before this one |
+| `externalDependsOn` | array | | External dependencies outside this graph (see External Dependency). These affect operational readiness without rewriting the committed graph when upstream status changes. |
 
 ### Node types
 
@@ -413,6 +415,32 @@ Each node is a unit of work in the dependency graph.
 - **gate** — validation checkpoint where the builder evaluates whether the workstream is on track. Gates block downstream work until passed.
 
 Research nodes include **design sessions** — nodes whose purpose is to make implicit design explicit before downstream implementation begins. A design-session node is a valid early-wave node when the workstream's design is still implicit in the brief and graph. Its output is design documents and decision records, not code. After a design session completes, the downstream implementation graph can be refined because the intended design is now written down.
+
+### External Dependency
+
+`externalDependsOn` records prerequisites outside the current graph: another
+Streamliner workstream, a specific node in another workstream, or a manual/URL
+dependency that cannot be resolved from tracked graph data. Use same-graph
+`dependsOn` for local prerequisites.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `id` | string | ✓ | Kebab-case id unique within the owning node's `externalDependsOn` array |
+| `target` | object | | Resolvable upstream workstream target. Omit only for manual/URL dependencies. |
+| `target.projectKey` | string | ✓ when `target` present | Upstream project namespace |
+| `target.workstreamId` | string | ✓ when `target` present | Upstream workstream id |
+| `target.nodeId` | string | | Optional upstream node id; omitted means the whole workstream is the target |
+| `label` | string | | UI label; otherwise derived from target or URL |
+| `url` | string | | Optional tracker/design/external-system link |
+| `status` | `"pending"` or `"satisfied"` | | Manual override used only when the target is absent, unresolved, or errors; resolved targets are authoritative |
+
+A targeted dependency is satisfied when the upstream node is `"completed"` or
+`"retired"`, or when the upstream workstream is `"completed"`. Unresolved
+targeted dependencies are not ready unless manually marked `"satisfied"`.
+Streamliner renders target-backed cross-workstream dependencies as
+Streamliner-style ghost nodes with an explicit "other workstream" marker.
+Manual or URL-only external blockers keep the generic red dashed blocker
+treatment. Both forms use dashed edges into the local node.
 
 ### Artifact state vs. operational state
 
@@ -423,6 +451,10 @@ The rule:
 1. **Commit artifact changes** when the plan changes or durable progress should be promoted.
 2. **Update runtime state** for fast-moving operational facts.
 3. **Render the UI from both** — the graph is the committed base layer; runtime/tracker data is the overlay.
+
+Manual graph positions are runtime overlay state. Moving a card writes a
+machine-local positions file so the layout survives restarts and graph refreshes
+without churning `graph.json`.
 
 ### Repo
 
@@ -507,5 +539,7 @@ These constraints are enforced at parse time. Violations cause errors.
 | 14 | `docRefs.kind` is one of the supported documentation-reference kinds |
 | 15 | `docRefs.repoId` must match a declared repo |
 | 16 | `docRefs.path` is repo-root-relative |
+| 17 | `externalDependsOn[].id` values are unique within each node |
+| 18 | External targets cannot point at the owning node |
 
-Runtime validation (tracker-cache freshness, cross-reference checks) is separate from parse-time schema validation.
+Runtime validation (tracker-cache freshness, cross-reference checks, and external target resolution) is separate from parse-time schema validation.

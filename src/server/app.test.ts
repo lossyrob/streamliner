@@ -107,6 +107,7 @@ function createIsolatedApi(
     recentsPath: join(rootDir, "recent-graphs.json"),
     workstreamRegistryPath: join(rootDir, "workstreams.json"),
     workstreamSourceRegistryPath: join(rootDir, "sources.json"),
+    workstreamPositionsRoot: join(rootDir, "positions"),
     nodeLaunchRecordsPath: join(rootDir, "node-launch-records.json"),
     ...options,
   });
@@ -762,6 +763,50 @@ describe("createStreamlinerApiApp", () => {
     expect(cleared.presentation).toBeUndefined();
     expect(cleared.launchPolicy).toBeUndefined();
     expect(cleared.launchDefaults).toBeUndefined();
+  });
+
+  it("persists manual workstream graph positions outside graph.json", async () => {
+    const rootDir = createRootDir();
+    const graphPath = join(rootDir, "graph.json");
+    writeFileSync(graphPath, JSON.stringify(buildGraph()), "utf8");
+    const api = createIsolatedApi(rootDir, {
+      now: () => new Date("2026-05-07T18:10:33.000Z"),
+    });
+    activeApps.push(api);
+    await request(api.app).post("/api/workstreams").send({ path: graphPath }).expect(201);
+
+    const emptyResponse = await request(api.app)
+      .get("/api/workstreams/streamliner/api-test/positions")
+      .expect(200);
+    expect(emptyResponse.body).toEqual({
+      schemaVersion: 1,
+      positions: {},
+    });
+
+    const updateResponse = await request(api.app)
+      .put("/api/workstreams/streamliner/api-test/positions")
+      .send({
+        positions: {
+          "first-node": { x: 120, y: 240 },
+          invalid: { x: "left", y: 0 },
+        },
+      })
+      .expect(200);
+    expect(updateResponse.body.positions).toEqual({
+      "first-node": {
+        x: 120,
+        y: 240,
+        updatedAt: "2026-05-07T18:10:33.000Z",
+      },
+    });
+
+    const persistedGraph = JSON.parse(readFileSync(graphPath, "utf8")) as Record<string, unknown>;
+    expect(persistedGraph).not.toHaveProperty("positions");
+
+    const readResponse = await request(api.app)
+      .get("/api/workstreams/streamliner/api-test/positions")
+      .expect(200);
+    expect(readResponse.body.positions).toEqual(updateResponse.body.positions);
   });
 
   it("rejects invalid workstream launch configuration updates", async () => {

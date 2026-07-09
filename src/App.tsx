@@ -11,12 +11,22 @@ import "./streamliner-theme.css";
 import {
   parseWorkstreamDocument,
   buildWorkstreamViewModel,
+  workstreamExternalDependencyKey,
+  type WorkstreamExternalDependencyResolution,
+  type WorkstreamExternalDependencyView,
 } from "./workstream-view-model";
 import {
   applyWorkstreamGraphSelection,
   buildWorkstreamGraphBaseLayout,
 } from "./workstream-graph";
-import type { WorkstreamDocument } from "./workstream-schema";
+import type {
+  WorkstreamDocument,
+  WorkstreamExternalDependency,
+} from "./workstream-schema";
+import type {
+  WorkstreamGraphNodePosition,
+  WorkstreamPositionsResponse,
+} from "./workstream-positions-contract";
 import {
   buildGraphNodeSessionStatusMap,
   type GraphNodeSessionStatusSummary,
@@ -129,6 +139,11 @@ const GITHUB_STATUS_REFRESH_INTERVAL_MS = 60_000;
 const LAST_GRAPH_KEY = "streamliner:lastGraphPath";
 const PAW_LAUNCH_CWD_OVERRIDES_KEY = "streamliner:pawLaunchCwdByRepo";
 const STREAMLINER_LOGO_URL = "/streamliner-logo.png";
+const POSITIONS_SAVE_DEBOUNCE_MS = 350;
+const EMPTY_EXTERNAL_DEPENDENCY_RESOLUTIONS: ReadonlyMap<
+  string,
+  WorkstreamExternalDependencyResolution
+> = new Map();
 
 interface GraphLoadError {
   code?: string;
@@ -227,6 +242,13 @@ function isKebabCaseId(value: string): boolean {
   return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value);
 }
 
+function isWorkstreamRouteNodeId(value: string): boolean {
+  return (
+    isKebabCaseId(value) ||
+    /^external:[a-z0-9]+(?:-[a-z0-9]+)*:[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value)
+  );
+}
+
 function parseMessageEventData<T>(event: Event): T {
   return JSON.parse((event as MessageEvent<string>).data) as T;
 }
@@ -293,7 +315,7 @@ function readDashboardRoute(): DashboardRoute {
     return { view: "workstreams", message: "That workstream URL is incomplete." };
   }
   const nodeId = decodeSegment(segments[4]);
-  if (!nodeId || !isKebabCaseId(nodeId)) {
+  if (!nodeId || !isWorkstreamRouteNodeId(nodeId)) {
     return { view: "workstreams", message: "That workstream node URL is invalid." };
   }
   return { view: "workstream", projectKey, workstreamId, nodeId };
@@ -413,6 +435,10 @@ function registryArchiveUrl(entry: { projectKey: string; workstreamId: string })
 
 function registryConfigurationUrl(entry: { projectKey: string; workstreamId: string }): string {
   return `${registryEntryUrl(entry)}/configuration`;
+}
+
+function registryPositionsUrl(entry: { projectKey: string; workstreamId: string }): string {
+  return `${registryEntryUrl(entry)}/positions`;
 }
 
 function sourceEntryUrl(sourceId: string): string {
@@ -1816,10 +1842,415 @@ function useSessionLaunchSettingsState() {
   };
 }
 
+function workstreamIdentityForDocument(
+  workstream: WorkstreamDocument,
+  activeWorkstream: { projectKey: string; workstreamId: string } | null | undefined,
+): { projectKey: string; workstreamId: string } {
+  return {
+    projectKey: activeWorkstream?.projectKey ?? workstream.projectKey ?? workstream.id,
+    workstreamId: activeWorkstream?.workstreamId ?? workstream.id,
+  };
+}
+
+function externalDependencyTargetKey(dependency: WorkstreamExternalDependency): string | null {
+  if (!dependency.target) {
+    return null;
+  }
+  return `${dependency.target.projectKey}/${dependency.target.workstreamId}`;
+}
+
+function isDependencyTargetSatisfied(status: string): boolean {
+  return status === "completed" || status === "retired";
+}
+
+function resolveExternalDependencyAgainstDocument(
+  document: WorkstreamDocument,
+  dependency: WorkstreamExternalDependency,
+  archived = false,
+): WorkstreamExternalDependencyResolution {
+  if (!dependency.target) {
+    return {
+      state: "unresolved",
+      reason: "External dependency has no upstream target.",
+      archived,
+    };
+  }
+
+  if (dependency.target.nodeId) {
+    const upstreamNode = document.nodes.find((node) => node.id === dependency.target?.nodeId);
+    if (!upstreamNode) {
+      return {
+        state: "unresolved",
+        reason: `Upstream node ${dependency.target.nodeId} was not found.`,
+        archived,
+      };
+    }
+    return {
+      state: "resolved",
+      target: {
+        kind: "node",
+        title: upstreamNode.title,
+        status: upstreamNode.status,
+        satisfied: isDependencyTargetSatisfied(upstreamNode.status),
+        archived,
+      },
+    };
+  }
+
+  return {
+    state: "resolved",
+    target: {
+      kind: "workstream",
+      title: document.title,
+      status: document.status,
+      satisfied: isDependencyTargetSatisfied(document.status),
+      archived,
+    },
+  };
+}
+
+function externalDependenciesForWorkstream(
+  workstream: WorkstreamDocument,
+): Array<{ nodeId: string; dependency: WorkstreamExternalDependency }> {
+  return workstream.nodes.flatMap((node) =>
+    (node.externalDependsOn ?? []).map((dependency) => ({
+      nodeId: node.id,
+      dependency,
+    })),
+  );
+}
+
+function useExternalDependencyResolutions(
+  workstream: WorkstreamDocument | null,
+  activeWorkstream: { projectKey: string; workstreamId: string } | null | undefined,
+  workstreams: WorkstreamRegistryListEntry[],
+  archivedWorkstreams: WorkstreamRegistryListEntry[],
+): ReadonlyMap<string, WorkstreamExternalDependencyResolution> {
+  const [resolutionState, setResolutionState] = useState<{
+    key: string;
+    resolutions: ReadonlyMap<string, WorkstreamExternalDependencyResolution>;
+  }>({ key: "", resolutions: EMPTY_EXTERNAL_DEPENDENCY_RESOLUTIONS });
+  const externalDependencies = useMemo(
+    () =>
+      workstream
+        ? externalDependenciesForWorkstream(workstream).filter(
+            ({ dependency }) => dependency.target,
+          )
+        : [],
+    [workstream],
+  );
+  const resolutionRequestKey = useMemo(() => {
+    if (!workstream || externalDependencies.length === 0) {
+      return "";
+    }
+    const localIdentity = workstreamIdentityForDocument(workstream, activeWorkstream);
+    const registrySeed = [...workstreams, ...archivedWorkstreams]
+      .map((entry) =>
+        `${entry.projectKey}/${entry.workstreamId}:${entry.archived ? "archived" : "active"}:${entry.fileStatus}`,
+      )
+      .sort()
+      .join(",");
+    const dependencySeed = externalDependencies
+      .map(({ nodeId, dependency }) =>
+        `${nodeId}:${dependency.id}:${dependency.target?.projectKey}/${dependency.target?.workstreamId}/${dependency.target?.nodeId ?? ""}`,
+      )
+      .join(",");
+    return `${localIdentity.projectKey}/${localIdentity.workstreamId}:${workstream.updatedAt}:${dependencySeed}:${registrySeed}`;
+  }, [activeWorkstream, archivedWorkstreams, externalDependencies, workstream, workstreams]);
+
+  useEffect(() => {
+    if (!workstream || externalDependencies.length === 0 || !resolutionRequestKey) {
+      return;
+    }
+
+    let cancelled = false;
+    const controller = new AbortController();
+
+    const localIdentity = workstreamIdentityForDocument(workstream, activeWorkstream);
+    const registryByTarget = new Map(
+      [...workstreams, ...archivedWorkstreams].map((entry) => [
+        `${entry.projectKey}/${entry.workstreamId}`,
+        entry,
+      ]),
+    );
+    const dependenciesByTarget = new Map<
+      string,
+      Array<{ nodeId: string; dependency: WorkstreamExternalDependency }>
+    >();
+
+    for (const item of externalDependencies) {
+      const targetKey = externalDependencyTargetKey(item.dependency);
+      if (!targetKey) {
+        continue;
+      }
+      const existing = dependenciesByTarget.get(targetKey) ?? [];
+      existing.push(item);
+      dependenciesByTarget.set(targetKey, existing);
+    }
+
+    async function resolveAll(): Promise<void> {
+      const next = new Map<string, WorkstreamExternalDependencyResolution>();
+
+      await Promise.all(
+        [...dependenciesByTarget.entries()].map(async ([targetKey, dependencies]) => {
+          const [projectKey, workstreamId] = targetKey.split("/");
+          const registryEntry = registryByTarget.get(targetKey);
+          const archived = registryEntry?.archived ?? false;
+          let upstreamDocument: WorkstreamDocument | null = null;
+          let upstreamError: string | null = null;
+
+          if (
+            projectKey === localIdentity.projectKey &&
+            workstreamId === localIdentity.workstreamId
+          ) {
+            upstreamDocument = workstream;
+          } else {
+            try {
+              const response = await fetch(registryGraphUrl({ projectKey, workstreamId }), {
+                signal: controller.signal,
+              });
+              if (!response.ok) {
+                upstreamError = (await parseErrorResponse(response)).message;
+              } else {
+                upstreamDocument = parseWorkstreamDocument(await response.text());
+              }
+            } catch (error: unknown) {
+              if (error instanceof DOMException && error.name === "AbortError") {
+                return;
+              }
+              upstreamError = error instanceof Error ? error.message : String(error);
+            }
+          }
+
+          for (const { nodeId, dependency } of dependencies) {
+            const key = workstreamExternalDependencyKey(nodeId, dependency.id);
+            const failedResolution: WorkstreamExternalDependencyResolution = registryEntry
+              ? {
+                  state: "error",
+                  error: upstreamError ?? "Unable to load upstream workstream.",
+                  archived,
+                }
+              : {
+                  state: "unresolved",
+                  reason: upstreamError ?? "Upstream workstream is not tracked.",
+                  archived,
+                };
+            next.set(
+              key,
+              upstreamDocument
+                ? resolveExternalDependencyAgainstDocument(upstreamDocument, dependency, archived)
+                : failedResolution,
+            );
+          }
+        }),
+      );
+
+      if (!cancelled) {
+        setResolutionState({ key: resolutionRequestKey, resolutions: next });
+      }
+    }
+
+    void resolveAll();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [
+    activeWorkstream,
+    archivedWorkstreams,
+    externalDependencies,
+    resolutionRequestKey,
+    workstream,
+    workstreams,
+  ]);
+
+  return resolutionState.key === resolutionRequestKey
+    ? resolutionState.resolutions
+    : EMPTY_EXTERNAL_DEPENDENCY_RESOLUTIONS;
+}
+
+function positionsRecordToMap(
+  positions: Record<string, WorkstreamGraphNodePosition>,
+): Map<string, WorkstreamGraphNodePosition> {
+  return new Map(Object.entries(positions));
+}
+
+function positionsMapToRecord(
+  positions: ReadonlyMap<string, WorkstreamGraphNodePosition>,
+): Record<string, WorkstreamGraphNodePosition> {
+  return Object.fromEntries(positions);
+}
+
+function useWorkstreamNodePositions(entry: WorkstreamRegistryListEntry | null): {
+  positions: ReadonlyMap<string, WorkstreamGraphNodePosition>;
+  error: string | null;
+  updatePosition: (nodeId: string, position: { x: number; y: number }) => void;
+} {
+  const [positions, setPositions] = useState<
+    ReadonlyMap<string, WorkstreamGraphNodePosition>
+  >(new Map());
+  const [error, setError] = useState<string | null>(null);
+  const positionsRef = useRef<ReadonlyMap<string, WorkstreamGraphNodePosition>>(new Map());
+  const positionsMountedRef = useRef(true);
+  const pendingPositionSaveRef = useRef<{
+    entry: WorkstreamRegistryListEntry;
+    positions: ReadonlyMap<string, WorkstreamGraphNodePosition>;
+  } | null>(null);
+  const positionSaveTimerRef = useRef<number | null>(null);
+  const positionSaveChainRef = useRef<Promise<void>>(Promise.resolve());
+
+  useEffect(() => {
+    if (!entry || isBrowserWorkstreamEntry(entry)) {
+      positionsRef.current = new Map();
+      setPositions(new Map());
+      setError(null);
+      return;
+    }
+
+    let cancelled = false;
+    const controller = new AbortController();
+    setError(null);
+    void (async () => {
+      try {
+        const response = await fetch(registryPositionsUrl(entry), {
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          throw new Error((await parseErrorResponse(response)).message);
+        }
+        const document = await response.json() as WorkstreamPositionsResponse;
+        if (!cancelled) {
+          const nextPositions = positionsRecordToMap(document.positions ?? {});
+          positionsRef.current = nextPositions;
+          setPositions(nextPositions);
+        }
+      } catch (loadError: unknown) {
+        if (loadError instanceof DOMException && loadError.name === "AbortError") {
+          return;
+        }
+        if (!cancelled) {
+          positionsRef.current = new Map();
+          setPositions(new Map());
+          setError(loadError instanceof Error ? loadError.message : String(loadError));
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [entry]);
+
+  const enqueuePositionSave = useCallback(
+    (
+      saveEntry: WorkstreamRegistryListEntry,
+      savePositions: ReadonlyMap<string, WorkstreamGraphNodePosition>,
+    ) => {
+      positionSaveChainRef.current = positionSaveChainRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          try {
+            if (positionsMountedRef.current) {
+              setError(null);
+            }
+            const response = await fetch(registryPositionsUrl(saveEntry), {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                positions: positionsMapToRecord(savePositions),
+              }),
+            });
+            if (!response.ok) {
+              throw new Error((await parseErrorResponse(response)).message);
+            }
+          } catch (saveError: unknown) {
+            if (positionsMountedRef.current) {
+              setError(saveError instanceof Error ? saveError.message : String(saveError));
+            }
+          }
+        });
+    },
+    [],
+  );
+
+  useEffect(() => {
+    positionsMountedRef.current = true;
+    return () => {
+      positionsMountedRef.current = false;
+      if (positionSaveTimerRef.current !== null) {
+        window.clearTimeout(positionSaveTimerRef.current);
+        positionSaveTimerRef.current = null;
+      }
+      const pending = pendingPositionSaveRef.current;
+      pendingPositionSaveRef.current = null;
+      if (pending) {
+        enqueuePositionSave(pending.entry, pending.positions);
+      }
+    };
+  }, [enqueuePositionSave]);
+
+  const schedulePositionSave = useCallback(
+    (
+      saveEntry: WorkstreamRegistryListEntry,
+      savePositions: ReadonlyMap<string, WorkstreamGraphNodePosition>,
+    ) => {
+      const pending = pendingPositionSaveRef.current;
+      if (
+        pending &&
+        registryPositionsUrl(pending.entry) !== registryPositionsUrl(saveEntry)
+      ) {
+        if (positionSaveTimerRef.current !== null) {
+          window.clearTimeout(positionSaveTimerRef.current);
+          positionSaveTimerRef.current = null;
+        }
+        pendingPositionSaveRef.current = null;
+        enqueuePositionSave(pending.entry, pending.positions);
+      }
+      pendingPositionSaveRef.current = {
+        entry: saveEntry,
+        positions: savePositions,
+      };
+      if (positionSaveTimerRef.current !== null) {
+        window.clearTimeout(positionSaveTimerRef.current);
+      }
+      positionSaveTimerRef.current = window.setTimeout(() => {
+        positionSaveTimerRef.current = null;
+        const pending = pendingPositionSaveRef.current;
+        pendingPositionSaveRef.current = null;
+        if (pending) {
+          enqueuePositionSave(pending.entry, pending.positions);
+        }
+      }, POSITIONS_SAVE_DEBOUNCE_MS);
+    },
+    [enqueuePositionSave],
+  );
+
+  const updatePosition = useCallback(
+    (nodeId: string, position: { x: number; y: number }) => {
+      if (!entry || isBrowserWorkstreamEntry(entry)) {
+        return;
+      }
+
+      const updatedAt = new Date().toISOString();
+      const next = new Map(positionsRef.current);
+      next.set(nodeId, { ...position, updatedAt });
+      positionsRef.current = next;
+      setPositions(next);
+      schedulePositionSave(entry, next);
+    },
+    [entry, schedulePositionSave],
+  );
+
+  return { positions, error, updatePosition };
+}
+
 function GraphDashboard({
   workstream,
   error,
   workstreams,
+  archivedWorkstreams,
   activeWorkstream,
   githubStatusRefreshKey,
   archive,
@@ -1842,7 +2273,7 @@ function GraphDashboard({
   onReviewPromptTemplatesChanged,
   sessionLaunchSettings,
 }: ReturnType<typeof useGraphLoader> & {
-  onOpenWorkstream: (entry: WorkstreamRegistryListEntry) => void | Promise<void>;
+  onOpenWorkstream: (entry: { projectKey: string; workstreamId: string; nodeId?: string | null }) => void | Promise<void>;
   onOpenSessions: (target?: {
     workstreamId?: string | null;
     nodeId?: string | null;
@@ -1893,6 +2324,17 @@ function GraphDashboard({
   const localRunStreamsRef = useRef<Set<string>>(new Set());
   const isDocumentVisible = useIsDocumentVisible();
   const activeWorkstreamKey = activeWorkstream ? registryKey(activeWorkstream) : "";
+  const activeWorkstreamEntry = useMemo(() => {
+    if (!activeWorkstream) return null;
+    return workstreams.find((entry) => registryKey(entry) === registryKey(activeWorkstream)) ?? null;
+  }, [activeWorkstream, workstreams]);
+  const externalDependencyResolutions = useExternalDependencyResolutions(
+    workstream,
+    activeWorkstream,
+    workstreams,
+    archivedWorkstreams,
+  );
+  const nodePositions = useWorkstreamNodePositions(activeWorkstreamEntry);
   const sessionList = useSessionRegistryList(
     { workstreamId: activeWorkstream?.workstreamId ?? null },
     { enabled: Boolean(activeWorkstream) },
@@ -1937,8 +2379,10 @@ function GraphDashboard({
   );
   const viewModel = useMemo(() => {
     if (!workstream) return null;
-    return buildWorkstreamViewModel(workstream, githubSnapshot);
-  }, [githubSnapshot, workstream]);
+    return buildWorkstreamViewModel(workstream, githubSnapshot, new Date(), {
+      externalDependencyResolutions,
+    });
+  }, [externalDependencyResolutions, githubSnapshot, workstream]);
 
   const baseLayout = useMemo(() => {
     if (!workstream || !viewModel) return null;
@@ -1953,14 +2397,22 @@ function GraphDashboard({
     if (!selectedNodeId || !viewModel) return null;
     return viewModel.derivedNodes.find((entry) => entry.node.id === selectedNodeId) ?? null;
   }, [selectedNodeId, viewModel]);
+  const selectedExternalDependency = useMemo(() => {
+    if (!selectedNodeId || !viewModel) return null;
+    for (const entry of viewModel.derivedNodes) {
+      const dependency = entry.externalDependencies.find(
+        (externalDependency) => externalDependency.graphNodeId === selectedNodeId,
+      );
+      if (dependency) {
+        return dependency;
+      }
+    }
+    return null;
+  }, [selectedNodeId, viewModel]);
   const nodeLaunchRecord = selectedEntry
     ? nodeLaunchRecordsByNodeId.get(selectedEntry.node.id) ?? null
     : null;
 
-  const activeWorkstreamEntry = useMemo(() => {
-    if (!activeWorkstream) return null;
-    return workstreams.find((entry) => registryKey(entry) === registryKey(activeWorkstream)) ?? null;
-  }, [activeWorkstream, workstreams]);
   const activeWorkstreamEntryPath = activeWorkstreamEntry?.path ?? null;
   const runtimeOverlay = useMemo<WorkstreamRuntimeOverlay | null>(() => {
     if (!viewModel) {
@@ -2195,6 +2647,33 @@ function GraphDashboard({
     [activeWorkstream?.workstreamId, onOpenSessions],
   );
 
+  const externalRouteForDependency = useCallback(
+    (dependency: WorkstreamExternalDependencyView) => {
+      if (dependency.target) {
+        const routeTarget = {
+          projectKey: dependency.target.projectKey,
+          workstreamId: dependency.target.workstreamId,
+          nodeId: dependency.target.nodeId ?? null,
+        };
+        return {
+          href: workstreamRoutePath(routeTarget),
+          onOpen: () => onOpenWorkstream(routeTarget),
+        };
+      }
+      if (dependency.url) {
+        const url = dependency.url;
+        return {
+          href: url,
+          onOpen: () => {
+            window.open(url, "_blank", "noopener,noreferrer");
+          },
+        };
+      }
+      return null;
+    },
+    [onOpenWorkstream],
+  );
+
   const openSelectedConsoleInSessions = useCallback(
     async () => {
       await onOpenSessions({
@@ -2273,7 +2752,7 @@ function GraphDashboard({
     // unchanged, which previously caused launchDefaults to get a fresh
     // object reference on every poll and ripple through PawLaunchDialog
     // props.
-    const defaultsNodeId = launchDialogTarget?.nodeId ?? selectedNodeId;
+    const defaultsNodeId = launchDialogTarget?.nodeId ?? selectedLaunchNodeId;
     const graphPath = launchDialogTarget?.graphPath ?? activeWorkstreamEntry?.path;
     if (!defaultsNodeId || !graphPath || !workstream) return null;
     const defaultsNode = workstream.nodes.find((node) => node.id === defaultsNodeId);
@@ -2317,7 +2796,7 @@ function GraphDashboard({
   }, [
     activeWorkstreamEntry?.path,
     launchDialogTarget,
-    selectedNodeId,
+    selectedLaunchNodeId,
     sessionLaunchSettings?.defaultCliArgs,
     workstream,
   ]);
@@ -2369,7 +2848,7 @@ function GraphDashboard({
   // on the node id (a stable primitive) instead of the derived entry object,
   // which gets a fresh reference every time the view-model rebuilds.
   useEffect(() => {
-    if (!activeWorkstreamPath || !selectedLaunchWorkstreamId || !selectedNodeId) {
+    if (!activeWorkstreamPath || !selectedLaunchWorkstreamId || !selectedLaunchNodeId) {
       setSelectedNodeLaunchRecordLoading(false);
       setSelectedNodeLaunchRecordError(null);
       return;
@@ -2377,7 +2856,7 @@ function GraphDashboard({
     const target: LaunchOperationTarget = {
       graphPath: activeWorkstreamPath,
       workstreamId: selectedLaunchWorkstreamId,
-      nodeId: selectedNodeId,
+      nodeId: selectedLaunchNodeId,
     };
     let cancelled = false;
     setSelectedNodeLaunchRecordLoading(true);
@@ -2431,7 +2910,7 @@ function GraphDashboard({
     return () => {
       cancelled = true;
     };
-  }, [activeWorkstreamPath, nodeLaunchRecordRefreshKey, selectedLaunchWorkstreamId, selectedNodeId]);
+  }, [activeWorkstreamPath, nodeLaunchRecordRefreshKey, selectedLaunchWorkstreamId, selectedLaunchNodeId]);
 
   const setLaunchOperation = useCallback((
     target: LaunchOperationTarget,
@@ -3455,14 +3934,20 @@ function GraphDashboard({
             nodeSessionStatusState={nodeSessionStatusState}
             runtimeOverlay={runtimeOverlay}
             launchOperations={launchOperationsByNodeId}
+            nodePositions={nodePositions.positions}
+            onNodePositionChange={nodePositions.updatePosition}
             sessionRouteForNode={sessionRouteForNode}
+            externalRouteForDependency={externalRouteForDependency}
           />
         </ReactFlowProvider>
         <div className="sl-sidebar">
+          {nodePositions.error && <div className="sl-action-error">{nodePositions.error}</div>}
           <NodeInspector
             entry={selectedEntry}
+            externalDependency={selectedExternalDependency}
             layout={layout}
             workstream={workstream}
+            externalRouteForDependency={externalRouteForDependency}
             canLaunch={canLaunchSelectedNode}
             launchDisabledReason={launchDisabledReason}
             launchRecord={nodeLaunchRecord}
