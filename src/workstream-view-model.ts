@@ -4,6 +4,9 @@ import type {
   WorkstreamCheckpointStatus,
   WorkstreamDesignReference,
   WorkstreamDocument,
+  WorkstreamExternalDependency,
+  WorkstreamExternalDependencyStatus,
+  WorkstreamExternalDependencyTarget,
   WorkstreamGithubIssueSnapshot,
   WorkstreamGithubPullRequestSnapshot,
   WorkstreamGithubSnapshot,
@@ -15,6 +18,7 @@ import type {
   WorkstreamLaunchTerminalPreference,
   WorkstreamNode,
   WorkstreamNodeStatus,
+  WorkstreamPresentation,
   WorkstreamTracker,
   WorkstreamTrackerType,
   WorkstreamNodeType,
@@ -24,6 +28,7 @@ import type {
 import {
   WORKSTREAM_ATTENTION_STATES,
   WORKSTREAM_CHECKPOINT_STATUSES,
+  WORKSTREAM_EXTERNAL_DEPENDENCY_STATUSES,
   WORKSTREAM_LAUNCH_REQUIRED_TRACKERS,
   WORKSTREAM_LAUNCH_TERMINAL_PREFERENCES,
   WORKSTREAM_NODE_STATUSES,
@@ -57,8 +62,60 @@ export interface WorkstreamDerivedNode {
   operationalStatus: WorkstreamOperationalStatus;
   dependencyReady: boolean;
   completionSource: "artifact" | "github" | null;
+  externalDependencies: WorkstreamExternalDependencyView[];
   githubIssue?: WorkstreamGithubIssueSnapshot;
   activePullRequest?: WorkstreamGithubPullRequestSnapshot;
+}
+
+export type WorkstreamExternalDependencyResolutionState =
+  | "resolving"
+  | "resolved"
+  | "unresolved"
+  | "error"
+  | "manual";
+
+export interface WorkstreamResolvedExternalDependencyTarget {
+  kind: "node" | "workstream";
+  title: string;
+  status: WorkstreamNodeStatus | WorkstreamStatus;
+  satisfied: boolean;
+  archived?: boolean;
+}
+
+export type WorkstreamExternalDependencyResolution =
+  | {
+      state: "resolved";
+      target: WorkstreamResolvedExternalDependencyTarget;
+    }
+  | {
+      state: "unresolved";
+      reason: string;
+      archived?: boolean;
+    }
+  | {
+      state: "error";
+      error: string;
+      archived?: boolean;
+    };
+
+export interface WorkstreamExternalDependencyView {
+  key: string;
+  graphNodeId: string;
+  nodeId: string;
+  dependency: WorkstreamExternalDependency;
+  label: string;
+  detail: string;
+  statusLabel: string;
+  state: WorkstreamExternalDependencyResolutionState;
+  satisfied: boolean;
+  target?: WorkstreamExternalDependencyTarget;
+  targetTitle?: string;
+  targetStatus?: WorkstreamNodeStatus | WorkstreamStatus;
+  targetKind?: "node" | "workstream";
+  archived?: boolean;
+  url?: string;
+  error?: string;
+  ignoredStatus?: WorkstreamExternalDependencyStatus;
 }
 
 export interface WorkstreamCheckpointProgress {
@@ -79,6 +136,13 @@ export interface WorkstreamViewModel {
   freshness: WorkstreamFreshness;
   signals: WorkstreamSignal[];
   checkpoints: WorkstreamCheckpointProgress[];
+}
+
+export interface BuildWorkstreamViewModelOptions {
+  externalDependencyResolutions?: ReadonlyMap<
+    string,
+    WorkstreamExternalDependencyResolution
+  >;
 }
 
 const STALE_ARTIFACT_MS = 7 * 24 * 60 * 60 * 1000;
@@ -129,6 +193,28 @@ function asIdArray(value: unknown, label: string): string[] {
   return value.map((entry, index) =>
     asKebabCaseId(entry, `${label}[${index}]`),
   );
+}
+
+function asOptionalNonEmptyString(
+  value: unknown,
+  label: string,
+): string | undefined {
+  if (typeof value === "undefined") {
+    return undefined;
+  }
+  return asNonEmptyString(value, label);
+}
+
+function asOptionalUrl(value: unknown, label: string): string | undefined {
+  const url = asOptionalNonEmptyString(value, label);
+  if (typeof url === "undefined") {
+    return undefined;
+  }
+  try {
+    return new URL(url).toString();
+  } catch {
+    throw new Error(`Expected ${label} to be a valid absolute URL.`);
+  }
 }
 
 function asEnum<T extends string>(
@@ -212,6 +298,71 @@ function parseTracker(value: unknown, label: string): WorkstreamTracker {
         path: asNonEmptyString(record.path, `${label}.path`),
       };
   }
+}
+
+function parseExternalDependencyTarget(
+  value: unknown,
+  label: string,
+): WorkstreamExternalDependencyTarget {
+  const record = asObject(value, label);
+  return {
+    projectKey: asKebabCaseId(record.projectKey, `${label}.projectKey`),
+    workstreamId: asKebabCaseId(record.workstreamId, `${label}.workstreamId`),
+    nodeId:
+      typeof record.nodeId === "undefined"
+        ? undefined
+        : asKebabCaseId(record.nodeId, `${label}.nodeId`),
+  };
+}
+
+function parseExternalDependency(
+  value: unknown,
+  label: string,
+): WorkstreamExternalDependency {
+  const record = asObject(value, label);
+  const target =
+    typeof record.target === "undefined"
+      ? undefined
+      : parseExternalDependencyTarget(record.target, `${label}.target`);
+  const labelText = asOptionalNonEmptyString(record.label, `${label}.label`);
+  const url = asOptionalUrl(record.url, `${label}.url`);
+  const status =
+    typeof record.status === "undefined"
+      ? undefined
+      : asEnum<WorkstreamExternalDependencyStatus>(
+          record.status,
+          `${label}.status`,
+          WORKSTREAM_EXTERNAL_DEPENDENCY_STATUSES,
+        );
+
+  if (!target && !labelText && !url) {
+    throw new Error(
+      `Expected ${label} to include target, label, or url for unresolved external dependency context.`,
+    );
+  }
+
+  return {
+    id: asKebabCaseId(record.id, `${label}.id`),
+    target,
+    label: labelText,
+    url,
+    status,
+  };
+}
+
+function parseExternalDependencies(
+  value: unknown,
+  label: string,
+): WorkstreamExternalDependency[] {
+  if (typeof value === "undefined") {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`Expected ${label} to be an array.`);
+  }
+  return value.map((entry, index) =>
+    parseExternalDependency(entry, `${label}[${index}]`),
+  );
 }
 
 function parseRepo(value: unknown, label: string): WorkstreamRepo {
@@ -326,6 +477,31 @@ function parseLaunchDefaults(value: unknown, label: string): WorkstreamLaunchDef
   };
 }
 
+function parsePresentation(value: unknown, label: string): WorkstreamPresentation {
+  const record = asObject(value, label);
+  return {
+    shortName: parseOptionalString(record.shortName, `${label}.shortName`),
+    color: parseOptionalHexColor(record.color, `${label}.color`),
+  };
+}
+
+function presentationWithLegacyColorFallback(
+  presentation: WorkstreamPresentation | undefined,
+  launchDefaults: WorkstreamLaunchDefaults | undefined,
+): WorkstreamPresentation | undefined {
+  const shortName = presentation?.shortName;
+  const color = presentation && presentation.color !== undefined
+    ? presentation.color
+    : launchDefaults?.terminal?.tabColor;
+  if (shortName === undefined && color === undefined) {
+    return undefined;
+  }
+  return {
+    ...(shortName !== undefined ? { shortName } : {}),
+    ...(color !== undefined ? { color } : {}),
+  };
+}
+
 function parseNode(
   value: unknown,
   label: string,
@@ -361,6 +537,10 @@ function parseNode(
         ? undefined
         : parseTracker(tracker, `${label}.tracker`),
     dependsOn: asIdArray(record.dependsOn ?? [], `${label}.dependsOn`),
+    externalDependsOn: parseExternalDependencies(
+      record.externalDependsOn,
+      `${label}.externalDependsOn`,
+    ),
   };
 }
 
@@ -429,6 +609,25 @@ function assertSemanticallyValid(
     for (const dependencyId of node.dependsOn) {
       if (dependencyId === node.id) {
         throw new Error("A node cannot depend on itself");
+      }
+    }
+
+    const externalDependencyIds = new Set<string>();
+    for (const dependency of node.externalDependsOn ?? []) {
+      if (externalDependencyIds.has(dependency.id)) {
+        throw new Error(
+          `Duplicate external dependency id '${dependency.id}' on node '${node.id}'`,
+        );
+      }
+      externalDependencyIds.add(dependency.id);
+      const target = dependency.target;
+      if (
+        target &&
+        target.projectKey === (workstream.projectKey ?? workstream.id) &&
+        target.workstreamId === workstream.id &&
+        target.nodeId === node.id
+      ) {
+        throw new Error("A node cannot externally depend on itself");
       }
     }
 
@@ -514,9 +713,20 @@ export function parseWorkstreamDocument(
   const record = asObject(parsed, "workstream");
   const projectKey = record.projectKey;
   const trackingIssue = record.trackingIssue;
+  const presentation = record.presentation;
   const launchPolicy = record.launchPolicy;
   const launchDefaults = record.launchDefaults;
   const designRefs = record.designRefs;
+  const parsedLaunchDefaults =
+    typeof launchDefaults === "undefined"
+      ? undefined
+      : parseLaunchDefaults(launchDefaults, "workstream.launchDefaults");
+  const parsedPresentation = presentationWithLegacyColorFallback(
+    typeof presentation === "undefined"
+      ? undefined
+      : parsePresentation(presentation, "workstream.presentation"),
+    parsedLaunchDefaults,
+  );
 
   return assertSemanticallyValid({
     schemaVersion:
@@ -550,14 +760,12 @@ export function parseWorkstreamDocument(
       typeof trackingIssue === "undefined"
         ? undefined
         : parseIssue(trackingIssue, "workstream.trackingIssue"),
+    presentation: parsedPresentation,
     launchPolicy:
       typeof launchPolicy === "undefined"
         ? undefined
         : parseLaunchPolicy(launchPolicy, "workstream.launchPolicy"),
-    launchDefaults:
-      typeof launchDefaults === "undefined"
-        ? undefined
-        : parseLaunchDefaults(launchDefaults, "workstream.launchDefaults"),
+    launchDefaults: parsedLaunchDefaults,
     repos: parseArray(record.repos, "workstream.repos", parseRepo),
     designRefs:
       typeof designRefs === "undefined"
@@ -716,11 +924,184 @@ function buildCheckpointProgress(
   });
 }
 
+export function workstreamExternalDependencyKey(
+  nodeId: string,
+  dependencyId: string,
+): string {
+  return `${nodeId}:${dependencyId}`;
+}
+
+export function workstreamExternalDependencyGraphNodeId(
+  nodeId: string,
+  dependencyId: string,
+): string {
+  return `external:${nodeId}:${dependencyId}`;
+}
+
+function externalDependencyFallbackLabel(
+  dependency: WorkstreamExternalDependency,
+): string {
+  if (dependency.label) {
+    return dependency.label;
+  }
+  if (dependency.target?.nodeId) {
+    return `${dependency.target.workstreamId} / ${dependency.target.nodeId}`;
+  }
+  if (dependency.target) {
+    return dependency.target.workstreamId;
+  }
+  if (dependency.url) {
+    return dependency.url;
+  }
+  return dependency.id;
+}
+
+function buildExternalDependencyView(
+  nodeId: string,
+  dependency: WorkstreamExternalDependency,
+  resolution: WorkstreamExternalDependencyResolution | undefined,
+): WorkstreamExternalDependencyView {
+  const key = workstreamExternalDependencyKey(nodeId, dependency.id);
+  const graphNodeId = workstreamExternalDependencyGraphNodeId(nodeId, dependency.id);
+  const fallbackLabel = externalDependencyFallbackLabel(dependency);
+
+  if (dependency.target) {
+    if (resolution?.state === "resolved") {
+      const target = resolution.target;
+      return {
+        key,
+        graphNodeId,
+        nodeId,
+        dependency,
+        label: dependency.label ?? target.title,
+        detail: `${target.kind === "node" ? "Node" : "Workstream"} ${target.status}`,
+        statusLabel: target.satisfied ? "satisfied" : "waiting",
+        state: "resolved",
+        satisfied: target.satisfied,
+        target: dependency.target,
+        targetTitle: target.title,
+        targetStatus: target.status,
+        targetKind: target.kind,
+        archived: target.archived,
+        url: dependency.url,
+        ignoredStatus: dependency.status,
+      };
+    }
+
+    const canUseManualTargetOverride =
+      resolution?.state === "error" || resolution?.state === "unresolved";
+    const unresolvedSatisfied =
+      canUseManualTargetOverride && dependency.status === "satisfied";
+    if (unresolvedSatisfied) {
+      return {
+        key,
+        graphNodeId,
+        nodeId,
+        dependency,
+        label: fallbackLabel,
+        detail:
+          resolution?.state === "error"
+            ? `Manual override while target errored: ${resolution.error}`
+            : `Manual override while target unresolved: ${resolution.reason}`,
+        statusLabel: "manually satisfied",
+        state: "manual",
+        satisfied: true,
+        target: dependency.target,
+        archived: resolution?.state === "unresolved" || resolution?.state === "error"
+          ? resolution.archived
+          : undefined,
+        url: dependency.url,
+        error: resolution?.state === "error" ? resolution.error : undefined,
+      };
+    }
+
+    if (resolution?.state === "error") {
+      return {
+        key,
+        graphNodeId,
+        nodeId,
+        dependency,
+        label: fallbackLabel,
+        detail: resolution.error,
+        statusLabel: "error",
+        state: "error",
+        satisfied: false,
+        target: dependency.target,
+        archived: resolution.archived,
+        url: dependency.url,
+        error: resolution.error,
+      };
+    }
+
+    if (resolution?.state === "unresolved") {
+      return {
+        key,
+        graphNodeId,
+        nodeId,
+        dependency,
+        label: fallbackLabel,
+        detail: resolution.reason,
+        statusLabel: "unresolved",
+        state: "unresolved",
+        satisfied: false,
+        target: dependency.target,
+        archived: resolution.archived,
+        url: dependency.url,
+      };
+    }
+
+    return {
+      key,
+      graphNodeId,
+      nodeId,
+      dependency,
+      label: fallbackLabel,
+      detail: "Resolving upstream workstream dependency.",
+      statusLabel: "resolving",
+      state: "resolving",
+      satisfied: false,
+      target: dependency.target,
+      url: dependency.url,
+    };
+  }
+
+  const satisfied = dependency.status === "satisfied";
+  return {
+    key,
+    graphNodeId,
+    nodeId,
+    dependency,
+    label: fallbackLabel,
+    detail: dependency.url
+      ? "URL-only external dependency."
+      : "Manual external dependency.",
+    statusLabel: satisfied ? "manually satisfied" : "pending",
+    state: "manual",
+    satisfied,
+    url: dependency.url,
+  };
+}
+
+function externalDependencyViewsForNode(
+  node: WorkstreamNode,
+  resolutions:
+    | ReadonlyMap<string, WorkstreamExternalDependencyResolution>
+    | undefined,
+): WorkstreamExternalDependencyView[] {
+  return (node.externalDependsOn ?? []).map((dependency) =>
+    buildExternalDependencyView(
+      node.id,
+      dependency,
+      resolutions?.get(workstreamExternalDependencyKey(node.id, dependency.id)),
+    ),
+  );
+}
+
 function buildArtifactOnlyViewModel(
   workstream: WorkstreamDocument,
   freshness: WorkstreamFreshness,
+  options: BuildWorkstreamViewModelOptions = {},
 ): WorkstreamViewModel {
-  const readyNow = workstream.nodes.filter((node) => node.status === "ready");
   const inFlight = workstream.nodes.filter(
     (node) => node.status === "in-progress",
   );
@@ -730,17 +1111,6 @@ function buildArtifactOnlyViewModel(
   // Both are excluded from "needs attention" derivations.
   const attentionEligibleNodes = workstream.nodes.filter(
     (node) => node.status !== "completed" && node.status !== "retired",
-  );
-  const readyIds = new Set(readyNow.map((node) => node.id));
-  const inFlightIds = new Set(inFlight.map((node) => node.id));
-  const blockedOrAttention = workstream.nodes.filter(
-    (node) =>
-      node.status === "blocked" ||
-      (node.attention !== "parked" &&
-        node.status !== "completed" &&
-        node.status !== "retired" &&
-        !readyIds.has(node.id) &&
-        !inFlightIds.has(node.id)),
   );
   const gateNodes = workstream.nodes.filter((node) => node.type === "gate");
   const focusNodes = attentionEligibleNodes
@@ -792,19 +1162,61 @@ function buildArtifactOnlyViewModel(
       tone: nextValidationItem ? "accent" : "muted",
     },
   ];
-  const derivedNodes: WorkstreamDerivedNode[] = workstream.nodes.map(
-    (node) => ({
+  const completedOrRetiredByArtifact = new Set(
+    workstream.nodes
+      .filter((node) => node.status === "completed" || node.status === "retired")
+      .map((node) => node.id),
+  );
+  const derivedNodes: WorkstreamDerivedNode[] = workstream.nodes.map((node) => {
+    const externalDependencies = externalDependencyViewsForNode(
       node,
-      operationalStatus: node.status,
-      dependencyReady: node.dependsOn.length === 0,
+      options.externalDependencyResolutions,
+    );
+    const externalDependenciesReady = externalDependencies.every(
+      (dependency) => dependency.satisfied,
+    );
+    const localDependenciesReady = node.dependsOn.every((dependencyId) =>
+      completedOrRetiredByArtifact.has(dependencyId),
+    );
+    const hasExternalDependencies = externalDependencies.length > 0;
+    const dependencyReady = localDependenciesReady && externalDependenciesReady;
+    let operationalStatus: WorkstreamOperationalStatus = node.status;
+    if (
+      hasExternalDependencies &&
+      (node.status === "ready" || node.status === "planned" || node.status === "blocked")
+    ) {
+      operationalStatus = dependencyReady ? "ready" : "blocked";
+    }
+
+    return {
+      node,
+      operationalStatus,
+      dependencyReady,
       // Both completed and retired nodes count as artifact-satisfied for
       // downstream gating; operationalStatus distinguishes them in the UI.
       completionSource:
         node.status === "completed" || node.status === "retired"
           ? ("artifact" as const)
           : null,
-    }),
-  );
+      externalDependencies,
+    };
+  });
+  const readyNow = derivedNodes
+    .filter((entry) => entry.operationalStatus === "ready")
+    .map((entry) => entry.node);
+  const readyIds = new Set(readyNow.map((node) => node.id));
+  const inFlightIds = new Set(inFlight.map((node) => node.id));
+  const blockedOrAttention = derivedNodes
+    .filter(
+      ({ node, operationalStatus }) =>
+        operationalStatus === "blocked" ||
+        (node.attention !== "parked" &&
+          operationalStatus !== "completed" &&
+          operationalStatus !== "retired" &&
+          !readyIds.has(node.id) &&
+          !inFlightIds.has(node.id)),
+    )
+    .map((entry) => entry.node);
   const artifactCompletedNodeIds = new Set(
     derivedNodes
       .filter(
@@ -836,11 +1248,12 @@ export function buildWorkstreamViewModel(
   workstream: WorkstreamDocument,
   githubSnapshot?: WorkstreamGithubSnapshot,
   now = new Date(),
+  options: BuildWorkstreamViewModelOptions = {},
 ): WorkstreamViewModel {
   const freshness = describeFreshness(workstream.updatedAt, now);
 
   if (!githubSnapshot) {
-    return buildArtifactOnlyViewModel(workstream, freshness);
+    return buildArtifactOnlyViewModel(workstream, freshness, options);
   }
 
   const issueSnapshots = buildIssueSnapshotMap(githubSnapshot);
@@ -889,9 +1302,17 @@ export function buildWorkstreamViewModel(
       ? issueSnapshots.get(issueKey(issueRef))
       : undefined;
     const completionSource = completionSourceOf(node.id);
-    const dependencyReady = node.dependsOn.every(
+    const localDependencyReady = node.dependsOn.every(
       (dependencyId) => completionSourceOf(dependencyId) !== null,
     );
+    const externalDependencies = externalDependencyViewsForNode(
+      node,
+      options.externalDependencyResolutions,
+    );
+    const externalDependencyReady = externalDependencies.every(
+      (dependency) => dependency.satisfied,
+    );
+    const dependencyReady = localDependencyReady && externalDependencyReady;
     const dependencyUnblockedByGithub =
       dependencyReady &&
       node.dependsOn.some(
@@ -919,6 +1340,11 @@ export function buildWorkstreamViewModel(
       dependencyReady
     ) {
       operationalStatus = "ready";
+    } else if (
+      externalDependencies.length > 0 &&
+      (node.status === "ready" || node.status === "planned" || node.status === "blocked")
+    ) {
+      operationalStatus = dependencyReady ? "ready" : "blocked";
     }
 
     return {
@@ -926,6 +1352,7 @@ export function buildWorkstreamViewModel(
       operationalStatus,
       dependencyReady,
       completionSource,
+      externalDependencies,
       githubIssue,
       activePullRequest,
     };

@@ -602,18 +602,51 @@ function detachNodeRegistryRows(
     }
     const current = registryStore.getSession(session.id);
     if (current && isNodeGraphBinding(current.graphBinding, workstreamId, nodeId)) {
-      registryStore.patchSession(session.id, { graphBinding: null });
-      detachedRegistryIds.add(session.id);
+      if (clearSessionGraphBinding(registryStore, current)) {
+        detachedRegistryIds.add(session.id);
+      }
     }
   }
 }
 
 function isNodeGraphBinding(
-  graphBinding: { workstreamId: string; nodeId: string } | null,
+  graphBinding: { workstreamId: string; nodeId?: string | null } | null,
   workstreamId: string,
   nodeId: string,
 ): boolean {
   return graphBinding?.workstreamId === workstreamId && graphBinding.nodeId === nodeId;
+}
+
+function clearSessionGraphBinding(
+  registryStore: SessionRegistryFileStore,
+  session: { id: string; cwd: string; graphBinding: { workstreamId: string; nodeId?: string | null; launchClaimId?: string | null } | null },
+): boolean {
+  const binding = session.graphBinding;
+  if (!binding) {
+    return false;
+  }
+  if (binding.launchClaimId && !binding.nodeId) {
+    return false;
+  }
+  if (binding.launchClaimId && binding.nodeId) {
+    const result = registryStore.bindClaimToRow(
+      session.id,
+      {
+        cwdAfterNormalize: session.cwd,
+        branch: null,
+        repo: null,
+        requireGraphBindingNullOrMatching: {
+          workstreamId: binding.workstreamId,
+          nodeId: binding.nodeId,
+          launchClaimId: binding.launchClaimId,
+        },
+      },
+      { graphBinding: null },
+    );
+    return result.ok;
+  }
+  registryStore.patchSession(session.id, { graphBinding: null });
+  return true;
 }
 
 function releaseClaimRegistryRows(
@@ -645,8 +678,9 @@ function releaseClaimRegistryRows(
     }
     const current = registryStore.getSession(registryId);
     if (current?.graphBinding?.launchClaimId === claim.launchClaimId) {
-      registryStore.patchSession(registryId, { graphBinding: null });
-      detached.push(registryId);
+      if (clearSessionGraphBinding(registryStore, current)) {
+        detached.push(registryId);
+      }
     }
   }
   return detached;

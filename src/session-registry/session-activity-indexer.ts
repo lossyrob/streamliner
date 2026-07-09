@@ -9,6 +9,7 @@ import {
   type SessionRegistryActivityStatus,
 } from "../session-registry-schema";
 import type { SessionRegistryDerivedStatePatch } from "./file-store";
+import { processExists } from "./lock-liveness";
 
 export const SESSION_ACTIVITY_INDEX_MAX_BYTES = 128 * 1024;
 
@@ -50,23 +51,6 @@ interface AnonymousAskUserRequest {
 
 function isJsonObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function processExists(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error: unknown) {
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      (error as NodeJS.ErrnoException).code === "EPERM"
-    ) {
-      return true;
-    }
-    return false;
-  }
 }
 
 function readTail(path: string, maxBytes: number): TailRead {

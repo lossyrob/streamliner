@@ -78,3 +78,12 @@ export async function saveReviewPromptTemplate(input: {
   }
   return body.template;
 }
+
+export async function deleteReviewPromptTemplate(id: string): Promise<void> {
+  const response = await fetch(`/api/paw-review-prompt-templates/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    throw new Error(responseErrorMessage(response, "Could not delete review prompt template."));
+  }
+}

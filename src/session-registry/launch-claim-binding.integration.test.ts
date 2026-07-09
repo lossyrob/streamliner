@@ -9,7 +9,11 @@ import { SessionRegistryFileStore } from "./file-store";
 import { LaunchClaimFileStore } from "./launch-claim-store";
 import { runLaunchClaimBindingPass } from "./launch-claim-binding";
 import { runLaunchClaimSweep } from "./launch-claim-sweep";
-import { createLaunchClaim, kickoffNonceLine, reconcileOrphanReservedRows } from "./launch-claims";
+import {
+  createLaunchClaim,
+  kickoffNonceLine,
+  reconcileOrphanReservedRows,
+} from "./launch-claims";
 import {
   type DiscoveredCopilotSession,
 } from "./copilot-session-discovery";
@@ -225,6 +229,11 @@ describe("Launch Claim Binding — end-to-end integration", () => {
     expect(claimStore.getClaim("claim-INTEGRATION")).toBeNull();
     // The bound registry row and durable graph binding survive claim-file pruning
     // and the next startup reconciliation pass.
+    expect(registryStore.getSession("reg-INTEGRATION")?.graphBinding).toEqual({
+      workstreamId: "session-launching-and-tracking",
+      nodeId: "launch-claim-binding",
+      launchClaimId: "claim-INTEGRATION",
+    });
     const reconcile = reconcileOrphanReservedRows(registryStore, claimStore);
     expect(reconcile.rowsDeleted).toBe(0);
     expect(reconcile.rowsGraphBindingCleared).toBe(0);

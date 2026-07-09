@@ -580,9 +580,32 @@ describe("SessionRegistryFileStore — FR-7 patchSession({ graphBinding }) expli
     expect(latest.version).toBe(v1.version);
   });
 
-  it("clearing graphBinding via patchSession works and bumps version", () => {
+  it("clearing an unprotected graphBinding via patchSession works and bumps version", () => {
     const row = store.upsertSession({
       id: "row-fr7-clear",
+      title: "Manual",
+      description: "",
+      cwd: "C:/repo",
+      repo: null,
+      branch: null,
+      tags: [],
+      origin: { kind: "manual" },
+      graphBinding: {
+        workstreamId: "w",
+        nodeId: "n",
+      },
+    });
+    const cleared = store.patchSession(row.id, {
+      graphBinding: null,
+      expectedVersion: row.version,
+    });
+    expect(cleared.graphBinding).toBeNull();
+    expect(cleared.version).toBe(row.version + 1);
+  });
+
+  it("rejects clearing a launch-claim-protected graphBinding via patchSession", () => {
+    const row = store.upsertSession({
+      id: "row-fr7-clear-protected",
       title: "Manual",
       description: "",
       cwd: "C:/repo",
@@ -596,11 +619,12 @@ describe("SessionRegistryFileStore — FR-7 patchSession({ graphBinding }) expli
         launchClaimId: "claim",
       },
     });
-    const cleared = store.patchSession(row.id, {
-      graphBinding: null,
-      expectedVersion: row.version,
-    });
-    expect(cleared.graphBinding).toBeNull();
-    expect(cleared.version).toBe(row.version + 1);
+    expect(() =>
+      store.patchSession(row.id, {
+        graphBinding: null,
+        expectedVersion: row.version,
+      }),
+    ).toThrow(SessionRegistryConflictError);
+    expect(store.getSession(row.id)?.graphBinding?.launchClaimId).toBe("claim");
   });
 });

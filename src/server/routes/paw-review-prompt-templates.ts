@@ -222,5 +222,23 @@ export function createPawReviewPromptTemplatesRouter(options: {
     }
   });
 
+  router.delete("/paw-review-prompt-templates/:id", async (req, res, next) => {
+    try {
+      const document = await readDocument(templatesPath);
+      const nextTemplates = document.templates.filter((template) => template.id !== req.params.id);
+      if (nextTemplates.length === document.templates.length) {
+        res.status(404).json({ code: "review_prompt_template_not_found", error: "Review prompt template not found." });
+        return;
+      }
+      await writeDocument(templatesPath, {
+        ...document,
+        templates: nextTemplates,
+      });
+      res.status(204).end();
+    } catch (error: unknown) {
+      next(error);
+    }
+  });
+
   return router;
 }

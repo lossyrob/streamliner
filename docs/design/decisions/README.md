@@ -1,25 +1,3 @@
----
-kind: design-doc
-status: current
-last_updated: 2026-05-02
-update_semantics: rewrite-in-place
-authoritative_for: "Decision record conventions and catalog"
-scope_tags:
-  - decisions
-  - architecture
-code_paths: []
-references_decisions:
-  - 1
-  - 2
-  - 3
-  - 4
-  - 5
-  - 6
-  - 7
-  - 8
-  - 9
----
-
 # Decision Records
 
 This directory holds architecturally significant decisions for Streamliner.
@@ -29,6 +7,7 @@ This directory holds architecturally significant decisions for Streamliner.
 - **Numbering**: Sequential, zero-padded to three digits (e.g., `001-use-react-flow.md`)
 - **File naming**: `{number}-{slug}.md` where slug is a short kebab-case description
 - **Append-only**: Once accepted, a decision record is not edited. If the decision changes, a new record supersedes the old one.
+- **No frontmatter**: Decision metadata lives in the filename, `# H1`, and the decision tables in this README and the design index.
 
 ## Status values
 
@@ -73,3 +52,5 @@ What follows from this choice.
 | 007 | [Tracked workstream registry](007-tracked-workstream-registry.md) | accepted | 2026-05-01 |
 | 008 | [PAW artifacts for workflow status](008-paw-artifacts-for-workflow-status.md) | accepted | 2026-05-02 |
 | 009 | [SDK-managed graph-node worker runtime](009-sdk-managed-worker-runtime.md) | accepted | 2026-05-07 |
+| 010 | [Terminal takeover and managed cleanup actions](010-terminal-takeover-and-cleanup.md) | accepted | 2026-05-09 |
+| 011 | [Documentation family foundation](011-documentation-family-foundation.md) | accepted | 2026-05-10 |

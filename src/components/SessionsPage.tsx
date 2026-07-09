@@ -9,19 +9,18 @@ import {
   useState,
 } from "react";
 
-import type {
-  SessionRegistryListItem,
-  SessionRegistryListOptions,
-  SessionRegistryPatch,
+import {
+  sessionRegistryRecordToListItem,
+  type SessionRegistryListItem,
+  type SessionRegistryListOptions,
+  type SessionRegistryPatch,
 } from "../session-registry-contract";
 import type { SessionRegistryRecord } from "../session-registry-schema";
 import type { ManagedRuntimeProjection } from "../managed-runtime-contract";
 import {
   formatManagedRuntimeLabel,
   managedLifecycleStatusClass,
-  managedRuntimeProjectionFromMetadata,
-  managedRuntimeProgressEvents,
-  resolveManagedRuntimeActions,
+  managedRuntimeProjectionFromSession,
 } from "../managed-runtime-contract";
 import {
   handleInAppLinkClick,
@@ -31,11 +30,13 @@ import {
   canLoadWorkstreamGraph,
   findGraphBindingWorkstreamMatches,
   resolveSessionWorkstreamLinkage,
+  UNBOUND_SESSION_WORKSTREAM_GROUP,
   workstreamRegistryKey,
   type SessionWorkstreamLinkageResolution,
   type WorkstreamGraphLoadState,
   type WorkstreamRouteTarget,
 } from "../session-workstream-linkage";
+import { sessionRegistryEffectiveGraphBinding } from "../session-registry-filter";
 import type { WorkstreamRegistryListEntry } from "../workstream-registry-contract";
 import { parseWorkstreamDocument } from "../workstream-view-model";
 import { useIsDocumentVisible } from "../use-document-visibility";
@@ -65,7 +66,10 @@ import {
 import {
   TerminalColorQuickPicker,
 } from "./SessionColorPicker";
-import { ManagedRuntimeActionButton } from "./ManagedRuntimeActionButton";
+import {
+  ManagedRuntimeConsolePanel,
+} from "./ManagedRuntimeConsolePanel";
+import { isManagedRuntimeConsoleLive } from "./ManagedSessionConsoleEvents";
 import {
   eventRegistryId,
   runtimeUpdatedPayload,
@@ -92,8 +96,10 @@ const SESSION_QUERY_DEBOUNCE_MS = 250;
 const DEFAULT_STALE_SESSION_DAYS = 7;
 const SESSION_STALE_DAYS_STORAGE_KEY = "streamliner:sessionsStaleDays";
 const SESSION_GROUP_MODE_STORAGE_KEY = "streamliner:sessionsGroupMode";
+const SESSION_FACET_ALL = "__all__";
 
 type GroupMode = "recency" | "repo" | "folder" | "workstream" | "flat";
+type SessionsViewTab = "list" | "consoles";
 type SheetTab = "overview" | "activity" | "settings";
 
 const GROUP_MODES: Array<{ mode: GroupMode; label: string }> = [
@@ -116,6 +122,7 @@ interface SessionDraft {
   branch: string;
   tagsText: string;
   lifecycleStatus: "active" | "paused" | "archived" | "ended";
+  graphBinding: SessionRegistryListItem["graphBinding"];
 }
 
 type SaveState = "idle" | "saving" | "saved" | "error";
@@ -140,6 +147,7 @@ function draftFromSession(session: SessionRegistryListItem): SessionDraft {
     branch: session.branch ?? "",
     tagsText: session.tags.join(", "),
     lifecycleStatus: session.lifecycleStatus,
+    graphBinding: session.graphBinding ? { ...session.graphBinding } : null,
   };
 }
 
@@ -153,63 +161,11 @@ function createEmptyDraft(): SessionDraft {
     branch: "",
     tagsText: "",
     lifecycleStatus: "active",
+    graphBinding: null,
   };
 }
 
-function toListItem(record: SessionRegistryRecord): SessionRegistryListItem {
-  return {
-    id: record.id,
-    version: record.version,
-    title: record.title,
-    titleSource: record.titleSource,
-    description: record.description,
-    lifecycleStatus: record.lifecycleStatus,
-    lastSeenAt: record.lastSeenAt,
-    updatedAt: record.updatedAt,
-    color: record.color,
-    cwd: record.cwd,
-    repo: record.repo,
-    branch: record.branch,
-    tags: record.tags,
-    originKind: record.origin.kind,
-    launchCliArgs: record.origin.kind === "launched" && Array.isArray(record.origin.cliArgs)
-      ? [...record.origin.cliArgs]
-      : null,
-    graphBinding: record.graphBinding,
-    pawLaunch: record.pawLaunch,
-    runtime: record.runtime ?? null,
-    copilotSessionId: record.copilotSessionId,
-    aiSummary: record.aiSummary,
-    aiSummaryModel: record.aiSummaryModel,
-    aiSummaryUpdatedAt: record.aiSummaryUpdatedAt,
-    aiSummaryEventsFingerprint: record.aiSummaryEventsFingerprint,
-    aiSummaryStatus: record.aiSummaryStatus,
-    aiSummaryError: record.aiSummaryError,
-    observedSessionKind: record.observedSessionKind,
-    copilotProcessState: record.copilotProcessState,
-    copilotProcessId: record.copilotProcessId,
-    activityStatus: record.activityStatus,
-    activityStatusUpdatedAt: record.activityStatusUpdatedAt,
-    activityEvidence: record.activityEvidence,
-    pawWorkflow: record.pawWorkflow,
-    trustedSignalSource: record.trustedSignalSource,
-    trustedStartedAt: record.trustedStartedAt,
-    trustedEndedAt: record.trustedEndedAt,
-    trustedLastSignalAt: record.trustedLastSignalAt,
-    trustedStartSource: record.trustedStartSource,
-    trustedEndReason: record.trustedEndReason,
-    trustedExecutionKind: record.trustedExecutionKind,
-    trustedInitialPromptLength: record.trustedInitialPromptLength,
-    trustedLastPromptLength: record.trustedLastPromptLength,
-    derivedWorktreePath: record.derivedWorktreePath,
-    derivedBranch: record.derivedBranch,
-    derivedGithubRefs: record.derivedGithubRefs,
-    derivedContextUpdatedAt: record.derivedContextUpdatedAt,
-    derivedContextEventsOffset: record.derivedContextEventsOffset,
-    derivedContextEventsSize: record.derivedContextEventsSize,
-    derivedContextEventsMtimeMs: record.derivedContextEventsMtimeMs,
-  };
-}
+const toListItem = sessionRegistryRecordToListItem;
 
 function normalizeTags(tagsText: string): string[] {
   const seen = new Set<string>();
@@ -229,6 +185,7 @@ function draftKey(draft: SessionDraft): string {
     branch: draft.branch,
     tags: normalizeTags(draft.tagsText),
     lifecycleStatus: draft.lifecycleStatus,
+    graphBinding: draft.graphBinding,
   });
 }
 
@@ -253,6 +210,9 @@ function buildPatch(
   const nextTags = normalizeTags(draft.tagsText);
   if (JSON.stringify(nextTags) !== JSON.stringify(session.tags)) {
     patch.tags = nextTags;
+  }
+  if (JSON.stringify(draft.graphBinding ?? null) !== JSON.stringify(session.graphBinding ?? null)) {
+    patch.graphBinding = draft.graphBinding;
   }
 
   if (
@@ -918,6 +878,8 @@ function workstreamLinkageTitle(
   switch (linkage.status) {
     case "resolved":
       return "Open bound workstream node";
+    case "workstream-only":
+      return "Open assigned workstream";
     case "graph-loading":
       return linkage.note ?? "Resolving bound workstream node";
     case "graph-unavailable":
@@ -936,6 +898,8 @@ function workstreamLinkageStatusLabel(
   switch (linkage.status) {
     case "resolved":
       return "Resolved";
+    case "workstream-only":
+      return "Workstream assigned";
     case "graph-loading":
       return "Resolving node";
     case "graph-unavailable":
@@ -995,7 +959,7 @@ function SessionWorkstreamContextChips({
 function getManagedRuntime(
   session: SessionRegistryListItem,
 ): ManagedRuntimeProjection | null {
-  return managedRuntimeProjectionFromMetadata(session.runtime);
+  return managedRuntimeProjectionFromSession(session);
 }
 
 function managedRuntimeLifecycleText(runtime: ManagedRuntimeProjection): string {
@@ -1009,6 +973,35 @@ function managedRuntimeSummaryText(runtime: ManagedRuntimeProjection): string {
     runtime.errorSummary ??
     `Background session is ${managedRuntimeLifecycleText(runtime)}.`
   );
+}
+
+function managedRuntimeUpdatedTimestamp(session: SessionRegistryListItem): number {
+  const runtime = getManagedRuntime(session);
+  return Date.parse(
+    runtime?.lifecycleUpdatedAt ??
+      session.lastSeenAt ??
+      session.updatedAt,
+  );
+}
+
+function sortManagedConsoleSessions(
+  sessions: readonly SessionRegistryListItem[],
+): SessionRegistryListItem[] {
+  return sessions
+    .filter((session) => getManagedRuntime(session))
+    .sort((a, b) => {
+      const aRuntime = getManagedRuntime(a);
+      const bRuntime = getManagedRuntime(b);
+      if (!aRuntime || !bRuntime) {
+        return 0;
+      }
+      const activeDelta = Number(isManagedRuntimeConsoleLive(bRuntime)) -
+        Number(isManagedRuntimeConsoleLive(aRuntime));
+      if (activeDelta !== 0) {
+        return activeDelta;
+      }
+      return managedRuntimeUpdatedTimestamp(b) - managedRuntimeUpdatedTimestamp(a);
+    });
 }
 
 type RecencyBucketKey =
@@ -1068,6 +1061,12 @@ interface SessionGroup {
   sessions: SessionRegistryListItem[];
 }
 
+interface SessionFacetOption {
+  value: string;
+  label: string;
+  count: number;
+}
+
 function repoGroupKey(session: SessionRegistryListItem): string {
   return session.repo ?? "__no_repo__";
 }
@@ -1082,6 +1081,42 @@ function displayRepoLabel(repoKey: string): { label: string; code: string | null
   }
   const shortName = repoKey.includes("/") ? repoKey.split("/").slice(-1)[0] : repoKey;
   return { label: shortName, code: repoKey };
+}
+
+function buildRepoFacetOptions(sessions: readonly SessionRegistryListItem[]): SessionFacetOption[] {
+  const counts = new Map<string, number>();
+  for (const session of sessions) {
+    const key = repoGroupKey(session);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([value, count]) => {
+      const display = displayRepoLabel(value);
+      return {
+        value,
+        label: display.code ?? display.label,
+        count,
+      };
+    })
+    .sort((left, right) => left.label.localeCompare(right.label));
+}
+
+function buildWorkstreamFacetOptions(
+  sessions: readonly SessionRegistryListItem[],
+  linkages: ReadonlyMap<string, SessionWorkstreamLinkageResolution>,
+): SessionFacetOption[] {
+  const counts = new Map<string, { label: string; count: number }>();
+  for (const session of sessions) {
+    const group = linkages.get(session.id)?.group ?? UNBOUND_SESSION_WORKSTREAM_GROUP;
+    const existing = counts.get(group.key);
+    counts.set(group.key, {
+      label: group.code ?? group.label,
+      count: (existing?.count ?? 0) + 1,
+    });
+  }
+  return [...counts.entries()]
+    .map(([value, option]) => ({ value, ...option }))
+    .sort((left, right) => left.label.localeCompare(right.label));
 }
 
 function displayFolderLabel(folderKey: string): { label: string; code: string | null } {
@@ -1203,6 +1238,12 @@ function groupSessions(
     groups.sort((a, b) => (order[a.key as RecencyBucketKey] ?? 99) - (order[b.key as RecencyBucketKey] ?? 99));
   } else if (mode === "workstream") {
     groups.sort((a, b) => {
+      if (a.key === UNBOUND_SESSION_WORKSTREAM_GROUP.key && b.key !== UNBOUND_SESSION_WORKSTREAM_GROUP.key) {
+        return 1;
+      }
+      if (b.key === UNBOUND_SESSION_WORKSTREAM_GROUP.key && a.key !== UNBOUND_SESSION_WORKSTREAM_GROUP.key) {
+        return -1;
+      }
       if (a.order !== b.order) {
         return a.order - b.order;
       }
@@ -1275,6 +1316,7 @@ interface SessionsPageProps {
   onOpenWorkstream?: (target: WorkstreamRouteTarget) => void | Promise<void>;
   routeWorkstreamId?: string | null;
   routeNodeId?: string | null;
+  routeTab?: SessionsViewTab | null;
 }
 
 function buildVisibleRestartCommand(
@@ -1310,6 +1352,7 @@ export function SessionsPage({
   onOpenWorkstream,
   routeWorkstreamId = null,
   routeNodeId = null,
+  routeTab = null,
 }: SessionsPageProps) {
   const [sessions, setSessions] = useState<SessionRegistryListItem[]>([]);
   const [workstreamGraphs, setWorkstreamGraphs] = useState<
@@ -1319,9 +1362,15 @@ export function SessionsPage({
   const [showArchived, setShowArchived] = useState(false);
   const [showEnded, setShowEnded] = useState(false);
   const [showAllObserved, setShowAllObserved] = useState(false);
+  const [viewTab, setViewTab] = useState<SessionsViewTab>(
+    routeTab === "consoles" ? "consoles" : "list",
+  );
+  const [repoFacet, setRepoFacet] = useState(SESSION_FACET_ALL);
+  const [workstreamFacet, setWorkstreamFacet] = useState(SESSION_FACET_ALL);
   const [staleSessionDays, setStaleSessionDays] = useState(readStaleSessionDays);
   const [groupMode, setGroupMode] = useState<GroupMode>(readGroupMode);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedConsoleId, setSelectedConsoleId] = useState<string | null>(null);
   const [draft, setDraft] = useState<SessionDraft>(createEmptyDraft);
   const [selectedSnapshot, setSelectedSnapshot] = useState<SessionRegistryListItem | null>(
     null,
@@ -1746,20 +1795,12 @@ export function SessionsPage({
     () => filterEndedSessions(relevanceFilteredSessions, showEnded),
     [relevanceFilteredSessions, showEnded],
   );
-  const visibleSessions = useMemo(
+  const staleFilteredSessions = useMemo(
     () =>
       endedFilteredSessions.filter(
         (session) => !isSessionStale(session, staleSessionDays),
       ),
     [endedFilteredSessions, staleSessionDays],
-  );
-  const githubStatusRefs = useMemo(
-    () => githubStatusRefsForSessions(visibleSessions, selectedSession),
-    [selectedSession, visibleSessions],
-  );
-  const githubStatuses = useGithubStatusLookup(
-    githubStatusRefs,
-    githubStatusRefreshKey,
   );
   const hiddenGraphScopedManualCount = sessions.length - graphScopedSessions.length;
   const hiddenObservedSessionCount =
@@ -1767,7 +1808,7 @@ export function SessionsPage({
   const hiddenEndedSessionCount =
     relevanceFilteredSessions.length - endedFilteredSessions.length;
   const hiddenStaleSessionCount =
-    endedFilteredSessions.length - visibleSessions.length;
+    endedFilteredSessions.length - staleFilteredSessions.length;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -1777,10 +1818,21 @@ export function SessionsPage({
   }, []);
 
   useEffect(() => {
+    setViewTab(routeTab === "consoles" ? "consoles" : "list");
+  }, [routeTab]);
+
+  useEffect(() => {
+    if (routeTab === "consoles" && (routeWorkstreamId || routeNodeId)) {
+      setShowArchived(true);
+      setShowEnded(true);
+    }
+  }, [routeNodeId, routeTab, routeWorkstreamId]);
+
+  useEffect(() => {
     const entriesToLoad = new Map<string, WorkstreamRegistryListEntry>();
     const graphStateSnapshot = workstreamGraphsRef.current;
-    for (const session of visibleSessions) {
-      const binding = session.graphBinding;
+    for (const session of staleFilteredSessions) {
+      const binding = sessionRegistryEffectiveGraphBinding(session);
       if (!binding) {
         continue;
       }
@@ -1847,7 +1899,7 @@ export function SessionsPage({
         }
       })();
     }
-  }, [visibleSessions, workstreamGraphsRef, workstreams]);
+  }, [staleFilteredSessions, workstreamGraphsRef, workstreams]);
 
   const workstreamGraphStateMap = useMemo(
     () => new Map(Object.entries(workstreamGraphs)),
@@ -1879,6 +1931,68 @@ export function SessionsPage({
           )
         : null,
     [selectedSession, workstreamGraphStateMap, workstreams],
+  );
+
+  const repoFacetOptions = useMemo(
+    () => buildRepoFacetOptions(staleFilteredSessions),
+    [staleFilteredSessions],
+  );
+  const workstreamFacetOptions = useMemo(
+    () => buildWorkstreamFacetOptions(staleFilteredSessions, sessionLinkages),
+    [staleFilteredSessions, sessionLinkages],
+  );
+  useEffect(() => {
+    if (
+      repoFacet !== SESSION_FACET_ALL &&
+      !repoFacetOptions.some((option) => option.value === repoFacet)
+    ) {
+      setRepoFacet(SESSION_FACET_ALL);
+    }
+  }, [repoFacet, repoFacetOptions]);
+  useEffect(() => {
+    if (
+      workstreamFacet !== SESSION_FACET_ALL &&
+      !workstreamFacetOptions.some((option) => option.value === workstreamFacet)
+    ) {
+      setWorkstreamFacet(SESSION_FACET_ALL);
+    }
+  }, [workstreamFacet, workstreamFacetOptions]);
+  const visibleSessions = useMemo(
+    () =>
+      staleFilteredSessions.filter((session) => {
+        if (repoFacet !== SESSION_FACET_ALL && repoGroupKey(session) !== repoFacet) {
+          return false;
+        }
+        if (
+          workstreamFacet !== SESSION_FACET_ALL &&
+          (sessionLinkages.get(session.id)?.group.key ?? UNBOUND_SESSION_WORKSTREAM_GROUP.key) !==
+            workstreamFacet
+        ) {
+          return false;
+        }
+        return true;
+      }),
+    [repoFacet, sessionLinkages, staleFilteredSessions, workstreamFacet],
+  );
+  const consoleSessions = useMemo(
+    () => sortManagedConsoleSessions(visibleSessions),
+    [visibleSessions],
+  );
+  const selectedConsoleSession = useMemo(
+    () =>
+      consoleSessions.find((session) => session.id === selectedConsoleId) ??
+      consoleSessions[0] ??
+      null,
+    [consoleSessions, selectedConsoleId],
+  );
+  const hiddenFacetSessionCount = staleFilteredSessions.length - visibleSessions.length;
+  const githubStatusRefs = useMemo(
+    () => githubStatusRefsForSessions(visibleSessions, selectedSession),
+    [selectedSession, visibleSessions],
+  );
+  const githubStatuses = useGithubStatusLookup(
+    githubStatusRefs,
+    githubStatusRefreshKey,
   );
 
   const computedGroups = useMemo(
@@ -2352,7 +2466,7 @@ export function SessionsPage({
       : groupMode === "flat"
         ? "No grouping — rows sorted by most recent activity"
         : groupMode === "workstream"
-          ? "Workstream groups — unbound first, then tracked order"
+          ? "Workstream groups — tracked workstreams first, unbound last"
           : "Group order frozen at page load · use ↻ Resort to refresh";
 
   return (
@@ -2382,11 +2496,35 @@ export function SessionsPage({
           </button>
           <button
             className="sl-action-btn primary"
-            onClick={() => void startCreating()}
+            onClick={() => {
+              setViewTab("list");
+              void startCreating();
+            }}
           >
             + New session
           </button>
         </div>
+      </div>
+
+      <div className="sl-sessions-view-tabs" role="tablist" aria-label="Sessions views">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={viewTab === "list"}
+          className={`sl-sheet-tab${viewTab === "list" ? " active" : ""}`}
+          onClick={() => setViewTab("list")}
+        >
+          Session list
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={viewTab === "consoles"}
+          className={`sl-sheet-tab${viewTab === "consoles" ? " active" : ""}`}
+          onClick={() => setViewTab("consoles")}
+        >
+          Background consoles
+        </button>
       </div>
 
       <div className="sl-sessions-filters">
@@ -2417,33 +2555,67 @@ export function SessionsPage({
             <span className="sl-session-stale-suffix">days</span>
           </div>
         </label>
+        <label className="sl-session-facet-filter">
+          <span className="sl-field-label">Repo</span>
+          <select
+            className="sl-text-field"
+            value={repoFacet}
+            onChange={(event) => setRepoFacet(event.target.value)}
+          >
+            <option value={SESSION_FACET_ALL}>All repos ({staleFilteredSessions.length})</option>
+            {repoFacetOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label} ({option.count})
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="sl-session-facet-filter">
+          <span className="sl-field-label">Workstream</span>
+          <select
+            className="sl-text-field"
+            value={workstreamFacet}
+            onChange={(event) => setWorkstreamFacet(event.target.value)}
+          >
+            <option value={SESSION_FACET_ALL}>
+              All workstreams ({staleFilteredSessions.length})
+            </option>
+            {workstreamFacetOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label} ({option.count})
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
 
-      <div className="sl-sessions-group-bar">
-        <span className="sl-seg-label">Group by</span>
-        <div className="sl-seg" role="tablist">
-          {GROUP_MODES.map(({ mode, label }) => (
-            <button
-              key={mode}
-              role="tab"
-              aria-selected={mode === groupMode}
-              className={`sl-seg-btn${mode === groupMode ? " active" : ""}`}
-              onClick={() => setGroupMode(mode)}
-            >
-              {label}
-            </button>
-          ))}
+      {viewTab === "list" && (
+        <div className="sl-sessions-group-bar">
+          <span className="sl-seg-label">Group by</span>
+          <div className="sl-seg" role="tablist">
+            {GROUP_MODES.map(({ mode, label }) => (
+              <button
+                key={mode}
+                role="tab"
+                aria-selected={mode === groupMode}
+                className={`sl-seg-btn${mode === groupMode ? " active" : ""}`}
+                onClick={() => setGroupMode(mode)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <button
+            className="sl-seg-resort"
+            disabled={groupMode === "recency" || groupMode === "flat" || groupMode === "workstream"}
+            onClick={handleResort}
+            title="Re-sort groups by most recent activity"
+          >
+            ↻ Resort
+          </button>
+          <span className="sl-seg-note">{freezeNote}</span>
         </div>
-        <button
-          className="sl-seg-resort"
-          disabled={groupMode === "recency" || groupMode === "flat" || groupMode === "workstream"}
-          onClick={handleResort}
-          title="Re-sort groups by most recent activity"
-        >
-          ↻ Resort
-        </button>
-        <span className="sl-seg-note">{freezeNote}</span>
-      </div>
+      )}
 
       {(routeWorkstreamId || routeNodeId) && (
         <div className="sl-sessions-filter-note">
@@ -2494,10 +2666,27 @@ export function SessionsPage({
         </div>
       )}
 
+      {hiddenFacetSessionCount > 0 && (
+        <div className="sl-sessions-filter-note">
+          Hiding {hiddenFacetSessionCount} session
+          {hiddenFacetSessionCount === 1 ? "" : "s"} outside the selected repo/workstream filters.
+        </div>
+      )}
+
       {syncNote && <div className="sl-sessions-filter-note">{syncNote}</div>}
 
       {error && <div className="sl-action-error">{error}</div>}
 
+      {viewTab === "consoles" ? (
+        <BackgroundConsolesView
+          sessions={consoleSessions}
+          selectedSession={selectedConsoleSession}
+          loading={loading}
+          onSelect={setSelectedConsoleId}
+          onActionComplete={fetchSessions}
+        />
+      ) : (
+        <>
       <div className="sl-sessions-groups">
         {loading ? (
           <div className="sl-empty-state">Loading sessions…</div>
@@ -2515,11 +2704,16 @@ export function SessionsPage({
             No open or interrupted Copilot CLI sessions right now. Show ended to inspect
             sessions that closed cleanly.
           </div>
-        ) : visibleSessions.length === 0 ? (
+        ) : staleFilteredSessions.length === 0 ? (
           <div className="sl-empty-state">
             No sessions updated in the last {staleSessionDays} day
             {staleSessionDays === 1 ? "" : "s"}. Increase the stale window to show
             older sessions.
+          </div>
+        ) : visibleSessions.length === 0 ? (
+          <div className="sl-empty-state">
+            No sessions match the selected repo/workstream filters. Choose All repos
+            or All workstreams to widen the list.
           </div>
         ) : (
           orderedGroups.map((group) => (
@@ -2878,6 +3072,7 @@ export function SessionsPage({
                   draft={draft}
                   creating={creating}
                   selectedSession={selectedSession}
+                  workstreams={workstreams}
                   onChange={updateDraft}
                   onCommit={() => {
                     void (creating ? handleCreate() : closeSheet());
@@ -2928,6 +3123,8 @@ export function SessionsPage({
           </div>
         </>
       )}
+        </>
+      )}
     </div>
   );
 }
@@ -2939,6 +3136,91 @@ interface SessionOverviewProps {
   defaultCliArgs: readonly string[] | null;
   onOpenWorkstream?: (target: WorkstreamRouteTarget) => void | Promise<void>;
   onSessionActionComplete?: () => void | Promise<void>;
+}
+
+function BackgroundConsolesView({
+  sessions,
+  selectedSession,
+  loading,
+  onSelect,
+  onActionComplete,
+}: {
+  sessions: readonly SessionRegistryListItem[];
+  selectedSession: SessionRegistryListItem | null;
+  loading: boolean;
+  onSelect: (id: string) => void;
+  onActionComplete?: () => void | Promise<void>;
+}) {
+  const selectedRuntime = selectedSession ? getManagedRuntime(selectedSession) : null;
+  return (
+    <section className="sl-managed-console-monitor">
+      <aside className="sl-managed-console-monitor-rail" aria-label="Background session consoles">
+        <div className="sl-managed-console-monitor-rail-head">
+          <span className="sl-eyebrow">Background consoles</span>
+          <strong>{sessions.length}</strong>
+        </div>
+        {loading ? (
+          <div className="sl-empty-state">Loading background consoles...</div>
+        ) : sessions.length === 0 ? (
+          <div className="sl-empty-state">
+            No background session consoles match the current filters.
+          </div>
+        ) : (
+          sessions.map((session) => {
+            const runtime = getManagedRuntime(session);
+            if (!runtime) {
+              return null;
+            }
+            const active = selectedSession?.id === session.id;
+            return (
+              <button
+                className={active ? "active" : ""}
+                key={session.id}
+                type="button"
+                onClick={() => onSelect(session.id)}
+              >
+                <strong>{getRowFallbackTitle(session)}</strong>
+                <span>{managedRuntimeLifecycleText(runtime)}</span>
+                <small>{managedRuntimeSummaryText(runtime)}</small>
+              </button>
+            );
+          })
+        )}
+      </aside>
+      <div className="sl-managed-console-monitor-main">
+        {selectedSession && selectedRuntime ? (
+          <>
+            <div className="sl-managed-console-monitor-toolbar">
+              <div>
+                <span className="sl-eyebrow">Focused console</span>
+                <h2>{getRowFallbackTitle(selectedSession)}</h2>
+                <p>
+                  {selectedSession.repo ?? "(no repo)"}
+                  {selectedSession.branch ? ` / ${selectedSession.branch}` : ""}
+                </p>
+              </div>
+              <span className={`sl-managed-runtime-state ${managedLifecycleStatusClass(selectedRuntime.lifecycleState)}`}>
+                {managedRuntimeLifecycleText(selectedRuntime)}
+              </span>
+            </div>
+            <ManagedRuntimeConsolePanel
+              runtime={selectedRuntime}
+              sessionId={selectedSession.id}
+              title="Runtime transcript"
+              subtitle="Sanitized Streamliner activity."
+              showCurrentMessage={false}
+              eventLimit={50}
+              onActionComplete={onActionComplete}
+            />
+          </>
+        ) : (
+          <div className="sl-empty-state">
+            Select a background session console to inspect retained activity.
+          </div>
+        )}
+      </div>
+    </section>
+  );
 }
 
 type CopyState = "idle" | "copied" | "error";
@@ -3232,9 +3514,7 @@ function ManagedRuntimeOverview({
   runtime: ManagedRuntimeProjection;
   onActionComplete?: () => void | Promise<void>;
 }) {
-  const progressEvents = managedRuntimeProgressEvents(runtime.progress);
   const sdk = runtime.sdk ?? null;
-  const actions = resolveManagedRuntimeActions(runtime);
 
   return (
     <section className="sl-session-overview-section managed-runtime">
@@ -3282,36 +3562,13 @@ function ManagedRuntimeOverview({
           </>
         )}
       </dl>
-      <div className="sl-session-managed-actions">
-        {actions.map((action) => (
-          <ManagedRuntimeActionButton
-            key={action.action}
-            sessionId={sessionId}
-            action={action}
-            onComplete={onActionComplete}
-          />
-        ))}
-      </div>
-      {progressEvents.length > 0 && (
-        <ol className="sl-session-managed-progress">
-          {progressEvents.map((event) => (
-            <li key={`${event.timestamp}-${event.phase}-${event.summary}`}>
-              <span className="sl-session-managed-progress-time">
-                {formatTimestamp(event.timestamp)}
-              </span>
-              <span className="sl-session-managed-progress-phase">
-                {formatManagedRuntimeLabel(event.phase)}
-              </span>
-              <span>{event.summary}</span>
-            </li>
-          ))}
-        </ol>
-      )}
-      {(runtime.blockerSummary || runtime.errorSummary) && (
-        <div className="sl-session-overview-note">
-          {runtime.blockerSummary ?? runtime.errorSummary}
-        </div>
-      )}
+      <ManagedRuntimeConsolePanel
+        runtime={runtime}
+        sessionId={sessionId}
+        title="Managed session console"
+        subtitle="Replayed from bounded sanitized Streamliner runtime activity; open terminal takeover for interactive control."
+        onActionComplete={onActionComplete}
+      />
     </section>
   );
 }
@@ -3672,6 +3929,7 @@ interface SessionSettingsFormProps {
   draft: SessionDraft;
   creating: boolean;
   selectedSession: SessionRegistryListItem | null;
+  workstreams: WorkstreamRegistryListEntry[];
   onChange: (updater: (current: SessionDraft) => SessionDraft) => void;
   onCommit: () => void;
 }
@@ -3680,10 +3938,23 @@ function SessionSettingsForm({
   draft,
   creating,
   selectedSession,
+  workstreams,
   onChange,
   onCommit,
 }: SessionSettingsFormProps) {
   const lifecycleLocked = selectedSession?.lifecycleStatus === "ended";
+  const workstreamAssignmentLocked = Boolean(
+    selectedSession?.graphBinding?.nodeId || selectedSession?.graphBinding?.launchClaimId,
+  );
+  const workstreamOptions = useMemo(
+    () =>
+      [...workstreams].sort((left, right) =>
+        `${left.title} ${workstreamRegistryKey(left)}`.localeCompare(
+          `${right.title} ${workstreamRegistryKey(right)}`,
+        )
+      ),
+    [workstreams],
+  );
   const setColor = (color: string) => {
     onChange((current) => ({ ...current, color }));
   };
@@ -3806,6 +4077,38 @@ function SessionSettingsForm({
           placeholder="paw-lite, ui, session-registry"
         />
       </label>
+      {!creating && (
+        <label className="sl-field">
+          <span className="sl-field-label">Workstream assignment</span>
+          <select
+            className="sl-select-field"
+            aria-label="Workstream assignment"
+            value={draft.graphBinding?.workstreamId ?? ""}
+            disabled={workstreamAssignmentLocked}
+            onChange={(event) => {
+              const workstreamId = event.target.value;
+              onChange((current) => ({
+                ...current,
+                graphBinding: workstreamId
+                  ? { workstreamId, nodeId: null, launchClaimId: null }
+                  : null,
+              }));
+            }}
+          >
+            <option value="">Unassigned</option>
+            {workstreamOptions.map((entry) => (
+              <option key={workstreamRegistryKey(entry)} value={entry.workstreamId}>
+                {entry.title} ({workstreamRegistryKey(entry)})
+              </option>
+            ))}
+          </select>
+          <p className="sl-field-note">
+            {workstreamAssignmentLocked
+              ? "This session is already bound to a graph node or launch claim; clear that binding through the node/session recovery flow before changing it here."
+              : "Assign orchestrator or manually discovered sessions to a workstream without attaching them to a specific graph node."}
+          </p>
+        </label>
+      )}
     </div>
   );
 }

@@ -224,6 +224,15 @@ function buildOrchestratedTargetRepoFixture(root: string): {
   mkdirSync(workstreamDir, { recursive: true });
   mkdirSync(join(targetRepoRoot, "docs", "design"), { recursive: true });
   writeText(
+    join(targetRepoRoot, ".github", "copilot-instructions.md"),
+    [
+      "# Target Repo Instructions",
+      "",
+      "- Create worktrees with `script/worktree-new <name>`.",
+      "- Run `script/worktree-env` before validation.",
+    ].join("\n"),
+  );
+  writeText(
     configPath,
     `${JSON.stringify(
       {
@@ -465,10 +474,26 @@ describe("prepareLaunchContextPackage", () => {
           repoId: "vs-code-postgresql",
           path: "docs/design/query-editor.md",
         }),
+        expect.objectContaining({
+          kind: "repo-instructions",
+          repoId: "vs-code-postgresql",
+          path: ".github/copilot-instructions.md",
+        }),
       ]),
     );
+    expect(result.metadata.repoInstructions).toEqual(expect.objectContaining({
+      repoId: "vs-code-postgresql",
+      repoRoot: normalizePath(targetRepoRoot),
+      path: ".github/copilot-instructions.md",
+      exists: true,
+      content: expect.stringContaining("script/worktree-new <name>"),
+    }));
     expect(result.unavailableInputs.find((input) => input.reason === "cross_repo_unavailable")).toBeUndefined();
     expect(generationInputs[0]?.repoRoot).toBe(targetRepoRoot);
+    expect(generationInputs[0]?.repoInstructions).toEqual(expect.objectContaining({
+      repoId: "vs-code-postgresql",
+      content: expect.stringContaining("script/worktree-env"),
+    }));
     expect(generationInputs[0]?.designSources).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

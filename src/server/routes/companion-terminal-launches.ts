@@ -1,15 +1,27 @@
 import { Router } from "express";
 
+import type { LaunchClaimStore } from "../../launch-claim-contract";
+import { buildLaunchedSessionDescription } from "../../session-registry-filter";
+import {
+  createLaunchClaim,
+  markClaimFailed,
+} from "../../session-registry/launch-claims";
+import { SessionRegistryFileStore } from "../../session-registry/file-store";
 import { isLoopbackAddress } from "../config";
 import {
-  buildCopilotInteractiveCommand,
+  buildCopilotInteractiveCommandForShell,
   launchCopilotTerminal,
+  selectTerminalCommandShellDialect,
   TERMINAL_HOST_PREFERENCES,
   type TerminalHostPreference,
   type TerminalLaunchOptions,
   type TerminalLaunchResult,
 } from "../terminal-launch";
 import type { NodeCompanionTerminalLaunchResponse } from "../../node-launch-record-contract";
+import {
+  appendLaunchBindingPromptLines,
+  summarizeLaunchClaim,
+} from "../node-launch";
 
 /**
  * Review companions default to the PAW-Review workflow agent while allowing
@@ -27,10 +39,19 @@ export interface CompanionTerminalLaunchInput {
   title?: string;
   tabColor?: string;
   usePawReviewAgent?: boolean;
+  launchBinding?: {
+    workstreamId: string;
+    nodeId: string;
+    branch?: string | null;
+    contextId?: string | null;
+  };
 }
 
 export interface CompanionTerminalLaunchDeps {
   launchTerminal?: (options: TerminalLaunchOptions) => TerminalLaunchResult;
+  registryStore?: SessionRegistryFileStore;
+  claimStore?: LaunchClaimStore;
+  now?: () => Date;
 }
 
 function hasNonLoopbackForwardedFor(value: string | string[] | undefined): boolean {
@@ -82,6 +103,21 @@ function optionalBooleanField(value: unknown, label: string): boolean | undefine
   return value;
 }
 
+function optionalLaunchBinding(value: unknown): CompanionTerminalLaunchInput["launchBinding"] {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw Object.assign(new Error("launchBinding must be an object."), { statusCode: 400 });
+  }
+  return {
+    workstreamId: stringField(value.workstreamId, "launchBinding.workstreamId"),
+    nodeId: stringField(value.nodeId, "launchBinding.nodeId"),
+    branch: optionalStringField(value.branch, "launchBinding.branch") ?? null,
+    contextId: optionalStringField(value.contextId, "launchBinding.contextId") ?? null,
+  };
+}
+
 function optionalCliArgs(value: unknown): string[] {
   if (value === undefined || value === null) {
     return [];
@@ -130,7 +166,10 @@ function terminalHostPreference(value: unknown): TerminalHostPreference {
   ) {
     return value as TerminalHostPreference;
   }
-  throw Object.assign(new Error("preferredTerminal must be default, windows-terminal, or powershell."), { statusCode: 400 });
+  throw Object.assign(
+    new Error(`preferredTerminal must be one of: ${TERMINAL_HOST_PREFERENCES.join(", ")}.`),
+    { statusCode: 400 },
+  );
 }
 
 export async function launchCompanionTerminal(
@@ -138,21 +177,76 @@ export async function launchCompanionTerminal(
   deps: CompanionTerminalLaunchDeps = {},
 ): Promise<CompanionTerminalLaunchResponse> {
   const cliArgs = applyCompanionAgent(input.cliArgs ?? [], input.usePawReviewAgent ?? true);
-  const terminal = await launchCopilotTerminal({
-    cwd: input.cwd,
-    command: buildCopilotInteractiveCommand({
+  const now = deps.now?.() ?? new Date();
+  if (input.launchBinding && (!deps.registryStore || !deps.claimStore)) {
+    throw Object.assign(
+      new Error("Companion launch binding requires session registry and launch-claim stores."),
+      { statusCode: 503 },
+    );
+  }
+  const claimOutcome = input.launchBinding && deps.registryStore && deps.claimStore
+    ? createLaunchClaim(deps.registryStore, deps.claimStore, {
+      workstreamId: input.launchBinding.workstreamId,
+      nodeId: input.launchBinding.nodeId,
+      expectedCwd: input.cwd,
+      expectedBranch: input.launchBinding.branch ?? null,
+      expectedRepo: null,
+      contextId: input.launchBinding.contextId ?? null,
+      reservedRowTitle: input.title,
+      reservedRowColor: input.tabColor ?? null,
+      reservedRowDescription: buildLaunchedSessionDescription(
+        input.launchBinding.workstreamId,
+        input.launchBinding.nodeId,
+      ),
       cliArgs,
-      kickoffPrompt: input.kickoffPrompt,
-    }),
-    prepareCopilotCli: true,
-    preferredTerminal: input.preferredTerminal ?? "default",
-    title: input.title,
-    tabColor: input.tabColor,
-  }, {
-    launchTerminal: deps.launchTerminal,
-    cooldownMs: deps.launchTerminal ? 0 : undefined,
-  });
+    }, deps.now ? { now: deps.now } : undefined)
+    : null;
+  if (claimOutcome && !claimOutcome.ok) {
+    throw Object.assign(
+      new Error(`Failed to reserve companion launch claim: ${claimOutcome.error.message}`),
+      { statusCode: 500 },
+    );
+  }
+  const claim = claimOutcome?.ok ? claimOutcome.claim : null;
+  const kickoffPrompt = claim
+    ? appendLaunchBindingPromptLines(
+      input.kickoffPrompt,
+      claim.launchNonce,
+      claim.launchClaimId,
+    )
+    : input.kickoffPrompt;
+  let terminal: TerminalLaunchResult;
+  try {
+    terminal = await launchCopilotTerminal({
+      cwd: input.cwd,
+      command: buildCopilotInteractiveCommandForShell({
+        cliArgs,
+        kickoffPrompt,
+      }, selectTerminalCommandShellDialect()),
+      env: claim ? { STREAMLINER_LAUNCH_CLAIM_ID: claim.launchClaimId } : undefined,
+      prepareCopilotCli: true,
+      preferredTerminal: input.preferredTerminal ?? "default",
+      title: input.title,
+      tabColor: input.tabColor,
+    }, {
+      launchTerminal: deps.launchTerminal,
+      cooldownMs: deps.launchTerminal ? 0 : undefined,
+      pluginPreflight: deps.launchTerminal ? false : undefined,
+    });
+  } catch (error: unknown) {
+    if (claim && deps.registryStore && deps.claimStore) {
+      markClaimFailed(
+        deps.registryStore,
+        deps.claimStore,
+        claim.launchClaimId,
+        "terminal-spawn-failed",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    throw error;
+  }
   return {
+    ...(claim ? { launchClaim: summarizeLaunchClaim(claim, now) } : {}),
     terminal,
     cwd: input.cwd,
     command: { cliArgs },
@@ -181,6 +275,7 @@ export function createCompanionTerminalLaunchesRouter(
         body.usePawReviewAgent,
         "usePawReviewAgent",
       ) ?? true;
+      const launchBinding = optionalLaunchBinding(body.launchBinding);
       const response = await launchCompanionTerminal({
         cwd,
         kickoffPrompt,
@@ -189,6 +284,7 @@ export function createCompanionTerminalLaunchesRouter(
         title,
         tabColor,
         usePawReviewAgent,
+        launchBinding,
       }, deps);
       res.status(201).json(response);
     } catch (error: unknown) {

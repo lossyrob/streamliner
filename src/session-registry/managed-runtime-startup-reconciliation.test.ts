@@ -232,7 +232,7 @@ describe("reconcileManagedRuntimeStartupRows", () => {
     );
   });
 
-  it("runs synchronously once from background worker startup before poll cycles", async () => {
+  it("runs once from the first background worker cycle", async () => {
     const registryRoot = createRoot("managed-runtime-startup-registry-");
     const sessionRoot = createRoot("managed-runtime-startup-session-state-");
     const store = new SessionRegistryFileStore({ rootDir: registryRoot });
@@ -246,6 +246,7 @@ describe("reconcileManagedRuntimeStartupRows", () => {
     });
 
     worker.start();
+    await worker.runCycle();
     await worker.stop();
     expect(store.getSession("startup-running")?.runtime?.lifecycleState).toBe(
       "interrupted",

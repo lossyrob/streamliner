@@ -99,6 +99,13 @@ then current configured defaults for historical sessions without recorded args.
 Streamliner appends its own `--resume=<session>` argument during relaunch, so do
 not include `--resume` in the defaults.
 
+Visible worker terminal launches use platform adapters. Terminal preferences are
+`default`, `windows-terminal`, `powershell`, `mac-terminal`, and `iterm2`: on
+Windows, `default` prefers Windows Terminal and falls back to PowerShell; on
+macOS, `default` and `mac-terminal` use Apple Terminal.app, while `iterm2`
+explicitly selects iTerm2. Terminal titles and colors are best-effort and depend
+on the host adapter.
+
 ## Worktree preview instances
 
 Use a worktree preview when you want to inspect a PR without stopping the main
@@ -163,6 +170,16 @@ copilot plugin list
 `copilot plugin marketplace list` should show `streamliner-local` pointing at
 the main checkout, and `copilot plugin list` should include
 `streamliner@streamliner-local`.
+
+Streamliner also runs a Copilot plugin preflight before Streamliner-owned
+visible Copilot terminal launches. The preflight reads enabled plugins from
+`~/.copilot/settings.json`, resolves their installed cache directories, and
+passes them to Copilot with `--plugin-dir` for that launch. It does not run
+`copilot plugin install` on the launch path, so running sessions that are using
+plugin scripts do not block new launches with cache-update `EBUSY` errors. Set
+`STREAMLINER_COPILOT_PLUGIN_PREFLIGHT=false` to disable the preflight, or
+`STREAMLINER_COPILOT_REQUIRED_PLUGINS=plugin@marketplace,...` to override the
+plugin sources checked before launch.
 
 If `streamliner-local` is already registered to an old worktree, remove and
 re-add it from the main checkout:

@@ -6,6 +6,7 @@ import type {
   SessionRegistryRecord,
 } from "../session-registry-schema";
 import type { SessionRegistryStore } from "../session-registry-contract";
+import { buildLaunchedSessionDescription } from "../session-registry-filter";
 import type { SessionRegistryFileStore } from "../session-registry/file-store";
 import { isManagedRuntimeActive } from "../session-registry/managed-runtime";
 import {
@@ -16,8 +17,9 @@ import {
 } from "../session-registry/launch-claims";
 import type { PawLaunchHandoff } from "./launch-preparation";
 import {
-  buildCopilotInteractiveCommand,
+  buildCopilotInteractiveCommandForShell,
   launchCopilotTerminal,
+  selectTerminalCommandShellDialect,
   type TerminalLaunchOptions,
   type TerminalLaunchResult,
 } from "./terminal-launch";
@@ -431,7 +433,10 @@ function reserveLaunchClaimForHandoff(
     launchNonce: handoff.launchMetadata.launchNonce,
     reservedRowTitle: terminalTitle,
     reservedRowColor: handoff.terminal.tabColor ?? null,
-    reservedRowDescription: `Graph launch for workstream ${handoff.launchMetadata.workstreamId}, node ${handoff.launchMetadata.nodeId}.`,
+    reservedRowDescription: buildLaunchedSessionDescription(
+      handoff.launchMetadata.workstreamId,
+      handoff.launchMetadata.nodeId,
+    ),
     pawLaunch: pawLaunchFor(handoff),
     ...(options.recordCliArgs ? { cliArgs: [...handoff.cliArgs] } : {}),
     lineageMetadata: lineageMetadataFor(handoff),
@@ -465,10 +470,10 @@ export async function launchPreparedNode(
     claim.launchNonce,
     claim.launchClaimId,
   );
-  const command = buildCopilotInteractiveCommand({
+  const command = buildCopilotInteractiveCommandForShell({
     cliArgs: handoff.cliArgs,
     kickoffPrompt,
-  });
+  }, selectTerminalCommandShellDialect());
   const terminalOptions: TerminalLaunchOptions = {
     cwd: handoff.cwd,
     command,
@@ -486,6 +491,7 @@ export async function launchPreparedNode(
     const terminal = await launchCopilotTerminal(terminalOptions, {
       launchTerminal: deps.launchTerminal,
       cooldownMs: deps.launchTerminal ? 0 : undefined,
+      pluginPreflight: deps.launchTerminal ? false : undefined,
     });
     return {
       runtimeKind: "terminal-cli",

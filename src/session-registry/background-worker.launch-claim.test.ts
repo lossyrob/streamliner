@@ -44,7 +44,7 @@ describe("SessionRegistryBackgroundWorker — launch-claim startup recovery", ()
     logger = new ApiLogger({ logDir: logRoot, mirrorConsole: false, purgeOnStart: false });
   });
 
-  it("runs reconcileOrphanReservedRows synchronously before the first poll cycle", async () => {
+  it("runs reconcileOrphanReservedRows synchronously when the worker starts", async () => {
     // Create an orphan launched row (no matching claim).
     registryStore.upsertSession({
       id: "orphan-startup",
@@ -73,8 +73,6 @@ describe("SessionRegistryBackgroundWorker — launch-claim startup recovery", ()
       logger: { info: () => {}, warn: () => {}, error: () => {} },
     });
     worker.start();
-    // Reconciliation runs synchronously inside start(). Stop the timers
-    // immediately so the test does not hang.
     await worker.stop();
     expect(registryStore.getSession("orphan-startup")).toBeNull();
   });
@@ -122,6 +120,7 @@ describe("SessionRegistryBackgroundWorker — launch-claim startup recovery", ()
       now: () => new Date("2026-05-10T04:00:00.000Z"),
     });
     worker.start();
+    await worker.runCycle();
     await worker.stop();
 
     const row = registryStore.getSession("orphan-managed-startup");
@@ -158,6 +157,7 @@ describe("SessionRegistryBackgroundWorker — launch-claim startup recovery", ()
       logger: { info: () => {}, warn: () => {}, error: () => {} },
     });
     worker.start();
+    await worker.runCycle();
     await worker.stop();
     expect(registryStore.getSession("orphan-noclaim")).not.toBeNull();
   });
@@ -172,6 +172,7 @@ describe("SessionRegistryBackgroundWorker — launch-claim startup recovery", ()
       logger: { info: () => {}, warn: () => {}, error: () => {} },
     });
     worker.start();
+    await worker.runCycle();
     // Create an orphan AFTER startup reconciliation has run.
     registryStore.upsertSession({
       id: "post-startup-orphan",

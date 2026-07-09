@@ -228,6 +228,7 @@ export const SESSION_REGISTRY_RUNTIME_PROGRESS_EVENT_TYPES = [
   "assistant_status",
   "tool_started",
   "tool_completed",
+  "subagent_status",
   "permission_decision",
   "mcp_status",
   "skill_status",
@@ -260,7 +261,8 @@ export type SessionRegistryGithubRefType =
 
 export interface SessionRegistryGraphBinding {
   workstreamId: string;
-  nodeId: string;
+  /** Optional for sessions assigned to a workstream but not to a specific graph node. */
+  nodeId?: string | null;
   launchClaimId?: string | null;
 }
 

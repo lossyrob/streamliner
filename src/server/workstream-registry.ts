@@ -11,7 +11,7 @@ import {
   type WorkstreamRegistryListEntry,
   type WorkstreamRegistryWarning,
 } from "../workstream-registry-contract";
-import type { WorkstreamDocument } from "../workstream-schema";
+import type { WorkstreamDocument, WorkstreamPresentation } from "../workstream-schema";
 import { parseWorkstreamDocument } from "../workstream-view-model";
 import { RECENTS_PATH, readGraphFile, statGraphFile } from "./local-files";
 
@@ -34,6 +34,7 @@ export interface WorkstreamRegistryOptions {
   registryPath?: string;
   sourceRegistryPath?: string;
   recentsPath?: string;
+  workstreamPositionsRoot?: string;
   now?: () => Date;
 }
 
@@ -42,6 +43,7 @@ interface WorkstreamGraphSummary {
   workstreamId: string;
   title: string;
   summary: string;
+  presentation?: WorkstreamPresentation;
 }
 
 type NodeError = Error & { code?: string };
@@ -187,6 +189,7 @@ function summarizeWorkstream(workstream: WorkstreamDocument): WorkstreamGraphSum
     workstreamId: workstream.id,
     title: workstream.title,
     summary: workstream.summary,
+    presentation: workstream.presentation,
   };
 }
 

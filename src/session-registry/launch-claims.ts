@@ -16,8 +16,18 @@ import {
   type LaunchClaimStore,
   LaunchClaimNotFoundError,
 } from "../launch-claim-contract";
-import type { SessionRegistryPawLaunch } from "../session-registry-schema";
+import { buildLaunchedSessionDescription } from "../session-registry-filter";
+import type {
+  SessionRegistryGraphBinding,
+  SessionRegistryPawLaunch,
+  SessionRegistryRecord,
+} from "../session-registry-schema";
 import { SessionRegistryFileStore } from "./file-store";
+
+type RecoveredLaunchGraphBinding = SessionRegistryGraphBinding & {
+  nodeId: string;
+  launchClaimId: string;
+};
 
 export const LAUNCH_NONCE_PROMPT_LINE_PREFIX = "Streamliner launch nonce: ";
 
@@ -134,7 +144,7 @@ function buildReservedRowDescription(input: CreateLaunchClaimInput): string {
   if (input.reservedRowDescription !== undefined && input.reservedRowDescription !== null) {
     return input.reservedRowDescription;
   }
-  return `Launch claim for workstream ${input.workstreamId}, node ${input.nodeId}.`;
+  return buildLaunchedSessionDescription(input.workstreamId, input.nodeId);
 }
 
 /**
@@ -392,7 +402,7 @@ export function applyReservedRowCleanup(
 /**
  * Startup recovery routine. Lists all launched-origin registry rows
  * whose `origin.launchClaimId` does not appear in the launch-claim
- * store and conditionally cleans them up:
+ * store and conditionally reconciles them:
  *
  *   - If `copilotSessionId === null` and the row has no managed runtime:
  *     delete the row (orphan reserved row, no real session ever
@@ -401,7 +411,9 @@ export function applyReservedRowCleanup(
  *   - Else: preserve the row and its `graphBinding` (the row had a real
  *     terminal session attach or is a managed runtime row whose history
  *     should remain associated with the launched node after the
- *     short-lived claim file is pruned).
+ *     short-lived claim file is pruned). If an older reconciliation
+ *     cleared `graphBinding`, restore it from durable launch metadata
+ *     when possible.
  *
  * Also handles the inverse case: claims whose `reservedRegistryId`
  * points at a missing row are left intact (the binding pass and sweep
@@ -413,11 +425,17 @@ export function applyReservedRowCleanup(
 export function reconcileOrphanReservedRows(
   registryStore: SessionRegistryFileStore,
   claimStore: LaunchClaimStore,
-): { rowsDeleted: number; rowsGraphBindingCleared: number; rowsInspected: number } {
+): {
+  rowsDeleted: number;
+  rowsGraphBindingCleared: number;
+  rowsGraphBindingRestored: number;
+  rowsInspected: number;
+} {
   const sessions = registryStore.listSessions({ includeArchived: true });
   const launchedSessions = sessions.filter((session) => session.originKind === "launched");
   let rowsDeleted = 0;
   const rowsGraphBindingCleared = 0;
+  let rowsGraphBindingRestored = 0;
   let rowsInspected = 0;
   for (const session of launchedSessions) {
     rowsInspected += 1;
@@ -442,15 +460,123 @@ export function reconcileOrphanReservedRows(
       if (deleteResult.deleted) {
         rowsDeleted += 1;
       } else if (deleteResult.reason === "predicate-false") {
-        // A session attached during the cleanup gap; keep its durable binding.
-        continue;
+        // A session attached during the gap; preserve/restore node history.
+        const current = registryStore.getSession(fullRecord.id);
+        if (
+          current &&
+          restoreMissingGraphBindingForLaunchedSession(
+            registryStore,
+            current,
+            launchClaimId,
+          )
+        ) {
+          rowsGraphBindingRestored += 1;
+        }
       }
     } else {
-      // Preserve observed terminal sessions and managed runtime rows with their durable binding.
-      continue;
+      // Preserve observed terminal sessions and managed runtime rows with
+      // their durable binding. Restore bindings that older cleanup logic
+      // cleared after the short-lived claim file was pruned.
+      if (
+        restoreMissingGraphBindingForLaunchedSession(
+          registryStore,
+          fullRecord,
+          launchClaimId,
+        )
+      ) {
+        rowsGraphBindingRestored += 1;
+      }
     }
   }
-  return { rowsDeleted, rowsGraphBindingCleared, rowsInspected };
+  return { rowsDeleted, rowsGraphBindingCleared, rowsGraphBindingRestored, rowsInspected };
+}
+
+function restoreMissingGraphBindingForLaunchedSession(
+  registryStore: SessionRegistryFileStore,
+  record: SessionRegistryRecord,
+  launchClaimId: string,
+): boolean {
+  if (record.graphBinding !== null) {
+    return false;
+  }
+  const graphBinding = recoverGraphBindingForLaunchedSession(record, launchClaimId);
+  if (!graphBinding) {
+    return false;
+  }
+  const restored = registryStore.bindClaimToRow(
+    record.id,
+    {
+      cwdAfterNormalize: record.cwd,
+      branch: null,
+      repo: null,
+      requireGraphBindingNullOrMatching: graphBinding,
+    },
+    { graphBinding },
+  );
+  return restored.ok;
+}
+
+function recoverGraphBindingForLaunchedSession(
+  record: SessionRegistryRecord,
+  launchClaimId: string,
+): RecoveredLaunchGraphBinding | null {
+  const fromRuntime = recoverGraphBindingFromRuntimeEvents(record, launchClaimId);
+  if (fromRuntime) {
+    return fromRuntime;
+  }
+  return recoverGraphBindingFromReservedDescription(record.description, launchClaimId);
+}
+
+function recoverGraphBindingFromRuntimeEvents(
+  record: SessionRegistryRecord,
+  launchClaimId: string,
+): RecoveredLaunchGraphBinding | null {
+  for (const event of record.runtime?.progressEvents ?? []) {
+    const data = event.data;
+    if (!isRecord(data)) {
+      continue;
+    }
+    const workstreamId = nonEmptyString(data.workstreamId);
+    const nodeId = nonEmptyString(data.nodeId);
+    const eventLaunchClaimId = nonEmptyString(data.launchClaimId);
+    if (!workstreamId || !nodeId) {
+      continue;
+    }
+    if (eventLaunchClaimId !== launchClaimId) {
+      continue;
+    }
+    return {
+      workstreamId,
+      nodeId,
+      launchClaimId,
+    };
+  }
+  return null;
+}
+
+function recoverGraphBindingFromReservedDescription(
+  description: string,
+  launchClaimId: string,
+): RecoveredLaunchGraphBinding | null {
+  const match = description.match(/^Graph launch for workstream ([^,]+), node (.+)\.$/);
+  const workstreamId = match?.[1]?.trim();
+  const nodeId = match?.[2]?.trim();
+  if (!workstreamId || !nodeId) {
+    return null;
+  }
+  return {
+    workstreamId,
+    nodeId,
+    launchClaimId,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
 /**

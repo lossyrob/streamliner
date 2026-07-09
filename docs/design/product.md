@@ -16,17 +16,25 @@ The user is a builder who:
 
 ## Core Concepts
 
-### Project Design Layer
+### Project documentation families
 
-Above any individual workstream sits the project's **design layer**: design docs and decision records that live under `docs/design/` (or a configurable location). This layer answers what the intended system is, how major components relate, what architectural constraints apply, and why significant decisions were made.
+Above any individual workstream sits the project's **Design** documentation
+family: design docs and decision records that live under `docs/design/` (or a
+configurable location). This family answers what the intended system is, how
+major components relate, what architectural constraints apply, and why
+significant decisions were made.
 
-The design layer has three document families:
+Design is Streamliner-native required context. Published project docs may also
+include optional-but-recommended peer families:
 
-1. **Design index** — the entry point for cold readers
-2. **Living design docs** — the intended design for specific domains or concerns, rewritten in place
-3. **Decision records** — append-only rationale for architecturally significant choices
+1. **Architecture** — current-codebase orientation for contributors and agents
+2. **User Guide** — user-facing setup, workflows, operation, and troubleshooting
 
-Design docs are authoritative for intended system design. They are project-level and shared across workstreams.
+Inside the Design family, the Design index is the cold-reader entry point, living
+design docs are rewritten in place as intended design evolves, and decision
+records provide append-only rationale for significant choices. Design docs are
+authoritative for intended system design. They are project-level and shared
+across workstreams.
 
 ### Workstream
 
@@ -92,7 +100,10 @@ Streamliner is a web app served by a local process and opened in any browser. Th
 
 ### Registered Repositories
 
-The builder registers where workstream artifacts live (planning repo, source repo, or elsewhere), participating source repositories, and where design docs live in each repo (default: `docs/design/`).
+The builder registers where workstream artifacts live (planning repo, source
+repo, or elsewhere), participating source repositories, and where documentation
+families live in each repo. Design defaults to `docs/design/`; Architecture and
+User Guide are optional discoverable families.
 
 ### Technology Stack
 

@@ -11,12 +11,22 @@ import "./streamliner-theme.css";
 import {
   parseWorkstreamDocument,
   buildWorkstreamViewModel,
+  workstreamExternalDependencyKey,
+  type WorkstreamExternalDependencyResolution,
+  type WorkstreamExternalDependencyView,
 } from "./workstream-view-model";
 import {
   applyWorkstreamGraphSelection,
   buildWorkstreamGraphBaseLayout,
 } from "./workstream-graph";
-import type { WorkstreamDocument } from "./workstream-schema";
+import type {
+  WorkstreamDocument,
+  WorkstreamExternalDependency,
+} from "./workstream-schema";
+import type {
+  WorkstreamGraphNodePosition,
+  WorkstreamPositionsResponse,
+} from "./workstream-positions-contract";
 import {
   buildGraphNodeSessionStatusMap,
   type GraphNodeSessionStatusSummary,
@@ -41,6 +51,7 @@ import {
   type PawLaunchProgressEvent,
 } from "./components/PawLaunchDialog";
 import { PawProfilesPage } from "./components/PawProfilesPage";
+import { PawReviewTemplatesPage } from "./components/PawReviewTemplatesPage";
 import { SessionLaunchSettingsPage } from "./components/SessionLaunchSettingsPage";
 import {
   loadPromptProfiles,
@@ -70,6 +81,8 @@ import {
   type PawLaunchDialogDefaults,
 } from "./components/paw-launch-config";
 import { SessionsPage } from "./components/SessionsPage";
+import { ManagedConsolesPrototypePage } from "./components/ManagedConsolesPrototypePage";
+import { ManagedRuntimeConsoleOverlay } from "./components/ManagedRuntimeConsoleOverlay";
 import {
   deleteBrowserWorkstreamEntry,
   listBrowserWorkstreamEntries,
@@ -105,6 +118,11 @@ import { evaluateNodeLaunchPolicy } from "./workstream-launch-policy";
 import { useSessionRegistryList } from "./session-registry-client";
 import { useIsDocumentVisible } from "./use-document-visibility";
 import {
+  sessionRegistryRecordToListItem,
+  type SessionRegistryListItem,
+} from "./session-registry-contract";
+import type { SessionRegistryRecord } from "./session-registry-schema";
+import {
   buildWorkstreamRuntimeOverlay,
   type WorkstreamRuntimeOverlay,
 } from "./workstream-runtime-overlay";
@@ -114,11 +132,18 @@ import {
   workstreamGithubSnapshotFromStatuses,
 } from "./github-status-client";
 
-const POLL_INTERVAL_MS = 2000;
+const WORKSTREAM_EVENT_STALE_MS = 45_000;
+const WORKSTREAM_FALLBACK_POLL_INTERVAL_MS = 60_000;
+const WORKSTREAM_FALLBACK_JITTER_RATIO = 0.2;
 const GITHUB_STATUS_REFRESH_INTERVAL_MS = 60_000;
 const LAST_GRAPH_KEY = "streamliner:lastGraphPath";
 const PAW_LAUNCH_CWD_OVERRIDES_KEY = "streamliner:pawLaunchCwdByRepo";
 const STREAMLINER_LOGO_URL = "/streamliner-logo.png";
+const POSITIONS_SAVE_DEBOUNCE_MS = 350;
+const EMPTY_EXTERNAL_DEPENDENCY_RESOLUTIONS: ReadonlyMap<
+  string,
+  WorkstreamExternalDependencyResolution
+> = new Map();
 
 interface GraphLoadError {
   code?: string;
@@ -217,6 +242,13 @@ function isKebabCaseId(value: string): boolean {
   return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value);
 }
 
+function isWorkstreamRouteNodeId(value: string): boolean {
+  return (
+    isKebabCaseId(value) ||
+    /^external:[a-z0-9]+(?:-[a-z0-9]+)*:[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value)
+  );
+}
+
 function parseMessageEventData<T>(event: Event): T {
   return JSON.parse((event as MessageEvent<string>).data) as T;
 }
@@ -226,14 +258,22 @@ function readDashboardRoute(): DashboardRoute {
   if (searchParams.get("view") === "sessions" || window.location.pathname === "/sessions") {
     const workstreamId = searchParams.get("workstreamId");
     const nodeId = searchParams.get("nodeId");
+    const tab = searchParams.get("tab");
     return {
       view: "sessions",
       workstreamId: workstreamId && isKebabCaseId(workstreamId) ? workstreamId : null,
       nodeId: nodeId && isKebabCaseId(nodeId) ? nodeId : null,
+      tab: tab === "consoles" ? "consoles" : null,
     };
   }
   if (window.location.pathname === "/settings/session-launch") {
     return { view: "settings", section: "session-launch" };
+  }
+  if (window.location.pathname === "/__prototype/managed-consoles") {
+    return { view: "prototype", prototype: "managed-consoles" };
+  }
+  if (window.location.pathname === "/settings/review-templates") {
+    return { view: "settings", section: "review-templates" };
   }
   if (
     window.location.pathname === "/settings" ||
@@ -275,7 +315,7 @@ function readDashboardRoute(): DashboardRoute {
     return { view: "workstreams", message: "That workstream URL is incomplete." };
   }
   const nodeId = decodeSegment(segments[4]);
-  if (!nodeId || !isKebabCaseId(nodeId)) {
+  if (!nodeId || !isWorkstreamRouteNodeId(nodeId)) {
     return { view: "workstreams", message: "That workstream node URL is invalid." };
   }
   return { view: "workstream", projectKey, workstreamId, nodeId };
@@ -395,6 +435,10 @@ function registryArchiveUrl(entry: { projectKey: string; workstreamId: string })
 
 function registryConfigurationUrl(entry: { projectKey: string; workstreamId: string }): string {
   return `${registryEntryUrl(entry)}/configuration`;
+}
+
+function registryPositionsUrl(entry: { projectKey: string; workstreamId: string }): string {
+  return `${registryEntryUrl(entry)}/positions`;
 }
 
 function sourceEntryUrl(sourceId: string): string {
@@ -723,6 +767,35 @@ function normalizeRegistryListResponse(
   };
 }
 
+function isJsonRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseWorkstreamGraphChange(event: Event): { projectKey: string; workstreamId: string } | null {
+  let payload: unknown;
+  try {
+    payload = parseMessageEventData<unknown>(event);
+  } catch {
+    return null;
+  }
+  if (!isJsonRecord(payload)) {
+    return null;
+  }
+  const { projectKey, workstreamId } = payload;
+  return typeof projectKey === "string" && typeof workstreamId === "string"
+    ? { projectKey, workstreamId }
+    : null;
+}
+
+function jitteredWorkstreamFallbackDelay(): number {
+  const spread = WORKSTREAM_FALLBACK_POLL_INTERVAL_MS * WORKSTREAM_FALLBACK_JITTER_RATIO;
+  return Math.round(
+    WORKSTREAM_FALLBACK_POLL_INTERVAL_MS -
+      spread +
+      Math.random() * spread * 2,
+  );
+}
+
 function useGraphLoader(route: DashboardRoute, enabled: boolean) {
   const activeProjectKey = route.view === "workstream" ? route.projectKey : null;
   const activeWorkstreamId = route.view === "workstream" ? route.workstreamId : null;
@@ -747,7 +820,12 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
   const [githubStatusRefreshKey, setGithubStatusRefreshKey] = useState(0);
   const workstreamsRef = useRef<WorkstreamRegistryListEntry[]>([]);
   const lastModifiedRef = useRef<string | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const fallbackPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const graphPollInFlightRef = useRef(false);
+  const workstreamEventLiveRef = useRef(false);
+  const lastWorkstreamEventAtRef = useRef(0);
+  const registryRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isDocumentVisible = useIsDocumentVisible();
 
   const applyRegistryResponse = useCallback((body: WorkstreamRegistryListResponse) => {
     const mergedWorkstreams = mergeWorkstreamEntries(
@@ -837,9 +915,8 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
       setWorkstream(doc);
       setGithubStatusRefreshKey((current) => current + 1);
       setError(null);
-      await fetchRegistry();
     },
-    [fetchRegistry],
+    [],
   );
 
   useEffect(() => {
@@ -867,24 +944,202 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
     })();
   }, [activeWorkstream, enabled, fetchRegistry, loadRegistered]);
 
+  const markWorkstreamEvent = useCallback(() => {
+    workstreamEventLiveRef.current = true;
+    lastWorkstreamEventAtRef.current = Date.now();
+  }, []);
+
+  const workstreamEventIsStale = useCallback(() => (
+    !workstreamEventLiveRef.current ||
+      Date.now() - lastWorkstreamEventAtRef.current > WORKSTREAM_EVENT_STALE_MS
+  ), []);
+
+  const loadActiveWorkstreamQuietly = useCallback(
+    async (
+      entry: { projectKey: string; workstreamId: string },
+      options: { entries?: WorkstreamRegistryListEntry[] } = {},
+    ) => {
+      if (graphPollInFlightRef.current) {
+        return;
+      }
+      graphPollInFlightRef.current = true;
+      try {
+        await loadRegistered(entry, { quiet: true, entries: options.entries });
+      } finally {
+        graphPollInFlightRef.current = false;
+      }
+    },
+    [loadRegistered],
+  );
+
+  const refreshRegistryFromEvent = useCallback(
+    (delayMs = 100) => {
+      if (!activeWorkstream) {
+        return;
+      }
+      if (registryRefreshTimerRef.current) {
+        clearTimeout(registryRefreshTimerRef.current);
+      }
+      registryRefreshTimerRef.current = setTimeout(() => {
+        registryRefreshTimerRef.current = null;
+        void (async () => {
+          try {
+            const entries = await fetchRegistry();
+            await loadActiveWorkstreamQuietly(activeWorkstream, { entries });
+          } catch (nextError) {
+            setRegistryError(nextError instanceof Error ? nextError.message : String(nextError));
+          }
+        })();
+      }, delayMs);
+    },
+    [activeWorkstream, fetchRegistry, loadActiveWorkstreamQuietly],
+  );
+
+  useEffect(() => {
+    if (!enabled || !activeWorkstream || error || !isDocumentVisible) {
+      workstreamEventLiveRef.current = false;
+      return;
+    }
+    if (typeof EventSource === "undefined") {
+      workstreamEventLiveRef.current = false;
+      return;
+    }
+
+    const source = new EventSource("/api/workstreams/events");
+    let closed = false;
+
+    const handleOpen = () => {
+      if (!closed) {
+        markWorkstreamEvent();
+      }
+    };
+    const handleHeartbeat = () => {
+      if (!closed) {
+        markWorkstreamEvent();
+      }
+    };
+    const handleSnapshot = () => {
+      if (closed) {
+        return;
+      }
+      markWorkstreamEvent();
+    };
+    const handleRegistryChanged = () => {
+      if (closed) {
+        return;
+      }
+      markWorkstreamEvent();
+      refreshRegistryFromEvent();
+    };
+    const handleGraphChanged = (event: Event) => {
+      if (closed) {
+        return;
+      }
+      markWorkstreamEvent();
+      const payload = parseWorkstreamGraphChange(event);
+      if (!payload || registryKey(payload) !== registryKey(activeWorkstream)) {
+        return;
+      }
+      void loadActiveWorkstreamQuietly(activeWorkstream);
+    };
+    const handleError = () => {
+      if (closed) {
+        return;
+      }
+      workstreamEventLiveRef.current = false;
+      refreshRegistryFromEvent(0);
+    };
+
+    source.addEventListener("open", handleOpen);
+    source.addEventListener("heartbeat", handleHeartbeat);
+    source.addEventListener("snapshot", handleSnapshot);
+    source.addEventListener("workstream.registry.changed", handleRegistryChanged);
+    source.addEventListener("workstream.source.changed", handleRegistryChanged);
+    source.addEventListener("workstream.graph.changed", handleGraphChanged);
+    source.onerror = handleError;
+
+    return () => {
+      closed = true;
+      source.close();
+    };
+  }, [
+    activeWorkstream,
+    enabled,
+    error,
+    isDocumentVisible,
+    loadActiveWorkstreamQuietly,
+    markWorkstreamEvent,
+    refreshRegistryFromEvent,
+  ]);
+
+  useEffect(() => {
+    if (!enabled || !activeWorkstream || error || !isDocumentVisible) {
+      return;
+    }
+
+    let cancelled = false;
+    const scheduleNextFallback = () => {
+      fallbackPollRef.current = setTimeout(() => {
+        fallbackPollRef.current = null;
+        if (cancelled) {
+          return;
+        }
+        if (workstreamEventIsStale()) {
+          void loadActiveWorkstreamQuietly(activeWorkstream);
+        }
+        scheduleNextFallback();
+      }, jitteredWorkstreamFallbackDelay());
+    };
+    scheduleNextFallback();
+
+    return () => {
+      cancelled = true;
+      if (fallbackPollRef.current) {
+        clearTimeout(fallbackPollRef.current);
+        fallbackPollRef.current = null;
+      }
+    };
+  }, [
+    activeWorkstream,
+    enabled,
+    error,
+    isDocumentVisible,
+    loadActiveWorkstreamQuietly,
+    workstreamEventIsStale,
+  ]);
+
   useEffect(() => {
     if (!enabled || !activeWorkstream || error) {
       return;
     }
-
-    pollRef.current = setInterval(() => {
-      void loadRegistered(activeWorkstream, { quiet: true });
-    }, POLL_INTERVAL_MS);
-
-    return () => {
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "hidden") {
+        return;
+      }
+      if (workstreamEventIsStale()) {
+        refreshRegistryFromEvent(0);
       }
     };
-  }, [activeWorkstream, enabled, error, loadRegistered]);
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      if (registryRefreshTimerRef.current) {
+        clearTimeout(registryRefreshTimerRef.current);
+        registryRefreshTimerRef.current = null;
+      }
+    };
+  }, [
+    activeWorkstream,
+    enabled,
+    error,
+    refreshRegistryFromEvent,
+    workstreamEventIsStale,
+  ]);
 
   useEffect(() => {
-    if (!enabled || !activeWorkstream || error) {
+    if (!enabled || !activeWorkstream || error || !isDocumentVisible) {
       return;
     }
 
@@ -895,7 +1150,7 @@ function useGraphLoader(route: DashboardRoute, enabled: boolean) {
     return () => {
       clearInterval(timer);
     };
-  }, [activeWorkstream, enabled, error]);
+  }, [activeWorkstream, enabled, error, isDocumentVisible]);
 
   const addSource = useCallback(
     async (type: WorkstreamSourceType, path: string) => {
@@ -1147,55 +1402,69 @@ function WorkstreamHome({
     });
   };
 
-  const renderWorkstreamCard = (entry: WorkstreamRegistryListEntry, archived = false) => (
-    <div className="sl-workstream-card" key={`${archived ? "archived" : "active"}-${registryKey(entry)}`}>
-      <a
-        className="sl-workstream-card-main"
-        href={workstreamRoutePath(entry)}
-        onClick={(event) => handleInAppLinkClick(event, () => onOpenWorkstream(entry))}
-      >
-        <span className="sl-workstream-card-title">{entry.title}</span>
-        <span className="sl-workstream-card-id">{registryKey(entry)}</span>
-        <span className="sl-workstream-card-meta">
-          <span className={`sl-pill ${entry.fileStatus === "available" ? "green" : "amber"}`}>
-            {entry.fileStatus}
+  const renderWorkstreamCard = (entry: WorkstreamRegistryListEntry, archived = false) => {
+    const shortName = entry.presentation?.shortName?.trim();
+    const color = entry.presentation?.color;
+    return (
+      <div className="sl-workstream-card" key={`${archived ? "archived" : "active"}-${registryKey(entry)}`}>
+        <a
+          className="sl-workstream-card-main"
+          href={workstreamRoutePath(entry)}
+          onClick={(event) => handleInAppLinkClick(event, () => onOpenWorkstream(entry))}
+        >
+          <span className="sl-workstream-card-title-row">
+            {color && (
+              <span
+                className="sl-workstream-color-swatch"
+                style={{ backgroundColor: color }}
+                aria-label={`Workstream color ${color}`}
+              />
+            )}
+            {shortName && <span className="sl-workstream-short-name">{shortName}</span>}
+            <span className="sl-workstream-card-title">{entry.title}</span>
           </span>
-          <span className="sl-pill muted">{entry.source ?? "path"}</span>
-          {entry.sourceId && <span className="sl-pill muted">{entry.sourceId}</span>}
-        </span>
-        <span className="sl-path-value">{entry.path}</span>
-      </a>
-      <div className="sl-workstream-card-actions">
-        {archived ? (
-          <button
-            className="sl-action-btn"
-            disabled={busy}
-            onClick={() => void runAction(() => onRestoreWorkstream(entry))}
-          >
-            Restore
-          </button>
-        ) : (
-          <button
-            className="sl-action-btn"
-            disabled={busy}
-            onClick={() => void runAction(() => onArchiveWorkstream(entry))}
-          >
-            Archive
-          </button>
-        )}
-        {!archived && (isPathWorkstreamEntry(entry) || isBrowserWorkstreamEntry(entry)) && (
-          <button
-            className="sl-action-btn danger"
-            disabled={busy}
-            onClick={() => void runAction(() => onUntrackWorkstream(entry))}
-            aria-label={`Untrack ${entry.title}`}
-          >
-            Untrack
-          </button>
-        )}
+          <span className="sl-workstream-card-id">{registryKey(entry)}</span>
+          <span className="sl-workstream-card-meta">
+            <span className={`sl-pill ${entry.fileStatus === "available" ? "green" : "amber"}`}>
+              {entry.fileStatus}
+            </span>
+            <span className="sl-pill muted">{entry.source ?? "path"}</span>
+            {entry.sourceId && <span className="sl-pill muted">{entry.sourceId}</span>}
+          </span>
+          <span className="sl-path-value">{entry.path}</span>
+        </a>
+        <div className="sl-workstream-card-actions">
+          {archived ? (
+            <button
+              className="sl-action-btn"
+              disabled={busy}
+              onClick={() => void runAction(() => onRestoreWorkstream(entry))}
+            >
+              Restore
+            </button>
+          ) : (
+            <button
+              className="sl-action-btn"
+              disabled={busy}
+              onClick={() => void runAction(() => onArchiveWorkstream(entry))}
+            >
+              Archive
+            </button>
+          )}
+          {!archived && (isPathWorkstreamEntry(entry) || isBrowserWorkstreamEntry(entry)) && (
+            <button
+              className="sl-action-btn danger"
+              disabled={busy}
+              onClick={() => void runAction(() => onUntrackWorkstream(entry))}
+              aria-label={`Untrack ${entry.title}`}
+            >
+              Untrack
+            </button>
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div className="sl-shell-panel">
@@ -1421,6 +1690,7 @@ function useReviewPromptTemplatesState() {
   const requestRef = useRef<Promise<void> | null>(null);
   const mountedRef = useRef(true);
   const mutationVersionRef = useRef(0);
+  const deletedTemplateIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     mountedRef.current = true;
@@ -1431,7 +1701,15 @@ function useReviewPromptTemplatesState() {
 
   const noteTemplatesChanged = useCallback((changedTemplates: PawReviewPromptTemplate[]) => {
     mutationVersionRef.current += 1;
+    for (const template of changedTemplates) {
+      deletedTemplateIdsRef.current.delete(template.id);
+    }
     setTemplates((current) => mergeReviewPromptTemplates(current, changedTemplates));
+  }, []);
+  const noteTemplateDeleted = useCallback((templateId: string) => {
+    mutationVersionRef.current += 1;
+    deletedTemplateIdsRef.current.add(templateId);
+    setTemplates((current) => current.filter((template) => template.id !== templateId));
   }, []);
 
   const refresh = useCallback(() => {
@@ -1445,9 +1723,12 @@ function useReviewPromptTemplatesState() {
       .then((loadedTemplates) => {
         if (mountedRef.current) {
           if (mutationVersionRef.current === requestMutationVersion) {
+            deletedTemplateIdsRef.current.clear();
             setTemplates(() => mergeReviewPromptTemplates([], loadedTemplates));
           } else {
-            setTemplates((current) => mergeReviewPromptTemplates(current, loadedTemplates));
+            const deletedTemplateIds = deletedTemplateIdsRef.current;
+            const retainedTemplates = loadedTemplates.filter((template) => !deletedTemplateIds.has(template.id));
+            setTemplates((current) => mergeReviewPromptTemplates(current, retainedTemplates));
           }
         }
       })
@@ -1472,6 +1753,7 @@ function useReviewPromptTemplatesState() {
     error,
     refresh,
     noteTemplatesChanged,
+    noteTemplateDeleted,
   };
 }
 
@@ -1560,10 +1842,415 @@ function useSessionLaunchSettingsState() {
   };
 }
 
+function workstreamIdentityForDocument(
+  workstream: WorkstreamDocument,
+  activeWorkstream: { projectKey: string; workstreamId: string } | null | undefined,
+): { projectKey: string; workstreamId: string } {
+  return {
+    projectKey: activeWorkstream?.projectKey ?? workstream.projectKey ?? workstream.id,
+    workstreamId: activeWorkstream?.workstreamId ?? workstream.id,
+  };
+}
+
+function externalDependencyTargetKey(dependency: WorkstreamExternalDependency): string | null {
+  if (!dependency.target) {
+    return null;
+  }
+  return `${dependency.target.projectKey}/${dependency.target.workstreamId}`;
+}
+
+function isDependencyTargetSatisfied(status: string): boolean {
+  return status === "completed" || status === "retired";
+}
+
+function resolveExternalDependencyAgainstDocument(
+  document: WorkstreamDocument,
+  dependency: WorkstreamExternalDependency,
+  archived = false,
+): WorkstreamExternalDependencyResolution {
+  if (!dependency.target) {
+    return {
+      state: "unresolved",
+      reason: "External dependency has no upstream target.",
+      archived,
+    };
+  }
+
+  if (dependency.target.nodeId) {
+    const upstreamNode = document.nodes.find((node) => node.id === dependency.target?.nodeId);
+    if (!upstreamNode) {
+      return {
+        state: "unresolved",
+        reason: `Upstream node ${dependency.target.nodeId} was not found.`,
+        archived,
+      };
+    }
+    return {
+      state: "resolved",
+      target: {
+        kind: "node",
+        title: upstreamNode.title,
+        status: upstreamNode.status,
+        satisfied: isDependencyTargetSatisfied(upstreamNode.status),
+        archived,
+      },
+    };
+  }
+
+  return {
+    state: "resolved",
+    target: {
+      kind: "workstream",
+      title: document.title,
+      status: document.status,
+      satisfied: isDependencyTargetSatisfied(document.status),
+      archived,
+    },
+  };
+}
+
+function externalDependenciesForWorkstream(
+  workstream: WorkstreamDocument,
+): Array<{ nodeId: string; dependency: WorkstreamExternalDependency }> {
+  return workstream.nodes.flatMap((node) =>
+    (node.externalDependsOn ?? []).map((dependency) => ({
+      nodeId: node.id,
+      dependency,
+    })),
+  );
+}
+
+function useExternalDependencyResolutions(
+  workstream: WorkstreamDocument | null,
+  activeWorkstream: { projectKey: string; workstreamId: string } | null | undefined,
+  workstreams: WorkstreamRegistryListEntry[],
+  archivedWorkstreams: WorkstreamRegistryListEntry[],
+): ReadonlyMap<string, WorkstreamExternalDependencyResolution> {
+  const [resolutionState, setResolutionState] = useState<{
+    key: string;
+    resolutions: ReadonlyMap<string, WorkstreamExternalDependencyResolution>;
+  }>({ key: "", resolutions: EMPTY_EXTERNAL_DEPENDENCY_RESOLUTIONS });
+  const externalDependencies = useMemo(
+    () =>
+      workstream
+        ? externalDependenciesForWorkstream(workstream).filter(
+            ({ dependency }) => dependency.target,
+          )
+        : [],
+    [workstream],
+  );
+  const resolutionRequestKey = useMemo(() => {
+    if (!workstream || externalDependencies.length === 0) {
+      return "";
+    }
+    const localIdentity = workstreamIdentityForDocument(workstream, activeWorkstream);
+    const registrySeed = [...workstreams, ...archivedWorkstreams]
+      .map((entry) =>
+        `${entry.projectKey}/${entry.workstreamId}:${entry.archived ? "archived" : "active"}:${entry.fileStatus}`,
+      )
+      .sort()
+      .join(",");
+    const dependencySeed = externalDependencies
+      .map(({ nodeId, dependency }) =>
+        `${nodeId}:${dependency.id}:${dependency.target?.projectKey}/${dependency.target?.workstreamId}/${dependency.target?.nodeId ?? ""}`,
+      )
+      .join(",");
+    return `${localIdentity.projectKey}/${localIdentity.workstreamId}:${workstream.updatedAt}:${dependencySeed}:${registrySeed}`;
+  }, [activeWorkstream, archivedWorkstreams, externalDependencies, workstream, workstreams]);
+
+  useEffect(() => {
+    if (!workstream || externalDependencies.length === 0 || !resolutionRequestKey) {
+      return;
+    }
+
+    let cancelled = false;
+    const controller = new AbortController();
+
+    const localIdentity = workstreamIdentityForDocument(workstream, activeWorkstream);
+    const registryByTarget = new Map(
+      [...workstreams, ...archivedWorkstreams].map((entry) => [
+        `${entry.projectKey}/${entry.workstreamId}`,
+        entry,
+      ]),
+    );
+    const dependenciesByTarget = new Map<
+      string,
+      Array<{ nodeId: string; dependency: WorkstreamExternalDependency }>
+    >();
+
+    for (const item of externalDependencies) {
+      const targetKey = externalDependencyTargetKey(item.dependency);
+      if (!targetKey) {
+        continue;
+      }
+      const existing = dependenciesByTarget.get(targetKey) ?? [];
+      existing.push(item);
+      dependenciesByTarget.set(targetKey, existing);
+    }
+
+    async function resolveAll(): Promise<void> {
+      const next = new Map<string, WorkstreamExternalDependencyResolution>();
+
+      await Promise.all(
+        [...dependenciesByTarget.entries()].map(async ([targetKey, dependencies]) => {
+          const [projectKey, workstreamId] = targetKey.split("/");
+          const registryEntry = registryByTarget.get(targetKey);
+          const archived = registryEntry?.archived ?? false;
+          let upstreamDocument: WorkstreamDocument | null = null;
+          let upstreamError: string | null = null;
+
+          if (
+            projectKey === localIdentity.projectKey &&
+            workstreamId === localIdentity.workstreamId
+          ) {
+            upstreamDocument = workstream;
+          } else {
+            try {
+              const response = await fetch(registryGraphUrl({ projectKey, workstreamId }), {
+                signal: controller.signal,
+              });
+              if (!response.ok) {
+                upstreamError = (await parseErrorResponse(response)).message;
+              } else {
+                upstreamDocument = parseWorkstreamDocument(await response.text());
+              }
+            } catch (error: unknown) {
+              if (error instanceof DOMException && error.name === "AbortError") {
+                return;
+              }
+              upstreamError = error instanceof Error ? error.message : String(error);
+            }
+          }
+
+          for (const { nodeId, dependency } of dependencies) {
+            const key = workstreamExternalDependencyKey(nodeId, dependency.id);
+            const failedResolution: WorkstreamExternalDependencyResolution = registryEntry
+              ? {
+                  state: "error",
+                  error: upstreamError ?? "Unable to load upstream workstream.",
+                  archived,
+                }
+              : {
+                  state: "unresolved",
+                  reason: upstreamError ?? "Upstream workstream is not tracked.",
+                  archived,
+                };
+            next.set(
+              key,
+              upstreamDocument
+                ? resolveExternalDependencyAgainstDocument(upstreamDocument, dependency, archived)
+                : failedResolution,
+            );
+          }
+        }),
+      );
+
+      if (!cancelled) {
+        setResolutionState({ key: resolutionRequestKey, resolutions: next });
+      }
+    }
+
+    void resolveAll();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [
+    activeWorkstream,
+    archivedWorkstreams,
+    externalDependencies,
+    resolutionRequestKey,
+    workstream,
+    workstreams,
+  ]);
+
+  return resolutionState.key === resolutionRequestKey
+    ? resolutionState.resolutions
+    : EMPTY_EXTERNAL_DEPENDENCY_RESOLUTIONS;
+}
+
+function positionsRecordToMap(
+  positions: Record<string, WorkstreamGraphNodePosition>,
+): Map<string, WorkstreamGraphNodePosition> {
+  return new Map(Object.entries(positions));
+}
+
+function positionsMapToRecord(
+  positions: ReadonlyMap<string, WorkstreamGraphNodePosition>,
+): Record<string, WorkstreamGraphNodePosition> {
+  return Object.fromEntries(positions);
+}
+
+function useWorkstreamNodePositions(entry: WorkstreamRegistryListEntry | null): {
+  positions: ReadonlyMap<string, WorkstreamGraphNodePosition>;
+  error: string | null;
+  updatePosition: (nodeId: string, position: { x: number; y: number }) => void;
+} {
+  const [positions, setPositions] = useState<
+    ReadonlyMap<string, WorkstreamGraphNodePosition>
+  >(new Map());
+  const [error, setError] = useState<string | null>(null);
+  const positionsRef = useRef<ReadonlyMap<string, WorkstreamGraphNodePosition>>(new Map());
+  const positionsMountedRef = useRef(true);
+  const pendingPositionSaveRef = useRef<{
+    entry: WorkstreamRegistryListEntry;
+    positions: ReadonlyMap<string, WorkstreamGraphNodePosition>;
+  } | null>(null);
+  const positionSaveTimerRef = useRef<number | null>(null);
+  const positionSaveChainRef = useRef<Promise<void>>(Promise.resolve());
+
+  useEffect(() => {
+    if (!entry || isBrowserWorkstreamEntry(entry)) {
+      positionsRef.current = new Map();
+      setPositions(new Map());
+      setError(null);
+      return;
+    }
+
+    let cancelled = false;
+    const controller = new AbortController();
+    setError(null);
+    void (async () => {
+      try {
+        const response = await fetch(registryPositionsUrl(entry), {
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          throw new Error((await parseErrorResponse(response)).message);
+        }
+        const document = await response.json() as WorkstreamPositionsResponse;
+        if (!cancelled) {
+          const nextPositions = positionsRecordToMap(document.positions ?? {});
+          positionsRef.current = nextPositions;
+          setPositions(nextPositions);
+        }
+      } catch (loadError: unknown) {
+        if (loadError instanceof DOMException && loadError.name === "AbortError") {
+          return;
+        }
+        if (!cancelled) {
+          positionsRef.current = new Map();
+          setPositions(new Map());
+          setError(loadError instanceof Error ? loadError.message : String(loadError));
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [entry]);
+
+  const enqueuePositionSave = useCallback(
+    (
+      saveEntry: WorkstreamRegistryListEntry,
+      savePositions: ReadonlyMap<string, WorkstreamGraphNodePosition>,
+    ) => {
+      positionSaveChainRef.current = positionSaveChainRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          try {
+            if (positionsMountedRef.current) {
+              setError(null);
+            }
+            const response = await fetch(registryPositionsUrl(saveEntry), {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                positions: positionsMapToRecord(savePositions),
+              }),
+            });
+            if (!response.ok) {
+              throw new Error((await parseErrorResponse(response)).message);
+            }
+          } catch (saveError: unknown) {
+            if (positionsMountedRef.current) {
+              setError(saveError instanceof Error ? saveError.message : String(saveError));
+            }
+          }
+        });
+    },
+    [],
+  );
+
+  useEffect(() => {
+    positionsMountedRef.current = true;
+    return () => {
+      positionsMountedRef.current = false;
+      if (positionSaveTimerRef.current !== null) {
+        window.clearTimeout(positionSaveTimerRef.current);
+        positionSaveTimerRef.current = null;
+      }
+      const pending = pendingPositionSaveRef.current;
+      pendingPositionSaveRef.current = null;
+      if (pending) {
+        enqueuePositionSave(pending.entry, pending.positions);
+      }
+    };
+  }, [enqueuePositionSave]);
+
+  const schedulePositionSave = useCallback(
+    (
+      saveEntry: WorkstreamRegistryListEntry,
+      savePositions: ReadonlyMap<string, WorkstreamGraphNodePosition>,
+    ) => {
+      const pending = pendingPositionSaveRef.current;
+      if (
+        pending &&
+        registryPositionsUrl(pending.entry) !== registryPositionsUrl(saveEntry)
+      ) {
+        if (positionSaveTimerRef.current !== null) {
+          window.clearTimeout(positionSaveTimerRef.current);
+          positionSaveTimerRef.current = null;
+        }
+        pendingPositionSaveRef.current = null;
+        enqueuePositionSave(pending.entry, pending.positions);
+      }
+      pendingPositionSaveRef.current = {
+        entry: saveEntry,
+        positions: savePositions,
+      };
+      if (positionSaveTimerRef.current !== null) {
+        window.clearTimeout(positionSaveTimerRef.current);
+      }
+      positionSaveTimerRef.current = window.setTimeout(() => {
+        positionSaveTimerRef.current = null;
+        const pending = pendingPositionSaveRef.current;
+        pendingPositionSaveRef.current = null;
+        if (pending) {
+          enqueuePositionSave(pending.entry, pending.positions);
+        }
+      }, POSITIONS_SAVE_DEBOUNCE_MS);
+    },
+    [enqueuePositionSave],
+  );
+
+  const updatePosition = useCallback(
+    (nodeId: string, position: { x: number; y: number }) => {
+      if (!entry || isBrowserWorkstreamEntry(entry)) {
+        return;
+      }
+
+      const updatedAt = new Date().toISOString();
+      const next = new Map(positionsRef.current);
+      next.set(nodeId, { ...position, updatedAt });
+      positionsRef.current = next;
+      setPositions(next);
+      schedulePositionSave(entry, next);
+    },
+    [entry, schedulePositionSave],
+  );
+
+  return { positions, error, updatePosition };
+}
+
 function GraphDashboard({
   workstream,
   error,
   workstreams,
+  archivedWorkstreams,
   activeWorkstream,
   githubStatusRefreshKey,
   archive,
@@ -1586,8 +2273,12 @@ function GraphDashboard({
   onReviewPromptTemplatesChanged,
   sessionLaunchSettings,
 }: ReturnType<typeof useGraphLoader> & {
-  onOpenWorkstream: (entry: WorkstreamRegistryListEntry) => void | Promise<void>;
-  onOpenSessions: (target?: { workstreamId?: string | null; nodeId?: string | null }) => void | Promise<void>;
+  onOpenWorkstream: (entry: { projectKey: string; workstreamId: string; nodeId?: string | null }) => void | Promise<void>;
+  onOpenSessions: (target?: {
+    workstreamId?: string | null;
+    nodeId?: string | null;
+    tab?: "list" | "consoles" | null;
+  }) => void | Promise<void>;
   onManageSources: () => void;
   onRouteHome: () => void;
   selectedNodeIdFromRoute?: string | null;
@@ -1617,12 +2308,15 @@ function GraphDashboard({
   const [launchResuming, setLaunchResuming] = useState(false);
   const [launchResumeError, setLaunchResumeError] = useState<string | null>(null);
   const [launchResumeStatus, setLaunchResumeStatus] = useState<string | null>(null);
+  const [managedConsoleOverlayOpen, setManagedConsoleOverlayOpen] = useState(false);
   const [nodeLaunchRecords, setNodeLaunchRecords] = useState<NodeLaunchRecord[]>([]);
   const [nodeLaunchRecordLoading, setNodeLaunchRecordLoading] = useState(false);
   const [nodeLaunchRecordError, setNodeLaunchRecordError] = useState<string | null>(null);
   const [selectedNodeLaunchRecordLoading, setSelectedNodeLaunchRecordLoading] = useState(false);
   const [selectedNodeLaunchRecordError, setSelectedNodeLaunchRecordError] = useState<string | null>(null);
   const [nodeLaunchRecordRefreshKey, setNodeLaunchRecordRefreshKey] = useState(0);
+  const [selectedBoundSession, setSelectedBoundSession] =
+    useState<SessionRegistryListItem | null>(null);
   const [configurationDialogOpen, setConfigurationDialogOpen] = useState(false);
   const [configurationSaving, setConfigurationSaving] = useState(false);
   const [configurationError, setConfigurationError] = useState<string | null>(null);
@@ -1630,6 +2324,17 @@ function GraphDashboard({
   const localRunStreamsRef = useRef<Set<string>>(new Set());
   const isDocumentVisible = useIsDocumentVisible();
   const activeWorkstreamKey = activeWorkstream ? registryKey(activeWorkstream) : "";
+  const activeWorkstreamEntry = useMemo(() => {
+    if (!activeWorkstream) return null;
+    return workstreams.find((entry) => registryKey(entry) === registryKey(activeWorkstream)) ?? null;
+  }, [activeWorkstream, workstreams]);
+  const externalDependencyResolutions = useExternalDependencyResolutions(
+    workstream,
+    activeWorkstream,
+    workstreams,
+    archivedWorkstreams,
+  );
+  const nodePositions = useWorkstreamNodePositions(activeWorkstreamEntry);
   const sessionList = useSessionRegistryList(
     { workstreamId: activeWorkstream?.workstreamId ?? null },
     { enabled: Boolean(activeWorkstream) },
@@ -1674,8 +2379,10 @@ function GraphDashboard({
   );
   const viewModel = useMemo(() => {
     if (!workstream) return null;
-    return buildWorkstreamViewModel(workstream, githubSnapshot);
-  }, [githubSnapshot, workstream]);
+    return buildWorkstreamViewModel(workstream, githubSnapshot, new Date(), {
+      externalDependencyResolutions,
+    });
+  }, [externalDependencyResolutions, githubSnapshot, workstream]);
 
   const baseLayout = useMemo(() => {
     if (!workstream || !viewModel) return null;
@@ -1690,14 +2397,22 @@ function GraphDashboard({
     if (!selectedNodeId || !viewModel) return null;
     return viewModel.derivedNodes.find((entry) => entry.node.id === selectedNodeId) ?? null;
   }, [selectedNodeId, viewModel]);
+  const selectedExternalDependency = useMemo(() => {
+    if (!selectedNodeId || !viewModel) return null;
+    for (const entry of viewModel.derivedNodes) {
+      const dependency = entry.externalDependencies.find(
+        (externalDependency) => externalDependency.graphNodeId === selectedNodeId,
+      );
+      if (dependency) {
+        return dependency;
+      }
+    }
+    return null;
+  }, [selectedNodeId, viewModel]);
   const nodeLaunchRecord = selectedEntry
     ? nodeLaunchRecordsByNodeId.get(selectedEntry.node.id) ?? null
     : null;
 
-  const activeWorkstreamEntry = useMemo(() => {
-    if (!activeWorkstream) return null;
-    return workstreams.find((entry) => registryKey(entry) === registryKey(activeWorkstream)) ?? null;
-  }, [activeWorkstream, workstreams]);
   const activeWorkstreamEntryPath = activeWorkstreamEntry?.path ?? null;
   const runtimeOverlay = useMemo<WorkstreamRuntimeOverlay | null>(() => {
     if (!viewModel) {
@@ -1725,9 +2440,100 @@ function GraphDashboard({
     sessionList.error,
     viewModel,
   ]);
-  const selectedRuntimeOverlay = selectedEntry
+  const selectedRuntimeOverlayBase = selectedEntry
     ? runtimeOverlay?.nodesById.get(selectedEntry.node.id) ?? null
     : null;
+  const selectedBoundSessionId =
+    selectedRuntimeOverlayBase?.session.primarySession
+      ? null
+      : selectedRuntimeOverlayBase?.launch.latestClaim?.boundRegistryId ?? null;
+  const selectedRuntimeOverlay = useMemo(() => {
+    if (
+      !selectedBoundSession ||
+      !activeWorkstream ||
+      !viewModel ||
+      !selectedEntry ||
+      !selectedRuntimeOverlayBase
+    ) {
+      return selectedRuntimeOverlayBase;
+    }
+    const historicNodeStatuses = buildGraphNodeSessionStatusMap(
+      [...sessionList.sessions, selectedBoundSession],
+      activeWorkstream.workstreamId,
+    );
+    return buildWorkstreamRuntimeOverlay({
+      viewModel,
+      nodeSessionStatuses: historicNodeStatuses,
+      sessionStatusState: nodeSessionStatusState,
+      sessionStatusError: sessionList.error,
+      nodeLaunchRecords: nodeLaunchRecordsByNodeId,
+      launchRecordsState: nodeLaunchRecordLoading
+        ? "loading"
+        : nodeLaunchRecordError
+          ? "error"
+          : "ready",
+      launchRecordsError: nodeLaunchRecordError,
+    }).nodesById.get(selectedEntry.node.id) ?? selectedRuntimeOverlayBase;
+  }, [
+    activeWorkstream,
+    nodeLaunchRecordError,
+    nodeLaunchRecordLoading,
+    nodeLaunchRecordsByNodeId,
+    nodeSessionStatusState,
+    selectedBoundSession,
+    selectedEntry,
+    selectedRuntimeOverlayBase,
+    sessionList.error,
+    sessionList.sessions,
+    viewModel,
+  ]);
+
+  useEffect(() => {
+    setSelectedBoundSession(null);
+    if (!selectedBoundSessionId || !activeWorkstream || !selectedEntry) {
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/sessions/${encodeURIComponent(selectedBoundSessionId)}`)
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`Session ${selectedBoundSessionId} could not be loaded.`);
+        }
+        return sessionRegistryRecordToListItem(
+          (await response.json()) as SessionRegistryRecord,
+        );
+      })
+      .then((session) => {
+        if (cancelled) {
+          return;
+        }
+        const binding = session.graphBinding;
+        setSelectedBoundSession(
+          binding?.workstreamId === activeWorkstream.workstreamId &&
+            binding.nodeId === selectedEntry.node.id
+            ? session
+            : null,
+        );
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSelectedBoundSession(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeWorkstream,
+    selectedBoundSessionId,
+    selectedEntry,
+  ]);
+
+  useEffect(() => {
+    if (!selectedRuntimeOverlay?.managedRuntime) {
+      setManagedConsoleOverlayOpen(false);
+    }
+  }, [selectedRuntimeOverlay?.managedRuntime]);
 
   // Derive the launch target from stable string primitives so its identity
   // only changes when the underlying graph path or node id actually changes.
@@ -1841,6 +2647,44 @@ function GraphDashboard({
     [activeWorkstream?.workstreamId, onOpenSessions],
   );
 
+  const externalRouteForDependency = useCallback(
+    (dependency: WorkstreamExternalDependencyView) => {
+      if (dependency.target) {
+        const routeTarget = {
+          projectKey: dependency.target.projectKey,
+          workstreamId: dependency.target.workstreamId,
+          nodeId: dependency.target.nodeId ?? null,
+        };
+        return {
+          href: workstreamRoutePath(routeTarget),
+          onOpen: () => onOpenWorkstream(routeTarget),
+        };
+      }
+      if (dependency.url) {
+        const url = dependency.url;
+        return {
+          href: url,
+          onOpen: () => {
+            window.open(url, "_blank", "noopener,noreferrer");
+          },
+        };
+      }
+      return null;
+    },
+    [onOpenWorkstream],
+  );
+
+  const openSelectedConsoleInSessions = useCallback(
+    async () => {
+      await onOpenSessions({
+        workstreamId: activeWorkstream?.workstreamId ?? null,
+        nodeId: selectedEntry?.node.id ?? null,
+        tab: "consoles",
+      });
+    },
+    [activeWorkstream?.workstreamId, onOpenSessions, selectedEntry?.node.id],
+  );
+
   const launchActionDisabledReason = useMemo(() => {
     const operation = launchDialogOperation ?? selectedLaunchOperation;
     const latestClaim = launchDialogTarget ? launchDialogLatestClaim : nodeLaunchRecord?.latestClaim;
@@ -1908,7 +2752,7 @@ function GraphDashboard({
     // unchanged, which previously caused launchDefaults to get a fresh
     // object reference on every poll and ripple through PawLaunchDialog
     // props.
-    const defaultsNodeId = launchDialogTarget?.nodeId ?? selectedNodeId;
+    const defaultsNodeId = launchDialogTarget?.nodeId ?? selectedLaunchNodeId;
     const graphPath = launchDialogTarget?.graphPath ?? activeWorkstreamEntry?.path;
     if (!defaultsNodeId || !graphPath || !workstream) return null;
     const defaultsNode = workstream.nodes.find((node) => node.id === defaultsNodeId);
@@ -1944,14 +2788,15 @@ function GraphDashboard({
           renderWorkstreamTerminalTitleTemplate(
             workstream?.launchDefaults?.terminal?.titleTemplate,
             defaultsNode,
+            workstream,
           ) ?? defaultsNode.title,
-        tabColor: workstream?.launchDefaults?.terminal?.tabColor ?? null,
+        tabColor: workstream?.presentation?.color ?? workstream?.launchDefaults?.terminal?.tabColor ?? null,
       },
     };
   }, [
     activeWorkstreamEntry?.path,
     launchDialogTarget,
-    selectedNodeId,
+    selectedLaunchNodeId,
     sessionLaunchSettings?.defaultCliArgs,
     workstream,
   ]);
@@ -2003,7 +2848,7 @@ function GraphDashboard({
   // on the node id (a stable primitive) instead of the derived entry object,
   // which gets a fresh reference every time the view-model rebuilds.
   useEffect(() => {
-    if (!activeWorkstreamPath || !selectedLaunchWorkstreamId || !selectedNodeId) {
+    if (!activeWorkstreamPath || !selectedLaunchWorkstreamId || !selectedLaunchNodeId) {
       setSelectedNodeLaunchRecordLoading(false);
       setSelectedNodeLaunchRecordError(null);
       return;
@@ -2011,7 +2856,7 @@ function GraphDashboard({
     const target: LaunchOperationTarget = {
       graphPath: activeWorkstreamPath,
       workstreamId: selectedLaunchWorkstreamId,
-      nodeId: selectedNodeId,
+      nodeId: selectedLaunchNodeId,
     };
     let cancelled = false;
     setSelectedNodeLaunchRecordLoading(true);
@@ -2065,7 +2910,7 @@ function GraphDashboard({
     return () => {
       cancelled = true;
     };
-  }, [activeWorkstreamPath, nodeLaunchRecordRefreshKey, selectedLaunchWorkstreamId, selectedNodeId]);
+  }, [activeWorkstreamPath, nodeLaunchRecordRefreshKey, selectedLaunchWorkstreamId, selectedLaunchNodeId]);
 
   const setLaunchOperation = useCallback((
     target: LaunchOperationTarget,
@@ -2604,6 +3449,12 @@ function GraphDashboard({
               preferredTerminal: handoff.terminal.preferredTerminal,
               title: `${input.terminalTitle} REVIEW`,
               tabColor: input.terminalColor,
+              launchBinding: {
+                workstreamId: handoff.launchMetadata.workstreamId,
+                nodeId: handoff.launchMetadata.nodeId,
+                branch: handoff.branch,
+                contextId: handoff.contextPackage.contextId,
+              },
               ...(input.reviewCompanion.usePawReviewAgent ? {} : { usePawReviewAgent: false }),
             }),
           });
@@ -3083,14 +3934,20 @@ function GraphDashboard({
             nodeSessionStatusState={nodeSessionStatusState}
             runtimeOverlay={runtimeOverlay}
             launchOperations={launchOperationsByNodeId}
+            nodePositions={nodePositions.positions}
+            onNodePositionChange={nodePositions.updatePosition}
             sessionRouteForNode={sessionRouteForNode}
+            externalRouteForDependency={externalRouteForDependency}
           />
         </ReactFlowProvider>
         <div className="sl-sidebar">
+          {nodePositions.error && <div className="sl-action-error">{nodePositions.error}</div>}
           <NodeInspector
             entry={selectedEntry}
+            externalDependency={selectedExternalDependency}
             layout={layout}
             workstream={workstream}
+            externalRouteForDependency={externalRouteForDependency}
             canLaunch={canLaunchSelectedNode}
             launchDisabledReason={launchDisabledReason}
             launchRecord={nodeLaunchRecord}
@@ -3099,6 +3956,9 @@ function GraphDashboard({
             launchRecordError={nodeLaunchRecordError ?? selectedNodeLaunchRecordError}
             runtimeOverlay={selectedRuntimeOverlay}
             onLaunch={handleOpenLaunchDialog}
+            onOpenConsole={() => setManagedConsoleOverlayOpen(true)}
+            onOpenConsoleInSessions={openSelectedConsoleInSessions}
+            onManagedRuntimeActionComplete={sessionList.refresh}
             onReleaseStuckOperation={
               selectedLaunchTarget
                 ? () => releaseStuckLaunchOperation(selectedLaunchTarget)
@@ -3157,6 +4017,19 @@ function GraphDashboard({
           onResumeLaunch={canResumeBackgroundLaunch ? handleResumeBackgroundLaunch : undefined}
         />
       ) : null}
+      {managedConsoleOverlayOpen && selectedRuntimeOverlay?.managedRuntime ? (
+        <ManagedRuntimeConsoleOverlay
+          title={selectedRuntimeOverlay.node.title}
+          subtitle={`${activeWorkstream?.workstreamId ?? "workstream"} / ${
+            selectedRuntimeOverlay.node.id
+          }`}
+          runtime={selectedRuntimeOverlay.managedRuntime.projection}
+          sessionId={selectedRuntimeOverlay.session.primarySession?.id ?? null}
+          onClose={() => setManagedConsoleOverlayOpen(false)}
+          onOpenInSessions={openSelectedConsoleInSessions}
+          onActionComplete={sessionList.refresh}
+        />
+      ) : null}
       {configurationDialogOpen && workstream ? (
         <WorkstreamConfigurationDialog
           key={`${workstream.projectKey ?? ""}:${workstream.id}:${workstream.updatedAt}`}
@@ -3206,13 +4079,19 @@ function SettingsPage({
   onRefreshProfiles,
   onProfilesChanged,
   onProfileDeleted,
+  reviewTemplates,
+  reviewTemplatesLoading,
+  reviewTemplatesError,
+  onRefreshReviewTemplates,
+  onReviewTemplatesChanged,
+  onReviewTemplateDeleted,
   sessionLaunchSettings,
   sessionLaunchSettingsLoading,
   sessionLaunchSettingsError,
   onRefreshSessionLaunchSettings,
   onSessionLaunchSettingsChanged,
 }: {
-  section: "profiles" | "session-launch";
+  section: "profiles" | "review-templates" | "session-launch";
   onRouteChange: (route: DashboardRoute) => void | Promise<void>;
   profiles: PawPromptProfile[];
   profilesLoading: boolean;
@@ -3220,6 +4099,12 @@ function SettingsPage({
   onRefreshProfiles: () => Promise<void>;
   onProfilesChanged: (profiles: PawPromptProfile[]) => void;
   onProfileDeleted: (profileId: string) => void;
+  reviewTemplates: PawReviewPromptTemplate[];
+  reviewTemplatesLoading: boolean;
+  reviewTemplatesError: string | null;
+  onRefreshReviewTemplates: () => Promise<void>;
+  onReviewTemplatesChanged: (templates: PawReviewPromptTemplate[]) => void;
+  onReviewTemplateDeleted: (templateId: string) => void;
   sessionLaunchSettings: SessionLaunchSettings | null;
   sessionLaunchSettingsLoading: boolean;
   sessionLaunchSettingsError: string | null;
@@ -3227,7 +4112,7 @@ function SettingsPage({
   onSessionLaunchSettingsChanged: (settings: SessionLaunchSettings) => void;
 }) {
   const renderNavItem = (
-    itemSection: "profiles" | "session-launch",
+    itemSection: "profiles" | "review-templates" | "session-launch",
     label: string,
     description: string,
   ) => {
@@ -3255,6 +4140,7 @@ function SettingsPage({
           <nav className="sl-settings-nav" aria-label="Streamliner settings">
             {renderNavItem("session-launch", "Session launch", "Copilot CLI defaults")}
             {renderNavItem("profiles", "PAW profiles", "Launch prompt defaults")}
+            {renderNavItem("review-templates", "PAW Review templates", "Companion review prompts")}
           </nav>
         </aside>
         <main className="sl-settings-content">
@@ -3266,6 +4152,15 @@ function SettingsPage({
               onRefresh={onRefreshProfiles}
               onProfilesChanged={onProfilesChanged}
               onProfileDeleted={onProfileDeleted}
+            />
+          ) : section === "review-templates" ? (
+            <PawReviewTemplatesPage
+              templates={reviewTemplates}
+              loading={reviewTemplatesLoading}
+              error={reviewTemplatesError}
+              onRefresh={onRefreshReviewTemplates}
+              onTemplatesChanged={onReviewTemplatesChanged}
+              onTemplateDeleted={onReviewTemplateDeleted}
             />
           ) : (
             <SessionLaunchSettingsPage
@@ -3291,6 +4186,7 @@ function DashboardNav({
 }) {
   const workstreamsActive = route.view === "workstreams" || route.view === "workstream";
   const settingsActive = route.view === "settings";
+  const prototypeActive = route.view === "prototype";
 
   return (
     <div className="sl-shell-nav">
@@ -3346,6 +4242,20 @@ function DashboardNav({
           </svg>
           <span className="sl-visually-hidden">Streamliner settings</span>
         </a>
+        {import.meta.env.DEV && (
+          <a
+            className={`sl-action-btn${prototypeActive ? " active" : ""}`}
+            href={routePath({ view: "prototype", prototype: "managed-consoles" })}
+            aria-current={prototypeActive ? "page" : undefined}
+            onClick={(event) =>
+              handleInAppLinkClick(event, () =>
+                onRouteChange({ view: "prototype", prototype: "managed-consoles" })
+              )
+            }
+          >
+            Prototype
+          </a>
+        )}
       </div>
     </div>
   );
@@ -3377,6 +4287,8 @@ export default function App() {
       case "settings":
         suffix = route.section === "profiles"
           ? "Settings · PAW profiles"
+          : route.section === "review-templates"
+            ? "Settings · PAW Review templates"
           : "Settings · Session launch";
         break;
       case "workstream": {
@@ -3431,11 +4343,16 @@ export default function App() {
   );
 
   const openSessions = useCallback(
-    async (target?: { workstreamId?: string | null; nodeId?: string | null }) => {
+    async (target?: {
+      workstreamId?: string | null;
+      nodeId?: string | null;
+      tab?: "list" | "consoles" | null;
+    }) => {
       await handleRouteChange({
         view: "sessions",
         workstreamId: target?.workstreamId ?? null,
         nodeId: target?.nodeId ?? null,
+        tab: target?.tab ?? null,
       });
     },
     [handleRouteChange],
@@ -3457,7 +4374,9 @@ export default function App() {
     <div className="sl-root">
       <DashboardNav route={route} onRouteChange={handleRouteChange} />
       <MigrationWarningsBanner warnings={graphLoader.migrationWarnings} />
-      {route.view === "settings" ? (
+      {route.view === "prototype" ? (
+        <ManagedConsolesPrototypePage />
+      ) : route.view === "settings" ? (
         <SettingsPage
           section={route.section ?? "session-launch"}
           onRouteChange={handleRouteChange}
@@ -3467,6 +4386,12 @@ export default function App() {
           onRefreshProfiles={promptProfileState.refresh}
           onProfilesChanged={promptProfileState.noteProfilesChanged}
           onProfileDeleted={promptProfileState.noteProfileDeleted}
+          reviewTemplates={reviewPromptTemplateState.templates}
+          reviewTemplatesLoading={reviewPromptTemplateState.loading}
+          reviewTemplatesError={reviewPromptTemplateState.error}
+          onRefreshReviewTemplates={reviewPromptTemplateState.refresh}
+          onReviewTemplatesChanged={reviewPromptTemplateState.noteTemplatesChanged}
+          onReviewTemplateDeleted={reviewPromptTemplateState.noteTemplateDeleted}
           sessionLaunchSettings={sessionLaunchSettingsState.responseError ? null : sessionLaunchSettingsState.settings}
           sessionLaunchSettingsLoading={sessionLaunchSettingsState.loading}
           sessionLaunchSettingsError={sessionLaunchSettingsState.error}
@@ -3485,6 +4410,7 @@ export default function App() {
           onOpenWorkstream={openWorkstream}
           routeWorkstreamId={route.workstreamId ?? null}
           routeNodeId={route.nodeId ?? null}
+          routeTab={route.tab ?? null}
         />
       ) : route.view === "workstream" ? (
         <GraphDashboard

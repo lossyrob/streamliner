@@ -27,10 +27,20 @@ import {
   type StreamlinerApiAppOptions,
 } from "./app";
 import { SessionRegistryEventStream } from "./session-events";
+import type { TerminalLaunchOptions, TerminalLaunchResult } from "./terminal-launch";
 
 const createdRoots: string[] = [];
 const activeApps: StreamlinerApiApp[] = [];
 const activeServers: Server[] = [];
+
+type TerminalLaunchMethodForTest = TerminalLaunchResult["method"];
+
+function terminalResult(
+  method: TerminalLaunchMethodForTest,
+  pid: number,
+): TerminalLaunchResult {
+  return { method, pid };
+}
 
 class FakeSseRequest extends EventEmitter {
   private readonly lastEventId?: string;
@@ -97,6 +107,7 @@ function createIsolatedApi(
     recentsPath: join(rootDir, "recent-graphs.json"),
     workstreamRegistryPath: join(rootDir, "workstreams.json"),
     workstreamSourceRegistryPath: join(rootDir, "sources.json"),
+    workstreamPositionsRoot: join(rootDir, "positions"),
     nodeLaunchRecordsPath: join(rootDir, "node-launch-records.json"),
     ...options,
   });
@@ -620,6 +631,66 @@ describe("createStreamlinerApiApp", () => {
     expect(listResponse.body.workstreams).toEqual([]);
   });
 
+  it("streams workstream graph changes over SSE", async () => {
+    const rootDir = createRootDir();
+    const graphPath = join(rootDir, "graph.json");
+    writeFileSync(graphPath, JSON.stringify(buildGraph()), "utf8");
+    const api = createIsolatedApi(rootDir, {
+      workstreamEventDebounceMs: 5,
+      workstreamEventWatchIntervalMs: 20,
+    });
+    activeApps.push(api);
+
+    await request(api.app)
+      .post("/api/workstreams")
+      .send({ path: graphPath })
+      .expect(201);
+
+    const server = createServer(api.app);
+    const port = await listen(server);
+    const received = await new Promise<string>((resolve, reject) => {
+      let body = "";
+      let graphUpdated = false;
+      const timeout = setTimeout(() => reject(new Error("Timed out waiting for workstream SSE")), 5_000);
+      const req = httpGet(`http://127.0.0.1:${port}/api/workstreams/events`, (res) => {
+        res.setEncoding("utf8");
+        res.on("data", (chunk: string) => {
+          body += chunk;
+          if (body.includes("event: snapshot") && !graphUpdated) {
+            graphUpdated = true;
+            setTimeout(() => {
+              writeFileSync(
+                graphPath,
+                JSON.stringify(buildGraph({ title: "API Test Changed" })),
+                "utf8",
+              );
+            }, 25);
+          }
+          if (
+            body.includes("event: workstream.graph.changed") &&
+            body.includes('"projectKey":"streamliner"') &&
+            body.includes('"workstreamId":"api-test"') &&
+            body.includes('"lastModified"')
+          ) {
+            clearTimeout(timeout);
+            req.destroy();
+            resolve(body);
+          }
+        });
+      });
+      req.on("error", (error) => {
+        if (!body.includes("event: workstream.graph.changed")) {
+          clearTimeout(timeout);
+          reject(error);
+        }
+      });
+    });
+
+    expect(received).toContain("event: snapshot");
+    expect(received).toContain("event: workstream.graph.changed");
+    expect(received).toContain('"lastModified"');
+  });
+
   it("updates persisted workstream launch configuration", async () => {
     const rootDir = createRootDir();
     const graphPath = join(rootDir, "graph.json");
@@ -633,13 +704,16 @@ describe("createStreamlinerApiApp", () => {
     const updateResponse = await request(api.app)
       .patch("/api/workstreams/streamliner/api-test/configuration")
       .send({
+        presentation: {
+          shortName: "API",
+          color: "#FF8C0A",
+        },
         launchPolicy: { requiredTracker: "github-issue" },
         launchDefaults: {
           promptProfileId: "final-pr-only",
           terminal: {
             preferredTerminal: "windows-terminal",
             titleTemplate: "{githubIssue} - {nodeTitle}",
-            tabColor: "#FF8C0A",
           },
         },
       })
@@ -648,33 +722,91 @@ describe("createStreamlinerApiApp", () => {
     expect(updateResponse.body.workstream.launchPolicy).toEqual({
       requiredTracker: "github-issue",
     });
+    expect(updateResponse.body.workstream.presentation).toEqual({
+      shortName: "API",
+      color: "#ff8c0a",
+    });
     expect(updateResponse.body.workstream.launchDefaults).toEqual({
       promptProfileId: "final-pr-only",
       terminal: {
         preferredTerminal: "windows-terminal",
         titleTemplate: "{githubIssue} - {nodeTitle}",
-        tabColor: "#ff8c0a",
       },
     });
     const persisted = JSON.parse(readFileSync(graphPath, "utf8")) as Record<string, unknown>;
     expect(persisted.updatedAt).toBe("2026-05-07T18:10:33.000Z");
+    expect(persisted.presentation).toEqual({
+      shortName: "API",
+      color: "#ff8c0a",
+    });
     expect(persisted.launchPolicy).toEqual({ requiredTracker: "github-issue" });
     expect(persisted.launchDefaults).toEqual({
       promptProfileId: "final-pr-only",
       terminal: {
         preferredTerminal: "windows-terminal",
         titleTemplate: "{githubIssue} - {nodeTitle}",
-        tabColor: "#ff8c0a",
       },
     });
+    const listResponse = await request(api.app).get("/api/workstreams").expect(200);
+    expect(listResponse.body.workstreams[0]).toEqual(expect.objectContaining({
+      presentation: {
+        shortName: "API",
+        color: "#ff8c0a",
+      },
+    }));
 
     await request(api.app)
       .patch("/api/workstreams/streamliner/api-test/configuration")
-      .send({ launchPolicy: null, launchDefaults: null })
+      .send({ presentation: null, launchPolicy: null, launchDefaults: null })
       .expect(200);
     const cleared = JSON.parse(readFileSync(graphPath, "utf8")) as Record<string, unknown>;
+    expect(cleared.presentation).toBeUndefined();
     expect(cleared.launchPolicy).toBeUndefined();
     expect(cleared.launchDefaults).toBeUndefined();
+  });
+
+  it("persists manual workstream graph positions outside graph.json", async () => {
+    const rootDir = createRootDir();
+    const graphPath = join(rootDir, "graph.json");
+    writeFileSync(graphPath, JSON.stringify(buildGraph()), "utf8");
+    const api = createIsolatedApi(rootDir, {
+      now: () => new Date("2026-05-07T18:10:33.000Z"),
+    });
+    activeApps.push(api);
+    await request(api.app).post("/api/workstreams").send({ path: graphPath }).expect(201);
+
+    const emptyResponse = await request(api.app)
+      .get("/api/workstreams/streamliner/api-test/positions")
+      .expect(200);
+    expect(emptyResponse.body).toEqual({
+      schemaVersion: 1,
+      positions: {},
+    });
+
+    const updateResponse = await request(api.app)
+      .put("/api/workstreams/streamliner/api-test/positions")
+      .send({
+        positions: {
+          "first-node": { x: 120, y: 240 },
+          invalid: { x: "left", y: 0 },
+        },
+      })
+      .expect(200);
+    expect(updateResponse.body.positions).toEqual({
+      "first-node": {
+        x: 120,
+        y: 240,
+        updatedAt: "2026-05-07T18:10:33.000Z",
+      },
+    });
+
+    const persistedGraph = JSON.parse(readFileSync(graphPath, "utf8")) as Record<string, unknown>;
+    expect(persistedGraph).not.toHaveProperty("positions");
+
+    const readResponse = await request(api.app)
+      .get("/api/workstreams/streamliner/api-test/positions")
+      .expect(200);
+    expect(readResponse.body.positions).toEqual(updateResponse.body.positions);
   });
 
   it("rejects invalid workstream launch configuration updates", async () => {
@@ -1484,6 +1616,46 @@ describe("createStreamlinerApiApp", () => {
         cwd: rootDir,
         method: "windows-terminal",
         pid: 99999,
+      }),
+    );
+  });
+
+  it("relaunch endpoint returns mac-terminal method for resumed sessions", async () => {
+    const rootDir = createRootDir();
+    const store = new SessionRegistryFileStore({ rootDir: join(rootDir, "registry") });
+    const session = store.upsertSession({
+      title: "macOS relaunch target",
+      cwd: rootDir,
+      origin: { kind: "observed" },
+      copilotSessionId: "mac-session-123",
+    });
+    let launchOptions: TerminalLaunchOptions | undefined;
+    const api = createStreamlinerApiApp({
+      store,
+      relaunchDeps: {
+        launchTerminal: (options) => {
+          launchOptions = options;
+          return terminalResult("mac-terminal", 42424);
+        },
+        existsSync: () => true,
+        pluginPreflight: false,
+      },
+    });
+    activeApps.push(api);
+
+    const response = await request(api.app)
+      .post(`/api/sessions/${session.id}/relaunch`)
+      .set("Content-Type", "application/json")
+      .expect(200);
+
+    expect(launchOptions?.command).toContain("--resume=mac-session-123");
+    expect(launchOptions?.prepareCopilotCli).toBe(true);
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        sessionId: session.id,
+        method: "mac-terminal",
+        pid: 42424,
+        copilotResumed: true,
       }),
     );
   });

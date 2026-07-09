@@ -222,15 +222,6 @@ export function sessionMatchesQuery(
   ) {
     return false;
   }
-  if (
-    query.workstreamId &&
-    session.graphBinding?.workstreamId !== query.workstreamId
-  ) {
-    return false;
-  }
-  if (query.nodeId && session.graphBinding?.nodeId !== query.nodeId) {
-    return false;
-  }
   return sessionRegistryRecordMatchesOptions(session, query);
 }
 

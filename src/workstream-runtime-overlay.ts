@@ -9,7 +9,7 @@ import type {
 import {
   formatManagedRuntimeLabel,
   MANAGED_RUNTIME_LIFECYCLE_STATES,
-  managedRuntimeProjectionFromMetadata,
+  managedRuntimeProjectionFromSession,
   managedRuntimeProgressEvents,
 } from "./managed-runtime-contract";
 import type {
@@ -503,10 +503,10 @@ function isTerminalManagedRuntimeLifecycle(
   state: ManagedRuntimeLifecycleState,
 ): boolean {
   switch (state) {
-    case "completed":
-    case "cleaned_up":
     case "terminal_takeover":
       return true;
+    case "completed":
+    case "cleaned_up":
     case "failed":
     case "canceled":
     case "preparing":
@@ -541,7 +541,7 @@ function unresolvedLaunchStatus(
 function buildManagedRuntimeOverlay(
   session: SessionRegistryListItem | null,
 ): WorkstreamManagedRuntimeOverlay | null {
-  const projection = managedRuntimeProjectionFromMetadata(session?.runtime);
+  const projection = managedRuntimeProjectionFromSession(session);
   if (!projection) {
     return null;
   }

@@ -4,11 +4,13 @@ import type { SessionRegistryRecord } from "../session-registry-schema";
 import type { SessionRegistryStore } from "../session-registry-contract";
 import {
   buildCopilotResumeCommand,
+  type CopilotPluginPreflightOptions,
   isSafeCopilotResumeSessionId,
   type TerminalLaunchOptions,
   type TerminalLaunchResult,
   launchCopilotTerminal,
   launchTerminal,
+  selectTerminalCommandShellDialect,
 } from "../server/terminal-launch";
 import { DEFAULT_COPILOT_CLI_ARGS } from "../server/session-launch-settings";
 
@@ -27,7 +29,7 @@ export type RelaunchErrorCode = (typeof RELAUNCH_ERROR_CODES)[number];
 export interface RelaunchResult {
   sessionId: string;
   cwd: string;
-  method: "windows-terminal" | "powershell";
+  method: TerminalLaunchResult["method"];
   copilotResumed: boolean;
   colorApplied: boolean;
   pid: number | undefined;
@@ -47,6 +49,12 @@ export interface RelaunchDeps {
   existsSync: (path: string) => boolean;
   launchTerminal: (options: TerminalLaunchOptions) => TerminalLaunchResult;
   loadDefaultCliArgs: () => string[];
+  /**
+   * Override or disable the Copilot plugin preflight run during a resume launch.
+   * Defaults to the real preflight in production; tests pass `false` to stay
+   * hermetic instead of reading the host's `~/.copilot` plugin configuration.
+   */
+  pluginPreflight?: false | CopilotPluginPreflightOptions;
 }
 
 function defaultDeps(store: SessionRegistryStore): RelaunchDeps {
@@ -134,7 +142,11 @@ export function buildRelaunchParams(
   const options: TerminalLaunchOptions = { cwd };
 
   if (session.copilotSessionId) {
-    options.command = buildCopilotResumeCommand(session.copilotSessionId, cliArgs);
+    options.command = buildCopilotResumeCommand(
+      session.copilotSessionId,
+      cliArgs,
+      selectTerminalCommandShellDialect(),
+    );
     options.prepareCopilotCli = true;
   }
 
@@ -193,6 +205,7 @@ export async function relaunchSession(
       ? await launchCopilotTerminal(launchOptions, {
         launchTerminal: resolved.launchTerminal,
         cooldownMs: deps?.launchTerminal ? 0 : undefined,
+        pluginPreflight: resolved.pluginPreflight,
       })
       : resolved.launchTerminal(launchOptions);
 

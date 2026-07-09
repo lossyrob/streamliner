@@ -561,11 +561,22 @@ export function createLaunchPreparationsRouter(options: {
                   kickoffPrompt: postPreparation.launchCompanion.kickoffPrompt,
                   cliArgs: launchHandoff.cliArgs,
                   preferredTerminal: launchHandoff.terminal.preferredTerminal,
-                  title: `${launchHandoff.terminal.title} Review`,
+                  title: `${launchHandoff.terminal.title} REVIEW`,
                   ...(launchHandoff.terminal.tabColor ? { tabColor: launchHandoff.terminal.tabColor } : {}),
                   usePawReviewAgent: postPreparation.launchCompanion.usePawReviewAgent,
+                  launchBinding: {
+                    workstreamId: launchHandoff.launchMetadata.workstreamId,
+                    nodeId: launchHandoff.launchMetadata.nodeId,
+                    branch: launchHandoff.branch,
+                    contextId: launchHandoff.contextPackage.contextId,
+                  },
                 },
-                { launchTerminal: options.deps?.nodeLaunchDeps?.launchTerminal },
+                {
+                  launchTerminal: options.deps?.nodeLaunchDeps?.launchTerminal,
+                  registryStore: options.deps?.registryStore,
+                  claimStore: options.deps?.launchClaimStore,
+                  now: options.deps?.now,
+                },
               );
               await operationStore?.markCompanionLaunched({
                 handoff: launchHandoff,

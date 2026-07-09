@@ -34,6 +34,8 @@ export const WORKSTREAM_LAUNCH_TERMINAL_PREFERENCES = [
   "default",
   "windows-terminal",
   "powershell",
+  "mac-terminal",
+  "iterm2",
 ] as const;
 export type WorkstreamLaunchTerminalPreference =
   (typeof WORKSTREAM_LAUNCH_TERMINAL_PREFERENCES)[number];
@@ -50,6 +52,13 @@ export const WORKSTREAM_PULL_REQUEST_VALIDATION_STATES = [
 ] as const;
 export type WorkstreamPullRequestValidationState =
   (typeof WORKSTREAM_PULL_REQUEST_VALIDATION_STATES)[number];
+
+export const WORKSTREAM_EXTERNAL_DEPENDENCY_STATUSES = [
+  "pending",
+  "satisfied",
+] as const;
+export type WorkstreamExternalDependencyStatus =
+  (typeof WORKSTREAM_EXTERNAL_DEPENDENCY_STATUSES)[number];
 
 export interface WorkstreamIssue {
   owner: string;
@@ -113,6 +122,20 @@ export interface WorkstreamRepo {
   role?: string;
 }
 
+export interface WorkstreamExternalDependencyTarget {
+  projectKey: string;
+  workstreamId: string;
+  nodeId?: string;
+}
+
+export interface WorkstreamExternalDependency {
+  id: string;
+  target?: WorkstreamExternalDependencyTarget;
+  label?: string;
+  url?: string;
+  status?: WorkstreamExternalDependencyStatus;
+}
+
 export interface WorkstreamLaunchPolicy {
   requiredTracker?: WorkstreamLaunchRequiredTracker;
 }
@@ -120,6 +143,7 @@ export interface WorkstreamLaunchPolicy {
 export interface WorkstreamLaunchTerminalDefaults {
   preferredTerminal?: WorkstreamLaunchTerminalPreference;
   titleTemplate?: string | null;
+  /** @deprecated Use workstream presentation.color instead. */
   tabColor?: string | null;
 }
 
@@ -129,6 +153,11 @@ export interface WorkstreamLaunchDefaults {
   launchAfterInit?: boolean;
   reviewCompanion?: boolean;
   reviewPromptTemplateId?: string | null;
+}
+
+export interface WorkstreamPresentation {
+  shortName?: string | null;
+  color?: string | null;
 }
 
 export interface WorkstreamNode {
@@ -141,6 +170,7 @@ export interface WorkstreamNode {
   repoIds: string[];
   tracker?: WorkstreamTracker;
   dependsOn: string[];
+  externalDependsOn?: WorkstreamExternalDependency[];
 }
 
 export interface WorkstreamCheckpoint {
@@ -162,6 +192,7 @@ export interface WorkstreamDocument {
   createdAt: string;
   updatedAt: string;
   trackingIssue?: WorkstreamIssue;
+  presentation?: WorkstreamPresentation;
   launchPolicy?: WorkstreamLaunchPolicy;
   launchDefaults?: WorkstreamLaunchDefaults;
   repos: WorkstreamRepo[];
