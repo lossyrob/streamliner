@@ -1,11 +1,16 @@
 import type { SessionRegistryListItem } from "../session-registry-contract";
+import { isManagedRuntimeLifecycleCleanlyEnded } from "../managed-runtime-contract";
+import {
+  buildCopilotResumeCommand,
+  quotePosixShellLiteral,
+  quotePowerShellLiteral,
+  type CopilotCommandShellDialect,
+} from "../terminal-command";
+
+export type RestartCommandDialect = CopilotCommandShellDialect;
 
 export function getDisplaySessionId(session: SessionRegistryListItem): string {
   return session.copilotSessionId ?? session.id;
-}
-
-function quotePowerShellLiteral(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`;
 }
 
 function normalizePathForPowerShell(value: string): string {
@@ -16,16 +21,79 @@ function normalizePathForPowerShell(value: string): string {
   return trimmed;
 }
 
-export function buildRestartCommand(session: SessionRegistryListItem): string | null {
+function detectRestartCommandDialect(): RestartCommandDialect {
+  if (typeof navigator === "undefined") {
+    return "powershell";
+  }
+  if (/^Node\.js/i.test(navigator.userAgent)) {
+    return "powershell";
+  }
+  const extendedNavigator = navigator as Navigator & {
+    userAgentData?: { platform?: string };
+  };
+  const platform = [
+    extendedNavigator.userAgentData?.platform,
+    navigator.platform,
+    navigator.userAgent,
+  ].find((value): value is string => typeof value === "string" && value.length > 0) ?? "";
+  return /win/i.test(platform) ? "powershell" : "posix";
+}
+
+export function buildRestartCommand(
+  session: SessionRegistryListItem,
+  defaultCliArgs: readonly string[] = [],
+  dialect: RestartCommandDialect = detectRestartCommandDialect(),
+): string | null {
   if (!session.copilotSessionId) {
     return null;
   }
-  const worktree = normalizePathForPowerShell(session.derivedWorktreePath ?? session.cwd);
-  const resumeCommand = `copilot --resume ${quotePowerShellLiteral(session.copilotSessionId)}`;
+  const cliArgs = session.launchCliArgs ?? defaultCliArgs;
+  const resumeCommand = buildCopilotResumeCommand(session.copilotSessionId, cliArgs, dialect);
+  const worktree = (session.derivedWorktreePath ?? session.cwd).trim();
   if (worktree.length === 0) {
     return resumeCommand;
   }
-  return `Set-Location -LiteralPath ${quotePowerShellLiteral(worktree)}; ${resumeCommand}`;
+  if (dialect === "powershell") {
+    return `Set-Location -LiteralPath ${quotePowerShellLiteral(normalizePathForPowerShell(worktree))}; ${resumeCommand}`;
+  }
+  return `cd ${quotePosixShellLiteral(worktree)} && ${resumeCommand}`;
+}
+
+export function canRelaunch(session: SessionRegistryListItem): boolean {
+  // Cannot relaunch archived sessions
+  if (session.lifecycleStatus === "archived") {
+    return false;
+  }
+  
+  // Cannot relaunch if the session is trusted-active (high-confidence live check:
+  // has trusted signal source, no end signal, and live process state)
+  if (isTrustedActiveSession(session)) {
+    return false;
+  }
+  
+  // Must have a valid cwd or derivedWorktreePath
+  const worktree = session.derivedWorktreePath ?? session.cwd;
+  if (!worktree || worktree.trim().length === 0) {
+    return false;
+  }
+  
+  return true;
+}
+
+export function canManuallyStop(session: SessionRegistryListItem): boolean {
+  // Manual stop synthesizes a session.ended trusted signal. It only makes
+  // sense for sessions that have a Copilot session id (so the signal can be
+  // attributed) and aren't already terminally archived or ended.
+  if (session.lifecycleStatus === "archived") {
+    return false;
+  }
+  if (session.lifecycleStatus === "ended" && session.trustedEndedAt) {
+    return false;
+  }
+  if (!session.copilotSessionId) {
+    return false;
+  }
+  return true;
 }
 
 export function isTrustedActiveSession(session: SessionRegistryListItem): boolean {
@@ -47,6 +115,12 @@ export function isTrustedInterruptedSession(session: SessionRegistryListItem): b
 
 export function isCleanlyEndedSession(session: SessionRegistryListItem): boolean {
   if (isTrustedInterruptedSession(session)) {
+    return false;
+  }
+  const managedLifecycleState = session.runtime?.runtimeKind === "managed-sdk"
+    ? session.runtime.lifecycleState
+    : null;
+  if (managedLifecycleState && !isManagedRuntimeLifecycleCleanlyEnded(managedLifecycleState)) {
     return false;
   }
   return (

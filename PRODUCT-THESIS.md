@@ -23,6 +23,23 @@ becomes immediate rather than diffuse.
 The bottleneck moves from execution to design — not the design of the system
 being built, but the design of the work itself.
 
+## Work geometry
+
+Agentic development does not primarily need better artificial coworkers. It
+needs better work geometry.
+
+Work geometry is the explicit structure that makes parallel autonomy safe:
+boundaries, contracts, checkpoints, gates, context, and attention. A workstream
+defines a bounded region of ownership. Nodes define executable units inside it.
+Checkpoints export stable surfaces other work can depend on. Gates mark the
+moments where developer judgment matters. Design docs provide the
+intended-system reference plane. Context packages give cold-starting workers a
+coordinate system. Reconciliation updates the map after reality changes.
+
+This framing matters because it keeps Streamliner centered on the work, not on
+agent personas. Some tools make agents better at doing work. Streamliner makes
+developers better at shaping work.
+
 ## What goes wrong
 
 When a developer runs parallel agent workstreams without designing the work
@@ -184,6 +201,12 @@ That means three things:
    transitions, design mismatches, and scope decisions surface for review.
    Everything else runs autonomously. The developer's presence is a deliberate
    choice, not the normal mode.
+
+Streamliner is not trying to simulate a human team, replace the issue tracker,
+or become a generic memory system. It is the operating surface for work geometry
+in agentic engineering: the place where the developer designs, observes, and
+improves the boundaries, contracts, context, and checkpoints that let many
+agents execute safely.
 
 As the developer moves toward stage 3 — running concurrent workstreams across
 projects — Streamliner should grow with them. Cross-workstream coordination,

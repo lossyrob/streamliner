@@ -1,21 +1,20 @@
 import { useState, useRef, useEffect } from "react";
 import type { WorkstreamDocument } from "../workstream-schema";
+import type { WorkstreamRegistryListEntry } from "../workstream-registry-contract";
 import type { WorkstreamViewModel } from "../workstream-view-model";
 import { issueLabel, issueUrl } from "../workstream-links";
-
-interface RecentEntry {
-  path: string;
-  title: string;
-  id: string;
-  lastOpened: string;
-}
+import { handleInAppLinkClick, routePath, workstreamRoutePath } from "../dashboard-routing";
 
 interface WorkstreamHeaderProps {
   workstream: WorkstreamDocument;
   viewModel: WorkstreamViewModel;
-  onLoadPath: (path: string) => void;
-  recents: RecentEntry[];
-  onSwitchRecent: (path: string) => void;
+  activeWorkstream: { projectKey: string; workstreamId: string };
+  trackedWorkstreams: WorkstreamRegistryListEntry[];
+  onOpenWorkstream: (entry: WorkstreamRegistryListEntry) => void;
+  onAddWorkstream: () => void | Promise<void>;
+  onConfigureWorkstream: () => void;
+  configureDisabledReason?: string | null;
+  onUntrackWorkstream: (entry: WorkstreamRegistryListEntry) => void | Promise<void>;
 }
 
 function statusPillClass(status: string): string {
@@ -40,43 +39,43 @@ function attentionPillClass(attention: string): string {
   }
 }
 
+function registryKey(entry: { projectKey: string; workstreamId: string }): string {
+  return `${entry.projectKey}/${entry.workstreamId}`;
+}
+
 export function WorkstreamHeader({
   workstream,
   viewModel,
-  onLoadPath,
-  recents,
-  onSwitchRecent,
+  activeWorkstream,
+  trackedWorkstreams,
+  onOpenWorkstream,
+  onAddWorkstream,
+  onConfigureWorkstream,
+  configureDisabledReason,
+  onUntrackWorkstream,
 }: WorkstreamHeaderProps) {
-  const [showRecents, setShowRecents] = useState(false);
-  const [picking, setPicking] = useState(false);
+  const [showWorkstreams, setShowWorkstreams] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  const handlePickFile = async () => {
-    setPicking(true);
-    try {
-      const res = await fetch("/api/pick-file", { method: "POST" });
-      if (res.status === 204) return; // user cancelled
-      if (!res.ok) return;
-      const { path } = await res.json();
-      if (path) onLoadPath(path);
-    } catch { /* ignore */ }
-    finally { setPicking(false); }
+  const handleAddWorkstream = () => {
+    void onAddWorkstream();
+    setShowWorkstreams(false);
   };
 
-  // Close dropdown on outside click
   useEffect(() => {
-    if (!showRecents) return;
+    if (!showWorkstreams) return;
     const handler = (e: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setShowRecents(false);
+        setShowWorkstreams(false);
       }
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, [showRecents]);
+  }, [showWorkstreams]);
 
   const trackingIssue = issueLabel(workstream.trackingIssue);
   const trackingIssueHref = issueUrl(workstream.trackingIssue);
+  const activeKey = registryKey(activeWorkstream);
 
   return (
     <header className="sl-header">
@@ -116,44 +115,73 @@ export function WorkstreamHeader({
             </span>
           )}
           <span>{workstream.nodes.length} nodes</span>
+          <span>{activeKey}</span>
         </div>
       </div>
       <div className="sl-header-actions">
         <div className="sl-recents-container" ref={dropdownRef}>
-          <button
+          <a
             className="sl-action-btn"
-            onClick={() => setShowRecents((v) => !v)}
+            href={routePath({ view: "workstreams" })}
+            onClick={(event) => handleInAppLinkClick(event, () => setShowWorkstreams((v) => !v))}
           >
-            Recent workstreams ▾
-          </button>
-          {showRecents && (
+            Workstreams ▾
+          </a>
+          {showWorkstreams && (
             <div className="sl-recents-dropdown">
-              {recents.length === 0 ? (
-                <div className="sl-recents-empty">No recent workstreams</div>
+              {trackedWorkstreams.length === 0 ? (
+                <div className="sl-recents-empty">No tracked workstreams</div>
               ) : (
-                recents.map((entry) => (
-                  <button
-                    key={entry.path}
-                    className={`sl-recents-item${entry.id === workstream.id ? " active" : ""}`}
-                    onClick={() => {
-                      onSwitchRecent(entry.path);
-                      setShowRecents(false);
-                    }}
-                  >
-                    <span className="sl-recents-title">{entry.title}</span>
-                    <span className="sl-recents-id">{entry.id}</span>
-                  </button>
-                ))
+                trackedWorkstreams.map((entry) => {
+                  const key = registryKey(entry);
+                  return (
+                    <div
+                      key={key}
+                      className={`sl-recents-item-row${key === activeKey ? " active" : ""}`}
+                    >
+                      <a
+                        className="sl-recents-item"
+                        href={workstreamRoutePath(entry)}
+                        onClick={(event) => handleInAppLinkClick(event, () => {
+                          onOpenWorkstream(entry);
+                          setShowWorkstreams(false);
+                        })}
+                      >
+                        <span className="sl-recents-title">{entry.title}</span>
+                        <span className="sl-recents-id">{key}</span>
+                      </a>
+                      <button
+                        className="sl-recents-remove"
+                        onClick={() => {
+                          void onUntrackWorkstream(entry);
+                        }}
+                        aria-label={`Untrack ${entry.title}`}
+                        title="Untrack workstream"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  );
+                })
               )}
             </div>
           )}
         </div>
+        <a
+          className="sl-action-btn"
+          href={routePath({ view: "workstreams" })}
+          onClick={(event) => handleInAppLinkClick(event, handleAddWorkstream)}
+        >
+          Manage sources…
+        </a>
         <button
           className="sl-action-btn"
-          onClick={handlePickFile}
-          disabled={picking}
+          type="button"
+          onClick={onConfigureWorkstream}
+          disabled={Boolean(configureDisabledReason)}
+          title={configureDisabledReason ?? "Configure workstream launch settings"}
         >
-          {picking ? "Opening…" : "Open graph…"}
+          Configure…
         </button>
       </div>
     </header>

@@ -13,14 +13,35 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { SessionRegistryListItem } from "../session-registry-contract";
+import { DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE } from "../session-registry-schema";
 import { indexSessionContext } from "./session-context-indexer";
 
 const createdDirs: string[] = [];
+const NON_RESOLVABLE_TEST_CWD = "C:\\streamliner-test\\missing\\nested\\path\\leaf";
+const GIT_CONTEXT_TEST_TIMEOUT_MS = 30_000;
 
 function createRootDir(): string {
   const root = mkdtempSync(join(tmpdir(), "streamliner-session-context-"));
   createdDirs.push(root);
   return root;
+}
+
+function runGitSetup(cwd: string, args: string[]): void {
+  const result = spawnSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (result.error || result.status !== 0) {
+    throw new Error(
+      [
+        `git ${args.join(" ")} failed`,
+        `status=${String(result.status)}`,
+        `error=${result.error?.message ?? ""}`,
+        `stderr=${result.stderr.trim()}`,
+      ].join("; "),
+    );
+  }
 }
 
 function buildSession(overrides: Partial<SessionRegistryListItem> = {}): SessionRegistryListItem {
@@ -34,12 +55,14 @@ function buildSession(overrides: Partial<SessionRegistryListItem> = {}): Session
     lastSeenAt: "2026-04-25T20:00:00.000Z",
     updatedAt: "2026-04-25T20:00:00.000Z",
     color: null,
-    cwd: process.cwd(),
+    cwd: NON_RESOLVABLE_TEST_CWD,
     repo: "lossyrob/streamliner",
     branch: "main",
     tags: [],
     originKind: "observed",
+    launchCliArgs: null,
     graphBinding: null,
+    pawLaunch: null,
     copilotSessionId: "context-session",
     aiSummary: null,
     aiSummaryModel: null,
@@ -52,6 +75,8 @@ function buildSession(overrides: Partial<SessionRegistryListItem> = {}): Session
     copilotProcessId: null,
     activityStatus: "unknown",
     activityStatusUpdatedAt: null,
+    activityEvidence: DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
+    pawWorkflow: null,
     trustedSignalSource: "copilot-cli-hook",
     trustedStartedAt: "2026-04-25T20:00:00.000Z",
     trustedEndedAt: null,
@@ -125,8 +150,6 @@ describe("indexSessionContext", () => {
         expect.objectContaining({ type: "pr", repo: "lossyrob/streamliner", number: 14 }),
       ]),
     );
-    expect(patch?.derivedWorktreePath).toBeTruthy();
-
     const unchanged = indexSessionContext(
       buildSession({
         ...patch,
@@ -153,7 +176,7 @@ describe("indexSessionContext", () => {
       "utf8",
     );
 
-    let session = buildSession();
+    let session = buildSession({ cwd: join(root, "missing", "nested", "path", "leaf") });
     let iterations = 0;
     while (iterations < 10 && session.derivedGithubRefs.length === 0) {
       const patch = indexSessionContext(session, eventsPath, {
@@ -188,12 +211,8 @@ describe("indexSessionContext", () => {
     const eventsPath = join(root, "events.jsonl");
     mkdirSync(nestedDir, { recursive: true });
     writeFileSync(editedFile, "export const context = true;\n", "utf8");
-    spawnSync("git", ["init", "-b", "context-test"], { cwd: repo, windowsHide: true });
-    spawnSync(
-      "git",
-      ["remote", "add", "origin", "https://github.com/lossyrob/streamliner.git"],
-      { cwd: repo, windowsHide: true },
-    );
+    runGitSetup(repo, ["init", "-b", "context-test"]);
+    runGitSetup(repo, ["remote", "add", "origin", "https://github.com/lossyrob/streamliner.git"]);
     writeFileSync(
       eventsPath,
       JSON.stringify({
@@ -215,6 +234,49 @@ describe("indexSessionContext", () => {
     expect(patch?.repo).toBe("lossyrob/streamliner");
     expect(patch?.branch).toBe("context-test");
     expect(patch?.derivedBranch).toBe("context-test");
+  }, GIT_CONTEXT_TEST_TIMEOUT_MS);
+
+  it("resolves linked git worktree context without invoking git", () => {
+    const root = createRootDir();
+    const repo = join(root, "repo");
+    const commonGitDir = join(repo, ".git");
+    const linkedWorktree = join(root, "repo-worktree");
+    const linkedGitDir = join(commonGitDir, "worktrees", "repo-worktree");
+    const eventsPath = join(root, "events.jsonl");
+    const editedFile = join(linkedWorktree, "src", "context.ts");
+    mkdirSync(join(linkedWorktree, "src"), { recursive: true });
+    mkdirSync(linkedGitDir, { recursive: true });
+    writeFileSync(editedFile, "export const linked = true;\n", "utf8");
+    writeFileSync(join(linkedWorktree, ".git"), `gitdir: ${linkedGitDir}\n`, "utf8");
+    writeFileSync(join(linkedGitDir, "HEAD"), "ref: refs/heads/worktree-branch\n", "utf8");
+    writeFileSync(join(linkedGitDir, "commondir"), "../..\n", "utf8");
+    writeFileSync(
+      join(commonGitDir, "config"),
+      [
+        '[remote "origin"]',
+        "\turl = https://github.com/lossyrob/streamliner.git",
+      ].join("\n"),
+      "utf8",
+    );
+    writeFileSync(
+      eventsPath,
+      JSON.stringify({
+        type: "tool.execution",
+        timestamp: "2026-04-25T20:05:00.000Z",
+        data: { command: `Edited ${editedFile}` },
+      }),
+      "utf8",
+    );
+
+    const patch = indexSessionContext(
+      buildSession({ cwd: root, repo: null, branch: null }),
+      eventsPath,
+    );
+
+    expect(patch?.derivedWorktreePath).toBe(linkedWorktree);
+    expect(patch?.repo).toBe("lossyrob/streamliner");
+    expect(patch?.branch).toBe("worktree-branch");
+    expect(patch?.derivedBranch).toBe("worktree-branch");
   });
 
   it("backfills missing repo from git even when the event cursor is unchanged", () => {
@@ -223,12 +285,8 @@ describe("indexSessionContext", () => {
     const eventsPath = join(root, "events.jsonl");
     mkdirSync(repo, { recursive: true });
     writeFileSync(eventsPath, "", "utf8");
-    spawnSync("git", ["init", "-b", "main"], { cwd: repo, windowsHide: true });
-    spawnSync(
-      "git",
-      ["remote", "add", "origin", "git@github.com:lossyrob/streamliner.git"],
-      { cwd: repo, windowsHide: true },
-    );
+    runGitSetup(repo, ["init", "-b", "main"]);
+    runGitSetup(repo, ["remote", "add", "origin", "git@github.com:lossyrob/streamliner.git"]);
     const stat = statSync(eventsPath);
 
     const patch = indexSessionContext(
@@ -251,7 +309,39 @@ describe("indexSessionContext", () => {
         derivedBranch: "main",
       }),
     );
-  });
+  }, GIT_CONTEXT_TEST_TIMEOUT_MS);
+
+  it("backfills missing repo from GitHub SSH host aliases", () => {
+    const root = createRootDir();
+    const repo = join(root, "repo");
+    const eventsPath = join(root, "events.jsonl");
+    mkdirSync(repo, { recursive: true });
+    writeFileSync(eventsPath, "", "utf8");
+    runGitSetup(repo, ["init", "-b", "main"]);
+    runGitSetup(repo, ["remote", "add", "origin", "git@github.com-lossyrob:lossyrob/streamliner.git"]);
+    const stat = statSync(eventsPath);
+
+    const patch = indexSessionContext(
+      buildSession({
+        cwd: repo,
+        repo: null,
+        branch: "main",
+        derivedWorktreePath: repo,
+        derivedContextEventsOffset: stat.size,
+        derivedContextEventsSize: stat.size,
+        derivedContextEventsMtimeMs: stat.mtimeMs,
+      }),
+      eventsPath,
+    );
+
+    expect(patch).toEqual(
+      expect.objectContaining({
+        repo: "lossyrob/streamliner",
+        branch: "main",
+        derivedBranch: "main",
+      }),
+    );
+  }, GIT_CONTEXT_TEST_TIMEOUT_MS);
 
   it("backfills missing repo from username-prefixed GitHub HTTPS remotes", () => {
     const root = createRootDir();
@@ -259,17 +349,13 @@ describe("indexSessionContext", () => {
     const eventsPath = join(root, "events.jsonl");
     mkdirSync(repo, { recursive: true });
     writeFileSync(eventsPath, "", "utf8");
-    spawnSync("git", ["init", "-b", "main"], { cwd: repo, windowsHide: true });
-    spawnSync(
-      "git",
-      [
-        "remote",
-        "add",
-        "origin",
-        "https://robemanuele_microsoft@github.com/azure-data-database-platform/dbagent.git",
-      ],
-      { cwd: repo, windowsHide: true },
-    );
+    runGitSetup(repo, ["init", "-b", "main"]);
+    runGitSetup(repo, [
+      "remote",
+      "add",
+      "origin",
+      "https://robemanuele_microsoft@github.com/azure-data-database-platform/dbagent.git",
+    ]);
     const stat = statSync(eventsPath);
 
     const patch = indexSessionContext(
@@ -292,7 +378,7 @@ describe("indexSessionContext", () => {
         derivedBranch: "main",
       }),
     );
-  });
+  }, GIT_CONTEXT_TEST_TIMEOUT_MS);
 
   it("skips unchanged logs with missing repo when no git worktree was derived", () => {
     const root = createRootDir();

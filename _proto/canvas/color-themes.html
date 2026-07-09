@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Workstream Color Themes — Canvas Prototype</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f2f4f8;
+    --panel: rgba(255, 255, 255, 0.92);
+    --text: #1a2540;
+    --muted: #3a4f70;
+    --faint: #8d9bb5;
+    --border: rgba(20, 60, 130, 0.10);
+    --border-strong: rgba(20, 60, 130, 0.16);
+    --shadow-card: 0 8px 30px rgba(31, 58, 105, 0.08);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background:
+      radial-gradient(circle at 20% 0%, rgba(29, 110, 220, 0.07), transparent 30rem),
+      radial-gradient(circle at 82% 8%, rgba(124, 58, 237, 0.05), transparent 32rem),
+      var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", "Inter", sans-serif;
+    padding: 24px 32px;
+  }
+  header { display: flex; align-items: baseline; gap: 16px; margin-bottom: 18px; }
+  header h1 { margin: 0; font-size: 1.05rem; font-weight: 700; }
+  header p  { margin: 0; color: var(--muted); font-size: 0.78rem; }
+  .legend {
+    display: inline-flex; gap: 16px; padding: 6px 12px;
+    background: rgba(255,255,255,0.7); border: 1px solid var(--border);
+    border-radius: 999px; font-size: 0.7rem; color: var(--muted);
+    margin-left: auto;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(360px, 1fr));
+    gap: 24px 22px;
+  }
+  /* --- Workstream container (mirrors _proto/canvas .ws-group-node) --- */
+  .ws-group {
+    position: relative;
+    padding: 36px 16px 18px;
+    border: 1.5px dashed var(--ws-border);
+    background: var(--ws-fill);
+    border-radius: 18px;
+  }
+  .ws-group-label {
+    position: absolute;
+    top: -1px; left: -1px;
+    padding: 4px 12px 4px 10px;
+    font-size: 0.66rem;
+    font-weight: 700;
+    line-height: 1.25;
+    border-radius: 18px 0 12px 0;
+    color: var(--ws-accent);
+    background: var(--ws-chip);
+    border: 1.5px solid var(--ws-border);
+    border-top: none; border-left: none;
+    display: inline-flex; align-items: center; gap: 8px;
+  }
+  .ws-group-label .stage {
+    text-transform: uppercase;
+    font-size: 0.56rem;
+    letter-spacing: 0.09em;
+    opacity: 0.85;
+    padding-right: 6px;
+    border-right: 1px solid currentColor;
+    font-weight: 700;
+  }
+  .ws-group-label .count {
+    margin-left: 6px;
+    padding: 0 6px;
+    font-size: 0.58rem;
+    font-weight: 600;
+    background: rgba(20,60,130,0.08);
+    border-radius: 999px;
+  }
+  .swatch-row {
+    position: absolute; top: 6px; right: 10px;
+    display: flex; align-items: center; gap: 8px;
+    font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+    font-size: 0.66rem;
+    color: var(--muted);
+  }
+  .swatch {
+    width: 18px; height: 18px; border-radius: 6px;
+    border: 1px solid rgba(0,0,0,0.12);
+  }
+  /* --- Wave node card (mirrors _proto/canvas .wave-node) --- */
+  .wave {
+    position: relative;
+    padding: 10px 14px 12px;
+    margin-bottom: 8px;
+    border-radius: 10px;
+    border: 1px solid var(--border-strong);
+    border-left: 4px solid var(--ws-accent);
+    background: linear-gradient(180deg, var(--ws-tint), rgba(255,255,255,0.95));
+    box-shadow: var(--shadow-card);
+  }
+  .wave + .wave { margin-top: 4px; }
+  .ws-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: var(--ws-accent);
+    background: var(--ws-chip);
+    margin-bottom: 6px;
+  }
+  .wave-header {
+    display: flex; gap: 8px; align-items: center; margin-top: 2px;
+  }
+  .wave-index {
+    font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+    font-size: 0.6rem; color: var(--ws-accent);
+    border: 1px solid var(--ws-border);
+    background: rgba(255,255,255,0.7);
+    padding: 1px 5px; border-radius: 4px;
+  }
+  .wave-title { font-weight: 700; font-size: 0.84rem; color: var(--text); flex: 1; min-width: 0; }
+  .wave-status {
+    padding: 1px 7px; border-radius: 999px;
+    font-size: 0.6rem; font-weight: 600;
+  }
+  .wave-status.s-done        { color: #12945f; background: rgba(18,148,95,0.14); }
+  .wave-status.s-in-progress { color: #1d6edc; background: rgba(29,110,220,0.12); }
+  .wave-status.s-ready       { color: #b07808; background: rgba(176,120,8,0.16); }
+  .wave-summary {
+    margin: 4px 0 0; color: var(--muted);
+    font-size: 0.72rem; line-height: 1.4;
+  }
+  .controls {
+    margin-bottom: 18px; padding: 10px 14px;
+    background: rgba(255,255,255,0.92); border: 1px solid var(--border);
+    border-radius: 10px; font-size: 0.72rem; color: var(--muted);
+    display: flex; gap: 18px; align-items: center; flex-wrap: wrap;
+  }
+  .controls label { display: inline-flex; align-items: center; gap: 6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Workstream color themes — derived from terminal color picker palette</h1>
+  <p>Each card mocks one workstream (container + 3 waves) using one of the 16 picker hex colors as the theme seed.</p>
+  <div class="legend">
+    container border = soft accent &middot;
+    label + ws-badge = accent &middot;
+    wave left border = accent &middot;
+    wave fill = faint tint
+  </div>
+</header>
+
+<div class="controls">
+  <label><input type="checkbox" id="solidFill" checked /> Show solid container fill (vs. background tint)</label>
+  <label><input type="checkbox" id="boldBorder" checked /> Bolder container border</label>
+  <label>Tint strength
+    <input type="range" id="tintStrength" min="2" max="14" value="11" />
+    <span id="tintReadout">11%</span>
+  </label>
+</div>
+
+<div class="grid" id="grid"></div>
+
+<script>
+  // Same palette as TerminalColorQuickPicker.
+  const PALETTE = [
+    "#e8114b", "#4891c8", "#41b878", "#ff8c0a",
+    "#c71585", "#2897f0", "#2fcf32", "#ffff00",
+    "#9825d7", "#6754d7", "#00ff00", "#d6bd93",
+    "#f000e8", "#19d9df", "#82c6df", "#b8b8b8",
+  ];
+
+  // Mock wave content per theme — three waves per workstream so the styling
+  // can be evaluated across statuses.
+  const WAVES = [
+    { idx: 'W1', title: 'Foundations',           status: 'done',        summary: 'Closed substrate — depended-on by all later work.' },
+    { idx: 'W2', title: 'Implementation',         status: 'in-progress', summary: 'Active rollout. Spans repo A and service B with shared contract.' },
+    { idx: 'W3', title: 'Validation gate',        status: 'ready',       summary: 'Awaiting the integration loop and stakeholder demo.' },
+  ];
+
+  // ----- color math -----
+  function hexToRgb(hex) {
+    const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    if (!m) return { r: 0, g: 0, b: 0 };
+    return { r: parseInt(m[1],16), g: parseInt(m[2],16), b: parseInt(m[3],16) };
+  }
+  function rgbToHsl({ r, g, b }) {
+    r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    const l = (max + min) / 2;
+    let h = 0, s = 0;
+    if (max !== min) {
+      const d = max - min;
+      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      switch (max) {
+        case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+        case g: h = (b - r) / d + 2; break;
+        case b: h = (r - g) / d + 4; break;
+      }
+      h /= 6;
+    }
+    return { h: h * 360, s: s * 100, l: l * 100 };
+  }
+
+  // Derive a theme from a picker hex. The goal is to keep the hue obviously
+  // recognizable while pulling lightness/saturation into a comfortable band so
+  // bright pickers (yellow, lime, neon pink) don't blast the eyes.
+  function deriveTheme(hex, tintPct) {
+    const hsl = rgbToHsl(hexToRgb(hex));
+    const h = Math.round(hsl.h);
+    // Achromatic source (true gray, e.g. #b8b8b8): drop saturation entirely so
+    // we don't inherit hue=0 (red) from the HSL conversion. Gray themes derive
+    // soft, neutral tones from lightness alone.
+    if (hsl.s < 6) {
+      const accentL = Math.min(46, Math.max(28, Math.round(hsl.l * 0.6)));
+      const borderL = Math.min(60, accentL + 12);
+      const tintAlpha = (tintPct ?? 6) / 100;
+      return {
+        hex,
+        accent: `hsl(0, 0%, ${accentL}%)`,
+        border: `hsla(0, 0%, ${borderL}%, 0.55)`,
+        chip:   `hsl(0, 0%, 94%)`,
+        tint:   `hsla(0, 0%, ${borderL}%, ${tintAlpha + 0.04})`,
+      };
+    }
+    // Accent (text, borders): clamp saturation 55..82 and lightness 30..46 so
+    // it sits well over a near-white background and stays readable.
+    const accentS = Math.min(82, Math.max(55, Math.round(hsl.s)));
+    const accentL = Math.min(46, Math.max(30, Math.round(hsl.l * 0.7 + 18)));
+    // Border on the container — same hue, slightly lighter and softer than
+    // accent so it reads as a region delimiter, not as text-grade.
+    const borderS = Math.min(80, Math.max(50, Math.round(accentS * 0.85)));
+    const borderL = Math.min(58, Math.max(40, accentL + 8));
+    // Fills + chip — faint washes of the hue. Saturation is pulled down so
+    // the tint reads as "tinted white" rather than the full color.
+    const chipL = 94;
+    const tintAlpha = (tintPct ?? 6) / 100;
+    return {
+      hex,
+      accent:    `hsl(${h}, ${accentS}%, ${accentL}%)`,
+      border:    `hsla(${h}, ${borderS}%, ${borderL}%, 0.55)`,
+      chip:      `hsl(${h}, ${Math.max(40, accentS - 20)}%, ${chipL}%)`,
+      tint:      `hsla(${h}, ${borderS}%, ${borderL}%, ${tintAlpha + 0.04})`,
+    };
+  }
+
+  function render() {
+    const tintPct = Number(document.getElementById('tintStrength').value);
+    document.getElementById('tintReadout').textContent = tintPct + '%';
+    const solidFill = document.getElementById('solidFill').checked;
+    const boldBorder = document.getElementById('boldBorder').checked;
+    const grid = document.getElementById('grid');
+    grid.innerHTML = '';
+    for (const hex of PALETTE) {
+      const t = deriveTheme(hex, tintPct);
+      const card = document.createElement('div');
+      card.className = 'ws-group';
+      card.style.setProperty('--ws-accent', t.accent);
+      card.style.setProperty('--ws-border', t.border);
+      card.style.setProperty('--ws-fill',   solidFill ? t.tint : 'transparent');
+      card.style.setProperty('--ws-chip',   t.chip);
+      card.style.setProperty('--ws-tint',   t.tint);
+      if (boldBorder) {
+        card.style.borderWidth = '2px';
+        card.style.borderStyle = 'solid';
+      }
+      card.innerHTML = `
+        <div class="ws-group-label">
+          <span class="stage">Workstream</span>
+          <span>${hex}</span>
+          <span class="count">3</span>
+        </div>
+        <div class="swatch-row">
+          <span class="swatch" style="background:${hex}"></span>
+          <span>${hex}</span>
+        </div>
+        ${WAVES.map(w => `
+          <div class="wave">
+            <span class="ws-badge">workstream/${hex.replace('#','')}</span>
+            <div class="wave-header">
+              <span class="wave-index">${w.idx}</span>
+              <span class="wave-title">${w.title}</span>
+              <span class="wave-status s-${w.status}">${w.status}</span>
+            </div>
+            <p class="wave-summary">${w.summary}</p>
+          </div>
+        `).join('')}
+      `;
+      grid.appendChild(card);
+    }
+  }
+
+  document.getElementById('tintStrength').addEventListener('input', render);
+  document.getElementById('solidFill').addEventListener('change', render);
+  document.getElementById('boldBorder').addEventListener('change', render);
+  render();
+</script>
+</body>
+</html>

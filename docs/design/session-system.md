@@ -1,7 +1,7 @@
 ---
 kind: design-doc
 status: draft
-last_updated: 2026-04-28
+last_updated: 2026-07-06
 update_semantics: rewrite-in-place
 authoritative_for: "Session launching, lifecycle, registry contract, tracking, and runtime overlay"
 scope_tags:
@@ -11,10 +11,16 @@ scope_tags:
   - tracking
   - runtime-overlay
 code_paths:
+  - src/App.tsx
   - src/session-registry*.ts
   - src/session-registry/**
   - src/server/**
+  - src/components/NodeInspector.tsx
+  - src/components/PawLaunchDialog.tsx
+  - src/components/PawProfilesPage.tsx
   - src/components/SessionsPage.tsx
+  - src/components/WorkstreamConfigurationDialog.tsx
+  - src/components/paw-prompt-profiles.ts
   - src/server/session/**
   - src/server/context/**
   - src/components/session/**
@@ -22,19 +28,20 @@ code_paths:
 references_decisions:
   - 1
   - 2
-  - 3
   - 4
   - 5
   - 6
+  - 8
+  - 9
 ---
 
 # Session System
 
-The session system is how Streamliner launches, monitors, and surfaces AI coding agent sessions. A **session** is a Copilot CLI agent instance executing a specific node's work in a workstream — or, equivalently, any Copilot CLI instance the builder has chosen to track. Streamliner maintains a local, graph-independent **session registry** as the authoritative record for tracked sessions ([Decision 004](decisions/004-session-registry-primary-surface.md)), observes each session's Copilot CLI state files to populate liveness and workflow-progression fields, and projects that combined state onto the committed graph as a runtime overlay without writing ephemeral telemetry back into `graph.json`. Sessions launched from the graph and sessions the builder tracks manually are the same kind of record; the launch pipeline writes onto an existing or newly created registry row rather than maintaining a parallel store.
+The session system is how Streamliner launches, monitors, and surfaces AI coding agent sessions. A **session** is either a terminal-owned Copilot CLI agent instance, an SDK-managed Copilot worker executing graph-node work under Streamliner's local runtime, or any Copilot CLI instance the builder has chosen to track. Streamliner maintains a local, graph-independent **session registry** as the authoritative record for tracked sessions ([Decision 004](decisions/004-session-registry-primary-surface.md)), observes terminal-owned Copilot CLI state files to populate liveness and attention fields, records SDK-managed lifecycle evidence through the local API when Streamliner owns execution, derives PAW workflow enrichment from durable PAW artifacts when available, and projects that combined state onto the committed graph as a runtime overlay without writing ephemeral telemetry back into `graph.json`. Sessions launched from the graph and sessions the builder tracks manually are the same kind of registry record; runtime-specific launch paths write onto an existing or newly created registry row rather than maintaining parallel stores.
 
 ## Launch Contract
 
-The launch contract is the interface between the graph UI (where the builder initiates work), the backend (which performs SDK-based preparation), and the terminal integration (which starts the worker session through Copilot CLI interactive mode). SDK preparation and worker launch are distinct: Streamliner uses Copilot SDK to prepare the work, but the visible worker session is always a Copilot CLI session.
+The Wave 3 launch MVP is **PAW-only graph launch**. The contract is the interface between the graph UI, which lets the builder configure and run PAW init for a ready node, and the backend, which prepares the PAW work area, worker context, kickoff prompt, structured handoff, launch claim, and worker runtime. Launch preparation and worker launch are distinct stages: Streamliner's current terminal-first path uses Copilot SDK to prepare context, run PAW initialization, and compile prompts, then starts a visible Copilot CLI interactive session through the shared local terminal path. The accepted SDK-managed worker path keeps the same graph, PAW, context, and registry binding foundations but starts the worker through Streamliner's managed Copilot SDK runtime instead of a terminal. Both runtime modes bind back to the graph node through the session-registry path rather than a separate graph-launch telemetry store.
 
 ### Launch Inputs
 
@@ -43,134 +50,346 @@ The launch contract is the interface between the graph UI (where the builder ini
 | Workstream ID | Graph selection | Which workstream the node belongs to |
 | Node ID | Graph selection | Which node to execute |
 | Target repo | Graph `repos` + config | Where the code lives |
-| Branch strategy | Builder choice | New branch, existing branch, or worktree |
-| Execution mode | Builder choice or default | `current-checkout` or `worktree` |
-| Environment | Builder choice or default | `local` in this design; remote environments are deferred |
-| Execution path | Builder choice or default | `full-paw`, `paw-lite`, or `just-do-it` |
-| Review policy | Execution path default or override | Which review gates the launched workflow should expect |
+| Backend-readable graph path | Workstream registry entry | Local `graph.json` path the backend can read |
+| Launch policy | Graph `launchPolicy` | Optional durable preconditions, such as requiring a GitHub issue tracker before launch |
+| Launch instructions | Builder edit + default text | Natural-language guidance for the graph-launched PAW session. PAW init may use it to derive work title, work ID, target branch, review policy, and model settings, but general operating guidance belongs in the kickoff prompt rather than verbatim `Custom Workflow Instructions`. |
+| PAW prompt profile | Local Streamliner state + graph `launchDefaults.promptProfileId` | Optional reusable text snippet that can populate or update the launch instructions field. A workstream may store a local profile id as a best-effort default selection. |
+| CLI arguments | Default + builder override | Copilot CLI flags for the later worker launch; an explicit empty list is valid |
+| Terminal preference | Graph `launchDefaults` + builder edit | Preferred visible terminal host for the worker launch (`default`, `windows-terminal`, `powershell`, `mac-terminal`, or `iterm2`) |
+| Terminal presentation | Graph `launchDefaults` + builder edit | Optional default tab title template and tab/session color for the worker launch; color application is adapter-dependent |
+| Launch nonce | Graph launch caller | Token preserved across preparation, claim creation, and final Copilot prompt binding |
 
-The builder selects a node in the graph and initiates a launch. Streamliner resolves the node's workstream, target repository, and branch strategy. The builder may override the branch strategy or accept the default (new feature branch from the repo's main branch).
+The builder selects a node in the graph and opens launch context from the inspector when the selected `WorkstreamDerivedNode` is operationally ready, the active workstream registry entry is backend-readable, and the selected node satisfies any configured workstream `launchPolicy`. Browser-directory workstreams remain visible in the graph UI, but they are not launchable in this MVP because the backend cannot read their graph file. If `launchPolicy.requiredTracker` is `"github-issue"`, Streamliner disables launch for nodes without a GitHub issue tracker and explains that the node needs an issue first or the policy should be edited if untracked launches are intentional. Active or already-bound launch claims keep the dialog available for issue and prepared-launch context, but disable new PAW init or terminal launch actions for that node. Failed launch claims remain visible and retryable.
 
 This design specifies **local launches only**. The launch contract keeps an environment dimension so future remote execution can fit the same shape, but `devbox` launch is not defined here. Devbox observation is defined later as an extension of the session-tracking model, not as a launch mode.
 
+### Local API Trust Boundary
+
+Streamliner's launch APIs are designed for a single-user local deployment. The API binds to loopback by default, and graph launch routes treat loopback as the intended trust boundary: browser UI code, Copilot hook scripts, and same-user local helper processes can call the local service, while non-loopback callers are rejected by launch-claim and node-launch endpoints. Same-user local processes are not a separate preventative security boundary in this model; they already share the builder's filesystem, process environment, and Copilot session state.
+
+This means the prepared launch handoff is trusted as local process input for the current MVP. Before the same seam is reused for remote, multi-user, or untrusted non-React callers, Streamliner should move from client-carried full handoffs to a server-side prepared-handoff cache or persisted security envelope keyed by an opaque handoff id, then validate that persisted envelope when launching.
+
+### Runtime Selection
+
+Node launch has an explicit runtime dimension:
+
+| Runtime | Meaning | First-cut policy |
+|---------|---------|------------------|
+| `terminal-cli` | Start a visible Copilot CLI session after PAW launch preparation. The builder can watch and type in the terminal immediately. | Remains the supported terminal-first path and the safe default when the builder wants direct presence. |
+| `managed-sdk` | Start a headless Copilot SDK session owned by Streamliner's local runtime. The builder monitors a browser-facing progress projection and can interrupt or take over through a visible terminal. | Builder-selected only. Streamliner does not automatically classify nodes as safe or unsafe for managed execution in the first cut. |
+
+Runtime selection is independent of the recorded permission profile. Choosing `managed-sdk` says Streamliner owns the worker process and lifecycle; the builder's explicit node-launch action is also the consent boundary for autonomous tool execution. The first managed PAW worker records a `managed-autonomous` permission profile and runs with a Copilot CLI YOLO/allow-all-equivalent posture, so model-requested tool calls do not introduce per-tool approval prompts. Streamliner still scopes the launch to the selected node, worktree, repo, branch, and PAW context, projects redacted progress, and keeps deterministic backend guardrails for Streamliner-owned actions such as terminal takeover and cleanup.
+
+Terminal-first launch must not be removed or degraded by the managed runtime. If managed launch fails before a worker session exists, the launch fails honestly and remains retryable; it does not silently fall back to a terminal launch unless the builder explicitly chooses that runtime.
+
 ### Launch Sequence
 
-The launch is a two-phase process: an **SDK preparation phase** that prepares the execution environment, followed by a **Copilot CLI interactive launch** that starts the visible worker session. The preparation phase is not the worker session itself; it exists to assemble the launch spec that the terminal integration needs.
+Launch is a two-phase process: a **PAW init phase** that prepares all worker artifacts, followed by a runtime-specific **worker start phase**. The preparation phase is not the worker session itself; it exists to assemble context, initialize PAW, compile the prompt, resolve runtime inputs, select the working directory, and preserve launch metadata. For `terminal-cli`, the worker start phase is the Copilot CLI interactive launch described below. For `managed-sdk`, the worker start phase creates the managed registry/runtime state and starts the SDK worker described in [SDK-Managed Worker Runtime](#sdk-managed-worker-runtime); terminal settings may still be retained for later takeover, but no visible terminal is started automatically.
 
-#### Phase 1 — SDK Preparation
+#### Phase 1 — PAW Launch Initialization
 
-Streamliner runs a Copilot SDK session that:
+Streamliner's backend prepares a PAW handoff with one fully capable internal Copilot SDK session. Before context assembly or PAW init begins, the backend evaluates any configured workstream launch policy against the selected node and returns a typed precondition error when the node is blocked. Backend code still validates the selected graph node, computes deterministic metadata, and chooses local package paths, but context synthesis and PAW initialization now share the same SDK session, model context, tool access, and progress stream. The session preloads the installed `paw-init` skill, enables config discovery, approves built-in tool use, and adds Streamliner-owned `save_streamliner_context` and `complete_paw_init` tools. Initialization:
 
-1. **Assembles context** — builds the Layer 0–3 context package for the node (LLM-driven; the SDK session reads design docs, extracts brief sections, resolves node specs)
-2. **Runs paw-init** — `paw-init` owns branch naming, worktree creation, and PAW work directory setup. Streamliner passes the intent (workstream, node, branch strategy, execution mode); `paw-init` decides the feature slug, worktree path, and branch details.
-3. **Places context files** — writes the assembled context package into the PAW work directory that `paw-init` created
-4. **Generates launch claim data** — creates the launch nonce and expected binding metadata that Streamliner will record before starting Copilot CLI
-5. **Compiles kickoff prompt** — turns the execution path, review policy, work item identity, prepared context locations, and launch nonce into the initial instruction for the worker session
-6. **Returns structured output** — the SDK session returns the launch spec that the terminal launcher needs
+1. **Normalizes launch configuration** — applies defaults for workflow instruction text, CLI args, terminal mode, and environment values.
+2. **Prepares context inputs** — deterministically collects graph, brief, design-doc, and tracker/spec references plus freshness/unavailable-input metadata. This creates the target `launch-contexts/<context-id>/context.md` location and an internal SDK launch manifest with paths, URLs, selected-node metadata, unavailable-input diagnostics, existing launch details, and worktree policy, but it does not inline source bodies into the SDK's initial prompt.
+3. **Saves worker context** — the internal SDK session receives a small first prompt containing launch invariants, the builder's trusted launch instructions, and the manifest path. It reads repository, design-doc, GitHub, and configured MCP context as needed, synthesizes the selected node's Layer 0-3 `context.md`, and persists it through `save_streamliner_context`.
+4. **Runs PAW init** — the same SDK session uses the `paw-init` skill with Copilot CLI-style repository, shell, GitHub, configured MCP, and custom-tool access. The prompts supply the builder launch instructions, selected node, tracker URL, saved context path, and manifest-derived worktree policy, and tell PAW init to use documented defaults/best judgment rather than asking follow-up questions. Streamliner asks PAW init to treat the builder text as launch guidance and configuration input, not as verbatim custom workflow-stage instructions unless the text explicitly defines a custom PAW sequence.
+5. **Installs the context file** — after `paw-init` writes or validates `WorkflowContext.md` through the normal PAW workflow path, the Streamliner-owned completion tool, `complete_paw_init`, copies the saved context package to `.paw/work/<work-id>/streamliner/context.md` and verifies that `WorkflowContext.md` records the installed Streamliner context as an Additional Input. For Streamliner PAW Lite node launches, `WorkflowContext.md` should use `Custom Workflow Instructions: none` and `Initial Prompt: none`; kickoff-prompt text, generated context content, and node-orientation prose belong in Streamliner's kickoff prompt or generated launch `context.md`. The Additional Inputs line should only carry the worker-facing Streamliner context file, not internal launch metadata such as staged context package paths, graph path, context ID, node ID, or nonce.
+6. **Filters kickoff-only guidance** — the SDK session returns `additionalKickoffInstructions` through `complete_paw_init`. This text contains only builder guidance that should appear in the launched worker's initial prompt and excludes workflow configuration already encoded in `WorkflowContext.md`.
+7. **Preserves launch metadata** — carries the launch nonce, future claim reference fields, and the evaluated launch-policy snapshot through metadata without owning claim persistence.
+8. **Compiles kickoff prompt** — renders the Streamliner PAW-lite launch template with the issue URL, `WorkflowContext.md`, installed Streamliner context path, launch metadata needed for binding, and filtered additional kickoff instructions.
+9. **Returns structured output** — returns the handoff the terminal launcher needs.
 
-SDK preparation output:
+Launch preparation output:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `workId` | string | PAW work identifier |
 | `cwd` | string | Worktree or checkout path where the session should run |
 | `branch` | string | Branch name created or checked out |
-| `pawWorkDir` | string | Full path to `.paw/work/<work-id>/` |
-| `environment` | string | `local` in this design |
+| `pawWorkDir` | string | PAW work directory containing launch artifacts |
+| `workflowContextPath` | string | Path to `WorkflowContext.md` |
+| `streamlinerContextPath` | string | File path to the worker-facing `streamliner/context.md` |
+| `cliArgs` | string[] | Copilot CLI arguments after layered defaults and builder overrides |
+| `terminal` | object | Prepared terminal launch mode and preferred terminal host |
+| `environment` | object | Non-secret environment values for the terminal launch |
 | `sessionStateRoot` | string | Path to Copilot session state directory in the local environment |
-| `executionPath` | string | `full-paw`, `paw-lite`, or `just-do-it` |
-| `reviewPolicy` | string | Review behavior the worker session should follow |
-| `launchNonce` | string | Unique launch token used to bind the discovered session to the correct graph node |
+| `launchMetadata` | object | Workstream, node, repo, branch, work ID/title, tracker, launch-policy snapshot, nonce, and claim metadata |
+| `contextPackage` | object | Context package metadata from context assembly |
 | `kickoffPrompt` | string | Initial prompt passed to Copilot CLI interactive mode |
+| `kickoffAdditionalInstructions` | string | Optional filtered builder guidance appended to the kickoff template after PAW workflow configuration has been removed |
 
 #### Phase 2 — Copilot CLI Interactive Launch
 
-After SDK preparation completes, Streamliner:
+After PAW launch initialization completes, terminal integration re-reads the current graph path from the prepared handoff and re-evaluates launch policy before any stateful side effect. This prevents stale prepared handoffs or non-UI callers from bypassing a policy that now requires a GitHub issue tracker. If the current graph is unavailable, terminal launch may continue only when the prepared handoff did not carry a `requiredTracker` snapshot; a handoff prepared under a known launch policy fails closed because the current policy cannot be verified. Terminal integration then:
 
-1. **Records launch claim** — writes a launch claim to Streamliner's runtime state binding the node to the expected session location before the worker session starts
-2. **Launches Copilot CLI** — opens a visible terminal in the returned `cwd` and starts Copilot CLI interactive mode
-3. **Passes the kickoff prompt** — launches the worker session with the initial prompt already populated, conceptually equivalent to `copilot -i "<kickoff prompt>" .`
-4. **Binds on discovery** — when the session watcher detects the new Copilot session (via its session state directory appearing), Streamliner binds it to the launch claim
+1. **Reject duplicate active launches** — before creating a new claim, check launch-claim diagnostics for the same workstream/node and reject non-terminal active-window or bound claims with a typed conflict. This is enforced in the backend service so future CLI, skill, or MCP callers get the same protection as the graph UI.
+2. **Record launch claim** — write a launch claim to Streamliner's runtime state binding the node to the expected session location before the worker session starts. The claim uses the nonce from the prepared handoff when one exists; otherwise the claim-minted nonce becomes the final launch nonce.
+3. **Finalize binding prompt** — preserve the prepared kickoff prompt, replace descriptive launch metadata with the concrete claim id where present, and append exactly one canonical `kickoffNonceLine(claim.launchNonce)` line (`Streamliner launch nonce: ...`) plus the concrete claim id line. The descriptive `- Launch nonce: ...` metadata in the preparation prompt is not the Tier 1 scanner contract; the terminal launch service owns the canonical scanner line.
+4. **Launch Copilot CLI** — reuse the lower-level terminal spawning path used by session relaunch, opening a visible terminal in the returned `cwd` through the platform adapter (Windows Terminal or PowerShell on Windows; Apple Terminal.app by default, or explicit iTerm2, on macOS) and starting Copilot CLI interactive mode with the selected/default CLI arguments. Streamliner-owned Copilot CLI starts enter the process-wide Copilot terminal launch queue before spawning so node launches, review companions, session resumes, and managed terminal takeovers do not start at the same instant. The service passes `STREAMLINER_LAUNCH_CLAIM_ID` into the spawned process environment so the Copilot plugin hook can emit Tier 2 trusted claim evidence on `session.started`.
+5. **Bind on trusted signal or discovery** — when the hook signal or session watcher detects the new Copilot session, bind it to the launch claim and reserved registry row.
+6. **Fail honestly** — if terminal spawn fails after claim creation, transition the claim with failure code `terminal-spawn-failed`, clean up the reserved row through the claim-failure contract, log the failure, and return a typed error instead of a success-shaped pending state.
+
+### Launch Operation State and Reattachment
+
+Graph launch operations are per-node runtime state keyed by graph path and node id. This state belongs to the local API/runtime store, not `graph.json` or the workstream brief. The latest prepared launch record remains the durable path-oriented handoff summary, while the launch operation snapshot records fast-moving lifecycle state that lets the UI close, switch nodes, start other launches, and later reopen the same node without losing context.
+
+The API projects the following operation states:
+
+| State | Meaning | Retry behavior |
+|-------|---------|----------------|
+| `launchable` | No current operation blocks the selected ready node | Builder may start PAW init |
+| `preparing` | A launch-preparation run is active for this graph node | Same-node PAW init and terminal launch are blocked; other nodes may launch |
+| `prepared` | PAW init produced a handoff, kickoff prompt, and reviewable `WorkflowContext.md` | Builder may review/edit and launch the terminal |
+| `preparation_failed` | PAW init or context preparation failed | Retry is intentional; progress/error details remain visible |
+| `launching` | The terminal-launch request is creating a claim and spawning Copilot CLI | Same-node duplicate terminal launch is blocked |
+| `launched_pending_binding` | Terminal spawn returned and Streamliner has not yet marked the operation bound | Duplicate launch remains blocked only while the latest claim is still blocking; stale operations can be resolved from the inspector |
+| `managed_starting` | The managed-launch request has reserved the canonical row/claim and is creating the SDK session | Same-node duplicate terminal or managed launch is blocked |
+| `managed_running` | The managed SDK session started and Streamliner owns the worker runtime | Duplicate launch remains blocked while the managed lifecycle remains active |
+| `managed_failed` | Managed SDK startup failed after launch operation creation | Retry is intentional after the failed claim/runtime state is non-blocking |
+| `bound` | Observation bound the launch claim to a registry row/session | Duplicate launch remains blocked while that bound session is active |
+| `terminal_failed` | Claim creation or terminal spawn failed | Retry is intentional after the failed claim is non-blocking |
+
+`launched_pending_binding` and `bound` are projections over launch-claim state. The operation snapshot may remember the terminal-launch result, but launch claims remain authoritative for pending, bound, failed, blocking, and retryable semantics while they are retained. If a claim is pending within its binding window or already bound, the same node cannot start another launch even if the dialog is reopened. Failed preparation and terminal-spawn failures remain explicit retry states.
+
+Launch preparation run events are replayable through the existing run SSE endpoint while the API process still has the run buffer. The operation snapshot is the source of truth on dialog reopen: it carries the preparation run id, bounded progress history, last error, prepared handoff, terminal launch result, and claim projection. If the run id is unknown, the SSE buffer has rotated, or the API restarted, the UI falls back to the operation snapshot and presents the appropriate retry, review, or launch action instead of resetting to a blank dialog.
+
+The terminal-launch route remains a synchronous POST. To make that phase reattachable enough for the graph UI, the backend writes `launching` before claim creation/spawn and writes either `launched_pending_binding` with the terminal result or `terminal_failed` with diagnostic details before returning. The managed-launch route uses the same operation store: it writes `managed_starting` before SDK startup and then `managed_running` with the managed session facts or `managed_failed` with diagnostic details. The in-flight terminal-spawn and managed-start windows are bounded by the request, while post-return binding/managed lifecycle state is represented by the operation snapshot plus launch-claim and session-registry runtime projections.
+
+When a retained claim is gone or terminal and a terminal operation still says `launched_pending_binding`, the node inspector can resolve the stale operation. The release route first checks that no latest claim still blocks the node. If registry evidence proves a launched row for the same `launchClaimId` and that row has real session evidence (`copilotSessionId`) or managed SDK runtime evidence, Streamliner restores the row's `graphBinding` when it is missing, transitions any retained matching terminal claim to `bound` so a later sweep cannot detach the verified session again, and marks the operation `bound`. If the evidence is absent or conflicts with another binding, the route marks the operation `preparation_failed` so the node can be launched again. Streamliner intentionally does not run a proactive historical backfill for already-broken rows that have no stale operation or recoverable evidence; those remain manual repair scope.
+
+The launch dialog is non-modal with respect to operation ownership. Closing the dialog or selecting another node only hides/unsubscribes the current view; it does not cancel the server-side preparation run or clear the node's operation. Reopening a prepared operation restores the handoff, kickoff prompt editor, and `WorkflowContext.md` review access. Starting a second node launch uses a separate operation key so progress, errors, terminal results, and claims cannot bleed between nodes.
+
+### PAW Launch Configuration and Init Instructions
+
+The implemented launch surface is a text-guided PAW init dialog, not the full PAW `WorkflowContext.md` configuration UI. Defaults are intentionally visible to the builder in the instructions textarea:
+
+- PAW should use a local final-PR-only workflow.
+- PAW should not pause for intermediate review unless there is a serious blocker, unsafe ambiguity, missing credentials/infrastructure, or material scope mismatch.
+- PAW should use `gpt-5.5`, `claude-opus-4.7`, and `claude-opus-4.6-1m` where it asks for concrete multi-model planning or review choices.
+- PAW should proceed through implementation and documentation, then create the final PR.
+- CLI args default to `--yolo`; an explicit empty override remains empty.
+- Terminal launch mode is `manual` with a default terminal preference; `default` is platform-selected ("use Windows Terminal when available, otherwise PowerShell" on Windows, Apple Terminal.app on macOS), not an alias for PowerShell. `mac-terminal` explicitly selects Apple Terminal.app on macOS, and `iterm2` explicitly selects iTerm2. After PAW init completes, Streamliner uses those values to open the visible worker terminal.
+
+The dialog supports lightweight PAW prompt profiles: named reusable text snippets stored at the local Streamliner server state level. Profiles are not PAW-owned metadata and do not encode structured constraints; selecting one only replaces the free-text launch instructions, and the builder can edit the text before running PAW init. The dialog can save the current text as a new profile or update the selected profile. If the workstream's `launchDefaults.promptProfileId` matches a local profile, the dialog preselects it once while opening; if the profile is missing or later deleted, launch falls back to custom instructions without blocking the node.
+
+The Streamliner settings page at `/settings/profiles` is the primary management surface for these local PAW prompt profiles. The top-level dashboard navigation keeps Workstreams and Sessions as the main application areas, with profile management behind the settings gear and a settings sidebar section. The profile manager shares the same application-level profile state as the launch dialog, refreshes from the local API without browser caching, and supports create, edit, duplicate, copy-instructions, and delete actions. Mutations update shared in-memory state immediately, so a profile changed in settings is visible the next time the launch dialog opens in the same browser session.
+
+After PAW init succeeds, the dialog loads the generated `WorkflowContext.md` so the builder can review or make last-minute manual edits before terminal launch. The edit surface is intentionally bounded to the prepared PAW work directory. It is a debugging and correction affordance for the launch MVP, not a replacement for PAW init's normal workflow generation. The dialog then calls the same backend node-launch route as non-UI callers to create the claim and open the worker terminal.
+
+Reusable non-PAW launch profiles, persisted host-specific defaults, broader instance/project/workstream/node layering, and the rich PAW configuration form are deferred. The rich PAW form is tracked in issue #43 and should use PAW-owned metadata rather than reimplementing PAW init rules in Streamliner.
 
 ### Kickoff Prompt
 
 The kickoff prompt is a first-class launch artifact, not ad hoc terminal text. It tells the worker session what kind of run this is and how to begin. At minimum it must encode:
 
-- The execution path (`full-paw`, `paw-lite`, or `just-do-it`)
+- The selected launch instructions after PAW workflow configuration has been filtered out
 - The work item identity (workstream, node, repo, branch/worktree)
 - Where the prepared context artifacts live
 - The launch nonce on a dedicated line so the watcher can confirm the intended binding
-- Any review-policy expectations or launch-time operating constraints
+- Any CLI-argument assumptions, review-policy expectations, or launch-time operating constraints
+- Any PAW-specific startup guidance, such as workflow/review configuration text
 
 Opening a terminal in the correct directory is not a launch. A launch is only complete once Streamliner has prepared the kickoff prompt and started Copilot CLI interactive mode with that prompt.
+
+For the PAW MVP, the kickoff prompt starts from the same template a builder would paste manually: identify the Streamliner node session, include the GitHub issue when one exists, list the PAW `WorkflowContext.md` path and installed Streamliner launch context path, then instruct the worker to load `paw-lite`, read `WorkflowContext.md`, read the issue and Streamliner context, and proceed through PAW. Streamliner also includes descriptive launch metadata required for diagnosis, including the launch nonce and claim placeholder. The raw builder launch text is not appended directly. Instead, the init SDK session filters out workflow configuration already encoded in `WorkflowContext.md` and returns only the remaining worker-startup guidance as `additionalKickoffInstructions`, which is appended at the end of the prompt. If the selected node already has a prepared launch record, Streamliner passes those existing worktree and artifact paths into the SDK session so the agent can validate and reuse a prior PAW init when the terminal launch did not happen. The terminal launch service then appends the canonical Tier 1 scanner line, `Streamliner launch nonce: <nonce>`, exactly once after the claim exists.
 
 ### Failure Modes
 
 | Failure | Behavior |
 |---------|----------|
-| Node not launchable (wrong status, unmet deps) | Reject with explanation |
+| Node not launchable (wrong status, unmet deps) | Disable in the UI or reject with explanation |
+| Graph source is browser-only or unavailable to the backend | Disable in the UI or reject with unsupported-source explanation |
+| Launch policy blocks the node | Disable in the UI or reject with `launch_policy_blocked` before context assembly, PAW init, launch-claim creation, or terminal spawn. The message should direct the builder to create/promote a GitHub issue for the node or edit `graph.json` `launchPolicy` if untracked launches are intentional. |
 | Target repo not registered or inaccessible | Reject with explanation |
 | Branch conflict (already exists, dirty state) | Prompt builder for resolution |
-| SDK preparation failure (`paw-init`, context assembly, prompt compilation) | Report error, clean up partial state |
-| Copilot CLI launch failure | Report error, clean up launch claim |
+| Launch preparation failure (PAW initialization, context assembly, prompt compilation) | Report typed error with step/input details; do not start terminal |
+| PAW init asks a clarification question during preparation | Treat as `paw_init_failed`; surface the question/error in the dialog rather than waiting indefinitely |
+| Internal SDK launch session stalls | No short default timeout is applied; operators can set `STREAMLINER_PAW_LAUNCH_TIMEOUT_MS` as a whole-run watchdog and inspect the internal session state path surfaced in progress/logs |
+| Duplicate active launch | Backend returns a typed conflict for active-window or bound claims; UI disables/relabels the graph action |
+| Managed SDK worker start failure | Preserve the reserved registry row with typed `failed` or `waiting_for_builder` evidence when useful for diagnosis/retry; do not create a success-shaped active worker |
+| Managed SDK trust/binding failure | Keep the managed row visible with degraded diagnostics and do not create duplicate observed rows from filesystem-only SDK state |
+| Managed SDK permission profile is missing or unsupported | Fail before worker start, or transition to `waiting_for_builder` with a typed profile/configuration reason; do not downgrade into hidden per-tool prompts or silently choose a different runtime |
+| Managed SDK cancellation/takeover failure | Preserve the managed row and SDK identity, surface `cancel_timeout`, `cancel_evidence_inconclusive`, or `takeover_failed`, and require retry/cancel/manual recovery |
+| Copilot CLI launch failure | Report a typed error, mark the claim failed with `terminal-spawn-failed`, and clean up the reserved registry row through the claim-failure path |
 
 ## Context Assembly
 
-Context assembly builds the Layer 0–3 context package that gives a worker session everything it needs to execute a node's mission. It runs inside the SDK preparation phase so the LLM can make intelligent decisions about what context to include before the worker session is launched.
+Context assembly builds a single worker-facing `context.md` that orients a worker session to a node's mission without copying authoritative source material wholesale. The file preserves the conceptual Layer 0–3 sections, but delivery is consolidated so the worker has one file to read. Context assembly runs inside launch preparation. Streamliner deterministically collects source material and metadata, then the same fully capable SDK session that runs PAW init synthesizes the markdown so workstream-level background can be reframed as worker-relevant context instead of conflicting task instructions.
 
 ### Layer 0 — Project Design Context
 
-Layer 0 starts from the repo's configured design docs path, using the workstream's `designRefs` as prioritization hints:
+Layer 0 tells the worker that the repo's design layer is the authority and that it should navigate the design docs directly. The workstream's `designRefs`, brief references, and node spec links are hints into that design layer, not a required reading list, fixed ordering, or exhaustive design scope.
 
-- Read the design index (`docs/design/index.md`) as the cold-reader entry point
-- Front-load each `current` design doc referenced in `designRefs`
-- Follow the index and those front-loaded docs into other `current` design docs and accepted decision records when they are relevant to the node
-- Include `draft` design docs when they are explicitly referenced in `designRefs` or the node's spec
+- Point at the design index (`docs/design/index.md`) as the cold-reader entry point
+- Treat `designRefs` and brief references as possible starting points
+- Follow the index and referenced docs into other `current` design docs and accepted decision records when they are relevant to the node
+- Surface `draft` design docs only as hints when they are explicitly named in `designRefs` or the node's spec
 
-Design docs are already committed files. Context assembly may prioritize a subset for the generated Layer 0 bundle, but the worker is not restricted to that subset; it can continue reading the broader design set from the target repo (or registered design repo) at the current HEAD.
+Design docs are already committed files. Layer 0 is worker-facing navigation guidance, not a copied design-doc bundle or an agent-chosen set of required reading. The worker reads the authoritative docs directly from the target repo (or registered design repo) at the current HEAD, using any listed paths as hints.
 
-### Layer 1 — Workstream Intent
+### Layer 1 — Worker Mission
 
-Extracted from the workstream's `brief.md`:
+Synthesized from the selected node's tracker/spec, the graph node, and relevant workstream intent:
 
-- Purpose
-- Approach
-- Design References
-- Boundaries
+- The selected node's concrete responsibility
+- Key boundaries and non-goals for this worker
+- Relevant source-of-truth links the worker should read directly
 
-### Layer 2 — Operational State
+### Layer 2 — Relevant State
 
-Extracted from the workstream's `brief.md`:
+Synthesized from workstream state, decisions, and source metadata:
 
-- Current State
-- Decisions
-- Open Questions
+- Current state that affects this node
+- Decisions and constraints that change how the worker should approach the node
+- Missing or degraded context inputs when they are actionable
 
-### Layer 3 — Node Context
+### Layer 3 — Coordination Context
 
-Assembled from the graph and tracker:
+Synthesized from the graph neighborhood and tracker/spec references:
 
 - **Wave context**: which checkpoint/wave the node belongs to, what preceded it, what follows
-- **Node spec**: the issue body (from GitHub) or local spec file content
+- **Node spec reference**: the GitHub issue URL or local spec file path; the worker reads that source directly
 - **Coordination notes**: any cross-node coordination context from the orchestrator
 - **Relevant sibling context**: summaries of parallel and upstream nodes that might affect this node's work
 
 ### Delivery Mechanism
 
-Context is delivered as files written into the PAW work directory that `paw-init` created. The kickoff prompt points the worker session at these files during initialization. See [Decision 002](decisions/002-file-based-context-delivery.md) for the rationale.
+Context is delivered as one `context.md` file. For PAW launch initialization, Streamliner writes an internal SDK launch manifest and sends the SDK session a small manifest-driven prompt rather than a source bundle. The manifest points at graph, brief, design, and tracker/spec sources; the first prompt includes only launch invariants and the builder's trusted launch instructions. The internal SDK session calls Streamliner's `save_streamliner_context` tool to write the generated worker handoff under local runtime state. The same session then runs PAW init, which writes `WorkflowContext.md` through the normal PAW workflow path and records only the installed context path in Additional Inputs, as `streamliner-context=<paw-work-dir>/streamliner/context.md`. When PAW init completes, `complete_paw_init` copies the saved file to `streamliner/context.md` under the PAW work directory and verifies that `WorkflowContext.md` already references it. Internal launch metadata remains in Streamliner's handoff/record store, manifest, and kickoff prompt, not in PAW Additional Inputs. For prompt preview or direct context assembly, Streamliner can still write a per-context package under local runtime state. The kickoff prompt points the worker session at the installed PAW work-directory context file. See [Decision 002](decisions/002-file-based-context-delivery.md) for the rationale.
 
-The assembled context is written to:
+The assembled package is written to:
 
 ```
-.paw/work/<work-id>/
-  context/
-    layer-0-design.md       ← front-loaded design docs + pointers into the wider design set
-    layer-1-intent.md       ← extracted brief sections
-    layer-2-state.md        ← extracted operational state
-    layer-3-node.md         ← node spec + wave context
+<paw-work-dir>/
+  streamliner/
+    context.md              ← worker-facing Layer 0-3 context sections
+
+~/.streamliner/state/{projectKey}/{workstreamId}/launch-contexts/{contextId}/
+  context.md                ← preview/runtime generated context
 ```
 
-These files are generated, not manually maintained. They are excluded from Git (via `.gitignore` in the context directory) and regenerated on each launch. The PAW workflow skill reads them during initialization.
+This file is generated by Copilot SDK, not manually maintained. It is excluded from Git and regenerated for each context preparation. PAW launch initialization always instructs the worker to read it alongside `WorkflowContext.md`. The SDK prompt must give the context writer a concise product/process primer: Streamliner is a local-first workstream orchestration app where a builder launches a Copilot CLI worker to execute one selected graph node. It must then instruct the generator to treat source documents as data, produce context for exactly the selected node, avoid turning workstream-level plans into worker instructions, present Layer 0 design paths only as navigation hints, and link to authoritative sources instead of restating design docs or tracker specs in full. Machine metadata remains in the backend/API response rather than in a worker-facing manifest file.
+
+Direct context assembly uses `STREAMLINER_CONTEXT_MODEL` when set. When unset or blank, Streamliner requests `claude-sonnet-4.6` by default for context-preview synthesis. PAW launch preparation uses the PAW launch SDK session model (`STREAMLINER_PAW_INIT_MODEL`, default `gpt-5.5`) for both context synthesis and PAW init so the two steps share one reasoning context.
+
+Before launch claims exist, backend context preview writes default packages to:
+
+```text
+~/.streamliner/state/{projectKey}/{workstreamId}/launch-contexts/{contextId}/
+```
+
+`contextId` is a stable per-package identifier returned by the backend. Repeated runtime-state preparations create fresh package directories rather than overwriting earlier packages. During PAW init, `complete_paw_init` replaces the PAW work directory's `streamliner/context.md` handoff file because there is one generated worker context per PAW node session. Later launch-claim binding may associate a returned `contextId` with a `launchNonce` or copy the package into a nonce-scoped launch archive; this context assembly slice does not require a nonce up front.
+
+### Context Package Metadata
+
+Context package metadata is a backend/API contract consumed by PAW launch preparation, prompt preview, and future terminal launch work. It is not written into the worker-facing package as `manifest.json`:
+
+| Field | Meaning |
+|-------|---------|
+| `contextId` | Stable identifier for this generated package. |
+| `launchNonce` | Launch nonce when known; `null` during prompt preview or pre-claim context preparation. |
+| `launchClaimRef` | Future launch-claim association; `null` until claim binding owns it. |
+| `projectKey`, `workstreamId`, `nodeId` | Source workstream identity. |
+| `targetRepoIds` | Graph repo ids targeted by the selected node. |
+| `graphPath`, `workstreamDir`, `repoRoot` | Local source locations used during preparation. |
+| `generatedAt` | ISO timestamp for package freshness. |
+| `contextPackagePath`, `contextFilePath` | Absolute package and context-file paths for downstream local consumers. Path strings use forward slashes for stable JSON/prompt rendering. |
+| `contextModel` | Requested Copilot SDK model id used for synthesis, defaulting to `claude-sonnet-4.6` unless `STREAMLINER_CONTEXT_MODEL` is set. |
+| `sourceReferences` | Graph, brief, design, tracker, and local-spec references with git object hashes or content hashes when available. |
+| `unavailableInputs` | Missing or degraded optional inputs, such as missing design docs or local tracker files. |
+
+### Backend Preparation APIs
+
+The local API exposes PAW launch preparation as both a compatibility synchronous route and the UI-facing run route:
+
+```http
+POST /api/launch-preparations
+POST /api/launch-preparations/runs
+GET /api/launch-preparations/runs/:runId
+GET /api/launch-preparations/runs/:runId/events
+```
+
+Request body:
+
+| Field | Required | Meaning |
+|-------|----------|---------|
+| `nodeId` | yes | Selected graph node id. |
+| `graphPath` | no | Backend-readable graph file to use; the UI supplies the active workstream registry path. |
+| `launchNonce` | no | Optional nonce preserved in metadata and the kickoff prompt for later claim binding. |
+| `configuration` | no | PAW launch configuration overrides: workflow instruction text, CLI args, environment, and terminal preferences. |
+
+The synchronous response body, and the run route's final `result`, contain:
+
+| Field | Meaning |
+|-------|---------|
+| `cwd`, `branch`, `pawWorkDir` | Execution handoff location and branch. |
+| `workflowContextPath`, `streamlinerContextPath` | Prepared PAW and Streamliner context files the worker must read. |
+| `kickoffPrompt` | Initial worker prompt for the future Copilot CLI session. |
+| `cliArgs`, `environment`, `sessionStateRoot` | Launch command inputs for downstream terminal integration. |
+| `launchMetadata` | Workstream/node/repo/branch/work/nonce/claim/tracker metadata. |
+| `contextPackage` | Full context package metadata produced by context assembly. |
+
+Validation, PAW initialization, and context-preparation failures return JSON with `code`, `error`, `step`, and `input` fields. The route never starts a terminal.
+
+The dialog uses the run route. `POST /api/launch-preparations/runs` returns a `runId`, then the browser subscribes to `GET /api/launch-preparations/runs/:runId/events` as an SSE stream. Streamed events are intentionally sanitized progress records: phase changes, assistant status messages, tool start/finish names, final success, or typed failure. Raw prompts, full tool arguments, secrets, and model reasoning deltas are not browser-facing status.
+
+Internal SDK launch sessions persist under Streamliner's local state rather than the normal Copilot session-state root. The default root is `~/.streamliner/state/copilot-sdk/paw-launch/<context-id>/`, with `STREAMLINER_COPILOT_SDK_STATE_ROOT` available for override. Run progress and API logs surface the SDK `sessionId` and workspace path for debugging, but these internal sessions are not intended to appear in Streamliner's observed Sessions view.
+
+The PAW launch dialog is intentionally text-guided for this MVP. It exposes launch instructions, lightweight reusable text profiles, CLI args, terminal preference, graph source, a GitHub issue link when the selected node has one, and the prepared handoff after backend PAW init. Workstream `launchDefaults.promptProfileId` can preselect a local profile, `launchDefaults.terminal` pre-fills preferred terminal host and tab title, and `presentation.color` pre-fills the terminal tab/session color; builders can still override those values per launch. The tab title can be derived from `titleTemplate` with `{githubIssue}`, `{nodeId}`, `{nodeTitle}`, and `{workstreamShortName}` variables; `{githubIssue}` renders as `#number` for GitHub-tracked nodes, `{workstreamShortName}` falls back to the workstream title when no short name is configured, and the configuration dialog surfaces those variables in inline help. The builder's launch instructions are trusted local intent and appear near the top of the SDK launch-preparation session's first prompt so context assembly and PAW init both weight them heavily. Once preparation completes, the prepared kickoff prompt is editable before terminal launch so the builder can inspect or refine the exact initial prompt sent to the visible worker. The primary action is labeled as running PAW init because the SDK session may read repository files, inspect git/GitHub context, execute shell tools, and write the PAW work artifacts before returning the structured handoff. PAW-owned metadata, structured presets, specialists, and dependent WorkflowContext constraints are deferred to issue #43 so Streamliner does not duplicate PAW's configuration rules.
+
+The workstream header exposes a configuration dialog for backend-readable graph files. It edits durable graph presentation and launch settings, including `presentation.shortName`, `presentation.color`, `launchPolicy.requiredTracker`, `launchDefaults.promptProfileId`, and `launchDefaults.terminal`, through:
+
+```http
+PATCH /api/workstreams/:projectKey/:workstreamId/configuration
+```
+
+The route reads the selected registered or source-discovered graph, validates that the identity still matches the route, writes the updated graph JSON atomically, bumps `updatedAt`, and returns the parsed workstream document. Browser-directory workstreams remain read-only from the backend because the local API cannot write through the browser file handle.
+
+Reusable text prompt profiles are exposed as:
+
+```http
+GET /api/paw-launch-prompt-profiles
+POST /api/paw-launch-prompt-profiles
+PUT /api/paw-launch-prompt-profiles/:id
+DELETE /api/paw-launch-prompt-profiles/:id
+```
+
+Profiles are stored in local Streamliner state as `paw-launch-prompt-profiles.json`. Each record contains an id, name, instructions, created timestamp, and updated timestamp. `GET` is non-cacheable from the browser, `POST` creates a new profile from workflow text, `PUT` updates the selected profile, and `DELETE` removes a profile by id with a `204` response. The server validates non-empty names and instruction text but does not interpret PAW semantics. Deleting a profile does not scan or cascade workstream `launchDefaults.promptProfileId` references; dangling ids remain harmless local hints and fall back to custom launch instructions.
+
+The post-init review/edit surface for PAW WorkflowContext is exposed as:
+
+```http
+GET /api/paw-workflow-context?path=<WorkflowContext.md>
+PUT /api/paw-workflow-context
+```
+
+The workflow-context route only accepts `WorkflowContext.md` paths under `.paw/work` for the current server worktree. `GET` returns `{ path, content, updatedAt }`; `PUT` writes the supplied content and returns the same shape. This lets the builder inspect or edit PAW init output before a later terminal launch without giving the browser arbitrary filesystem write access.
+
+The local API exposes context assembly as:
+
+```http
+POST /api/launch-contexts
+```
+
+Request body:
+
+| Field | Required | Meaning |
+|-------|----------|---------|
+| `nodeId` | yes | Selected graph node id. |
+| `graphPath` | no | Graph file to use; defaults to the API-configured graph path. |
+| `outputDir` | no | Absolute PAW work directory supplied by launch preparation. Streamliner writes `{outputDir}/streamliner/context.md`. Defaults to runtime-state `launch-contexts/{contextId}/context.md`. |
+| `launchNonce` | no | Optional nonce when a caller already has one. |
+
+Response body:
+
+| Field | Meaning |
+|-------|---------|
+| `contextId` | Stable generated package id. |
+| `contextPackagePath` | Absolute package directory. |
+| `contextFilePath` | Absolute path to the generated worker-facing `context.md`. |
+| `metadata` | Structured system-level context metadata for PAW launch preparation, prompt preview, and terminal launch work. |
+| `unavailableInputs` | Convenience JSON copy of `metadata.unavailableInputs`; consumers should use one source to avoid duplicate warnings. |
+
+Missing or invalid graph/node request inputs are client errors. Missing optional context sources are recorded in `unavailableInputs` while still producing a package. Path fields in the JSON response use forward slashes for stable string comparison and prompt rendering, even on Windows. They remain local absolute paths unless marked as relative paths.
 
 ## Session Lifecycle
 
@@ -184,7 +403,7 @@ launching → discovered → active ⇄ idle → ended
 
 | State | Meaning | How detected |
 |-------|---------|--------------|
-| `launching` | SDK preparation done, Copilot CLI worker launch in progress | Launch claim recorded by Streamliner |
+| `launching` | Launch preparation done, Copilot CLI worker launch in progress | Launch claim recorded by Streamliner |
 | `discovered` | Session directory appeared, metadata being read | `workspace.yaml` exists in session state |
 | `active` | Agent turn in progress | `events.jsonl` recently modified |
 | `idle` | Agent turn completed, waiting for user input or next action | Turn boundary detected (no new `assistant.turn_start` after `assistant.turn_end` or `agentStop` hook) |
@@ -196,11 +415,49 @@ Beyond the core lifecycle state, the session watcher derives additional fields f
 
 | Field | Source | Description |
 |-------|--------|-------------|
-| `pendingInputRequest` | Unresolved `ask_user` tool request in `events.jsonl` | The session is blocked waiting for the builder to answer a question |
+| `activityStatus` | Trusted hooks, process locks, and recent `events.jsonl` activity | Coarse compatibility status: `unknown`, `working`, `waiting_for_input`, `interrupted`, or `exited`. |
+| `activityEvidence` | Bounded local observation of `events.jsonl` plus trusted hook/process evidence | Consumer-facing explanation for `activityStatus`: status reason, confidence (`none`, `low`, `medium`, `high`), diagnostic codes, pending-input state, recent turn-boundary timestamps/counts, and event-scan metadata. |
+| `activityEvidence.pendingInputRequest` | Unresolved `ask_user` tool request observed in the local `events.jsonl` tail | The session is blocked waiting for the builder to answer a question. If this is `false` while `diagnostics` contains `events_tail_truncated`, pending-input state is indeterminate rather than authoritatively absent. |
 | `phase` | Latest event types in `events.jsonl` | Human-readable: "reasoning", "tool-calling", "idle" |
 | `endReason` | Hook signal or inactivity | Why the session ended: "hook-signal", "idle-timeout", "user_exit" |
 | `turnCount` | Count of `user.message` events | How many user turns have occurred |
-| `pawWorkflow` | PAW work directory on disk | Work ID, work title, `Workflow Identity` (`paw` | `paw-lite`), current activity, and gate/procedure state read from `## Control State` in `WorkflowContext.md` / `ReviewContext.md` when present; legacy inference from artifact presence otherwise. See [Decision 003](decisions/003-paw-control-state-integration.md). |
+| `pawWorkflow` | Explicit PAW work directory from Streamliner launch metadata | Artifact-derived workflow summary: work id/title when discoverable, likely workflow kind, latest/coarsest stage indicated by PAW artifacts, artifact freshness, and any unavailable/unknown-layout diagnostics. See [Decision 008](decisions/008-paw-artifacts-for-workflow-status.md). |
+
+### PAW Artifact Workflow Enrichment
+
+`pawWorkflow` is a workflow-enrichment projection, not a liveness signal. It is updated by the session-registry background worker through the derived-state patch path, so builder-owned fields and trusted activity evidence are not rewritten by artifact scans. Durable launch metadata on the registry row (`pawLaunch.pawWorkDir`) is the preferred source for Streamliner-launched PAW sessions, because launch-claim files are retained only temporarily and `graphBinding` may be cleared after a failed or cancelled claim. If durable metadata is absent, the worker falls back to launch-claim lineage metadata when the claim is still available. When neither explicit launch source supplies a work directory, Streamliner leaves `pawWorkflow` unset instead of scanning unrelated `.paw/work/*` directories from the session cwd.
+
+The scanner is intentionally coarse and evidence-oriented. It inspects bounded directory entries under the PAW work directory and classifies durable files by path:
+
+| Artifact category | Examples | Implied stage |
+|-------------------|----------|---------------|
+| `context` | `WorkflowContext.md`, `streamliner/context.md`, `ReviewContext.md` | `init` for launch context, `review` for review context |
+| `specification`, `research`, `planning` | `Spec.md`, `CodeResearch.md`, `ImplementationPlan.md`, `Plan.md`, `reviews/planning/*.md` | `planning` |
+| `implementation` | `Docs.md`, `implementation/**`, `phases/**`, phase-named markdown files | `implementation` |
+| `review` | `reviews/final-review.md`, `FINAL-REVIEW.md`, other non-planning review markdown | `review` |
+| `finalization` | `PR.md`, `final-pr.md`, `pull-request.md`, `final-pr/**` | `finalization` |
+| `unknown` | Any file in the explicit PAW work directory that does not match known patterns | no inferred stage |
+
+When multiple known artifacts exist, the displayed stage is the highest coarse stage present (`finalization` > `review` > `implementation` > `planning` > `init`). `WorkflowContext.md` and `ReviewContext.md` may provide identity hints such as work id, work title, and workflow kind, but their `## Control State` sections are not authoritative and must not drive stage selection.
+
+`pawWorkflow.status` has three values:
+
+| Status | Meaning |
+|--------|---------|
+| `recognized` | A PAW work directory was found and at least one known artifact pattern was recognized. |
+| `unavailable` | An expected work directory is missing/unreadable. |
+| `unknown` | An explicit PAW work directory exists, but only unknown artifact layouts were found. |
+
+Diagnostics are explicit, but the Sessions UI only shows the `🐾 PAW ...` label for recognized Streamliner-launched PAW sessions:
+
+| Diagnostic | Meaning |
+|------------|---------|
+| `paw_workdir_unavailable` | The expected PAW work directory could not be used. |
+| `paw_artifact_layout_unknown` | Files exist, but none match known PAW artifact patterns. |
+| `paw_artifact_scan_error` | A bounded filesystem scan failed while reading part of the work directory. |
+| `paw_artifact_scan_truncated` | The bounded artifact scan reached its entry cap before all files were inspected. |
+
+Consumers must continue to treat `activityStatus` and `activityEvidence` as the source for "working", "waiting for input", "interrupted", and "exited". `pawWorkflow` only explains what durable workflow artifacts currently exist.
 
 ### Key Distinction: Idle vs. Ended
 
@@ -222,6 +479,199 @@ Beyond the core lifecycle state, the session watcher derives additional fields f
 A session is considered ended when its `events.jsonl` modification time exceeds the ended threshold (default: 30 minutes of inactivity). This is conservative — sessions that the builder is actively using interactively may have long pauses between turns, so the threshold must accommodate human-paced interaction.
 
 Crash recovery is not automatic. The builder decides whether the work is recoverable (relaunch from the same PAW work directory) or needs a fresh start.
+
+## SDK-Managed Worker Runtime
+
+SDK-managed workers are a first-class local runtime option for graph-node work, accepted by [Decision 009](decisions/009-sdk-managed-worker-runtime.md). They are not internal launch-preparation helpers and they are not ordinary filesystem-only observed Copilot CLI rows. A managed worker is admitted because Streamliner's local API creates or reserves the registry row, starts the SDK session, records managed lifecycle evidence, and publishes a redacted progress projection.
+
+The first implementation target is local PAW-backed node execution. Remote execution, worker pools, automatic multi-node scheduling, full review/address/re-review orchestration, and SDK-to-terminal-to-SDK round-tripping remain out of scope.
+
+### Managed Registry Identity
+
+The session registry remains the canonical row for a managed worker. The registry row's `id` is Streamliner-owned and stable; it is not the SDK session id and not a Copilot session id. SDK and terminal identities are nullable facts on that row:
+
+| Field | Meaning |
+|-------|---------|
+| `runtime.runtimeKind` | `terminal-cli` for visible terminal sessions, `managed-sdk` for SDK-managed workers. Legacy observed/manual rows omit the runtime object unless a future migration records a more precise value. |
+| `runtime.runtimeOwner` | `builder-terminal` when a human-visible Copilot CLI owns interaction, `streamliner-sdk` while Streamliner's SDK runtime owns the worker, or absent for manual/unresolved rows. |
+| `runtime.sdkSessionId` | Resumable Copilot SDK session id for managed workers. It remains separate from `copilotSessionId` even if the underlying Copilot runtime uses the same string as a resumable session identity. |
+| `runtime.sdkWorkspacePath` / `runtime.sdkStateRoot` | Local paths needed for SDK resume, diagnostics, and terminal takeover. They are registry/runtime metadata, not graph artifacts. |
+| `copilotSessionId` | Populated by terminal observation when a visible Copilot CLI/Agency session is trusted or when terminal takeover binds. It stays `null` for purely SDK-managed rows. |
+| `runtime.lifecycleState` | Managed-runtime lifecycle state. It is separate from `lifecycleStatus`, `activityStatus`, and `pawWorkflow`. |
+| `runtime.progressEvents` | Bounded sanitized progress stream in local registry/runtime state. Raw prompts, reasoning, tool payloads, and terminal output are not stored here. |
+| `runtime.evidence` | Optional PR/review/completion/cleanup/takeover metadata such as PR URL, PR number, commit SHA, completion signal, cleanup readiness, and cleanup result. |
+
+Managed runtime details live in local runtime state, for example under a managed-session subtree keyed by the registry id. The exact file layout can evolve, but it must follow the same runtime-state rules as the registry: schema versioning, single logical writer, write-then-rename for materialized state, and quarantine or typed failure on incompatible data. Managed lifecycle/progress telemetry must never be written to committed `graph.json`; graph cards and My Sessions read it as a projection through the registry/API.
+
+SDK-created helper sessions used only for launch preparation remain hidden from My Sessions. SDK-managed workers are different: they are user-visible node sessions with `graphBinding`, `pawLaunch`, and managed runtime metadata on the same registry row that downstream UI and review-loop code can join against.
+
+### Managed Lifecycle States
+
+Managed lifecycle describes Streamliner's ownership of a worker runtime. It is not PAW workflow status. PAW progress remains artifact-derived through `pawWorkflow` as described in [Decision 008](decisions/008-paw-artifacts-for-workflow-status.md), and `WorkflowContext.md` control state is not authoritative for managed lifecycle.
+
+| State | Meaning | Typical next states |
+|-------|---------|---------------------|
+| `preparing` | Streamliner is validating the node, resolving launch context, choosing permission policy, and reserving runtime/registry state. | `starting`, `failed`, `canceled` |
+| `starting` | The SDK client/session is being created and the first worker prompt is being sent. | `running`, `failed`, `canceled` |
+| `running` | The SDK worker is actively processing a turn or tool call. | `idle`, `waiting_for_builder`, `interrupt_requested`, `pr_ready`, `review_ready`, `completed`, `failed` |
+| `idle` | The SDK turn ended and the session is usable for follow-up without builder input. | `running`, `pr_ready`, `review_ready`, `completed`, `interrupt_requested`, `failed` |
+| `waiting_for_builder` | The worker cannot safely continue without builder action: permission denial, unresolved user input, cancellation timeout, takeover failure, cleanup guardrail, or explicit blocker. | `running`, `terminal_takeover`, `canceled`, `failed` |
+| `interrupt_requested` | The builder or runtime asked the SDK session to stop the current turn. | `interrupted`, `waiting_for_builder`, `failed` |
+| `interrupted` | SDK abort/idle evidence says the turn stopped and the session is resumable or ready for takeover. | `running`, `terminal_takeover`, `canceled` |
+| `canceled` | Builder intentionally stopped the managed run before completion and cleanup is not pending. | terminal |
+| `failed` | Runtime, SDK, tool, trust/binding, or launch failure prevented the managed worker from continuing. | terminal, or a new explicit retry launch |
+| `pr_ready` | The runtime has a PR URL or equivalent draft/open PR evidence linked to the node branch. | `review_ready`, `completed`, `failed` |
+| `review_ready` | A managed reviewer actor or review output is ready for the builder/review loop. This state is optional for implementation-only nodes but required for managed review actors. | `completed`, `running`, `failed` |
+| `completed` | The worker finished its assigned node contract and recorded completion evidence. Graph promotion remains a separate artifact/orchestrator action. | `cleanup_ready`, terminal |
+| `cleanup_ready` | The linked PR is merged or otherwise accepted and cleanup safety checks may run. | `cleaning_up`, `waiting_for_builder`, `failed` |
+| `cleaning_up` | The backend is removing the linked worktree/local branch or equivalent local resources. | `cleaned_up`, `waiting_for_builder`, `failed` |
+| `cleaned_up` | Deterministic cleanup completed and the row records the cleanup result. | terminal |
+| `terminal_takeover` | Ownership transferred one way to a visible Copilot CLI session. Streamliner stops issuing SDK prompts for this row. | terminal-owned observation states |
+
+`completed`, `canceled`, `failed`, `cleaned_up`, and `terminal_takeover` are terminal managed-runtime outcomes. A later retry creates a new managed run or explicitly records a new attempt; it does not pretend the previous managed lifecycle never happened.
+
+### Trust, Binding, and Runtime State
+
+The local API is the trust boundary for managed workers. It owns registry mutation, managed lifecycle writes, progress persistence, SSE fanout, terminal takeover, and cleanup actions. The SDK worker may emit structured lifecycle/progress through Streamliner-owned tools or in-process callbacks, but deterministic runtime actions do not depend on model prose.
+
+Managed launch uses a row-first binding model:
+
+1. Validate the selected graph node, workstream source, target repo/worktree, PAW work directory, `managed-autonomous` permission profile, and launch nonce.
+2. Create or reserve the registry row with `origin.kind: launched`, `runtimeKind: managed-sdk`, `runtimeOwner: streamliner-sdk`, `graphBinding`, `pawLaunch`, and the expected worktree/branch metadata.
+3. Start the SDK session in a state root compatible with later `copilot --resume <sdkSessionId>` takeover, and record `sdkSessionId`, `sdkWorkspacePath`, and SDK/runtime versions.
+4. Write managed lifecycle/progress records directly through the local API/runtime writer. Existing Copilot CLI plugin hook signals are useful corroboration when they appear, but SDK-managed admission does not rely solely on plugin hook delivery.
+5. If the filesystem watcher also discovers the SDK session under a Copilot session-state root, it must not create a separate default-visible observed row. It should fuse or hide that observation behind the managed registry row by `sdkSessionId`, cwd/branch, launch nonce, and runtime metadata.
+
+Managed progress and lifecycle state are runtime facts, not committed workstream artifacts. A node's `graph.json.status` changes only when the builder or orchestrator promotes durable progress.
+
+### Browser-Facing Progress Projection
+
+The managed progress surface is terminal-like but read-only. It is an allowlisted projection over SDK events, Streamliner lifecycle actions, and safe summary messages. It is not a raw SDK event stream and not a terminal transcript.
+
+Allowed browser-facing event classes:
+
+| Class | Safe fields |
+|-------|-------------|
+| `lifecycle` | Managed lifecycle state, timestamp, registry id, workstream/node, coarse reason code, confidence/evidence level. |
+| `assistant_status` | Short status-oriented assistant metadata after truncation/redaction; no hidden reasoning or prompt reconstruction. |
+| `tool_started` / `tool_completed` | Tool name or MCP server/tool label, opaque call id, success/failure boolean, coarse error category. |
+| `permission_decision` | Permission category, decision (`approved`, `rejected`, `requires_builder`), and redacted reason code. |
+| `mcp_status` / `skill_status` | MCP server or skill name/version/status when useful for diagnostics. |
+| `evidence` / `terminal_takeover` | PR URL or number when public to the repo, review-ready marker, cleanup state/result, takeover marker, and safety-check outcome. |
+| `usage` | Token or duration counters only when the UI opts into showing them. |
+
+Always exclude raw user prompts, transformed prompts, assistant reasoning, reasoning deltas, tool arguments, tool results, terminal stdout/stderr, hook payload bodies, full paths when not already part of the launch surface, secrets, tokens, credential-manager data, and provider telemetry that would expose more than the builder-visible node context.
+
+Retention is bounded and summary-oriented. The first managed runtime should persist the most recent sanitized events per managed run in local runtime state, cap by both event count and byte size, and retain a latest human-readable summary for list/detail views after older events roll off. SSE clients can receive a replay window on reconnect, then live events. API/runtime restart rehydrates the replay window and latest summary from that persisted sanitized runtime state when available; if the bounded event store is unavailable or pruned, the UI shows the latest summary plus a degraded replay diagnostic rather than fabricating a transcript. After terminal states, retain the bounded sanitized history long enough for review and cleanup diagnostics, then allow normal runtime-state retention policy to prune it. Raw excluded content is never retained for "debugging by default"; any future raw diagnostic capture needs an explicit content policy and builder opt-in.
+
+### Managed Runtime Write Coalescing and Compact Live Sync
+
+Managed SDK callbacks can emit multiple safe projection changes for one provider event; for example, `tool.execution_start` records both a `tool_started` progress item and a `running` lifecycle signal. The local API must merge same-tick row-local runtime patches before writing the session registry so routine SDK chatter does not produce one file write and one SSE event per callback. Routine progress and repeated active lifecycle states may be throttled briefly; prompt-driving transitions (`waiting_for_builder`, interrupts, failures, PR/review/completion/cleanup evidence, terminal takeover, cancellation, and cleanup terminal states), evidence-bearing patches, and forced lifecycle writes flush promptly.
+
+Deterministic route-owned transitions such as cancel, terminal takeover, cleanup, and explicit evidence recording quiesce the row-local coalescer before writing directly through the registry. That prevents late SDK callbacks or a pending throttle from resurrecting `running` over builder-owned states like `cleaning_up`, `canceled`, `terminal_takeover`, or `cleaned_up`. Terminal outcomes close the coalescer row and retain a short late-callback suppression window; late callbacks during that window are warn-logged and counted as cosmetic or evidence-bearing drops. After the retention window expires, callbacks are still ignored until a subsequent managed launch or resume explicitly reopens the row with `begin()`.
+
+`patchRuntimeMetadata` emits an upsert change event with `changeScope: "runtime"`. The SSE layer translates managed runtime-only changes into a compact `session.runtime.updated` event:
+
+```json
+{
+  "registryId": "session-row-id",
+  "runtime": { "runtimeKind": "managed-sdk" },
+  "updatedAt": "2026-05-11T00:00:00.000Z",
+  "version": 3
+}
+```
+
+The compact event is filtered with the same `includeArchived`, `repo`, `workstreamId`, `nodeId`, and text options as `GET /api/sessions`. Filtered live events that no longer match a client are converted to `session.deleted` so clients evict rows consistently across full upserts and compact runtime updates. `patchRuntimeMetadata` is constrained to runtime, `updatedAt`, and version fields, so compact runtime updates cannot silently change non-runtime filter dimensions. Browser clients apply compact runtime updates to known rows in memory, ignore stale versions, and fetch `/api/sessions` when the compact event references an unknown row.
+
+### Permission Policy
+
+Launch preparation may use broad internal SDK permissions because it is a short, supervised setup operation. SDK-managed workers must make the autonomous posture explicit instead of accidentally inheriting that internal setup behavior.
+
+For the first managed PAW worker, the builder's explicit `managed-sdk` node launch is the approval boundary. The runtime records a `managed-autonomous` permission profile on the launch/registry state and configures the SDK worker with a Copilot CLI YOLO/allow-all-equivalent posture. Model-requested tool calls proceed without per-tool approval prompts or builder modal interruptions while the managed run is active.
+
+That autonomy is constrained by launch ownership rather than prompt-by-prompt approval:
+
+- Streamliner starts the worker only for the selected graph node, worktree, repo, branch, PAW work directory, and launch nonce.
+- The UI must show the selected runtime and `managed-autonomous` profile before launch so the builder can choose terminal-first execution instead when they want interactive presence.
+- Tool activity is projected as redacted progress metadata, never as raw command arguments, tool results, prompts, or secrets.
+- Provider/SDK-level permission failures, missing profile support, or runtime configuration mismatches transition to `waiting_for_builder` or `failed` with typed reasons; Streamliner must not silently switch to per-tool prompts, auto-fallback to a terminal, or run without a recorded profile.
+- Deterministic Streamliner-owned actions such as terminal takeover, cleanup-after-merge, graph promotion, registry deletion, and worktree/branch removal keep their explicit backend guardrails and confirmation/failure behavior. The autonomous profile applies to the SDK worker's model-requested tool execution, not to those lifecycle actions.
+
+Future profiles can add narrower or interactive permission modes, but the Wave 2 implementation contract should not depend on per-tool approval for the default SDK-managed autonomous node path.
+
+### Interruption, Cancellation, and Pause Semantics
+
+Managed cancellation is evidence-based, not a guarantee that every tool on every platform stopped identically to an interactive terminal cancel.
+
+When the builder interrupts a managed worker:
+
+1. Transition to `interrupt_requested` and record who/what requested interruption.
+2. Call SDK abort for the current turn.
+3. Wait for bounded evidence: SDK `abort` event, `session.idle` with aborted evidence, absence of an in-flight completion marker when available, or process-level stop evidence for spawned shell/tool children when the runtime can observe it.
+4. Transition to `interrupted` when the evidence threshold is met.
+5. Transition to `waiting_for_builder` with `cancel_timeout` or `cancel_evidence_inconclusive` when the timeout expires without enough evidence.
+6. Transition to `failed` only when the SDK server/session becomes unusable, a stronger stop action fails, or the runtime cannot safely preserve ownership.
+
+`canceled` is reserved for builder-intended termination of the managed run. `failed` is reserved for runtime faults or unsafe/inconclusive states. A paused or interrupted SDK session may resume under SDK ownership only before terminal takeover; after takeover the row is terminal-owned and SDK control is finished.
+
+### One-Way Terminal Takeover
+
+First-cut terminal takeover is one way: SDK-managed to visible Copilot CLI. The reverse path is intentionally out of scope.
+
+Takeover sequence:
+
+1. If the SDK turn is running, perform the managed interruption sequence first or mark takeover as requiring builder confirmation when interruption evidence is inconclusive.
+2. Stop issuing SDK prompts and disconnect SDK resources that are not needed for session persistence.
+3. Create a takeover binding record tied to the existing registry row, `sdkSessionId`, worktree, branch, and graph binding.
+4. Launch a visible terminal in the managed worker cwd with `copilot --resume <sdkSessionId>` and pass takeover/claim metadata to the Copilot plugin environment when available.
+5. When a trusted CLI hook signal or nonce/session-state evidence appears, bind `copilotSessionId` to the same registry row, set `runtimeOwner: terminal`, close the managed progress stream with a takeover event, and leave `runtimeKind` history clear enough to show that the row began as managed.
+6. Continue normal terminal-owned observation through Copilot CLI state files and plugin signals.
+
+If terminal spawn or `copilot --resume` fails before a trusted terminal session binds, Streamliner must not fork the work into a fresh session. It records `waiting_for_builder` with `takeover_failed` (or `failed` if the SDK state is unusable), preserves the existing registry row and SDK identity, and lets the builder retry takeover, cancel, or recover manually.
+
+After successful takeover, Automated PAW Review Loop and other orchestrators must treat the worker as no longer programmatically controllable through the SDK.
+
+### PR, Review, Completion, and Cleanup Signals
+
+PR and completion state are managed-runtime signals plus GitHub/Git evidence; they are not automatic graph promotion.
+
+| Signal | Contract |
+|--------|----------|
+| `pr_ready` | Record when the runtime has a PR URL/number or equivalent draft/open PR evidence for the node branch. Store PR link, branch, head sha when available, and source evidence. |
+| `review_ready` | Record for managed reviewer actors when review output is ready for the builder or review loop. Implementation-only workers may skip this state. |
+| `completed` | Record when the worker declares node work complete and Streamliner has enough artifact/PR evidence to show the outcome. The committed node remains unchanged until promotion. |
+| `cleanup_ready` | Record when the linked PR is merged/accepted and cleanup safety checks may run. |
+| `cleaned_up` | Record after deterministic cleanup succeeds. |
+
+Cleanup-after-merge is an idempotent backend lifecycle action with PAW-aware inputs, not a model prompt. Before removing a worktree or local branch, the backend must verify the registry row, graph binding, expected repo/worktree, expected branch, PR URL/head relationship, merge/closed state, clean working tree, unpushed commits, and whether any other worktree or process still depends on the branch/path. Repeating cleanup after a verified prior success returns the recorded `cleaned_up` result; repeating after partial or externally completed cleanup succeeds only when the safety checks can prove the target branch/path is already gone for the expected merged PR. Failed guardrails transition to `waiting_for_builder` with a typed reason; cleanup does not proceed by guessing.
+
+Cleanup result belongs on managed runtime state and the registry projection. It may enable graph/UI badges and closeout actions, but it does not mutate `graph.json` or archive/delete the registry row unless the builder chooses a separate retention action.
+
+### My Sessions and Graph Overlay Behavior
+
+My Sessions is the primary surface for SDK-managed rows. Managed rows should appear alongside terminal-launched and manually tracked sessions with enough metadata to distinguish:
+
+- runtime kind and owner (`managed SDK`, `terminal`, or unresolved/manual);
+- managed lifecycle label and latest safe progress summary;
+- graph binding, workstream, node, branch, PAW work directory, and PR/review link when present;
+- action availability: cancel/interruption, terminal takeover, cleanup, archive/delete, and terminal focus only after takeover; and
+- degraded diagnostics when trust, progress, cancellation, takeover, or cleanup evidence is incomplete.
+
+Graph overlays remain a projection of the same registry rows. A managed row bound to a node can show "managed running", "waiting for builder", "PR ready", "completed", "cleanup ready", "cleaned up", or "takeover" badges based on managed lifecycle and completion metadata. Multiple rows for a node use the same attention ordering principle as terminal sessions: waiting for builder and failed/interrupted states outrank routine running/progress states. Empty, hidden helper SDK sessions do not render on graph nodes.
+
+### Automated PAW Review Loop Requirements
+
+Automated PAW Review Loop may consume SDK-managed workers for implementation and reviewer actors only through this contract. It can rely on:
+
+- stable identity: registry row id, workstream id, node id, repo, branch, PAW work directory, `sdkSessionId` while managed, nullable `copilotSessionId`, and PR/review links when present;
+- lifecycle events: `preparing`, `starting`, `running`, `idle`, `waiting_for_builder`, `interrupt_requested`, `interrupted`, `pr_ready`, `review_ready`, `completed`, `cleanup_ready`, `cleaning_up`, `cleaned_up`, `canceled`, `failed`, and `terminal_takeover`;
+- progress reads: bounded sanitized progress events and latest summary, not raw transcript access;
+- transport expectations: read lifecycle/progress through the local API's registry/session surfaces, SSE streams, or a future managed-run detail endpoint; write only through explicit managed runtime action endpoints/tools, never by editing registry files, graph files, or PAW artifacts directly;
+- permission posture: explicit `managed-autonomous` launch profile, no per-tool approval flow during SDK-owned execution, and typed/redacted profile or provider-permission failures when autonomy cannot proceed;
+- takeover semantics: terminal takeover is final for SDK control, and the review loop must stop trying to drive that actor programmatically after `terminal_takeover`; and
+- cleanup/completion semantics: PR merge and cleanup are deterministic backend states with guardrails, not model-authored status claims.
+
+The review loop must not infer live worker state from PAW artifacts alone, must not write runtime telemetry into workstream graph files, and must not invent separate worker identity or progress stores when the session registry already owns the row.
 
 ## Session Tracking
 
@@ -257,9 +707,17 @@ Each registry entry is a persisted `SessionRegistryRecord`. The stored lifecycle
 | `repo` | string or `null` | yes | Observation or builder | Normalized `owner/name` when known; otherwise the repo root path; `null` when unknown. |
 | `branch` | string or `null` | yes | Observation or builder | Last known branch when one is available. |
 | `copilotSessionId` | string or `null` | yes | Observation | Linked Copilot CLI session id when the row is tied to an observed session. |
+| `runtimeKind` | `terminal-cli \| managed-sdk` | yes after managed schema; legacy defaults to `terminal-cli` | Launch pipeline or observation | Runtime family that owns or originally owned the row. SDK-managed workers use `managed-sdk`; terminal/manually observed Copilot CLI rows use `terminal-cli`. |
+| `runtimeOwner` | `terminal \| streamliner-sdk \| null` | yes after managed schema; legacy defaults to `terminal` for trusted observed rows | Launch pipeline, managed runtime, or takeover | Current control owner. Successful terminal takeover changes this from `streamliner-sdk` to `terminal` without changing the registry row id. |
+| `sdkSessionId`, `sdkWorkspacePath`, `sdkStateRoot` | strings or `null` | yes after managed schema; `null` for non-managed rows | Managed runtime | SDK-managed identity and resume/debug paths. These do not replace `id` or `copilotSessionId`. |
 | `aiSummary`, `aiSummaryModel`, `aiSummaryUpdatedAt`, `aiSummaryEventsFingerprint`, `aiSummaryStatus`, `aiSummaryError` | string/status fields or `null` | yes | Worker | Optional persisted conversation description and refresh metadata. The worker may transiently read bounded recent `events.jsonl` user turns to produce `aiSummary`, but it does not persist the raw prompt/event bodies in these fields. |
 | `lifecycleStatus` | `active \| paused \| ended \| archived` | yes | Builder + observation | Durable coarse lifecycle. Observation only owns the transition into `ended`; archiving is builder-driven. |
 | `lastSeenAt` | ISO 8601 string or `null` | yes | Observation | Last observed activity timestamp; `null` for never-observed manual entries. |
+| `activityStatus`, `activityStatusUpdatedAt` | status + ISO 8601 string or `null` | yes | Observation | Coarse liveness/attention status retained for compatibility with existing My Sessions and future graph-node consumers. |
+| `activityEvidence` | object | yes | Observation | Privacy-preserving evidence behind `activityStatus`: `statusReason`, `confidence`, `diagnostics`, `pendingInputRequest`, `pendingInputRequestCount`, last user/assistant turn timestamps, scanned user/assistant-turn counts, and event scan offset/size/mtime metadata. Scan metadata is a snapshot from the most recent material interpreted-state change, not an incremental cursor and not refreshed for bookkeeping-only scans. Manual or never-observed rows use neutral defaults (`confidence: none`, no diagnostics) rather than degraded diagnostics. |
+| `pawLaunch` | object or `null` | yes | Launch pipeline | Durable PAW launch metadata captured when Streamliner starts a PAW-backed node: work id/title, workflow kind, PAW work directory, and context artifact paths. This field remains on the session row after launch-claim retention cleanup and lets `pawWorkflow` resolve the exact work directory even if `graphBinding` is later cleared by an explicit failed/cancelled launch cleanup or builder repair. |
+| `pawWorkflow` | object or `null` | yes | Artifact indexer | Derived PAW workflow enrichment for Streamliner-launched PAW sessions. `null` means no explicit PAW work directory has been linked. Non-null records include `status`, `stage`, `workflowKind`, work identity/path hints, recognized/unknown artifact evidence, latest artifact path/mtime, scan timestamp, and diagnostics. This field does not drive or replace `activityStatus`. |
+| `managedLifecycle`, `managedProgress`, `managedCompletion` | objects or `null` | yes after managed schema; `null` for non-managed rows | Managed runtime | SDK-managed runtime state pointers and latest sanitized summaries. Detailed progress remains in local runtime state; raw SDK events and prompts are not persisted on the registry row. |
 | `createdAt`, `updatedAt` | ISO 8601 string | yes | Streamliner | Record creation and last persisted update timestamps. |
 | `tags` | string[] | yes | Builder | Freeform labels; default `[]`. |
 | `origin.kind` | `manual \| observed \| launched` | yes | Streamliner | How the row first entered the registry. The `origin` object is discriminated by this field. |
@@ -267,9 +725,11 @@ Each registry entry is a persisted `SessionRegistryRecord`. The stored lifecycle
 | `origin.launchClaimId` | string or `null` | no | Launch pipeline | Present when the row was created from or first linked through a launch/relaunch claim. |
 | `graphBinding` | object or `null` | yes | Launch pipeline or builder | Optional `{ workstreamId, nodeId, launchClaimId }` binding for graph projection. |
 
-`lifecycleStatus` is intentionally coarse and durable. The fine-grained, observation-derived liveness of a currently-live Copilot session (`launching`, `discovered`, `active`, `idle`, `ended`) is an orthogonal derived view layered on top of the registry row at render time, not a field stored on the row. A single registry entry can be `lifecycleStatus: active` and observation-`idle` simultaneously — those are independent axes and the overlay composes them.
+`lifecycleStatus` is intentionally coarse and durable. The fine-grained, observation-derived liveness of a currently-live Copilot session (`launching`, `discovered`, `active`, `idle`, `ended`) and the managed SDK lifecycle (`starting`, `running`, `waiting_for_builder`, `pr_ready`, and related states) are orthogonal derived/runtime views layered on top of the registry row at render time. A single registry entry can be `lifecycleStatus: active`, observation-`idle`, and managed-`pr_ready` simultaneously — those are independent axes and the overlay composes them.
 
 Only observed rows may carry `origin.importedFromCopilotSessionId`; only launched rows may carry `origin.launchClaimId`; manual rows carry neither. Persisted schema and API types should encode that constraint directly rather than relying on convention.
+
+`graphBinding` is the shared linkage contract between My Sessions and the graph. The registry stores stable IDs only; display labels, grouping names, and navigation targets are derived by joining `{ workstreamId, nodeId }` against the current workstream catalog and graph. When the workstream or node cannot be resolved, the Sessions view keeps the row visible with degraded "unknown workstream/node" labeling rather than dropping the linkage. For Streamliner-launched sessions, this field is durable session linkage: launch-claim files are short-lived coordination records, so claim retention pruning must not clear `graphBinding` from rows that have already attached to a real Copilot session or managed SDK runtime.
 
 Registry entries are created in three ways:
 
@@ -299,8 +759,8 @@ The registry lives under a global subtree of Streamliner's local runtime-state r
 
 - **`entries/{registry-id}.json` is authoritative.** Each file holds one full `SessionRegistryRecord`.
 - **`index.json` is a denormalized summary, not the source of truth.** It exists for fast list rendering and rebuilds from the entry files whenever it is missing, malformed, version-incompatible, or observably stale. It carries the exact list-surface fields needed by `listSessions()`, including `version`, `title`, `description`, `tags`, lifecycle, origin, freshness, and graph-binding metadata.
-- **`registry.lock` is an advisory single-writer lock.** Exactly one process is expected to mutate registry files at a time; readers never require the lock.
-- **`api.lock` is the standalone API process lock.** It prevents accidental duplicate Streamliner API processes from owning the same registry worker and live event stream.
+- **`registry.lock` is an advisory single-writer lock.** Exactly one process is expected to mutate registry files at a time; readers never require the lock. A lock left by a crashed or rebooted owner is reclaimed automatically — when the recorded owner PID no longer exists, or the lock was acquired during a previous boot session (detected by comparing the recorded `os.uptime()` against the current uptime, which is immune to wall-clock changes) — so PID reuse across a restart cannot wedge writers into a permanent read-only state. Reclamation errs toward safety: an unprovable lock held by a live PID is never stolen.
+- **`api.lock` is the standalone API process lock.** It prevents accidental duplicate Streamliner API processes from owning the same registry worker and live event stream. A stale `api.lock` left by a crashed or rebooted owner is reclaimed on startup using the same uptime-based liveness rule (dead PID, or acquired during a previous boot), so a restart does not require manually deleting the lock file.
 - **`quarantine/` holds bad inputs.** Malformed JSON, unsupported schema versions, and partially written files are moved here and excluded from normal reads until the builder repairs or deletes them.
 
 Hand-edited files are tolerated when they still parse and match the supported schema version. Unknown extra fields are preserved on rewrite rather than dropped opportunistically. If an entry file and `index.json` disagree, the entry file wins: missing index rows are rebuilt from entries, and orphaned index rows are dropped on rebuild.
@@ -414,7 +874,7 @@ The local HTTP surface includes:
 | `POST /api/sessions/signals` | Loopback-only trusted Copilot CLI hook signal intake. |
 | `GET /api/sessions/events` | Server-sent event stream for live registry changes. |
 
-The initial live sync protocol uses `EventSource` over `GET /api/sessions/events`. New clients receive a `snapshot` event unless they reconnect with a replayable `Last-Event-ID`. Subsequent buffered changes are emitted as `session.upserted`, `session.deleted`, or `session.rebuilt` with monotonic event ids; id-less `heartbeat` events keep intermediaries from treating the stream as idle without consuming replay ids. The API keeps a bounded replay buffer, and the browser also refreshes on window focus/visibility changes so reconnect gaps degrade to a normal reload rather than stale UI.
+The initial live sync protocol uses `EventSource` over `GET /api/sessions/events`. New clients receive a query-filtered `snapshot` event unless they reconnect with a replayable `Last-Event-ID`. Subsequent buffered changes are emitted as `session.upserted`, `session.runtime.updated`, `session.deleted`, or `session.rebuilt` with monotonic event ids; id-less named `heartbeat` events keep intermediaries from treating the stream as idle without consuming replay ids. The API keeps a bounded replay buffer and re-filters replayed events for each reconnecting client's query. Browser clients may suspend interval and focus/visibility polling while the SSE connection is open and fresh; if the stream errors, is unavailable, or stops delivering heartbeat/live events past the stale threshold, clients resume normal `/api/sessions` fetches so reconnect gaps degrade to a normal reload rather than stale UI.
 
 In development, `npm run dev` starts both long-lived processes: `npm run dev:api` for the API and `npm run dev:web` for Vite. Vite dev and preview are loopback-bound by default so trusted signal intake cannot be exposed to the LAN through the frontend proxy. Frontend HMR or a Vite restart does not restart the registry worker, and API restarts do not require rebuilding the frontend. For direct API debugging, run `npm run api` or `npm run dev:api` and call `http://127.0.0.1:4319/api/...` directly.
 
@@ -424,7 +884,7 @@ The dashboard and future relaunch flows consume the registry through the local A
 
 | Operation | Contract |
 |-----------|----------|
-| `listSessions(options?)` | Returns list items sorted by `lastSeenAt` then `updatedAt`; excludes archived rows by default; `options.text` matches `title`, `description`, and `tags`. |
+| `listSessions(options?)` | Returns list items sorted by `lastSeenAt` then `updatedAt`; excludes archived rows by default; `options.text` matches the shared session-search haystack (title, description, tags, origin kind, repo/branch/worktree, GitHub refs, and PAW launch/workflow metadata). |
 | `getSession(id)` | Returns the full registry record or `null`. |
 | `upsertSession(input)` | Creates or replaces a row for manual, observed, or launched sources using the identity/merge rules above. Lifecycle input is source-sensitive: observation may create newly discovered active rows and may also upsert rows that are already `ended`; caller-driven manual/launch upserts may not create `ended` or `archived` rows directly. |
 | `attachObservedSession(id, observation)` | Links a discovered Copilot session onto an existing manual or launched row without rewriting its original `origin.kind`. Observation-owned fields (`copilotSessionId`, `lastSeenAt`, `cwd`, `repo`, `branch`, observation-driven `ended`) flow through this operation. This operation does not let observation write builder-owned `paused` or `active` lifecycle transitions onto an existing row. |
@@ -441,22 +901,24 @@ Streamliner watches the session state root directory (`~/.copilot/session-state/
 
 ### Activity Detection
 
-The watcher polls `events.jsonl` modification times at a configurable interval (default: 30 seconds). When the file's mtime changes:
+The watcher polls `events.jsonl` modification times at a configurable interval (default: 30 seconds). The current local implementation derives registry-level activity evidence as follows:
 
-1. Read only the new bytes since the last read (incremental tail, anchored on the byte offset of the last parsed event) rather than a point-in-time tail window. This guarantees every event is seen exactly once regardless of log size.
-2. Extract metadata: repository, branch, turn count
-3. Detect turn boundaries: look for `assistant.turn_end` events or `agentStop` hook events without a subsequent `assistant.turn_start`
-4. Detect pending input: maintain a **per-session incremental index of open tool requests**. As each `assistant.message.toolRequests` entry is observed, record its tool-call ID in the session's open-requests set; as each `tool.execution_complete` is observed, remove the matching ID. `pendingInputRequest` is true iff the open-requests set contains an `ask_user` call. The index persists across watcher restarts (rehydrated from runtime state) so long-running sessions do not lose pending-input detection when an unresolved request falls outside any bounded tail window.
-5. Detect PAW workflow state: for each active `.paw/work/*/` directory reachable from the session's `cwd`, parse `WorkflowContext.md` (and `ReviewContext.md` for PAW Review sessions). When a `## Control State` section is present, use its `Workflow Identity`, required-item statuses, gate items, procedure items, and `Reconciliation` marker as the authoritative view of workflow progression. When absent, fall back to legacy inference from artifact presence. See [Decision 003](decisions/003-paw-control-state-integration.md).
+1. Read a bounded tail of `events.jsonl` and record the scan offset, file size, and mtime in `activityEvidence` when the scan changes material interpreted state. These fields describe the scan snapshot behind the current evidence, not an incremental checkpoint and not the latest scan heartbeat. If the scan is tail-truncated, partially unparsable, empty, missing, contains no supported activity event, or exposes a tool-request array whose entries have no recognizable tool names, record diagnostic codes instead of guessing.
+2. Extract recent turn evidence: scanned `user.message` count, scanned `assistant.turn_start` count, latest user-message timestamp, latest assistant-turn-start timestamp, and latest assistant-turn-end timestamp.
+3. Derive coarse `activityStatus` from trusted end/start/prompt signals, process-lock disappearance after a trusted start, `session.ended`, assistant turn boundaries, user messages, assistant messages, tool starts/completions, and user-requested tool completions.
+4. Detect pending input within the scanned tail by tracking unresolved `ask_user` tool requests from `assistant.message.toolRequests` or `tool.execution_start` until matching `tool.execution_complete` events. A visible open request sets `activityStatus: waiting_for_input` and `activityEvidence.pendingInputRequest: true`. Anonymous requests are deduplicated per event and expire at a later assistant turn end; if the request scrolled out of a truncated tail, consumers should treat `pendingInputRequest: false` plus `events_tail_truncated` as unknown.
+5. Detect PAW artifact status when applicable: for sessions launched through Streamliner's PAW flow with durable PAW launch metadata or retained launch-claim lineage, inspect the explicit PAW work directory and derive a coarse workflow-status summary. Ordinary observed/manual sessions are not labeled by scanning for reachable `.paw/work/*/` directories from their cwd. `WorkflowContext.md` and `ReviewContext.md` may contribute artifact identity or headings, but `## Control State` is not authoritative. See [Decision 008](decisions/008-paw-artifacts-for-workflow-status.md).
+
+Full persistent incremental open-request indexing and watcher-restart rehydration remain deferred. Until that lands, `activityEvidence.confidence` and diagnostics make bounded-tail limitations explicit for consumers.
 
 ### Two Orthogonal State Sources
 
-Session tracking combines two independent sources that should not be collapsed:
+Session tracking combines a required liveness source with optional workflow-artifact sources that should not be collapsed:
 
 - **Copilot session state** (`~/.copilot/session-state/{id}/`) — liveness, turn boundaries, pending input requests, end reasons. Authoritative for *is the session alive and does it need attention?*
-- **PAW control state** (`.paw/work/<work-id>/*Context.md`) — workflow identity, required activities, gate items, procedure items, reconciliation markers. Authoritative for *where is the workflow and can decisions be trusted?*
+- **PAW artifact state** (`.paw/work/<work-id>/...`) — for PAW-backed sessions only: durable workflow artifacts such as specs, plans, research, implementation phase artifacts, review artifacts, and PR/finalization artifacts. Authoritative for *what PAW artifacts exist and what coarse workflow status they imply?*
 
-Streamliner overlays both onto the graph node. Neither subsumes the other: a session can be idle while the PAW workflow is mid-activity, and PAW state can advance across sessions that this watcher never observed.
+Streamliner overlays Copilot session state onto every bound graph node and overlays PAW artifact status when a Streamliner-launched session has explicit PAW launch metadata or retained launch-claim lineage. Neither subsumes the other: a session can be idle while PAW artifacts indicate mid-workflow progress, and PAW artifacts can advance across sessions that this watcher never observed. Launch and tracking require PAW initialization for the MVP graph-launch path, but they do not require `## Control State` parsing to succeed.
 
 ### Hook Signals
 
@@ -548,60 +1010,106 @@ This keeps the binding in Streamliner's domain while relying on Copilot's files 
 
 ### Launch Claim Lifecycle
 
-Launch claims are transient. They must be actively reconciled or aged out, or they become ambient noise that corrupts future bindings.
+Launch claims are transient coordination records. They must be actively reconciled or aged out, or they become ambient noise that corrupts future bindings. The durable graph linkage for a successfully attached session lives on the session-registry row, not in the claim file.
 
-- **Claim creation** writes the claim atomically to runtime state before the terminal launch command runs. If SDK preparation fails before the launch command is issued, the claim is deleted on the same failure path that cleans up context files.
+- **Claim creation** writes the claim atomically to runtime state before the terminal launch command runs. Streamliner's `createLaunchClaim` helper uses a row-first, claim-second canonical write order: it pre-mints both the launch-claim id and a reserved `SessionRegistryRecord` id, writes the registry row with `origin.kind = "launched"`, `origin.launchClaimId`, and `graphBinding`, then writes the claim file with `reservedRegistryId` populated. A crash between the two writes is recovered by the `reconcileOrphanReservedRows` startup routine in the background worker. If launch preparation fails before the launch command is issued, the claim is deleted on the same failure path that cleans up the generated context package.
+- **Path A (default) vs Path B**: with row reservation enabled (the default), discovery may transiently produce a duplicate observed row for the same Copilot session id. The binding pass detects this and fuses the duplicate into the reserved row atomically via the `fuseObservedRowIntoReservedRow` registry primitive, then deletes the duplicate. Path B (`reserveRegistryRow: false`, intended only for diagnostic / preview flows) writes `graphBinding` directly onto the existing observed row via `bindClaimToRow`; `origin.kind` stays `"observed"` and `graphBinding.launchClaimId` provides linkage.
+- **Two binding tiers**: there are two complementary ways the claim can be bound to its session, and Streamliner runs both:
+  - **Tier 1 — kickoff-prompt nonce** (always available). The launcher renders `kickoffNonceLine(launchNonce)` into the kickoff prompt; the binding pass scans the discovered session's early `events.jsonl` for the nonce token and binds when a unique match is found. Works without the Copilot CLI plugin installed.
+  - **Tier 2 — trusted hook signal carrying `launchClaimId`** (preferred when plugin installed). The launcher sets `STREAMLINER_LAUNCH_CLAIM_ID` in the spawned Copilot CLI process environment; the plugin's `sessionStart` hook script forwards it on the `session.started` signal payload; on intake, Streamliner calls `bindClaimViaTrustedSignal` to atomically bind the claim. Cannot be defeated by builder edits to the kickoff prompt and binds on first signal arrival rather than waiting for the next worker poll cycle. Tier 1 remains the fallback when the plugin is missing or the hook cannot deliver.
+  - The two tiers are race-safe: whichever wins first marks the claim `bound`; the loser's bind attempt is rejected by the existing atomic primitives (`reserved-row-already-attached` / `graph-binding-conflict` / `already-bound`) and recorded as a deferred outcome in the diagnostic logs.
 - **Binding window**: a claim is eligible for binding only while its launch window is open. The default window is 5 minutes from `launchedAt`. Inside the window, the watcher attempts to bind discovered sessions by nonce plus `cwd`/branch guardrails.
-- **Claim expiry**: if no session binds within the window, the claim transitions to `abandoned`. Abandoned claims are retained for a short inspection period (default: 1 hour) so the builder can see that a launch failed to attach, then pruned.
-- **Nonce tampering**: the kickoff prompt includes the launch nonce on a dedicated line. If the builder edits or deletes the nonce line before pressing Enter, the session's early events will not contain the expected nonce. The claim expires normally; the orphan session is surfaced in the UI (see below) so the builder can rebind it manually or discard it.
+- **Claim expiry**: if no session binds within the window, the claim transitions to one of two terminal states. `nonce-missing` indicates that at least one Copilot session was observed in `expectedCwd` during the window but never produced a nonce match (recorded in `seenCandidateCopilotSessionIds`). `expired` indicates that no candidate session ever appeared. The legacy term *abandoned* is preserved in older docs but is no longer a status — the two-bucket distinction is more useful for diagnostics. Terminal claims are retained for a short inspection period (default: 1 hour) so the builder can see that a launch failed to attach, then pruned by the sweep.
+- **Reserved-row cleanup**: when a non-`bound` terminal transition happens, the reserved row is conditionally deleted via the `deleteSessionIf(rowId, copilotSessionId === null)` primitive (predicate evaluated under the registry write lock). When a real session attached during the gap but the claim never bound, the row is preserved and its `graphBinding` is cleared via `bindClaimToRow(..., { graphBinding: null })`; the row appears in the future "Unbound sessions" surface. This strict terminal-failure path avoids leaking an untrusted node association.
+- **Nonce tampering**: the kickoff prompt includes the launch nonce on a dedicated line (see `kickoffNonceLine` helper). If the builder edits or deletes the nonce token before pressing Enter, Tier 1 binding will not see the expected nonce. When Tier 2 is also in play, the binding still succeeds via the env-var-backed hook path. With only Tier 1, the claim transitions to `nonce-missing` after the binding window closes; the orphan session is surfaced in the UI so the builder can rebind it manually or discard it.
 - **Unbound-session surface**: sessions discovered by the watcher that match no claim within the binding window (or are deliberately launched outside Streamliner) appear in a dedicated "Unbound sessions" panel. The builder can bind them to a node explicitly, ignore them, or let them age out with the rest of the session history.
-- **Single session per claim**: a claim binds at most one session. Once bound, the claim is marked `bound` and subsequent discoveries matching the same nonce are logged as anomalies rather than rebinding.
+- **Single session per claim**: a claim binds at most one session. Once bound, the claim is marked `bound` and subsequent discoveries matching the same nonce are logged via the `launch-claim-rebind-attempt` diagnostic rather than rebinding.
+- **Ambiguity**: if more than one discovered Copilot session in `expectedCwd` matches the nonce in the same binding-pass cycle (defensive case; nonces are 128-bit), the claim transitions to the terminal `ambiguous` status and the sessions remain unbound for manual recovery.
+
+#### Atomicity primitives
+
+The race-free behavior above relies on three primitives on `SessionRegistryFileStore` (`src/session-registry/file-store.ts`), each acquiring the registry write lock once around its read–validate–write sequence:
+
+- `bindClaimToRow(id, expected, desired)` — re-reads the row under the lock, re-validates `cwd`/`branch`/`repo`/`graphBinding.launchClaimId` against the binding-pass decision, and writes `graphBinding` (or clears it). Returns a typed reason on mismatch so the caller can retry or surface a diagnostic.
+- `deleteSessionIf(id, predicate)` — predicate-checked delete under the lock; closes the gap between sweep decision and delete.
+- `fuseObservedRowIntoReservedRow(args)` — atomic transfer of observation fields onto the reserved row plus deletion of the duplicate observed row in a single locked transaction; emits one `upsert` then one `delete` so SSE consumers see a coherent state.
+
+The startup recovery routine `reconcileOrphanReservedRows(claimStore, registryStore)` (in `src/session-registry/launch-claims.ts`) lists launched-origin rows whose `origin.launchClaimId` is missing from the claim store. Rows that never attached to a real session and have no managed SDK runtime evidence are deleted as abandoned reservations. Rows with `copilotSessionId` or managed SDK runtime evidence are preserved with their `graphBinding`, because the missing claim may simply have been pruned after a successful launch. It runs synchronously inside `SessionRegistryBackgroundWorker.start()` once per process lifecycle, before the first poll cycle.
+
+The launch-claim store lives at `~/.streamliner/state/launch-claims/` (override via `STREAMLINER_LAUNCH_CLAIMS_ROOT`) with the same advisory-lock + write-then-rename + per-record JSON file layout as the session registry.
+
+#### Diagnostic surface
+
+A read-only HTTP API exposes the claim store for UI consumption:
+
+- `GET /api/launch-claims` — versioned envelope `{ apiVersion, items, nextCursor, meta: { total, serverTime, diagnosticsSummary } }` with summary entries (status, derived lifecycle phase, bound-session pointers); supports `?status`, `?workstreamId`, `?nodeId`, `?limit` (default 50, max 200).
+- `GET /api/launch-claims/:id` — full claim record plus `derived: { lifecyclePhase, bindingWindowExpiresAt, retentionExpiresAt }`.
+
+Both endpoints are loopback-only.
 
 ### Watcher Diagnostics
 
 Because session tracking combines several independent observation sources, the watcher exposes a per-session diagnostic record so operational disagreements between the UI and reality are debuggable without ad-hoc log archaeology.
 
-Each session carries:
+Each observed session carries:
 
-- **Last successful Copilot parse** — timestamp and byte offset of the last `events.jsonl` read that succeeded, plus the number of open tool requests in the incremental index.
-- **Last successful PAW parse** — timestamp of the last `WorkflowContext.md` / `ReviewContext.md` read, along with the derivation path used (`control-state`, `inferred`, or `unparsable`; see [Decision 003](decisions/003-paw-control-state-integration.md)).
+- **Activity evidence** — `activityEvidence.confidence`, `activityEvidence.statusReason`, and `activityEvidence.diagnostics`, plus scan offset/size/mtime from the most recent material interpreted-state change and recent turn-boundary metadata.
+- **Pending-input evidence** — `activityEvidence.pendingInputRequest` and `activityEvidence.pendingInputRequestCount` from unresolved `ask_user` requests visible in the bounded local event tail.
+- **Last successful PAW artifact scan** — when applicable, timestamp of the explicit PAW work directory scan, the artifact patterns recognized, and any unavailable-path or unknown-layout diagnostics. See [Decision 008](decisions/008-paw-artifacts-for-workflow-status.md).
 - **Hook signal counters** — count of `sessionStart`, `agentStop`, `sessionEnd` signals received vs. equivalent transitions inferred from polling, so "hooks silently stopped firing" is visible.
 
-In addition, the watcher emits structured diagnostic events (not free-form logs) for every degradation mode it recognizes: `hook-miss`, `tail-truncation`, `nonce-absent-after-window`, `legacy-inference-used`, `unknown-control-state-token`, `copilot-compatibility-probe-failed`, `paw-contract-version-out-of-range`. These events are retained alongside session history and surfaced in the diagnostic view. The UI shows a compact degradation badge on any session whose diagnostics are non-empty so the builder never has to guess whether the overlay can be trusted.
+The registry-level activity diagnostic codes currently include `events_missing`, `events_empty`, `events_tail_truncated`, `events_parse_error`, `events_unrecognized`, and `events_unrecognized_tool_shape`. In addition, the watcher emits or logs structured diagnostics (not free-form logs) for other degradation modes it recognizes: `hook-miss`, `nonce-absent-after-window`, `launch-claim-ambiguous`, `launch-claim-rebind-attempt`, `launch-claim-orphan-session` (case `"a"` for candidate-with-no-nonce, case `"b"` for preserved-reserved-row whose claim went non-bound), `copilot-compatibility-probe-failed`, `paw-workdir-unavailable`, `paw-artifact-layout-unknown`. PAW-specific diagnostics are emitted only for sessions with Streamliner PAW launch metadata that names an explicit PAW work directory. Launch-claim diagnostics are emitted as JSONL log lines under `withScope("launch-claim.binding")` and `withScope("launch-claim.sweep")` in the API logger; the durable per-claim inspection record is the claim's own `evidence` ledger, exposed via `GET /api/launch-claims/:id`. The UI can show a compact degradation badge on any session whose diagnostics are non-empty so the builder never has to guess whether the overlay can be trusted.
 
 ## Runtime Overlay
 
-The runtime overlay is how Streamliner presents live session and tracker state in the UI without modifying the committed graph. The overlay is a **projection of the session registry** ([Decision 004](decisions/004-session-registry-primary-surface.md)) filtered to entries whose `graphBinding` resolves to a visible node, joined with that node's committed status, observed liveness, and PAW control state. Sessions without `graphBinding` remain visible in the registry UI but do not render on the graph.
+The runtime overlay is how Streamliner presents live session, launch, PAW, and tracker state in the UI without modifying the committed graph. The overlay is a **projection** of the parsed workstream graph, graph-bound session registry rows ([Decision 004](decisions/004-session-registry-primary-surface.md)), graph-wide node launch records, and already-loaded tracker snapshots. It never writes runtime fields, launch claim summaries, session liveness, PAW artifact state, or tracker snapshots back into `graph.json` or changes `updatedAt`.
 
 ### Overlay Model
 
-The UI renders each node's state by combining three sources:
+The exported `workstream-runtime-overlay` contract is the UI/gate-readable composition boundary. `buildWorkstreamRuntimeOverlay(...)` returns:
 
-```
-Displayed state = committed graph status
-                + runtime session status (from observation)
-                + tracker status (from cached issue/PR state)
-```
+- `nodes`: one `WorkstreamRuntimeNodeOverlay` per graph node, preserving the committed graph status and adding runtime session, launch, PAW, tracker, issue, and degradation slices.
+- `summary`: graph-wide counts and issues for internal diagnostics and future gate consumers.
+- `gateReadiness`: `{ status, reasons }`, where `status` is `usable`, `degraded`, or `not-usable`.
 
-| Committed status | Runtime session | Displayed as |
-|-----------------|-----------------|--------------|
-| `ready` | `launching` | Launching |
-| `ready` | `active` | In Progress |
-| `ready` | `idle` | Needs Attention |
-| `ready` | `idle` + `pendingInputRequest` | Needs Input |
-| `ready` | `ended` | Completed (pending artifact promotion) |
-| `ready` | none | Ready |
-| `in-progress` | any | Session status takes precedence |
-| `completed` | any | Completed |
+`usable` means composition succeeded and the overlay can distinguish committed graph state from runtime evidence. `degraded` means one or more runtime sources are missing, stale, ambiguous, or unresolved but the projection is still usable. `not-usable` means a required composition source, such as the session registry snapshot, failed in a way that prevents reliable runtime interpretation.
 
-### Control-State Trust Rendering
+The dashboard consumes graph-wide launch records through `GET /api/node-launch-records?graphPath=...`, which returns `{ records }` with latest launch-claim summaries. The selected-node compatibility shape, `GET /api/node-launch-records?graphPath=...&nodeId=...` returning `{ record }`, remains available for narrower consumers. Both paths are read-only and are scoped by normalized graph path.
 
-The `pawWorkflow` field carries a derivation-path annotation (see [Decision 003](decisions/003-paw-control-state-integration.md)) and, when control state is present, a `Reconciliation` marker. Both drive UI trust:
+### Precedence and Degradation
 
-- **`control-state` + `Reconciliation: current`** — full confidence. All affordances rendered, including "ready to launch next activity."
-- **`control-state` + `Reconciliation: stale | external_unverified | not_run`** — overlay visibly downgrades confidence (muted colors, "reconciliation stale" badge). "Ready to launch next activity" affordances are suppressed until reconciliation is refreshed. The builder may still inspect state but cannot trigger mutation-affecting actions from the overlay.
-- **`inferred`** — legacy artifact-presence fallback. Overlay renders with a "legacy inference" badge. Mutation-affecting affordances are suppressed.
-- **`unparsable`** — control state present but rejected by the parser (unknown tokens, out-of-range contract version). Overlay shows an error badge and the underlying diagnostic. No activity-status rendering until the parser is updated or the builder acknowledges the condition.
+Runtime overlay precedence is explicit:
+
+| Evidence | Overlay behavior |
+|---|---|
+| Committed graph status | Always remains visible as the base state; runtime evidence adds detail and never promotes graph status. |
+| Pending blocking launch claim with no bound session | Renders the node as `launching` and records a degraded unresolved-launch reason. |
+| Non-pending blocking launch claim with no bound session | Renders the node as `unresolved` and records a degraded unresolved-launch reason. |
+| Bound session `activityStatus: working` | Renders active work while retaining committed node status. |
+| Bound session `activityStatus: waiting_for_input` or `activityEvidence.pendingInputRequest` | Renders needs-input attention using the same language as My Sessions. |
+| Bound session `activityStatus: interrupted` or stale process evidence | Renders interrupted/stale runtime degradation. |
+| Bound session `activityStatus: exited` before committed completion | Renders ended runtime evidence pending explicit artifact promotion. |
+| Multiple non-ended bound sessions | Uses the highest-attention session as primary and marks the node ambiguous instead of hiding the conflict. |
+| Session registry loading | Keeps the overlay usable but degraded until a snapshot arrives. |
+| Session registry error | Marks the overlay not usable and surfaces the registry error as a graph-level reason. |
+| Launch records loading or unavailable | Keeps session/tracker projection usable but marks gate readiness degraded because launch-claim runtime evidence may be incomplete. |
+
+Graph nodes are the visible graph-wide runtime surface: they show committed lifecycle badges, the existing bound-session pulse/pill, and small runtime chips only when there is runtime evidence or actionable degradation. Selecting a node opens inspector-only runtime details for that node's session, launch, PAW, tracker, and degradation slices. The typed `summary` and `gateReadiness` contract remains available to downstream gates and automation, but the dashboard does not render a graph-wide runtime summary panel in the inspector sidebar. Indicator links to the Sessions surface continue to use workstream/node filters, so builders can correlate graph badges with registry rows without persisting runtime telemetry into the graph artifact.
+
+### PAW Artifact Status Rendering
+
+For PAW-backed sessions, `pawWorkflow` carries an artifact-derived status summary (see [Decision 008](decisions/008-paw-artifacts-for-workflow-status.md)). It is intentionally coarse: it reports the artifact evidence Streamliner can see, not a guaranteed workflow automaton state.
+
+- **Recognized Streamliner-launched PAW session** — overlay shows the PAW workflow kind/stage as enrichment alongside, never instead of, the activity status.
+- **Expected but unavailable/unknown PAW evidence** — overlay keeps the session liveness visible and adds PAW degradation (`paw-evidence-unavailable` or `paw-evidence-unknown`) rather than inventing workflow progress.
+- **Detected PAW artifacts without Streamliner PAW launch metadata** — overlay marks PAW as degraded (`paw-not-streamliner-launched`) and does not infer graph work from cwd or adjacent `.paw/work` directories.
+- **No PAW evidence** — overlay omits PAW enrichment.
+
+Mutation-affecting affordances must not depend solely on artifact-derived status until the workstream explicitly defines the artifact patterns and confidence thresholds for that affordance.
+
+### Tracker Narrowing
+
+Tracker overlay only uses tracker state already present on the `WorkstreamDerivedNode`. A GitHub issue snapshot contributes issue/PR state; an active pull request contributes the selected PR state. A node with a GitHub tracker reference but no loaded snapshot is treated as tracker-linked metadata rather than degraded runtime state: the inspector can say that a live issue/PR snapshot is not loaded, but the node should not show a degradation reason or affect gate readiness solely because Streamliner has not fetched GitHub. The runtime overlay does not fetch GitHub data, infer issue state from URLs, or persist tracker snapshots as part of Wave 4.
 
 ### Artifact Promotion
 
@@ -615,11 +1123,51 @@ Promotion happens when the orchestrator reviews the session's output (PR, code c
 
 Sessions run in visible terminals. The builder sees:
 
-- A terminal tab or window per session (in VS Code, iTerm, Windows Terminal, etc.)
+- A terminal tab or window per session (Apple Terminal.app, iTerm2, Windows Terminal, PowerShell, etc.)
 - Each launched session starts with a kickoff prompt already sent, rather than an idle shell in the target directory
 - Streamliner's UI shows a session list with node binding, status, and terminal reference
 
 Conceptually, the launch integration is doing the equivalent of `copilot -i "<kickoff prompt>" .` in the prepared `cwd`, even if the exact terminal adapter wraps that command differently for the local platform.
+
+### Terminal Adapter Seam
+
+The node launch and relaunch pipelines treat the terminal as an adapter boundary.
+Launch claims, registry binding, graph-node handoff parsing, node launch records,
+and relaunch validation are Streamliner API/session concepts; terminal host
+selection and shell command encoding are adapter concerns.
+
+Platform adapters own visible terminal host discovery, command encoding, and
+host-specific presentation. The Windows adapter owns Windows Terminal discovery,
+`wt.exe` argument construction, PowerShell Core detection, PowerShell fallback,
+PowerShell launch-script creation, and the PowerShell command strings used for
+`copilot -i` and `copilot --resume=<id>`. The macOS adapter owns Apple
+Terminal.app and iTerm2 launch command construction and shell quoting for the
+same Copilot CLI commands. The public compatibility values are `default`,
+`windows-terminal`, `powershell`, `mac-terminal`, and `iterm2`; `default` means
+"choose the platform default" (prefer Windows Terminal when available, otherwise
+PowerShell on Windows; Apple Terminal.app on macOS). Terminal color support is
+adapter-dependent. Future Linux adapters should implement the same launch
+request shape rather than changing launch claims, graph binding, node launch
+records, or relaunch state.
+
+### Copilot Terminal Launch Serialization
+
+Streamliner-owned visible Copilot CLI starts are serialized through one
+process-wide queue before the terminal adapter spawns the host process. The
+queue covers graph node terminal launches, review companion terminals, session
+relaunches that run `copilot --resume=<id>`, and managed SDK terminal takeover.
+Generic terminal launches that do not start Copilot use the synchronous adapter
+directly and are not delayed.
+
+The queue waits for a configurable cooldown after each terminal spawn attempt
+returns before the next queued Copilot launch may spawn. This delay is a
+contention-reduction heuristic between terminal host starts (`wt.exe`,
+PowerShell, Apple Terminal.app, iTerm2, etc.); it is not a
+readiness proof that the nested Copilot process has finished initializing
+shared plugin or cache state. Spawn failures reject only the caller whose launch
+failed and do not poison the process-wide queue for later launches. Launch
+serialization does not read or mutate Copilot global config, marketplace cache,
+or installed plugin files.
 
 ### Operator Presence
 
@@ -633,24 +1181,146 @@ Presence does not change the session's tracking state. The session watcher conti
 
 ### Session List in UI
 
-Streamliner surfaces a session panel or overlay showing:
+Streamliner surfaces My Sessions as the primary list of tracked sessions. Rows launched from a workstream declare their `graphBinding`, so the list can group or filter by workstream and link back to the workstream graph or selected node. Manual or unbound sessions remain visible in a default/unbound grouping.
 
 | Column | Source |
 |--------|--------|
+| Workstream | Registry `graphBinding.workstreamId` joined to workstream catalog; fallback "Unbound" or "Unknown workstream" |
 | Node | Launch claim binding → graph node title |
-| Status | Observed lifecycle state |
+| Status | Observed lifecycle state using the same pulse/pill component rendered on graph nodes |
 | Phase | Derived from recent events |
 | Needs Input | `pendingInputRequest` present |
 | Duration | `now - createdAt` from `workspace.yaml` |
 | Last Activity | `events.jsonl` mtime |
 
-Clicking a session in the list focuses its terminal (when the terminal integration supports it) or shows the session's details.
+Clicking a session in the list focuses its terminal (when the terminal integration supports it) or shows the session's details. Workstream and node affordances navigate back to the workstream graph with the node selected when a binding exists.
+
+## Session Relaunch
+
+Relaunch restores a builder to a tracked session's working directory after an
+interruption (browser close, machine restart, terminal crash). It is a
+**registry operation**: the registry row is the durable session identity, and
+relaunch consumes metadata from that row rather than maintaining a parallel
+terminal or session store.
+
+### Relaunch API
+
+**Endpoint**: `POST /api/sessions/:id/relaunch`
+
+Loopback-only (same enforcement as `/api/sessions/signals`). The local
+Streamliner API process owns this action per Decision 006.
+
+**Response on success** (200):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `sessionId` | string | Registry entry ID |
+| `cwd` | string | Resolved working directory used |
+| `method` | `"windows-terminal"` \| `"powershell"` \| `"mac-terminal"` \| `"iterm2"` | Terminal method used |
+| `copilotResumed` | boolean | Whether `copilot --resume=<id>` was attempted |
+| `colorApplied` | boolean | Whether tab/session color was applied by the adapter |
+| `pid` | number \| undefined | PID of spawned terminal process |
+
+**Error response** (400 / 404 / 500):
+
+| `code` | HTTP status | Meaning |
+|--------|------------|---------|
+| `session_not_found` | 404 | No registry row with this ID |
+| `session_archived` | 400 | Session is archived; unarchive first |
+| `session_live` | 400 | Copilot process is still live; stop it first |
+| `no_cwd` | 400 | No working directory recorded |
+| `cwd_not_found` | 400 | Working directory does not exist on disk |
+| `spawn_failed` | 500 | Terminal process failed to launch |
+
+### Relaunch Behavior
+
+**Path resolution**: `derivedWorktreePath ?? cwd` — worktree path is preferred
+when available, matching the existing restart-command behavior.
+
+**Resume command**: command launches set the working directory before invoking
+Copilot and pass the session identity as a single `--resume=<id>` option value.
+No positional path argument is passed to Copilot.
+
+**Node launch display metadata**: the PAW launch dialog lets the user choose
+the terminal tab title and a color from the same quick-pick palette used by the
+Sessions view. Streamliner passes those values to the platform terminal adapter
+and stores them on the launch claim's reserved session row, so later claim
+binding can preserve the same display identity in Sessions even when the host
+does not support every presentation hint. Users may also opt into launching the
+terminal immediately after PAW init completes, bypassing the prepared-context
+review step for routine launches.
+
+The inspector launch button remains a dialog-entry affordance even when an
+active launch claim exists. The dialog surfaces that active-claim state and
+disables new PAW init or terminal launch actions so the builder can still check
+the issue and prepared context without creating a duplicate worker. It also
+offers an explicit release action for stuck claims; release marks the claim as
+`failed` with `user-cancelled`, detaches the linked registry row from the graph
+node when present, and makes the node retryable without requiring direct state
+file edits.
+
+**Terminal selection**:
+1. `default` delegates to the platform adapter. On Windows, it prefers Windows
+   Terminal (`wt.exe`) and falls back to PowerShell. On macOS, it opens
+   Apple Terminal.app.
+2. `windows-terminal` explicitly requests `wt new-tab` on Windows with
+   `--title`, `--tabColor` (valid `#RRGGBB` only), `-d <cwd>`, and optionally
+   positional `pwsh.exe -NoExit -File <streamliner-launch.ps1>` against a
+   transient, self-deleting Streamliner launch script so the new tab keeps the
+   builder's Windows Terminal profile appearance while command execution is
+   explicit and not parsed as additional `wt` subcommands.
+3. `powershell` explicitly requests `pwsh.exe` when available, falling back to
+   `powershell.exe`, with `-NoExit -Command "Set-Location ..."` for cwd-only
+   launches or `-NoExit -File <streamliner-launch.ps1>` for command launches.
+4. `mac-terminal` explicitly requests Apple Terminal.app on macOS. It starts in
+   the resolved `cwd` and runs the same Copilot CLI interactive or resume
+   command; title and color handling are limited to what the adapter and host
+   expose.
+5. `iterm2` explicitly requests iTerm2 on macOS. It starts in the resolved `cwd`
+   and runs the same Copilot CLI interactive or resume command; title and color
+   handling are limited to what the adapter and host expose.
+
+**Process lifecycle**: Terminals are spawned `detached` with `stdio: 'ignore'`
+and `unref()`'d so they outlive the Streamliner API process. The relaunch
+endpoint does not track the spawned process after returning the PID.
+
+**Degradation rules**:
+- No `copilotSessionId` → open terminal at cwd without resume (still a
+  successful relaunch; the issue spec principle is "correct cwd beats full
+  resume").
+- No Windows Terminal while using Windows `default` → PowerShell fallback.
+- Invalid, missing, or unsupported `color` → launch without applying terminal color.
+- Missing cwd directory → fail with `cwd_not_found`.
+
+### Non-Mutating
+
+Relaunch does **not** write to the registry or emit SSE change events. It is
+a read-then-spawn action. A future `lastRelaunchedAt` timestamp or relaunch
+claim binding would be a separate registry schema change.
+
+### Eligibility
+
+A session is eligible for relaunch when:
+- `lifecycleStatus` is **not** `"archived"` (must unarchive first).
+- `copilotProcessState` is **not** `"live"` (prevents duplicate terminal
+  spawns for already-running sessions).
+- A working directory is available (`derivedWorktreePath` or `cwd` is
+  non-empty).
+
+### Wave 3 Separation
+
+Relaunch (`POST /api/sessions/:id/relaunch`) operates on an **existing**
+registry row. The launch-from-graph flow (Wave 3) uses a separate endpoint
+(e.g., `POST /api/sessions/launch`) that creates a new registry row after PAW
+launch preparation and then launches, sharing the same terminal-launch
+infrastructure.
 
 ## Scope Boundaries
 
 ### In This Design
 
-- Launch from the graph with SDK preparation, kickoff-prompt compilation, and Copilot CLI interactive worker-session launch
+- MVP launch from the graph for PAW-backed Copilot CLI worker sessions, including a launch configuration dialog, SDK context assembly, SDK `paw-init`, prompt-template compilation, configurable Copilot CLI arguments, launch-claim binding, and terminal launch
+- SDK-managed local graph-node worker runtime as a builder-selected option, including registry identity, lifecycle/progress projection, `managed-autonomous` permission posture, interruption/cancel, one-way terminal takeover, PR/review/completion signals, cleanup-after-merge, and Automated PAW Review Loop consumption requirements
 - Observation-based session tracking via Copilot state files
 - Plugin hook signals for low-latency status hints
 - Registered-devbox observation vocabulary for trusted hook forwarding and remote session-state access
@@ -660,17 +1330,19 @@ Clicking a session in the list focuses its terminal (when the terminal integrati
 
 ### Not In This Design
 
-- Using Copilot SDK as the worker-session runtime instead of Copilot CLI interactive mode
+- Non-PAW graph launch modes in the MVP
 - Multi-machine registry sync, devbox launch, or remote control actions beyond observation
-- Automatic crash recovery or relaunch implementation (this doc defines the registry contract relaunch will consume, not the relaunch flow itself)
+- Automatic crash recovery or relaunch implementation beyond the explicit `POST /api/sessions/:id/relaunch` action (this doc defines the registry contract relaunch consumes and the relaunch API contract; automatic recovery is not in scope)
 - Session-to-session communication
-- Rich session control beyond launch and presence
-- Headless (non-terminal) session execution
+- Rich session control beyond launch, managed interruption, one-way takeover, cleanup, and presence
+- Remote, pooled, or multi-user headless execution
 - Automatic artifact promotion from session completion
 
 ## Open Questions
 
 - **Terminal multiplexer integration**: Should Streamliner manage terminal tabs directly, or delegate to tmux/screen/IDE terminal APIs? (See terminal note for tmux-based approach.)
+- **PAW launch configuration persistence**: Which PAW init/configuration fields belong in committed project/workstream config, and which belong in local builder defaults?
+- **Future launch-profile persistence**: If non-PAW profiles return, which fields belong in committed project/workstream config, and which belong in local builder defaults?
 - **Multiple sessions per node**: Can a node have multiple concurrent sessions (e.g., after a crash and relaunch)? If so, how are they reconciled?
 - **Context staleness**: If a session runs long enough that the workstream state changes (brief updated, graph refined), should the session be notified or continue with its original context?
 - **Devbox bridge lifecycle**: Should the production bridge remain a user-started helper, be launched by Streamliner through the configured access channel, or be installed as a user login task/service after an explicit ADR?

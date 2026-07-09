@@ -22,6 +22,7 @@
   },
   "include": [
     "vite.config.ts",
+    "scripts/**/*.ts",
     "src/session-registry/**/*.ts",
     "src/server/**/*.ts"
   ]

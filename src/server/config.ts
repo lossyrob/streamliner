@@ -7,6 +7,14 @@ export interface StreamlinerApiConfig {
   host: string;
   port: number;
   graphPath?: string;
+  workstreamRegistryPath?: string;
+  workstreamSourceRegistryPath?: string;
+  recentsPath?: string;
+  previewReadonly: boolean;
+}
+
+function parseBoolean(value: string | undefined): boolean {
+  return value === "1" || value?.toLowerCase() === "true";
 }
 
 function parsePort(value: string | undefined): number {
@@ -29,6 +37,16 @@ export function readStreamlinerApiConfig(
     graphPath: env.STREAMLINER_GRAPH
       ? resolve(env.STREAMLINER_GRAPH)
       : undefined,
+    workstreamRegistryPath: env.STREAMLINER_WORKSTREAM_REGISTRY
+      ? resolve(env.STREAMLINER_WORKSTREAM_REGISTRY)
+      : undefined,
+    workstreamSourceRegistryPath: env.STREAMLINER_WORKSTREAM_SOURCE_REGISTRY
+      ? resolve(env.STREAMLINER_WORKSTREAM_SOURCE_REGISTRY)
+      : undefined,
+    recentsPath: env.STREAMLINER_RECENTS_PATH
+      ? resolve(env.STREAMLINER_RECENTS_PATH)
+      : undefined,
+    previewReadonly: parseBoolean(env.STREAMLINER_PREVIEW_READONLY),
   };
 }
 

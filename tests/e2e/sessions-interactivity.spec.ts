@@ -53,17 +53,23 @@ interface SessionRegistryListItem {
   derivedContextEventsMtimeMs: number | null;
 }
 
+function recentIso(offsetMs = 0): string {
+  return new Date(Date.now() + offsetMs).toISOString();
+}
+
 function buildTrustedSession(
   overrides: Partial<SessionRegistryListItem> = {},
 ): SessionRegistryListItem {
+  const startedAt = recentIso(-6 * 60 * 1000);
+  const updatedAt = recentIso();
   return {
     id: "trusted-session",
     title: "Follow Paw-Lite Process",
     titleSource: "user",
     description: "lossyrob/streamliner · feature/manual-session-registry",
     lifecycleStatus: "active",
-    lastSeenAt: "2026-04-24T22:48:16.000Z",
-    updatedAt: "2026-04-24T22:54:16.000Z",
+    lastSeenAt: startedAt,
+    updatedAt,
     color: "#5b7fff",
     cwd: "C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
     repo: "lossyrob/streamliner",
@@ -75,7 +81,7 @@ function buildTrustedSession(
     aiSummary:
       "This session started as follow-up work on trusted Copilot session tracking. The latest discussion is refining session cards so the editable title stays separate from a richer conversation description.",
     aiSummaryModel: "gpt-5.4-mini",
-    aiSummaryUpdatedAt: "2026-04-24T22:54:16.000Z",
+    aiSummaryUpdatedAt: updatedAt,
     aiSummaryEventsFingerprint: "events|userTurns=12",
     aiSummaryStatus: "ready",
     aiSummaryError: null,
@@ -83,11 +89,11 @@ function buildTrustedSession(
     copilotProcessState: "live",
     copilotProcessId: 34392,
     activityStatus: "waiting_for_input",
-    activityStatusUpdatedAt: "2026-04-24T22:54:16.000Z",
+    activityStatusUpdatedAt: updatedAt,
     trustedSignalSource: "copilot-cli-hook",
-    trustedStartedAt: "2026-04-24T22:48:16.000Z",
+    trustedStartedAt: startedAt,
     trustedEndedAt: null,
-    trustedLastSignalAt: "2026-04-24T22:48:16.000Z",
+    trustedLastSignalAt: startedAt,
     trustedStartSource: "resume",
     trustedEndReason: null,
     trustedExecutionKind: "copilot_cli",
@@ -101,8 +107,8 @@ function buildTrustedSession(
         repo: "lossyrob/streamliner",
         number: 14,
         url: "https://github.com/lossyrob/streamliner/pull/14",
-        firstSeenAt: "2026-04-24T22:50:00.000Z",
-        lastSeenAt: "2026-04-24T22:50:00.000Z",
+        firstSeenAt: startedAt,
+        lastSeenAt: updatedAt,
         source: "gh",
       },
       {
@@ -110,12 +116,12 @@ function buildTrustedSession(
         repo: null,
         number: 13,
         url: null,
-        firstSeenAt: "2026-04-24T22:51:00.000Z",
-        lastSeenAt: "2026-04-24T22:51:00.000Z",
+        firstSeenAt: startedAt,
+        lastSeenAt: updatedAt,
         source: "user",
       },
     ],
-    derivedContextUpdatedAt: "2026-04-24T22:55:00.000Z",
+    derivedContextUpdatedAt: updatedAt,
     derivedContextEventsOffset: 1200,
     derivedContextEventsSize: 1200,
     derivedContextEventsMtimeMs: 1777080900000,
@@ -169,7 +175,7 @@ async function mockSessionsApi(page: Page, options: MockSessionsApiOptions = {})
       session = {
         ...session,
         ...patch,
-        updatedAt: "2026-04-24T23:16:00.000Z",
+        updatedAt: recentIso(),
       };
       const responseSession = session;
       await delay(options.patchDelayMs ?? 0);
@@ -290,19 +296,11 @@ test("session cards and detail view copy restart commands and session ids", asyn
 
   const row = page.getByRole("button", { name: /Follow Paw-Lite Process/ });
   await expect(row).toBeVisible();
-  await expect(row).toContainText("trusted-session");
 
-  await page.getByRole("button", { name: "Copy session ID trusted-session" }).click();
-  await expect(page.getByRole("dialog")).toBeHidden();
-  await expect.poll(() => readClipboardWrites(page)).toEqual(["trusted-session"]);
-
-  await page.getByRole("button", { name: "Copy restart command" }).click();
   const expectedRestartCommand =
-    "Set-Location -LiteralPath 'C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry'; copilot --resume 'trusted-session'";
-  await expect.poll(() => readClipboardWrites(page)).toEqual([
-    "trusted-session",
-    expectedRestartCommand,
-  ]);
+    "Set-Location -LiteralPath 'C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry'; copilot '--resume=trusted-session'";
+  await page.getByRole("button", { name: "Copy restart command" }).click();
+  await expect.poll(() => readClipboardWrites(page)).toEqual([expectedRestartCommand]);
   await expect(page.getByRole("dialog")).toBeHidden();
 
   await row.click();
@@ -310,10 +308,16 @@ test("session cards and detail view copy restart commands and session ids", asyn
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText(expectedRestartCommand)).toBeVisible();
 
+  await dialog.getByRole("button", { name: "Copy session ID trusted-session" }).first().click();
+  await expect.poll(() => readClipboardWrites(page)).toEqual([
+    expectedRestartCommand,
+    "trusted-session",
+  ]);
+
   await dialog.getByRole("button", { name: "Copy restart command" }).click();
   await expect.poll(() => readClipboardWrites(page)).toEqual([
-    "trusted-session",
     expectedRestartCommand,
+    "trusted-session",
     expectedRestartCommand,
   ]);
 });

@@ -3,6 +3,7 @@ import type {
   ManualSessionRegistryOrigin,
   ObservedSessionRegistryOrigin,
   SessionRegistryAiSummaryStatus,
+  SessionRegistryActivityEvidence,
   SessionRegistryActivityStatus,
   SessionRegistryCopilotProcessState,
   SessionRegistryGithubRef,
@@ -10,7 +11,16 @@ import type {
   SessionRegistryLifecycleStatus,
   SessionRegistryObservedSessionKind,
   SessionRegistryOriginKind,
+  SessionRegistryPawLaunch,
+  SessionRegistryPawWorkflow,
   SessionRegistryRecord,
+  SessionRegistryManagedLifecycleState,
+  SessionRegistryRuntimeEvidenceKind,
+  SessionRegistryRuntimeKind,
+  SessionRegistryRuntimeMetadata,
+  SessionRegistryRuntimeOwner,
+  SessionRegistryRuntimePermissionProfile,
+  SessionRegistryRuntimeProgressEventType,
   SessionRegistryTitleSource,
   SessionRegistryTrustedEndReason,
   SessionRegistryTrustedExecutionKind,
@@ -51,7 +61,10 @@ export interface SessionRegistryListItem {
   branch: string | null;
   tags: string[];
   originKind: SessionRegistryOriginKind;
+  launchCliArgs: string[] | null;
   graphBinding: SessionRegistryGraphBinding | null;
+  pawLaunch: SessionRegistryPawLaunch | null;
+  runtime?: SessionRegistryRuntimeMetadata | null;
   copilotSessionId: string | null;
   aiSummary: string | null;
   aiSummaryModel: string | null;
@@ -64,6 +77,8 @@ export interface SessionRegistryListItem {
   copilotProcessId: number | null;
   activityStatus: SessionRegistryActivityStatus;
   activityStatusUpdatedAt: string | null;
+  activityEvidence: SessionRegistryActivityEvidence;
+  pawWorkflow: SessionRegistryPawWorkflow | null;
   trustedSignalSource: SessionRegistryTrustedSignalSource | null;
   trustedStartedAt: string | null;
   trustedEndedAt: string | null;
@@ -80,6 +95,63 @@ export interface SessionRegistryListItem {
   derivedContextEventsOffset: number;
   derivedContextEventsSize: number;
   derivedContextEventsMtimeMs: number | null;
+}
+
+export function sessionRegistryRecordToListItem(
+  record: SessionRegistryRecord,
+): SessionRegistryListItem {
+  return {
+    id: record.id,
+    version: record.version,
+    title: record.title,
+    titleSource: record.titleSource,
+    description: record.description,
+    lifecycleStatus: record.lifecycleStatus,
+    lastSeenAt: record.lastSeenAt,
+    updatedAt: record.updatedAt,
+    color: record.color,
+    cwd: record.cwd,
+    repo: record.repo,
+    branch: record.branch,
+    tags: record.tags,
+    originKind: record.origin.kind,
+    launchCliArgs: record.origin.kind === "launched" && Array.isArray(record.origin.cliArgs)
+      ? [...record.origin.cliArgs]
+      : null,
+    graphBinding: record.graphBinding,
+    pawLaunch: record.pawLaunch,
+    runtime: record.runtime ?? null,
+    copilotSessionId: record.copilotSessionId,
+    aiSummary: record.aiSummary,
+    aiSummaryModel: record.aiSummaryModel,
+    aiSummaryUpdatedAt: record.aiSummaryUpdatedAt,
+    aiSummaryEventsFingerprint: record.aiSummaryEventsFingerprint,
+    aiSummaryStatus: record.aiSummaryStatus,
+    aiSummaryError: record.aiSummaryError,
+    observedSessionKind: record.observedSessionKind,
+    copilotProcessState: record.copilotProcessState,
+    copilotProcessId: record.copilotProcessId,
+    activityStatus: record.activityStatus,
+    activityStatusUpdatedAt: record.activityStatusUpdatedAt,
+    activityEvidence: record.activityEvidence,
+    pawWorkflow: record.pawWorkflow,
+    trustedSignalSource: record.trustedSignalSource,
+    trustedStartedAt: record.trustedStartedAt,
+    trustedEndedAt: record.trustedEndedAt,
+    trustedLastSignalAt: record.trustedLastSignalAt,
+    trustedStartSource: record.trustedStartSource,
+    trustedEndReason: record.trustedEndReason,
+    trustedExecutionKind: record.trustedExecutionKind,
+    trustedInitialPromptLength: record.trustedInitialPromptLength,
+    trustedLastPromptLength: record.trustedLastPromptLength,
+    derivedWorktreePath: record.derivedWorktreePath,
+    derivedBranch: record.derivedBranch,
+    derivedGithubRefs: record.derivedGithubRefs,
+    derivedContextUpdatedAt: record.derivedContextUpdatedAt,
+    derivedContextEventsOffset: record.derivedContextEventsOffset,
+    derivedContextEventsSize: record.derivedContextEventsSize,
+    derivedContextEventsMtimeMs: record.derivedContextEventsMtimeMs,
+  };
 }
 
 interface SessionRegistryUpsertInputBase {
@@ -101,6 +173,7 @@ export interface ManualSessionRegistryUpsertInput
     "ended" | "archived"
   >;
   graphBinding?: SessionRegistryGraphBinding | null;
+  runtime?: SessionRegistryRuntimeMetadata | null;
 }
 
 export interface ObservedSessionRegistryUpsertInput
@@ -110,6 +183,7 @@ export interface ObservedSessionRegistryUpsertInput
   lastSeenAt?: string | null;
   lifecycleStatus?: SessionRegistryObservedLifecycleStatus;
   graphBinding?: SessionRegistryGraphBinding | null;
+  runtime?: SessionRegistryRuntimeMetadata | null;
   observedSessionKind?: SessionRegistryObservedSessionKind | null;
   copilotProcessState?: SessionRegistryCopilotProcessState | null;
   copilotProcessId?: number | null;
@@ -132,6 +206,8 @@ export interface LaunchedSessionRegistryUpsertInput
     "ended" | "archived"
   >;
   graphBinding?: SessionRegistryGraphBinding | null;
+  pawLaunch?: SessionRegistryPawLaunch | null;
+  runtime?: SessionRegistryRuntimeMetadata | null;
 }
 
 export interface SessionRegistryObservedLinkInput {
@@ -178,6 +254,16 @@ export interface SessionRegistryTrustedSignalInput {
   environmentId?: string | null;
   initialPromptLength?: number | null;
   promptLength?: number | null;
+  /**
+   * Tier 2 launch-claim binding: when the launcher sets
+   * STREAMLINER_LAUNCH_CLAIM_ID in the spawned Copilot CLI process
+   * environment, the plugin hook script forwards it here. Streamliner
+   * uses it to atomically bind the discovered session to the
+   * pre-reserved registry row without waiting for the events.jsonl
+   * nonce scan. Falls back to the Tier 1 nonce-in-prompt path when
+   * absent.
+   */
+  launchClaimId?: string | null;
 }
 
 export type SessionRegistryUpsertInput =
@@ -195,6 +281,41 @@ export interface SessionRegistryPatch {
   graphBinding?: SessionRegistryGraphBinding | null;
 }
 
+export interface SessionRegistryRuntimeProgressEventInput {
+  type: SessionRegistryRuntimeProgressEventType;
+  message: string;
+  timestamp?: string;
+  data?: Record<string, unknown>;
+}
+
+export interface SessionRegistryRuntimeEvidenceInput {
+  kind: SessionRegistryRuntimeEvidenceKind;
+  source: string;
+  detectedAt?: string;
+  url?: string | null;
+  repo?: string | null;
+  number?: number | null;
+  sha?: string | null;
+  summary?: string | null;
+}
+
+export interface SessionRegistryRuntimeMetadataPatch {
+  runtimeKind?: SessionRegistryRuntimeKind;
+  runtimeOwner?: SessionRegistryRuntimeOwner;
+  lifecycleState?: SessionRegistryManagedLifecycleState | null;
+  permissionProfile?: SessionRegistryRuntimePermissionProfile | null;
+  launchClaimId?: string | null;
+  launchNonce?: string | null;
+  sdkSessionId?: string | null;
+  sdkWorkspacePath?: string | null;
+  sdkStateRoot?: string | null;
+  startedAt?: string | null;
+  lastStateChangedAt?: string | null;
+  forceLifecycleState?: boolean;
+  progressEvents?: SessionRegistryRuntimeProgressEventInput[];
+  evidence?: SessionRegistryRuntimeEvidenceInput[];
+}
+
 export const SESSION_REGISTRY_CHANGE_EVENT_KINDS = [
   "upsert",
   "delete",
@@ -207,6 +328,7 @@ export interface SessionRegistryUpsertChangeEvent {
   kind: "upsert";
   registryId: string;
   snapshot: SessionRegistryRecord;
+  changeScope?: "runtime";
 }
 
 export interface SessionRegistryDeleteChangeEvent {
@@ -249,6 +371,7 @@ export interface SessionRegistryStore {
   ): SessionRegistryRecord;
   recordTrustedSessionSignal(input: SessionRegistryTrustedSignalInput): SessionRegistryRecord;
   patchSession(id: string, patch: SessionRegistryPatch): SessionRegistryRecord;
+  patchRuntimeMetadata(id: string, patch: SessionRegistryRuntimeMetadataPatch): SessionRegistryRecord;
   archiveSession(id: string): SessionRegistryRecord;
   deleteSession(id: string): void;
   subscribe(listener: SessionRegistryChangeListener): () => void;

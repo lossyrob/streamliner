@@ -43,12 +43,44 @@ The data pipeline is fully layered:
 
 ## Quick start
 
-```bash
+Clone the repo, install dependencies, copy the local environment template, then start the API and web app together:
+
+```powershell
+git clone https://github.com/lossyrob/streamliner.git
+cd streamliner
 npm install
+Copy-Item .env.template .env
 npm run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173) to see the example workstream graph. `npm run dev` starts both the local API and Vite; the API is available directly at [http://127.0.0.1:4319/api/health](http://127.0.0.1:4319/api/health).
+On macOS/Linux, use `cp .env.template .env` instead of `Copy-Item`.
+Visible worker terminal launches use the local platform: Windows opens Windows
+Terminal or PowerShell; on macOS, Streamliner opens Apple Terminal.app by
+default and can explicitly use iTerm2.
+
+The checked-in `.env.template` points Streamliner at the sample session-launching workstream and sets the launch-context synthesis model to Claude Sonnet 4.6:
+
+```dotenv
+STREAMLINER_GRAPH=.streamliner/workstreams/session-launching-and-tracking/graph.json
+STREAMLINER_CONTEXT_MODEL=claude-sonnet-4.6
+STREAMLINER_API_HOST=127.0.0.1
+STREAMLINER_API_PORT=4319
+```
+
+Edit `.env` to choose a different workstream graph or Copilot SDK model. `.env` is ignored by Git, and Streamliner loads it automatically when running the local API, Vite config, and API wait script.
+
+Open [http://localhost:5173](http://localhost:5173) to see the configured workstream graph. `npm run dev` starts both the local API and Vite; the API is available directly at [http://127.0.0.1:4319/api/health](http://127.0.0.1:4319/api/health).
+
+Useful commands:
+
+| Command | Purpose |
+|---------|---------|
+| `npm run dev` | Start the API and Vite web app together |
+| `npm run dev:api` | Start only the local API in watch mode |
+| `npm run dev:web` | Start only the Vite web app after waiting for the API |
+| `npm test` | Run the Vitest suite |
+| `npm run lint` | Run ESLint |
+| `npm run build` | Type-check and build the web app |
 
 See [DEVELOPING.md](DEVELOPING.md) for full development setup and workflow.
 

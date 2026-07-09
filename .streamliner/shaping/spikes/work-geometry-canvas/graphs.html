@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Work Geometry Canvas - Mini-graphs</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main class="page">
+      <header class="topbar">
+        <div>
+          <h1>Option B: Full mini-graphs on one canvas</h1>
+          <p>Each workstream exposes internal nodes; dependency lines attach to specific import/export nodes.</p>
+        </div>
+        <nav class="nav" aria-label="Spike views">
+          <a href="index.html">Index</a>
+          <a href="cards.html">Cards</a>
+          <a href="graphs.html" aria-current="page">Mini-graphs</a>
+          <a href="lanes.html">Lanes</a>
+        </nav>
+      </header>
+
+      <section class="content">
+        <div class="canvas-shell">
+          <div id="world" class="world">
+            <svg id="edges" class="edge-layer" aria-hidden="true"></svg>
+            <div id="clusters"></div>
+          </div>
+        </div>
+        <aside id="inspector" class="inspector">
+          <h2>Mini-graphs read</h2>
+          <p>This option shows exact connection points, but it asks the user to visually parse many small graphs at once.</p>
+        </aside>
+      </section>
+    </main>
+
+    <script src="mock-data.js"></script>
+    <script>
+      const { workstreams, edges, byId } = window.workGeometryMock;
+      const clustersLayer = document.getElementById("clusters");
+      const edgeLayer = document.getElementById("edges");
+      const inspector = document.getElementById("inspector");
+
+      const graphPositions = {
+        docs: { x: 70, y: 80 },
+        "session-launch": { x: 70, y: 420 },
+        distribution: { x: 530, y: 360 },
+        "agent-skills": { x: 1000, y: 90 },
+        "hot-work": { x: 1000, y: 430 },
+        dependencies: { x: 530, y: 730 },
+        canvas: { x: 1000, y: 760 }
+      };
+
+      function nodeClass(node) {
+        return `node ${node.status}`;
+      }
+
+      function nodeCenter(workstreamId, nodeId) {
+        const workstream = byId[workstreamId];
+        const position = graphPositions[workstreamId];
+        const node = workstream.nodes.find((candidate) => candidate.id === nodeId);
+        return {
+          x: position.x + node.x + 63,
+          y: position.y + node.y + 27
+        };
+      }
+
+      function edgePath(from, to) {
+        const dx = Math.max(110, Math.abs(to.x - from.x) * 0.34);
+        return `M ${from.x} ${from.y} C ${from.x + dx} ${from.y}, ${to.x - dx} ${to.y}, ${to.x} ${to.y}`;
+      }
+
+      function stateChip(state) {
+        if (state === "validated" || state === "mainline") return "green";
+        if (state === "preview") return "yellow";
+        if (state === "branch-local") return "orange";
+        return "purple";
+      }
+
+      function showNode(workstream, node) {
+        const inbound = edges.filter((edge) => edge.to.workstream === workstream.id && edge.to.node === node.id);
+        const outbound = edges.filter((edge) => edge.from.workstream === workstream.id && edge.from.node === node.id);
+        inspector.innerHTML = `
+          <h2>${node.label}</h2>
+          <p>${workstream.title} / ${node.type} / ${node.status}</p>
+          <div class="chips">
+            <span class="chip blue">${workstream.kind}</span>
+            <span class="chip ${stateChip(workstream.status)}">${workstream.health}</span>
+          </div>
+          <h3>Edges</h3>
+          ${inbound.length || outbound.length
+            ? `<ul>${inbound.map((edge) => `<li>Imports ${edge.label} from ${byId[edge.from.workstream].title}: ${edge.state}</li>`).join("")}${outbound.map((edge) => `<li>Exports ${edge.label} to ${byId[edge.to.workstream].title}: ${edge.state}</li>`).join("")}</ul>`
+            : "<p>No external edge attached to this mock node.</p>"}
+          <h3>Read</h3>
+          <p>This version is useful when exact node/checkpoint attachment matters. It may need zoom, collapse, filtering, and minimap support before it works for larger projects.</p>
+        `;
+      }
+
+      function renderClusters() {
+        clustersLayer.innerHTML = workstreams.map((workstream) => {
+          const pos = graphPositions[workstream.id];
+          return `
+            <section class="cluster" style="left:${pos.x}px;top:${pos.y}px">
+              <div class="kicker"><span>${workstream.kind}</span><span>${workstream.health}</span></div>
+              <h2>${workstream.title}</h2>
+              ${workstream.nodes.map((node) => `
+                <button class="${nodeClass(node)}" data-workstream="${workstream.id}" data-node="${node.id}" style="left:${node.x}px;top:${node.y}px">
+                  ${node.label}
+                  <small>${node.type} / ${node.status}</small>
+                </button>
+              `).join("")}
+            </section>
+          `;
+        }).join("");
+
+        document.querySelectorAll(".node").forEach((nodeEl) => {
+          nodeEl.addEventListener("click", () => {
+            const workstream = byId[nodeEl.dataset.workstream];
+            const node = workstream.nodes.find((candidate) => candidate.id === nodeEl.dataset.node);
+            showNode(workstream, node);
+          });
+        });
+      }
+
+      function renderEdges() {
+        edgeLayer.setAttribute("viewBox", "0 0 1780 1120");
+        edgeLayer.innerHTML = edges.map((edge, index) => {
+          const from = nodeCenter(edge.from.workstream, edge.from.node);
+          const to = nodeCenter(edge.to.workstream, edge.to.node);
+          const labelX = (from.x + to.x) / 2;
+          const labelY = (from.y + to.y) / 2 - 10 + (index % 2 ? 18 : 0);
+          return `
+            <path class="edge ${edge.state}" d="${edgePath(from, to)}"></path>
+            <text class="edge-label" x="${labelX}" y="${labelY}">${edge.label}</text>
+          `;
+        }).join("");
+      }
+
+      renderClusters();
+      renderEdges();
+      showNode(byId["canvas"], byId["canvas"].nodes[0]);
+    </script>
+  </body>
+</html>

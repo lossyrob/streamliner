@@ -9,6 +9,7 @@ export const WORKSTREAM_NODE_STATUSES = [
   "in-progress",
   "blocked",
   "completed",
+  "retired",
 ] as const;
 export type WorkstreamNodeStatus = (typeof WORKSTREAM_NODE_STATUSES)[number];
 
@@ -25,6 +26,20 @@ export type WorkstreamNodeType = (typeof WORKSTREAM_NODE_TYPES)[number];
 export const WORKSTREAM_TRACKER_TYPES = ["github", "local"] as const;
 export type WorkstreamTrackerType = (typeof WORKSTREAM_TRACKER_TYPES)[number];
 
+export const WORKSTREAM_LAUNCH_REQUIRED_TRACKERS = ["github-issue"] as const;
+export type WorkstreamLaunchRequiredTracker =
+  (typeof WORKSTREAM_LAUNCH_REQUIRED_TRACKERS)[number];
+
+export const WORKSTREAM_LAUNCH_TERMINAL_PREFERENCES = [
+  "default",
+  "windows-terminal",
+  "powershell",
+  "mac-terminal",
+  "iterm2",
+] as const;
+export type WorkstreamLaunchTerminalPreference =
+  (typeof WORKSTREAM_LAUNCH_TERMINAL_PREFERENCES)[number];
+
 export const WORKSTREAM_CHECKPOINT_STATUSES = ["planned", "completed"] as const;
 export type WorkstreamCheckpointStatus =
   (typeof WORKSTREAM_CHECKPOINT_STATUSES)[number];
@@ -37,6 +52,13 @@ export const WORKSTREAM_PULL_REQUEST_VALIDATION_STATES = [
 ] as const;
 export type WorkstreamPullRequestValidationState =
   (typeof WORKSTREAM_PULL_REQUEST_VALIDATION_STATES)[number];
+
+export const WORKSTREAM_EXTERNAL_DEPENDENCY_STATUSES = [
+  "pending",
+  "satisfied",
+] as const;
+export type WorkstreamExternalDependencyStatus =
+  (typeof WORKSTREAM_EXTERNAL_DEPENDENCY_STATUSES)[number];
 
 export interface WorkstreamIssue {
   owner: string;
@@ -100,6 +122,44 @@ export interface WorkstreamRepo {
   role?: string;
 }
 
+export interface WorkstreamExternalDependencyTarget {
+  projectKey: string;
+  workstreamId: string;
+  nodeId?: string;
+}
+
+export interface WorkstreamExternalDependency {
+  id: string;
+  target?: WorkstreamExternalDependencyTarget;
+  label?: string;
+  url?: string;
+  status?: WorkstreamExternalDependencyStatus;
+}
+
+export interface WorkstreamLaunchPolicy {
+  requiredTracker?: WorkstreamLaunchRequiredTracker;
+}
+
+export interface WorkstreamLaunchTerminalDefaults {
+  preferredTerminal?: WorkstreamLaunchTerminalPreference;
+  titleTemplate?: string | null;
+  /** @deprecated Use workstream presentation.color instead. */
+  tabColor?: string | null;
+}
+
+export interface WorkstreamLaunchDefaults {
+  promptProfileId?: string | null;
+  terminal?: WorkstreamLaunchTerminalDefaults;
+  launchAfterInit?: boolean;
+  reviewCompanion?: boolean;
+  reviewPromptTemplateId?: string | null;
+}
+
+export interface WorkstreamPresentation {
+  shortName?: string | null;
+  color?: string | null;
+}
+
 export interface WorkstreamNode {
   id: string;
   type: WorkstreamNodeType;
@@ -110,6 +170,7 @@ export interface WorkstreamNode {
   repoIds: string[];
   tracker?: WorkstreamTracker;
   dependsOn: string[];
+  externalDependsOn?: WorkstreamExternalDependency[];
 }
 
 export interface WorkstreamCheckpoint {
@@ -131,6 +192,9 @@ export interface WorkstreamDocument {
   createdAt: string;
   updatedAt: string;
   trackingIssue?: WorkstreamIssue;
+  presentation?: WorkstreamPresentation;
+  launchPolicy?: WorkstreamLaunchPolicy;
+  launchDefaults?: WorkstreamLaunchDefaults;
   repos: WorkstreamRepo[];
   designRefs: WorkstreamDesignReference[];
   nodes: WorkstreamNode[];

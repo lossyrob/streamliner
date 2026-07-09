@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Work Geometry Canvas - Lanes</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main class="page">
+      <header class="topbar">
+        <div>
+          <h1>Option C: Timeline lanes</h1>
+          <p>Workstreams are rows; imports and exports attach to checkpoints over a rough project sequence.</p>
+        </div>
+        <nav class="nav" aria-label="Spike views">
+          <a href="index.html">Index</a>
+          <a href="cards.html">Cards</a>
+          <a href="graphs.html">Mini-graphs</a>
+          <a href="lanes.html" aria-current="page">Lanes</a>
+        </nav>
+      </header>
+
+      <section class="content">
+        <div class="canvas-shell">
+          <div id="world" class="world wide">
+            <div class="time-axis">
+              <span>Shaping</span>
+              <span>Contracts</span>
+              <span>Preview</span>
+              <span>Mainline</span>
+              <span>Validated</span>
+              <span>Canvas-ready</span>
+            </div>
+            <svg id="edges" class="edge-layer" aria-hidden="true"></svg>
+            <div id="lanes"></div>
+          </div>
+        </div>
+        <aside id="inspector" class="inspector">
+          <h2>Timeline read</h2>
+          <p>This option emphasizes sequencing, availability, and gates. It is less like the current graph UI but may make project planning easier.</p>
+        </aside>
+      </section>
+    </main>
+
+    <script src="mock-data.js"></script>
+    <script>
+      const { workstreams, edges, byId } = window.workGeometryMock;
+      const lanesLayer = document.getElementById("lanes");
+      const edgeLayer = document.getElementById("edges");
+      const inspector = document.getElementById("inspector");
+      const laneOrder = ["docs", "session-launch", "distribution", "agent-skills", "hot-work", "dependencies", "canvas"];
+
+      function laneY(workstreamId) {
+        return 96 + laneOrder.indexOf(workstreamId) * 132;
+      }
+
+      function milestoneCenter(workstreamId, milestoneId) {
+        const workstream = byId[workstreamId];
+        const milestone = workstream.milestones.find((candidate) => candidate.id === milestoneId);
+        return {
+          x: milestone.x + 88,
+          y: laneY(workstreamId) + 38
+        };
+      }
+
+      function edgePath(from, to) {
+        const midY = (from.y + to.y) / 2;
+        return `M ${from.x} ${from.y} C ${from.x + 90} ${from.y}, ${to.x - 90} ${midY}, ${to.x} ${to.y}`;
+      }
+
+      function stateChip(state) {
+        if (state === "validated" || state === "mainline") return "green";
+        if (state === "preview") return "yellow";
+        if (state === "branch-local") return "orange";
+        return "purple";
+      }
+
+      function showMilestone(workstream, milestone) {
+        const inbound = edges.filter((edge) => edge.to.workstream === workstream.id && edge.to.node === milestone.id);
+        const outbound = edges.filter((edge) => edge.from.workstream === workstream.id && edge.from.node === milestone.id);
+        inspector.innerHTML = `
+          <h2>${milestone.label}</h2>
+          <p>${workstream.title}: ${milestone.note}</p>
+          <div class="chips">
+            <span class="chip ${milestone.kind === "export" ? "green" : "yellow"}">${milestone.kind}</span>
+            <span class="chip blue">${workstream.health}</span>
+          </div>
+          <h3>Edges</h3>
+          ${inbound.length || outbound.length
+            ? `<ul>${inbound.map((edge) => `<li>Needs ${edge.label} from ${byId[edge.from.workstream].title}: ${edge.state}</li>`).join("")}${outbound.map((edge) => `<li>Provides ${edge.label} to ${byId[edge.to.workstream].title}: ${edge.state}</li>`).join("")}</ul>`
+            : "<p>No external edge attached in this mock.</p>"}
+          <h3>Read</h3>
+          <p>This version is strong for gates, sequencing, and availability. It may be weaker when the builder wants spatial graph intuition or nested workstream detail.</p>
+        `;
+      }
+
+      function renderLanes() {
+        lanesLayer.innerHTML = laneOrder.map((id) => {
+          const workstream = byId[id];
+          const y = laneY(id);
+          return `
+            <div class="lane-line" style="top:${y + 38}px"></div>
+            <section class="lane-label" style="top:${y - 8}px">
+              <h2>${workstream.title}</h2>
+              <p>${workstream.kind} / ${workstream.health}</p>
+            </section>
+            ${workstream.milestones.map((milestone) => `
+              <button class="milestone ${milestone.kind}" data-workstream="${workstream.id}" data-milestone="${milestone.id}" style="left:${milestone.x}px;top:${y}px">
+                <h3>${milestone.label}</h3>
+                <p>${milestone.note}</p>
+              </button>
+            `).join("")}
+          `;
+        }).join("");
+
+        document.querySelectorAll(".milestone").forEach((el) => {
+          el.addEventListener("click", () => {
+            const workstream = byId[el.dataset.workstream];
+            const milestone = workstream.milestones.find((candidate) => candidate.id === el.dataset.milestone);
+            showMilestone(workstream, milestone);
+          });
+        });
+      }
+
+      function renderEdges() {
+        edgeLayer.setAttribute("viewBox", "0 0 2240 1060");
+        edgeLayer.innerHTML = edges.map((edge, index) => {
+          const from = milestoneCenter(edge.from.workstream, edge.from.node);
+          const to = milestoneCenter(edge.to.workstream, edge.to.node);
+          const labelX = (from.x + to.x) / 2;
+          const labelY = (from.y + to.y) / 2 - 8 + (index % 2 ? 20 : 0);
+          return `
+            <path class="edge ${edge.state}" d="${edgePath(from, to)}"></path>
+            <text class="edge-label" x="${labelX}" y="${labelY}">${edge.label}</text>
+          `;
+        }).join("");
+      }
+
+      renderLanes();
+      renderEdges();
+      showMilestone(byId["canvas"], byId["canvas"].milestones[0]);
+    </script>
+  </body>
+</html>

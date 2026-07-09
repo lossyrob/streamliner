@@ -58,6 +58,98 @@ export const SESSION_REGISTRY_ACTIVITY_STATUSES = [
 export type SessionRegistryActivityStatus =
   (typeof SESSION_REGISTRY_ACTIVITY_STATUSES)[number];
 
+export const SESSION_REGISTRY_ACTIVITY_CONFIDENCES = [
+  "none",
+  "low",
+  "medium",
+  "high",
+] as const;
+export type SessionRegistryActivityConfidence =
+  (typeof SESSION_REGISTRY_ACTIVITY_CONFIDENCES)[number];
+
+export const SESSION_REGISTRY_ACTIVITY_STATUS_REASONS = [
+  "neutral_default",
+  "trusted_start",
+  "trusted_prompt",
+  "trusted_end",
+  "user_message",
+  "assistant_message",
+  "assistant_turn_start",
+  "assistant_turn_end",
+  "tool_user_requested",
+  "tool_execution_start",
+  "tool_execution_complete",
+  "user_requested_tool_complete",
+  "pending_input",
+  "session_ended",
+  "process_interrupted",
+  "events_missing",
+  "events_empty",
+  "events_unrecognized",
+] as const;
+export type SessionRegistryActivityStatusReason =
+  (typeof SESSION_REGISTRY_ACTIVITY_STATUS_REASONS)[number];
+
+export const SESSION_REGISTRY_ACTIVITY_DIAGNOSTIC_CODES = [
+  "events_missing",
+  "events_empty",
+  "events_tail_truncated",
+  "events_parse_error",
+  "events_unrecognized",
+  "events_unrecognized_tool_shape",
+] as const;
+export type SessionRegistryActivityDiagnosticCode =
+  (typeof SESSION_REGISTRY_ACTIVITY_DIAGNOSTIC_CODES)[number];
+
+export const SESSION_REGISTRY_PAW_WORKFLOW_STATUSES = [
+  "recognized",
+  "unavailable",
+  "unknown",
+] as const;
+export type SessionRegistryPawWorkflowStatus =
+  (typeof SESSION_REGISTRY_PAW_WORKFLOW_STATUSES)[number];
+
+export const SESSION_REGISTRY_PAW_WORKFLOW_STAGES = [
+  "init",
+  "planning",
+  "implementation",
+  "review",
+  "finalization",
+] as const;
+export type SessionRegistryPawWorkflowStage =
+  (typeof SESSION_REGISTRY_PAW_WORKFLOW_STAGES)[number];
+
+export const SESSION_REGISTRY_PAW_WORKFLOW_KINDS = [
+  "paw",
+  "paw-lite",
+  "paw-review",
+  "unknown",
+] as const;
+export type SessionRegistryPawWorkflowKind =
+  (typeof SESSION_REGISTRY_PAW_WORKFLOW_KINDS)[number];
+
+export const SESSION_REGISTRY_PAW_ARTIFACT_KINDS = [
+  "context",
+  "specification",
+  "research",
+  "planning",
+  "implementation",
+  "review",
+  "finalization",
+  "unknown",
+] as const;
+export type SessionRegistryPawArtifactKind =
+  (typeof SESSION_REGISTRY_PAW_ARTIFACT_KINDS)[number];
+
+export const SESSION_REGISTRY_PAW_WORKFLOW_DIAGNOSTIC_CODES = [
+  "paw_workdir_unavailable",
+  "paw_artifact_layout_unknown",
+  "paw_artifact_scan_error",
+  "paw_artifact_scan_truncated",
+] as const;
+export type SessionRegistryPawWorkflowDiagnosticCode =
+  (typeof SESSION_REGISTRY_PAW_WORKFLOW_DIAGNOSTIC_CODES)[number];
+
 export const SESSION_REGISTRY_TRUSTED_SIGNAL_SOURCES = [
   "copilot-cli-hook",
 ] as const;
@@ -89,6 +181,76 @@ export const SESSION_REGISTRY_TRUSTED_EXECUTION_KINDS = [
 export type SessionRegistryTrustedExecutionKind =
   (typeof SESSION_REGISTRY_TRUSTED_EXECUTION_KINDS)[number];
 
+export const SESSION_REGISTRY_RUNTIME_KINDS = [
+  "terminal-cli",
+  "managed-sdk",
+] as const;
+export type SessionRegistryRuntimeKind =
+  (typeof SESSION_REGISTRY_RUNTIME_KINDS)[number];
+
+export const SESSION_REGISTRY_RUNTIME_OWNERS = [
+  "builder-terminal",
+  "streamliner-sdk",
+] as const;
+export type SessionRegistryRuntimeOwner =
+  (typeof SESSION_REGISTRY_RUNTIME_OWNERS)[number];
+
+export const SESSION_REGISTRY_RUNTIME_PERMISSION_PROFILES = [
+  "manual",
+  "managed-autonomous",
+] as const;
+export type SessionRegistryRuntimePermissionProfile =
+  (typeof SESSION_REGISTRY_RUNTIME_PERMISSION_PROFILES)[number];
+
+export const SESSION_REGISTRY_MANAGED_LIFECYCLE_STATES = [
+  "preparing",
+  "starting",
+  "running",
+  "idle",
+  "waiting_for_builder",
+  "interrupt_requested",
+  "interrupted",
+  "canceled",
+  "failed",
+  "pr_ready",
+  "review_ready",
+  "completed",
+  "cleanup_ready",
+  "cleaning_up",
+  "cleaned_up",
+  "terminal_takeover",
+] as const;
+export type SessionRegistryManagedLifecycleState =
+  (typeof SESSION_REGISTRY_MANAGED_LIFECYCLE_STATES)[number];
+
+export const SESSION_REGISTRY_RUNTIME_PROGRESS_EVENT_TYPES = [
+  "lifecycle",
+  "assistant_status",
+  "tool_started",
+  "tool_completed",
+  "subagent_status",
+  "permission_decision",
+  "mcp_status",
+  "skill_status",
+  "evidence",
+  "terminal_takeover",
+  "error",
+  "usage",
+] as const;
+export type SessionRegistryRuntimeProgressEventType =
+  (typeof SESSION_REGISTRY_RUNTIME_PROGRESS_EVENT_TYPES)[number];
+
+export const SESSION_REGISTRY_RUNTIME_EVIDENCE_KINDS = [
+  "pr_ready",
+  "review_ready",
+  "completed",
+  "cleanup_ready",
+  "cleaned_up",
+  "terminal_takeover",
+] as const;
+export type SessionRegistryRuntimeEvidenceKind =
+  (typeof SESSION_REGISTRY_RUNTIME_EVIDENCE_KINDS)[number];
+
 export const SESSION_REGISTRY_GITHUB_REF_TYPES = [
   "issue",
   "pr",
@@ -99,7 +261,8 @@ export type SessionRegistryGithubRefType =
 
 export interface SessionRegistryGraphBinding {
   workstreamId: string;
-  nodeId: string;
+  /** Optional for sessions assigned to a workstream but not to a specific graph node. */
+  nodeId?: string | null;
   launchClaimId?: string | null;
 }
 
@@ -111,6 +274,147 @@ export interface SessionRegistryGithubRef {
   firstSeenAt: string | null;
   lastSeenAt: string | null;
   source: string;
+}
+
+export interface SessionRegistryActivityEvidence {
+  statusReason: SessionRegistryActivityStatusReason;
+  confidence: SessionRegistryActivityConfidence;
+  diagnostics: SessionRegistryActivityDiagnosticCode[];
+  /**
+   * True when an unresolved ask_user request is visible in the bounded
+   * local event-log tail. When this is false and diagnostics includes
+   * events_tail_truncated, pending-input state is indeterminate rather
+   * than authoritatively absent.
+   */
+  pendingInputRequest: boolean;
+  pendingInputRequestCount: number;
+  lastUserMessageAt: string | null;
+  lastAssistantTurnStartedAt: string | null;
+  lastAssistantTurnEndedAt: string | null;
+  /**
+   * Most recent recognized activity event in the scanned tail, independent
+   * of the current statusReason. For pending_input, activityStatusUpdatedAt
+   * remains the ask_user request time.
+   */
+  lastActivityEventAt: string | null;
+  userMessageCount: number;
+  assistantTurnCount: number;
+  /**
+   * Snapshot of scan metadata captured with the most recent material
+   * interpreted-state change. These fields are diagnostics, not an
+   * incremental cursor, and do not refresh on bookkeeping-only scans.
+   */
+  eventsScannedAt: string | null;
+  eventsOffset: number;
+  eventsSize: number;
+  eventsMtimeMs: number | null;
+}
+
+export const DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE: SessionRegistryActivityEvidence = {
+  statusReason: "neutral_default",
+  confidence: "none",
+  diagnostics: [],
+  pendingInputRequest: false,
+  pendingInputRequestCount: 0,
+  lastUserMessageAt: null,
+  lastAssistantTurnStartedAt: null,
+  lastAssistantTurnEndedAt: null,
+  lastActivityEventAt: null,
+  userMessageCount: 0,
+  assistantTurnCount: 0,
+  eventsScannedAt: null,
+  eventsOffset: 0,
+  eventsSize: 0,
+  eventsMtimeMs: null,
+};
+
+export function buildSessionRegistryActivityEvidence(
+  overrides: Partial<SessionRegistryActivityEvidence> = {},
+  base: SessionRegistryActivityEvidence = DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
+): SessionRegistryActivityEvidence {
+  const diagnostics = overrides.diagnostics ?? base.diagnostics;
+  return {
+    ...base,
+    ...overrides,
+    diagnostics: [...new Set(diagnostics)],
+  };
+}
+
+export function isPendingInputRequestIndeterminate(
+  evidence: SessionRegistryActivityEvidence,
+): boolean {
+  return (
+    !evidence.pendingInputRequest &&
+    evidence.diagnostics.includes("events_tail_truncated")
+  );
+}
+
+export interface SessionRegistryPawArtifactEvidence {
+  path: string;
+  kind: SessionRegistryPawArtifactKind;
+  stage: SessionRegistryPawWorkflowStage | null;
+  mtimeMs: number | null;
+}
+
+export interface SessionRegistryPawWorkflow {
+  status: SessionRegistryPawWorkflowStatus;
+  stage: SessionRegistryPawWorkflowStage | null;
+  workflowKind: SessionRegistryPawWorkflowKind;
+  workId: string | null;
+  workTitle: string | null;
+  workDir: string | null;
+  artifacts: SessionRegistryPawArtifactEvidence[];
+  artifactCount: number;
+  latestArtifactPath: string | null;
+  latestArtifactMtimeMs: number | null;
+  scannedAt: string | null;
+  diagnostics: SessionRegistryPawWorkflowDiagnosticCode[];
+}
+
+export interface SessionRegistryPawLaunch {
+  workId: string;
+  workTitle: string;
+  workflowKind: SessionRegistryPawWorkflowKind;
+  pawWorkDir: string;
+  workflowContextPath: string | null;
+  streamlinerContextPath: string | null;
+}
+
+export interface SessionRegistryRuntimeProgressEvent {
+  id: string;
+  sequence: number;
+  type: SessionRegistryRuntimeProgressEventType;
+  message: string;
+  timestamp: string;
+  data?: Record<string, unknown>;
+}
+
+export interface SessionRegistryRuntimeEvidence {
+  id: string;
+  kind: SessionRegistryRuntimeEvidenceKind;
+  source: string;
+  detectedAt: string;
+  url: string | null;
+  repo: string | null;
+  number: number | null;
+  sha: string | null;
+  summary: string | null;
+}
+
+export interface SessionRegistryRuntimeMetadata {
+  runtimeKind: SessionRegistryRuntimeKind;
+  runtimeOwner: SessionRegistryRuntimeOwner;
+  lifecycleState: SessionRegistryManagedLifecycleState | null;
+  permissionProfile: SessionRegistryRuntimePermissionProfile | null;
+  launchClaimId: string | null;
+  launchNonce: string | null;
+  sdkSessionId: string | null;
+  sdkWorkspacePath: string | null;
+  sdkStateRoot: string | null;
+  startedAt: string | null;
+  lastStateChangedAt: string | null;
+  progressEvents: SessionRegistryRuntimeProgressEvent[];
+  evidence: SessionRegistryRuntimeEvidence[];
 }
 
 export interface ManualSessionRegistryOrigin {
@@ -125,6 +429,7 @@ export interface ObservedSessionRegistryOrigin {
 export interface LaunchedSessionRegistryOrigin {
   kind: "launched";
   launchClaimId?: string | null;
+  cliArgs?: string[] | null;
 }
 
 export type SessionRegistryOrigin =
@@ -151,6 +456,8 @@ export interface SessionRegistryRecord {
   tags: string[];
   origin: SessionRegistryOrigin;
   graphBinding: SessionRegistryGraphBinding | null;
+  pawLaunch: SessionRegistryPawLaunch | null;
+  runtime?: SessionRegistryRuntimeMetadata | null;
   aiSummary: string | null;
   aiSummaryModel: string | null;
   aiSummaryUpdatedAt: string | null;
@@ -162,6 +469,8 @@ export interface SessionRegistryRecord {
   copilotProcessId: number | null;
   activityStatus: SessionRegistryActivityStatus;
   activityStatusUpdatedAt: string | null;
+  activityEvidence: SessionRegistryActivityEvidence;
+  pawWorkflow: SessionRegistryPawWorkflow | null;
   trustedSignalSource: SessionRegistryTrustedSignalSource | null;
   trustedStartedAt: string | null;
   trustedEndedAt: string | null;
@@ -196,7 +505,10 @@ export interface SessionRegistryIndexEntry {
   copilotSessionId: string | null;
   tags: string[];
   originKind: SessionRegistryOriginKind;
+  launchCliArgs: string[] | null;
   graphBinding: SessionRegistryGraphBinding | null;
+  pawLaunch: SessionRegistryPawLaunch | null;
+  runtime?: SessionRegistryRuntimeMetadata | null;
   aiSummary: string | null;
   aiSummaryModel: string | null;
   aiSummaryUpdatedAt: string | null;
@@ -208,6 +520,8 @@ export interface SessionRegistryIndexEntry {
   copilotProcessId: number | null;
   activityStatus: SessionRegistryActivityStatus;
   activityStatusUpdatedAt: string | null;
+  activityEvidence: SessionRegistryActivityEvidence;
+  pawWorkflow: SessionRegistryPawWorkflow | null;
   trustedSignalSource: SessionRegistryTrustedSignalSource | null;
   trustedStartedAt: string | null;
   trustedEndedAt: string | null;

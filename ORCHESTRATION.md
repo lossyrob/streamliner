@@ -79,6 +79,92 @@ Top-down orchestration updates:
 This is the mode the operator uses when talking with an orchestrator session to
 plan, reshape, or reason about the work.
 
+#### Node creation and session cost
+
+When top-down orchestration creates or reshapes nodes, it should account for the
+cost of launching, reviewing, and reconciling worker sessions. A node is the
+largest coherent unit of work that one worker can execute with good context,
+clear boundaries, and reviewable output. It is not a checklist item and should
+not mirror every phase of the worker's internal plan.
+
+Balance coherence against parallelism. Bias toward fewer, heavier nodes when the
+work fits in one context and the interrelated changes are safer for one worker to
+reason through sequentially. Split a wave into multiple nodes when the work can
+run safely in parallel under a stable contract and the wall-clock speedup is
+likely to survive launch, review, merge, and reconciliation cost. Parallelism is
+a first-class reason to split, but "can be listed separately" is not enough.
+
+Other split reasons include different expertise or roles, independent validation
+surfaces, external dependency boundaries, failure isolation, context limits, or
+separately consumable outputs.
+
+Later-wave node breakdowns are hypotheses. At promotion time, the orchestrator
+reviews what actually shipped, then may split a coarse sketch node to unlock safe
+parallelism or manage real complexity, merge adjacent nodes, or replace the
+sketch with a different node shape before creating tracker issues or local specs.
+
+#### Closeout observation lane
+
+During execution, the operator may discover small polish and cleanup items while
+using the feature. The orchestrator should capture those items without
+reflexively turning each one into hot work or a separate node. The items can
+accumulate before the final closure phase.
+
+Use a closeout observation lane when the items are bounded, low-risk, and tightly
+coupled to the current workstream. The orchestrator records them, triages them,
+and later materializes related entries into a normal closeout node with a tracker
+issue when that is more efficient than many small worker launches, usually near a
+gate or closure point.
+
+The canonical brief heading for new workstreams is `## Closeout Observations`.
+Older or adjacent workstreams may use equivalent closure parking lanes such as
+`Closeout Punch List`, coverage-routing reports, or named closeout checklists.
+Treat those lanes as closeout observations when they collect bounded closure
+items that must be completed, deferred, promoted, or dropped before final
+closure. Do not ignore closure work solely because the heading predates this
+doctrine.
+
+Some workstreams use `Closeout Observations` as a running narrative log of
+field-report lessons rather than as a closure punch list. The closure-gate rule
+applies to actionable closure items, not to every narrative observation bullet.
+If a narrative observation became a lesson, reflect it in the reconciliation
+note's learning sections or promotion candidates; if it records an accepted
+residual or deferral, disposition it in `Closeout observation dispositions`.
+
+Some workstreams legitimately have no separate closeout lane. If bounded closure
+items were resolved inline through the brief's `Decisions` section, graph status
+changes, or normal node closure, and no separate parking lane exists, this rule
+is vacuously satisfied.
+
+The closeout observation lane is gate-owned and conditional. Do not create an
+empty closeout node just because the workstream is nearing closure. The closure
+gate asks whether any closeout work remains. If none exists, the gate can pass.
+If bounded polish exists, create or promote one closeout task node with a tracker
+issue to handle the batch before the gate. That node/issue owns the checklist,
+session, PR, review, and reconciliation mechanics. If the items are too large,
+risky, or dependency-bearing, promote them out into normal work.
+
+The normal process is:
+
+1. The operator tells the orchestrator to add a closeout observation.
+2. The orchestrator records the item on the workstream and does a quick triage:
+   batch, promote, defer, or reject as out of scope.
+3. The item stays parked until the orchestrator decides a closeout batch should
+   be materialized as a normal node/issue or the closure gate needs to resolve it.
+4. Reconciliation keeps closeout observations honest as items are completed,
+   deferred, promoted, or dropped.
+
+Each closeout observation should eventually be one of:
+
+- **completed** in the closeout batch;
+- **deferred** explicitly with rationale, which is a closed disposition;
+- **promoted** to its own node, tracker issue, candidate, or follow-on workstream;
+- **dropped** because it no longer matters after reconciliation.
+
+Promote an observation out into normal work when the item changes core semantics,
+needs a design decision or gate, touches unrelated systems, carries meaningful
+review risk, or produces an export another workstream depends on.
+
 ### Bottom-up reconciliation
 
 Bottom-up reconciliation absorbs reality.
@@ -144,6 +230,7 @@ Inbox entries can include:
 - tracker status changed
 - session attached, detached, or disappeared
 - developer marked a burst of hot work
+- operator added or changed a closeout observation
 - design docs changed
 - graph and runtime state disagree
 - downstream checkpoint became ready
@@ -217,6 +304,7 @@ Useful triggers include:
 - worker completes a node
 - PR opens or merges
 - checkpoint or gate is reached
+- closeout observation is added, resolved, deferred, or promoted
 - wave transition begins
 - developer finishes direct presence or hot work
 - runtime state and graph state diverge
@@ -273,6 +361,62 @@ practical, not performative:
 This keeps reconciliation from becoming invisible automation. Streamliner should
 not merely keep the workstream plan synchronized with reality; it should help
 the builder learn why reality diverged from the plan.
+
+### Reconciliation notes and promotion
+
+When a wave, gate, hot-work burst, or completed workstream teaches something
+about the work geometry, reconciliation emits a compact reconciliation note: a
+lower-authority learning artifact about boundaries, contracts, context gaps,
+gate timing, attention allocation, and downstream impact, written from
+plan/reality divergence rather than as a completed-work inventory.
+
+The note is a durable workstream artifact at
+`<workstream>/reconciliation-note.md`, rewritten in place. Its structure,
+disposition vocabulary, promotion targets, and worked examples live in
+[WORKSTREAM-FORMAT.md](WORKSTREAM-FORMAT.md#the-reconciliation-note-reconciliation-notemd);
+this section covers only when the note is produced and how it gates closure.
+
+#### When it is produced
+
+| Trigger | Reconciliation note expectation |
+|---|---|
+| Final closure gate | **Required.** Closure does not pass until the note exists and every promotion candidate has an explicit disposition. |
+| Wave or checkpoint gate where the work taught something nontrivial | **Recommended.** Extend the existing note in place. |
+| Hot-work burst that changed plan or scope | **Recommended** when the lesson is durable enough to inform future shaping. |
+| Routine reconciliation with no learning to record | None required. The note should not be edited just to prove reconciliation happened. |
+
+#### Closure-gate rule
+
+A workstream's final closure gate does not pass until:
+
+1. `reconciliation-note.md` exists for this workstream.
+2. Every actionable closeout observation — in the brief's `Closeout
+   Observations` or an equivalent closure lane — has a disposition.
+3. Every promotion candidate in the note has an explicit disposition.
+
+See the [reconciliation note spec](WORKSTREAM-FORMAT.md#the-reconciliation-note-reconciliation-notemd)
+for what counts as a valid disposition, including why `deferred with rationale`
+is a closed disposition and where closeout-observation dispositions are recorded.
+These rules apply to *the closure gate*, not to every reconciliation pass: a
+mid-workstream reconciliation that does not change the closure picture does not
+need to revise the note.
+
+#### Promotion
+
+Promotion keeps authority explicit — nothing becomes authoritative merely
+because an agent wrote it down. Each promotion candidate names a target authority
+(a brief decision, node-spec guidance, a design doc or decision record, a shaping
+candidate, or a workstream-design lesson) so its disposition is verifiable. The
+[reconciliation note spec](WORKSTREAM-FORMAT.md#the-reconciliation-note-reconciliation-notemd)
+defines the full target list and how workstream-design lessons accumulate before
+they earn promotion.
+
+#### Distinct from any closeout narrative
+
+A workstream may also produce a longer-form prose narrative under `docs/` for
+reflective consumption. That artifact is optional, story-shaped, and never
+satisfies the closure-gate rule — the reconciliation note does. The two can
+reference each other but serve different audiences.
 
 ## Authority boundaries
 

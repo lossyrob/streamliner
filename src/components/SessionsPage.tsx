@@ -1,52 +1,117 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
-import type { SessionRegistryListItem, SessionRegistryPatch } from "../session-registry-contract";
+import {
+  sessionRegistryRecordToListItem,
+  type SessionRegistryListItem,
+  type SessionRegistryListOptions,
+  type SessionRegistryPatch,
+} from "../session-registry-contract";
 import type { SessionRegistryRecord } from "../session-registry-schema";
+import type { ManagedRuntimeProjection } from "../managed-runtime-contract";
+import {
+  formatManagedRuntimeLabel,
+  managedLifecycleStatusClass,
+  managedRuntimeProjectionFromSession,
+} from "../managed-runtime-contract";
+import {
+  handleInAppLinkClick,
+  workstreamRoutePath,
+} from "../dashboard-routing";
+import {
+  canLoadWorkstreamGraph,
+  findGraphBindingWorkstreamMatches,
+  resolveSessionWorkstreamLinkage,
+  UNBOUND_SESSION_WORKSTREAM_GROUP,
+  workstreamRegistryKey,
+  type SessionWorkstreamLinkageResolution,
+  type WorkstreamGraphLoadState,
+  type WorkstreamRouteTarget,
+} from "../session-workstream-linkage";
+import { sessionRegistryEffectiveGraphBinding } from "../session-registry-filter";
+import type { WorkstreamRegistryListEntry } from "../workstream-registry-contract";
+import { parseWorkstreamDocument } from "../workstream-view-model";
+import { useIsDocumentVisible } from "../use-document-visibility";
 import {
   buildRestartCommand,
+  canManuallyStop,
+  canRelaunch,
   filterEndedSessions,
   getDisplaySessionId,
   isTrustedActiveSession,
   isTrustedInterruptedSession,
 } from "./session-policies";
+import {
+  activitySignalClass,
+  activityStatusClass,
+  activityStatusHint,
+  getEffectiveActivityStatus,
+  getActivityStatusDescription,
+  getActivityStatusLabel,
+  getActivityTimestamp,
+  getObservedStatusLabel,
+  getTrustedStatusLabel,
+  hasTrustedSignal,
+  isHelperLikeObservedSession,
+  isRecentlyEndedTrustedSession,
+} from "./session-activity-status";
+import {
+  TerminalColorQuickPicker,
+} from "./SessionColorPicker";
+import {
+  ManagedRuntimeConsolePanel,
+} from "./ManagedRuntimeConsolePanel";
+import { isManagedRuntimeConsoleLive } from "./ManagedSessionConsoleEvents";
+import {
+  eventRegistryId,
+  runtimeUpdatedPayload,
+  sessionFromEventPayload,
+  sessionMatchesQuery,
+  sessionRegistryEventsUrl,
+  sessionRegistryListUrl,
+  sessionsFromSnapshotPayload,
+} from "../session-registry-client";
+import {
+  githubStatusForRef,
+  useGithubStatusLookup,
+} from "../github-status-client";
+import {
+  type GithubStatusRef,
+  type GithubStatusResult,
+  githubStatusTone,
+} from "../github-status";
 
 const SESSION_POLL_INTERVAL_MS = 15_000;
 const SESSION_EVENT_REFETCH_DEBOUNCE_MS = 150;
-const SESSION_AUTOSAVE_MS = 500;
+const SESSION_EVENT_STALE_MS = 35_000;
+const SESSION_QUERY_DEBOUNCE_MS = 250;
 const DEFAULT_STALE_SESSION_DAYS = 7;
-const DEFAULT_RECENTLY_CLOSED_HOURS = 6;
 const SESSION_STALE_DAYS_STORAGE_KEY = "streamliner:sessionsStaleDays";
 const SESSION_GROUP_MODE_STORAGE_KEY = "streamliner:sessionsGroupMode";
-const TERMINAL_COLOR_QUICK_PICKS = [
-  "#e8114b",
-  "#4891c8",
-  "#41b878",
-  "#ff8c0a",
-  "#c71585",
-  "#2897f0",
-  "#2fcf32",
-  "#ffff00",
-  "#9825d7",
-  "#6754d7",
-  "#00ff00",
-  "#d6bd93",
-  "#f000e8",
-  "#19d9df",
-  "#82c6df",
-  "#b8b8b8",
-] as const;
+const SESSION_FACET_ALL = "__all__";
 
-type GroupMode = "recency" | "repo" | "folder" | "flat";
+type GroupMode = "recency" | "repo" | "folder" | "workstream" | "flat";
+type SessionsViewTab = "list" | "consoles";
 type SheetTab = "overview" | "activity" | "settings";
 
 const GROUP_MODES: Array<{ mode: GroupMode; label: string }> = [
   { mode: "recency", label: "Recency" },
   { mode: "repo", label: "Repo" },
   { mode: "folder", label: "Folder" },
+  { mode: "workstream", label: "Workstream" },
   { mode: "flat", label: "Flat" },
 ];
 
 const DEFAULT_GROUP_MODE: GroupMode = "recency";
+const EMPTY_WORKSTREAMS: WorkstreamRegistryListEntry[] = [];
 
 interface SessionDraft {
   title: string;
@@ -57,6 +122,7 @@ interface SessionDraft {
   branch: string;
   tagsText: string;
   lifecycleStatus: "active" | "paused" | "archived" | "ended";
+  graphBinding: SessionRegistryListItem["graphBinding"];
 }
 
 type SaveState = "idle" | "saving" | "saved" | "error";
@@ -81,6 +147,7 @@ function draftFromSession(session: SessionRegistryListItem): SessionDraft {
     branch: session.branch ?? "",
     tagsText: session.tags.join(", "),
     lifecycleStatus: session.lifecycleStatus,
+    graphBinding: session.graphBinding ? { ...session.graphBinding } : null,
   };
 }
 
@@ -94,56 +161,11 @@ function createEmptyDraft(): SessionDraft {
     branch: "",
     tagsText: "",
     lifecycleStatus: "active",
+    graphBinding: null,
   };
 }
 
-function toListItem(record: SessionRegistryRecord): SessionRegistryListItem {
-  return {
-    id: record.id,
-    version: record.version,
-    title: record.title,
-    titleSource: record.titleSource,
-    description: record.description,
-    lifecycleStatus: record.lifecycleStatus,
-    lastSeenAt: record.lastSeenAt,
-    updatedAt: record.updatedAt,
-    color: record.color,
-    cwd: record.cwd,
-    repo: record.repo,
-    branch: record.branch,
-    tags: record.tags,
-    originKind: record.origin.kind,
-    graphBinding: record.graphBinding,
-    copilotSessionId: record.copilotSessionId,
-    aiSummary: record.aiSummary,
-    aiSummaryModel: record.aiSummaryModel,
-    aiSummaryUpdatedAt: record.aiSummaryUpdatedAt,
-    aiSummaryEventsFingerprint: record.aiSummaryEventsFingerprint,
-    aiSummaryStatus: record.aiSummaryStatus,
-    aiSummaryError: record.aiSummaryError,
-    observedSessionKind: record.observedSessionKind,
-    copilotProcessState: record.copilotProcessState,
-    copilotProcessId: record.copilotProcessId,
-    activityStatus: record.activityStatus,
-    activityStatusUpdatedAt: record.activityStatusUpdatedAt,
-    trustedSignalSource: record.trustedSignalSource,
-    trustedStartedAt: record.trustedStartedAt,
-    trustedEndedAt: record.trustedEndedAt,
-    trustedLastSignalAt: record.trustedLastSignalAt,
-    trustedStartSource: record.trustedStartSource,
-    trustedEndReason: record.trustedEndReason,
-    trustedExecutionKind: record.trustedExecutionKind,
-    trustedInitialPromptLength: record.trustedInitialPromptLength,
-    trustedLastPromptLength: record.trustedLastPromptLength,
-    derivedWorktreePath: record.derivedWorktreePath,
-    derivedBranch: record.derivedBranch,
-    derivedGithubRefs: record.derivedGithubRefs,
-    derivedContextUpdatedAt: record.derivedContextUpdatedAt,
-    derivedContextEventsOffset: record.derivedContextEventsOffset,
-    derivedContextEventsSize: record.derivedContextEventsSize,
-    derivedContextEventsMtimeMs: record.derivedContextEventsMtimeMs,
-  };
-}
+const toListItem = sessionRegistryRecordToListItem;
 
 function normalizeTags(tagsText: string): string[] {
   const seen = new Set<string>();
@@ -163,6 +185,7 @@ function draftKey(draft: SessionDraft): string {
     branch: draft.branch,
     tags: normalizeTags(draft.tagsText),
     lifecycleStatus: draft.lifecycleStatus,
+    graphBinding: draft.graphBinding,
   });
 }
 
@@ -187,6 +210,9 @@ function buildPatch(
   const nextTags = normalizeTags(draft.tagsText);
   if (JSON.stringify(nextTags) !== JSON.stringify(session.tags)) {
     patch.tags = nextTags;
+  }
+  if (JSON.stringify(draft.graphBinding ?? null) !== JSON.stringify(session.graphBinding ?? null)) {
+    patch.graphBinding = draft.graphBinding;
   }
 
   if (
@@ -234,6 +260,7 @@ function sessionSnapshotKey(session: SessionRegistryListItem | null): string | n
     tags: session.tags,
     originKind: session.originKind,
     graphBinding: session.graphBinding,
+    pawLaunch: session.pawLaunch,
     copilotSessionId: session.copilotSessionId,
     aiSummary: session.aiSummary,
     aiSummaryModel: session.aiSummaryModel,
@@ -246,6 +273,8 @@ function sessionSnapshotKey(session: SessionRegistryListItem | null): string | n
     copilotProcessId: session.copilotProcessId,
     activityStatus: session.activityStatus,
     activityStatusUpdatedAt: session.activityStatusUpdatedAt,
+    activityEvidence: session.activityEvidence,
+    pawWorkflow: session.pawWorkflow,
     trustedSignalSource: session.trustedSignalSource,
     trustedStartedAt: session.trustedStartedAt,
     trustedEndedAt: session.trustedEndedAt,
@@ -271,7 +300,6 @@ function builderSnapshotKey(session: SessionRegistryListItem | null): string | n
   }
   return JSON.stringify({
     id: session.id,
-    version: session.version,
     title: session.title,
     description: session.description,
     lifecycleStatus: session.lifecycleStatus,
@@ -279,6 +307,15 @@ function builderSnapshotKey(session: SessionRegistryListItem | null): string | n
     tags: session.tags,
     graphBinding: session.graphBinding,
   });
+}
+
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedValue(value), delayMs);
+    return () => clearTimeout(timer);
+  }, [delayMs, value]);
+  return debouncedValue;
 }
 
 function statusClass(status: SessionRegistryListItem["lifecycleStatus"]): string {
@@ -302,34 +339,8 @@ function formatTimestamp(value: string | null): string {
   return new Date(value).toLocaleString();
 }
 
-function looksLikeSummarizerPrompt(value: string): boolean {
-  const trimmed = value.trim();
-  return trimmed.startsWith("Repo:") && trimmed.includes("Existing title:");
-}
-
-function isHelperLikeObservedSession(session: SessionRegistryListItem): boolean {
-  return (
-    session.originKind === "observed" &&
-    (session.observedSessionKind === "helper" ||
-      looksLikeSummarizerPrompt(session.title) ||
-      session.description.startsWith("AI summary helper ·"))
-  );
-}
-
-function hasTrustedSignal(session: SessionRegistryListItem): boolean {
-  return session.trustedSignalSource !== null;
-}
-
 function sessionDisplayColor(session: Pick<SessionRegistryListItem, "color">): string {
   return session.color ?? "var(--sl-accent-border)";
-}
-
-function colorInputValue(value: string): string {
-  return /^#[0-9a-f]{6}$/i.test(value.trim()) ? value.trim() : "#5b7fff";
-}
-
-function normalizeColor(value: string): string {
-  return value.trim().toLowerCase();
 }
 
 async function copyTextToClipboard(text: string): Promise<void> {
@@ -342,7 +353,7 @@ async function copyTextToClipboard(text: string): Promise<void> {
 function getRowFallbackTitle(session: SessionRegistryListItem): string {
   const title = session.title.trim();
   const looksLikePrompt =
-    looksLikeSummarizerPrompt(title) ||
+    (title.startsWith("Repo:") && title.includes("Existing title:")) ||
     title.includes("Cwd:") ||
     title.includes("Existing title:");
   if (!session.copilotSessionId || (!looksLikePrompt && title.length <= 80)) {
@@ -488,33 +499,12 @@ function getSessionLatestDescription(
   return "No conversation description has been generated yet.";
 }
 
-function getActivityTimestamp(session: SessionRegistryListItem): number | null {
-  if (!session.lastSeenAt) {
-    return null;
-  }
-  const parsed = Date.parse(session.lastSeenAt);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
 function isSessionStale(
   session: SessionRegistryListItem,
   staleSessionDays: number,
 ): boolean {
   const staleCutoff = Date.now() - staleSessionDays * 24 * 60 * 60 * 1000;
   return getFreshnessTimestamp(session) < staleCutoff;
-}
-
-function isRecentlyClosedObservedSession(session: SessionRegistryListItem): boolean {
-  if (session.originKind !== "observed" || session.copilotProcessState === "live") {
-    return false;
-  }
-  const activityTimestamp = getActivityTimestamp(session);
-  if (activityTimestamp === null) {
-    return false;
-  }
-  return (
-    Date.now() - activityTimestamp <= DEFAULT_RECENTLY_CLOSED_HOURS * 60 * 60 * 1000
-  );
 }
 
 function isRelevantSession(session: SessionRegistryListItem): boolean {
@@ -527,134 +517,66 @@ function isRelevantSession(session: SessionRegistryListItem): boolean {
   return hasTrustedSignal(session);
 }
 
-function isRecentlyEndedTrustedSession(session: SessionRegistryListItem): boolean {
-  if (!hasTrustedSignal(session) || !session.trustedEndedAt) {
-    return false;
+type PawWorkflowSummary = NonNullable<SessionRegistryListItem["pawWorkflow"]>;
+type VisiblePawWorkflowSummary = PawWorkflowSummary & { status: "recognized" };
+
+function pawWorkflowStageLabel(stage: PawWorkflowSummary["stage"]): string {
+  switch (stage) {
+    case "init":
+      return "init";
+    case "planning":
+      return "planning";
+    case "implementation":
+      return "implementation";
+    case "review":
+      return "review";
+    case "finalization":
+      return "finalization";
+    default:
+      return "not inferred";
   }
-  const endedAt = Date.parse(session.trustedEndedAt);
-  if (!Number.isFinite(endedAt)) {
-    return false;
-  }
-  return Date.now() - endedAt <= DEFAULT_RECENTLY_CLOSED_HOURS * 60 * 60 * 1000;
 }
 
-function getObservedStatusLabel(session: SessionRegistryListItem): string | null {
-  if (session.originKind !== "observed") {
+function pawArtifactKindLabel(kind: PawWorkflowSummary["artifacts"][number]["kind"]): string {
+  switch (kind) {
+    case "specification":
+      return "spec";
+    case "finalization":
+      return "final";
+    default:
+      return kind;
+  }
+}
+
+function getPawWorkflowLabel(workflow: VisiblePawWorkflowSummary): string {
+  return `🐾 PAW ${pawWorkflowStageLabel(workflow.stage)}`;
+}
+
+function isRecognizedPawWorkflow(
+  workflow: PawWorkflowSummary,
+): workflow is VisiblePawWorkflowSummary {
+  return workflow.status === "recognized";
+}
+
+function visiblePawWorkflow(session: SessionRegistryListItem): VisiblePawWorkflowSummary | null {
+  const workflow = session.pawWorkflow;
+  if (!workflow || session.originKind !== "launched" || !isRecognizedPawWorkflow(workflow)) {
     return null;
   }
-  if (isHelperLikeObservedSession(session)) {
-    return "helper";
-  }
-  if (session.copilotProcessState === "live") {
-    return "open";
-  }
-  if (session.copilotProcessState === "stale_lock") {
-    return "stale lock";
-  }
-  if (isRecentlyClosedObservedSession(session)) {
-    return "closed";
-  }
-  return "historical";
+  return workflow;
 }
 
-function getTrustedStatusLabel(session: SessionRegistryListItem): string | null {
-  if (!hasTrustedSignal(session)) {
-    return null;
-  }
-  const runner = session.trustedExecutionKind === "agency" ? "agency" : "cli";
-  if (isTrustedActiveSession(session)) {
-    return `${runner} open`;
-  }
-  if (isTrustedInterruptedSession(session)) {
-    return `${runner} resumable`;
-  }
-  if (session.trustedEndedAt) {
-    return `${runner} ended`;
-  }
-  return `${runner} trusted`;
+function getPawWorkflowDescription(workflow: VisiblePawWorkflowSummary): string {
+  return `Artifact scan recognized ${workflow.artifactCount} PAW artifact${
+    workflow.artifactCount === 1 ? "" : "s"
+  }.`;
 }
 
-function getActivityStatusLabel(session: SessionRegistryListItem): string {
-  switch (session.activityStatus) {
-    case "working":
-      return "working";
-    case "waiting_for_input":
-      return "waiting for you";
-    case "interrupted":
-      return "interrupted";
-    case "exited":
-      return "exited";
-    case "unknown":
-      return getTrustedStatusLabel(session) ?? getObservedStatusLabel(session) ?? "unknown";
-    default:
-      return "unknown";
+function formatPawArtifactMtime(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) {
+    return "mtime unavailable";
   }
-}
-
-function activityStatusClass(status: SessionRegistryListItem["activityStatus"]): string {
-  switch (status) {
-    case "working":
-      return "accent";
-    case "waiting_for_input":
-      return "green";
-    case "interrupted":
-      return "amber";
-    case "exited":
-      return "muted";
-    case "unknown":
-      return "muted";
-    default:
-      return "muted";
-  }
-}
-
-function activitySignalClass(status: SessionRegistryListItem["activityStatus"]): string {
-  switch (status) {
-    case "working":
-      return "working";
-    case "waiting_for_input":
-      return "waiting";
-    case "interrupted":
-    case "exited":
-    case "unknown":
-      return "inactive";
-    default:
-      return "inactive";
-  }
-}
-
-function activityStatusHint(status: SessionRegistryListItem["activityStatus"]): string {
-  switch (status) {
-    case "working":
-      return "agent active";
-    case "waiting_for_input":
-      return "assistant done";
-    case "interrupted":
-      return "resumable";
-    case "exited":
-      return "ended";
-    case "unknown":
-      return "activity unknown";
-    default:
-      return "activity unknown";
-  }
-}
-
-function getActivityStatusDescription(session: SessionRegistryListItem): string {
-  switch (session.activityStatus) {
-    case "working":
-      return "The latest Copilot event indicates the assistant turn is still in progress.";
-    case "waiting_for_input":
-      return "The latest Copilot event indicates the assistant turn ended and the session is waiting for input.";
-    case "interrupted":
-      return "The session started without a matching end signal, and Streamliner no longer sees a live Copilot process.";
-    case "exited":
-      return "The session has an end signal or ended lifecycle state.";
-    case "unknown":
-      return "Streamliner has not indexed enough activity yet to classify this session.";
-    default:
-      return "Streamliner has not indexed enough activity yet to classify this session.";
-  }
+  return new Date(value).toLocaleString();
 }
 
 function readStaleSessionDays(): number {
@@ -674,7 +596,13 @@ function readGroupMode(): GroupMode {
     return DEFAULT_GROUP_MODE;
   }
   const stored = window.localStorage.getItem(SESSION_GROUP_MODE_STORAGE_KEY);
-  if (stored === "recency" || stored === "repo" || stored === "folder" || stored === "flat") {
+  if (
+    stored === "recency" ||
+    stored === "repo" ||
+    stored === "folder" ||
+    stored === "workstream" ||
+    stored === "flat"
+  ) {
     return stored;
   }
   return DEFAULT_GROUP_MODE;
@@ -747,6 +675,15 @@ function githubRefRepo(ref: DerivedGithubRef, session: SessionRegistryListItem):
   return ref.repo ?? session.repo;
 }
 
+function githubRepoParts(repo: string | null): { owner: string; repo: string } | null {
+  const trimmed = repo?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const match = trimmed.match(/^([\w.-]+)\/([\w.-]+)$/);
+  return match ? { owner: match[1], repo: match[2] } : null;
+}
+
 function normalizeGithubRepoForUrl(repo: string | null): string | null {
   const trimmed = repo?.trim();
   if (!trimmed) {
@@ -778,6 +715,51 @@ function safeGithubRefUrl(url: string | null): string | null {
   return null;
 }
 
+function githubStatusRefForDerivedRef(
+  ref: DerivedGithubRef,
+  session: SessionRegistryListItem,
+): GithubStatusRef | null {
+  if (ref.type !== "issue" && ref.type !== "pr") {
+    return null;
+  }
+  const repo = githubRepoParts(githubRefRepo(ref, session));
+  if (!repo) {
+    return null;
+  }
+  return {
+    type: ref.type,
+    owner: repo.owner,
+    repo: repo.repo,
+    number: ref.number,
+  };
+}
+
+function githubStatusRefsForSessions(
+  sessions: readonly SessionRegistryListItem[],
+  selectedSession: SessionRegistryListItem | null,
+): GithubStatusRef[] {
+  const seen = new Set<string>();
+  const refs: GithubStatusRef[] = [];
+  const sourceSessions = selectedSession
+    ? [...sessions, selectedSession]
+    : sessions;
+  for (const session of sourceSessions) {
+    for (const ref of session.derivedGithubRefs) {
+      const statusRef = githubStatusRefForDerivedRef(ref, session);
+      if (!statusRef) {
+        continue;
+      }
+      const key = `${statusRef.type}:${statusRef.owner}/${statusRef.repo}#${statusRef.number}`.toLowerCase();
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      refs.push(statusRef);
+    }
+  }
+  return refs;
+}
+
 function githubRefUrl(ref: DerivedGithubRef, session: SessionRegistryListItem): string | null {
   const explicitUrl = safeGithubRefUrl(ref.url);
   if (explicitUrl) {
@@ -798,36 +780,228 @@ interface GithubRefChipProps {
   refItem: DerivedGithubRef;
   session: SessionRegistryListItem;
   className: string;
+  status?: GithubStatusResult | null;
   showRepo?: boolean;
 }
 
-function GithubRefChip({ refItem, session, className, showRepo = false }: GithubRefChipProps) {
+function GithubRefChip({
+  refItem,
+  session,
+  className,
+  status = null,
+  showRepo = false,
+}: GithubRefChipProps) {
   const label = githubRefLabel(refItem);
   const repo = githubRefRepo(refItem, session);
   const url = githubRefUrl(refItem, session);
+  const statusClass = status ? ` github-status ${githubStatusTone(status)}` : "";
+  const statusTitle = status?.error
+    ? `${status.statusLabel}: ${status.error.message}`
+    : status?.statusLabel;
   const content = (
     <>
       {label}
       {showRepo && repo ? ` · ${repo}` : ""}
+      {status ? ` · ${status.statusLabel}` : ""}
     </>
   );
 
   if (!url) {
-    return <span className={className}>{content}</span>;
+    return (
+      <span className={`${className}${statusClass}`} title={statusTitle}>
+        {content}
+      </span>
+    );
   }
 
   return (
     <a
-      className={`${className} linkable`}
+      className={`${className}${statusClass} linkable`}
       href={url}
       target="_blank"
       rel="noopener noreferrer"
-      aria-label={`Open ${label} in GitHub`}
+      aria-label={`Open ${statusTitle ? `${label} (${statusTitle})` : label} in GitHub`}
+      title={statusTitle}
       onClick={(event) => event.stopPropagation()}
     >
       {content}
     </a>
   );
+}
+
+interface WorkstreamLinkChipProps {
+  target: WorkstreamRouteTarget | null;
+  className: string;
+  label: string;
+  title?: string;
+  onOpenWorkstream?: (target: WorkstreamRouteTarget) => void | Promise<void>;
+  children: ReactNode;
+}
+
+function WorkstreamLinkChip({
+  target,
+  className,
+  label,
+  title,
+  onOpenWorkstream,
+  children,
+}: WorkstreamLinkChipProps) {
+  if (!target) {
+    return (
+      <span className={className} title={title}>
+        {children}
+      </span>
+    );
+  }
+
+  return (
+    <a
+      className={`${className} linkable`}
+      href={workstreamRoutePath(target)}
+      title={title}
+      aria-label={label}
+      onClick={(event) => {
+        event.stopPropagation();
+        if (onOpenWorkstream) {
+          handleInAppLinkClick(event, () => onOpenWorkstream(target));
+        }
+      }}
+    >
+      {children}
+    </a>
+  );
+}
+
+function workstreamLinkageTitle(
+  linkage: SessionWorkstreamLinkageResolution,
+): string {
+  switch (linkage.status) {
+    case "resolved":
+      return "Open bound workstream node";
+    case "workstream-only":
+      return "Open assigned workstream";
+    case "graph-loading":
+      return linkage.note ?? "Resolving bound workstream node";
+    case "graph-unavailable":
+    case "node-unresolved":
+    case "missing-workstream":
+    case "ambiguous-workstream":
+      return linkage.note ?? "Bound workstream context is unresolved";
+    case "unbound":
+      return "This session is not bound to a workstream";
+  }
+}
+
+function workstreamLinkageStatusLabel(
+  linkage: SessionWorkstreamLinkageResolution,
+): string {
+  switch (linkage.status) {
+    case "resolved":
+      return "Resolved";
+    case "workstream-only":
+      return "Workstream assigned";
+    case "graph-loading":
+      return "Resolving node";
+    case "graph-unavailable":
+      return "Graph unavailable";
+    case "node-unresolved":
+      return "Node not found";
+    case "missing-workstream":
+      return "Workstream not tracked";
+    case "ambiguous-workstream":
+      return "Ambiguous workstream";
+    case "unbound":
+      return "Unbound";
+  }
+}
+
+function SessionWorkstreamContextChips({
+  linkage,
+  onOpenWorkstream,
+}: {
+  linkage: SessionWorkstreamLinkageResolution;
+  onOpenWorkstream?: (target: WorkstreamRouteTarget) => void | Promise<void>;
+}) {
+  if (linkage.status === "unbound") {
+    return null;
+  }
+
+  const title = workstreamLinkageTitle(linkage);
+  const workstreamLabel = linkage.workstreamLabel ?? linkage.workstreamId ?? "unknown";
+  const nodeLabel = linkage.nodeLabel ?? linkage.nodeId;
+
+  return (
+    <>
+      <WorkstreamLinkChip
+        target={linkage.workstreamRouteTarget}
+        className="sl-session-row-context-chip important"
+        label={`Open workstream ${workstreamLabel}`}
+        title={title}
+        onOpenWorkstream={onOpenWorkstream}
+      >
+        workstream {workstreamLabel}
+      </WorkstreamLinkChip>
+      {nodeLabel && (
+        <WorkstreamLinkChip
+          target={linkage.nodeRouteTarget}
+          className="sl-session-row-context-chip"
+          label={`Open workstream node ${nodeLabel}`}
+          title={title}
+          onOpenWorkstream={onOpenWorkstream}
+        >
+          node {nodeLabel}
+        </WorkstreamLinkChip>
+      )}
+    </>
+  );
+}
+
+function getManagedRuntime(
+  session: SessionRegistryListItem,
+): ManagedRuntimeProjection | null {
+  return managedRuntimeProjectionFromSession(session);
+}
+
+function managedRuntimeLifecycleText(runtime: ManagedRuntimeProjection): string {
+  return formatManagedRuntimeLabel(runtime.lifecycleState);
+}
+
+function managedRuntimeSummaryText(runtime: ManagedRuntimeProjection): string {
+  return (
+    runtime.summary ??
+    runtime.blockerSummary ??
+    runtime.errorSummary ??
+    `Background session is ${managedRuntimeLifecycleText(runtime)}.`
+  );
+}
+
+function managedRuntimeUpdatedTimestamp(session: SessionRegistryListItem): number {
+  const runtime = getManagedRuntime(session);
+  return Date.parse(
+    runtime?.lifecycleUpdatedAt ??
+      session.lastSeenAt ??
+      session.updatedAt,
+  );
+}
+
+function sortManagedConsoleSessions(
+  sessions: readonly SessionRegistryListItem[],
+): SessionRegistryListItem[] {
+  return sessions
+    .filter((session) => getManagedRuntime(session))
+    .sort((a, b) => {
+      const aRuntime = getManagedRuntime(a);
+      const bRuntime = getManagedRuntime(b);
+      if (!aRuntime || !bRuntime) {
+        return 0;
+      }
+      const activeDelta = Number(isManagedRuntimeConsoleLive(bRuntime)) -
+        Number(isManagedRuntimeConsoleLive(aRuntime));
+      if (activeDelta !== 0) {
+        return activeDelta;
+      }
+      return managedRuntimeUpdatedTimestamp(b) - managedRuntimeUpdatedTimestamp(a);
+    });
 }
 
 type RecencyBucketKey =
@@ -883,7 +1057,14 @@ interface SessionGroup {
   label: string;
   code: string | null;
   latestTs: number;
+  order: number;
   sessions: SessionRegistryListItem[];
+}
+
+interface SessionFacetOption {
+  value: string;
+  label: string;
+  count: number;
 }
 
 function repoGroupKey(session: SessionRegistryListItem): string {
@@ -902,6 +1083,42 @@ function displayRepoLabel(repoKey: string): { label: string; code: string | null
   return { label: shortName, code: repoKey };
 }
 
+function buildRepoFacetOptions(sessions: readonly SessionRegistryListItem[]): SessionFacetOption[] {
+  const counts = new Map<string, number>();
+  for (const session of sessions) {
+    const key = repoGroupKey(session);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([value, count]) => {
+      const display = displayRepoLabel(value);
+      return {
+        value,
+        label: display.code ?? display.label,
+        count,
+      };
+    })
+    .sort((left, right) => left.label.localeCompare(right.label));
+}
+
+function buildWorkstreamFacetOptions(
+  sessions: readonly SessionRegistryListItem[],
+  linkages: ReadonlyMap<string, SessionWorkstreamLinkageResolution>,
+): SessionFacetOption[] {
+  const counts = new Map<string, { label: string; count: number }>();
+  for (const session of sessions) {
+    const group = linkages.get(session.id)?.group ?? UNBOUND_SESSION_WORKSTREAM_GROUP;
+    const existing = counts.get(group.key);
+    counts.set(group.key, {
+      label: group.code ?? group.label,
+      count: (existing?.count ?? 0) + 1,
+    });
+  }
+  return [...counts.entries()]
+    .map(([value, option]) => ({ value, ...option }))
+    .sort((left, right) => left.label.localeCompare(right.label));
+}
+
 function displayFolderLabel(folderKey: string): { label: string; code: string | null } {
   if (folderKey === "__no_cwd__") {
     return { label: "(no cwd)", code: null };
@@ -913,9 +1130,17 @@ function displayFolderLabel(folderKey: string): { label: string; code: string | 
   return { label: short || folderKey, code: folderKey };
 }
 
+function workstreamGraphApiUrl(entry: {
+  projectKey: string;
+  workstreamId: string;
+}): string {
+  return `/api/workstreams/${encodeURIComponent(entry.projectKey)}/${encodeURIComponent(entry.workstreamId)}/graph`;
+}
+
 function groupSessions(
   sessions: SessionRegistryListItem[],
   mode: GroupMode,
+  linkages: ReadonlyMap<string, SessionWorkstreamLinkageResolution>,
 ): SessionGroup[] {
   if (mode === "flat") {
     const sorted = [...sessions].sort(
@@ -928,18 +1153,26 @@ function groupSessions(
         label: "All sessions",
         code: null,
         latestTs,
+        order: 0,
         sessions: sorted,
       },
     ];
   }
 
   const buckets = new Map<string, SessionRegistryListItem[]>();
+  const workstreamGroups = new Map<string, SessionWorkstreamLinkageResolution["group"]>();
   for (const session of sessions) {
     let key: string;
     if (mode === "recency") {
       key = recencyBucket(session).key;
     } else if (mode === "repo") {
       key = repoGroupKey(session);
+    } else if (mode === "workstream") {
+      const group = linkages.get(session.id)?.group;
+      key = group?.key ?? "__unbound__";
+      if (group) {
+        workstreamGroups.set(key, group);
+      }
     } else {
       key = folderGroupKey(session);
     }
@@ -960,22 +1193,31 @@ function groupSessions(
 
     let label = key;
     let code: string | null = null;
+    let order = Number.MAX_SAFE_INTEGER;
     if (mode === "recency") {
       // label comes from the bucket metadata
       const sample = sorted[0];
       const info = recencyBucket(sample);
       label = info.label;
+      order = info.order;
     } else if (mode === "repo") {
       const display = displayRepoLabel(key);
       label = display.label;
       code = display.code;
+    } else if (mode === "workstream") {
+      const group = workstreamGroups.get(key);
+      if (group) {
+        label = group.label;
+        code = group.code;
+        order = group.order;
+      }
     } else {
       const display = displayFolderLabel(key);
       label = display.label;
       code = display.code;
     }
 
-    groups.push({ key, label, code, latestTs, sessions: sorted });
+    groups.push({ key, label, code, latestTs, order, sessions: sorted });
   }
 
   if (mode === "recency") {
@@ -994,6 +1236,19 @@ function groupSessions(
       never: 10,
     };
     groups.sort((a, b) => (order[a.key as RecencyBucketKey] ?? 99) - (order[b.key as RecencyBucketKey] ?? 99));
+  } else if (mode === "workstream") {
+    groups.sort((a, b) => {
+      if (a.key === UNBOUND_SESSION_WORKSTREAM_GROUP.key && b.key !== UNBOUND_SESSION_WORKSTREAM_GROUP.key) {
+        return 1;
+      }
+      if (b.key === UNBOUND_SESSION_WORKSTREAM_GROUP.key && a.key !== UNBOUND_SESSION_WORKSTREAM_GROUP.key) {
+        return -1;
+      }
+      if (a.order !== b.order) {
+        return a.order - b.order;
+      }
+      return a.label.localeCompare(b.label);
+    });
   }
   return groups;
 }
@@ -1037,6 +1292,16 @@ function useLatestValue<T>(value: T) {
   return ref;
 }
 
+function isPlainEnterKey(event: ReactKeyboardEvent<HTMLInputElement>): boolean {
+  return (
+    event.key === "Enter" &&
+    !event.shiftKey &&
+    !event.altKey &&
+    !event.ctrlKey &&
+    !event.metaKey
+  );
+}
+
 interface SessionSaveOptions {
   background?: boolean;
   keepalive?: boolean;
@@ -1046,17 +1311,66 @@ interface SessionSaveOptions {
 
 interface SessionsPageProps {
   registerBeforeLeave?: (handler: (() => Promise<boolean>) | null) => void;
+  workstreams?: WorkstreamRegistryListEntry[];
+  defaultCliArgs?: readonly string[] | null;
+  onOpenWorkstream?: (target: WorkstreamRouteTarget) => void | Promise<void>;
+  routeWorkstreamId?: string | null;
+  routeNodeId?: string | null;
+  routeTab?: SessionsViewTab | null;
 }
 
-export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
+function buildVisibleRestartCommand(
+  session: SessionRegistryListItem,
+  defaultCliArgs: readonly string[] | null,
+): string | null {
+  if (!session.copilotSessionId) {
+    return null;
+  }
+  if (session.launchCliArgs === null && defaultCliArgs === null) {
+    return null;
+  }
+  return buildRestartCommand(session, defaultCliArgs ?? []);
+}
+
+function restartUnavailableMessage(
+  session: SessionRegistryListItem,
+  defaultCliArgs: readonly string[] | null,
+): string {
+  if (!session.copilotSessionId) {
+    return "Restart unavailable; no Copilot session ID";
+  }
+  if (session.launchCliArgs === null && defaultCliArgs === null) {
+    return "Restart unavailable; session launch settings are still loading";
+  }
+  return "Restart unavailable";
+}
+
+export function SessionsPage({
+  registerBeforeLeave,
+  workstreams = EMPTY_WORKSTREAMS,
+  defaultCliArgs = null,
+  onOpenWorkstream,
+  routeWorkstreamId = null,
+  routeNodeId = null,
+  routeTab = null,
+}: SessionsPageProps) {
   const [sessions, setSessions] = useState<SessionRegistryListItem[]>([]);
+  const [workstreamGraphs, setWorkstreamGraphs] = useState<
+    Record<string, WorkstreamGraphLoadState>
+  >({});
   const [query, setQuery] = useState("");
   const [showArchived, setShowArchived] = useState(false);
   const [showEnded, setShowEnded] = useState(false);
   const [showAllObserved, setShowAllObserved] = useState(false);
+  const [viewTab, setViewTab] = useState<SessionsViewTab>(
+    routeTab === "consoles" ? "consoles" : "list",
+  );
+  const [repoFacet, setRepoFacet] = useState(SESSION_FACET_ALL);
+  const [workstreamFacet, setWorkstreamFacet] = useState(SESSION_FACET_ALL);
   const [staleSessionDays, setStaleSessionDays] = useState(readStaleSessionDays);
   const [groupMode, setGroupMode] = useState<GroupMode>(readGroupMode);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedConsoleId, setSelectedConsoleId] = useState<string | null>(null);
   const [draft, setDraft] = useState<SessionDraft>(createEmptyDraft);
   const [selectedSnapshot, setSelectedSnapshot] = useState<SessionRegistryListItem | null>(
     null,
@@ -1072,106 +1386,136 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
   const [syncState, setSyncState] = useState<SyncState>("connecting");
   const [conflictPending, setConflictPending] = useState<SessionConflictState | null>(null);
   const [creatingState, setCreatingState] = useState<SaveState>("idle");
-  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [githubStatusRefreshKey, setGithubStatusRefreshKey] = useState(0);
   const eventRefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const eventStreamLiveRef = useRef(false);
+  const lastStreamEventAtRef = useRef(0);
+  const isDocumentVisible = useIsDocumentVisible();
   const skipUnmountFlushRef = useRef(false);
   const saveRequestIdRef = useRef(0);
   // Frozen group order per mode. Filled lazily on first render for a mode; cleared by Resort.
   const frozenOrderRef = useRef<Partial<Record<GroupMode, string[]>>>({});
   const creatingRef = useLatestValue(creating);
+  const sessionsRef = useLatestValue(sessions);
   const selectedIdRef = useLatestValue(selectedId);
   const draftRef = useLatestValue(draft);
   const selectedSnapshotRef = useLatestValue(selectedSnapshot);
   const saveStateRef = useLatestValue(saveState);
   const conflictPendingRef = useLatestValue(conflictPending);
+  const workstreamGraphsRef = useLatestValue(workstreamGraphs);
+  const mountedRef = useRef(false);
+  const loadingWorkstreamGraphKeysRef = useRef(new Set<string>());
+  const debouncedQuery = useDebouncedValue(query, SESSION_QUERY_DEBOUNCE_MS);
+
+  const sessionListQuery = useMemo(
+    () => ({
+      includeArchived: showArchived,
+      text: debouncedQuery,
+      workstreamId: routeWorkstreamId,
+      nodeId: routeNodeId,
+    }),
+    [debouncedQuery, routeNodeId, routeWorkstreamId, showArchived],
+  );
+  const sessionMatchOptions = useMemo<SessionRegistryListOptions>(
+    () => ({
+      includeArchived: showArchived,
+      text: debouncedQuery,
+      workstreamId: routeWorkstreamId?.trim() ? routeWorkstreamId : undefined,
+      nodeId: routeNodeId?.trim() ? routeNodeId : undefined,
+    }),
+    [debouncedQuery, routeNodeId, routeWorkstreamId, showArchived],
+  );
+  const sessionEventsUrl = useMemo(
+    () => sessionRegistryEventsUrl(sessionListQuery),
+    [sessionListQuery],
+  );
 
   const applySessionList = useCallback(
     (nextSessions: SessionRegistryListItem[], keepSelection = true) => {
+      sessionsRef.current = nextSessions;
       setSessions(nextSessions);
+      setGithubStatusRefreshKey((current) => current + 1);
       setError(null);
-        const currentCreating = creatingRef.current;
-        const currentSelectedId = selectedIdRef.current;
-        const currentSelectedSnapshot = selectedSnapshotRef.current;
-        const currentDraft = draftRef.current;
-        const currentSaveState = saveStateRef.current;
-        if (!keepSelection) {
-          return;
-        }
-        if (currentCreating) {
+      const currentCreating = creatingRef.current;
+      const currentSelectedId = selectedIdRef.current;
+      const currentSelectedSnapshot = selectedSnapshotRef.current;
+      const currentDraft = draftRef.current;
+      const currentSaveState = saveStateRef.current;
+      if (!keepSelection) {
+        return;
+      }
+      if (currentCreating) {
+        return;
+      }
+
+      if (currentSelectedId) {
+        const matching =
+          nextSessions.find((session) => session.id === currentSelectedId) ?? null;
+        if (!matching) {
+          setSelectedId(null);
+          setSelectedSnapshot(null);
+          setDraft(createEmptyDraft());
+          setSaveState("idle");
+          setConflictPending(null);
+          setSheetOpen(false);
           return;
         }
 
-        if (currentSelectedId) {
-          const matching =
-            nextSessions.find((session) => session.id === currentSelectedId) ?? null;
-          if (!matching) {
-            setSelectedId(null);
-            setSelectedSnapshot(null);
-            setDraft(createEmptyDraft());
-            setSaveState("idle");
-            setConflictPending(null);
-            setSheetOpen(false);
-            return;
+        const currentDraftKey = draftKey(currentDraft);
+        const snapshotDraftKey = currentSelectedSnapshot
+          ? draftKey(draftFromSession(currentSelectedSnapshot))
+          : null;
+        const nextSnapshotKey = sessionSnapshotKey(matching);
+        const currentSnapshotKey = sessionSnapshotKey(currentSelectedSnapshot);
+        const nextBuilderKey = builderSnapshotKey(matching);
+        const currentBuilderKey = builderSnapshotKey(currentSelectedSnapshot);
+        if (
+          currentSaveState !== "saving" &&
+          currentSelectedSnapshot &&
+          currentDraftKey === snapshotDraftKey
+        ) {
+          const nextDraft = draftFromSession(matching);
+          if (currentSnapshotKey !== nextSnapshotKey) {
+            setSelectedSnapshot(matching);
+            setSaveError(null);
           }
-
-          const currentDraftKey = draftKey(currentDraft);
-          const snapshotDraftKey = currentSelectedSnapshot
-            ? draftKey(draftFromSession(currentSelectedSnapshot))
-            : null;
-          const nextSnapshotKey = sessionSnapshotKey(matching);
-          const currentSnapshotKey = sessionSnapshotKey(currentSelectedSnapshot);
-          const nextBuilderKey = builderSnapshotKey(matching);
-          const currentBuilderKey = builderSnapshotKey(currentSelectedSnapshot);
-          if (
-            currentSaveState !== "saving" &&
-            currentSelectedSnapshot &&
-            currentDraftKey === snapshotDraftKey
-          ) {
-            const nextDraft = draftFromSession(matching);
-            if (currentSnapshotKey !== nextSnapshotKey) {
-              setSelectedSnapshot(matching);
-              setSaveError(null);
-            }
-            if (currentDraftKey !== draftKey(nextDraft)) {
-              setDraft(nextDraft);
-            }
-            setConflictPending((current) =>
-              current?.sessionId === matching.id ? null : current,
-            );
-          } else if (
-            currentSaveState !== "saving" &&
-            currentSelectedSnapshot &&
-            currentBuilderKey !== nextBuilderKey
-          ) {
-            const message =
-              "This session changed elsewhere. Your unsaved edits are preserved; edit a field to re-apply them after reviewing the latest row.";
-            setConflictPending({
-              sessionId: matching.id,
-              latest: matching,
-              fields: ["builder-owned fields"],
-              message,
-            });
-            setSaveError(message);
+          if (currentDraftKey !== draftKey(nextDraft)) {
+            setDraft(nextDraft);
           }
+          setConflictPending((current) =>
+            current?.sessionId === matching.id ? null : current,
+          );
+        } else if (
+          currentSaveState !== "saving" &&
+          currentSelectedSnapshot &&
+          currentBuilderKey !== nextBuilderKey
+        ) {
+          const message =
+            "This session changed elsewhere. Your unsaved edits are preserved; edit a field to re-apply them after reviewing the latest row.";
+          setConflictPending({
+            sessionId: matching.id,
+            latest: matching,
+            fields: ["builder-owned fields"],
+            message,
+          });
+          setSaveError(message);
         }
+      }
     },
-    [creatingRef, draftRef, saveStateRef, selectedIdRef, selectedSnapshotRef],
+    [
+      creatingRef,
+      draftRef,
+      saveStateRef,
+      selectedIdRef,
+      selectedSnapshotRef,
+      sessionsRef,
+    ],
   );
 
   const fetchSessions = useCallback(
     async (keepSelection = true) => {
       try {
-        const search = new URLSearchParams();
-        if (showArchived) {
-          search.set("includeArchived", "true");
-        }
-        if (query.trim().length > 0) {
-          search.set("text", query.trim());
-        }
-        const suffix = search.toString();
-        const response = await fetch(
-          suffix.length > 0 ? `/api/sessions?${suffix}` : "/api/sessions",
-        );
+        const response = await fetch(sessionRegistryListUrl(sessionListQuery));
         if (!response.ok) {
           throw new Error(`Failed to load sessions (${response.status})`);
         }
@@ -1183,8 +1527,20 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
         setLoading(false);
       }
     },
-    [applySessionList, query, showArchived],
+    [applySessionList, sessionListQuery],
   );
+
+  const shouldPoll = useCallback(() => {
+    if (!eventStreamLiveRef.current) {
+      return true;
+    }
+    return Date.now() - lastStreamEventAtRef.current > SESSION_EVENT_STALE_MS;
+  }, []);
+
+  const markStreamEvent = useCallback(() => {
+    eventStreamLiveRef.current = true;
+    lastStreamEventAtRef.current = Date.now();
+  }, []);
 
   const scheduleEventRefetch = useCallback(
     (delayMs = SESSION_EVENT_REFETCH_DEBOUNCE_MS) => {
@@ -1215,10 +1571,12 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
   useEffect(() => {
     void fetchSessions();
     const timer = setInterval(() => {
-      void fetchSessions();
+      if (shouldPoll()) {
+        void fetchSessions();
+      }
     }, SESSION_POLL_INTERVAL_MS);
     const refreshWhenVisible = () => {
-      if (document.visibilityState !== "hidden") {
+      if (document.visibilityState !== "hidden" && shouldPoll()) {
         void fetchSessions();
       }
     };
@@ -1229,33 +1587,44 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
       window.removeEventListener("focus", refreshWhenVisible);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
-  }, [fetchSessions]);
+  }, [fetchSessions, shouldPoll]);
 
   useEffect(() => {
     if (typeof EventSource === "undefined") {
+      eventStreamLiveRef.current = false;
+      setSyncState("polling");
+      return;
+    }
+    if (!isDocumentVisible) {
+      // Tab is backgrounded; drop the long-lived SSE so it stops consuming
+      // one of the browser's six per-origin HTTP/1.1 connections while doing
+      // no useful work. Effect re-runs on visibilitychange to reconnect.
+      eventStreamLiveRef.current = false;
       setSyncState("polling");
       return;
     }
 
     let closed = false;
-    const source = new EventSource("/api/sessions/events");
+    const source = new EventSource(sessionEventsUrl);
     setSyncState("connecting");
 
-    const handleChange = () => {
+    const handleRefetchChange = () => {
+      markStreamEvent();
       scheduleEventRefetch();
     };
+    const handleHeartbeat = () => {
+      markStreamEvent();
+      setSyncState("live");
+    };
     const handleSnapshot = (event: MessageEvent) => {
-      if (query.trim().length > 0 || showArchived) {
-        scheduleEventRefetch(0);
-        return;
-      }
+      markStreamEvent();
       try {
-        const payload = JSON.parse(event.data) as { sessions?: unknown };
-        if (!Array.isArray(payload.sessions)) {
+        const nextSessions = sessionsFromSnapshotPayload(JSON.parse(event.data) as unknown);
+        if (!nextSessions) {
           scheduleEventRefetch(0);
           return;
         }
-        applySessionList(payload.sessions as SessionRegistryListItem[]);
+        applySessionList(nextSessions);
         setLoading(false);
       } catch {
         scheduleEventRefetch(0);
@@ -1263,66 +1632,376 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
     };
     const handleOpen = () => {
       if (!closed) {
+        markStreamEvent();
         setSyncState("live");
       }
     };
     const handleError = () => {
       if (!closed) {
+        eventStreamLiveRef.current = false;
         setSyncState("reconnecting");
+        void fetchSessions();
       }
+    };
+    const handleUpsert = (event: MessageEvent) => {
+      markStreamEvent();
+      let payload: unknown;
+      try {
+        payload = JSON.parse(event.data) as unknown;
+      } catch {
+        scheduleEventRefetch();
+        return;
+      }
+      const nextSession =
+        typeof payload === "object" && payload !== null && !Array.isArray(payload)
+          ? sessionFromEventPayload((payload as { session?: unknown }).session)
+          : null;
+      if (!nextSession) {
+        scheduleEventRefetch();
+        return;
+      }
+      const currentSessions = sessionsRef.current;
+      const existingIndex = currentSessions.findIndex(
+        (session) => session.id === nextSession.id,
+      );
+      const matches = sessionMatchesQuery(nextSession, sessionMatchOptions);
+      if (existingIndex === -1) {
+        if (matches) {
+          applySessionList([nextSession, ...currentSessions]);
+        }
+      } else if (matches) {
+        const nextSessions = [...currentSessions];
+        nextSessions[existingIndex] = nextSession;
+        applySessionList(nextSessions);
+      } else {
+        applySessionList(
+          currentSessions.filter((session) => session.id !== nextSession.id),
+        );
+      }
+      setLoading(false);
+    };
+    const handleRuntimeUpdate = (event: MessageEvent) => {
+      markStreamEvent();
+      let payload: ReturnType<typeof runtimeUpdatedPayload> = null;
+      try {
+        payload = runtimeUpdatedPayload(JSON.parse(event.data) as unknown);
+      } catch {
+        scheduleEventRefetch();
+        return;
+      }
+      if (!payload) {
+        scheduleEventRefetch();
+        return;
+      }
+      const currentSessions = sessionsRef.current;
+      const existingIndex = currentSessions.findIndex(
+        (session) => session.id === payload.registryId,
+      );
+      if (existingIndex === -1) {
+        scheduleEventRefetch();
+        return;
+      }
+      const existing = currentSessions[existingIndex];
+      if (
+        payload.version !== undefined &&
+        payload.version <= existing.version
+      ) {
+        return;
+      }
+      const updatedSession: SessionRegistryListItem = {
+        ...existing,
+        runtime: payload.runtime,
+        updatedAt: payload.updatedAt ?? existing.updatedAt,
+        version: payload.version ?? existing.version,
+      };
+      const nextSessions = [...currentSessions];
+      if (sessionMatchesQuery(updatedSession, sessionMatchOptions)) {
+        nextSessions[existingIndex] = updatedSession;
+      } else {
+        nextSessions.splice(existingIndex, 1);
+      }
+      applySessionList(nextSessions);
+      setLoading(false);
+    };
+    const handleDelete = (event: MessageEvent) => {
+      markStreamEvent();
+      let registryId: string | null = null;
+      try {
+        registryId = eventRegistryId(JSON.parse(event.data) as unknown);
+      } catch {
+        scheduleEventRefetch();
+        return;
+      }
+      if (!registryId) {
+        scheduleEventRefetch();
+        return;
+      }
+      applySessionList(
+        sessionsRef.current.filter((session) => session.id !== registryId),
+      );
+      setLoading(false);
     };
 
     source.addEventListener("open", handleOpen);
     source.addEventListener("error", handleError);
+    source.addEventListener("heartbeat", handleHeartbeat);
     source.addEventListener("snapshot", handleSnapshot);
-    source.addEventListener("session.upserted", handleChange);
-    source.addEventListener("session.deleted", handleChange);
-    source.addEventListener("session.rebuilt", handleChange);
+    source.addEventListener("session.upserted", handleUpsert);
+    source.addEventListener("session.runtime.updated", handleRuntimeUpdate);
+    source.addEventListener("session.deleted", handleDelete);
+    source.addEventListener("session.rebuilt", handleRefetchChange);
 
     return () => {
       closed = true;
+      eventStreamLiveRef.current = false;
       source.close();
       if (eventRefetchTimerRef.current) {
         clearTimeout(eventRefetchTimerRef.current);
         eventRefetchTimerRef.current = null;
       }
     };
-  }, [applySessionList, query, scheduleEventRefetch, showArchived]);
+  }, [
+    applySessionList,
+    fetchSessions,
+    isDocumentVisible,
+    markStreamEvent,
+    scheduleEventRefetch,
+    sessionEventsUrl,
+    sessionMatchOptions,
+    sessionsRef,
+  ]);
 
   const selectedSession = useMemo(
     () => sessions.find((session) => session.id === selectedId) ?? selectedSnapshot,
     [selectedId, selectedSnapshot, sessions],
   );
+  const selectedPawWorkflow = selectedSession ? visiblePawWorkflow(selectedSession) : null;
   const selectedSessionRef = useLatestValue(selectedSession);
+  const graphScopedSessions = useMemo(
+    () =>
+      routeWorkstreamId || routeNodeId
+        ? sessions.filter((session) => session.originKind !== "manual")
+        : sessions,
+    [routeNodeId, routeWorkstreamId, sessions],
+  );
   const relevanceFilteredSessions = useMemo(
     () =>
-      showAllObserved ? sessions : sessions.filter((session) => isRelevantSession(session)),
-    [sessions, showAllObserved],
+      showAllObserved
+        ? graphScopedSessions
+        : graphScopedSessions.filter((session) => isRelevantSession(session)),
+    [graphScopedSessions, showAllObserved],
   );
   const endedFilteredSessions = useMemo(
     () => filterEndedSessions(relevanceFilteredSessions, showEnded),
     [relevanceFilteredSessions, showEnded],
   );
-  const visibleSessions = useMemo(
+  const staleFilteredSessions = useMemo(
     () =>
       endedFilteredSessions.filter(
         (session) => !isSessionStale(session, staleSessionDays),
       ),
     [endedFilteredSessions, staleSessionDays],
   );
-  const hiddenObservedSessionCount = sessions.length - relevanceFilteredSessions.length;
+  const hiddenGraphScopedManualCount = sessions.length - graphScopedSessions.length;
+  const hiddenObservedSessionCount =
+    graphScopedSessions.length - relevanceFilteredSessions.length;
   const hiddenEndedSessionCount =
     relevanceFilteredSessions.length - endedFilteredSessions.length;
   const hiddenStaleSessionCount =
-    endedFilteredSessions.length - visibleSessions.length;
+    endedFilteredSessions.length - staleFilteredSessions.length;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    setViewTab(routeTab === "consoles" ? "consoles" : "list");
+  }, [routeTab]);
+
+  useEffect(() => {
+    if (routeTab === "consoles" && (routeWorkstreamId || routeNodeId)) {
+      setShowArchived(true);
+      setShowEnded(true);
+    }
+  }, [routeNodeId, routeTab, routeWorkstreamId]);
+
+  useEffect(() => {
+    const entriesToLoad = new Map<string, WorkstreamRegistryListEntry>();
+    const graphStateSnapshot = workstreamGraphsRef.current;
+    for (const session of staleFilteredSessions) {
+      const binding = sessionRegistryEffectiveGraphBinding(session);
+      if (!binding) {
+        continue;
+      }
+      const matches = findGraphBindingWorkstreamMatches(
+        binding.workstreamId,
+        workstreams,
+      );
+      if (matches.length !== 1 || !canLoadWorkstreamGraph(matches[0])) {
+        continue;
+      }
+      const key = workstreamRegistryKey(matches[0]);
+      if (!graphStateSnapshot[key] && !loadingWorkstreamGraphKeysRef.current.has(key)) {
+        entriesToLoad.set(key, matches[0]);
+        // Claim the key synchronously so rapid re-fires of this effect
+        // (e.g., from an SSE-driven visibleSessions burst at startup) see
+        // it as in-flight and skip. Previously this `add` lived inside the
+        // setWorkstreamGraphs updater, which runs during React's batched
+        // state-update phase -- the ref stayed empty between effect runs,
+        // and every fire issued another duplicate fetch for the same
+        // workstream graph.
+        loadingWorkstreamGraphKeysRef.current.add(key);
+      }
+    }
+
+    if (entriesToLoad.size === 0) {
+      return;
+    }
+
+    setWorkstreamGraphs((current) => {
+      const next = { ...current };
+      for (const key of entriesToLoad.keys()) {
+        next[key] = { status: "loading" };
+      }
+      return next;
+    });
+
+    for (const [key, entry] of entriesToLoad) {
+      void (async () => {
+        try {
+          const response = await fetch(workstreamGraphApiUrl(entry));
+          if (!response.ok) {
+            throw new Error(`Failed to load workstream graph (${response.status})`);
+          }
+          const document = parseWorkstreamDocument(await response.text());
+          if (mountedRef.current) {
+            setWorkstreamGraphs((current) => ({
+              ...current,
+              [key]: { status: "loaded", document },
+            }));
+          }
+        } catch (nextError) {
+          if (mountedRef.current) {
+            setWorkstreamGraphs((current) => ({
+              ...current,
+              [key]: {
+                status: "error",
+                message:
+                  nextError instanceof Error ? nextError.message : String(nextError),
+              },
+            }));
+          }
+        } finally {
+          loadingWorkstreamGraphKeysRef.current.delete(key);
+        }
+      })();
+    }
+  }, [staleFilteredSessions, workstreamGraphsRef, workstreams]);
+
+  const workstreamGraphStateMap = useMemo(
+    () => new Map(Object.entries(workstreamGraphs)),
+    [workstreamGraphs],
+  );
+
+  const sessionLinkages = useMemo(
+    () =>
+      new Map(
+        sessions.map((session) => [
+          session.id,
+          resolveSessionWorkstreamLinkage(
+            session,
+            workstreams,
+            workstreamGraphStateMap,
+          ),
+        ]),
+      ),
+    [sessions, workstreamGraphStateMap, workstreams],
+  );
+
+  const selectedSessionLinkage = useMemo(
+    () =>
+      selectedSession
+        ? resolveSessionWorkstreamLinkage(
+            selectedSession,
+            workstreams,
+            workstreamGraphStateMap,
+          )
+        : null,
+    [selectedSession, workstreamGraphStateMap, workstreams],
+  );
+
+  const repoFacetOptions = useMemo(
+    () => buildRepoFacetOptions(staleFilteredSessions),
+    [staleFilteredSessions],
+  );
+  const workstreamFacetOptions = useMemo(
+    () => buildWorkstreamFacetOptions(staleFilteredSessions, sessionLinkages),
+    [staleFilteredSessions, sessionLinkages],
+  );
+  useEffect(() => {
+    if (
+      repoFacet !== SESSION_FACET_ALL &&
+      !repoFacetOptions.some((option) => option.value === repoFacet)
+    ) {
+      setRepoFacet(SESSION_FACET_ALL);
+    }
+  }, [repoFacet, repoFacetOptions]);
+  useEffect(() => {
+    if (
+      workstreamFacet !== SESSION_FACET_ALL &&
+      !workstreamFacetOptions.some((option) => option.value === workstreamFacet)
+    ) {
+      setWorkstreamFacet(SESSION_FACET_ALL);
+    }
+  }, [workstreamFacet, workstreamFacetOptions]);
+  const visibleSessions = useMemo(
+    () =>
+      staleFilteredSessions.filter((session) => {
+        if (repoFacet !== SESSION_FACET_ALL && repoGroupKey(session) !== repoFacet) {
+          return false;
+        }
+        if (
+          workstreamFacet !== SESSION_FACET_ALL &&
+          (sessionLinkages.get(session.id)?.group.key ?? UNBOUND_SESSION_WORKSTREAM_GROUP.key) !==
+            workstreamFacet
+        ) {
+          return false;
+        }
+        return true;
+      }),
+    [repoFacet, sessionLinkages, staleFilteredSessions, workstreamFacet],
+  );
+  const consoleSessions = useMemo(
+    () => sortManagedConsoleSessions(visibleSessions),
+    [visibleSessions],
+  );
+  const selectedConsoleSession = useMemo(
+    () =>
+      consoleSessions.find((session) => session.id === selectedConsoleId) ??
+      consoleSessions[0] ??
+      null,
+    [consoleSessions, selectedConsoleId],
+  );
+  const hiddenFacetSessionCount = staleFilteredSessions.length - visibleSessions.length;
+  const githubStatusRefs = useMemo(
+    () => githubStatusRefsForSessions(visibleSessions, selectedSession),
+    [selectedSession, visibleSessions],
+  );
+  const githubStatuses = useGithubStatusLookup(
+    githubStatusRefs,
+    githubStatusRefreshKey,
+  );
 
   const computedGroups = useMemo(
-    () => groupSessions(visibleSessions, groupMode),
-    [visibleSessions, groupMode],
+    () => groupSessions(visibleSessions, groupMode, sessionLinkages),
+    [visibleSessions, groupMode, sessionLinkages],
   );
 
   const orderedGroups = useMemo(() => {
-    if (groupMode === "recency" || groupMode === "flat") {
+    if (groupMode === "recency" || groupMode === "flat" || groupMode === "workstream") {
       return computedGroups;
     }
     const frozen = frozenOrderRef.current[groupMode];
@@ -1335,19 +2014,8 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
     return applyFrozenOrder(computedGroups, frozen);
   }, [computedGroups, groupMode]);
 
-  const draftAutosaveKey = useMemo(() => draftKey(draft), [draft]);
-
-  const clearAutosaveTimer = useCallback(() => {
-    if (autosaveTimerRef.current) {
-      clearTimeout(autosaveTimerRef.current);
-      autosaveTimerRef.current = null;
-    }
-  }, []);
-
   const saveExistingSession = useCallback(
     async (options: SessionSaveOptions = {}): Promise<boolean> => {
-      clearAutosaveTimer();
-
       const currentSelectedSession =
         selectedSnapshotRef.current ?? selectedSessionRef.current;
       if (!currentSelectedSession || creatingRef.current) {
@@ -1490,7 +2158,6 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
       }
     },
     [
-      clearAutosaveTimer,
       conflictPendingRef,
       creatingRef,
       draftRef,
@@ -1543,14 +2210,13 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
     window.addEventListener("pagehide", handlePageHide);
     return () => {
       window.removeEventListener("pagehide", handlePageHide);
-      clearAutosaveTimer();
       if (skipUnmountFlushRef.current) {
         skipUnmountFlushRef.current = false;
         return;
       }
       flushDirtyDraftOnExit();
     };
-  }, [clearAutosaveTimer, flushDirtyDraftOnExit]);
+  }, [flushDirtyDraftOnExit]);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -1566,34 +2232,6 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
       window.localStorage.setItem(SESSION_GROUP_MODE_STORAGE_KEY, groupMode);
     }
   }, [groupMode]);
-
-  useEffect(() => {
-    if (
-      creating ||
-      !sheetOpen ||
-      !selectedSession ||
-      !getExistingDraftPatch() ||
-      conflictPending?.sessionId === selectedSession.id
-    ) {
-      return;
-    }
-
-    clearAutosaveTimer();
-    autosaveTimerRef.current = setTimeout(() => {
-      void saveExistingSession();
-    }, SESSION_AUTOSAVE_MS);
-
-    return clearAutosaveTimer;
-  }, [
-    clearAutosaveTimer,
-    conflictPending,
-    creating,
-    draftAutosaveKey,
-    getExistingDraftPatch,
-    saveExistingSession,
-    selectedSession,
-    sheetOpen,
-  ]);
 
   const openSessionSheet = useCallback(
     async (session: SessionRegistryListItem) => {
@@ -1801,6 +2439,17 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
     setSessions((current) => current.slice());
   }, [groupMode]);
 
+  const commitSheetOnEnter = useCallback(
+    (event: ReactKeyboardEvent<HTMLInputElement>) => {
+      if (!isPlainEnterKey(event)) {
+        return;
+      }
+      event.preventDefault();
+      void closeSheet();
+    },
+    [closeSheet],
+  );
+
   const detailStatus = creating ? creatingState : saveState;
   const showDetailStatus = detailStatus !== "idle";
   const syncNote =
@@ -1816,7 +2465,9 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
       ? "Recency buckets — order is semantic"
       : groupMode === "flat"
         ? "No grouping — rows sorted by most recent activity"
-        : "Group order frozen at page load · use ↻ Resort to refresh";
+        : groupMode === "workstream"
+          ? "Workstream groups — tracked workstreams first, unbound last"
+          : "Group order frozen at page load · use ↻ Resort to refresh";
 
   return (
     <div className="sl-sessions sl-sessions-v2">
@@ -1845,11 +2496,35 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
           </button>
           <button
             className="sl-action-btn primary"
-            onClick={() => void startCreating()}
+            onClick={() => {
+              setViewTab("list");
+              void startCreating();
+            }}
           >
             + New session
           </button>
         </div>
+      </div>
+
+      <div className="sl-sessions-view-tabs" role="tablist" aria-label="Sessions views">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={viewTab === "list"}
+          className={`sl-sheet-tab${viewTab === "list" ? " active" : ""}`}
+          onClick={() => setViewTab("list")}
+        >
+          Session list
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={viewTab === "consoles"}
+          className={`sl-sheet-tab${viewTab === "consoles" ? " active" : ""}`}
+          onClick={() => setViewTab("consoles")}
+        >
+          Background consoles
+        </button>
       </div>
 
       <div className="sl-sessions-filters">
@@ -1857,7 +2532,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
           className="sl-text-field"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search sessions, repos, tags…"
+          placeholder="Search sessions, repos, tags, Copilot session ID…"
         />
         <label className="sl-session-stale-filter">
           <span className="sl-field-label">Old after</span>
@@ -1880,33 +2555,92 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
             <span className="sl-session-stale-suffix">days</span>
           </div>
         </label>
+        <label className="sl-session-facet-filter">
+          <span className="sl-field-label">Repo</span>
+          <select
+            className="sl-text-field"
+            value={repoFacet}
+            onChange={(event) => setRepoFacet(event.target.value)}
+          >
+            <option value={SESSION_FACET_ALL}>All repos ({staleFilteredSessions.length})</option>
+            {repoFacetOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label} ({option.count})
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="sl-session-facet-filter">
+          <span className="sl-field-label">Workstream</span>
+          <select
+            className="sl-text-field"
+            value={workstreamFacet}
+            onChange={(event) => setWorkstreamFacet(event.target.value)}
+          >
+            <option value={SESSION_FACET_ALL}>
+              All workstreams ({staleFilteredSessions.length})
+            </option>
+            {workstreamFacetOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label} ({option.count})
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
 
-      <div className="sl-sessions-group-bar">
-        <span className="sl-seg-label">Group by</span>
-        <div className="sl-seg" role="tablist">
-          {GROUP_MODES.map(({ mode, label }) => (
-            <button
-              key={mode}
-              role="tab"
-              aria-selected={mode === groupMode}
-              className={`sl-seg-btn${mode === groupMode ? " active" : ""}`}
-              onClick={() => setGroupMode(mode)}
-            >
-              {label}
-            </button>
-          ))}
+      {viewTab === "list" && (
+        <div className="sl-sessions-group-bar">
+          <span className="sl-seg-label">Group by</span>
+          <div className="sl-seg" role="tablist">
+            {GROUP_MODES.map(({ mode, label }) => (
+              <button
+                key={mode}
+                role="tab"
+                aria-selected={mode === groupMode}
+                className={`sl-seg-btn${mode === groupMode ? " active" : ""}`}
+                onClick={() => setGroupMode(mode)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <button
+            className="sl-seg-resort"
+            disabled={groupMode === "recency" || groupMode === "flat" || groupMode === "workstream"}
+            onClick={handleResort}
+            title="Re-sort groups by most recent activity"
+          >
+            ↻ Resort
+          </button>
+          <span className="sl-seg-note">{freezeNote}</span>
         </div>
-        <button
-          className="sl-seg-resort"
-          disabled={groupMode === "recency" || groupMode === "flat"}
-          onClick={handleResort}
-          title="Re-sort groups by most recent activity"
-        >
-          ↻ Resort
-        </button>
-        <span className="sl-seg-note">{freezeNote}</span>
-      </div>
+      )}
+
+      {(routeWorkstreamId || routeNodeId) && (
+        <div className="sl-sessions-filter-note">
+          Showing graph-bound sessions
+          {routeNodeId ? (
+            <>
+              {" "}for node <code>{routeNodeId}</code>
+            </>
+          ) : null}
+          {routeWorkstreamId ? (
+            <>
+              {" "}in workstream <code>{routeWorkstreamId}</code>
+            </>
+          ) : null}
+          . Use the Sessions nav item to clear this graph filter.
+        </div>
+      )}
+
+      {hiddenGraphScopedManualCount > 0 && (
+        <div className="sl-sessions-filter-note">
+          Hiding {hiddenGraphScopedManualCount} manual session
+          {hiddenGraphScopedManualCount === 1 ? "" : "s"} from this graph-node
+          projection. Manual sessions remain available in the unfiltered Sessions view.
+        </div>
+      )}
 
       {hiddenObservedSessionCount > 0 && (
         <div className="sl-sessions-filter-note">
@@ -1932,10 +2666,27 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
         </div>
       )}
 
+      {hiddenFacetSessionCount > 0 && (
+        <div className="sl-sessions-filter-note">
+          Hiding {hiddenFacetSessionCount} session
+          {hiddenFacetSessionCount === 1 ? "" : "s"} outside the selected repo/workstream filters.
+        </div>
+      )}
+
       {syncNote && <div className="sl-sessions-filter-note">{syncNote}</div>}
 
       {error && <div className="sl-action-error">{error}</div>}
 
+      {viewTab === "consoles" ? (
+        <BackgroundConsolesView
+          sessions={consoleSessions}
+          selectedSession={selectedConsoleSession}
+          loading={loading}
+          onSelect={setSelectedConsoleId}
+          onActionComplete={fetchSessions}
+        />
+      ) : (
+        <>
       <div className="sl-sessions-groups">
         {loading ? (
           <div className="sl-empty-state">Loading sessions…</div>
@@ -1953,11 +2704,16 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
             No open or interrupted Copilot CLI sessions right now. Show ended to inspect
             sessions that closed cleanly.
           </div>
-        ) : visibleSessions.length === 0 ? (
+        ) : staleFilteredSessions.length === 0 ? (
           <div className="sl-empty-state">
             No sessions updated in the last {staleSessionDays} day
             {staleSessionDays === 1 ? "" : "s"}. Increase the stale window to show
             older sessions.
+          </div>
+        ) : visibleSessions.length === 0 ? (
+          <div className="sl-empty-state">
+            No sessions match the selected repo/workstream filters. Choose All repos
+            or All workstreams to widen the list.
           </div>
         ) : (
           orderedGroups.map((group) => (
@@ -1982,16 +2738,28 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                     const rowTitle = getRowFallbackTitle(session);
                     const rowBranch = displayBranch(session);
                     const rowWorktree = displayWorktree(session);
-                    const rowSessionId = getDisplaySessionId(session);
-                    const rowRestartCommand = buildRestartCommand(session);
+                    const rowRestartCommand = buildVisibleRestartCommand(session, defaultCliArgs);
                     const activityLabel = getActivityStatusLabel(session);
-                    const activityHint = activityStatusHint(session.activityStatus);
-                    const signalClass = activitySignalClass(session.activityStatus);
+                    const effectiveActivityStatus = getEffectiveActivityStatus(session);
+                    const activityHint = activityStatusHint(effectiveActivityStatus);
+                    const signalClass = activitySignalClass(effectiveActivityStatus);
                     const signalDetail = trustedStatus ?? observedStatus ?? session.originKind;
+                    const rowFolderLeaf = leafName(rowWorktree ?? session.cwd);
+                    const rowManagedRuntime = getManagedRuntime(session);
+                    const rowPawWorkflow = visiblePawWorkflow(session);
+                    const rowLinkage =
+                      sessionLinkages.get(session.id) ??
+                      resolveSessionWorkstreamLinkage(
+                        session,
+                        workstreams,
+                        workstreamGraphStateMap,
+                      );
                     const rowDetail =
                       summary.text && summary.status !== "missing"
                         ? summary.text
-                        : session.description || null;
+                        : rowManagedRuntime
+                          ? managedRuntimeSummaryText(rowManagedRuntime)
+                          : session.description || null;
                     return (
                       <div
                         key={session.id}
@@ -2020,11 +2788,6 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                           <div className="sl-session-row-main">
                             <div className="sl-session-row-title-line">
                               <span
-                                className={`sl-session-row-dot ${
-                                  session.lifecycleStatus === "active" ? "active" : "dim"
-                                }`}
-                              />
-                              <span
                                 className="sl-session-row-swatch"
                                 style={{ backgroundColor: sessionDisplayColor(session) }}
                                 aria-hidden="true"
@@ -2050,19 +2813,37 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                                   <span className="sl-session-row-branch">{rowBranch}</span>
                                 </>
                               )}
-                              <span className="sl-session-row-id">
-                                <span className="sl-session-row-id-label">id</span>
-                                <code>{rowSessionId}</code>
-                                <CopyButton
-                                  text={rowSessionId}
-                                  label={`Copy session ID ${rowSessionId}`}
-                                  copiedLabel="Copied session ID"
-                                  iconOnly
-                                />
-                              </span>
-                              {rowWorktree && (
-                                <span className="sl-session-row-context-chip">
-                                  worktree {leafName(rowWorktree)}
+                              {rowFolderLeaf && (
+                                <span
+                                  className="sl-session-row-context-chip"
+                                  title={session.cwd}
+                                >
+                                  folder {rowFolderLeaf}
+                                </span>
+                              )}
+                              <SessionWorkstreamContextChips
+                                linkage={rowLinkage}
+                                onOpenWorkstream={onOpenWorkstream}
+                              />
+                              {rowManagedRuntime && (
+                                <>
+                                  <span className="sl-session-row-context-chip managed-runtime">
+                                    background session
+                                  </span>
+                                  <span
+                                    className={`sl-session-row-context-chip managed-runtime ${managedLifecycleStatusClass(rowManagedRuntime.lifecycleState)}`}
+                                    title={managedRuntimeSummaryText(rowManagedRuntime)}
+                                  >
+                                    {managedRuntimeLifecycleText(rowManagedRuntime)}
+                                  </span>
+                                </>
+                              )}
+                              {rowPawWorkflow && (
+                                <span
+                                  className="sl-session-row-context-chip paw-workflow recognized"
+                                  title={getPawWorkflowDescription(rowPawWorkflow)}
+                                >
+                                  {getPawWorkflowLabel(rowPawWorkflow)}
                                 </span>
                               )}
                               {session.derivedGithubRefs.slice(0, 3).map((ref) => (
@@ -2071,6 +2852,10 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                                   refItem={ref}
                                   session={session}
                                   className="sl-session-row-context-chip important"
+                                  status={githubStatusForRef(
+                                    githubStatuses.statuses,
+                                    githubStatusRefForDerivedRef(ref, session),
+                                  )}
                                 />
                               ))}
                               {session.tags.map((tag) => (
@@ -2080,43 +2865,43 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                               ))}
                             </div>
                           </div>
-                          <div className="sl-session-row-path" title={session.cwd}>
-                            <span className="sl-session-row-path-label">folder</span>
-                            <span className="sl-session-row-path-value">
-                              {leafName(rowWorktree ?? session.cwd) ?? session.cwd}
-                            </span>
-                          </div>
                           <div
                             className={`sl-session-row-status-dock ${signalClass}`}
                             aria-label={`${activityLabel} status`}
                           >
-                            <div className="sl-session-row-status-dock-head">
-                              <span className={`sl-session-row-signal-label ${signalClass}`}>
+                            <div className="sl-session-row-status-dock-line">
+                              <span
+                                className={`sl-session-row-status-pill ${signalClass}`}
+                                title={`${activityHint} · ${signalDetail}`}
+                              >
                                 {activityLabel}
                               </span>
-                              <span className="sl-session-row-signal-detail">
-                                {signalDetail}
+                              <span className="sl-session-row-signal-track" aria-hidden="true">
+                                <span className="sl-session-row-signal-pulse" />
                               </span>
                             </div>
-                            <span className="sl-session-row-signal-track" aria-hidden="true">
-                              <span className="sl-session-row-signal-pulse" />
-                            </span>
-                            <div className="sl-session-row-status-dock-foot">
-                              <span>{activityHint}</span>
-                              <span>{formatTimestamp(session.lastSeenAt)}</span>
+                            <div className="sl-session-row-status-dock-actions">
+                              <CopyButton
+                                text={rowRestartCommand ?? ""}
+                                label={
+                                  rowRestartCommand
+                                    ? "Copy restart command"
+                                    : restartUnavailableMessage(session, defaultCliArgs)
+                                }
+                                copiedLabel="Copied restart command"
+                                iconOnly
+                              />
+                              <RelaunchButton
+                                session={session}
+                                compact
+                              />
+                              {session.activityStatus === "interrupted" && (
+                                <StopButton
+                                  session={session}
+                                  compact
+                                />
+                              )}
                             </div>
-                            <CopyButton
-                              text={rowRestartCommand ?? ""}
-                              label={
-                                rowRestartCommand
-                                  ? "Copy restart command"
-                                  : "Restart unavailable; no Copilot session ID"
-                              }
-                              copiedLabel="Copied restart command"
-                              className="compact sl-session-row-status-dock-action"
-                            >
-                              {rowRestartCommand ? "Copy restart" : "No restart"}
-                            </CopyButton>
                           </div>
                         </div>
                       </div>
@@ -2141,7 +2926,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                   {selectedSession && (
                     <>
                       <span
-                        className={`sl-pill ${activityStatusClass(selectedSession.activityStatus)}`}
+                        className={`sl-pill ${activityStatusClass(getEffectiveActivityStatus(selectedSession))}`}
                       >
                         {getActivityStatusLabel(selectedSession)}
                       </span>
@@ -2157,6 +2942,14 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                       {getObservedStatusLabel(selectedSession) && (
                         <span className="sl-pill muted">
                           {getObservedStatusLabel(selectedSession)}
+                        </span>
+                      )}
+                      {selectedPawWorkflow && (
+                        <span
+                          className="sl-pill paw-workflow recognized"
+                          title={getPawWorkflowDescription(selectedPawWorkflow)}
+                        >
+                          {getPawWorkflowLabel(selectedPawWorkflow)}
                         </span>
                       )}
                     </>
@@ -2200,6 +2993,7 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                       onChange={(event) =>
                         updateDraft((current) => ({ ...current, title: event.target.value }))
                       }
+                      onKeyDown={commitSheetOnEnter}
                     />
                   </div>
                 ) : (
@@ -2259,7 +3053,14 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
               {saveError && <div className="sl-action-error">{saveError}</div>}
 
               {sheetTab === "overview" && selectedSession && !creating && (
-                <SessionOverview session={selectedSession} />
+                <SessionOverview
+                  session={selectedSession}
+                  workstreamLinkage={selectedSessionLinkage}
+                  githubStatuses={githubStatuses.statuses}
+                  defaultCliArgs={defaultCliArgs}
+                  onOpenWorkstream={onOpenWorkstream}
+                  onSessionActionComplete={fetchSessions}
+                />
               )}
 
               {sheetTab === "activity" && selectedSession && !creating && (
@@ -2271,11 +3072,10 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
                   draft={draft}
                   creating={creating}
                   selectedSession={selectedSession}
+                  workstreams={workstreams}
                   onChange={updateDraft}
-                  onAutosave={() => {
-                    if (!creating) {
-                      void saveExistingSession();
-                    }
+                  onCommit={() => {
+                    void (creating ? handleCreate() : closeSheet());
                   }}
                 />
               )}
@@ -2323,12 +3123,104 @@ export function SessionsPage({ registerBeforeLeave }: SessionsPageProps) {
           </div>
         </>
       )}
+        </>
+      )}
     </div>
   );
 }
 
 interface SessionOverviewProps {
   session: SessionRegistryListItem;
+  workstreamLinkage: SessionWorkstreamLinkageResolution | null;
+  githubStatuses: ReadonlyMap<string, GithubStatusResult>;
+  defaultCliArgs: readonly string[] | null;
+  onOpenWorkstream?: (target: WorkstreamRouteTarget) => void | Promise<void>;
+  onSessionActionComplete?: () => void | Promise<void>;
+}
+
+function BackgroundConsolesView({
+  sessions,
+  selectedSession,
+  loading,
+  onSelect,
+  onActionComplete,
+}: {
+  sessions: readonly SessionRegistryListItem[];
+  selectedSession: SessionRegistryListItem | null;
+  loading: boolean;
+  onSelect: (id: string) => void;
+  onActionComplete?: () => void | Promise<void>;
+}) {
+  const selectedRuntime = selectedSession ? getManagedRuntime(selectedSession) : null;
+  return (
+    <section className="sl-managed-console-monitor">
+      <aside className="sl-managed-console-monitor-rail" aria-label="Background session consoles">
+        <div className="sl-managed-console-monitor-rail-head">
+          <span className="sl-eyebrow">Background consoles</span>
+          <strong>{sessions.length}</strong>
+        </div>
+        {loading ? (
+          <div className="sl-empty-state">Loading background consoles...</div>
+        ) : sessions.length === 0 ? (
+          <div className="sl-empty-state">
+            No background session consoles match the current filters.
+          </div>
+        ) : (
+          sessions.map((session) => {
+            const runtime = getManagedRuntime(session);
+            if (!runtime) {
+              return null;
+            }
+            const active = selectedSession?.id === session.id;
+            return (
+              <button
+                className={active ? "active" : ""}
+                key={session.id}
+                type="button"
+                onClick={() => onSelect(session.id)}
+              >
+                <strong>{getRowFallbackTitle(session)}</strong>
+                <span>{managedRuntimeLifecycleText(runtime)}</span>
+                <small>{managedRuntimeSummaryText(runtime)}</small>
+              </button>
+            );
+          })
+        )}
+      </aside>
+      <div className="sl-managed-console-monitor-main">
+        {selectedSession && selectedRuntime ? (
+          <>
+            <div className="sl-managed-console-monitor-toolbar">
+              <div>
+                <span className="sl-eyebrow">Focused console</span>
+                <h2>{getRowFallbackTitle(selectedSession)}</h2>
+                <p>
+                  {selectedSession.repo ?? "(no repo)"}
+                  {selectedSession.branch ? ` / ${selectedSession.branch}` : ""}
+                </p>
+              </div>
+              <span className={`sl-managed-runtime-state ${managedLifecycleStatusClass(selectedRuntime.lifecycleState)}`}>
+                {managedRuntimeLifecycleText(selectedRuntime)}
+              </span>
+            </div>
+            <ManagedRuntimeConsolePanel
+              runtime={selectedRuntime}
+              sessionId={selectedSession.id}
+              title="Runtime transcript"
+              subtitle="Sanitized Streamliner activity."
+              showCurrentMessage={false}
+              eventLimit={50}
+              onActionComplete={onActionComplete}
+            />
+          </>
+        ) : (
+          <div className="sl-empty-state">
+            Select a background session console to inspect retained activity.
+          </div>
+        )}
+      </div>
+    </section>
+  );
 }
 
 type CopyState = "idle" | "copied" | "error";
@@ -2406,9 +3298,202 @@ function CopyButton({
   );
 }
 
+type RelaunchState = "idle" | "launching" | "launched" | "error";
+
+interface RelaunchButtonProps {
+  session: SessionRegistryListItem;
+  className?: string;
+  compact?: boolean;
+}
+
+function RelaunchButton({ session, className, compact = false }: RelaunchButtonProps) {
+  const [state, setState] = useState<RelaunchState>("idle");
+  const [detail, setDetail] = useState("");
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const eligible = canRelaunch(session);
+
+  useEffect(() => {
+    return () => {
+      if (resetTimerRef.current) {
+        clearTimeout(resetTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleRelaunch = useCallback(async () => {
+    if (!eligible || state === "launching") {
+      return;
+    }
+    setState("launching");
+    setDetail("");
+    try {
+      const response = await fetch(
+        `/api/sessions/${encodeURIComponent(session.id)}/relaunch`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
+      );
+      const body = await response.json();
+      if (response.ok) {
+        const method = body.method === "powershell" ? "PowerShell" : "Windows Terminal";
+        const info = body.copilotResumed ? `Resumed in ${method}` : `Opened in ${method}`;
+        setState("launched");
+        setDetail(info);
+      } else {
+        setState("error");
+        setDetail(body.message ?? "Relaunch failed");
+      }
+    } catch {
+      setState("error");
+      setDetail("Network error");
+    }
+    if (resetTimerRef.current) {
+      clearTimeout(resetTimerRef.current);
+    }
+    resetTimerRef.current = setTimeout(() => {
+      setState("idle");
+      setDetail("");
+      resetTimerRef.current = null;
+    }, 15_000);
+  }, [eligible, session.id, state]);
+
+  const label = !eligible
+    ? session.lifecycleStatus === "archived"
+      ? "Archived — unarchive to relaunch"
+      : session.copilotProcessState === "live"
+        ? "Session is live"
+        : "No working directory"
+    : state === "launching"
+      ? "Launching…"
+      : state === "launched"
+        ? detail
+        : state === "error"
+          ? detail
+          : "Relaunch session";
+
+  const buttonText = compact
+    ? state === "launching" ? "…" : state === "launched" ? "✓" : state === "error" ? "✗" : "⟳"
+    : label;
+
+  return (
+    <button
+      type="button"
+      className={`sl-relaunch-btn${state === "launched" ? " success" : ""}${
+        state === "error" ? " error" : ""
+      }${state === "launching" ? " launching" : ""}${className ? ` ${className}` : ""}`}
+      aria-label={label}
+      title={label}
+      disabled={!eligible || state === "launching"}
+      onClick={(event) => {
+        event.stopPropagation();
+        void handleRelaunch();
+      }}
+    >
+      {buttonText}
+    </button>
+  );
+}
+
 interface CopyableValueProps {
   value: string;
   label: string;
+}
+
+type StopState = "idle" | "stopping" | "stopped" | "error";
+
+interface StopButtonProps {
+  session: SessionRegistryListItem;
+  className?: string;
+  compact?: boolean;
+  confirmBeforeStopping?: boolean;
+}
+
+function StopButton({ session, className, compact = false, confirmBeforeStopping = true }: StopButtonProps) {
+  const [state, setState] = useState<StopState>("idle");
+  const [detail, setDetail] = useState("");
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const eligible = canManuallyStop(session);
+
+  useEffect(() => {
+    return () => {
+      if (resetTimerRef.current) {
+        clearTimeout(resetTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleStop = useCallback(async () => {
+    if (!eligible || state === "stopping") {
+      return;
+    }
+    if (confirmBeforeStopping) {
+      const ok = window.confirm(
+        `Mark "${session.title}" as ended? Use this only if the Copilot CLI session is no longer running but the registry still shows it as active or interrupted.`,
+      );
+      if (!ok) return;
+    }
+    setState("stopping");
+    setDetail("");
+    try {
+      const response = await fetch(
+        `/api/sessions/${encodeURIComponent(session.id)}/stop`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
+      );
+      const body = await response.json();
+      if (response.ok) {
+        setState("stopped");
+        setDetail("Marked as ended");
+      } else {
+        setState("error");
+        setDetail(body.message ?? "Stop failed");
+      }
+    } catch {
+      setState("error");
+      setDetail("Network error");
+    }
+    if (resetTimerRef.current) {
+      clearTimeout(resetTimerRef.current);
+    }
+    resetTimerRef.current = setTimeout(() => {
+      setState("idle");
+      setDetail("");
+      resetTimerRef.current = null;
+    }, 5_000);
+  }, [confirmBeforeStopping, eligible, session.id, session.title, state]);
+
+  const label = !eligible
+    ? session.lifecycleStatus === "archived"
+      ? "Archived"
+      : session.lifecycleStatus === "ended" && session.trustedEndedAt
+        ? "Already ended"
+        : "No Copilot session ID"
+    : state === "stopping"
+      ? "Marking ended…"
+      : state === "stopped"
+        ? detail
+        : state === "error"
+          ? detail
+          : "Mark as ended";
+
+  const buttonText = compact
+    ? state === "stopping" ? "…" : state === "stopped" ? "✓" : state === "error" ? "✗" : "■"
+    : label;
+
+  return (
+    <button
+      type="button"
+      className={`sl-stop-btn${state === "stopped" ? " success" : ""}${
+        state === "error" ? " error" : ""
+      }${state === "stopping" ? " stopping" : ""}${className ? ` ${className}` : ""}`}
+      aria-label={label}
+      title={label}
+      disabled={!eligible || state === "stopping"}
+      onClick={(event) => {
+        event.stopPropagation();
+        void handleStop();
+      }}
+    >
+      {buttonText}
+    </button>
+  );
 }
 
 function CopyableValue({ value, label }: CopyableValueProps) {
@@ -2420,24 +3505,103 @@ function CopyableValue({ value, label }: CopyableValueProps) {
   );
 }
 
-function SessionOverview({ session }: SessionOverviewProps) {
+function ManagedRuntimeOverview({
+  sessionId,
+  runtime,
+  onActionComplete,
+}: {
+  sessionId: string;
+  runtime: ManagedRuntimeProjection;
+  onActionComplete?: () => void | Promise<void>;
+}) {
+  const sdk = runtime.sdk ?? null;
+
+  return (
+    <section className="sl-session-overview-section managed-runtime">
+      <h3 className="sl-session-overview-heading">Background session</h3>
+      <div className="sl-session-managed-runtime-banner">
+        <span
+          className={`sl-managed-runtime-state ${managedLifecycleStatusClass(runtime.lifecycleState)}`}
+        >
+          {managedRuntimeLifecycleText(runtime)}
+        </span>
+        <span>{managedRuntimeSummaryText(runtime)}</span>
+      </div>
+      <dl className="sl-session-kv">
+        <dt>Runtime</dt>
+        <dd>background session</dd>
+        <dt>Owner</dt>
+        <dd>{formatManagedRuntimeLabel(runtime.runtimeOwner)}</dd>
+        <dt>Permission profile</dt>
+        <dd>{formatManagedRuntimeLabel(runtime.permissionProfile)}</dd>
+        <dt>Lifecycle</dt>
+        <dd>{managedRuntimeLifecycleText(runtime)}</dd>
+        <dt>Updated</dt>
+        <dd>{formatTimestamp(runtime.lifecycleUpdatedAt ?? null)}</dd>
+        {sdk?.sdkSessionId && (
+          <>
+            <dt>SDK session</dt>
+            <dd>
+              <CopyableValue
+                value={sdk.sdkSessionId}
+                label={`Copy SDK session ID ${sdk.sdkSessionId}`}
+              />
+            </dd>
+          </>
+        )}
+        {sdk?.sdkWorkspacePath && (
+          <>
+            <dt>SDK workspace</dt>
+            <dd>{sdk.sdkWorkspacePath}</dd>
+          </>
+        )}
+        {sdk?.sdkStateRoot && (
+          <>
+            <dt>SDK state</dt>
+            <dd>{sdk.sdkStateRoot}</dd>
+          </>
+        )}
+      </dl>
+      <ManagedRuntimeConsolePanel
+        runtime={runtime}
+        sessionId={sessionId}
+        title="Managed session console"
+        subtitle="Replayed from bounded sanitized Streamliner runtime activity; open terminal takeover for interactive control."
+        onActionComplete={onActionComplete}
+      />
+    </section>
+  );
+}
+
+function SessionOverview({
+  session,
+  workstreamLinkage,
+  githubStatuses,
+  defaultCliArgs,
+  onOpenWorkstream,
+  onSessionActionComplete,
+}: SessionOverviewProps) {
   const summary = getSessionSummaryDisplay(session);
   const latestDescription = getSessionLatestDescription(session, summary);
   const contextBranch = displayBranch(session);
   const contextWorktree = displayWorktree(session);
   const displaySessionId = getDisplaySessionId(session);
-  const restartCommand = buildRestartCommand(session);
+  const restartCommand = buildVisibleRestartCommand(session, defaultCliArgs);
+  const pawWorkflow = visiblePawWorkflow(session);
+  const managedRuntime = getManagedRuntime(session);
   return (
     <div className="sl-session-overview">
       <section className="sl-session-overview-section">
         <h3 className="sl-session-overview-heading">Restart</h3>
         <div className="sl-session-quick-actions">
+          <RelaunchButton session={session} />
+          <StopButton session={session} />
           <CopyButton
             text={restartCommand ?? ""}
             label={
               restartCommand
                 ? "Copy restart command"
-                : "Restart unavailable; no Copilot session ID"
+                : restartUnavailableMessage(session, defaultCliArgs)
             }
             copiedLabel="Copied restart command"
           >
@@ -2452,7 +3616,10 @@ function SessionOverview({ session }: SessionOverviewProps) {
           </CopyButton>
         </div>
         <code className="sl-session-command-preview">
-          {restartCommand ?? "No Copilot session ID recorded. Copy the registry ID instead."}
+          {restartCommand ??
+            (session.copilotSessionId
+              ? "Session launch settings are still loading. Restart command preview will appear when defaults load."
+              : "No Copilot session ID recorded. Copy the registry ID instead.")}
         </code>
       </section>
 
@@ -2468,6 +3635,116 @@ function SessionOverview({ session }: SessionOverviewProps) {
         </div>
         {summary.note && <div className="sl-session-overview-note">{summary.note}</div>}
       </section>
+
+      {managedRuntime && (
+        <ManagedRuntimeOverview
+          sessionId={session.id}
+          runtime={managedRuntime}
+          onActionComplete={onSessionActionComplete}
+        />
+      )}
+
+      {workstreamLinkage && workstreamLinkage.status !== "unbound" && (
+        <section className="sl-session-overview-section">
+          <h3 className="sl-session-overview-heading">Workstream binding</h3>
+          <dl className="sl-session-kv">
+            <dt>Workstream</dt>
+            <dd>
+              <WorkstreamLinkChip
+                target={workstreamLinkage.workstreamRouteTarget}
+                className="sl-session-context-ref"
+                label={`Open workstream ${workstreamLinkage.workstreamLabel ?? workstreamLinkage.workstreamId ?? "unknown"}`}
+                title={workstreamLinkageTitle(workstreamLinkage)}
+                onOpenWorkstream={onOpenWorkstream}
+              >
+                {workstreamLinkage.workstreamLabel ??
+                  workstreamLinkage.workstreamId ??
+                  "unknown"}
+              </WorkstreamLinkChip>
+            </dd>
+            {workstreamLinkage.nodeId && (
+              <>
+                <dt>Node</dt>
+                <dd>
+                  <WorkstreamLinkChip
+                    target={workstreamLinkage.nodeRouteTarget}
+                    className="sl-session-context-ref"
+                    label={`Open workstream node ${workstreamLinkage.nodeLabel ?? workstreamLinkage.nodeId}`}
+                    title={workstreamLinkageTitle(workstreamLinkage)}
+                    onOpenWorkstream={onOpenWorkstream}
+                  >
+                    {workstreamLinkage.nodeLabel ?? workstreamLinkage.nodeId}
+                  </WorkstreamLinkChip>
+                </dd>
+              </>
+            )}
+            <dt>Binding status</dt>
+            <dd>{workstreamLinkageStatusLabel(workstreamLinkage)}</dd>
+            {workstreamLinkage.matchCount > 1 && (
+              <>
+                <dt>Matches</dt>
+                <dd>{workstreamLinkage.matchCount} tracked workstreams</dd>
+              </>
+            )}
+          </dl>
+          {workstreamLinkage.note && (
+            <div className="sl-session-overview-note">{workstreamLinkage.note}</div>
+          )}
+        </section>
+      )}
+
+      {pawWorkflow && (
+        <section className="sl-session-overview-section">
+          <h3 className="sl-session-overview-heading">PAW workflow</h3>
+          <div className="sl-session-paw-summary recognized">
+            <strong>{getPawWorkflowLabel(pawWorkflow)}</strong>
+            <span>{getPawWorkflowDescription(pawWorkflow)}</span>
+          </div>
+          <dl className="sl-session-kv">
+            <dt>Status</dt>
+            <dd>{pawWorkflow.status}</dd>
+            <dt>Stage</dt>
+            <dd>{pawWorkflowStageLabel(pawWorkflow.stage)}</dd>
+            <dt>Workflow</dt>
+            <dd>{pawWorkflow.workflowKind}</dd>
+            <dt>Work ID</dt>
+            <dd>{pawWorkflow.workId ?? "—"}</dd>
+            {pawWorkflow.workTitle && (
+              <>
+                <dt>Work title</dt>
+                <dd>{pawWorkflow.workTitle}</dd>
+              </>
+            )}
+            <dt>Work dir</dt>
+            <dd>{pawWorkflow.workDir ?? "—"}</dd>
+            <dt>Artifacts</dt>
+            <dd>{pawWorkflow.artifactCount}</dd>
+            <dt>Latest artifact</dt>
+            <dd>{pawWorkflow.latestArtifactPath ?? "—"}</dd>
+            <dt>Latest mtime</dt>
+            <dd>{formatPawArtifactMtime(pawWorkflow.latestArtifactMtimeMs)}</dd>
+            <dt>Scanned</dt>
+            <dd>{formatTimestamp(pawWorkflow.scannedAt)}</dd>
+          </dl>
+          {pawWorkflow.diagnostics.length > 0 && (
+            <div className="sl-session-paw-diagnostics">
+              {pawWorkflow.diagnostics.map((diagnostic) => (
+                <code key={diagnostic}>{diagnostic}</code>
+              ))}
+            </div>
+          )}
+          {pawWorkflow.artifacts.length > 0 && (
+            <ul className="sl-session-paw-artifacts">
+              {pawWorkflow.artifacts.slice(0, 6).map((artifact) => (
+                <li key={`${artifact.kind}-${artifact.path}`}>
+                  <span>{pawArtifactKindLabel(artifact.kind)}</span>
+                  <code>{artifact.path}</code>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
 
       {(contextBranch || contextWorktree || session.derivedGithubRefs.length > 0) && (
         <section className="sl-session-overview-section">
@@ -2496,6 +3773,10 @@ function SessionOverview({ session }: SessionOverviewProps) {
                         refItem={ref}
                         session={session}
                         className="sl-session-context-ref"
+                        status={githubStatusForRef(
+                          githubStatuses,
+                          githubStatusRefForDerivedRef(ref, session),
+                        )}
                         showRepo
                       />
                     ))}
@@ -2644,71 +3925,45 @@ function SessionActivity({ session }: SessionActivityProps) {
   );
 }
 
-interface TerminalColorQuickPickerProps {
-  value: string;
-  onChange: (color: string) => void;
-}
-
-function TerminalColorQuickPicker({ value, onChange }: TerminalColorQuickPickerProps) {
-  const normalizedColor = normalizeColor(value);
-  return (
-    <div className="sl-terminal-color-picker" aria-label="Terminal color quick picks">
-      <div className="sl-terminal-color-grid">
-        {TERMINAL_COLOR_QUICK_PICKS.map((color) => (
-          <button
-            key={color}
-            type="button"
-            className={`sl-terminal-color-btn${
-              normalizedColor === color ? " selected" : ""
-            }`}
-            style={{ backgroundColor: color }}
-            aria-label={`Use terminal color ${color}`}
-            aria-pressed={normalizedColor === color}
-            onClick={() => onChange(color)}
-          />
-        ))}
-      </div>
-      <div className="sl-terminal-color-actions">
-        <button
-          type="button"
-          className="sl-terminal-color-action"
-          onClick={() => onChange("")}
-        >
-          Reset
-        </button>
-        <label className="sl-terminal-color-action custom">
-          Custom
-          <input
-            className="sl-color-picker"
-            type="color"
-            aria-label="Custom session color"
-            value={colorInputValue(value)}
-            onChange={(event) => onChange(event.target.value)}
-          />
-        </label>
-      </div>
-    </div>
-  );
-}
-
 interface SessionSettingsFormProps {
   draft: SessionDraft;
   creating: boolean;
   selectedSession: SessionRegistryListItem | null;
+  workstreams: WorkstreamRegistryListEntry[];
   onChange: (updater: (current: SessionDraft) => SessionDraft) => void;
-  onAutosave: () => void;
+  onCommit: () => void;
 }
 
 function SessionSettingsForm({
   draft,
   creating,
   selectedSession,
+  workstreams,
   onChange,
-  onAutosave,
+  onCommit,
 }: SessionSettingsFormProps) {
   const lifecycleLocked = selectedSession?.lifecycleStatus === "ended";
+  const workstreamAssignmentLocked = Boolean(
+    selectedSession?.graphBinding?.nodeId || selectedSession?.graphBinding?.launchClaimId,
+  );
+  const workstreamOptions = useMemo(
+    () =>
+      [...workstreams].sort((left, right) =>
+        `${left.title} ${workstreamRegistryKey(left)}`.localeCompare(
+          `${right.title} ${workstreamRegistryKey(right)}`,
+        )
+      ),
+    [workstreams],
+  );
   const setColor = (color: string) => {
     onChange((current) => ({ ...current, color }));
+  };
+  const commitOnEnter = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (!isPlainEnterKey(event)) {
+      return;
+    }
+    event.preventDefault();
+    onCommit();
   };
   return (
     <div className="sl-session-editor">
@@ -2720,7 +3975,7 @@ function SessionSettingsForm({
           onChange={(event) =>
             onChange((current) => ({ ...current, title: event.target.value }))
           }
-          onBlur={onAutosave}
+          onKeyDown={commitOnEnter}
         />
       </label>
 
@@ -2732,7 +3987,6 @@ function SessionSettingsForm({
           onChange={(event) =>
             onChange((current) => ({ ...current, description: event.target.value }))
           }
-          onBlur={onAutosave}
         />
       </label>
 
@@ -2746,7 +4000,7 @@ function SessionSettingsForm({
               value={draft.color}
               onChange={(event) => setColor(event.target.value)}
               placeholder="#5b7fff"
-              onBlur={onAutosave}
+              onKeyDown={commitOnEnter}
             />
           </div>
         </label>
@@ -2762,7 +4016,6 @@ function SessionSettingsForm({
                 lifecycleStatus: event.target.value as SessionDraft["lifecycleStatus"],
               }))
             }
-            onBlur={onAutosave}
           >
             <option value="active">active</option>
             <option value="paused">paused</option>
@@ -2820,10 +4073,42 @@ function SessionSettingsForm({
           onChange={(event) =>
             onChange((current) => ({ ...current, tagsText: event.target.value }))
           }
-          onBlur={onAutosave}
+          onKeyDown={commitOnEnter}
           placeholder="paw-lite, ui, session-registry"
         />
       </label>
+      {!creating && (
+        <label className="sl-field">
+          <span className="sl-field-label">Workstream assignment</span>
+          <select
+            className="sl-select-field"
+            aria-label="Workstream assignment"
+            value={draft.graphBinding?.workstreamId ?? ""}
+            disabled={workstreamAssignmentLocked}
+            onChange={(event) => {
+              const workstreamId = event.target.value;
+              onChange((current) => ({
+                ...current,
+                graphBinding: workstreamId
+                  ? { workstreamId, nodeId: null, launchClaimId: null }
+                  : null,
+              }));
+            }}
+          >
+            <option value="">Unassigned</option>
+            {workstreamOptions.map((entry) => (
+              <option key={workstreamRegistryKey(entry)} value={entry.workstreamId}>
+                {entry.title} ({workstreamRegistryKey(entry)})
+              </option>
+            ))}
+          </select>
+          <p className="sl-field-note">
+            {workstreamAssignmentLocked
+              ? "This session is already bound to a graph node or launch claim; clear that binding through the node/session recovery flow before changing it here."
+              : "Assign orchestrator or manually discovered sessions to a workstream without attaching them to a specific graph node."}
+          </p>
+        </label>
+      )}
     </div>
   );
 }

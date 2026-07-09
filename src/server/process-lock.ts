@@ -2,13 +2,17 @@ import {
   closeSync,
   mkdirSync,
   openSync,
-  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 
 import { resolveSessionRegistryRoot } from "../session-registry/runtime";
+import {
+  isProcessLockStale,
+  newLockMetadata,
+  readLockMetadataFile,
+} from "../session-registry/lock-liveness";
 
 export class StreamlinerApiLockError extends Error {
   constructor(lockPath: string, options?: ErrorOptions) {
@@ -17,44 +21,18 @@ export class StreamlinerApiLockError extends Error {
   }
 }
 
-function getErrorCode(error: unknown): string | undefined {
-  return error instanceof Error && "code" in error
-    ? (error as NodeJS.ErrnoException).code
-    : undefined;
+export interface ApiProcessLockOptions {
+  host?: string;
+  port?: number;
 }
 
-function processExists(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error: unknown) {
-    return getErrorCode(error) !== "ESRCH";
-  }
-}
-
-function readLockPid(lockPath: string): number | null {
-  try {
-    const existing = JSON.parse(readFileSync(lockPath, "utf8")) as { pid?: unknown };
-    return typeof existing.pid === "number" &&
-      Number.isInteger(existing.pid) &&
-      existing.pid > 0
-      ? existing.pid
-      : null;
-  } catch (error: unknown) {
-    if (getErrorCode(error) === "ENOENT") {
-      return null;
-    }
-    return null;
-  }
-}
-
-export function acquireApiProcessLock(): () => void {
+export function acquireApiProcessLock(options: ApiProcessLockOptions = {}): () => void {
   const rootDir = resolveSessionRegistryRoot();
   const lockPath = join(rootDir, "api.lock");
   mkdirSync(rootDir, { recursive: true });
 
-  const existingPid = readLockPid(lockPath);
-  if (typeof existingPid === "number" && !processExists(existingPid)) {
+  const existing = readLockMetadataFile(lockPath);
+  if (existing && isProcessLockStale(existing)) {
     rmSync(lockPath, { force: true });
   }
 
@@ -63,7 +41,14 @@ export function acquireApiProcessLock(): () => void {
     fd = openSync(lockPath, "wx");
     writeFileSync(
       fd,
-      JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() }, null, 2),
+      JSON.stringify(
+        newLockMetadata({
+          host: options.host ?? null,
+          port: options.port ?? null,
+        }),
+        null,
+        2,
+      ),
       "utf8",
     );
   } catch (error: unknown) {
@@ -75,7 +60,7 @@ export function acquireApiProcessLock(): () => void {
   }
 
   return () => {
-    if (readLockPid(lockPath) === process.pid) {
+    if (readLockMetadataFile(lockPath)?.pid === process.pid) {
       rmSync(lockPath, { force: true });
     }
   };

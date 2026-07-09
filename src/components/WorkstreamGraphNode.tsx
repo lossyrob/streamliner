@@ -1,9 +1,30 @@
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
-import type { WorkstreamGraphNodeData } from "../workstream-graph";
+import {
+  activitySignalClass,
+  activityStatusHint,
+  getEffectiveActivityStatus,
+  getActivityStatusLabel,
+} from "./session-activity-status";
+import { handleInAppLinkClick } from "../dashboard-routing";
+import {
+  githubIssueSnapshotLabel,
+  githubIssueSnapshotTone,
+  githubPullRequestSnapshotLabel,
+  githubPullRequestSnapshotTone,
+  githubStatusToneClass,
+} from "../github-status-view";
+import type {
+  WorkstreamExternalGraphNodeData,
+  WorkstreamGraphNodeData,
+} from "../workstream-graph";
 import { trackerLabel, trackerUrl } from "../workstream-links";
 
 function formatLabel(value: string): string {
   return value.replace(/[_-]+/g, " ").toLowerCase();
+}
+
+function formatPawStage(value: string | null): string {
+  return value ? formatLabel(value) : "workflow";
 }
 
 function highlightClassName(highlight: WorkstreamGraphNodeData["highlight"]) {
@@ -30,8 +51,75 @@ function statusClassName(value: string) {
       return "status-accent";
     case "blocked":
       return "status-red";
+    case "retired":
+      return "status-retired";
     default:
       return "status-amber";
+  }
+}
+
+function runtimeStatusClassName(value: string) {
+  switch (value) {
+    case "active":
+      return "status-green";
+    case "launching":
+    case "needs-input":
+      return "status-amber";
+    case "interrupted":
+    case "unresolved":
+      return "status-red";
+    case "ended":
+      return "muted";
+    default:
+      return "status-accent";
+  }
+}
+
+function launchOperationClassName(status: string) {
+  switch (status) {
+    case "managed_running":
+    case "launched_pending_binding":
+      return "status-green";
+    case "preparation_failed":
+    case "managed_failed":
+    case "terminal_failed":
+      return "status-red";
+    case "preparing":
+    case "launching":
+    case "managed_starting":
+      return "status-amber";
+    default:
+      return "status-accent";
+  }
+}
+
+function launchOperationLabel(data: WorkstreamGraphNodeData): string | null {
+  const operation = data.launchOperation;
+  if (!operation) {
+    return null;
+  }
+  const managed = operation.handoff?.runtimeKind === "managed-sdk" || Boolean(operation.managedLaunch);
+  switch (operation.status) {
+    case "preparing":
+      return "PAW init running";
+    case "prepared":
+      return managed ? "background prepared" : "handoff prepared";
+    case "launching":
+      return "terminal launching";
+    case "launched_pending_binding":
+      return "terminal launched";
+    case "managed_starting":
+      return "background starting";
+    case "managed_running":
+      return "background launched";
+    case "preparation_failed":
+      return "PAW init failed";
+    case "managed_failed":
+      return "background failed";
+    case "terminal_failed":
+      return "terminal failed";
+    default:
+      return null;
   }
 }
 
@@ -45,6 +133,12 @@ function NodeBadges({
   const pullRequestCount =
     data.entry.githubIssue?.linkedPullRequests.length ??
     (data.entry.activePullRequest ? 1 : 0);
+  const overlay = data.runtimeOverlay;
+  const showRuntimeStatus =
+    overlay &&
+    (overlay.runtimeStatus !== data.entry.operationalStatus ||
+      overlay.hasRuntimeEvidence);
+  const launchLabel = launchOperationLabel(data);
 
   return (
     <div className="sl-node-badges">
@@ -66,6 +160,174 @@ function NodeBadges({
           {pullRequestCount} PR{pullRequestCount === 1 ? "" : "s"}
         </span>
       ) : null}
+      {data.entry.githubIssue ? (
+        <span
+          className={`sl-node-pill ${githubStatusToneClass(
+            githubIssueSnapshotTone(data.entry.githubIssue),
+          )}`}
+          title={data.entry.githubIssue.error ?? data.entry.githubIssue.title}
+        >
+          {githubIssueSnapshotLabel(data.entry.githubIssue)}
+        </span>
+      ) : null}
+      {data.entry.activePullRequest ? (
+        <span
+          className={`sl-node-pill ${githubStatusToneClass(
+            githubPullRequestSnapshotTone(data.entry.activePullRequest),
+          )}`}
+          title={data.entry.activePullRequest.title}
+        >
+          {githubPullRequestSnapshotLabel(data.entry.activePullRequest)}
+        </span>
+      ) : null}
+      {showRuntimeStatus && overlay ? (
+        <span
+          className={`sl-node-pill ${runtimeStatusClassName(overlay.runtimeStatus)}`}
+        >
+          runtime {formatLabel(overlay.runtimeStatus)}
+        </span>
+      ) : null}
+      {launchLabel && data.launchOperation ? (
+        <span className={`sl-node-pill ${launchOperationClassName(data.launchOperation.status)}`}>
+          {launchLabel}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function NodeSessionIndicator({
+  data,
+  gate,
+}: {
+  data: WorkstreamGraphNodeData;
+  gate: boolean;
+}) {
+  if (gate) {
+    return null;
+  }
+
+  const status = data.sessionStatus;
+  if (!status) {
+    return null;
+  }
+
+  const primarySession = status.primarySession;
+  const effectiveActivityStatus = getEffectiveActivityStatus(primarySession);
+  const signalClass = activitySignalClass(effectiveActivityStatus);
+  const activityLabel = getActivityStatusLabel(primarySession);
+  const activityHint = activityStatusHint(effectiveActivityStatus);
+  const countLabel =
+    status.count === 1 ? "1 session" : `${status.count} sessions`;
+  const detail =
+    status.count === 1
+      ? primarySession.title
+      : `${primarySession.title} + ${status.count - 1} more`;
+  const href = data.sessionsHref ?? "/sessions";
+  const openSessions = data.onOpenSessions;
+
+  return (
+    <div
+      className={`sl-node-session ${signalClass}`}
+      title={`${activityHint} · ${detail}`}
+    >
+      <div className="sl-node-session-main">
+        <span className={`sl-session-row-status-pill ${signalClass}`}>
+          {activityLabel}
+        </span>
+        <span className="sl-session-row-signal-track" aria-hidden="true">
+          <span className="sl-session-row-signal-pulse" />
+        </span>
+        <span className="sl-node-session-count">{countLabel}</span>
+      </div>
+      <a
+        className="sl-node-session-link"
+        href={href}
+        onClick={(event) => {
+          event.stopPropagation();
+          if (openSessions) {
+            handleInAppLinkClick(event, openSessions);
+          }
+        }}
+      >
+        View in Sessions
+      </a>
+    </div>
+  );
+}
+
+function NodeRuntimeOverlayIndicator({
+  data,
+  gate,
+}: {
+  data: WorkstreamGraphNodeData;
+  gate: boolean;
+}) {
+  if (gate || !data.runtimeOverlay) {
+    return null;
+  }
+
+  const overlay = data.runtimeOverlay;
+  const issueCount = overlay.degradationReasons.filter(
+    (reason) => reason.code !== "tracker-snapshot-missing",
+  ).length;
+  const chips: Array<{ key: string; label: string; className: string }> = [];
+  if (overlay.launch.unresolved) {
+    chips.push({
+      key: "launch",
+      label: overlay.runtimeStatus === "launching" ? "launching" : "launch unresolved",
+      className: runtimeStatusClassName(overlay.runtimeStatus),
+    });
+  }
+  if (overlay.paw.status === "recognized") {
+    chips.push({
+      key: "paw",
+      label: `PAW ${formatPawStage(overlay.paw.stage)}`,
+      className: "status-accent",
+    });
+  } else if (overlay.paw.status === "unavailable" || overlay.paw.status === "unknown") {
+    chips.push({
+      key: "paw-degraded",
+      label: "PAW degraded",
+      className: "status-amber",
+    });
+  }
+  if (overlay.managedRuntime) {
+    chips.push({
+      key: "managed-runtime",
+      label: `background ${overlay.managedRuntime.lifecycleLabel}`,
+      className: runtimeStatusClassName(overlay.runtimeStatus),
+    });
+  }
+  if (overlay.session.ambiguous) {
+    chips.push({
+      key: "ambiguous",
+      label: "multiple sessions",
+      className: "status-amber",
+    });
+  }
+  if (issueCount > 0) {
+    chips.push({
+      key: "issues",
+      label: `${issueCount} runtime issue${issueCount === 1 ? "" : "s"}`,
+      className: "status-amber",
+    });
+  }
+
+  if (chips.length === 0) {
+    return null;
+  }
+
+  return (
+    <div
+      className="sl-node-runtime"
+      title={overlay.degradationReasons.map((reason) => reason.message).join(" ")}
+    >
+      {chips.map((chip) => (
+        <span key={chip.key} className={`sl-node-pill ${chip.className}`}>
+          {chip.label}
+        </span>
+      ))}
     </div>
   );
 }
@@ -97,6 +359,8 @@ function NodeShell({
         <div className="sl-node-id">{data.entry.node.id}</div>
       ) : null}
       <NodeBadges data={data} gate={gate} />
+      <NodeSessionIndicator data={data} gate={gate} />
+      <NodeRuntimeOverlayIndicator data={data} gate={gate} />
       <div className="sl-node-summary">{data.entry.node.summary}</div>
       <div className="sl-node-meta">
         <span>{data.repoLabel}</span>
@@ -129,4 +393,50 @@ export function WorkstreamGraphGateNode({
   data,
 }: NodeProps<Node<WorkstreamGraphNodeData>>) {
   return <NodeShell data={data} gate />;
+}
+
+export function WorkstreamExternalDependencyNode({
+  data,
+}: NodeProps<Node<WorkstreamExternalGraphNodeData>>) {
+  const dependency = data.dependency;
+  const isCrossWorkstream = Boolean(dependency.target);
+  const rootClassName = [
+    "sl-node",
+    isCrossWorkstream ? "cross-workstream" : "external",
+    highlightClassName(data.highlight),
+    dependency.satisfied ? "status-green" : "status-red",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  return (
+    <div className={rootClassName} onDoubleClick={data.onOpenTarget ?? undefined}>
+      <Handle isConnectable={false} position={Position.Bottom} type="source" />
+      <Handle isConnectable={false} position={Position.Right} type="source" />
+      {isCrossWorkstream ? (
+        <div className="sl-node-ghost-marker" title="Dependency from another Streamliner workstream">
+          <span aria-hidden="true">↗</span>
+          <span>other workstream</span>
+        </div>
+      ) : null}
+      <div className="sl-node-badges">
+        <span className={`sl-node-pill ${isCrossWorkstream ? "status-accent" : "status-red"}`}>
+          {isCrossWorkstream ? "XWS" : "EXT"}
+        </span>
+        <span className={`sl-node-pill ${dependency.satisfied ? "status-green" : "status-red"}`}>
+          {dependency.statusLabel}
+        </span>
+      </div>
+      <div className="sl-node-title">{dependency.label}</div>
+      <div className="sl-node-summary">{dependency.detail}</div>
+      <div className="sl-node-meta">
+        <span>
+          {dependency.target
+            ? `${dependency.target.projectKey}/${dependency.target.workstreamId}`
+            : "Manual external dependency"}
+        </span>
+        {dependency.archived ? <span>archived</span> : null}
+      </div>
+    </div>
+  );
 }

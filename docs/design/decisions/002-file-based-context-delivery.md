@@ -46,8 +46,101 @@ The context directory is excluded from Git (via `.gitignore`) and regenerated on
 - The PAW workflow skill needs to recognize and load the `context/` directory. This is a coordination point between Streamliner and the PAW skill system.
 - Generated context files should be clearly marked as generated (e.g., with a header comment) to prevent confusion with manually authored artifacts.
 
+### 2026-04-29 update: pre-claim context packages
+
+Backend context preparation can run before a launch claim exists, especially for
+prompt preview and non-PAW launch profiles. In that pre-claim state, Streamliner
+writes generated packages under
+`~/.streamliner/state/{projectKey}/{workstream-id}/launch-contexts/{contextId}/`
+with a manifest containing `launchNonce: null`. When a profile-specific setup
+provides an output parent directory, Streamliner creates the same `{contextId}`
+package shape under that parent rather than overwriting an existing directory.
+Launch-claim binding may later
+associate the returned `contextId` with a nonce-scoped launch archive or copy the
+package into `launches/{launchNonce}/context/`; context assembly itself does not
+require a nonce to produce a stable package reference.
+
+### 2026-04-30 update: reference-first context packages
+
+Generated context packages are navigation and launch-orientation artifacts, not
+copies of every authoritative source. Layer 0 records the selected design docs as
+repo/path references with rationale; it does not inline design doc bodies. Layer
+3 records the selected node spec reference, such as a GitHub issue URL or local
+spec path; it does not inline tracker bodies. Workers should read design docs and
+node specs directly from their source locations when they need the full text.
+
+`manifest.json` remains the compact package contract: stable package id and
+paths, generated layer index, source references with freshness where available,
+and unavailable-input diagnostics. Layer files should contain only synthesized or
+extracted launch-time orientation that is useful to the worker, plus links to the
+originals. Human-facing Layer 0 selection rationale lives in the generated Layer
+0 file instead of being duplicated as a separate manifest section.
+
+### 2026-04-30 update: single worker-facing context file
+
+The Layer 0-3 model remains conceptual, but generated delivery is consolidated
+into one worker-facing `context.md` file. Splitting small reference-first
+sections into separate files forced extra worker reads without meaningful
+progressive-disclosure value. `context.md` keeps Layer 0-3 headings so the
+orientation model is visible while giving the kickoff prompt one file to point
+at.
+
+The persisted `manifest.json` is removed from the generated package. Structured
+metadata, including source references, freshness, unavailable inputs,
+`contextId`, and `contextFilePath`, is a backend/API contract for launch
+profiles, prompt preview, and terminal launch plumbing. It is not a worker-facing
+artifact. If Layer 0 selection logging later needs to be durable for forensic
+review, it belongs in backend metadata or launch records rather than a generated
+manifest file.
+
+### 2026-04-30 update: SDK-synthesized worker context
+
+The backend now uses Copilot SDK to synthesize the worker-facing `context.md`
+from deterministic source material: graph data, workstream brief, selected
+design docs, tracker/spec content when available, source references, freshness,
+and unavailable-input diagnostics. Deterministic code still owns source
+collection, metadata, package paths, and error reporting; Copilot SDK owns the
+markdown synthesis step.
+
+This is required because the workstream brief and graph contain process-level
+language that is useful background but can confuse a worker if copied or
+procedurally extracted. The SDK prompt must ask for context for exactly the
+selected node, distinguish worker responsibility from workstream background, and
+avoid converting sibling/wave/workstream descriptions into tasks assigned to the
+worker.
+
+### 2026-04-30 update: Layer 0 design references are hints
+
+Layer 0 remains part of the worker-facing `context.md`, but its design paths are
+navigation hints rather than required reading or an exhaustive model-chosen
+design scope. The worker should navigate the repo's design docs directly,
+starting from `docs/design/index.md` when it needs orientation. Workstream
+`designRefs`, brief references, and node spec links can suggest likely starting
+points, but the worker retains responsibility for following the design layer as
+needed.
+
+The generated context should not present a long rationale table that sounds like
+another agent assigning required reading. If it lists design paths, it labels
+them as hints or possible starting points and keeps the list short. Source
+references and freshness remain backend/API metadata; they are not a
+worker-facing manifest or a durable record of an LLM-chosen Layer 0 selection.
+
+### 2026-05-02 update: PAW work-dir handoff path
+
+Pre-claim and preview context packages still use the runtime-state
+`launch-contexts/{contextId}/context.md` shape so repeated preparations do not
+overwrite each other. Once profile-specific setup supplies a PAW work directory,
+the worker-facing handoff is written to `streamliner/context.md` under that work
+directory instead of `{contextId}/context.md`.
+
+The `streamliner/` namespace keeps generated Streamliner launch artifacts out of
+the PAW control-artifact root next to `WorkflowContext.md`, while preserving a
+plain `context.md` filename for the worker. Repeated preparations for the same
+PAW work directory replace `streamliner/context.md`; the durable `contextId`
+remains backend metadata for preview, diagnostics, and any later launch archive.
+
 ## Open questions
 
 - **Archive retention policy**: How long are launch context archives kept? Options: last N launches per workstream, last N days, unbounded until manual clean. Resolve before launching multi-day PAW workflows routinely, because that is where forensic replay matters most.
 - **Brief drift during long sessions**: Should Streamliner compare the brief's current commit SHA against the launched snapshot and warn the worker or the builder when they diverge mid-session? A passive staleness banner is the near-term minimum; active notification is deferred. This open question must be resolved before multi-day PAW workflows are considered supported.
-- **LLM-chosen Layer 0 selection logging**: The Layer 0 assembler picks which design docs to front-load based on designRefs hints plus its own judgment. That selection is captured in the launch manifest so a later reviewer can see what was chosen and why.
+- **Layer 0 hint logging**: If Streamliner later needs a durable record of which design paths were surfaced as hints, that record belongs in backend metadata or launch records rather than a generated worker-facing manifest.

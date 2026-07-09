@@ -1,4 +1,3 @@
-import { execFile } from "node:child_process";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
@@ -42,31 +41,6 @@ export async function touchRecent(
   const filtered = entries.filter((entry) => entry.path !== absPath);
   filtered.unshift({ path: absPath, title, id, lastOpened: new Date().toISOString() });
   await saveRecents(filtered.slice(0, MAX_RECENTS), recentsPath);
-}
-
-export function openFilePicker(): Promise<string | null> {
-  return new Promise((resolvePicker, reject) => {
-    const script = `
-Add-Type -AssemblyName System.Windows.Forms
-$d = New-Object System.Windows.Forms.OpenFileDialog
-$d.Filter = 'Workstream Graph (graph.json)|graph.json|JSON files (*.json)|*.json|All files (*.*)|*.*'
-$d.Title = 'Open workstream graph'
-if ($d.ShowDialog() -eq 'OK') { $d.FileName } else { '' }
-`;
-    execFile(
-      "powershell",
-      ["-STA", "-NoProfile", "-Command", script],
-      { timeout: 120_000 },
-      (error, stdout) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-        const path = stdout.trim();
-        resolvePicker(path || null);
-      },
-    );
-  });
 }
 
 export interface GraphFileInfo {

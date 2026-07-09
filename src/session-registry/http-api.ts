@@ -1,4 +1,7 @@
-import type { SessionRegistryStore } from "../session-registry-contract";
+import type {
+  SessionRegistryStore,
+  SessionRegistryTrustedSignalInput,
+} from "../session-registry-contract";
 import {
   SessionRegistryConflictError,
   SessionRegistryLockedError,
@@ -7,8 +10,8 @@ import {
   parseSessionRegistryUpsertInput,
 } from "./file-store";
 import {
+  ignoredTrustedSessionSignalReason,
   parseTrustedSessionSignalInput,
-  shouldIgnoreTrustedSessionSignal,
 } from "./trusted-session-signals";
 
 export const SESSION_REGISTRY_API_BASE_PATH = "/api/sessions";
@@ -80,9 +83,22 @@ function decodePathSegments(pathname: string): string[] {
     .map((segment) => decodeURIComponent(segment));
 }
 
+export interface SessionRegistryApiHandlerOptions {
+  /**
+   * Optional callback invoked synchronously after each successful
+   * `recordTrustedSessionSignal` call from the POST /api/sessions/signals
+   * route. Used by the launch-claim binding integration to attempt
+   * Tier 2 binding when the signal carries a `launchClaimId`. Errors
+   * thrown from the callback are caught and converted to non-fatal
+   * 200 responses (the trusted signal itself was already recorded).
+   */
+  onTrustedSignalApplied?: (signal: SessionRegistryTrustedSignalInput) => void;
+}
+
 export function handleSessionRegistryApiRequest(
   store: SessionRegistryStore,
   request: SessionRegistryApiRequest,
+  options: SessionRegistryApiHandlerOptions = {},
 ): SessionRegistryApiResponse | null {
   const url = new URL(request.url, "http://localhost");
   if (!url.pathname.startsWith(SESSION_REGISTRY_API_BASE_PATH)) {
@@ -110,15 +126,25 @@ export function handleSessionRegistryApiRequest(
         };
       }
       const signal = parseTrustedSessionSignalInput(request.body);
-      if (shouldIgnoreTrustedSessionSignal(signal)) {
+      const ignoredReason = ignoredTrustedSessionSignalReason(signal);
+      if (ignoredReason) {
         return {
           statusCode: 202,
-          body: { ignored: true, reason: "copilot-sdk-session-fs" },
+          body: { ignored: true, reason: ignoredReason },
         };
+      }
+      const recorded = store.recordTrustedSessionSignal(signal);
+      if (options.onTrustedSignalApplied) {
+        try {
+          options.onTrustedSignalApplied(signal);
+        } catch {
+          // Tier 2 launch-claim binding failures must not turn a
+          // successful trusted-signal ingest into an HTTP error.
+        }
       }
       return {
         statusCode: 200,
-        body: store.recordTrustedSessionSignal(signal),
+        body: recorded,
       };
     }
 

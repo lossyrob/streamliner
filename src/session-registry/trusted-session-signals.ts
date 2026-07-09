@@ -26,6 +26,10 @@ import {
   type SessionRegistryTrustedSignalSource,
   type SessionRegistryTrustedStartSource,
 } from "../session-registry-schema";
+import {
+  isCopilotCliSubagentSessionId,
+  isCopilotHelperSessionIdentity,
+} from "./copilot-helper-sessions";
 import { isCopilotSdkSessionFsPath } from "./copilot-sdk-session-paths";
 
 export const SESSION_REGISTRY_SIGNAL_SPOOL_ROOT = resolve(
@@ -41,6 +45,15 @@ export interface TrustedSessionSignalSpoolOptions {
   rootDir?: string;
   now?: () => Date;
   logger?: Pick<Console, "warn">;
+  /**
+   * Optional Tier 2 launch-claim binding hook. When provided, after
+   * each successful `recordTrustedSessionSignal` call, the drain
+   * inspects the signal for a `launchClaimId` and calls
+   * `bindClaimViaTrustedSignal` to atomically bind the claim to the
+   * row that ingest just created. Errors are logged via `logger.warn`
+   * and never propagate.
+   */
+  onSignalApplied?: (signal: SessionRegistryTrustedSignalInput) => void;
 }
 
 export interface TrustedSessionSignalSpoolDrainResult {
@@ -123,9 +136,21 @@ export function getTrustedSessionSignalSpoolRoot(): string {
 }
 
 export function shouldIgnoreTrustedSessionSignal(
-  input: Pick<SessionRegistryTrustedSignalInput, "cwd">,
+  input: Pick<SessionRegistryTrustedSignalInput, "cwd" | "sessionId">,
 ): boolean {
-  return isCopilotSdkSessionFsPath(input.cwd);
+  return isCopilotHelperSessionIdentity(input);
+}
+
+export function ignoredTrustedSessionSignalReason(
+  input: Pick<SessionRegistryTrustedSignalInput, "cwd" | "sessionId">,
+): "copilot-cli-subagent" | "copilot-sdk-session-fs" | null {
+  if (isCopilotCliSubagentSessionId(input.sessionId)) {
+    return "copilot-cli-subagent";
+  }
+  if (isCopilotSdkSessionFsPath(input.cwd)) {
+    return "copilot-sdk-session-fs";
+  }
+  return null;
 }
 
 export function parseTrustedSessionSignalInput(
@@ -186,6 +211,9 @@ export function parseTrustedSessionSignalInput(
   if (hasOwn(value, "promptLength")) {
     signal.promptLength = ensureOptionalInteger(value.promptLength, "signal.promptLength");
   }
+  if (hasOwn(value, "launchClaimId")) {
+    signal.launchClaimId = ensureOptionalString(value.launchClaimId, "signal.launchClaimId");
+  }
 
   return signal;
 }
@@ -236,6 +264,17 @@ export function drainTrustedSessionSignalSpool(
         continue;
       }
       store.recordTrustedSessionSignal(signal);
+      if (options.onSignalApplied) {
+        try {
+          options.onSignalApplied(signal);
+        } catch (callbackError) {
+          options.logger?.warn(
+            `[session-signals] onSignalApplied failed for ${fileName}: ${
+              callbackError instanceof Error ? callbackError.message : String(callbackError)
+            }`,
+          );
+        }
+      }
       rmSync(sourcePath, { force: true });
       processed += 1;
     } catch (error) {
@@ -243,12 +282,18 @@ export function drainTrustedSessionSignalSpool(
         continue;
       }
       if (isSessionRegistryLocked(error)) {
+        // The registry lock is store-wide, so every remaining signal would hit
+        // the same lock this pass. Log once and stop; the worker retries the
+        // whole spool next cycle instead of emitting one line per file.
+        // Exclude already-processed and already-failed files so the count
+        // reflects only signals still pending (including the current one).
+        const remaining = files.length - processed - failed;
         options.logger?.warn(
-          `[session-signals] registry locked; will retry ${fileName}: ${
+          `[session-signals] registry locked; will retry ${remaining} pending signal(s) next cycle (paused at ${fileName}): ${
             error instanceof Error ? error.message : String(error)
           }`,
         );
-        continue;
+        break;
       }
       mkdirSync(failedDir, { recursive: true });
       const failedPath = join(failedDir, basename(fileName));

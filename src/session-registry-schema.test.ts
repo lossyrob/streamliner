@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
+  SESSION_REGISTRY_ACTIVITY_CONFIDENCES,
+  SESSION_REGISTRY_ACTIVITY_DIAGNOSTIC_CODES,
+  SESSION_REGISTRY_ACTIVITY_STATUS_REASONS,
   SESSION_REGISTRY_AI_SUMMARY_STATUSES,
   SESSION_REGISTRY_ACTIVITY_STATUSES,
   SESSION_REGISTRY_COPILOT_PROCESS_STATES,
@@ -8,12 +12,19 @@ import {
   SESSION_REGISTRY_LIFECYCLE_STATUSES,
   SESSION_REGISTRY_OBSERVED_SESSION_KINDS,
   SESSION_REGISTRY_ORIGIN_KINDS,
+  SESSION_REGISTRY_PAW_ARTIFACT_KINDS,
+  SESSION_REGISTRY_PAW_WORKFLOW_DIAGNOSTIC_CODES,
+  SESSION_REGISTRY_PAW_WORKFLOW_KINDS,
+  SESSION_REGISTRY_PAW_WORKFLOW_STAGES,
+  SESSION_REGISTRY_PAW_WORKFLOW_STATUSES,
   SESSION_REGISTRY_SCHEMA_VERSION,
   SESSION_REGISTRY_TITLE_SOURCES,
   SESSION_REGISTRY_TRUSTED_END_REASONS,
   SESSION_REGISTRY_TRUSTED_EXECUTION_KINDS,
   SESSION_REGISTRY_TRUSTED_SIGNAL_SOURCES,
   SESSION_REGISTRY_TRUSTED_START_SOURCES,
+  buildSessionRegistryActivityEvidence,
+  isPendingInputRequestIndeterminate,
   type SessionRegistryRecord,
 } from "./session-registry-schema";
 import {
@@ -53,6 +64,7 @@ function buildRecord(): SessionRegistryRecord {
       nodeId: "session-registry-model",
       launchClaimId: "launch-claim-123",
     },
+    pawLaunch: null,
     aiSummary: "Designing the session registry contract surface",
     aiSummaryModel: "gpt-5.4-mini",
     aiSummaryUpdatedAt: "2026-04-21T20:31:00.000Z",
@@ -64,6 +76,8 @@ function buildRecord(): SessionRegistryRecord {
     copilotProcessId: null,
     activityStatus: "unknown",
     activityStatusUpdatedAt: null,
+    activityEvidence: DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
+    pawWorkflow: null,
     trustedSignalSource: null,
     trustedStartedAt: null,
     trustedEndedAt: null,
@@ -120,6 +134,74 @@ describe("session registry schema", () => {
       "interrupted",
       "exited",
     ]);
+    expect(SESSION_REGISTRY_ACTIVITY_CONFIDENCES).toEqual([
+      "none",
+      "low",
+      "medium",
+      "high",
+    ]);
+    expect(SESSION_REGISTRY_ACTIVITY_STATUS_REASONS).toEqual([
+      "neutral_default",
+      "trusted_start",
+      "trusted_prompt",
+      "trusted_end",
+      "user_message",
+      "assistant_message",
+      "assistant_turn_start",
+      "assistant_turn_end",
+      "tool_user_requested",
+      "tool_execution_start",
+      "tool_execution_complete",
+      "user_requested_tool_complete",
+      "pending_input",
+      "session_ended",
+      "process_interrupted",
+      "events_missing",
+      "events_empty",
+      "events_unrecognized",
+    ]);
+    expect(SESSION_REGISTRY_ACTIVITY_DIAGNOSTIC_CODES).toEqual([
+      "events_missing",
+      "events_empty",
+      "events_tail_truncated",
+      "events_parse_error",
+      "events_unrecognized",
+      "events_unrecognized_tool_shape",
+    ]);
+    expect(SESSION_REGISTRY_PAW_WORKFLOW_STATUSES).toEqual([
+      "recognized",
+      "unavailable",
+      "unknown",
+    ]);
+    expect(SESSION_REGISTRY_PAW_WORKFLOW_STAGES).toEqual([
+      "init",
+      "planning",
+      "implementation",
+      "review",
+      "finalization",
+    ]);
+    expect(SESSION_REGISTRY_PAW_WORKFLOW_KINDS).toEqual([
+      "paw",
+      "paw-lite",
+      "paw-review",
+      "unknown",
+    ]);
+    expect(SESSION_REGISTRY_PAW_ARTIFACT_KINDS).toEqual([
+      "context",
+      "specification",
+      "research",
+      "planning",
+      "implementation",
+      "review",
+      "finalization",
+      "unknown",
+    ]);
+    expect(SESSION_REGISTRY_PAW_WORKFLOW_DIAGNOSTIC_CODES).toEqual([
+      "paw_workdir_unavailable",
+      "paw_artifact_layout_unknown",
+      "paw_artifact_scan_error",
+      "paw_artifact_scan_truncated",
+    ]);
     expect(SESSION_REGISTRY_GITHUB_REF_TYPES).toEqual(["issue", "pr", "unknown"]);
     expect(SESSION_REGISTRY_TRUSTED_SIGNAL_SOURCES).toEqual([
       "copilot-cli-hook",
@@ -170,6 +252,27 @@ describe("session registry schema", () => {
     expect(observedLinkInput.lifecycleStatus).toBe("ended");
   });
 
+  it("builds activity evidence and detects indeterminate pending input", () => {
+    const evidence = buildSessionRegistryActivityEvidence({
+      statusReason: "events_unrecognized",
+      confidence: "medium",
+      diagnostics: ["events_tail_truncated", "events_tail_truncated"],
+    });
+
+    expect(evidence.diagnostics).toEqual(["events_tail_truncated"]);
+    expect(isPendingInputRequestIndeterminate(evidence)).toBe(true);
+    expect(
+      isPendingInputRequestIndeterminate(
+        buildSessionRegistryActivityEvidence({
+          statusReason: "pending_input",
+          confidence: "high",
+          pendingInputRequest: true,
+          diagnostics: ["events_tail_truncated"],
+        }),
+      ),
+    ).toBe(false);
+  });
+
   it("provides stable record and contract shapes for downstream modules", () => {
     const record = buildRecord();
     const listItem: SessionRegistryListItem = {
@@ -187,7 +290,9 @@ describe("session registry schema", () => {
       branch: record.branch,
       tags: record.tags,
       originKind: record.origin.kind,
+      launchCliArgs: null,
       graphBinding: record.graphBinding,
+      pawLaunch: record.pawLaunch,
       copilotSessionId: record.copilotSessionId,
       aiSummary: record.aiSummary,
       aiSummaryModel: record.aiSummaryModel,
@@ -200,6 +305,8 @@ describe("session registry schema", () => {
       copilotProcessId: record.copilotProcessId,
       activityStatus: record.activityStatus,
       activityStatusUpdatedAt: record.activityStatusUpdatedAt,
+      activityEvidence: record.activityEvidence,
+      pawWorkflow: record.pawWorkflow,
       trustedSignalSource: record.trustedSignalSource,
       trustedStartedAt: record.trustedStartedAt,
       trustedEndedAt: record.trustedEndedAt,
@@ -324,6 +431,10 @@ describe("session registry schema", () => {
         lifecycleStatus:
           nextPatch.lifecycleStatus ?? record.lifecycleStatus,
         tags: nextPatch.tags ?? record.tags,
+      }),
+      patchRuntimeMetadata: (id) => ({
+        ...record,
+        id,
       }),
       archiveSession: (id) => ({
         ...record,

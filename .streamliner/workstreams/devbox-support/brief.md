@@ -74,7 +74,7 @@ contracts:
 | Upstream contract | Current owner | Devbox consumers | Blocking rule |
 |---|---|---|---|
 | Primary registry storage and identity | Decision 004, Decision 005, `session-registry-model`, `manual-session-registry-ui` | `devbox-host-registration`, `devbox-registry-merge`, `devbox-operational-surface` | Available as the baseline contract; devbox must preserve Streamliner-owned registry ids and builder-owned fields. |
-| Registry mutation and multi-view sync behavior | `session-dashboard-sync` / issue #17 | `devbox-registry-merge`, `devbox-operational-surface` | Required before remote observations become a new writer/refresh source for the shared registry surface. |
+| Registry mutation and multi-view sync behavior | `session-dashboard-sync` / issue #17 | `devbox-registry-merge`, `devbox-operational-surface` | Completed: devbox support should consume the standalone local Streamliner API process as the registry mutation, trusted signal ingestion, background observation/indexing, and live event hub. |
 | Local observation lifecycle and compatibility semantics | `session-event-observation`, plus Decision 001 until that node lands | `remote-session-state-spike`, `remote-observation-transport-spike`, `devbox-session-discovery` | Research can proceed now; implementation should wait for the stable local observation record shape, stale/ended rules, and compatibility diagnostics. |
 | Runtime overlay and PAW progression projection | `paw-control-state-observation`, `runtime-overlay-ui`, `tracking-visible` checkpoint | `devbox-operational-surface` only when graph projection is included | Not required for the first Sessions/registry-based devbox visibility slice unless the accepted implementation scope includes graph overlay behavior. |
 | Launch claims and graph-node binding | `launch-claim-binding`, `terminal-launch-integration`, `launch-from-graph` checkpoint | Future devbox launch, recovery, or node-binding work | Not a prerequisite for devbox observability. This workstream should not wait on launch-from-graph unless a later wave expands into remote launch or graph-node binding. |
@@ -98,37 +98,17 @@ that preserves stale last-known registry data without fabricating freshness. The
 contract was validated devbox-locally and through a laptop-to-devbox Dev Tunnel
 connection against the issue #22 smoke bridge/probe.
 
-Issue #23 is complete. The accepted identity model scopes observations by a
-Streamliner-owned `environmentId`, treats legacy/local rows as
-`environmentId: "local"`, uses `(environmentId, copilotSessionId)` as the
-automatic observed-session key, and keeps access-channel metadata, bridge
-capabilities, cursors, diagnostics, and credentials out of durable session
-identity. Remote `cwd`, `repo`, and `branch` remain environment-native registry
-facts used as strict manual-row attach guardrails, not cross-environment merge
-keys.
+Issue #17 is complete in the upstream `session-launching-and-tracking`
+workstream. It accepted the standalone local Streamliner API process as the
+registry sync/live-update contract that devbox implementation should consume
+rather than relying on Vite-owned registry workers.
 
-Issue #24 is complete. The accepted health model keeps durable registry lifecycle,
-observation-derived liveness, environment reachability, bridge health,
-observation freshness, and observation confidence as separate axes. Devbox rows
-stay visible as last-known history when the host, tunnel, bridge, credentials, or
-compatibility fail, but stale or unverified observations cannot look fresh and
-cannot create clean `ended` transitions from transport silence alone.
-
-Issue #27 is complete. The accepted security model keeps the first devbox
-observability slice local-first, builder-managed, and credential-external:
-Streamliner stores non-secret environment/access metadata and redacted diagnostics
-in local runtime/config, while SSH, Azure/Dev Tunnel tooling, OS credential
-stores, or a later explicit secret provider own credential material and private
-trust roots. A bridge bound to devbox loopback and reached only through an
-authenticated private Dev Tunnel or SSH forward does not need separate
-Streamliner bridge auth in the first slice; expanded bridge exposure, remote
-control, raw transcript transport, multi-user access, or Streamliner-managed
-credential storage requires a new security design/ADR.
-
-The next promoted item is the `devbox-research-contract-gate`. The implementation
-tail remains blocked on that accepted devbox research contract plus the specific
-upstream registry, sync, and observation contracts named above; it is not blocked
-on the entire `session-launching-and-tracking` workstream or on launch-from-graph.
+The promoted research issues are `environment-identity-spike` (issue #23),
+`devbox-health-spike` (issue #24), and `devbox-security-spike` (issue #27).
+Issue #28 tracks the research-contract gate. The implementation tail remains
+blocked on the accepted devbox research contract plus the remaining upstream
+local observation semantics named above; it is not blocked on the entire
+`session-launching-and-tracking` workstream or on launch-from-graph.
 
 ## Decisions
 - Use local tracker specs for Wave 1 research nodes so the spike missions are
@@ -163,38 +143,18 @@ on the entire `session-launching-and-tracking` workstream or on launch-from-grap
   `/health`, `/capabilities`, bounded `/sessions/snapshot`, offset-based
   `/sessions/{id}/events`, replayable `/signals`, and loopback
   `POST /api/sessions/signals` for devbox Copilot CLI hooks.
-- Use environment-scoped observation identity for devbox sessions. A registry row
-  keeps its Streamliner-owned `id`; automatic observed-session matching uses
-  `(environmentId, copilotSessionId)`, and manual-row attachment additionally
-  requires the same environment plus matching remote `cwd`, `repo`, and `branch`
-  guardrails.
-- Treat a registered devbox environment as one host/session-state-root
-  observation scope in local runtime config. Retargeting a registration to a
-  different host or Copilot session-state root requires a new environment id or
-  an explicit migration, not silent reuse.
-- Cache non-secret environment display/provider metadata on registry rows so the
-  existing Sessions surface can distinguish local and devbox rows. Keep access
-  details, bridge/tunnel identifiers, capabilities, cursors, diagnostics, path
-  mappings, and credentials in local runtime/config, derived overlay, or external
-  credential stores according to the issue #23 field-placement finding.
-- Represent devbox health as runtime confidence layered on top of the registry:
-  environment reachability, bridge health, observation freshness, and observation
-  confidence are distinct from durable `lifecycleStatus` and per-session
-  liveness.
-- Preserve last-known devbox registry rows during unreachable, credential-expired,
-  unsupported-bridge, permission, cursor, parse, stale-lock, and hook-capability
-  failures. Surface diagnostics and stale/degraded badges instead of fabricating
-  freshness, deleting rows, or marking sessions ended from outage alone.
-- Keep devbox credentials and private trust material outside Streamliner-managed
-  artifacts and ordinary runtime JSON. Local runtime/config may store non-secret
-  connector identifiers, credential references, host/bridge trust diagnostics,
-  and redacted health state; committed artifacts may describe vocabulary only.
-- Rely on loopback bridge binding plus authenticated private Dev Tunnel or SSH
-  forwarding for first-slice bridge trust. Open an ADR before requiring app-layer
-  bridge secrets, Streamliner-managed credential caches, privileged services,
-  cloud relays, multi-user access control, raw transcript transport, or remote
-  control semantics.
+- Consume the standalone local Streamliner API process accepted by issue #17 as
+  the registry mutation, trusted signal ingestion, background observation/indexing,
+  and live event hub. Devbox support should not add a parallel registry writer or
+  depend on Vite dev/preview processes as backend owners.
 
 ## Open Questions
+- What host/environment fields belong in the registry record versus derived
+  runtime overlay state?
+- How should Streamliner represent host reachability, tunnel reachability,
+  bridge health, plugin/hook availability, stale observations, and degraded
+  compatibility without making stale devbox data look fresh?
+- What credential references, bridge auth rules, and diagnostic redaction
+  boundaries are needed beyond the no-secrets artifact rule?
 - Should the production bridge remain a user-started helper, or should a later
   implementation install it as a user login task/service after an explicit ADR?

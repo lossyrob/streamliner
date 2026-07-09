@@ -2,17 +2,32 @@ import dagre from "@dagrejs/dagre";
 import type { WorkstreamDocument } from "./workstream-schema";
 import type {
   WorkstreamDerivedNode,
+  WorkstreamExternalDependencyView,
   WorkstreamViewModel,
 } from "./workstream-view-model";
+import type {
+  GraphNodeSessionStatusState,
+  GraphNodeSessionStatusSummary,
+} from "./graph-node-session-status";
+import type { WorkstreamRuntimeNodeOverlay } from "./workstream-runtime-overlay";
+import type { NodeLaunchOperation } from "./node-launch-record-contract";
 
-const TASK_NODE_WIDTH = 304;
-const TASK_NODE_HEIGHT = 168;
+const TASK_NODE_WIDTH = 328;
+const TASK_NODE_HEIGHT = 224;
 const GATE_NODE_WIDTH = 384;
 const GATE_NODE_HEIGHT = 96;
+const EXTERNAL_NODE_WIDTH = 248;
+const EXTERNAL_NODE_HEIGHT = 112;
 
-const LANE_PADDING_X = 32;
-const LANE_PADDING_TOP = 72;
-const LANE_PADDING_BOTTOM = 32;
+const GRAPH_RANK_SEP = 144;
+const GRAPH_NODE_SEP = 96;
+const GRAPH_EDGE_SEP = 40;
+const GRAPH_MARGIN = 64;
+
+const LANE_PADDING_X = 48;
+const LANE_PADDING_TOP = 88;
+const LANE_PADDING_BOTTOM = 56;
+const LANE_GAP_Y = 72;
 
 export type WorkstreamCheckpointLaneState =
   | "completed"
@@ -50,12 +65,25 @@ export interface WorkstreamGraphNodeData extends Record<string, unknown> {
   repoLabel: string;
   highlight: WorkstreamGraphNodeHighlight;
   showId: boolean;
+  sessionStatus: GraphNodeSessionStatusSummary | null;
+  sessionStatusState: GraphNodeSessionStatusState;
+  runtimeOverlay: WorkstreamRuntimeNodeOverlay | null;
+  launchOperation: NodeLaunchOperation | null;
+  sessionsHref: string | null;
+  onOpenSessions: (() => void | Promise<void>) | null;
+}
+
+export interface WorkstreamExternalGraphNodeData extends Record<string, unknown> {
+  dependency: WorkstreamExternalDependencyView;
+  highlight: WorkstreamGraphNodeHighlight;
+  onOpenTarget: (() => void | Promise<void>) | null;
 }
 
 export interface WorkstreamGraphRenderableEdge {
   id: string;
   sourceId: string;
   targetId: string;
+  kind?: "external" | "cross-workstream";
 }
 
 export interface WorkstreamGraphLayoutNode {
@@ -69,6 +97,16 @@ export interface WorkstreamGraphLayoutNode {
   entry: WorkstreamDerivedNode;
 }
 
+export interface WorkstreamGraphExternalLayoutNode {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  highlight: WorkstreamGraphNodeHighlight;
+  dependency: WorkstreamExternalDependencyView;
+}
+
 export interface WorkstreamGraphLayoutEdge
   extends WorkstreamGraphRenderableEdge {
   highlight: WorkstreamGraphEdgeHighlight;
@@ -76,6 +114,7 @@ export interface WorkstreamGraphLayoutEdge
 
 export interface WorkstreamGraphLayoutResult {
   nodes: WorkstreamGraphLayoutNode[];
+  externalNodes: WorkstreamGraphExternalLayoutNode[];
   edges: WorkstreamGraphLayoutEdge[];
   checkpointLanes: WorkstreamGraphCheckpointLane[];
   dependenciesByNode: Map<string, string[]>;
@@ -107,17 +146,47 @@ function repoLabelForNode(
     .join(" · ");
 }
 
-function buildDependencyMaps(workstream: WorkstreamDocument) {
+function externalDependenciesByNode(viewModel?: WorkstreamViewModel) {
+  return new Map(
+    (viewModel?.derivedNodes ?? []).map((entry) => [
+      entry.node.id,
+      entry.externalDependencies,
+    ]),
+  );
+}
+
+function buildDependencyMaps(
+  workstream: WorkstreamDocument,
+  viewModel?: WorkstreamViewModel,
+) {
+  const externalByNode = externalDependenciesByNode(viewModel);
   const dependenciesByNode = new Map(
-    workstream.nodes.map((node) => [node.id, [...node.dependsOn]]),
+    workstream.nodes.map((node) => [
+      node.id,
+      [
+        ...node.dependsOn,
+        ...(externalByNode.get(node.id) ?? []).map(
+          (dependency) => dependency.graphNodeId,
+        ),
+      ],
+    ]),
   );
   const dependentsByNode = new Map(
     workstream.nodes.map((node) => [node.id, [] as string[]]),
   );
 
+  for (const dependencies of externalByNode.values()) {
+    for (const dependency of dependencies) {
+      dependentsByNode.set(dependency.graphNodeId, []);
+    }
+  }
+
   for (const node of workstream.nodes) {
     for (const dependencyId of node.dependsOn) {
       dependentsByNode.get(dependencyId)?.push(node.id);
+    }
+    for (const dependency of externalByNode.get(node.id) ?? []) {
+      dependentsByNode.get(dependency.graphNodeId)?.push(node.id);
     }
   }
 
@@ -259,30 +328,73 @@ function edgeHighlightFor(
   return "muted";
 }
 
-export function buildWorkstreamGraphLayout(
+function separateCheckpointLanes(
+  viewModel: WorkstreamViewModel,
+  layoutNodes: WorkstreamGraphLayoutNode[],
+): WorkstreamGraphLayoutNode[] {
+  const separatedNodes = layoutNodes.map((node) => ({ ...node }));
+  const positionById = new Map(separatedNodes.map((node) => [node.id, node]));
+  let previousLaneBottom = -Infinity;
+
+  for (const progress of viewModel.checkpoints) {
+    const members = progress.checkpoint.nodeIds
+      .map((nodeId) => positionById.get(nodeId))
+      .filter((node): node is WorkstreamGraphLayoutNode => Boolean(node));
+    if (members.length === 0) {
+      continue;
+    }
+
+    const laneTop =
+      Math.min(...members.map((member) => member.y)) - LANE_PADDING_TOP;
+    const laneBottom =
+      Math.max(...members.map((member) => member.y + member.height)) +
+      LANE_PADDING_BOTTOM;
+    const requiredLaneTop = previousLaneBottom + LANE_GAP_Y;
+    const deltaY =
+      Number.isFinite(previousLaneBottom) && laneTop < requiredLaneTop
+        ? requiredLaneTop - laneTop
+        : 0;
+
+    if (deltaY > 0) {
+      for (const member of members) {
+        member.y += deltaY;
+      }
+    }
+
+    previousLaneBottom = laneBottom + deltaY;
+  }
+
+  return separatedNodes;
+}
+
+export function buildWorkstreamGraphBaseLayout(
   workstream: WorkstreamDocument,
   viewModel: WorkstreamViewModel,
-  selectedNodeId: string | null,
 ): WorkstreamGraphLayoutResult {
   const { dependenciesByNode, dependentsByNode } =
-    buildDependencyMaps(workstream);
+    buildDependencyMaps(workstream, viewModel);
   const renderedEdges = reduceTransitiveEdges(workstream);
-  const ancestors = selectedNodeId
-    ? collectReachableNodes(selectedNodeId, dependenciesByNode)
-    : new Set<string>();
-  const descendants = selectedNodeId
-    ? collectReachableNodes(selectedNodeId, dependentsByNode)
-    : new Set<string>();
+  const externalDependencies = viewModel.derivedNodes.flatMap(
+    (entry) => entry.externalDependencies,
+  );
+  const externalEdges = externalDependencies.map<WorkstreamGraphRenderableEdge>(
+    (dependency) => ({
+      id: `${dependency.graphNodeId}->${dependency.nodeId}`,
+      sourceId: dependency.graphNodeId,
+      targetId: dependency.nodeId,
+      kind: dependency.target ? "cross-workstream" : "external",
+    }),
+  );
 
   const graph = new dagre.graphlib.Graph();
   graph.setGraph({
     rankdir: "TB",
     ranker: "network-simplex",
-    ranksep: 104,
-    nodesep: 72,
-    edgesep: 28,
-    marginx: 56,
-    marginy: 56,
+    ranksep: GRAPH_RANK_SEP,
+    nodesep: GRAPH_NODE_SEP,
+    edgesep: GRAPH_EDGE_SEP,
+    marginx: GRAPH_MARGIN,
+    marginy: GRAPH_MARGIN,
   });
   graph.setDefaultEdgeLabel(() => ({}));
 
@@ -291,14 +403,22 @@ export function buildWorkstreamGraphLayout(
     graph.setNode(entry.node.id, { width, height });
   }
 
-  for (const edge of renderedEdges) {
+  for (const dependency of externalDependencies) {
+    graph.setNode(dependency.graphNodeId, {
+      width: EXTERNAL_NODE_WIDTH,
+      height: EXTERNAL_NODE_HEIGHT,
+    });
+  }
+
+  for (const edge of [...renderedEdges, ...externalEdges]) {
     graph.setEdge(edge.sourceId, edge.targetId);
   }
 
   dagre.layout(graph);
 
-  const layoutNodes: WorkstreamGraphLayoutNode[] = viewModel.derivedNodes.map(
-    (entry) => {
+  const layoutNodes = separateCheckpointLanes(
+    viewModel,
+    viewModel.derivedNodes.map((entry) => {
       const { width, height } = nodeSizeForType(entry.node.type);
       const position = graph.node(entry.node.id) as
         | { x: number; y: number }
@@ -310,38 +430,132 @@ export function buildWorkstreamGraphLayout(
         y: (position?.y ?? height / 2) - height / 2,
         width,
         height,
-        highlight: nodeHighlightFor(
-          entry.node.id,
-          selectedNodeId,
-          ancestors,
-          descendants,
-        ),
+        highlight: "none",
         repoLabel: repoLabelForNode(workstream, entry),
         entry,
       };
-    },
+    }),
   );
 
   const checkpointLanes = buildCheckpointLanes(viewModel, layoutNodes);
+  const externalNodes = externalDependencies.map((dependency) => {
+    const position = graph.node(dependency.graphNodeId) as
+      | { x: number; y: number }
+      | undefined;
+
+    return {
+      id: dependency.graphNodeId,
+      x: (position?.x ?? EXTERNAL_NODE_WIDTH / 2) - EXTERNAL_NODE_WIDTH / 2,
+      y: (position?.y ?? EXTERNAL_NODE_HEIGHT / 2) - EXTERNAL_NODE_HEIGHT / 2,
+      width: EXTERNAL_NODE_WIDTH,
+      height: EXTERNAL_NODE_HEIGHT,
+      highlight: "none" as const,
+      dependency,
+    };
+  });
 
   return {
     nodes: layoutNodes,
-    edges: renderedEdges.map((edge) => ({
+    externalNodes,
+    edges: [...renderedEdges, ...externalEdges].map((edge) => ({
       ...edge,
-      highlight: edgeHighlightFor(
-        edge.sourceId,
-        edge.targetId,
-        selectedNodeId,
-        ancestors,
-        descendants,
-      ),
+      highlight: "none",
     })),
     checkpointLanes,
     dependenciesByNode,
     dependentsByNode,
+    ancestors: new Set<string>(),
+    descendants: new Set<string>(),
+  };
+}
+
+export function applyWorkstreamGraphSelection(
+  layout: WorkstreamGraphLayoutResult,
+  selectedNodeId: string | null,
+): WorkstreamGraphLayoutResult {
+  const ancestors = selectedNodeId
+    ? collectReachableNodes(selectedNodeId, layout.dependenciesByNode)
+    : new Set<string>();
+  const descendants = selectedNodeId
+    ? collectReachableNodes(selectedNodeId, layout.dependentsByNode)
+    : new Set<string>();
+
+  let nodesChanged = false;
+  const nodes = layout.nodes.map((node) => {
+    const highlight = nodeHighlightFor(
+      node.id,
+      selectedNodeId,
+      ancestors,
+      descendants,
+    );
+    if (node.highlight === highlight) {
+      return node;
+    }
+    nodesChanged = true;
+    return { ...node, highlight };
+  });
+
+  let edgesChanged = false;
+  const edges = layout.edges.map((edge) => {
+    const highlight = edgeHighlightFor(
+      edge.sourceId,
+      edge.targetId,
+      selectedNodeId,
+      ancestors,
+      descendants,
+    );
+    if (edge.highlight === highlight) {
+      return edge;
+    }
+    edgesChanged = true;
+    return { ...edge, highlight };
+  });
+
+  let externalNodesChanged = false;
+  const externalNodes = layout.externalNodes.map((node) => {
+    const highlight = nodeHighlightFor(
+      node.id,
+      selectedNodeId,
+      ancestors,
+      descendants,
+    );
+    if (node.highlight === highlight) {
+      return node;
+    }
+    externalNodesChanged = true;
+    return { ...node, highlight };
+  });
+
+  if (
+    !selectedNodeId &&
+    !nodesChanged &&
+    !externalNodesChanged &&
+    !edgesChanged &&
+    layout.ancestors.size === 0 &&
+    layout.descendants.size === 0
+  ) {
+    return layout;
+  }
+
+  return {
+    ...layout,
+    nodes,
+    externalNodes,
+    edges,
     ancestors,
     descendants,
   };
+}
+
+export function buildWorkstreamGraphLayout(
+  workstream: WorkstreamDocument,
+  viewModel: WorkstreamViewModel,
+  selectedNodeId: string | null,
+): WorkstreamGraphLayoutResult {
+  return applyWorkstreamGraphSelection(
+    buildWorkstreamGraphBaseLayout(workstream, viewModel),
+    selectedNodeId,
+  );
 }
 
 function laneStateFor(

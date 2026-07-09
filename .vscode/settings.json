@@ -1,0 +1,4 @@
+{
+  // Force LF for new files created in VS Code on every contributor's machine.
+  "files.eol": "\n"
+}

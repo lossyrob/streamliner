@@ -86,6 +86,7 @@ function closeServer(server: Server): Promise<void> {
 describe("trusted session signal spool", () => {
   it("spools hook stdin as prompt lengths without persisting raw prompt text", async () => {
     const signalRoot = createRootDir();
+    const stateRoot = createRootDir();
     const initialPrompt = "secret kickoff prompt that must not be persisted";
 
     await runSignalScript(
@@ -99,7 +100,11 @@ describe("trusted session signal spool", () => {
       },
       {
         STREAMLINER_SESSION_SIGNAL_SPOOL_ROOT: signalRoot,
-        STREAMLINER_SESSION_SIGNAL_ENDPOINT: "",
+        // Isolate the script from the user's running API and lock file: a
+        // temp state root has no api.lock, and an unreachable port forces
+        // the POST to fail so the script falls through to the spool.
+        STREAMLINER_STATE_ROOT: stateRoot,
+        STREAMLINER_SESSION_SIGNAL_ENDPOINT: "http://127.0.0.1:1/disabled",
       },
     );
 
@@ -181,6 +186,28 @@ describe("trusted session signal spool", () => {
     expect(existsSync(join(signalRoot, SESSION_REGISTRY_SIGNAL_PENDING_DIR))).toBe(false);
   });
 
+  it("drops Copilot CLI subagent hook signals before posting or spooling", async () => {
+    const signalRoot = createRootDir();
+    const stateRoot = createRootDir();
+
+    await runSignalScript(
+      "sessionStart",
+      {
+        sessionId: "call_I4jAXfET9zZZNc23C2qdmG4s",
+        timestamp: "2026-04-24T20:00:00.000Z",
+        cwd: "C:\\repo",
+        source: "new",
+      },
+      {
+        STREAMLINER_SESSION_SIGNAL_SPOOL_ROOT: signalRoot,
+        STREAMLINER_STATE_ROOT: stateRoot,
+        STREAMLINER_SESSION_SIGNAL_ENDPOINT: "http://127.0.0.1:1/disabled",
+      },
+    );
+
+    expect(existsSync(join(signalRoot, SESSION_REGISTRY_SIGNAL_PENDING_DIR))).toBe(false);
+  });
+
   it("writes collision-safe complete files for same-session same-timestamp signals", () => {
     const rootDir = createRootDir();
     const now = () => new Date("2026-04-24T20:00:00.000Z");
@@ -216,7 +243,7 @@ describe("trusted session signal spool", () => {
     expect(existsSync(second)).toBe(true);
   });
 
-  it("drops Streamliner SDK helper hook signals without failing ingest", () => {
+  it("drops helper hook signals without failing ingest", () => {
     const signalRoot = createRootDir();
     const registryRoot = createRootDir();
     const store = new SessionRegistryFileStore({ rootDir: registryRoot });
@@ -233,9 +260,21 @@ describe("trusted session signal spool", () => {
       },
       { rootDir: signalRoot },
     );
+    writeTrustedSessionSignalSpoolFile(
+      {
+        event: "session.started",
+        source: "copilot-cli-hook",
+        sessionId: "call_I4jAXfET9zZZNc23C2qdmG4s",
+        timestamp: "2026-04-24T20:00:00.000Z",
+        cwd: "C:\\repo",
+        hookSource: "new",
+        executionKind: "copilot_cli",
+      },
+      { rootDir: signalRoot },
+    );
 
     expect(drainTrustedSessionSignalSpool(store, { rootDir: signalRoot })).toEqual({
-      processed: 1,
+      processed: 2,
       failed: 0,
     });
     expect(readdirSync(join(signalRoot, SESSION_REGISTRY_SIGNAL_PENDING_DIR))).toEqual([]);
@@ -300,7 +339,7 @@ describe("trusted session signal spool", () => {
     );
     writeFileSync(
       join(registryRoot, "registry.lock"),
-      JSON.stringify({ pid: process.pid, acquiredAt: "2026-04-24T20:00:00.000Z" }),
+      JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() }),
       "utf8",
     );
 
@@ -323,6 +362,48 @@ describe("trusted session signal spool", () => {
     expect(store.getSession("locked-session")).toEqual(
       expect.objectContaining({ lifecycleStatus: "active" }),
     );
+  });
+
+  it("logs a single retry warning when the registry is locked with many pending signals", () => {
+    const signalRoot = createRootDir();
+    const registryRoot = createRootDir();
+    const store = new SessionRegistryFileStore({
+      rootDir: registryRoot,
+      writeLockWaitTimeoutMs: 0,
+    });
+    const warnings: string[] = [];
+
+    for (let index = 0; index < 5; index += 1) {
+      writeTrustedSessionSignalSpoolFile(
+        {
+          event: "session.started",
+          source: "copilot-cli-hook",
+          sessionId: `locked-session-${index}`,
+          timestamp: "2026-04-24T20:00:00.000Z",
+          cwd: "C:\\repo",
+        },
+        { rootDir: signalRoot },
+      );
+    }
+    writeFileSync(
+      join(registryRoot, "registry.lock"),
+      JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() }),
+      "utf8",
+    );
+
+    expect(
+      drainTrustedSessionSignalSpool(store, {
+        rootDir: signalRoot,
+        logger: { warn: (message) => warnings.push(message) },
+      }),
+    ).toEqual({ processed: 0, failed: 0 });
+
+    // One warning for the whole pass, not one line per pending signal.
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("registry locked; will retry");
+    expect(
+      readdirSync(join(signalRoot, SESSION_REGISTRY_SIGNAL_PENDING_DIR)),
+    ).toHaveLength(5);
   });
 
   it("preserves repo and branch when later drained signals omit them", () => {

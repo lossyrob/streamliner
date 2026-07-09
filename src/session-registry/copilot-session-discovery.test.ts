@@ -8,6 +8,7 @@ import { SessionRegistryFileStore } from "./file-store";
 import {
   __resetCopilotDiscoveryCacheForTests,
   discoverCopilotSessions,
+  discoverCopilotSessionsBatch,
   rememberIgnoredObservedCopilotSessionId,
   syncDiscoveredCopilotSessions,
 } from "./copilot-session-discovery";
@@ -156,6 +157,47 @@ describe("copilot session discovery", () => {
     );
   });
 
+  it("discovers sessions in bounded batches", () => {
+    const sessionRoot = createRootDir("streamliner-copilot-session-state-");
+    createdRoots.push(sessionRoot);
+
+    for (const sessionId of ["session-a", "session-b", "session-c"]) {
+      writeWorkspaceFile(
+        sessionRoot,
+        sessionId,
+        [
+          `id: ${sessionId}`,
+          `cwd: C:\\repo\\${sessionId}`,
+          "repository: lossyrob/streamliner",
+          "branch: main",
+          `summary: ${sessionId}`,
+          "updated_at: 2026-04-23T18:28:32.345Z",
+        ].join("\n"),
+      );
+    }
+
+    const first = discoverCopilotSessionsBatch(sessionRoot, {
+      startIndex: 0,
+      maxDirectories: 2,
+    });
+    expect(first.totalDirectories).toBe(3);
+    expect(first.nextStartIndex).toBe(2);
+    expect(first.sessions.map((session) => session.sessionId).sort()).toEqual([
+      "session-a",
+      "session-b",
+    ]);
+
+    const second = discoverCopilotSessionsBatch(sessionRoot, {
+      startIndex: first.nextStartIndex,
+      maxDirectories: 2,
+    });
+    expect(second.nextStartIndex).toBe(1);
+    expect(second.sessions.map((session) => session.sessionId).sort()).toEqual([
+      "session-a",
+      "session-c",
+    ]);
+  });
+
   it("adopts Copilot workspace titles for trusted sessions until they are renamed", () => {
     const registryRoot = createRootDir("streamliner-session-registry-discovery-");
     const sessionRoot = createRootDir("streamliner-copilot-session-state-");
@@ -188,6 +230,8 @@ describe("copilot session discovery", () => {
         "cwd: C:\\Users\\robemanuele\\proj\\planning",
         "repository: lossyrob/planning",
         "branch: main",
+        "name: Session Rename Command Title",
+        "user_named: true",
         "summary: Plan Manual Session Titles",
         "updated_at: 2026-04-27T13:05:00.000Z",
       ].join("\n"),
@@ -196,8 +240,32 @@ describe("copilot session discovery", () => {
     expect(syncDiscoveredCopilotSessions(store, sessionRoot)).toBe(1);
     expect(store.getSession("trusted-planning-session")).toEqual(
       expect.objectContaining({
-        title: "Plan Manual Session Titles",
+        title: "Session Rename Command Title",
         titleSource: "auto",
+      }),
+    );
+
+    writeWorkspaceFile(
+      sessionRoot,
+      "trusted-planning-session",
+      [
+        "id: trusted-planning-session",
+        "cwd: C:\\Users\\robemanuele\\proj\\planning",
+        "repository: lossyrob/planning",
+        "branch: main",
+        "name: Updated Session Rename Command Title",
+        "user_named: true",
+        "summary: Plan Manual Session Titles",
+        "updated_at: 2026-04-27T13:07:00.000Z",
+      ].join("\n"),
+      { active: true },
+    );
+    expect(syncDiscoveredCopilotSessions(store, sessionRoot)).toBe(1);
+    expect(store.getSession("trusted-planning-session")).toEqual(
+      expect.objectContaining({
+        title: "Updated Session Rename Command Title",
+        titleSource: "auto",
+        lastSeenAt: "2026-04-27T13:07:00.000Z",
       }),
     );
 
@@ -210,6 +278,8 @@ describe("copilot session discovery", () => {
         "cwd: C:\\Users\\robemanuele\\proj\\planning",
         "repository: lossyrob/planning",
         "branch: feature/title-refresh",
+        "name: Copilot Rename Should Not Override Streamliner Title",
+        "user_named: true",
         "summary: Updated Copilot Workspace Title",
         "updated_at: 2026-04-27T13:10:00.000Z",
       ].join("\n"),
@@ -222,6 +292,39 @@ describe("copilot session discovery", () => {
         title: "My planning terminal",
         titleSource: "user",
         branch: "feature/title-refresh",
+      }),
+    );
+
+    const launched = store.upsertSession({
+      id: "workstream-launched-session",
+      title: "Workstream launch title",
+      description: "Launched from a workstream node",
+      cwd: "C:\\Users\\robemanuele\\proj\\planning",
+      repo: "lossyrob/planning",
+      branch: "main",
+      origin: {
+        kind: "launched",
+        launchClaimId: "claim-1",
+      },
+      graphBinding: {
+        workstreamId: "session-launching-and-tracking",
+        nodeId: "launch-node",
+        launchClaimId: "claim-1",
+      },
+    });
+    expect(launched.titleSource).toBe("user");
+    store.attachObservedSession("workstream-launched-session", {
+      copilotSessionId: "workstream-launched-copilot-session",
+      title: "Copilot rename should not override launch title",
+      cwd: "C:\\Users\\robemanuele\\proj\\planning",
+      repo: "lossyrob/planning",
+      branch: "main",
+    });
+    expect(store.getSession("workstream-launched-session")).toEqual(
+      expect.objectContaining({
+        title: "Workstream launch title",
+        titleSource: "user",
+        copilotSessionId: "workstream-launched-copilot-session",
       }),
     );
   });
@@ -272,6 +375,18 @@ describe("copilot session discovery", () => {
         "updated_at: 2026-04-23T18:28:32.345Z",
       ].join("\n"),
     );
+    writeWorkspaceFile(
+      sessionRoot,
+      "call_I4jAXfET9zZZNc23C2qdmG4s",
+      [
+        "id: call_I4jAXfET9zZZNc23C2qdmG4s",
+        "cwd: C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+        "repository: lossyrob/streamliner",
+        "branch: feature/manual-session-registry",
+        "summary: Explore session registry",
+        "updated_at: 2026-04-23T18:28:32.345Z",
+      ].join("\n"),
+    );
     writeFileSync(
       join(sessionRoot, "stale-lock-session", "inuse.999999.lock"),
       "",
@@ -289,6 +404,12 @@ describe("copilot session discovery", () => {
         }),
         expect.objectContaining({
           sessionId: "sdk-helper-session",
+          observedSessionKind: "helper",
+          copilotProcessState: "none",
+          lifecycleStatus: "ended",
+        }),
+        expect.objectContaining({
+          sessionId: "call_I4jAXfET9zZZNc23C2qdmG4s",
           observedSessionKind: "helper",
           copilotProcessState: "none",
           lifecycleStatus: "ended",
@@ -339,10 +460,20 @@ describe("copilot session discovery", () => {
       hookSource: "new",
       executionKind: "copilot_cli",
     });
+    store.recordTrustedSessionSignal({
+      event: "session.started",
+      source: "copilot-cli-hook",
+      sessionId: "call_I4jAXfET9zZZNc23C2qdmG4s",
+      timestamp: "2026-04-24T20:00:00.000Z",
+      cwd: "C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+      hookSource: "new",
+      executionKind: "copilot_cli",
+    });
 
-    expect(syncDiscoveredCopilotSessions(store, sessionRoot)).toBe(2);
+    expect(syncDiscoveredCopilotSessions(store, sessionRoot)).toBe(3);
     expect(store.getSession("legacy-helper")).toBeNull();
     expect(store.getSession("trusted-sdk-helper")).toBeNull();
+    expect(store.getSession("call_I4jAXfET9zZZNc23C2qdmG4s")).toBeNull();
   });
 
   it("skips importing helper sessions into the persisted observed registry", () => {
@@ -383,6 +514,18 @@ describe("copilot session discovery", () => {
         "updated_at: 2026-04-23T19:28:32.345Z",
       ].join("\n"),
       { active: true },
+    );
+    writeWorkspaceFile(
+      sessionRoot,
+      "call_I4jAXfET9zZZNc23C2qdmG4s",
+      [
+        "id: call_I4jAXfET9zZZNc23C2qdmG4s",
+        "cwd: C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+        "repository: lossyrob/streamliner",
+        "branch: feature/manual-session-registry",
+        "summary: Explore session registry",
+        "updated_at: 2026-04-23T20:28:32.345Z",
+      ].join("\n"),
     );
 
     const store = new SessionRegistryFileStore({ rootDir: registryRoot });
@@ -434,6 +577,57 @@ describe("copilot session discovery", () => {
         trustedStartedAt: "2026-04-24T20:00:00.000Z",
         trustedEndedAt: null,
         trustedExecutionKind: "agency",
+      }),
+    );
+  });
+
+  it("keeps lifecycleStatus ended after a trusted end signal even if the OS process is still observed alive", () => {
+    const registryRoot = createRootDir("streamliner-session-registry-ended-live-");
+    const sessionRoot = createRootDir("streamliner-copilot-session-state-");
+    createdRoots.push(registryRoot, sessionRoot);
+
+    writeWorkspaceFile(
+      sessionRoot,
+      "ended-but-process-alive",
+      [
+        "id: ended-but-process-alive",
+        "cwd: C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+        "repository: lossyrob/streamliner",
+        "branch: feature/relaunch",
+        "summary: Trusted session that ended while its process lingers",
+        "updated_at: 2026-04-29T16:55:00.000Z",
+      ].join("\n"),
+      { active: true },
+    );
+
+    const store = new SessionRegistryFileStore({ rootDir: registryRoot });
+    store.recordTrustedSessionSignal({
+      event: "session.started",
+      source: "copilot-cli-hook",
+      sessionId: "ended-but-process-alive",
+      timestamp: "2026-04-29T16:53:29.000Z",
+      cwd: "C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+      hookSource: "resume",
+      executionKind: "copilot_cli",
+    });
+    store.recordTrustedSessionSignal({
+      event: "session.ended",
+      source: "copilot-cli-hook",
+      sessionId: "ended-but-process-alive",
+      timestamp: "2026-04-29T16:55:25.000Z",
+      cwd: "C:\\Users\\robemanuele\\proj\\streamliner\\manual-session-registry",
+      endReason: "user_exit",
+      executionKind: "copilot_cli",
+    });
+
+    syncDiscoveredCopilotSessions(store, sessionRoot);
+
+    const record = store.getSession("ended-but-process-alive");
+    expect(record).toEqual(
+      expect.objectContaining({
+        lifecycleStatus: "ended",
+        trustedEndedAt: "2026-04-29T16:55:25.000Z",
+        trustedEndReason: "user_exit",
       }),
     );
   });

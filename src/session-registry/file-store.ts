@@ -16,6 +16,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
 import {
+  type LaunchedSessionRegistryUpsertInput,
   type ObservedSessionRegistryUpsertInput,
   SESSION_REGISTRY_CHANGE_EVENT_KINDS,
   type SessionRegistryBuilderLifecycleStatus,
@@ -25,11 +26,28 @@ import {
   type SessionRegistryListOptions,
   type SessionRegistryObservedLinkInput,
   type SessionRegistryPatch,
+  type SessionRegistryRuntimeMetadataPatch,
   type SessionRegistryStore,
   type SessionRegistryTrustedSignalInput,
   type SessionRegistryUpsertInput,
 } from "../session-registry-contract";
+import { sessionRegistryRecordTextMatches } from "../session-registry-filter";
+import { basenameCrossOs } from "../cross-os-path";
 import {
+  mergeSessionRegistryRuntimeMetadata,
+  normalizeSessionRegistryRuntimeMetadata,
+} from "./managed-runtime";
+import {
+  isProcessLockStale,
+  newLockMetadata,
+  type ProcessLockMetadata,
+  readLockMetadataFile,
+} from "./lock-liveness";
+import {
+  DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
+  SESSION_REGISTRY_ACTIVITY_CONFIDENCES,
+  SESSION_REGISTRY_ACTIVITY_DIAGNOSTIC_CODES,
+  SESSION_REGISTRY_ACTIVITY_STATUS_REASONS,
   SESSION_REGISTRY_ACTIVITY_STATUSES,
   SESSION_REGISTRY_AI_SUMMARY_STATUSES,
   SESSION_REGISTRY_COPILOT_PROCESS_STATES,
@@ -37,12 +55,21 @@ import {
   SESSION_REGISTRY_LIFECYCLE_STATUSES,
   SESSION_REGISTRY_OBSERVED_SESSION_KINDS,
   SESSION_REGISTRY_ORIGIN_KINDS,
+  SESSION_REGISTRY_PAW_ARTIFACT_KINDS,
+  SESSION_REGISTRY_PAW_WORKFLOW_DIAGNOSTIC_CODES,
+  SESSION_REGISTRY_PAW_WORKFLOW_KINDS,
+  SESSION_REGISTRY_PAW_WORKFLOW_STAGES,
+  SESSION_REGISTRY_PAW_WORKFLOW_STATUSES,
   SESSION_REGISTRY_SCHEMA_VERSION,
   SESSION_REGISTRY_TITLE_SOURCES,
   SESSION_REGISTRY_TRUSTED_END_REASONS,
   SESSION_REGISTRY_TRUSTED_EXECUTION_KINDS,
   SESSION_REGISTRY_TRUSTED_SIGNAL_SOURCES,
   SESSION_REGISTRY_TRUSTED_START_SOURCES,
+  buildSessionRegistryActivityEvidence,
+  type SessionRegistryActivityConfidence,
+  type SessionRegistryActivityDiagnosticCode,
+  type SessionRegistryActivityEvidence,
   type SessionRegistryActivityStatus,
   type SessionRegistryAiSummaryStatus,
   type SessionRegistryCopilotProcessState,
@@ -55,6 +82,14 @@ import {
   type SessionRegistryObservedSessionKind,
   type SessionRegistryOrigin,
   type SessionRegistryOriginKind,
+  type SessionRegistryPawArtifactEvidence,
+  type SessionRegistryPawArtifactKind,
+  type SessionRegistryPawLaunch,
+  type SessionRegistryPawWorkflow,
+  type SessionRegistryPawWorkflowDiagnosticCode,
+  type SessionRegistryPawWorkflowKind,
+  type SessionRegistryPawWorkflowStage,
+  type SessionRegistryPawWorkflowStatus,
   type SessionRegistryRecord,
   type SessionRegistryTitleSource,
   type SessionRegistryTrustedEndReason,
@@ -121,6 +156,11 @@ const SESSION_REGISTRY_UPSERT_BASE_KEYS = [
   "origin",
   "lifecycleStatus",
   "graphBinding",
+  "runtime",
+] as const;
+const LAUNCHED_SESSION_UPSERT_KEYS = [
+  ...SESSION_REGISTRY_UPSERT_BASE_KEYS,
+  "pawLaunch",
 ] as const;
 const OBSERVED_SESSION_UPSERT_KEYS = [
   ...SESSION_REGISTRY_UPSERT_BASE_KEYS,
@@ -142,10 +182,6 @@ const OBSERVED_SESSION_UPSERT_KEYS = [
 
 type StoredSessionRegistryRecord = SessionRegistryRecord & Record<string, unknown>;
 type JsonObject = Record<string, unknown>;
-interface SessionRegistryLockMetadata {
-  pid: number;
-  acquiredAt: string;
-}
 
 export class SessionRegistryNotFoundError extends Error {
   constructor(id: string) {
@@ -199,6 +235,8 @@ export interface SessionRegistryDerivedStatePatch {
   copilotProcessId?: number | null;
   activityStatus?: SessionRegistryActivityStatus;
   activityStatusUpdatedAt?: string | null;
+  activityEvidence?: SessionRegistryActivityEvidence;
+  pawWorkflow?: SessionRegistryPawWorkflow | null;
   derivedWorktreePath?: string | null;
   derivedBranch?: string | null;
   derivedGithubRefs?: SessionRegistryGithubRef[];
@@ -214,23 +252,6 @@ export function getDefaultSessionRegistryRoot(): string {
 
 function sleepSync(milliseconds: number): void {
   Atomics.wait(SHARED_SLEEP_ARRAY, 0, 0, milliseconds);
-}
-
-function processExists(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error: unknown) {
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      (error as NodeJS.ErrnoException).code === "EPERM"
-    ) {
-      return true;
-    }
-    return false;
-  }
 }
 
 function renameWithRetries(fromPath: string, toPath: string): void {
@@ -260,8 +281,29 @@ function cloneValue<T>(value: T): T {
   return structuredClone(value);
 }
 
+function fingerprintMapsEqual(left: Map<string, string>, right: Map<string, string>): boolean {
+  if (left.size !== right.size) {
+    return false;
+  }
+  for (const [key, value] of left) {
+    if (right.get(key) !== value) {
+      return false;
+    }
+  }
+  return true;
+}
+
+let lastIsoNowMs = 0;
+
+// Strictly monotonic per process so two registry writes that land in the same
+// millisecond still receive distinct, increasing timestamps. The freshness sort
+// keys on updatedAt, and on fast filesystems (e.g. APFS) back-to-back writes
+// could otherwise collide and produce non-deterministic ordering.
 function isoNow(): string {
-  return new Date().toISOString();
+  const nowMs = Date.now();
+  const ms = nowMs > lastIsoNowMs ? nowMs : lastIsoNowMs + 1;
+  lastIsoNowMs = ms;
+  return new Date(ms).toISOString();
 }
 
 function ensureString(value: unknown, fieldName: string): string {
@@ -361,6 +403,13 @@ function ensureStringField(value: unknown, fieldName: string): string {
   return value;
 }
 
+function ensureBoolean(value: unknown, fieldName: string): boolean {
+  if (typeof value !== "boolean") {
+    throw new Error(`Expected ${fieldName} to be a boolean.`);
+  }
+  return value;
+}
+
 function hasOwn(value: JsonObject, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
 }
@@ -395,9 +444,10 @@ function ensureOptionalGraphBinding(
     throw new Error(`Expected ${fieldName} to be an object or null.`);
   }
 
+  const nodeId = ensureOptionalString(value.nodeId, `${fieldName}.nodeId`);
   return {
     workstreamId: ensureString(value.workstreamId, `${fieldName}.workstreamId`),
-    nodeId: ensureString(value.nodeId, `${fieldName}.nodeId`),
+    nodeId: nodeId && nodeId.trim().length > 0 ? nodeId : null,
     launchClaimId: ensureOptionalString(
       value.launchClaimId,
       `${fieldName}.launchClaimId`,
@@ -431,6 +481,20 @@ function ensureStringArray(value: unknown, fieldName: string): string[] {
   return normalizeTags(value);
 }
 
+function ensureRawStringArray(value: unknown, fieldName: string): string[] {
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    throw new Error(`Expected ${fieldName} to be an array of strings.`);
+  }
+  return [...value];
+}
+
+function ensureOptionalRawStringArray(value: unknown, fieldName: string): string[] | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  return ensureRawStringArray(value, fieldName);
+}
+
 function parseStoredOrigin(value: unknown, fieldName: string): SessionRegistryOrigin {
   if (!isJsonObject(value)) {
     throw new Error(`Expected ${fieldName} to be an object.`);
@@ -461,6 +525,14 @@ function parseStoredOrigin(value: unknown, fieldName: string): SessionRegistryOr
       value.launchClaimId,
       `${fieldName}.launchClaimId`,
     ),
+    ...(hasOwn(value, "cliArgs")
+      ? {
+          cliArgs: ensureOptionalRawStringArray(
+            value.cliArgs,
+            `${fieldName}.cliArgs`,
+          ),
+        }
+      : {}),
   };
 }
 
@@ -506,7 +578,7 @@ function parseInputOrigin(value: unknown, fieldName: string): SessionRegistryOri
     };
   }
 
-  ensureAllowedKeys(value, fieldName, ["kind", "launchClaimId"]);
+  ensureAllowedKeys(value, fieldName, ["kind", "launchClaimId", "cliArgs"]);
   return {
     kind: "launched",
     ...(hasOwn(value, "launchClaimId")
@@ -514,6 +586,14 @@ function parseInputOrigin(value: unknown, fieldName: string): SessionRegistryOri
           launchClaimId: ensureOptionalString(
             value.launchClaimId,
             `${fieldName}.launchClaimId`,
+          ),
+        }
+      : {}),
+    ...(hasOwn(value, "cliArgs")
+      ? {
+          cliArgs: ensureOptionalRawStringArray(
+            value.cliArgs,
+            `${fieldName}.cliArgs`,
           ),
         }
       : {}),
@@ -538,6 +618,28 @@ function isAiSummaryStatus(value: string): value is SessionRegistryAiSummaryStat
 
 function isActivityStatus(value: string): value is SessionRegistryActivityStatus {
   return SESSION_REGISTRY_ACTIVITY_STATUSES.includes(value as SessionRegistryActivityStatus);
+}
+
+function isActivityConfidence(value: string): value is SessionRegistryActivityConfidence {
+  return SESSION_REGISTRY_ACTIVITY_CONFIDENCES.includes(
+    value as SessionRegistryActivityConfidence,
+  );
+}
+
+function isActivityStatusReason(
+  value: string,
+): value is SessionRegistryActivityEvidence["statusReason"] {
+  return SESSION_REGISTRY_ACTIVITY_STATUS_REASONS.includes(
+    value as SessionRegistryActivityEvidence["statusReason"],
+  );
+}
+
+function isActivityDiagnosticCode(
+  value: string,
+): value is SessionRegistryActivityDiagnosticCode {
+  return SESSION_REGISTRY_ACTIVITY_DIAGNOSTIC_CODES.includes(
+    value as SessionRegistryActivityDiagnosticCode,
+  );
 }
 
 function isObservedSessionKind(value: string): value is SessionRegistryObservedSessionKind {
@@ -580,10 +682,48 @@ function isGithubRefType(value: string): value is SessionRegistryGithubRefType {
   return SESSION_REGISTRY_GITHUB_REF_TYPES.includes(value as SessionRegistryGithubRefType);
 }
 
+function isPawWorkflowStatus(value: string): value is SessionRegistryPawWorkflowStatus {
+  return SESSION_REGISTRY_PAW_WORKFLOW_STATUSES.includes(
+    value as SessionRegistryPawWorkflowStatus,
+  );
+}
+
+function isPawWorkflowStage(value: string): value is SessionRegistryPawWorkflowStage {
+  return SESSION_REGISTRY_PAW_WORKFLOW_STAGES.includes(
+    value as SessionRegistryPawWorkflowStage,
+  );
+}
+
+function isPawWorkflowKind(value: string): value is SessionRegistryPawWorkflowKind {
+  return SESSION_REGISTRY_PAW_WORKFLOW_KINDS.includes(
+    value as SessionRegistryPawWorkflowKind,
+  );
+}
+
+function isPawArtifactKind(value: string): value is SessionRegistryPawArtifactKind {
+  return SESSION_REGISTRY_PAW_ARTIFACT_KINDS.includes(
+    value as SessionRegistryPawArtifactKind,
+  );
+}
+
+function isPawWorkflowDiagnosticCode(
+  value: string,
+): value is SessionRegistryPawWorkflowDiagnosticCode {
+  return SESSION_REGISTRY_PAW_WORKFLOW_DIAGNOSTIC_CODES.includes(
+    value as SessionRegistryPawWorkflowDiagnosticCode,
+  );
+}
+
 function isObservedUpsertInput(
   input: SessionRegistryUpsertInput,
 ): input is ObservedSessionRegistryUpsertInput {
   return input.origin.kind === "observed";
+}
+
+function isLaunchedUpsertInput(
+  input: SessionRegistryUpsertInput,
+): input is LaunchedSessionRegistryUpsertInput {
+  return input.origin.kind === "launched";
 }
 
 function parseBuilderLifecycleStatus(
@@ -666,6 +806,122 @@ function normalizeActivityStatus(
     throw new Error(`Unsupported ${fieldName} "${status}".`);
   }
   return status;
+}
+
+function normalizeActivityDiagnostics(
+  value: unknown,
+  fieldName: string,
+): SessionRegistryActivityDiagnosticCode[] {
+  if (value === undefined || value === null) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`Expected ${fieldName} to be an array.`);
+  }
+  const seen = new Set<SessionRegistryActivityDiagnosticCode>();
+  const diagnostics: SessionRegistryActivityDiagnosticCode[] = [];
+  for (const [index, entry] of value.entries()) {
+    if (typeof entry !== "string" || !isActivityDiagnosticCode(entry)) {
+      throw new Error(`Unsupported ${fieldName}[${index}] "${String(entry)}".`);
+    }
+    if (!seen.has(entry)) {
+      seen.add(entry);
+      diagnostics.push(entry);
+    }
+  }
+  return diagnostics;
+}
+
+function normalizeActivityConfidence(
+  value: unknown,
+  fieldName: string,
+): SessionRegistryActivityConfidence {
+  const confidence = ensureString(value, fieldName);
+  if (!isActivityConfidence(confidence)) {
+    throw new Error(`Unsupported ${fieldName} "${confidence}".`);
+  }
+  return confidence;
+}
+
+function normalizeActivityStatusReason(
+  value: unknown,
+  fieldName: string,
+): SessionRegistryActivityEvidence["statusReason"] {
+  const reason = ensureString(value, fieldName);
+  if (!isActivityStatusReason(reason)) {
+    throw new Error(`Unsupported ${fieldName} "${reason}".`);
+  }
+  return reason;
+}
+
+function normalizeActivityEvidence(
+  value: unknown,
+  fieldName: string,
+): SessionRegistryActivityEvidence {
+  const defaults = cloneValue(DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE);
+  if (value === undefined || value === null) {
+    return defaults;
+  }
+  if (!isJsonObject(value)) {
+    throw new Error(`Expected ${fieldName} to be an object or null.`);
+  }
+
+  return {
+    statusReason: hasOwn(value, "statusReason")
+      ? normalizeActivityStatusReason(value.statusReason, `${fieldName}.statusReason`)
+      : defaults.statusReason,
+    confidence: hasOwn(value, "confidence")
+      ? normalizeActivityConfidence(value.confidence, `${fieldName}.confidence`)
+      : defaults.confidence,
+    diagnostics: hasOwn(value, "diagnostics")
+      ? normalizeActivityDiagnostics(value.diagnostics, `${fieldName}.diagnostics`)
+      : defaults.diagnostics,
+    pendingInputRequest: hasOwn(value, "pendingInputRequest")
+      ? ensureBoolean(value.pendingInputRequest, `${fieldName}.pendingInputRequest`)
+      : defaults.pendingInputRequest,
+    pendingInputRequestCount: hasOwn(value, "pendingInputRequestCount")
+      ? ensureNonNegativeInteger(
+          value.pendingInputRequestCount,
+          `${fieldName}.pendingInputRequestCount`,
+        )
+      : defaults.pendingInputRequestCount,
+    lastUserMessageAt: hasOwn(value, "lastUserMessageAt")
+      ? ensureOptionalString(value.lastUserMessageAt, `${fieldName}.lastUserMessageAt`)
+      : defaults.lastUserMessageAt,
+    lastAssistantTurnStartedAt: hasOwn(value, "lastAssistantTurnStartedAt")
+      ? ensureOptionalString(
+          value.lastAssistantTurnStartedAt,
+          `${fieldName}.lastAssistantTurnStartedAt`,
+        )
+      : defaults.lastAssistantTurnStartedAt,
+    lastAssistantTurnEndedAt: hasOwn(value, "lastAssistantTurnEndedAt")
+      ? ensureOptionalString(
+          value.lastAssistantTurnEndedAt,
+          `${fieldName}.lastAssistantTurnEndedAt`,
+        )
+      : defaults.lastAssistantTurnEndedAt,
+    lastActivityEventAt: hasOwn(value, "lastActivityEventAt")
+      ? ensureOptionalString(value.lastActivityEventAt, `${fieldName}.lastActivityEventAt`)
+      : defaults.lastActivityEventAt,
+    userMessageCount: hasOwn(value, "userMessageCount")
+      ? ensureNonNegativeInteger(value.userMessageCount, `${fieldName}.userMessageCount`)
+      : defaults.userMessageCount,
+    assistantTurnCount: hasOwn(value, "assistantTurnCount")
+      ? ensureNonNegativeInteger(value.assistantTurnCount, `${fieldName}.assistantTurnCount`)
+      : defaults.assistantTurnCount,
+    eventsScannedAt: hasOwn(value, "eventsScannedAt")
+      ? ensureOptionalString(value.eventsScannedAt, `${fieldName}.eventsScannedAt`)
+      : defaults.eventsScannedAt,
+    eventsOffset: hasOwn(value, "eventsOffset")
+      ? ensureNonNegativeInteger(value.eventsOffset, `${fieldName}.eventsOffset`)
+      : defaults.eventsOffset,
+    eventsSize: hasOwn(value, "eventsSize")
+      ? ensureNonNegativeInteger(value.eventsSize, `${fieldName}.eventsSize`)
+      : defaults.eventsSize,
+    eventsMtimeMs: hasOwn(value, "eventsMtimeMs")
+      ? ensureOptionalNumber(value.eventsMtimeMs, `${fieldName}.eventsMtimeMs`)
+      : defaults.eventsMtimeMs,
+  };
 }
 
 function normalizeObservedSessionKind(
@@ -785,6 +1041,162 @@ function normalizeGithubRefs(value: unknown, fieldName: string): SessionRegistry
   return value.map((entry, index) => normalizeGithubRef(entry, `${fieldName}[${index}]`));
 }
 
+function normalizePawWorkflowStage(
+  value: unknown,
+  fieldName: string,
+): SessionRegistryPawWorkflowStage | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const stage = ensureString(value, fieldName);
+  if (!isPawWorkflowStage(stage)) {
+    throw new Error(`Unsupported ${fieldName} "${stage}".`);
+  }
+  return stage;
+}
+
+function normalizePawWorkflowDiagnosticCodes(
+  value: unknown,
+  fieldName: string,
+): SessionRegistryPawWorkflowDiagnosticCode[] {
+  if (value === undefined || value === null) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`Expected ${fieldName} to be an array.`);
+  }
+  const seen = new Set<SessionRegistryPawWorkflowDiagnosticCode>();
+  const diagnostics: SessionRegistryPawWorkflowDiagnosticCode[] = [];
+  for (const [index, entry] of value.entries()) {
+    if (typeof entry !== "string" || !isPawWorkflowDiagnosticCode(entry)) {
+      throw new Error(`Unsupported ${fieldName}[${index}] "${String(entry)}".`);
+    }
+    if (!seen.has(entry)) {
+      seen.add(entry);
+      diagnostics.push(entry);
+    }
+  }
+  return diagnostics;
+}
+
+function normalizePawArtifactEvidence(
+  value: unknown,
+  fieldName: string,
+): SessionRegistryPawArtifactEvidence {
+  if (!isJsonObject(value)) {
+    throw new Error(`Expected ${fieldName} to be an object.`);
+  }
+  const kind = ensureString(value.kind, `${fieldName}.kind`);
+  if (!isPawArtifactKind(kind)) {
+    throw new Error(`Unsupported ${fieldName}.kind "${kind}".`);
+  }
+  return {
+    path: ensureString(value.path, `${fieldName}.path`),
+    kind,
+    stage: normalizePawWorkflowStage(value.stage, `${fieldName}.stage`),
+    mtimeMs: ensureOptionalNumber(value.mtimeMs, `${fieldName}.mtimeMs`),
+  };
+}
+
+function normalizePawArtifactEvidenceList(
+  value: unknown,
+  fieldName: string,
+): SessionRegistryPawArtifactEvidence[] {
+  if (value === undefined || value === null) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`Expected ${fieldName} to be an array.`);
+  }
+  return value.map((entry, index) =>
+    normalizePawArtifactEvidence(entry, `${fieldName}[${index}]`),
+  );
+}
+
+function normalizePawWorkflow(
+  value: unknown,
+  fieldName: string,
+): SessionRegistryPawWorkflow | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (!isJsonObject(value)) {
+    throw new Error(`Expected ${fieldName} to be an object or null.`);
+  }
+  const status = ensureString(value.status, `${fieldName}.status`);
+  if (!isPawWorkflowStatus(status)) {
+    throw new Error(`Unsupported ${fieldName}.status "${status}".`);
+  }
+  const workflowKind = hasOwn(value, "workflowKind")
+    ? ensureString(value.workflowKind, `${fieldName}.workflowKind`)
+    : "unknown";
+  if (!isPawWorkflowKind(workflowKind)) {
+    throw new Error(`Unsupported ${fieldName}.workflowKind "${workflowKind}".`);
+  }
+  const artifacts = normalizePawArtifactEvidenceList(
+    value.artifacts,
+    `${fieldName}.artifacts`,
+  );
+  return {
+    status,
+    stage: normalizePawWorkflowStage(value.stage, `${fieldName}.stage`),
+    workflowKind,
+    workId: ensureOptionalString(value.workId, `${fieldName}.workId`),
+    workTitle: ensureOptionalString(value.workTitle, `${fieldName}.workTitle`),
+    workDir: ensureOptionalString(value.workDir, `${fieldName}.workDir`),
+    artifacts,
+    artifactCount: ensureNonNegativeInteger(
+      value.artifactCount ?? artifacts.length,
+      `${fieldName}.artifactCount`,
+    ),
+    latestArtifactPath: ensureOptionalString(
+      value.latestArtifactPath,
+      `${fieldName}.latestArtifactPath`,
+    ),
+    latestArtifactMtimeMs: ensureOptionalNumber(
+      value.latestArtifactMtimeMs,
+      `${fieldName}.latestArtifactMtimeMs`,
+    ),
+    scannedAt: ensureOptionalString(value.scannedAt, `${fieldName}.scannedAt`),
+    diagnostics: normalizePawWorkflowDiagnosticCodes(
+      value.diagnostics,
+      `${fieldName}.diagnostics`,
+    ),
+  };
+}
+
+function normalizePawLaunch(
+  value: unknown,
+  fieldName: string,
+): SessionRegistryPawLaunch | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (!isJsonObject(value)) {
+    throw new Error(`Expected ${fieldName} to be an object or null.`);
+  }
+  const workflowKind = hasOwn(value, "workflowKind")
+    ? ensureString(value.workflowKind, `${fieldName}.workflowKind`)
+    : "unknown";
+  if (!isPawWorkflowKind(workflowKind)) {
+    throw new Error(`Unsupported ${fieldName}.workflowKind "${workflowKind}".`);
+  }
+  return {
+    workId: ensureString(value.workId, `${fieldName}.workId`),
+    workTitle: ensureString(value.workTitle, `${fieldName}.workTitle`),
+    workflowKind,
+    pawWorkDir: ensureString(value.pawWorkDir, `${fieldName}.pawWorkDir`),
+    workflowContextPath: ensureOptionalString(
+      value.workflowContextPath,
+      `${fieldName}.workflowContextPath`,
+    ),
+    streamlinerContextPath: ensureOptionalString(
+      value.streamlinerContextPath,
+      `${fieldName}.streamlinerContextPath`,
+    ),
+  };
+}
+
 function inferLegacyTitleSource(value: {
   title: string;
   cwd: string;
@@ -804,7 +1216,7 @@ function inferLegacyTitleSource(value: {
   const title = value.title.trim();
   const candidates = new Set<string>();
   const repoName = value.repo?.split("/").at(-1)?.trim();
-  const cwdName = basename(value.cwd).trim();
+  const cwdName = basenameCrossOs(value.cwd).trim();
   const helperSuffix =
     value.observedSessionKind === "helper" ? " helper session" : "";
   for (const candidate of [repoName, cwdName, value.copilotSessionId]) {
@@ -889,6 +1301,14 @@ export function parseSessionRegistryUpsertInput(value: unknown): SessionRegistry
           graphBinding: ensureOptionalGraphBinding(
             value.graphBinding,
             "input.graphBinding",
+          ),
+        }
+      : {}),
+    ...(hasOwn(value, "runtime")
+      ? {
+          runtime: normalizeSessionRegistryRuntimeMetadata(
+            value.runtime,
+            "input.runtime",
           ),
         }
       : {}),
@@ -1010,8 +1430,8 @@ export function parseSessionRegistryUpsertInput(value: unknown): SessionRegistry
     };
   }
 
-  ensureAllowedKeys(value, "input", SESSION_REGISTRY_UPSERT_BASE_KEYS);
   if (origin.kind === "manual") {
+    ensureAllowedKeys(value, "input", SESSION_REGISTRY_UPSERT_BASE_KEYS);
     return {
       ...common,
       origin,
@@ -1026,9 +1446,15 @@ export function parseSessionRegistryUpsertInput(value: unknown): SessionRegistry
     };
   }
 
+  ensureAllowedKeys(value, "input", LAUNCHED_SESSION_UPSERT_KEYS);
   return {
     ...common,
     origin,
+    ...(hasOwn(value, "pawLaunch")
+      ? {
+          pawLaunch: normalizePawLaunch(value.pawLaunch, "input.pawLaunch"),
+        }
+      : {}),
     ...(hasOwn(value, "lifecycleStatus")
       ? {
           lifecycleStatus: parseCreateLifecycleStatus(
@@ -1141,8 +1567,10 @@ function validateStoredRecord(
       return {
         ...(rawRecord.graphBinding as JsonObject),
         ...typedGraphBinding,
-        } as SessionRegistryGraphBinding;
-      })(),
+      } as SessionRegistryGraphBinding;
+    })(),
+    pawLaunch: normalizePawLaunch(rawRecord.pawLaunch, `${filePath}.pawLaunch`),
+    runtime: normalizeSessionRegistryRuntimeMetadata(rawRecord.runtime, `${filePath}.runtime`),
     aiSummary: ensureOptionalString(rawRecord.aiSummary, `${filePath}.aiSummary`),
     aiSummaryModel: ensureOptionalString(rawRecord.aiSummaryModel, `${filePath}.aiSummaryModel`),
     aiSummaryUpdatedAt: ensureOptionalString(
@@ -1181,6 +1609,11 @@ function validateStoredRecord(
       rawRecord.activityStatusUpdatedAt,
       `${filePath}.activityStatusUpdatedAt`,
     ),
+    activityEvidence: normalizeActivityEvidence(
+      rawRecord.activityEvidence,
+      `${filePath}.activityEvidence`,
+    ),
+    pawWorkflow: normalizePawWorkflow(rawRecord.pawWorkflow, `${filePath}.pawWorkflow`),
     trustedSignalSource: normalizeTrustedSignalSource(
       rawRecord.trustedSignalSource,
       `${filePath}.trustedSignalSource`,
@@ -1307,7 +1740,12 @@ function validateIndexEntry(
     ),
     tags: ensureStringArray(rawEntry.tags, `${fieldName}.tags`),
     originKind,
+    launchCliArgs: rawEntry.launchCliArgs === undefined || rawEntry.launchCliArgs === null
+      ? null
+      : ensureRawStringArray(rawEntry.launchCliArgs, `${fieldName}.launchCliArgs`),
     graphBinding: ensureOptionalGraphBinding(rawEntry.graphBinding, `${fieldName}.graphBinding`),
+    pawLaunch: normalizePawLaunch(rawEntry.pawLaunch, `${fieldName}.pawLaunch`),
+    runtime: normalizeSessionRegistryRuntimeMetadata(rawEntry.runtime, `${fieldName}.runtime`),
     aiSummary: ensureOptionalString(rawEntry.aiSummary, `${fieldName}.aiSummary`),
     aiSummaryModel: ensureOptionalString(rawEntry.aiSummaryModel, `${fieldName}.aiSummaryModel`),
     aiSummaryUpdatedAt: ensureOptionalString(
@@ -1346,6 +1784,11 @@ function validateIndexEntry(
       rawEntry.activityStatusUpdatedAt,
       `${fieldName}.activityStatusUpdatedAt`,
     ),
+    activityEvidence: normalizeActivityEvidence(
+      rawEntry.activityEvidence,
+      `${fieldName}.activityEvidence`,
+    ),
+    pawWorkflow: normalizePawWorkflow(rawEntry.pawWorkflow, `${fieldName}.pawWorkflow`),
     trustedSignalSource: normalizeTrustedSignalSource(
       rawEntry.trustedSignalSource,
       `${fieldName}.trustedSignalSource`,
@@ -1453,7 +1896,12 @@ function buildIndex(records: Iterable<StoredSessionRegistryRecord>): SessionRegi
     copilotSessionId: record.copilotSessionId,
     tags: cloneValue(record.tags),
     originKind: record.origin.kind,
+    launchCliArgs: record.origin.kind === "launched" && Array.isArray(record.origin.cliArgs)
+      ? [...record.origin.cliArgs]
+      : null,
     graphBinding: record.graphBinding ? cloneValue(record.graphBinding) : null,
+    pawLaunch: record.pawLaunch ? cloneValue(record.pawLaunch) : null,
+    runtime: record.runtime ? cloneValue(record.runtime) : null,
     aiSummary: record.aiSummary,
     aiSummaryModel: record.aiSummaryModel,
     aiSummaryUpdatedAt: record.aiSummaryUpdatedAt,
@@ -1465,6 +1913,8 @@ function buildIndex(records: Iterable<StoredSessionRegistryRecord>): SessionRegi
     copilotProcessId: record.copilotProcessId,
     activityStatus: record.activityStatus,
     activityStatusUpdatedAt: record.activityStatusUpdatedAt,
+    activityEvidence: cloneValue(record.activityEvidence),
+    pawWorkflow: record.pawWorkflow ? cloneValue(record.pawWorkflow) : null,
     trustedSignalSource: record.trustedSignalSource,
     trustedStartedAt: record.trustedStartedAt,
     trustedEndedAt: record.trustedEndedAt,
@@ -1492,18 +1942,28 @@ function buildIndex(records: Iterable<StoredSessionRegistryRecord>): SessionRegi
 }
 
 function compareByFreshness(
-  left: Pick<SessionRegistryListItem, "lastSeenAt" | "updatedAt">,
-  right: Pick<SessionRegistryListItem, "lastSeenAt" | "updatedAt">,
+  left: Pick<SessionRegistryListItem, "lastSeenAt" | "updatedAt" | "trustedLastSignalAt">,
+  right: Pick<SessionRegistryListItem, "lastSeenAt" | "updatedAt" | "trustedLastSignalAt">,
 ): number {
-  const leftSeen = left.lastSeenAt ? Date.parse(left.lastSeenAt) : Number.NEGATIVE_INFINITY;
-  const rightSeen = right.lastSeenAt ? Date.parse(right.lastSeenAt) : Number.NEGATIVE_INFINITY;
-  if (leftSeen !== rightSeen) {
-    return rightSeen - leftSeen;
-  }
+  // Use the most recent of (trustedLastSignalAt, lastSeenAt, updatedAt) as
+  // the freshness key. The discovery worker tracks lastSeenAt from
+  // workspace.yaml mtime, which lags real user activity by minutes/hours
+  // for sessions that aren't constantly writing turns to disk. Trusted
+  // hook signals (prompt.submitted, session.started, session.ended) are
+  // the truest signal of "this session was just used."
+  const leftKey = freshnessKey(left);
+  const rightKey = freshnessKey(right);
+  return rightKey - leftKey;
+}
 
-  const leftUpdated = Date.parse(left.updatedAt);
-  const rightUpdated = Date.parse(right.updatedAt);
-  return rightUpdated - leftUpdated;
+function freshnessKey(
+  entry: Pick<SessionRegistryListItem, "lastSeenAt" | "updatedAt" | "trustedLastSignalAt">,
+): number {
+  const candidates = [entry.trustedLastSignalAt, entry.lastSeenAt, entry.updatedAt]
+    .filter((value): value is string => typeof value === "string" && value.length > 0)
+    .map((value) => Date.parse(value))
+    .filter((value) => Number.isFinite(value));
+  return candidates.length > 0 ? Math.max(...candidates) : Number.NEGATIVE_INFINITY;
 }
 
 function matchesText(
@@ -1516,30 +1976,17 @@ function matchesText(
     | "cwd"
     | "repo"
     | "branch"
+    | "copilotSessionId"
     | "derivedBranch"
     | "derivedWorktreePath"
     | "derivedGithubRefs"
+    | "originKind"
+    | "pawLaunch"
+    | "pawWorkflow"
   >,
   text: string,
 ): boolean {
-  const refs = record.derivedGithubRefs.map((ref) =>
-    [ref.repo, ref.type, `#${ref.number}`, `${ref.type} #${ref.number}`]
-      .filter(Boolean)
-      .join(" "),
-  );
-  const haystacks = [
-    record.title,
-    record.description,
-    record.aiSummary ?? "",
-    record.cwd,
-    record.repo ?? "",
-    record.branch ?? "",
-    record.derivedBranch ?? "",
-    record.derivedWorktreePath ?? "",
-    ...refs,
-    ...record.tags,
-  ];
-  return haystacks.some((value) => value.toLowerCase().includes(text));
+  return sessionRegistryRecordTextMatches(record, text);
 }
 
 function mergeStoredRecord(
@@ -1566,6 +2013,50 @@ function mergeStoredRecord(
   };
 }
 
+const RUNTIME_METADATA_PATCH_TOP_LEVEL_FIELDS = new Set<keyof SessionRegistryRecord>([
+  "runtime",
+  "updatedAt",
+  "version",
+]);
+
+function assertRuntimeMetadataPatchScope(
+  before: SessionRegistryRecord,
+  after: SessionRegistryRecord,
+): void {
+  const keys = new Set([
+    ...Object.keys(before),
+    ...Object.keys(after),
+  ] as Array<keyof SessionRegistryRecord>);
+  for (const key of keys) {
+    if (RUNTIME_METADATA_PATCH_TOP_LEVEL_FIELDS.has(key)) {
+      continue;
+    }
+    if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) {
+      throw new Error(
+        `patchRuntimeMetadata changed non-runtime top-level field "${String(key)}".`,
+      );
+    }
+  }
+}
+
+function activityEvidenceForTrustedSignal(
+  base: SessionRegistryActivityEvidence | undefined,
+  statusReason: SessionRegistryActivityEvidence["statusReason"],
+  timestamp: string,
+): SessionRegistryActivityEvidence {
+  return buildSessionRegistryActivityEvidence(
+    {
+      statusReason,
+      confidence: "high",
+      diagnostics: [],
+      pendingInputRequest: false,
+      pendingInputRequestCount: 0,
+      lastActivityEventAt: timestamp,
+    },
+    base ? cloneValue(base) : DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
+  );
+}
+
 function getBuilderConflictFields(patch: SessionRegistryPatch): string[] {
   const fields: string[] = [];
   for (const key of SESSION_REGISTRY_PATCH_KEYS) {
@@ -1577,6 +2068,21 @@ function getBuilderConflictFields(patch: SessionRegistryPatch): string[] {
     }
   }
   return fields;
+}
+
+function graphBindingsEqual(
+  left: SessionRegistryGraphBinding | null,
+  right: SessionRegistryGraphBinding | null,
+): boolean {
+  return (
+    (left?.workstreamId ?? null) === (right?.workstreamId ?? null) &&
+    (left?.nodeId ?? null) === (right?.nodeId ?? null) &&
+    (left?.launchClaimId ?? null) === (right?.launchClaimId ?? null)
+  );
+}
+
+function isProtectedGraphBinding(binding: SessionRegistryGraphBinding | null): boolean {
+  return Boolean(binding?.launchClaimId);
 }
 
 function writeJsonFile(path: string, payload: unknown): void {
@@ -1608,6 +2114,15 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
   private lastSignature = "";
   private lastDiskFingerprint = "";
   private loaded = false;
+
+  /**
+   * Per-file (filename → "mtimeMs:size") snapshot of the entries directory.
+   * Used by loadEntriesFromDisk to skip re-reading 1000+ JSON files when
+   * nothing has changed externally. Updated incrementally in persistEntry /
+   * deleteSession so write paths don't pay the read cost either.
+   */
+  private cachedEntryFingerprints: Map<string, string> | null = null;
+  private cachedEntryRecords: Map<string, StoredSessionRegistryRecord> | null = null;
 
   constructor(options?: SessionRegistryFileStoreOptions) {
     const resolvedRoot = resolve(options?.rootDir ?? DEFAULT_REGISTRY_ROOT);
@@ -1671,6 +2186,18 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       let nextCopilotProcessId = latestRecord?.copilotProcessId ?? null;
       let nextActivityStatus = latestRecord?.activityStatus ?? "unknown";
       let nextActivityStatusUpdatedAt = latestRecord?.activityStatusUpdatedAt ?? null;
+      let nextActivityEvidence = latestRecord?.activityEvidence
+        ? cloneValue(latestRecord.activityEvidence)
+        : cloneValue(DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE);
+      let nextPawWorkflow = latestRecord?.pawWorkflow
+        ? cloneValue(latestRecord.pawWorkflow)
+        : null;
+      let nextPawLaunch = latestRecord?.pawLaunch
+        ? cloneValue(latestRecord.pawLaunch)
+        : null;
+      let nextRuntime = latestRecord?.runtime
+        ? cloneValue(latestRecord.runtime)
+        : null;
       let nextTrustedSignalSource = latestRecord?.trustedSignalSource ?? null;
       let nextTrustedStartedAt = latestRecord?.trustedStartedAt ?? null;
       let nextTrustedEndedAt = latestRecord?.trustedEndedAt ?? null;
@@ -1719,6 +2246,22 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
             : latestRecord?.copilotProcessId ?? null;
         nextActivityStatus = latestRecord?.activityStatus ?? "unknown";
         nextActivityStatusUpdatedAt = latestRecord?.activityStatusUpdatedAt ?? null;
+        nextActivityEvidence = latestRecord?.activityEvidence
+          ? cloneValue(latestRecord.activityEvidence)
+          : cloneValue(DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE);
+        nextPawWorkflow = latestRecord?.pawWorkflow
+          ? cloneValue(latestRecord.pawWorkflow)
+          : null;
+        nextPawLaunch = latestRecord?.pawLaunch
+          ? cloneValue(latestRecord.pawLaunch)
+          : null;
+        nextRuntime = Object.prototype.hasOwnProperty.call(validatedInput, "runtime")
+          ? validatedInput.runtime
+            ? cloneValue(validatedInput.runtime)
+            : null
+          : latestRecord?.runtime
+            ? cloneValue(latestRecord.runtime)
+            : null;
         nextTrustedSignalSource =
           Object.prototype.hasOwnProperty.call(validatedInput, "trustedSignalSource")
             ? validatedInput.trustedSignalSource ?? null
@@ -1768,6 +2311,33 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         nextCopilotProcessId = null;
         nextActivityStatus = latestRecord?.activityStatus ?? "unknown";
         nextActivityStatusUpdatedAt = latestRecord?.activityStatusUpdatedAt ?? null;
+        nextActivityEvidence = latestRecord?.activityEvidence
+          ? cloneValue(latestRecord.activityEvidence)
+          : cloneValue(DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE);
+        nextPawWorkflow = latestRecord?.pawWorkflow
+          ? cloneValue(latestRecord.pawWorkflow)
+          : null;
+        if (isLaunchedUpsertInput(validatedInput)) {
+          nextPawLaunch = Object.prototype.hasOwnProperty.call(
+            validatedInput,
+            "pawLaunch",
+          )
+            ? validatedInput.pawLaunch
+              ? cloneValue(validatedInput.pawLaunch)
+              : null
+            : latestRecord?.pawLaunch
+              ? cloneValue(latestRecord.pawLaunch)
+              : null;
+        } else {
+          nextPawLaunch = null;
+        }
+        nextRuntime = Object.prototype.hasOwnProperty.call(validatedInput, "runtime")
+          ? validatedInput.runtime
+            ? cloneValue(validatedInput.runtime)
+            : null
+          : latestRecord?.runtime
+            ? cloneValue(latestRecord.runtime)
+            : null;
         nextTrustedSignalSource = null;
         nextTrustedStartedAt = null;
         nextTrustedEndedAt = null;
@@ -1799,6 +2369,8 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         tags: nextTags,
         origin: cloneValue(validatedInput.origin),
         graphBinding: nextGraphBinding,
+        pawLaunch: nextPawLaunch,
+        runtime: nextRuntime,
         aiSummary: latestRecord?.aiSummary ?? null,
         aiSummaryModel: latestRecord?.aiSummaryModel ?? null,
         aiSummaryUpdatedAt: latestRecord?.aiSummaryUpdatedAt ?? null,
@@ -1810,6 +2382,8 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         copilotProcessId: nextCopilotProcessId,
         activityStatus: nextActivityStatus,
         activityStatusUpdatedAt: nextActivityStatusUpdatedAt,
+        activityEvidence: nextActivityEvidence,
+        pawWorkflow: nextPawWorkflow,
         trustedSignalSource: nextTrustedSignalSource,
         trustedStartedAt: nextTrustedStartedAt,
         trustedEndedAt: nextTrustedEndedAt,
@@ -2085,6 +2659,16 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
           conflictFields,
         );
       }
+      if (
+        validatedPatch.graphBinding !== undefined &&
+        isProtectedGraphBinding(existingRecord.graphBinding) &&
+        !graphBindingsEqual(existingRecord.graphBinding, validatedPatch.graphBinding)
+      ) {
+        throw new SessionRegistryConflictError(
+          cloneValue(existingRecord),
+          ["graphBinding"],
+        );
+      }
 
       const nextLifecycle =
         validatedPatch.lifecycleStatus ?? existingRecord.lifecycleStatus;
@@ -2190,7 +2774,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         input.event === "session.started" && signalTime >= existingEndTime;
       const appliesEnd = input.event === "session.ended";
       const appliesPrompt = input.event === "prompt.submitted" && !isEnded;
-      const cwdName = basename(cwd).trim();
+      const cwdName = basenameCrossOs(cwd).trim();
       const lifecycleStatus: SessionRegistryLifecycleStatus =
         appliesEnd
           ? "ended"
@@ -2205,6 +2789,28 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
             : appliesStart && initialPromptLength !== null && initialPromptLength > 0
               ? "working"
               : existingRecord?.activityStatus ?? "waiting_for_input";
+      const activityEvidence =
+        appliesEnd
+          ? activityEvidenceForTrustedSignal(
+              existingRecord?.activityEvidence,
+              "trusted_end",
+              timestamp,
+            )
+          : appliesPrompt
+            ? activityEvidenceForTrustedSignal(
+                existingRecord?.activityEvidence,
+                "trusted_prompt",
+                timestamp,
+              )
+            : appliesStart
+              ? activityEvidenceForTrustedSignal(
+                  existingRecord?.activityEvidence,
+                  "trusted_start",
+                  timestamp,
+                )
+              : existingRecord?.activityEvidence
+                ? cloneValue(existingRecord.activityEvidence)
+                : cloneValue(DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE);
       const nextRecord: SessionRegistryRecord = {
         schemaVersion: SESSION_REGISTRY_SCHEMA_VERSION,
         id: targetId,
@@ -2245,12 +2851,31 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
             : appliesStart
               ? "live"
               : existingRecord?.copilotProcessState ?? "live",
-        copilotProcessId: existingRecord?.copilotProcessId ?? null,
+        // session.started signals (whether for a fresh session or a resume)
+        // logically establish a new process. Clear any stale PID from the
+        // previous incarnation so the activity indexer doesn't see a
+        // process-state mismatch and flash "interrupted" before discovery
+        // picks up the new PID.
+        copilotProcessId: appliesStart
+          ? null
+          : appliesEnd
+            ? null
+            : existingRecord?.copilotProcessId ?? null,
         activityStatus,
         activityStatusUpdatedAt:
           appliesStart || appliesEnd || appliesPrompt
             ? timestamp
             : existingRecord?.activityStatusUpdatedAt ?? timestamp,
+        activityEvidence,
+        pawWorkflow: existingRecord?.pawWorkflow
+          ? cloneValue(existingRecord.pawWorkflow)
+          : null,
+        pawLaunch: existingRecord?.pawLaunch
+          ? cloneValue(existingRecord.pawLaunch)
+          : null,
+        runtime: existingRecord?.runtime
+          ? cloneValue(existingRecord.runtime)
+          : null,
         trustedSignalSource: signalSource,
         trustedStartedAt:
           appliesStart
@@ -2341,6 +2966,16 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
           patch.activityStatusUpdatedAt !== undefined
             ? patch.activityStatusUpdatedAt
             : existingRecord.activityStatusUpdatedAt,
+        activityEvidence:
+          patch.activityEvidence !== undefined
+            ? cloneValue(patch.activityEvidence)
+            : existingRecord.activityEvidence,
+        pawWorkflow:
+          patch.pawWorkflow !== undefined
+            ? patch.pawWorkflow
+              ? cloneValue(patch.pawWorkflow)
+              : null
+            : existingRecord.pawWorkflow,
         aiSummary:
           patch.aiSummary !== undefined ? patch.aiSummary : existingRecord.aiSummary,
         aiSummaryModel:
@@ -2408,6 +3043,50 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
     });
   }
 
+  patchRuntimeMetadata(
+    id: string,
+    patch: SessionRegistryRuntimeMetadataPatch,
+    now = new Date(),
+  ): SessionRegistryRecord {
+    return this.withWriteLock(() => {
+      const records = this.loadEntriesFromDisk();
+      const existingRecord = records.get(id);
+      if (!existingRecord) {
+        throw new SessionRegistryNotFoundError(id);
+      }
+      if (existingRecord.lifecycleStatus === "archived") {
+        throw new SessionRegistryArchivedError(id, "update runtime metadata");
+      }
+
+      const nextRuntime = mergeSessionRegistryRuntimeMetadata(
+        existingRecord.runtime,
+        patch,
+        now,
+      );
+      const nextRecord: SessionRegistryRecord = {
+        ...cloneValue(existingRecord),
+        runtime: nextRuntime,
+        updatedAt: now.toISOString(),
+      };
+
+      const storedRecord = mergeStoredRecord(existingRecord, nextRecord);
+      storedRecord.runtime = nextRuntime;
+      assertRuntimeMetadataPatchScope(existingRecord, storedRecord);
+      records.set(id, storedRecord);
+      const nextIndex = buildIndex(records.values());
+      this.persistEntry(storedRecord);
+      this.persistIndex(records, nextIndex);
+      this.commitSnapshot(records, nextIndex);
+      this.emitChange({
+        kind: SESSION_REGISTRY_CHANGE_EVENT_KINDS[0],
+        registryId: id,
+        changeScope: "runtime",
+        snapshot: cloneValue(storedRecord),
+      });
+      return cloneValue(storedRecord);
+    });
+  }
+
   deleteSession(id: string): void {
     this.withWriteLock(() => {
       const records = this.loadEntriesFromDisk();
@@ -2417,8 +3096,18 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
 
       records.delete(id);
       const nextIndex = buildIndex(records.values());
-      const entryPath = join(this.entriesDir, `${id}${ENTRY_EXTENSION}`);
+      const entryFileName = `${id}${ENTRY_EXTENSION}`;
+      const entryPath = join(this.entriesDir, entryFileName);
       rmSync(entryPath, { force: true });
+
+      // Keep the loadEntriesFromDisk cache in sync.
+      if (this.cachedEntryRecords) {
+        this.cachedEntryRecords.delete(id);
+      }
+      if (this.cachedEntryFingerprints) {
+        this.cachedEntryFingerprints.delete(entryFileName);
+      }
+
       this.persistIndex(records, nextIndex);
       this.commitSnapshot(records, nextIndex);
       this.emitChange({
@@ -2426,6 +3115,348 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         registryId: id,
       });
     });
+  }
+
+  /**
+   * Atomic conditional delete: acquires the write lock, re-reads the row,
+   * invokes `predicate(current)` against the freshly-loaded record, and
+   * deletes only if the predicate returns true. Used by the launch-claim
+   * sweep and reserved-row recovery to avoid racing with observation
+   * writes.
+   */
+  deleteSessionIf(
+    id: string,
+    predicate: (current: SessionRegistryRecord) => boolean,
+  ): {
+    deleted: boolean;
+    reason: "deleted" | "predicate-false" | "not-found";
+  } {
+    return this.withWriteLock(() => {
+      const records = this.loadEntriesFromDisk();
+      const current = records.get(id);
+      if (!current) {
+        return { deleted: false, reason: "not-found" as const };
+      }
+      const verdict = predicate(cloneValue(current));
+      if (!verdict) {
+        return { deleted: false, reason: "predicate-false" as const };
+      }
+      records.delete(id);
+      const nextIndex = buildIndex(records.values());
+      const entryFileName = `${id}${ENTRY_EXTENSION}`;
+      const entryPath = join(this.entriesDir, entryFileName);
+      rmSync(entryPath, { force: true });
+      if (this.cachedEntryRecords) {
+        this.cachedEntryRecords.delete(id);
+      }
+      if (this.cachedEntryFingerprints) {
+        this.cachedEntryFingerprints.delete(entryFileName);
+      }
+      this.persistIndex(records, nextIndex);
+      this.commitSnapshot(records, nextIndex);
+      this.emitChange({
+        kind: SESSION_REGISTRY_CHANGE_EVENT_KINDS[1],
+        registryId: id,
+      });
+      return { deleted: true, reason: "deleted" as const };
+    });
+  }
+
+  /**
+   * Atomic launch-claim binding write. Acquires the write lock, re-reads
+   * the row, re-validates that the binding-pass invariants
+   * (cwd/branch/repo/launchClaimId compatibility) still hold against the
+   * latest persisted state, and only then writes `graphBinding`.
+   * Returns a typed outcome so the binding pass can decide whether to
+   * retry on the next cycle.
+   *
+   * The `bindClaimToRow` primitive exists because observation paths
+   * (`attachObservedSession`, `recordTrustedSessionSignal`) intentionally
+   * do not bump `version`, so `expectedVersion` cannot detect a
+   * cwd-changed-since-decision race. This method closes the loop by
+   * re-validating cwd (and optionally branch/repo) inside the same
+   * critical section as the write.
+   */
+  bindClaimToRow(
+    id: string,
+    expected: {
+      cwdAfterNormalize: string;
+      branch: string | null;
+      repo: string | null;
+      requireGraphBindingNullOrMatching: {
+        workstreamId: string;
+        nodeId: string;
+        launchClaimId: string;
+      };
+    },
+    desired: {
+      graphBinding: SessionRegistryGraphBinding | null;
+    },
+    pathCompare: (a: string, b: string) => boolean = (a, b) => a === b,
+  ):
+    | { ok: true; record: SessionRegistryRecord }
+    | {
+        ok: false;
+        reason:
+          | "row-vanished"
+          | "cwd-changed"
+          | "branch-changed"
+          | "repo-changed"
+          | "graph-binding-conflict";
+        detail?: string;
+      } {
+    return this.withWriteLock(() => {
+      const records = this.loadEntriesFromDisk();
+      const current = records.get(id);
+      if (!current) {
+        return { ok: false as const, reason: "row-vanished" as const };
+      }
+      if (!pathCompare(current.cwd, expected.cwdAfterNormalize)) {
+        return {
+          ok: false as const,
+          reason: "cwd-changed" as const,
+          detail: `expected cwd "${expected.cwdAfterNormalize}", row has "${current.cwd}"`,
+        };
+      }
+      if (expected.branch !== null && current.branch !== expected.branch) {
+        return {
+          ok: false as const,
+          reason: "branch-changed" as const,
+          detail: `expected branch "${expected.branch}", row has "${String(current.branch)}"`,
+        };
+      }
+      if (expected.repo !== null && current.repo !== expected.repo) {
+        return {
+          ok: false as const,
+          reason: "repo-changed" as const,
+          detail: `expected repo "${expected.repo}", row has "${String(current.repo)}"`,
+        };
+      }
+      if (
+        current.graphBinding !== null &&
+        current.graphBinding.launchClaimId !==
+          expected.requireGraphBindingNullOrMatching.launchClaimId
+      ) {
+        return {
+          ok: false as const,
+          reason: "graph-binding-conflict" as const,
+          detail: `existing graphBinding launchClaimId differs`,
+        };
+      }
+      const desiredBinding = desired.graphBinding;
+      const isChange =
+        JSON.stringify(current.graphBinding) !== JSON.stringify(desiredBinding);
+      if (!isChange) {
+        return { ok: true as const, record: cloneValue(current) };
+      }
+      const nextRecord: SessionRegistryRecord = {
+        ...cloneValue(current),
+        graphBinding: desiredBinding,
+        version: current.version + 1,
+        updatedAt: isoNow(),
+      };
+      const storedRecord = mergeStoredRecord(current, nextRecord);
+      // Force graphBinding to the desired value, defeating the merge's
+      // shallow-merge behavior when desired is null but existing is non-null.
+      storedRecord.graphBinding = desiredBinding;
+      records.set(id, storedRecord);
+      const nextIndex = buildIndex(records.values());
+      this.persistEntry(storedRecord);
+      this.persistIndex(records, nextIndex);
+      this.commitSnapshot(records, nextIndex);
+      this.emitChange({
+        kind: SESSION_REGISTRY_CHANGE_EVENT_KINDS[0],
+        registryId: id,
+        snapshot: cloneValue(storedRecord),
+      });
+      return { ok: true as const, record: cloneValue(storedRecord) };
+    });
+  }
+
+  /**
+   * Atomic launch-claim row fusion. When discovery (or trusted-signal
+   * intake) has created a separate observed row for a Copilot session id
+   * that should belong to a launch-claim's reserved row, this method:
+   *
+   * 1. Re-reads both rows under the registry write lock.
+   * 2. Validates that the reserved row is still unattached or already
+   *    attached to the same `copilotSessionId`, and that its
+   *    `graphBinding.launchClaimId` matches the caller's claim.
+   * 3. Copies the observation-owned fields (`copilotSessionId`, `cwd`,
+   *    `repo`, `branch`, `lastSeenAt`, observation-derived
+   *    lifecycle/process state, trusted signal fields) from the observed
+   *    row onto the reserved row.
+   * 4. Deletes the observed row.
+   * 5. Confirms the reserved row's `graphBinding` matches the claim
+   *    (sets it if it was null; rejects if it points to a different
+   *    claim).
+   *
+   * All five steps occur within one `withWriteLock` acquisition. SSE
+   * subscribers see one `upsert` for the reserved row and one `delete`
+   * for the observed row, in that order.
+   */
+  fuseObservedRowIntoReservedRow(args: {
+    reservedRowId: string;
+    observedRowId: string;
+    bindClaim: {
+      workstreamId: string;
+      nodeId: string;
+      launchClaimId: string;
+    };
+  }):
+    | {
+        ok: true;
+        reservedRecord: SessionRegistryRecord;
+        deletedObservedId: string;
+      }
+    | {
+        ok: false;
+        reason:
+          | "reserved-row-vanished"
+          | "observed-row-vanished"
+          | "reserved-row-already-attached"
+          | "graph-binding-conflict";
+        detail?: string;
+      } {
+    return this.withWriteLock(() => {
+      const records = this.loadEntriesFromDisk();
+      const reserved = records.get(args.reservedRowId);
+      if (!reserved) {
+        return { ok: false as const, reason: "reserved-row-vanished" as const };
+      }
+      const observed = records.get(args.observedRowId);
+      if (!observed) {
+        return { ok: false as const, reason: "observed-row-vanished" as const };
+      }
+      if (
+        reserved.copilotSessionId !== null &&
+        reserved.copilotSessionId !== observed.copilotSessionId
+      ) {
+        return {
+          ok: false as const,
+          reason: "reserved-row-already-attached" as const,
+          detail: `reserved row already bound to a different copilot session ${reserved.copilotSessionId}`,
+        };
+      }
+      if (
+        reserved.graphBinding !== null &&
+        reserved.graphBinding.launchClaimId !== args.bindClaim.launchClaimId
+      ) {
+        return {
+          ok: false as const,
+          reason: "graph-binding-conflict" as const,
+          detail: `reserved row graphBinding launchClaimId differs from claim`,
+        };
+      }
+      const desiredGraphBinding: SessionRegistryGraphBinding = {
+        workstreamId: args.bindClaim.workstreamId,
+        nodeId: args.bindClaim.nodeId,
+        launchClaimId: args.bindClaim.launchClaimId,
+      };
+      const fusedReserved: SessionRegistryRecord = {
+        ...cloneValue(reserved),
+        cwd: observed.cwd,
+        repo: observed.repo,
+        branch: observed.branch,
+        copilotSessionId: observed.copilotSessionId,
+        lastSeenAt: observed.lastSeenAt,
+        observedSessionKind: observed.observedSessionKind,
+        copilotProcessState: observed.copilotProcessState,
+        copilotProcessId: observed.copilotProcessId,
+        activityStatus: observed.activityStatus,
+        activityStatusUpdatedAt: observed.activityStatusUpdatedAt,
+        activityEvidence: cloneValue(observed.activityEvidence),
+        pawWorkflow: observed.pawWorkflow
+          ? cloneValue(observed.pawWorkflow)
+          : reserved.pawWorkflow
+            ? cloneValue(reserved.pawWorkflow)
+            : null,
+        pawLaunch: reserved.pawLaunch
+          ? cloneValue(reserved.pawLaunch)
+          : observed.pawLaunch
+            ? cloneValue(observed.pawLaunch)
+            : null,
+        runtime: reserved.runtime
+          ? cloneValue(reserved.runtime)
+          : observed.runtime
+            ? cloneValue(observed.runtime)
+            : null,
+        trustedSignalSource: observed.trustedSignalSource,
+        trustedStartedAt: observed.trustedStartedAt,
+        trustedEndedAt: observed.trustedEndedAt,
+        trustedLastSignalAt: observed.trustedLastSignalAt,
+        trustedStartSource: observed.trustedStartSource,
+        trustedEndReason: observed.trustedEndReason,
+        trustedExecutionKind: observed.trustedExecutionKind,
+        trustedInitialPromptLength: observed.trustedInitialPromptLength,
+        trustedLastPromptLength: observed.trustedLastPromptLength,
+        graphBinding: desiredGraphBinding,
+        updatedAt: isoNow(),
+      };
+      const storedFused = mergeStoredRecord(reserved, fusedReserved);
+      storedFused.graphBinding = desiredGraphBinding;
+      records.set(args.reservedRowId, storedFused);
+      records.delete(args.observedRowId);
+      const observedFileName = `${args.observedRowId}${ENTRY_EXTENSION}`;
+      const observedPath = join(this.entriesDir, observedFileName);
+      rmSync(observedPath, { force: true });
+      if (this.cachedEntryRecords) {
+        this.cachedEntryRecords.delete(args.observedRowId);
+      }
+      if (this.cachedEntryFingerprints) {
+        this.cachedEntryFingerprints.delete(observedFileName);
+      }
+      const nextIndex = buildIndex(records.values());
+      this.persistEntry(storedFused);
+      this.persistIndex(records, nextIndex);
+      this.commitSnapshot(records, nextIndex);
+      this.emitChange({
+        kind: SESSION_REGISTRY_CHANGE_EVENT_KINDS[0],
+        registryId: args.reservedRowId,
+        snapshot: cloneValue(storedFused),
+      });
+      this.emitChange({
+        kind: SESSION_REGISTRY_CHANGE_EVENT_KINDS[1],
+        registryId: args.observedRowId,
+      });
+      return {
+        ok: true as const,
+        reservedRecord: cloneValue(storedFused),
+        deletedObservedId: args.observedRowId,
+      };
+    });
+  }
+
+  /**
+   * Returns the registry id of the row whose `origin.kind === "launched"`
+   * and `origin.launchClaimId` equals the supplied id, or null. Used by
+   * launch-claim startup recovery to find orphan reserved rows.
+   */
+  findRecordIdByLaunchClaimId(launchClaimId: string): string | null {
+    this.refreshFromDisk();
+    for (const record of this.records.values()) {
+      if (
+        record.origin.kind === "launched" &&
+        record.origin.launchClaimId === launchClaimId
+      ) {
+        return record.id;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Returns the registry id of the row whose `copilotSessionId` matches
+   * the supplied id, or null. Used by the launch-claim binding pass.
+   */
+  findRecordIdByCopilotSession(copilotSessionId: string): string | null {
+    this.refreshFromDisk();
+    for (const record of this.records.values()) {
+      if (record.copilotSessionId === copilotSessionId) {
+        return record.id;
+      }
+    }
+    return null;
   }
 
   subscribe(listener: SessionRegistryChangeListener): () => void {
@@ -2515,12 +3546,37 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
   private loadEntriesFromDisk(): Map<string, StoredSessionRegistryRecord> {
     this.ensureDirectories();
 
-    const records = new Map<string, StoredSessionRegistryRecord>();
+    // Cheap check: stat all entry files in the directory and build a
+    // (filename → "mtime:size") map. If it matches our cache, return the
+    // cached records without re-reading any file content.
+    const currentFingerprints = new Map<string, string>();
     for (const fileName of readdirSync(this.entriesDir)) {
       if (!fileName.endsWith(ENTRY_EXTENSION)) {
         continue;
       }
+      try {
+        const stat = statSync(join(this.entriesDir, fileName));
+        currentFingerprints.set(fileName, `${stat.mtimeMs}:${stat.size}`);
+      } catch (error) {
+        if (isErrnoCode(error, "ENOENT")) {
+          continue;
+        }
+        throw error;
+      }
+    }
 
+    if (
+      this.cachedEntryRecords &&
+      this.cachedEntryFingerprints &&
+      fingerprintMapsEqual(this.cachedEntryFingerprints, currentFingerprints)
+    ) {
+      return this.cachedEntryRecords;
+    }
+
+    // Slow path: reload every entry. Only happens on first load or when
+    // an external process modified the entries directory.
+    const records = new Map<string, StoredSessionRegistryRecord>();
+    for (const fileName of currentFingerprints.keys()) {
       const entryPath = join(this.entriesDir, fileName);
       try {
         const parsed = JSON.parse(readFileSync(entryPath, "utf8")) as unknown;
@@ -2538,6 +3594,8 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       }
     }
 
+    this.cachedEntryRecords = records;
+    this.cachedEntryFingerprints = currentFingerprints;
     return records;
   }
 
@@ -2577,10 +3635,41 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       }
       throw error;
     }
+    // The entry no longer exists; drop it from any cached state so the next
+    // read doesn't try to reuse a stale record.
+    const entryFileName = basename(entryPath);
+    this.cachedEntryFingerprints?.delete(entryFileName);
+    if (this.cachedEntryRecords) {
+      const idMatch = entryFileName.endsWith(ENTRY_EXTENSION)
+        ? entryFileName.slice(0, -ENTRY_EXTENSION.length)
+        : null;
+      if (idMatch) {
+        this.cachedEntryRecords.delete(idMatch);
+      }
+    }
   }
 
   private persistEntry(record: StoredSessionRegistryRecord): void {
-    writeJsonFile(join(this.entriesDir, `${record.id}${ENTRY_EXTENSION}`), record);
+    const entryFileName = `${record.id}${ENTRY_EXTENSION}`;
+    const entryPath = join(this.entriesDir, entryFileName);
+    writeJsonFile(entryPath, record);
+
+    // Keep the loadEntriesFromDisk cache in sync so the next read sees this
+    // change without re-reading every file in the entries directory.
+    if (this.cachedEntryRecords) {
+      this.cachedEntryRecords.set(record.id, cloneValue(record));
+    }
+    if (this.cachedEntryFingerprints) {
+      try {
+        const stat = statSync(entryPath);
+        this.cachedEntryFingerprints.set(entryFileName, `${stat.mtimeMs}:${stat.size}`);
+      } catch {
+        // Stat failure is rare immediately after a successful write; if it
+        // happens, drop the cache entry so the next load detects the
+        // mismatch and reloads from disk.
+        this.cachedEntryFingerprints.delete(entryFileName);
+      }
+    }
   }
 
   private persistIndex(
@@ -2652,10 +3741,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
         try {
           writeFileSync(
             fd,
-            JSON.stringify({
-              pid: process.pid,
-              acquiredAt: isoNow(),
-            }),
+            JSON.stringify(newLockMetadata()),
             "utf8",
           );
         } catch (error: unknown) {
@@ -2705,7 +3791,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
 
   private removeStaleLock(): boolean {
     const lockMetadata = this.readLockMetadata();
-    if (!lockMetadata || processExists(lockMetadata.pid)) {
+    if (!lockMetadata || !isProcessLockStale(lockMetadata)) {
       return false;
     }
 
@@ -2715,7 +3801,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
 
   private hasActiveRegistryLock(): boolean {
     const lockMetadata = this.readLockMetadata();
-    return lockMetadata !== null && processExists(lockMetadata.pid);
+    return lockMetadata !== null && !isProcessLockStale(lockMetadata);
   }
 
   private acquireRecoveryLock(): number | null {
@@ -2740,10 +3826,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       try {
         writeFileSync(
           fd,
-          JSON.stringify({
-            pid: process.pid,
-            acquiredAt: isoNow(),
-          }),
+          JSON.stringify(newLockMetadata()),
           "utf8",
         );
       } catch (error: unknown) {
@@ -2780,7 +3863,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       return false;
     }
 
-    if (processExists(metadata.pid)) {
+    if (!isProcessLockStale(metadata)) {
       return true;
     }
 
@@ -2788,32 +3871,8 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
     return false;
   }
 
-  private readLockMetadata(lockPath = this.lockPath): SessionRegistryLockMetadata | null {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(readFileSync(lockPath, "utf8"));
-    } catch {
-      return null;
-    }
-
-    if (!parsed || typeof parsed !== "object") {
-      return null;
-    }
-
-    const candidate = parsed as Record<string, unknown>;
-    if (
-      typeof candidate.pid !== "number" ||
-      !Number.isInteger(candidate.pid) ||
-      candidate.pid <= 0 ||
-      typeof candidate.acquiredAt !== "string"
-    ) {
-      return null;
-    }
-
-    return {
-      pid: candidate.pid,
-      acquiredAt: candidate.acquiredAt,
-    };
+  private readLockMetadata(lockPath = this.lockPath): ProcessLockMetadata | null {
+    return readLockMetadataFile(lockPath);
   }
 
   private findRecordIdByCopilotSessionId(
