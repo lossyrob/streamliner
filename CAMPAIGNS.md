@@ -119,7 +119,9 @@ matures). It holds:
 - **Side issues** — bounded one-off work that rides along without needing a
   workstream.
 - **Seams** — the cross-workstream contracts and ownership inside the campaign,
-  and the exports it imports from or provides to other campaigns.
+  and the exports it imports from or provides to other campaigns. The seams are
+  where campaign-level attention goes at close: where two workstreams connect is
+  where an integration mismatch can hide that neither workstream's own tests catch.
 - **Sequencing and main effort** — the dependency order, what runs in parallel,
   and where attention concentrates.
 - **Coverage map** — which workstream or issue covers each slice of the declared
@@ -196,13 +198,22 @@ A campaign moves through informal states:
 - **Proposed** — shaped enough to name, not yet committed.
 - **Main effort** — the active campaign currently getting priority of attention.
 - **Supporting** — active but at lower intensity behind the main effort.
-- **Closing** — workstreams landing; coverage being reconciled.
+- **Closing** — workstreams landing; coverage and integration being checked.
 - **Closed** — the declared intent is covered (or its remainder explicitly rolled
   forward).
 
+Closing a campaign checks **two** things: that its workstreams are done (or carry
+tracked debt), and that where they connect, they actually fit together. The second
+is the campaign's real job — a single workstream can't see an integration mismatch
+that passes its own tests, so it only shows up when something looks across the
+seams between workstreams. Where those interfaces are fully typed or schema-checked,
+the mismatch is already caught at the workstream level; what's left for a
+campaign-level look is the meaning that types don't pin (e.g. both sides agree a
+field is a string, but one means a country code and the other an internal id).
+
 Closure is kept **informal** for now. A campaign-level closure gate — an explicit
-review that validates the declared intent was covered and harvests lessons — is a
-likely future addition, but it should emerge from running real campaigns rather
+review that both checks above pass and harvests lessons — is a likely future
+addition, but it should emerge from running real campaigns rather
 than be specified before the need is felt.
 
 ## Open questions

@@ -201,9 +201,12 @@ gain, these validations are **crafted** in design.
 
 The loop does not stop at pass/fail. On findings it **routes repair tasks to implementer nodes over
 telex** (directly or via the orchestrator), they fix on the wave branch, and it re-runs — converging to
-a **hardened wave** rather than a stuck red result. It pauses for the builder only when truly blocked,
-scope changes, or a high-spread choice appears. This is another **source for the autonomous execution
-engine** (findings → repair tasks → implementers), and it is the convergent-validation pattern.
+a **hardened wave** rather than a stuck red result. Converged means more than the harness re-passing:
+the strongest stop is when a fresh probe — different inputs, a different path, or an evaluator other
+than the one that drove the repairs — finds nothing new, so the loop is confirming the work, not just
+its own fixes. It pauses for the builder only when truly blocked, scope changes, or a high-spread choice
+appears. This is another **source for the autonomous execution engine** (findings → repair tasks →
+implementers), and it is the convergent-validation pattern.
 
 ## The validation loop
 

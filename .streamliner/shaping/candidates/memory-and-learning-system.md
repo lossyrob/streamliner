@@ -68,14 +68,25 @@ geometry-keyed/scoped — not a free-floating retrieval store.
 ## Working recommendations (provisional — to validate in later design)
 
 - **Two stores** (disposition beliefs + attention ledger), not one and not three.
-- **Beliefs carry a lightweight review trigger** — a builder-set "resurface for keep/drop when X"
-  (e.g. "at first non-beta release"), so stage-conditional policies catch their own rot (§10:
-  beliefs rot when the vision moves) without building a project-stages engine yet.
-- **Capture the learning signal from day one** — preference-fork **receipts** (the reversal-
-  detection substrate: a later change that undoes a recorded choice is a reversal) plus a
-  lightweight builder **"should have asked / this was wrong" affordance** at review and closeout.
-  Both feed detector calibration *and* belief promotion. This is the §12 no-regret habit and the
-  §13 falsifiable substrate ("preference-debt logs predict later builder corrections").
+- **Rules decay unless re-confirmed.** A rule earns its quiet by continuing to be right: it applies
+  silently while fresh confirming cases keep arriving, fades back toward asking if it goes untested
+  for a while, and drops straight back to asking the moment a choice it made gets reversed. This
+  replaces an earlier "builder-set resurface-when-X trigger" idea, which required forecasting when a
+  rule would go stale — the thing you can't predict. Decay needs no forecast: a stale or contradicted
+  rule surfaces itself.
+- **Don't auto-promote agent "learnings" into rules.** A worker's self-reported lesson stays a
+  *candidate* until something corroborates it — either the builder reacting to it, or an independent
+  check. Uncorroborated lessons never silently become rules; that is how a corpus would fill with
+  confident-but-wrong folklore.
+- **A rule that suppresses a question should occasionally surface it anyway**, to confirm it still
+  holds — more often for rules that change fast, rarely for stable ones.
+- **Health metric: the tool asks less without being wrong more.** Track, per rule, whether it is
+  saving a question while its choices are *not* getting reversed more often. Asking-less while
+  reversals-rise means it is suppressing questions it should ask — the failure to watch for.
+- **Capture the signal from day one** — record the choices the system makes on your behalf (so a
+  later change that undoes one is a detectable reversal) plus a lightweight builder **"should have
+  asked / this was wrong"** affordance at review and closeout. This is the no-regret first slice: it
+  feeds both the decay/contradiction rule above and the health metric.
 - **Streamliner owns the memory** (not the agent substrate) — though it may sync builder/project
   scope with agent memory.
 - **Design seam:** a value that is also an architecture stance **cross-references, not duplicates**;
@@ -113,11 +124,14 @@ geometry-keyed/scoped — not a free-floating retrieval store.
    single-workstream; v2 *parks* apprenticeship/taste-transfer and multi-builder. A corpus distilled
    across many workstreams into reusable heuristics/beliefs is a genuine extension, not just an
    implementation.
-2. **The distillation step is unspecified** — who/what compiles raw learnings into beliefs and
-   heuristics, and when (a periodic learning-reconciliation, a consolidation/subconscious agent)?
+2. **The distillation step** — who/what turns raw learnings into rules, and when. *Direction
+   settled (later dialogue):* it is a **rule, not a taste call** — promote a candidate lesson only
+   when corroborated (builder reaction or an independent check), so a consolidation pass can run it
+   without inventing judgment. The remaining open part is the cadence (periodic pass vs on-close).
 3. **Learning honesty.** A worker's self-reported "learning" is the least independent record there
-   is; the builder's reactions (reversals) are the trustworthy ground truth. The corpus needs
-   production-discipline or it compiles confident folklore.
+   is; the builder's reactions (reversals) are the trustworthy ground truth. *Direction settled:*
+   don't auto-promote self-reports; require corroboration, and let the decay/contradiction rule pull
+   stale rules back. The corpus stays mostly raw by design — compiled rules are a thin, earned layer.
 4. **Geometry-keyed, not RAG.** Keep the raw record per-node/workstream/fork and beliefs scoped —
    the §2 discipline that makes this more than retrieval.
 5. **Disposition ↔ design seam** unresolved where a value is also an architecture stance.

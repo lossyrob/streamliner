@@ -6,10 +6,10 @@ Shaped; foundational candidate.
 
 ## Seed Idea
 
-Give Streamliner a single home for the work-geometry **values & attention layer** — the *operating
-point* (capability x stakes x attention) expressed as concrete, per-scope knobs, plus the surfacing
-discipline that decides when builder attention is spent. These concepts are defined in the
-work-geometry model (the preference stop, the human floor, spread, posture, the care knob, encoded
+Give Streamliner a single home for the **values & attention layer** — the *operating
+point* (capability × stakes × attention × safety-net) expressed as concrete, per-scope knobs, plus
+the surfacing discipline that decides when builder attention is spent. These concepts are defined in
+the work-geometry model (the preference stop, the human floor, spread, posture, the care knob, encoded
 beliefs) and were prototyped together in the backlog-orchestrator skill, but nothing in Streamliner
 owns them yet.
 
@@ -27,8 +27,9 @@ preference fork," and "how to record a deferred preference," they will drift apa
 split-ownership failure the product thesis warns about, but for attention. One owner keeps the
 operating-point model coherent and lets the others consume a stable contract.
 
-This is also the layer that makes weaker-model + more-structure + more-attention reach the same
-safety as frontier-model + autonomy: the operating point is the dial the builder sets per scope.
+This is also the layer that makes weaker-model + more-structure + more-attention + stronger-safety-net
+reach the same safety as frontier-model + autonomy: the operating point is the dial the builder sets
+per scope.
 
 ## Candidate Scope
 
@@ -36,7 +37,10 @@ safety as frontier-model + autonomy: the operating point is the dial the builder
 
 - The per-scope **operating point**: the **care knob** (attention threshold mapping to hard-stop /
   preference-debt / silent-default), **posture** (prototype <-> craft, which sets the horizon),
-  accepted **stakes**, and deployed **capability** — the substitutable dials.
+  accepted **stakes**, deployed **capability**, and **safety-net strength** (tests, sandbox,
+  rollback, observability — how cheaply a fault gets caught) — the substitutable dials. A stronger
+  safety net buys the same confidence at lower capability or attention, so it belongs in the same
+  per-scope setting as the others.
 - **Sizing as an operating-point input** (S/M/L drives process/effort routing). The size *field*
   lives in the workstream format substrate; its *meaning and routing* live here.
 - **Preference-debt records** — when a fork is real but not worth a stop, the system picks and
@@ -46,6 +50,10 @@ safety as frontier-model + autonomy: the operating point is the dial the builder
   the asking rate over time.
 - **Human-floor surfacing** — the well-lit bet: options, a recommendation, the rationale, and what
   the model cannot see; never gate, never silent-default a consequential fork.
+- **Detection is separate from resolution** — whatever *notices* a fork, drift, or risk (a check, an
+  independent reviewer, an auditor session) does not get to *resolve* it. It routes: to the
+  orchestrator when the shape needs to change, to the builder when it's a value call. Voice, not veto.
+  This keeps review/audit sessions honest — they can raise a flag without seizing the decision.
 - **Autonomy / disposition setting** — the per-scope "how much autonomy at a gate" control (e.g.
   auto-proceed vs route-to-human).
 
