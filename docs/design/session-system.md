@@ -201,8 +201,6 @@ Beyond the core lifecycle state, the session watcher derives additional fields f
 | `endReason` | Hook signal or inactivity | Why the session ended: "hook-signal", "idle-timeout", "user_exit" |
 | `turnCount` | Count of `user.message` events | How many user turns have occurred |
 | `pawWorkflow` | PAW work directory on disk | Work ID, work title, `Workflow Identity` (`paw` | `paw-lite`), current activity, and gate/procedure state read from `## Control State` in `WorkflowContext.md` / `ReviewContext.md` when present; legacy inference from artifact presence otherwise. See [Decision 003](decisions/003-paw-control-state-integration.md). |
-| `observationFreshness` | Watcher/bridge runtime cache | Whether the observation is `fresh`, `stale`, or `unknown` for the environment that owns the row. Freshness is separate from durable `lifecycleStatus`. |
-| `observationConfidence` | Compatibility probes, bridge health, and diagnostics | Whether observation-derived liveness is `trusted`, `degraded`, or `unverified`. Degraded confidence suppresses mutation-affecting affordances but keeps last-known registry data visible. |
 
 ### Key Distinction: Idle vs. Ended
 
@@ -222,13 +220,6 @@ Beyond the core lifecycle state, the session watcher derives additional fields f
 ### Stale Session Detection
 
 A session is considered ended when its `events.jsonl` modification time exceeds the ended threshold (default: 30 minutes of inactivity). This is conservative — sessions that the builder is actively using interactively may have long pauses between turns, so the threshold must accommodate human-paced interaction.
-
-For local sessions this threshold is evaluated against the local session-state
-files directly. For devbox sessions, the stale/ended fallback may only use facts
-from a recent successful bridge observation. If the devbox, tunnel, bridge, or
-session-state root is unreachable, Streamliner marks the observation stale or
-unverified and preserves the last-known registry row; it does not infer a clean
-session end from transport silence.
 
 Crash recovery is not automatic. The builder decides whether the work is recoverable (relaunch from the same PAW work directory) or needs a fresh start.
 
@@ -262,14 +253,10 @@ Each registry entry is a persisted `SessionRegistryRecord`. The stored lifecycle
 | `title` | string | yes | Builder | Short editable label. Observation-created rows bootstrap this from `workspace.yaml.summary`, then fall back to repo/cwd naming until the builder edits it. |
 | `description` | string | yes | Builder | Longer editable notes; empty string allowed. |
 | `color` | string or `null` | yes | Builder | Palette token or hex; single source of truth for terminal/UI color bridges. |
-| `environmentId` | string | yes | Streamliner/runtime config | Stable observation scope for this local Streamliner install. Local rows use `local`; registered devboxes use a Streamliner-owned id from local runtime config. It is part of observation merge keys and is never a hostname, credential, tunnel id, or filesystem path. |
-| `environmentKind` | `local \| devbox` | yes | Runtime config | Host class for display and policy. `devbox` means remote observation in this design, not devbox launch or remote control. |
-| `environmentDisplayName` | string | yes | Runtime config | Non-secret label cached from the environment registration so the session list can distinguish local and devbox rows without a separate portfolio-shell surface. |
-| `environmentProvider` | string or `null` | yes | Runtime config | Non-secret provider hint such as `local`, `microsoft-dev-box`, `ssh`, or `dev-tunnel`; never a credential reference or access token. |
-| `cwd` | string | yes | Observation or builder | Environment-native absolute path and merge guardrail. For devbox rows this is the remote path reported by the devbox, not a rewritten local path. |
+| `cwd` | string | yes | Observation or builder | Absolute relaunch path and merge guardrail. |
 | `repo` | string or `null` | yes | Observation or builder | Normalized `owner/name` when known; otherwise the repo root path; `null` when unknown. |
 | `branch` | string or `null` | yes | Observation or builder | Last known branch when one is available. |
-| `copilotSessionId` | string or `null` | yes | Observation | Linked Copilot CLI session id when the row is tied to an observed session. It is scoped by `environmentId` and is not globally unique. |
+| `copilotSessionId` | string or `null` | yes | Observation | Linked Copilot CLI session id when the row is tied to an observed session. |
 | `aiSummary`, `aiSummaryModel`, `aiSummaryUpdatedAt`, `aiSummaryEventsFingerprint`, `aiSummaryStatus`, `aiSummaryError` | string/status fields or `null` | yes | Worker | Optional persisted conversation description and refresh metadata. The worker may transiently read bounded recent `events.jsonl` user turns to produce `aiSummary`, but it does not persist the raw prompt/event bodies in these fields. |
 | `lifecycleStatus` | `active \| paused \| ended \| archived` | yes | Builder + observation | Durable coarse lifecycle. Observation only owns the transition into `ended`; archiving is builder-driven. |
 | `lastSeenAt` | ISO 8601 string or `null` | yes | Observation | Last observed activity timestamp; `null` for never-observed manual entries. |
@@ -283,8 +270,6 @@ Each registry entry is a persisted `SessionRegistryRecord`. The stored lifecycle
 `lifecycleStatus` is intentionally coarse and durable. The fine-grained, observation-derived liveness of a currently-live Copilot session (`launching`, `discovered`, `active`, `idle`, `ended`) is an orthogonal derived view layered on top of the registry row at render time, not a field stored on the row. A single registry entry can be `lifecycleStatus: active` and observation-`idle` simultaneously — those are independent axes and the overlay composes them.
 
 Only observed rows may carry `origin.importedFromCopilotSessionId`; only launched rows may carry `origin.launchClaimId`; manual rows carry neither. Persisted schema and API types should encode that constraint directly rather than relying on convention.
-
-Rows written before the environment fields exist normalize at read/migration time to `environmentId: "local"`, `environmentKind: "local"`, `environmentDisplayName: "Local"`, and `environmentProvider: "local"`. That keeps existing local registry rows in the same identity scope while making future devbox observations explicit instead of inferring host identity from paths.
 
 Registry entries are created in three ways:
 
@@ -337,18 +322,16 @@ The observation model defined by [Decision 001](decisions/001-observation-based-
 - **`events.jsonl`** — activity and turn/event stream
 - **Hook signal files** (`{id}.start.json`, `{id}.turn.json`, `{id}.end.json`) — low-latency hints only, never the durable source of truth
 
-Discovery runs inside an observation environment. The local environment uses `environmentId: "local"`, a startup scan of the local session-state root, and **`fs.watch()`** for ongoing updates. A registered devbox uses its configured `environmentId` plus bridge snapshots, signal cursors, and event-tail offsets. A Copilot session id is only unique inside that environment and configured session-state root, so merge logic never compares `copilotSessionId` without the environment scope. Merge precedence is:
+Discovery uses both a **startup scan** of the session-state root and **`fs.watch()`** for ongoing updates. Merge precedence is:
 
-1. If a registry row already has the same `environmentId` and `copilotSessionId`, update that row.
-2. Else if an active launch/relaunch claim with the same `environmentId` resolves to a known registry row, link the discovered session onto that row. Current launch claims are local-only; devbox observation does not bind to local launch claims until a later devbox launch/recovery design explicitly adds remote claims.
-3. Else if there is **exactly one** non-archived manual row with the same `environmentId`, no `copilotSessionId`, `lastSeenAt: null`, and matching `cwd`, `repo`, and `branch` (ignoring fields that are `null` on both sides), attach the discovered session to that row and preserve the builder-owned fields already on it.
+1. If a registry row already has the same `copilotSessionId`, update that row.
+2. Else if an active launch/relaunch claim resolves to a known registry row, link the discovered session onto that row.
+3. Else if there is **exactly one** non-archived manual row with no `copilotSessionId`, `lastSeenAt: null`, and matching `cwd`, `repo`, and `branch` (ignoring fields that are `null` on both sides), attach the discovered session to that row and preserve the builder-owned fields already on it.
 4. Else create a new `origin.kind: observed` row.
 
-Observation may refresh `copilotSessionId`, `cwd`, `repo`, `branch`, `lastSeenAt`, and the transition from `lifecycleStatus: active | paused` to `ended`; local environment config may refresh cached `environmentDisplayName` or `environmentProvider`. Observation does **not** rewrite `environmentId`, and it does **not** overwrite builder-edited `title`, `description`, `color`, `tags`, or an existing `graphBinding` unless a launch/relaunch claim explicitly owns that binding update.
+Observation may refresh `copilotSessionId`, `cwd`, `repo`, `branch`, `lastSeenAt`, and the transition from `lifecycleStatus: active | paused` to `ended`. It does **not** overwrite builder-edited `title`, `description`, `color`, `tags`, or an existing `graphBinding` unless a launch/relaunch claim explicitly owns that binding update.
 
 The manual-row attach rule is deliberately strict. Streamliner does **not** fuzzy-match by `cwd` alone, and it does not auto-attach when more than one manual row could plausibly match. Ambiguous cases fall back to a new observed row plus an explicit builder bind/reconcile step.
-
-Different `environmentId` values always produce distinct automatic matches even when `cwd`, `repo`, `branch`, or `copilotSessionId` overlap. The UI may show a possible relationship between rows in different environments, but cross-environment reconciliation is a builder action rather than an observation side effect.
 
 Observation never auto-archives. A linked row becomes `ended` when a clean end signal arrives or when the stale-session fallback fires after the watcher has not seen activity within the configured timeout. `archived` is only reached through an explicit builder action. Archived rows stay archived and are excluded from automatic rediscovery matching; a newly observed session creates a fresh row unless a relaunch flow explicitly reactivates the archived entry first.
 
@@ -498,28 +481,6 @@ Streamliner config. Credentials, tokens, key material, and tunnel secrets remain
 owned by SSH, Azure CLI, the OS credential store, or an equivalent external
 credential manager.
 
-A registered devbox environment represents one host/session-state-root
-observation scope inside the local Streamliner install. The stable
-`environmentId` is Streamliner-owned and stored in local runtime config; it is not
-the devbox hostname, Azure resource id, tunnel id, SSH alias, credential name, or
-remote path. If the builder retargets a registration to a different host or a
-different Copilot session-state root, Streamliner must treat that as a new
-environment or an explicit migration rather than silently reusing old identity.
-
-Field placement for devbox identity and access facts is:
-
-| Fact | Placement | Notes |
-|------|-----------|-------|
-| `environmentId` | Registry row, registry list entry, bridge snapshots/signals, and local runtime config | Primary observation scope. Required for merge with `copilotSessionId`; safe to persist because it is Streamliner-owned and non-secret. |
-| `environmentKind`, `environmentDisplayName`, `environmentProvider` | Registry row/list as cached non-secret display metadata; authoritative value in local runtime config | Lets the UI render "Local" vs a named devbox without portfolio-shell work. Renaming a devbox can refresh these fields without changing session identity. |
-| Provider-native host identifiers, Azure Dev Center project/box names, host fingerprints | Local runtime/config diagnostics | Useful for reachability and duplicate-registration warnings, but not part of the registry row and not committed to workstream artifacts. |
-| Access channel metadata (`access.kind`, SSH target/alias, Dev Tunnel id, bridge base URL, local/remote ports) | Local runtime/config or external tool state | May be redacted in diagnostics. The registry records that a row belongs to an environment, not how the laptop currently reaches it. |
-| `sessionStateRoot` and `pathConventions` | Environment config plus bridge health/capability/runtime cache | Scope and normalize observation. The first slice treats one registered environment as one configured session-state root; multiple roots require distinct environment ids or an explicit migration. |
-| `cwd`, `repo`, `branch` | Registry row/list as observation or builder facts | `cwd` remains environment-native. Optional repo/path mappings can improve display, but they do not rewrite identity or make a devbox cwd equivalent to a local cwd. |
-| Repo/path mappings | Local runtime config only | Paths can reveal machine layout and are hints for display or future launch work, not merge keys across environments. |
-| Bridge capabilities, health, cursors, event-tail offsets, freshness timestamps, compatibility diagnostics | Local runtime/cache and derived overlay | They explain whether observation is trustworthy now; they are not durable session identity and must not make stale data appear fresh. |
-| SSH keys, Azure/Dev Tunnel tokens, bridge bearer secrets, passphrases, known-host private material | External credential manager, SSH/Azure CLI/Dev Tunnel/OS state | Never committed and never copied into ordinary registry JSON as raw values. |
-
 The preferred access model is a devbox-side Streamliner bridge reached from the
 local Streamliner process through a builder-managed access channel such as an
 SSH local port forward or an authenticated Dev Tunnel. The bridge listens on
@@ -570,106 +531,8 @@ the bridge or the registry identity model.
 
 Devbox observation does not imply devbox launch, remote control, or
 multi-machine registry sync. A devbox-observed registry row still uses a
-Streamliner-owned `id`; the automatic observation identity is
-`environmentId` + `copilotSessionId`, with remote `cwd`, `repo`, and `branch` as
-manual-row attach guardrails and display facts.
-
-### Devbox Health and Freshness
-
-Devbox health composes with the registry; it is not a replacement lifecycle
-status. The registry row remains the durable identity and builder-edited history.
-Local runtime/cache state records whether the environment and bridge are
-currently observable, whether the most recent observation is fresh enough to
-trust, and which diagnostics explain degraded confidence.
-
-The runtime health model has four independent axes:
-
-| Axis | Values | Owner | Meaning |
-|------|--------|-------|---------|
-| Environment reachability | `reachable`, `unreachable`, `unknown` | Connector/health probe | Whether the local Streamliner process can reach the configured devbox access channel. |
-| Bridge health | `healthy`, `unavailable`, `unsupported`, `permission_denied`, `unknown` | `/health` and `/capabilities` | Whether the bridge can read the configured session-state root, report capabilities, and speak a compatible contract. |
-| Observation freshness | `fresh`, `stale`, `unknown` | Local runtime cache | Whether the last successful snapshot/signal/tail ingestion is within the freshness window for the environment or session. |
-| Observation confidence | `trusted`, `degraded`, `unverified` | Compatibility probes and diagnostics | Whether observation-derived liveness can drive normal UI affordances, should be shown with warnings, or should be treated as history only. |
-
-Per-session liveness (`active`, `idle`, `ended`, interrupted/resumable lock state)
-is only current when environment reachability, bridge health, and observation
-freshness allow it. Otherwise the UI renders the last-known row with a stale or
-degraded badge. This keeps old devbox observations useful for context recovery
-without presenting them as fresh truth.
-
-Minimum health/freshness rules:
-
-| Condition | Runtime behavior |
-|-----------|------------------|
-| `/health`, `/capabilities`, snapshot, signal, and needed event-tail reads succeed within the freshness window | Mark the environment reachable, bridge healthy, relevant observations fresh, and confidence trusted unless compatibility diagnostics say otherwise. |
-| Dev Tunnel or SSH connector is unavailable, bridge is not listening, or a health probe times out | Mark environment or bridge unreachable/unavailable; keep registry rows; observations become stale after the freshness window; do not create `ended` transitions from outage alone. |
-| Dev Tunnel authentication expires or SSH auth fails | Mark the environment unreachable with a credential diagnostic and re-login guidance; do not delete rows or rewrite session lifecycle. |
-| Bridge version is unsupported or required capabilities are absent | Mark bridge `unsupported` and confidence `unverified` for feature-dependent liveness; skip snapshot/tail ingestion unless the version/capability is explicitly backward compatible. |
-| Session-state root is missing, denied, or unreadable | Mark bridge `permission_denied` or compatibility degraded; do not create fresh observations from partial data. |
-| Event tail cursor is invalid, JSONL parsing fails, or clock skew is detected | Keep metadata that is still verified, perform bounded resync when possible, and mark event-dependent fields degraded until reverified. |
-| Hook capability is absent or no trusted hook has admitted a historical session | Keep filesystem-only rows observed-diagnostic by default; hook absence is degraded confidence, not proof that the bridge is unhealthy. |
-| Bridge reports `stale_lock` for a session | Render the session as interrupted/resumable or stale-lock degraded, not live. |
-
-The freshness window defaults to the local watcher cadence plus a bounded grace
-period rather than the 30-minute session-ended threshold. A missed poll should
-not instantly stale all rows, but freshness should expire quickly enough that an
-unreachable devbox cannot look operational. The exact default is implementation
-configuration owned by the devbox discovery task; the invariant is that
-transport outage affects freshness/confidence first and lifecycle only after
-verified session-state facts support that transition.
-
-### Devbox Security and Credential Boundary
-
-The first devbox observation slice stays local-first and builder-managed. It does
-not introduce a hosted Streamliner service, multi-user access control, a
-Streamliner-managed credential vault, or remote control authority. Streamliner may
-store enough non-secret local runtime/config state to reconnect to a registered
-devbox and explain failures, but credential material and private trust roots stay
-with the tools that own the access channel.
-
-Credential ownership:
-
-| Secret or trust material | Owner | Streamliner handling |
-|--------------------------|-------|----------------------|
-| SSH private keys, passphrases, SSH agent state, private certificates | SSH/OS credential store | Never copied into Streamliner config, registry rows, committed artifacts, or diagnostics. Streamliner may reference an SSH host alias and rely on SSH to authenticate. |
-| SSH known-host trust store | SSH | Streamliner may cache a non-secret host fingerprint or trust status for diagnostics, but SSH remains authoritative for host verification. |
-| Azure CLI, Dev Center, and Dev Tunnel refresh/access tokens | Azure CLI, Dev Tunnel tooling, OS credential manager | Streamliner invokes or observes the configured connector and records status/expiry diagnostics only. |
-| Dev Tunnel id/name, SSH alias/target, bridge local URL/ports | Local Streamliner runtime config | Allowed locally because they are operational identifiers, but redacted from committed artifacts and default logs. |
-| Bridge bearer/shared secret, if a later bridge requires one | OS credential manager or explicit secret provider | Not required for the first loopback/private-channel slice. If added later, registry/config store only a credential reference, never the raw secret. |
-
-For the first implementation slice, a devbox bridge bound to devbox loopback and
-reached only through an authenticated private Dev Tunnel or SSH local forward does
-not require a separate Streamliner bridge-auth scheme. The private channel and
-host-local loopback binding are the trust boundary. If the bridge is exposed
-beyond loopback/private tunnel, accepts remote control actions, transfers raw
-transcript content, or must authenticate multiple users, implementation must stop
-for an explicit security design/ADR before depending on that shape.
-
-Registration and verification rules:
-
-| Step | Requirement |
-|------|-------------|
-| Registration | Store `environmentId`, display/provider metadata, access kind, non-secret connector identifiers, bridge URL/ports, session-state root override, path conventions, and optional credential references in local runtime/config only. |
-| Verification | Probe `/health` and `/capabilities` through the configured connector. Require compatible bridge version, expected session-state root access, path convention, loopback/private-channel posture, and required capabilities before marking the environment observable. |
-| Host trust changes | If SSH host trust, provider identity, bridge instance identity, or configured session-state root changes unexpectedly, mark the environment `unverified` or `host-identity-changed` and require builder review instead of silently continuing. |
-| Credential failures | Surface `credential-expired`, `auth-denied`, or `bridge-auth-required` diagnostics with remediation guidance. Preserve registry rows as stale history and do not retry in a way that prints secrets. |
-| Retargeting | Moving an environment registration to a different host or session-state root requires explicit migration or a new `environmentId`; it is not a normal credential refresh. |
-
-Diagnostics and logs use allowlists, not best-effort scrubbing. Safe diagnostic
-fields include environment id/display label, provider kind, access kind,
-capability booleans, bridge version, path convention, timestamps, event counts,
-cursor/offset numbers, prompt lengths, process-state enums, and structured error
-codes. Sensitive fields include access tokens, bearer secrets, SSH key material,
-passphrases, raw tunnel URLs when they embed secrets, usernames/hosts/tunnel ids
-outside local runtime config, full filesystem paths in committed artifacts, raw
-prompt text, assistant text, tool arguments, and complete JSONL event lines.
-
-Committed workstream artifacts and design docs may name field vocabulary and
-endpoint shapes, but must not include real hostnames, usernames, tunnel ids,
-tokens, private paths, credential names that reveal secrets, or raw session
-content. Local runtime files may contain concrete connector identifiers and path
-hints, but default logs and issue-ready diagnostics should redact them unless the
-builder explicitly exports a local troubleshooting bundle.
+Streamliner-owned `id`; the Copilot session id, remote host/environment id, and
+remote cwd are separate identity facts used for merge and display.
 
 ### Node-to-Session Binding
 
@@ -703,21 +566,8 @@ Each session carries:
 - **Last successful Copilot parse** — timestamp and byte offset of the last `events.jsonl` read that succeeded, plus the number of open tool requests in the incremental index.
 - **Last successful PAW parse** — timestamp of the last `WorkflowContext.md` / `ReviewContext.md` read, along with the derivation path used (`control-state`, `inferred`, or `unparsable`; see [Decision 003](decisions/003-paw-control-state-integration.md)).
 - **Hook signal counters** — count of `sessionStart`, `agentStop`, `sessionEnd` signals received vs. equivalent transitions inferred from polling, so "hooks silently stopped firing" is visible.
-- **Environment observation health** — for devbox rows, the last successful health/capability probe, snapshot receipt, signal cursor, event-tail offset, freshness expiry, and any environment-level diagnostic affecting the row.
 
-In addition, the watcher emits structured diagnostic events (not free-form logs)
-for every degradation mode it recognizes: `hook-miss`, `tail-truncation`,
-`nonce-absent-after-window`, `legacy-inference-used`,
-`unknown-control-state-token`, `copilot-compatibility-probe-failed`,
-`paw-contract-version-out-of-range`, `environment-unreachable`,
-`bridge-unavailable`, `credential-expired`, `unsupported-bridge-version`,
-`session-root-unreadable`, `remote-observation-stale`, `cursor-invalid`,
-`event-parse-error`, `bridge-clock-skew`, `missing-hook-capability`,
-`stale-process-lock`, `auth-denied`, `bridge-auth-required`,
-`host-identity-changed`, and `redaction-applied`. These events are retained
-alongside session history and surfaced in the diagnostic view. The UI shows a
-compact degradation badge on any session whose diagnostics are non-empty so the
-builder never has to guess whether the overlay can be trusted.
+In addition, the watcher emits structured diagnostic events (not free-form logs) for every degradation mode it recognizes: `hook-miss`, `tail-truncation`, `nonce-absent-after-window`, `legacy-inference-used`, `unknown-control-state-token`, `copilot-compatibility-probe-failed`, `paw-contract-version-out-of-range`. These events are retained alongside session history and surfaced in the diagnostic view. The UI shows a compact degradation badge on any session whose diagnostics are non-empty so the builder never has to guess whether the overlay can be trusted.
 
 ## Runtime Overlay
 
@@ -752,12 +602,6 @@ The `pawWorkflow` field carries a derivation-path annotation (see [Decision 003]
 - **`control-state` + `Reconciliation: stale | external_unverified | not_run`** — overlay visibly downgrades confidence (muted colors, "reconciliation stale" badge). "Ready to launch next activity" affordances are suppressed until reconciliation is refreshed. The builder may still inspect state but cannot trigger mutation-affecting actions from the overlay.
 - **`inferred`** — legacy artifact-presence fallback. Overlay renders with a "legacy inference" badge. Mutation-affecting affordances are suppressed.
 - **`unparsable`** — control state present but rejected by the parser (unknown tokens, out-of-range contract version). Overlay shows an error badge and the underlying diagnostic. No activity-status rendering until the parser is updated or the builder acknowledges the condition.
-
-Devbox observation confidence applies the same rendering principle to remote
-session liveness. Fresh trusted devbox observations render like local
-observations plus an environment badge. Stale, degraded, or unverified devbox
-observations keep the session row visible but mute or badge liveness and suppress
-actions that would assume the remote state is current.
 
 ### Artifact Promotion
 
@@ -794,13 +638,11 @@ Streamliner surfaces a session panel or overlay showing:
 | Column | Source |
 |--------|--------|
 | Node | Launch claim binding → graph node title |
-| Environment | Registry environment display metadata plus local runtime health |
-| Status | Observed lifecycle state, badged by freshness/confidence for devbox rows |
+| Status | Observed lifecycle state |
 | Phase | Derived from recent events |
 | Needs Input | `pendingInputRequest` present |
 | Duration | `now - createdAt` from `workspace.yaml` |
 | Last Activity | `events.jsonl` mtime |
-| Observation Trust | Local watcher or devbox bridge freshness/confidence diagnostics |
 
 Clicking a session in the list focuses its terminal (when the terminal integration supports it) or shows the session's details.
 
@@ -811,9 +653,7 @@ Clicking a session in the list focuses its terminal (when the terminal integrati
 - Launch from the graph with SDK preparation, kickoff-prompt compilation, and Copilot CLI interactive worker-session launch
 - Observation-based session tracking via Copilot state files
 - Plugin hook signals for low-latency status hints
-- Registered-devbox observation vocabulary, environment identity, trusted hook forwarding, and remote session-state access
-- Devbox health/freshness vocabulary that separates reachability, bridge health, observation freshness, and confidence from durable session lifecycle
-- Devbox security/credential boundary for local runtime config, external credential ownership, host trust, bridge-auth escalation, and redacted diagnostics
+- Registered-devbox observation vocabulary for trusted hook forwarding and remote session-state access
 - Runtime overlay onto the committed graph
 - Terminal-based operator presence
 - Local session tracking plus registered-devbox observation through the local Streamliner process
