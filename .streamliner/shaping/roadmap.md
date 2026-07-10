@@ -10,10 +10,11 @@ defined in [CAMPAIGNS.md](../../CAMPAIGNS.md). This document applies that concep
 work in front of us right now. It is a point-in-time view and is expected to be
 revised as campaigns progress.
 
-It was produced by consolidating the backlog that accumulated during the DB Agent
-private-preview push (voice notes, deferred problems, observations). That
-consolidation declared the intent below and partitioned it into three campaigns,
-one standalone workstream, and a set of side issues.
+It was first produced by consolidating the backlog that accumulated during the DB
+Agent private-preview push (voice notes, deferred problems, observations). It has
+since been revised as work shipped and priorities changed. The current main effort
+now combines three closely related needs: plugin-delivered role context, Telex
+coordination, and shared Git-backed Streamliner artifacts.
 
 ## How to read this
 
@@ -29,35 +30,81 @@ one standalone workstream, and a set of side issues.
 
 ## Current main effort
 
-**Campaign 1 — Session Coordination.** Highest validated pain (manual
-session-to-session coordination), and Telex is already built for it.
+**Campaign 1 — Shared Project Operations.** Make a Streamliner project usable by
+multiple builders and agent sessions without personal setup knowledge, manual
+message relay, or artifact-sync choreography.
 
 ---
 
-## Campaign 1 — Session Coordination *(main effort)*
+## Campaign 1 — Shared Project Operations *(main effort)*
 
-**Declared intent.** Sessions become addressable, role-bound, message-passing
-actors with a bound orchestrator, so coordination stops being a manual
-messages-folder relay.
+**Declared intent.** A project can be operated by multiple builders and agent
+sessions: the Streamliner plugin loads the right role context, Telex carries live
+coordination between durable responsibility addresses, and a dedicated
+`streamliner-artifacts` branch carries shared workstream artifacts without
+polluting source branches.
 
-**Review question.** Can the builder coordinate sessions through the fabric
-instead of by hand?
+**Review question.** Can a second builder enter a project, load the correct
+Streamliner role, find the shared workstreams, and coordinate through Telex
+without learning another builder's private instructions or manual Git routine?
 
-**Theater.** The coordination/runtime layer: actors, mailboxes, the bound
-orchestrator.
+**Theater.** Shared project operations: role/context delivery, live session
+coordination, and the durable artifact ledger.
 
 **Covering workstreams.**
 
 | Workstream | Candidate | Notes |
 |---|---|---|
-| Local Actor Fabric & Bound Orchestrator | `session-actor-control-plane` | **Adopts Telex** as transport (cross-project import). Bound orchestrator launch, window binding, lifecycle notifications (#121). |
-| Role & Context Packages | `streamliner-agent-skill-context` | Foundational role/context packages an actor binds at launch. Exports `role-context-v1`. |
+| Streamliner Plugin Role Skills | `streamliner-agent-skill-context` | **Starts first.** Adds a small `streamliner` entry skill plus designer, formation, orchestrator, and worker role context to the existing plugin; makes that plugin installable by another builder through the repository marketplace. Imports the temporary role notes and Namra's `streamliner-skills` work as implementation evidence. Exports `role-context-v1`. |
+| Telex-backed Actor Fabric & Bound Orchestrator | `session-actor-control-plane` | Adopts the released Telex product rather than building a mailbox. Owns the mapping from Streamliner project/workstream/node roles to Telex addresses and stations, bound-orchestrator behavior, lifecycle routing (#121), and field-report message profiles. Exports `telex-addressing-v1`. |
+| Git-backed Artifact Ledger & Sync | `git-backed-artifact-sync` | Makes `streamliner-artifacts` a first-class same-repository artifact branch/worktree, adds external artifact-root configuration and deterministic synchronization, and routes sync/conflict attention through Telex. Exports `artifact-root-v1`. |
 
-**Related (downstream).** `session-attention-widget` — consumes actor
-attention/lifecycle signals (#122).
+**Ownership boundary.**
 
-**Exports.** `role-context-v1`; the actor/mailbox + field-report **transport**
-(consumed by Campaign 2).
+| Concern | Owner |
+|---|---|
+| How a session operates as a Streamliner role | Plugin Role Skills |
+| Message delivery, liveness, acknowledgement, and history | Telex |
+| Mapping Streamliner roles/scopes onto Telex addresses | Telex-backed Actor Fabric |
+| Briefs, graphs, shaping notes, reports, and reconciliation artifacts | `streamliner-artifacts` branch |
+| Source code and durable product/design documentation | Normal source branches |
+| Local runtime and session projections | Streamliner local state |
+
+Messages carry pointers to artifacts, commits, issues, nodes, or PRs; they do not
+become a second artifact store. A durable decision made through Telex is promoted
+into the appropriate artifact or design record.
+
+**Shared seams.** All three workstreams consume the existing Streamliner project
+key. Plugin Role Skills exports stable role identifiers and context-selection
+rules. The actor workstream maps those roles onto Telex addresses. Artifact Sync
+exports project artifact-root discovery so role skills and later project surfaces
+can load the same workstream state on every machine.
+
+**Sequencing inside the campaign.**
+
+1. Plugin Role Skills establishes `role-context-v1` and the first useful plugin
+   experience.
+2. Telex integration consumes the role identifiers. Artifact Sync can begin its
+   branch/root work in parallel without waiting for either role or Telex
+   integration.
+3. The Telex-backed actor workstream routes artifact-sync attention and lifecycle
+   events to the appropriate role addresses; Plugin Role Skills adopts
+   `artifact-root-v1` once the resolver is available.
+4. A multi-builder dogfood gate exercises the whole seam: two environments, one
+   repository, one artifact branch, one shared Telex backend, and no private
+   briefing or manual relay.
+
+**External inputs.** Released Telex is a product dependency, not code copied into
+Streamliner. Namra's `streamliner-skills` repository is an explicit role-skills
+input; its useful behavior should be reconciled into the canonical plugin skills
+rather than maintained as a permanent parallel workaround.
+
+**Related (downstream).** `session-attention-widget` consumes Telex and lifecycle
+attention signals (#122). The existing SDK-managed runtime remains an enabling
+execution track and should consume the same role/address contracts where useful.
+
+**Exports.** `role-context-v1`; `telex-addressing-v1`; `artifact-root-v1`; Telex
+field-report transport (consumed by Campaign 2).
 
 ## Campaign 2 — Coverage & Execution Integrity *(proposed)*
 
@@ -99,14 +146,15 @@ work.
 
 | Workstream | Candidate | Notes |
 |---|---|---|
-| Project Surface & Orientation | `project-surface-and-issue-launches` | **Owns the Project boundary.** Orientation view (ready/working/blocked/needs-launch) as an early wave; issue launches as a later wave. Absorbs per-repo group collapse. |
-| Cross-Workstream Dependencies & Geometry | `multi-workstream-dependencies` | Import/export/availability + external blockers (folds in `external-dependency-tracking`). Consumes the Project boundary. |
+| Project Surface & Orientation | `project-surface-and-issue-launches` | **Owns the full Project surface.** Orientation view (ready/working/blocked/needs-launch) as an early wave; issue launches as a later wave. Absorbs per-repo group collapse. C1 only pulls forward the minimal existing project key/configuration needed to bind roles, Telex, and artifact roots. |
+| Cross-Workstream Dependencies & Geometry | `multi-workstream-dependencies` | Import/export/availability + external blockers (folds in `external-dependency-tracking`). The first implementation slice shipped in #108; rebaseline the remaining work at formation. |
 
 **Related (downstream).** `work-geometry-canvas` — renders the dependency model.
 
 **Side issues.** #128 (session-group collapse).
 
-**Imports.** `schema-v2` (C2), orientation signals (C1).
+**Imports.** `schema-v2` (C2), orientation signals (C1), and
+`artifact-root-v1` (C1).
 
 ## Campaign 4 — Autonomous Execution *(proposed, later)*
 
@@ -150,9 +198,10 @@ Not part of a campaign this round; low-dependency, can run independently.
 
 | Seam / export | Produced by | Consumed by |
 |---|---|---|
-| `role-context-v1` | C1 Role & Context Packages | C2 (worker guidance), C3 (issue-worker role) |
+| `role-context-v1` | C1 Plugin Role Skills | C1 Telex Actor Fabric, C2 (worker guidance), C3 (issue-worker role) |
+| `telex-addressing-v1` + field-report transport | C1 Telex Actor Fabric | C2 Node Handoff, C4 orchestration |
+| `artifact-root-v1` | C1 Artifact Ledger & Sync | C1 Plugin Role Skills, C3 Project Surface |
 | `schema-v2` | C2 Format & Coverage Substrate | C3 (fields its surfaces read) |
-| field-report transport | C1 Actor Fabric | C2 Node Handoff (its content/reconciliation) |
 | Project boundary | C3 Project Surface | C3 Cross-Workstream Dependencies |
 | #124 deferral→debt | C2 reconciliation (creates) | C2 closeout (validates no open debt) |
 | `operating-point-v1` (care/posture/preference/human-floor) | C2 Operating Point & Attention | C2 (WS-D/WS-F surfacing), C4 (merge gate) |
@@ -170,7 +219,7 @@ Filed and mapped to campaigns:
 Already open, mapped:
 
 - **#7** remove deprecated schema fields, **#120** artifact-placement guidance → C2.
-- **#121** worker lifecycle notifications → C1.
+- **#121** worker lifecycle notifications → C1 (route through Telex-backed actor addresses).
 - **#122** desktop toast/notification companion → C1 (attention widget).
 
 ## Not in a campaign this round
@@ -187,8 +236,12 @@ control-plane north star (#102/#123).
 
 ## Sequencing
 
-- **C1 (main effort) → C2 → C3.** C2 imports `role-context-v1` from C1; C3 imports
-  `schema-v2` from C2 and orientation signals from C1.
+- **C1 (main effort) → C2 → C3.** Inside C1, Plugin Role Skills exports
+  `role-context-v1` first. Telex integration consumes it; Artifact Sync's
+  branch/root work can run in parallel and later exports `artifact-root-v1` back
+  to the plugin. The campaign converges at the multi-builder dogfood gate. C2
+  imports role context and field-report transport from C1; C3 imports
+  `schema-v2`, orientation signals, and artifact-root discovery.
 - **Inside C2:** the Format & Coverage Substrate workstream goes first and exports
   `schema-v2` early (contract-first), so the other two can build against a stable
   shape.

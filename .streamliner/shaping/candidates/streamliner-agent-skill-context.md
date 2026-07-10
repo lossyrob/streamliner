@@ -1,12 +1,17 @@
-# Streamliner Agent and Skill Context
+# Streamliner Plugin Role Skills
 
 ## Stage
 
-Shaped; ready to move on.
+Shaped; ready for formation as the first workstream in the Shared Project
+Operations campaign.
 
 ## Seed Idea
 
-Add Streamliner-aware agents or skills to the plugin so orchestrator and worker sessions can load the concepts, roles, and operating context they need without repeated manual prompting. The builder should not need to repeatedly explain Streamliner, workstreams, orchestrators, workers, context packages, or session responsibilities.
+Add Streamliner role skills to the existing Copilot CLI plugin so sessions can
+load the concepts, role, and project context they need without repeated manual
+prompting. The builder should be able to invoke one `streamliner` entry skill,
+select or infer a role, and load only the relevant context rather than asking a
+session to read the entire top-level document set.
 
 ## Why It Matters
 
@@ -19,6 +24,11 @@ That repeated prompting is both tedious and risky. It creates session-to-session
 ### In Scope
 
 - Define the role-context model for Streamliner-aware sessions.
+- Add a small `streamliner` entry/orientation skill that discovers the current
+  project and routes into a role-specific skill.
+- Package and document the role skills through the existing repository-backed
+  Copilot plugin marketplace so another builder does not need a local Streamliner
+  checkout or a separate workaround repository.
 - Decide when Streamliner should provide skills, custom agents, launch prompts, or generated context packages.
 - Add reusable context for at least four roles/modes:
   - Project Workstream Designer: shapes multiple candidate workstreams and their geometry.
@@ -27,6 +37,10 @@ That repeated prompting is both tedious and risky. It creates session-to-session
   - Workstream Node Worker: executes one node from the context package and reports documentation/design/scope impacts.
 - Keep role guidance composable so the builder can still direct a session freely without being trapped in a rigid custom-agent persona.
 - Connect role context to documentation authority: role guidance should point to Design, Architecture, User Guide, and workstream artifacts rather than duplicating them wholesale.
+- Resolve project-specific context through Streamliner's project key and artifact
+  root, including a future external `streamliner-artifacts` worktree.
+- Define stable role identifiers that the Telex-backed actor workstream can map
+  onto durable responsibility addresses.
 - Decide how node sessions automatically receive worker role context at launch.
 
 ### Out of Scope
@@ -34,6 +48,10 @@ That repeated prompting is both tedious and risky. It creates session-to-session
 - Replacing the context package with skills or custom agents.
 - Treating plugin-provided role guidance as project design authority.
 - Building a full multi-workstream dependency model.
+- Implementing Telex delivery, address attachment, or actor lifecycle behavior.
+- Implementing Git artifact synchronization or external artifact-root storage.
+- Building the broader `streamliner` CLI, daemon lifecycle, or full
+  install/update/doctor experience from issue #40.
 - Fully designing hot-work behavior; this workstream should enable that follow-on work.
 
 ### Deferred
@@ -46,6 +64,9 @@ That repeated prompting is both tedious and risky. It creates session-to-session
 ## Decisions and Working Assumptions
 
 - Prefer **skills as the primary context mechanism** because they are composable. A session can load a Streamliner role while still staying loose enough for the builder to direct it.
+- Ship one **`streamliner` entry skill** plus role-specific skills. The entry
+  skill handles discovery and orientation; it should not become a large
+  all-purpose prompt that loads every Streamliner document.
 - Use **custom agents as optional entry points**, not the only mechanism. A custom agent is appropriate when the whole session is intentionally operating as a Workstream Designer or Orchestrator, but it should be a thin wrapper over the same shared role guidance.
 - A custom agent should not be the source of truth for Streamliner behavior. It should load or point to shared role docs/skills so agent and skill behavior do not drift.
 - The node-worker role should be loaded automatically for launched worker sessions. This could be through the launch prompt, a plugin-provided skill, generated context-package instructions, or a combination.
@@ -53,6 +74,35 @@ That repeated prompting is both tedious and risky. It creates session-to-session
 - The plugin already exists for session lifecycle hooks, but this workstream may need to expand plugin packaging to include skills, agent definitions, or role documentation if Copilot CLI supports distributing them that way.
 - The role model should likely include one shared `streamliner-core` context plus role-specific layers for designer, orchestrator, worker, and eventually reconciler.
 - Dogfooding suggests three primary skills above node work: Project Workstream Design, Workstream Formation, and Workstream Orchestration. They may share one Streamliner Core context and can still have optional custom-agent entry points.
+- The workstream exports a versioned **`role-context-v1`** contract: stable role
+  identifiers, skill names, minimum context-selection rules, worker launch
+  requirements, and the way a session records which role it loaded.
+- Project/product documents remain authoritative. Plugin skills are navigators
+  and operating instructions; they should load the smallest useful document set
+  and never maintain a private copy of project truth.
+- The first useful plugin slice should ship through the existing plugin
+  marketplace/install path and be installable from the repository by a second
+  builder, not only from a local checkout. It should not wait for the broader
+  Distribution/Integration workstream (#40).
+- The entry skill initially supports today's source-root project layout. It later
+  consumes `artifact-root-v1` without making Artifact Sync a prerequisite for the
+  first role-skills checkpoint.
+
+## External implementation input
+
+Namra created `naprajap_microsoft/streamliner-skills` to make Streamliner usable
+without the canonical plugin role skills. Treat that repository as implementation
+evidence and a migration source during Wave 1:
+
+- inventory its roles, triggers, document-selection rules, and user-facing
+  workflows;
+- preserve behavior that has proven useful to another builder;
+- reconcile naming and authority boundaries with the canonical Streamliner role
+  model;
+- avoid requiring the workaround repository once equivalent plugin skills ship.
+
+The repository is behind Microsoft enterprise SSO. Formation should secure access
+or an exported copy as an external input, not guess at its contents.
 
 ## Role Context Model
 
@@ -205,14 +255,20 @@ This preserves flexibility while still making Streamliner roles loadable and rep
 
 - [Workstream Design Mode](workstream-design-mode.md), for role definitions and the higher-level shaping workflow.
 - [Documentation System](documentation-system.md), if agent/skill context should draw from a clearer documentation hierarchy.
+- Existing Streamliner Copilot CLI plugin packaging and the shipped
+  session-launch/context-package pipeline.
 
 ### Enables
 
 - [Worker Hot Work and Reconciliation](worker-hot-work-reconciliation.md), because hot-work behavior should be part of worker role guidance.
+- [Telex-backed Session Actor Control Plane](session-actor-control-plane.md), which consumes
+  stable role identifiers for Telex address binding.
 
 ### Related Candidates
 
 - [Multi-Workstream Dependencies](multi-workstream-dependencies.md), because orchestrator or designer roles may need to reason across multiple workstreams.
+- [Git-backed Artifact Ledger & Sync](git-backed-artifact-sync.md), because role skills
+  must discover and load project artifacts from the configured artifact root.
 
 ## Workstream Shape
 
@@ -220,7 +276,12 @@ This is a workstream-sized effort. Its broad shape is to define and implement St
 
 Likely work areas:
 
+- Inventory the temporary `.streamliner/roles/` notes and Namra's
+  `streamliner-skills` implementation.
 - Inventory current Copilot CLI plugin, skill, and agent packaging options.
+- Update the repository marketplace/plugin metadata, installation guidance, and
+  versioning needed for another builder to install the role skills.
+- Build the small `streamliner` entry/orientation skill.
 - Define shared Streamliner Core context.
 - Define role-specific guidance for Project Workstream Designer, Workstream Formation, Workstream Orchestrator, and Workstream Node Worker.
 - Decide how role guidance references docs without duplicating them.
@@ -238,24 +299,43 @@ Likely work areas:
 - Workstream Design Mode: role semantics for designer sessions and work-geometry primitives.
 - Distribution/Integration Workstream ([GitHub issue #40](https://github.com/lossyrob/streamliner/issues/40)): CLI, daemon, Copilot plugin install/doctor/update, helper distribution, and agent-friendly launch entrypoints.
 - Session launching/tracking work: stable API-first launch pipeline and context-package seam for graph-launched node workers.
+- `artifact-root-v1` from Git-backed Artifact Ledger & Sync when available. The
+  first plugin checkpoint must continue to work with today's source-root layout.
 
 ### Exports
 
+- `role-context-v1`: stable role identifiers, skill names, minimum
+  context-selection rules, loaded-role receipt, and worker launch requirements.
 - Role-context model for Project Workstream Designer, Workstream Formation, Orchestrator, and Node Worker.
 - Packaging decision for skills vs custom agents.
 - Worker launch-context expectations for downstream hot-work guidance.
 - Workstream closure-review expectations for orchestrator sessions.
 - Shared Streamliner vocabulary that later multi-workstream dependency tooling can reuse.
 - Requirements for distribution surfaces: what skills/agents/helpers need to be installed, updated, diagnosed, and versioned by the CLI/plugin distribution workstream.
+- First-slice repository marketplace packaging and install guidance for the
+  role-skills plugin.
 - Orchestrator-helper requirements for launching node workers without using the UI.
+- Telex role-binding requirements: the role identifier and project/workstream/node
+  scope an actor integration needs in order to derive a durable address.
+- Artifact discovery requirements: how the entry and role skills resolve the
+  current project and configured artifact root without assuming `.streamliner`
+  lives on the source branch.
 
 ### Edge with Distribution/Integration Workstream
 
-GitHub issue [#40](https://github.com/lossyrob/streamliner/issues/40) already defines a future "CLI, daemon, and Copilot integration distribution" workstream. This agent/skill context candidate should not absorb that workstream.
+GitHub issue [#40](https://github.com/lossyrob/streamliner/issues/40) already defines a future "CLI, daemon, and Copilot integration distribution" workstream. This Plugin Role Skills candidate should not absorb that workstream or wait for it before shipping through the existing plugin.
+
+The practical split is:
+
+- Plugin Role Skills owns enough repository marketplace metadata, plugin
+  packaging, versioning, and install guidance to make this workstream's skills
+  usable by another builder.
+- Issue #40 later owns the product-wide CLI, daemon lifecycle, automatic
+  install/update/uninstall, `doctor`, and integration health experience.
 
 The boundary should be:
 
-| Concern | Agent/Skill Context workstream | Distribution/Integration workstream |
+| Concern | Plugin Role Skills workstream | Distribution/Integration workstream |
 |---|---|---|
 | Role semantics | Owns the content model for designer, orchestrator, worker, and future reconciler guidance. | Consumes those role artifacts for packaging and installation. |
 | Skills/agents | Defines what skills/agents should teach and how they avoid drifting from docs. | Installs, updates, verifies, and diagnoses those helpers. |
@@ -283,7 +363,7 @@ Conversely, issue #40 should export the stable distribution and automation subst
 
 The Workstream Orchestrator role should be able to launch node workers without relying on the dashboard UI. That creates a direct interdependency with the Distribution/Integration workstream:
 
-- The Agent/Skill Context workstream defines that an orchestrator helper needs an instruction like: use `streamliner launch-node --workstream <id> --node <id>` when launching a worker for a graph node, rather than manually reconstructing prompts or asking the builder to click the UI.
+- The Plugin Role Skills workstream defines that an orchestrator helper needs an instruction like: use `streamliner launch-node --workstream <id> --node <id>` when launching a worker for a graph node, rather than manually reconstructing prompts or asking the builder to click the UI.
 - The Distribution/Integration workstream provides the actual `streamliner launch-node` command or equivalent stable API entrypoint.
 - The session-launching product workstream provides the underlying launch pipeline that both the UI and CLI entrypoint call.
 
@@ -291,19 +371,19 @@ This edge should be treated as an import/export contract:
 
 | Direction | Contract |
 |---|---|
-| Agent/Skill Context -> Distribution | Orchestrator helper requirements: command intent, required arguments, expected machine-readable output, error/doctor expectations, and role-context handoff needs. |
-| Distribution -> Agent/Skill Context | Stable command/API behavior: launch-node invocation shape, safety prompts or preview modes, returned launch/session identifiers, and failure diagnostics. |
+| Plugin Role Skills -> Distribution | Orchestrator helper requirements: command intent, required arguments, expected machine-readable output, error/doctor expectations, and role-context handoff needs. |
+| Distribution -> Plugin Role Skills | Stable command/API behavior: launch-node invocation shape, safety prompts or preview modes, returned launch/session identifiers, and failure diagnostics. |
 | Session Launching -> both | API-first launch pipeline that assembles context, prepares PAW, creates launch claims, launches the terminal/session, and binds registry state. |
 
 The orchestrator helper should not duplicate the launch pipeline. Its job is to know **when and how to call** the product-owned entrypoint, then reconcile the returned launch/session information into the workstream graph and brief.
 
 ### Mock work-geometry diagram
 
-This is a high-level sketch of how the Agent/Skill Context workstream connects to the Distribution/Integration workstream and the existing Session Launching work. It intentionally stays above individual task nodes. Waves/checkpoints are shown as containers and exports.
+This is a high-level sketch of how the Plugin Role Skills workstream connects to the Distribution/Integration workstream and the existing Session Launching work. It intentionally stays above individual task nodes. Waves/checkpoints are shown as containers and exports.
 
 ```mermaid
 flowchart LR
-  subgraph AS["Workstream: Agent/Skill Context"]
+  subgraph AS["Workstream: Plugin Role Skills"]
     AS_W1["Wave: Role context model"]
     AS_E1(("Export: Orchestrator helper requirements"))
     AS_E2(("Export: Worker role-context requirements"))
@@ -339,27 +419,51 @@ flowchart LR
   D_CP -. "orchestrator launch capability" .-> AS_W2
 ```
 
-In a single-workstream UI, the Agent/Skill Context graph should show that its orchestrator-helper work has an external dependency on the Distribution/Integration workstream's `launch-node` export. In an all-workstreams canvas, that dependency could render as a dotted edge between checkpoints/exports rather than as a node-level dependency.
+In a single-workstream UI, the Plugin Role Skills graph should show that its orchestrator-helper work has an external dependency on the Distribution/Integration workstream's `launch-node` export. In an all-workstreams canvas, that dependency could render as a dotted edge between checkpoints/exports rather than as a node-level dependency.
 
 ## Open Questions
 
-- Should this start as plugin documentation, a skill, a custom agent, or some combination?
 - What minimal context should an orchestrator load at launch?
 - What minimal context should a worker load at launch?
 - How should plugin-provided context avoid drifting from project design docs?
 - What exact packaging mechanisms does Copilot CLI support for plugin-distributed skills and custom agents?
+- What marketplace/plugin naming and versioning should replace the current
+  local-development identity?
 - Should Workstream Designer and Orchestrator each have both a skill and a custom agent?
 - Should the node-worker role be a skill, a generated prompt section, a plugin-provided launch behavior, or all three?
 - How should a session declare or record which Streamliner role context it loaded?
+- Should the entry skill infer the role from invocation/session metadata when
+  possible, or always require an explicit role selection for interactive sessions?
 
 ## Handoff Brief
 
-Create a Streamliner Agent and Skill Context workstream.
+Create the Streamliner Plugin Role Skills workstream as the first workstream in
+the Shared Project Operations campaign.
 
-The workstream should define and implement reusable Streamliner role context for Workstream Designer, Workstream Orchestrator, and Workstream Node Worker sessions. It should prefer composable skills as the primary mechanism, with optional custom agents as thin role-specific entry points where appropriate. Role guidance should be reference-first: it should load the Streamliner operating model and point to authoritative Design, Architecture, User Guide, shaping, and workstream artifacts rather than duplicating them.
+The workstream should add a small `streamliner` entry/orientation skill plus
+reusable role skills for Project Workstream Designer, Workstream Formation,
+Workstream Orchestrator, and Workstream Node Worker sessions. It should prefer
+composable skills as the primary mechanism, with optional custom agents as thin
+role-specific entry points where appropriate. Role guidance should be
+reference-first: it should load the minimum useful context and point to
+authoritative Design, Architecture, User Guide, shaping, and workstream artifacts
+rather than duplicating them.
 
 The workstream should define a shared Streamliner Core context plus role-specific guidance for designer, orchestrator, worker, and eventually reconciler behavior. The orchestrator role should include graph/wave/node coordination, worker launch behavior, reconciliation, and workstream closure review for final PRs or completed waves. The worker role should be automatically present in launched node sessions and should understand context packages, workstream boundaries, documentation impact, and downstream reconciliation needs.
 
-This workstream has an explicit dependency edge with the Distribution/Integration workstream in GitHub issue #40. Agent/Skill Context should define the role-helper requirements, helper manifest shape, expected install/doctor/version checks, and orchestrator `launch-node` usage. The Distribution/Integration workstream should provide the actual CLI/API distribution spine, including `streamliner launch-node` or an equivalent stable entrypoint. This workstream should also import the Session Launching workstream's API-first launch pipeline and export role/context requirements to Worker Hot Work and Multi-Workstream Dependencies.
+Wave 1 should inventory the temporary role notes and Namra's
+`streamliner-skills` workaround, define `role-context-v1`, and ship the first
+plugin skills through a repository-backed marketplace another builder can
+install. The workstream should also define the artifact-root discovery and Telex
+role-binding requirements consumed by the other two campaign workstreams.
+
+This workstream has an explicit dependency edge with the Distribution/Integration
+workstream in GitHub issue #40. Plugin Role Skills should define the role-helper
+requirements, helper manifest shape, expected install/doctor/version checks, and
+orchestrator `launch-node` usage. The Distribution/Integration workstream should
+provide the actual CLI/API distribution spine, including `streamliner launch-node`
+or an equivalent stable entrypoint. This workstream should also import the Session
+Launching workstream's API-first launch pipeline and export role/context
+requirements to Worker Hot Work and Multi-Workstream Dependencies.
 
 The orchestrator should decide internal waves and packaging details. The shaped boundary is role-context content, skill/custom-agent strategy, launched-worker orientation, closure-review behavior, and the helper/distribution contracts needed for other workstreams to consume.
