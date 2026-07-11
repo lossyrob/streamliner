@@ -432,9 +432,6 @@ export class LaunchClaimFileStore implements LaunchClaimStore {
               sleepSync(WRITE_LOCK_WAIT_INTERVAL_MS);
               continue;
             }
-            if (Date.now() < deadline) {
-              throw new LaunchClaimLockedError(`Launch claim store is locked at ${this.lockPath}.`);
-            }
             throw new LaunchClaimLockedError(`Launch claim store is locked at ${this.lockPath}.`);
           }
           throw error;
