@@ -38,9 +38,9 @@ import {
 import {
   createLockFileAtomically,
   getLockFileStatus,
-  isProcessLockStale,
   newLockMetadata,
   removeReclaimableLockFile,
+  readLockMetadataFile,
 } from "./lock-liveness";
 import {
   DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
@@ -3773,7 +3773,9 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
   }
 
   private hasActiveRegistryLock(): boolean {
-    return getLockFileStatus(this.lockPath) === "active";
+    return (
+      getLockFileStatus(this.lockPath) === "active" && readLockMetadataFile(this.lockPath) !== null
+    );
   }
 
   private acquireRecoveryLock(): number | null {

@@ -36,6 +36,7 @@ import {
   getLockFileStatus,
   newLockMetadata,
   removeReclaimableLockFile,
+  readLockMetadataFile,
 } from "./lock-liveness";
 
 const DEFAULT_LAUNCH_CLAIMS_ROOT = resolve(
@@ -427,9 +428,12 @@ export class LaunchClaimFileStore implements LaunchClaimStore {
               this.releaseRecoveryLock(recoveryLockFd);
               recoveryLockFd = null;
             }
-            if (Date.now() < deadline) {
+            if (this.hasActivePrimaryLock() && Date.now() < deadline) {
               sleepSync(WRITE_LOCK_WAIT_INTERVAL_MS);
               continue;
+            }
+            if (Date.now() < deadline) {
+              throw new LaunchClaimLockedError(`Launch claim store is locked at ${this.lockPath}.`);
             }
             throw new LaunchClaimLockedError(`Launch claim store is locked at ${this.lockPath}.`);
           }
@@ -458,6 +462,12 @@ export class LaunchClaimFileStore implements LaunchClaimStore {
 
   private removeStaleLock(): boolean {
     return removeReclaimableLockFile(this.lockPath);
+  }
+
+  private hasActivePrimaryLock(): boolean {
+    return (
+      getLockFileStatus(this.lockPath) === "active" && readLockMetadataFile(this.lockPath) !== null
+    );
   }
 
   private acquireRecoveryLock(): number | null {
