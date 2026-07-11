@@ -1,0 +1,377 @@
+{
+  "schemaVersion": 1,
+  "id": "plugin-role-skills",
+  "projectKey": "streamliner",
+  "title": "Streamliner Plugin Role Skills",
+  "summary": "Wave 1 is detailed with local specs for stable role identifiers, launch-policy-v1, and the first repository-installable role-skills slice. Later waves sketch explicit launch contexts, marketplace migration, trust remediation, second-builder validation, and artifact-root adoption.",
+  "status": "active",
+  "attention": "focus",
+  "createdAt": "2026-07-11T03:00:00.000Z",
+  "updatedAt": "2026-07-11T03:00:00.000Z",
+  "repos": [
+    {
+      "id": "streamliner",
+      "owner": "lossyrob",
+      "name": "streamliner",
+      "role": "primary"
+    }
+  ],
+  "designRefs": [
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/index.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/operating-model.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/design-layer.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/workstream-format.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/session-system.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/concepts/context-package.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/concepts/waves.md"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "stable-role-identifiers",
+      "type": "research",
+      "title": "Stable role identifiers and contracts",
+      "summary": "Define the public versioned role IDs, skill names, authority layers, explicit activation rules, and Actor Fabric binding vocabulary that form the early role-context-v1 export.",
+      "status": "ready",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/stable-role-identifiers.md"
+      },
+      "dependsOn": []
+    },
+    {
+      "id": "launch-policy-contract-foundation",
+      "type": "research",
+      "title": "Launch policy contract foundation",
+      "summary": "Define launch-policy-v1: typed schema, non-overridable policy versus defaults, precedence and merge behavior, compatibility and provenance semantics, and automated versus interactive failure behavior.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/launch-policy-contract-foundation.md"
+      },
+      "dependsOn": [
+        "stable-role-identifiers"
+      ]
+    },
+    {
+      "id": "repository-role-skills-slice",
+      "type": "task",
+      "title": "Repository role skills slice",
+      "summary": "Package Streamliner Core, orientation, Designer, Formation, Orchestrator, Node Worker, Node Implementer, and Node Reviewer skills in the canonical plugin and make the first role-context-v1 slice installable from the repository marketplace.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/repository-role-skills-slice.md"
+      },
+      "dependsOn": [
+        "stable-role-identifiers",
+        "launch-policy-contract-foundation"
+      ]
+    },
+    {
+      "id": "role-context-v1-gate",
+      "type": "gate",
+      "title": "Role context v1 gate",
+      "summary": "Builder validates the role contracts, repository-installed plugin skills, explicit activation behavior, documentation authority boundaries, and the early role-ID export before launch integrations are promoted.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "repository-role-skills-slice"
+      ]
+    },
+    {
+      "id": "worker-role-launch-integration",
+      "type": "task",
+      "title": "Worker role launch integration",
+      "summary": "Compose explicit Node Worker, Node Implementer, and Node Reviewer role contracts into terminal and managed SDK launch paths while keeping generated context.md node-specific and launch prompts thin.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "role-context-v1-gate"
+      ]
+    },
+    {
+      "id": "short-worker-role-launch-gate",
+      "type": "gate",
+      "title": "Short implementer and reviewer launch test",
+      "summary": "Validate short composed launches for Node Implementer and Node Reviewer across supported launch paths, including authority, outcome-anchor, field-report, real-review, and lifecycle-policy boundaries without copied long-form prompts.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "worker-role-launch-integration"
+      ]
+    },
+    {
+      "id": "orchestrator-launch-context-contract",
+      "type": "research",
+      "title": "Orchestrator launch context contract",
+      "summary": "Define orchestrator-launch-context-v1 with explicit role/version, project/workstream identity, artifact root and commit, current brief/graph state, pending Telex thread references, actor binding, and unresolved actions for Actor Fabric assembly.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "role-context-v1-gate"
+      ]
+    },
+    {
+      "id": "orchestrator-launch-context-v1-gate",
+      "type": "gate",
+      "title": "Orchestrator launch context v1 test",
+      "summary": "Validate that Actor Fabric can assemble a current replacement orchestrator package from versioned role context, artifact provenance, Telex references, binding state, and unresolved actions without a generic-session briefing step.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "orchestrator-launch-context-contract"
+      ]
+    },
+    {
+      "id": "marketplace-identity-migration",
+      "type": "task",
+      "title": "Marketplace identity migration",
+      "summary": "Migrate to canonical streamliner@streamliner while preserving temporary streamliner@streamliner-local compatibility across marketplace registration, enabled settings, installed caches, and launch preflight.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "short-worker-role-launch-gate",
+        "orchestrator-launch-context-v1-gate"
+      ]
+    },
+    {
+      "id": "marketplace-migration-gate",
+      "type": "gate",
+      "title": "Marketplace migration test",
+      "summary": "Validate clean canonical installation, temporary legacy compatibility, settings/cache migration, launch preflight behavior, upgrade, rollback, and removal without stranding sessions.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "marketplace-identity-migration"
+      ]
+    },
+    {
+      "id": "trust-compatibility-remediation",
+      "type": "task",
+      "title": "Trust and compatibility remediation",
+      "summary": "Implement contract and policy validation, provenance diagnostics, automated-launch blocking, and explicit warned interactive overrides for missing, stale, untrusted, or incompatible inputs.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "short-worker-role-launch-gate",
+        "orchestrator-launch-context-v1-gate"
+      ]
+    },
+    {
+      "id": "trust-compatibility-gate",
+      "type": "gate",
+      "title": "Trust and compatibility test",
+      "summary": "Exercise supported contract versions, missing or invalid required policy, stale or untrusted provenance, automated blocking, and explicit interactive override diagnostics without silent degradation.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "trust-compatibility-remediation"
+      ]
+    },
+    {
+      "id": "second-builder-role-delivery-gate",
+      "type": "gate",
+      "title": "Second-builder role delivery gate",
+      "summary": "A second builder installs the canonical plugin and exercises explicit Designer, Formation, Orchestrator, Node Implementer, and Node Reviewer roles with trustworthy policy handling and no private briefing or copied prompt profile.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "marketplace-migration-gate",
+        "trust-compatibility-gate"
+      ]
+    },
+    {
+      "id": "artifact-root-policy-adoption",
+      "type": "task",
+      "title": "Artifact root and shared policy adoption",
+      "summary": "Consume artifact-root-v1 so role and launch-policy resolution uses shared artifact storage and provenance without changing logical role IDs, policy semantics, or builder-local prompt profiles.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "second-builder-role-delivery-gate"
+      ],
+      "externalDependsOn": [
+        {
+          "id": "artifact-root-v1",
+          "target": {
+            "projectKey": "streamliner",
+            "workstreamId": "git-backed-artifact-sync",
+            "nodeId": "artifact-root-authority-gate"
+          },
+          "label": "artifact-root-v1 from Git-backed Artifact Ledger and Sync",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "id": "plugin-role-skills-closure-gate",
+      "type": "gate",
+      "title": "Plugin role skills closure gate",
+      "summary": "Validate role delivery, launch-policy ownership, marketplace and trust behavior, orchestrator context export, artifact-root adoption, and availability of evidence for the campaign gate without duplicating the integrated campaign exercise.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "artifact-root-policy-adoption"
+      ]
+    }
+  ],
+  "checkpoints": [
+    {
+      "id": "role-identifiers-available",
+      "title": "Stable role identifiers available",
+      "summary": "Versioned role IDs, skill names, scope vocabulary, and binding metadata are stable enough to unblock Actor Fabric Wave 1.",
+      "status": "planned",
+      "nodeIds": [
+        "stable-role-identifiers"
+      ]
+    },
+    {
+      "id": "role-context-v1-available",
+      "title": "Role context v1 available",
+      "summary": "The repository-installed plugin delivers the approved explicit role contracts and launch-policy foundation.",
+      "status": "planned",
+      "nodeIds": [
+        "stable-role-identifiers",
+        "launch-policy-contract-foundation",
+        "repository-role-skills-slice",
+        "role-context-v1-gate"
+      ]
+    },
+    {
+      "id": "worker-role-launches-proven",
+      "title": "Worker role launches proven",
+      "summary": "Node Implementer and Node Reviewer can be launched from short composed instructions without duplicating stable role or lifecycle guidance.",
+      "status": "planned",
+      "nodeIds": [
+        "worker-role-launch-integration",
+        "short-worker-role-launch-gate"
+      ]
+    },
+    {
+      "id": "orchestrator-launch-context-available",
+      "title": "Orchestrator launch context available",
+      "summary": "orchestrator-launch-context-v1 is validated and available for Actor Fabric's bound-orchestrator UI completion.",
+      "status": "planned",
+      "nodeIds": [
+        "orchestrator-launch-context-contract",
+        "orchestrator-launch-context-v1-gate"
+      ]
+    },
+    {
+      "id": "marketplace-migration-validated",
+      "title": "Marketplace migration validated",
+      "summary": "Canonical plugin installation and temporary legacy compatibility work across settings, cache, preflight, upgrade, rollback, and removal.",
+      "status": "planned",
+      "nodeIds": [
+        "marketplace-identity-migration",
+        "marketplace-migration-gate"
+      ]
+    },
+    {
+      "id": "trust-compatibility-validated",
+      "title": "Trust and compatibility validated",
+      "summary": "Role and policy contracts fail or remediate predictably for missing, stale, untrusted, and incompatible inputs.",
+      "status": "planned",
+      "nodeIds": [
+        "trust-compatibility-remediation",
+        "trust-compatibility-gate"
+      ]
+    },
+    {
+      "id": "second-builder-role-delivery-proven",
+      "title": "Second-builder role delivery proven",
+      "summary": "The role-focused workstream gate has passed in a separate builder environment.",
+      "status": "planned",
+      "nodeIds": [
+        "second-builder-role-delivery-gate"
+      ]
+    },
+    {
+      "id": "artifact-root-policy-adopted",
+      "title": "Artifact root policy adopted",
+      "summary": "Role and shared policy discovery consume artifact-root-v1 while preserving contract semantics and local profile separation.",
+      "status": "planned",
+      "nodeIds": [
+        "artifact-root-policy-adoption"
+      ]
+    },
+    {
+      "id": "plugin-role-skills-closure-ready",
+      "title": "Plugin role skills closure ready",
+      "summary": "All role, policy, marketplace, compatibility, orchestrator-context, and artifact-root obligations are validated and their evidence is available to the campaign gate.",
+      "status": "planned",
+      "nodeIds": [
+        "plugin-role-skills-closure-gate"
+      ]
+    }
+  ]
+}
