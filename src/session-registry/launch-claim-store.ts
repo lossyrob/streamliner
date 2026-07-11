@@ -34,9 +34,9 @@ import {
 import {
   createLockFileAtomically,
   getLockFileStatus,
+  inspectLockFile,
   newLockMetadata,
   removeReclaimableLockFile,
-  readLockMetadataFile,
 } from "./lock-liveness";
 
 const DEFAULT_LAUNCH_CLAIMS_ROOT = resolve(
@@ -462,9 +462,8 @@ export class LaunchClaimFileStore implements LaunchClaimStore {
   }
 
   private hasActivePrimaryLock(): boolean {
-    return (
-      getLockFileStatus(this.lockPath) === "active" && readLockMetadataFile(this.lockPath) !== null
-    );
+    const inspection = inspectLockFile(this.lockPath);
+    return inspection.status === "active" && inspection.metadata !== null;
   }
 
   private acquireRecoveryLock(): number | null {

@@ -89,8 +89,13 @@ export interface LockLivenessOverrides {
  */
 export const LOCK_BOOT_STALE_MARGIN_MS = 60_000;
 export const LOCK_UNPARSEABLE_STALE_AGE_MS = 60_000;
+const LOCK_MTIME_SKEW_TOLERANCE_MS = 1_000;
 
 export type LockFileStatus = "missing" | "active" | "reclaimable";
+export interface LockFileInspection {
+  status: LockFileStatus;
+  metadata: ProcessLockMetadata | null;
+}
 
 export function processExists(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) {
@@ -223,36 +228,53 @@ export function readLockMetadataFile(lockPath: string): ProcessLockMetadata | nu
   return parseLockMetadata(raw);
 }
 
-export function getLockFileStatus(
+export function inspectLockFile(
   lockPath: string,
   overrides: LockLivenessOverrides = {},
-): LockFileStatus {
+): LockFileInspection {
   let stats: { mtimeMs: number };
   try {
     stats = statSync(lockPath);
   } catch {
-    return "missing";
+    return { status: "missing", metadata: null };
   }
 
   let raw: string;
   try {
     raw = readFileSync(lockPath, "utf8");
   } catch {
-    return "active";
+    return { status: "active", metadata: null };
   }
 
   const metadata = parseLockMetadata(raw);
   if (metadata) {
-    return isProcessLockStale(metadata, overrides) ? "reclaimable" : "active";
+    return {
+      status: isProcessLockStale(metadata, overrides) ? "reclaimable" : "active",
+      metadata,
+    };
   }
 
   const nowMs = overrides.nowMs ?? Date.now();
   const staleAgeMs = overrides.unparseableStaleAgeMs ?? LOCK_UNPARSEABLE_STALE_AGE_MS;
-  if (!Number.isFinite(nowMs) || !Number.isFinite(stats.mtimeMs) || nowMs < stats.mtimeMs) {
-    return "active";
+  if (
+    !Number.isFinite(nowMs) ||
+    !Number.isFinite(stats.mtimeMs) ||
+    nowMs + LOCK_MTIME_SKEW_TOLERANCE_MS < stats.mtimeMs
+  ) {
+    return { status: "active", metadata: null };
   }
 
-  return nowMs - stats.mtimeMs >= staleAgeMs ? "reclaimable" : "active";
+  return {
+    status: nowMs - stats.mtimeMs >= staleAgeMs ? "reclaimable" : "active",
+    metadata: null,
+  };
+}
+
+export function getLockFileStatus(
+  lockPath: string,
+  overrides: LockLivenessOverrides = {},
+): LockFileStatus {
+  return inspectLockFile(lockPath, overrides).status;
 }
 
 export function removeReclaimableLockFile(
