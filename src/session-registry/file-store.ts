@@ -3772,6 +3772,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
     return removeReclaimableLockFile(this.lockPath);
   }
 
+  /** True only for a parseable, currently-live primary registry lock. */
   private hasActiveRegistryLock(): boolean {
     const inspection = inspectLockFile(this.lockPath);
     return inspection.status === "active" && inspection.metadata !== null;

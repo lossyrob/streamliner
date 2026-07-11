@@ -461,6 +461,7 @@ export class LaunchClaimFileStore implements LaunchClaimStore {
     return removeReclaimableLockFile(this.lockPath);
   }
 
+  /** True only for a parseable, currently-live primary launch-claims lock. */
   private hasActivePrimaryLock(): boolean {
     const inspection = inspectLockFile(this.lockPath);
     return inspection.status === "active" && inspection.metadata !== null;

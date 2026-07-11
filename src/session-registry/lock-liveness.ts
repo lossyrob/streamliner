@@ -228,6 +228,18 @@ export function readLockMetadataFile(lockPath: string): ProcessLockMetadata | nu
   return parseLockMetadata(raw);
 }
 
+/**
+ * Inspect the current on-disk state of a lock file.
+ *
+ * Returns:
+ * - `"missing"` when the file does not exist
+ * - `"active"` when the file exists but is not yet safely reclaimable
+ * - `"reclaimable"` when the file is either stale by PID/boot liveness or has
+ *   remained unparseable beyond the malformed-lock grace period
+ *
+ * For malformed/partial lock files, the grace period prevents a live peer that
+ * is still in the middle of writing from having its lock reclaimed.
+ */
 export function inspectLockFile(
   lockPath: string,
   overrides: LockLivenessOverrides = {},
@@ -270,6 +282,7 @@ export function inspectLockFile(
   };
 }
 
+/** Convenience wrapper that returns only the status portion of `inspectLockFile`. */
 export function getLockFileStatus(
   lockPath: string,
   overrides: LockLivenessOverrides = {},
@@ -277,6 +290,12 @@ export function getLockFileStatus(
   return inspectLockFile(lockPath, overrides).status;
 }
 
+/**
+ * Remove `lockPath` only when it is safely reclaimable.
+ *
+ * Returns `true` when the file was removed, otherwise `false`. Malformed lock
+ * files are only removed after the configured grace period has elapsed.
+ */
 export function removeReclaimableLockFile(
   lockPath: string,
   overrides: LockLivenessOverrides = {},
@@ -288,6 +307,15 @@ export function removeReclaimableLockFile(
   return true;
 }
 
+/**
+ * Atomically create a new lock file containing fully-written metadata.
+ *
+ * The metadata is first written to a temporary sibling file, then linked into
+ * place as `lockPath`. Because hard-link creation fails when the destination
+ * already exists, this preserves the advisory lock's create-only-if-absent
+ * semantics while ensuring readers never observe a partial file. Returns a
+ * read-only file descriptor for the created lock file.
+ */
 export function createLockFileAtomically(
   lockPath: string,
   metadata: Record<string, unknown>,
