@@ -199,6 +199,12 @@ where two builders exercise the integrated plugin roles, bound Actor Fabric,
 shared Telex coordination, shared policy provenance, and Git-backed artifact
 root.
 
+After `artifact-root-v1` adoption, a final Plugin Role Skills closure gate
+validates this workstream's role delivery, launch-policy ownership, marketplace
+and trust behavior, orchestrator context export, and artifact-root integration.
+It confirms that the required evidence is available to Artifact Sync's campaign
+gate without repeating the integrated two-builder campaign exercise.
+
 ## Design References
 
 - `streamliner:docs/design/index.md` - entry point for the project design set.
@@ -341,6 +347,9 @@ node spec, implementation change, or commit has been created.
   rather than making it a stable Node Reviewer obligation.
 - Keep the workstream gate focused on trustworthy role delivery; Artifact Sync
   Wave 4 owns the final integrated campaign gate.
+- Add a final workstream closure gate after `artifact-root-v1` adoption to
+  validate local obligations and campaign-evidence availability without
+  duplicating Artifact Sync's integrated campaign gate.
 - Treat marketplace identity migration and trust/compatibility remediation as
   required graph work, not optional closeout polish.
 - Do not wait for issue #40 before shipping the first repository-installable
@@ -496,6 +505,8 @@ explicit work for:
 - adopting `artifact-root-v1` without changing logical role or policy
   semantics;
 - running the role-focused workstream gate.
+- running a final Plugin Role Skills closure gate after artifact-root adoption,
+  with the integrated campaign exercise remaining in Artifact Sync Wave 4.
 
 ### Cross-workstream blind spots for review
 
