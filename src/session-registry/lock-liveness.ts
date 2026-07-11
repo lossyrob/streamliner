@@ -1,5 +1,16 @@
-import { readFileSync } from "node:fs";
+import {
+  linkSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { randomUUID } from "node:crypto";
 import { uptime } from "node:os";
+import { dirname } from "node:path";
 
 /**
  * Reboot-safe liveness checks for advisory lock files.
@@ -62,6 +73,13 @@ export interface LockLivenessOverrides {
    * delays reclamation, so it is safe to keep generous.
    */
   bootStaleMarginMs?: number;
+  /** Current wall clock in ms. Defaults to `Date.now()`. */
+  nowMs?: number;
+  /**
+   * Minimum age for an unparseable lock file before it can be reclaimed.
+   * Defaults to `LOCK_UNPARSEABLE_STALE_AGE_MS`.
+   */
+  unparseableStaleAgeMs?: number;
 }
 
 /**
@@ -70,6 +88,9 @@ export interface LockLivenessOverrides {
  * `acquiredUptimeMs` exceeds the current uptime by more than this margin.
  */
 export const LOCK_BOOT_STALE_MARGIN_MS = 60_000;
+export const LOCK_UNPARSEABLE_STALE_AGE_MS = 60_000;
+
+export type LockFileStatus = "missing" | "active" | "reclaimable";
 
 export function processExists(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) {
@@ -200,4 +221,73 @@ export function readLockMetadataFile(lockPath: string): ProcessLockMetadata | nu
     return null;
   }
   return parseLockMetadata(raw);
+}
+
+export function getLockFileStatus(
+  lockPath: string,
+  overrides: LockLivenessOverrides = {},
+): LockFileStatus {
+  let stats: { mtimeMs: number };
+  try {
+    stats = statSync(lockPath);
+  } catch {
+    return "missing";
+  }
+
+  let raw: string;
+  try {
+    raw = readFileSync(lockPath, "utf8");
+  } catch {
+    return "active";
+  }
+
+  const metadata = parseLockMetadata(raw);
+  if (metadata) {
+    return isProcessLockStale(metadata, overrides) ? "reclaimable" : "active";
+  }
+
+  const nowMs = overrides.nowMs ?? Date.now();
+  const staleAgeMs = overrides.unparseableStaleAgeMs ?? LOCK_UNPARSEABLE_STALE_AGE_MS;
+  if (!Number.isFinite(nowMs) || !Number.isFinite(stats.mtimeMs) || nowMs < stats.mtimeMs) {
+    return "active";
+  }
+
+  return nowMs - stats.mtimeMs >= staleAgeMs ? "reclaimable" : "active";
+}
+
+export function removeReclaimableLockFile(
+  lockPath: string,
+  overrides: LockLivenessOverrides = {},
+): boolean {
+  if (getLockFileStatus(lockPath, overrides) !== "reclaimable") {
+    return false;
+  }
+  rmSync(lockPath, { force: true });
+  return true;
+}
+
+export function createLockFileAtomically(
+  lockPath: string,
+  metadata: Record<string, unknown>,
+  space?: number,
+): number {
+  mkdirSync(dirname(lockPath), { recursive: true });
+  const tempPath = `${lockPath}.${process.pid}.${randomUUID()}.tmp`;
+  let linked = false;
+  try {
+    writeFileSync(tempPath, JSON.stringify(metadata, null, space), "utf8");
+    linkSync(tempPath, lockPath);
+    linked = true;
+    return openSync(lockPath, "r");
+  } finally {
+    if (linked) {
+      try {
+        unlinkSync(tempPath);
+      } catch {
+        // best effort
+      }
+    } else {
+      rmSync(tempPath, { force: true });
+    }
+  }
 }

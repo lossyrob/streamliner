@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir, uptime } from "node:os";
 import { join } from "node:path";
 
@@ -25,6 +25,7 @@ import {
   getEnvLaunchClaimRoot,
   LaunchClaimFileStore,
 } from "./launch-claim-store";
+import { LOCK_UNPARSEABLE_STALE_AGE_MS } from "./lock-liveness";
 
 function makeRoot(): string {
   return mkdtempSync(join(tmpdir(), "streamliner-launch-claim-test-"));
@@ -46,6 +47,11 @@ function makeInput(overrides: Partial<LaunchClaimCreateInput> = {}): LaunchClaim
     reservedRegistryId: overrides.reservedRegistryId ?? null,
     lineageMetadata: overrides.lineageMetadata ?? null,
   };
+}
+
+function ageOutLock(lockPath: string): void {
+  const staleAt = new Date(Date.now() - LOCK_UNPARSEABLE_STALE_AGE_MS - 1_000);
+  utimesSync(lockPath, staleAt, staleAt);
 }
 
 describe("sanitizeFailureReason", () => {
@@ -319,6 +325,29 @@ describe("LaunchClaimFileStore advisory lock liveness", () => {
     expect(existsSync(join(rootDir, "launch-claims.lock"))).toBe(true);
   });
 
+  it("blocks on a fresh malformed launch-claims.lock", () => {
+    const rootDir = freshRoot();
+    const store = new LaunchClaimFileStore({ rootDir, writeLockWaitTimeoutMs: 0 });
+    const lockPath = join(rootDir, "launch-claims.lock");
+    writeFileSync(lockPath, "{", "utf8");
+
+    expect(() => store.createClaim(makeInput())).toThrow(LaunchClaimLockedError);
+    expect(existsSync(lockPath)).toBe(true);
+  });
+
+  it("reclaims an old malformed launch-claims.lock after the safety grace period", () => {
+    const rootDir = freshRoot();
+    const store = new LaunchClaimFileStore({ rootDir, writeLockWaitTimeoutMs: 0 });
+    const lockPath = join(rootDir, "launch-claims.lock");
+    writeFileSync(lockPath, "", "utf8");
+    ageOutLock(lockPath);
+
+    const claim = store.createClaim(makeInput());
+
+    expect(claim.launchClaimId).toBe("claim-001");
+    expect(existsSync(lockPath)).toBe(false);
+  });
+
   it("reclaims a stale launch-claims.lock.recovery from a previous boot", () => {
     const rootDir = freshRoot();
     const store = new LaunchClaimFileStore({ rootDir });
@@ -344,5 +373,18 @@ describe("LaunchClaimFileStore advisory lock liveness", () => {
     );
 
     expect(() => store.createClaim(makeInput())).toThrow(LaunchClaimLockedError);
+  });
+
+  it("reclaims an old malformed launch-claims.lock.recovery after the safety grace period", () => {
+    const rootDir = freshRoot();
+    const store = new LaunchClaimFileStore({ rootDir, writeLockWaitTimeoutMs: 0 });
+    const recoveryLockPath = join(rootDir, "launch-claims.lock.recovery");
+    writeFileSync(recoveryLockPath, "", "utf8");
+    ageOutLock(recoveryLockPath);
+
+    const claim = store.createClaim(makeInput());
+
+    expect(claim.launchClaimId).toBe("claim-001");
+    expect(existsSync(recoveryLockPath)).toBe(false);
   });
 });

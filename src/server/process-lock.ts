@@ -1,16 +1,14 @@
 import {
   closeSync,
-  mkdirSync,
-  openSync,
   rmSync,
-  writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 
 import { resolveSessionRegistryRoot } from "../session-registry/runtime";
 import {
-  isProcessLockStale,
+  createLockFileAtomically,
   newLockMetadata,
+  removeReclaimableLockFile,
   readLockMetadataFile,
 } from "../session-registry/lock-liveness";
 
@@ -29,27 +27,17 @@ export interface ApiProcessLockOptions {
 export function acquireApiProcessLock(options: ApiProcessLockOptions = {}): () => void {
   const rootDir = resolveSessionRegistryRoot();
   const lockPath = join(rootDir, "api.lock");
-  mkdirSync(rootDir, { recursive: true });
-
-  const existing = readLockMetadataFile(lockPath);
-  if (existing && isProcessLockStale(existing)) {
-    rmSync(lockPath, { force: true });
-  }
+  removeReclaimableLockFile(lockPath);
 
   let fd: number | undefined;
   try {
-    fd = openSync(lockPath, "wx");
-    writeFileSync(
-      fd,
-      JSON.stringify(
-        newLockMetadata({
-          host: options.host ?? null,
-          port: options.port ?? null,
-        }),
-        null,
-        2,
-      ),
-      "utf8",
+    fd = createLockFileAtomically(
+      lockPath,
+      newLockMetadata({
+        host: options.host ?? null,
+        port: options.port ?? null,
+      }),
+      2,
     );
   } catch (error: unknown) {
     throw new StreamlinerApiLockError(lockPath, { cause: error });
