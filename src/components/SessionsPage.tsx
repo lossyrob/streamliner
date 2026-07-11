@@ -2770,7 +2770,9 @@ export function SessionsPage({
                 onClick={() => toggleGroupCollapse(group.key)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
+                    if (event.key === " ") {
+                      event.preventDefault();
+                    }
                     toggleGroupCollapse(group.key);
                   }
                 }}
