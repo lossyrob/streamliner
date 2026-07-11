@@ -2,8 +2,7 @@
 
 ## Stage
 
-Shaped; ready for formation as the first workstream in the Shared Project
-Operations campaign.
+Promoted to `.streamliner/workstreams/plugin-role-skills/`.
 
 ## Seed Idea
 
@@ -467,3 +466,14 @@ Launching workstream's API-first launch pipeline and export role/context
 requirements to Worker Hot Work and Multi-Workstream Dependencies.
 
 The orchestrator should decide internal waves and packaging details. The shaped boundary is role-context content, skill/custom-agent strategy, launched-worker orientation, closure-review behavior, and the helper/distribution contracts needed for other workstreams to consume.
+
+## Promotion
+
+Promoted into `.streamliner/workstreams/plugin-role-skills/` as the first formed
+workstream in the Shared Project Operations campaign. The formed brief and graph
+supersede provisional details in this candidate, including the final explicit
+role/subrole model, `launch-policy-v1`, `orchestrator-launch-context-v1`, and the
+checkpoint dependencies consumed by Actor Fabric and Artifact Sync.
+
+Retain this candidate as the historical shaping record until Streamliner has a
+first-class candidate archive or lifecycle migration.

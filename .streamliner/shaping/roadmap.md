@@ -55,9 +55,9 @@ coordination, and the durable artifact ledger.
 
 | Workstream | Candidate | Notes |
 |---|---|---|
-| Streamliner Plugin Role Skills | `streamliner-agent-skill-context` | **Starts first.** Adds a small `streamliner` entry skill plus designer, formation, orchestrator, and worker role context to the existing plugin; makes that plugin installable by another builder through the repository marketplace. Imports the temporary role notes and Namra's `streamliner-skills` work as implementation evidence. Exports `role-context-v1`. |
-| Telex-backed Actor Fabric & Bound Orchestrator | `session-actor-control-plane` | Adopts the released Telex product rather than building a mailbox. Owns the mapping from Streamliner project/workstream/node roles to Telex addresses and stations, bound-orchestrator behavior, lifecycle routing (#121), and field-report message profiles. Exports `telex-addressing-v1`. |
-| Git-backed Artifact Ledger & Sync | `git-backed-artifact-sync` | Makes `streamliner-artifacts` a first-class same-repository artifact branch/worktree, adds external artifact-root configuration and deterministic synchronization, and routes sync/conflict attention through Telex. Exports `artifact-root-v1`. |
+| Streamliner Plugin Role Skills | `streamliner-agent-skill-context` | **Formed:** `.streamliner/workstreams/plugin-role-skills/`. Starts with stable role IDs, `launch-policy-v1`, and the repository-installable role-skills slice. Exports `role-context-v1` early and `orchestrator-launch-context-v1` before Actor Fabric's bound-orchestrator UI can complete. |
+| Telex-backed Actor Fabric & Bound Orchestrator | `session-actor-control-plane` | **Formed:** `.streamliner/workstreams/telex-actor-fabric/`. Two Wave 1 contract nodes are ready; address and event-envelope contracts consume Plugin Role Skills targets. The first usable product slice is the bound-orchestrator UI with reboot/resume/replacement behavior. |
+| Git-backed Artifact Ledger & Sync | `git-backed-artifact-sync` | **Formed:** `.streamliner/workstreams/git-backed-artifact-sync/`. `artifact-root-v1` is the first ready node. Later waves add safe synchronization, policy provenance, Telex attention, and the single campaign integration gate. |
 
 **Ownership boundary.**
 

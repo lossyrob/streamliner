@@ -2,8 +2,7 @@
 
 ## Status
 
-Shaped; ready for formation after review of the Shared Project Operations
-campaign.
+Promoted to `.streamliner/workstreams/telex-actor-fabric/`.
 
 ## Summary
 
@@ -261,3 +260,14 @@ Wave 2 should make terminal and managed sessions attachable and visible. Wave 3
 should dogfood a real orchestrator/worker flow across multiple sessions and a
 shared backend. Do not implement a Streamliner mailbox or persist message files
 under `.streamliner`.
+
+## Promotion
+
+Promoted into `.streamliner/workstreams/telex-actor-fabric/`. Formation made the
+bound-orchestrator UI the first usable product slice after the contract proof,
+added explicit role/subrole imports, idempotent actor operations and reboot
+reconciliation, and resolved cross-workstream dependencies against Plugin Role
+Skills.
+
+Retain this candidate as the historical shaping record until Streamliner has a
+first-class candidate archive or lifecycle migration.

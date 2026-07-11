@@ -2,8 +2,7 @@
 
 ## Status
 
-Shaped; ready for formation after review of the Shared Project Operations
-campaign.
+Promoted to `.streamliner/workstreams/git-backed-artifact-sync/`.
 
 ## Summary
 
@@ -368,3 +367,13 @@ Wave 1 should deliver the artifact branch/root contract and a usable manual
 workflow. Wave 2 should automate deterministic synchronization. Wave 3 should add
 Streamliner and Telex attention. Wave 4 should prove the complete workflow with
 two builders/environments.
+
+## Promotion
+
+Promoted into `.streamliner/workstreams/git-backed-artifact-sync/`. The formed
+workstream owns convention-first `streamliner-artifacts` bootstrap,
+`artifact-root-v1`, deterministic synchronization, shared policy storage and
+provenance, and the final Shared Project Operations campaign integration gate.
+
+Retain this candidate as the historical shaping record until Streamliner has a
+first-class candidate archive or lifecycle migration.
