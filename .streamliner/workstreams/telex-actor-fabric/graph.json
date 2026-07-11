@@ -1,0 +1,422 @@
+{
+  "schemaVersion": 1,
+  "id": "telex-actor-fabric",
+  "projectKey": "streamliner",
+  "title": "Telex-backed Actor Fabric & Bound Orchestrator",
+  "summary": "Formation graph: prove the released-Telex integration contracts, ship the bound-orchestrator workstream UI with idempotent reboot/replacement behavior, then extend the model to node actors, lifecycle routing, and actor-specific dogfood.",
+  "status": "active",
+  "attention": "focus",
+  "createdAt": "2026-07-11T02:58:06.641Z",
+  "updatedAt": "2026-07-11T02:58:06.641Z",
+  "presentation": {
+    "shortName": "Actor Fabric",
+    "color": "#6F63D9"
+  },
+  "launchDefaults": {
+    "promptProfileId": "paw-lite-2",
+    "terminal": {
+      "titleTemplate": "SLR-T {nodeTitle}"
+    }
+  },
+  "repos": [
+    {
+      "id": "streamliner",
+      "owner": "lossyrob",
+      "name": "streamliner",
+      "role": "primary"
+    }
+  ],
+  "designRefs": [
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/index.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/operating-model.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/session-system.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/001-observation-based-session-tracking.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/004-session-registry-primary-surface.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/005-session-registry-storage-and-identity.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/006-local-streamliner-api-service.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/009-sdk-managed-worker-runtime.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/010-terminal-takeover-and-cleanup.md"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "released-telex-contract-proof",
+      "type": "research",
+      "title": "Released Telex contract proof",
+      "summary": "Verify the released CLI/plugin surface Streamliner will consume: explicit backend/session/address inputs, Copilot attach/resume bridge behavior, station status/stop, lease epochs, local fencing, JSON error contracts, and the unsupported remote-takeover boundary.",
+      "status": "ready",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/released-telex-contract-proof.md"
+      },
+      "dependsOn": []
+    },
+    {
+      "id": "logical-backend-mapping-contract",
+      "type": "research",
+      "title": "Logical Telex backend mapping contract",
+      "summary": "Define the portable project-level Telex backend ID, environment-local profile/credential mapping, diagnostics, and failure behavior without leaking machine profile names or credentials into shared artifacts.",
+      "status": "ready",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/logical-backend-mapping-contract.md"
+      },
+      "dependsOn": []
+    },
+    {
+      "id": "telex-addressing-v1-contract",
+      "type": "research",
+      "title": "Telex addressing v1 contract",
+      "summary": "Freeze canonical project/workstream/node role and subrole address derivation, one-primary-address-per-session behavior, metadata, lifecycle, retirement, and test vectors after Role Skills publishes stable identifiers.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/telex-addressing-v1-contract.md"
+      },
+      "dependsOn": [
+        "released-telex-contract-proof",
+        "logical-backend-mapping-contract"
+      ],
+      "externalDependsOn": [
+        {
+          "id": "role-context-v1-identifiers",
+          "target": {
+            "projectKey": "streamliner",
+            "workstreamId": "plugin-role-skills",
+            "nodeId": "stable-role-identifiers"
+          },
+          "label": "Plugin Role Skills Wave 1: stable role-context-v1 role/subrole identifiers",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "id": "telex-event-envelope-contracts",
+      "type": "research",
+      "title": "Telex event envelope and dedupe contracts",
+      "summary": "Define field-report transport/provenance and telex-pr-lifecycle-events-v1, including actor/subrole routing, GitHub evidence pointers, canonical-emitter precedence, stable source-event dedupe, attention, disposition, and threading without absorbing PAW or Campaign 2 policy.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/telex-event-envelope-contracts.md"
+      },
+      "dependsOn": [
+        "released-telex-contract-proof",
+        "logical-backend-mapping-contract"
+      ],
+      "externalDependsOn": [
+        {
+          "id": "role-context-v1-subroles",
+          "target": {
+            "projectKey": "streamliner",
+            "workstreamId": "plugin-role-skills",
+            "nodeId": "stable-role-identifiers"
+          },
+          "label": "Plugin Role Skills Wave 1: node-implementer and node-reviewer identifiers",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "id": "actor-contract-gate",
+      "type": "gate",
+      "title": "Actor integration contract gate",
+      "summary": "Builder verifies the released-dependency boundary, portable backend mapping, telex-addressing-v1, one-address actor rule, and transport-only event envelopes before product implementation begins.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "telex-addressing-v1-contract",
+        "telex-event-envelope-contracts"
+      ]
+    },
+    {
+      "id": "telex-adapter-attachment-substrate",
+      "type": "task",
+      "title": "Telex adapter and attachment substrate",
+      "summary": "Implement the thin JSON CLI adapter, logical-backend resolution, typed failures, in-session attach/resume planning, status/directory projection, and released compatibility checks without implementing waiting, liveness, delivery, or persistence.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "actor-contract-gate"
+      ]
+    },
+    {
+      "id": "actor-binding-operation-substrate",
+      "type": "task",
+      "title": "Actor binding and idempotent operation substrate",
+      "summary": "Add the workstream role-slot binding model and actorOperationId state machine with persisted phases, current/last session linkage, expected and observed Telex lease epochs, fencing proof, partial-failure states, and mutation serialization.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "telex-adapter-attachment-substrate"
+      ]
+    },
+    {
+      "id": "orchestrator-context-assembly",
+      "type": "task",
+      "title": "Orchestrator launch and replacement context assembly",
+      "summary": "Consume orchestrator-launch-context-v1 to assemble initial, resume, and replacement packages from explicit role assignment, effective validated policy, artifact commit/current workstream state, pending Telex threads, actor binding, and unresolved actions without prior transcript dependence.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "actor-binding-operation-substrate"
+      ],
+      "externalDependsOn": [
+        {
+          "id": "orchestrator-launch-context-v1",
+          "target": {
+            "projectKey": "streamliner",
+            "workstreamId": "plugin-role-skills",
+            "nodeId": "orchestrator-launch-context-v1-gate"
+          },
+          "label": "Plugin Role Skills Wave 2: orchestrator-launch-context-v1",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "id": "bound-orchestrator-launch-ui",
+      "type": "task",
+      "title": "Bound orchestrator launch and status UI",
+      "summary": "Add the workstream-level Orchestrator control and API for configure, launch, attaching, active, degraded, unoccupied, conflict, stale, and failed states while enforcing one serialized orchestrator slot and one primary Telex address.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "actor-binding-operation-substrate",
+        "orchestrator-context-assembly"
+      ]
+    },
+    {
+      "id": "orchestrator-focus-degradation",
+      "type": "task",
+      "title": "Orchestrator focus and degradation behavior",
+      "summary": "Provide a capability-aware Focus action for the active orchestrator, retain safe terminal references where supported, and define explicit navigation/diagnostic degradation instead of fragile process or tab guessing.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "bound-orchestrator-launch-ui"
+      ]
+    },
+    {
+      "id": "orchestrator-resume-explicit-replacement",
+      "type": "task",
+      "title": "Orchestrator resume and explicit replacement",
+      "summary": "Prefer same-session resume with explicit context and Telex reprovisioning; add one-click but non-silent replacement, known-local station stop/fencing, lease-epoch confirmation, and blocked/request-handoff behavior for unknown remote occupancy.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "bound-orchestrator-launch-ui",
+        "orchestrator-context-assembly"
+      ]
+    },
+    {
+      "id": "actor-startup-reconciliation",
+      "type": "task",
+      "title": "Actor startup and partial-failure reconciliation",
+      "summary": "On API startup, reconcile non-terminal actor operations against actor bindings, registry rows, Telex station/address state, attachment epochs, and terminal evidence; recover launch-without-attach, stopped-without-replacement, attach-without-binding-write, and restart-during-mutation states.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "actor-binding-operation-substrate",
+        "orchestrator-resume-explicit-replacement"
+      ]
+    },
+    {
+      "id": "bound-orchestrator-gate",
+      "type": "gate",
+      "title": "Bound orchestrator usability gate",
+      "summary": "Builder launches and focuses an orchestrator, reboots or restarts the API, resumes or explicitly replaces the session without re-explaining role/artifacts, verifies queued Telex delivery, exercises focus degradation, and confirms prior-epoch fencing plus partial-failure recovery.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "orchestrator-focus-degradation",
+        "actor-startup-reconciliation"
+      ]
+    },
+    {
+      "id": "node-actor-projection-and-attachment",
+      "type": "task",
+      "title": "Node actor projection and attachment",
+      "summary": "Extend actor bindings and Telex-derived health projection to explicitly assigned node-implementer and node-reviewer actors, including address retirement and terminal/managed attachment where released integration support is proven.",
+      "status": "planned",
+      "attention": "watch",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "bound-orchestrator-gate"
+      ]
+    },
+    {
+      "id": "lifecycle-routing-and-provenance",
+      "type": "task",
+      "title": "Lifecycle routing and provenance",
+      "summary": "Route field-report, blocker, review, re-review, merge-ready, merged, and escalation events through the accepted transport envelopes with canonical-emitter dedupe and durable message/thread provenance while GitHub, PAW, and Campaign 2 retain policy authority.",
+      "status": "planned",
+      "attention": "watch",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "bound-orchestrator-gate"
+      ]
+    },
+    {
+      "id": "managed-actor-delivery-spike",
+      "type": "research",
+      "title": "Managed actor Telex delivery spike",
+      "summary": "Determine the released, supported Telex delivery and attachment path for SDK-managed implementer/reviewer actors without recreating the Copilot bridge or assuming terminal-session behavior.",
+      "status": "planned",
+      "attention": "watch",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "bound-orchestrator-gate"
+      ]
+    },
+    {
+      "id": "actor-fabric-dogfood-hardening",
+      "type": "task",
+      "title": "Actor fabric dogfood and hardening",
+      "summary": "Operate a real workstream through the bound orchestrator and node actor addresses, exercise offline queueing, station replacement, lifecycle routing, provenance promotion, address retirement, and injected partial failures, then reconcile the contract against observed behavior.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "node-actor-projection-and-attachment",
+        "lifecycle-routing-and-provenance",
+        "managed-actor-delivery-spike"
+      ]
+    },
+    {
+      "id": "actor-fabric-closure-gate",
+      "type": "gate",
+      "title": "Actor fabric closure gate",
+      "summary": "Builder validates actor-specific durability: singleton orchestrator operation, reboot/replacement without transcript dependence, lease fencing, idempotent recovery, implementer/reviewer routing, GitHub authority, provenance promotion, and no Streamliner-owned message transport.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "actor-fabric-dogfood-hardening"
+      ]
+    }
+  ],
+  "checkpoints": [
+    {
+      "id": "actor-contract-proven",
+      "title": "Actor integration contract proven",
+      "summary": "Released Telex boundaries, portable backend mapping, telex-addressing-v1, one-address actor semantics, and transport-only event envelopes are accepted for implementation.",
+      "status": "planned",
+      "nodeIds": [
+        "released-telex-contract-proof",
+        "logical-backend-mapping-contract",
+        "telex-addressing-v1-contract",
+        "telex-event-envelope-contracts",
+        "actor-contract-gate"
+      ]
+    },
+    {
+      "id": "bound-orchestrator-usable",
+      "title": "Bound orchestrator usable",
+      "summary": "The workstream UI can launch, focus, resume, explicitly replace, fence, and recover its sole orchestrator without prior chat dependence or duplicate actor operations.",
+      "status": "planned",
+      "nodeIds": [
+        "telex-adapter-attachment-substrate",
+        "actor-binding-operation-substrate",
+        "orchestrator-context-assembly",
+        "bound-orchestrator-launch-ui",
+        "orchestrator-focus-degradation",
+        "orchestrator-resume-explicit-replacement",
+        "actor-startup-reconciliation",
+        "bound-orchestrator-gate"
+      ]
+    },
+    {
+      "id": "actor-fabric-dogfooded",
+      "title": "Actor fabric dogfooded",
+      "summary": "Explicit node actors, lifecycle routing, managed-delivery findings, provenance, retirement, and actor-specific durability have been exercised and accepted.",
+      "status": "planned",
+      "nodeIds": [
+        "node-actor-projection-and-attachment",
+        "lifecycle-routing-and-provenance",
+        "managed-actor-delivery-spike",
+        "actor-fabric-dogfood-hardening",
+        "actor-fabric-closure-gate"
+      ]
+    }
+  ]
+}
