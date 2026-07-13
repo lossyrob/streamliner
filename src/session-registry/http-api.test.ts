@@ -212,7 +212,7 @@ describe("handleSessionRegistryApiRequest", () => {
   it("maps lock errors and bad request bodies", () => {
     const rootDir = createRootDir();
     createdRoots.push(rootDir);
-    const store = new SessionRegistryFileStore({ rootDir });
+    const store = new SessionRegistryFileStore({ rootDir, writeLockWaitTimeoutMs: 0 });
     writeFileSync(join(rootDir, "registry.lock"), "locked", "utf8");
 
     const lockResponse = handleSessionRegistryApiRequest(store, {
