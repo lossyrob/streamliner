@@ -337,7 +337,11 @@ export function createLockFileAtomically(
         // best effort
       }
     } else {
-      rmSync(tempPath, { force: true });
+      try {
+        rmSync(tempPath, { force: true });
+      } catch {
+        // best effort
+      }
     }
   }
 }

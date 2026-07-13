@@ -1436,6 +1436,41 @@ setTimeout(() => process.exit(0), holdMs + 50);
     await childExit;
   });
 
+  it("waits briefly for a fresh malformed advisory lock to clear", async () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({
+      rootDir,
+      writeLockWaitTimeoutMs: 2_000,
+    });
+    const lockPath = join(rootDir, "registry.lock");
+    writeFileSync(lockPath, "{", "utf8");
+    const script = `
+const { rmSync } = require("node:fs");
+const lockPath = process.argv[1];
+const holdMs = Number(process.argv[2]);
+setTimeout(() => {
+  rmSync(lockPath, { force: true });
+}, holdMs);
+setTimeout(() => process.exit(0), holdMs + 50);
+`;
+    const stderr: Buffer[] = [];
+    const child = spawn(process.execPath, ["-e", script, lockPath, "250"], {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
+    const childExit = waitForChildExit(child, stderr);
+
+    const created = store.upsertSession({
+      title: "Recovered malformed lock after wait",
+      cwd: "C:\\repo",
+      origin: { kind: "manual" },
+    });
+
+    expect(created.title).toBe("Recovered malformed lock after wait");
+    await childExit;
+  });
+
   it("recovers stale advisory locks from exited processes", () => {
     const rootDir = createRootDir();
     createdRoots.push(rootDir);

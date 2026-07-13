@@ -2,10 +2,11 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   LOCK_BOOT_STALE_MARGIN_MS,
+  createLockFileAtomically,
   currentUptimeMs,
   isAcquiredBeforeCurrentBoot,
   isProcessLockStale,
@@ -14,6 +15,14 @@ import {
   processExists,
   readLockMetadataFile,
 } from "./lock-liveness";
+
+const { rmSyncMock } = vi.hoisted(() => ({ rmSyncMock: vi.fn() }));
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  rmSyncMock.mockImplementation(actual.rmSync);
+  return { ...actual, rmSync: rmSyncMock };
+});
 
 // Far above any plausible live PID; process.kill(pid, 0) reports ESRCH.
 const DEAD_PID = 999999999;
@@ -208,5 +217,25 @@ describe("readLockMetadataFile", () => {
     const root = mkdtempSync(join(tmpdir(), "streamliner-lock-liveness-"));
     createdRoots.push(root);
     expect(readLockMetadataFile(join(root, "missing.lock"))).toBeNull();
+  });
+});
+
+describe("createLockFileAtomically", () => {
+  it("preserves the link error when temporary-file cleanup fails", () => {
+    const root = mkdtempSync(join(tmpdir(), "streamliner-lock-liveness-"));
+    createdRoots.push(root);
+    const lockPath = join(root, "api.lock");
+    writeFileSync(lockPath, "existing", "utf8");
+    const remove = rmSyncMock.getMockImplementation();
+    rmSyncMock.mockImplementation((path, options) => {
+      if (String(path).endsWith(".tmp")) {
+        throw new Error("cleanup failed");
+      }
+      return remove?.(path, options);
+    });
+
+    expect(() => createLockFileAtomically(lockPath, { pid: process.pid })).toThrow(
+      expect.objectContaining({ code: "EEXIST" }),
+    );
   });
 });

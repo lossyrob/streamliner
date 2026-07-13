@@ -1,6 +1,7 @@
 import { existsSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir, uptime } from "node:os";
 import { join } from "node:path";
+import { spawn } from "node:child_process";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -52,6 +53,26 @@ function makeInput(overrides: Partial<LaunchClaimCreateInput> = {}): LaunchClaim
 function ageOutLock(lockPath: string): void {
   const staleAt = new Date(Date.now() - LOCK_UNPARSEABLE_STALE_AGE_MS - 1_000);
   utimesSync(lockPath, staleAt, staleAt);
+}
+
+function waitForChildExit(
+  child: ReturnType<typeof spawn>,
+  stderr: Buffer[],
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code, signal) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(
+        new Error(
+          `Lock holder exited with ${code ?? signal}: ${Buffer.concat(stderr).toString("utf8")}`,
+        ),
+      );
+    });
+  });
 }
 
 describe("sanitizeFailureReason", () => {
@@ -333,6 +354,33 @@ describe("LaunchClaimFileStore advisory lock liveness", () => {
 
     expect(() => store.createClaim(makeInput())).toThrow(LaunchClaimLockedError);
     expect(existsSync(lockPath)).toBe(true);
+  });
+
+  it("waits for a fresh malformed launch-claims.lock to clear", async () => {
+    const rootDir = freshRoot();
+    const store = new LaunchClaimFileStore({ rootDir, writeLockWaitTimeoutMs: 2_000 });
+    const lockPath = join(rootDir, "launch-claims.lock");
+    writeFileSync(lockPath, "{", "utf8");
+    const script = `
+const { rmSync } = require("node:fs");
+const lockPath = process.argv[1];
+const holdMs = Number(process.argv[2]);
+setTimeout(() => {
+  rmSync(lockPath, { force: true });
+}, holdMs);
+setTimeout(() => process.exit(0), holdMs + 50);
+`;
+    const stderr: Buffer[] = [];
+    const child = spawn(process.execPath, ["-e", script, lockPath, "250"], {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
+    const childExit = waitForChildExit(child, stderr);
+
+    const claim = store.createClaim(makeInput());
+
+    expect(claim.launchClaimId).toBe("claim-001");
+    await childExit;
   });
 
   it("reclaims an old malformed launch-claims.lock after the safety grace period", () => {
