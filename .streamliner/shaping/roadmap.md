@@ -57,7 +57,7 @@ coordination, and the durable artifact ledger.
 |---|---|---|
 | Streamliner Plugin Role Skills | `streamliner-agent-skill-context` | **Formed:** `.streamliner/workstreams/plugin-role-skills/`. Starts with stable role IDs, `launch-policy-v1`, and the repository-installable role-skills slice. Exports `role-context-v1` early and `orchestrator-launch-context-v1` before Actor Fabric's bound-orchestrator UI can complete. |
 | Telex-backed Actor Fabric & Bound Orchestrator | `session-actor-control-plane` | **Formed:** `.streamliner/workstreams/telex-actor-fabric/`. Two Wave 1 contract nodes are ready; address and event-envelope contracts consume Plugin Role Skills targets. The first usable product slice is the bound-orchestrator UI with reboot/resume/replacement behavior. |
-| Git-backed Artifact Ledger & Sync | `git-backed-artifact-sync` | **Formed:** `.streamliner/workstreams/git-backed-artifact-sync/`. `artifact-root-v1` is the first ready node. Later waves add safe synchronization, policy provenance, Telex attention, and the single campaign integration gate. |
+| Git-backed Artifact Ledger & Sync | `git-backed-artifact-sync` | **Formed:** `.streamliner/workstreams/git-backed-artifact-sync/`. `artifact-root-v1` is the first ready node; Wave 1 then defines storage-neutral `artifact-operations-v1` and routes canonical writes/manual sync through the local API. Later waves add isolated change workspaces, safe unattended synchronization, policy provenance, Telex attention, and the single campaign integration gate. |
 
 **Ownership boundary.**
 
@@ -89,7 +89,8 @@ can load the same workstream state on every machine.
    integration.
 3. The Telex-backed actor workstream routes artifact-sync attention and lifecycle
    events to the appropriate role addresses; Plugin Role Skills adopts
-   `artifact-root-v1` once the resolver is available.
+   `artifact-root-v1` and `artifact-operations-v1` once the provider and API
+   contracts are available.
 4. A multi-builder dogfood gate exercises the whole seam: two environments, one
    repository, one artifact branch, one shared Telex backend, and no private
    briefing or manual relay.
@@ -103,8 +104,8 @@ rather than maintained as a permanent parallel workaround.
 attention signals (#122). The existing SDK-managed runtime remains an enabling
 execution track and should consume the same role/address contracts where useful.
 
-**Exports.** `role-context-v1`; `telex-addressing-v1`; `artifact-root-v1`; Telex
-field-report transport (consumed by Campaign 2).
+**Exports.** `role-context-v1`; `telex-addressing-v1`; `artifact-root-v1`;
+`artifact-operations-v1`; Telex field-report transport (consumed by Campaign 2).
 
 ## Campaign 2 — Coverage & Execution Integrity *(proposed)*
 
@@ -154,7 +155,7 @@ work.
 **Side issues.** #128 (session-group collapse).
 
 **Imports.** `schema-v2` (C2), orientation signals (C1), and
-`artifact-root-v1` (C1).
+`artifact-root-v1` + `artifact-operations-v1` (C1).
 
 ## Campaign 4 — Autonomous Execution *(proposed, later)*
 
@@ -200,7 +201,7 @@ Not part of a campaign this round; low-dependency, can run independently.
 |---|---|---|
 | `role-context-v1` | C1 Plugin Role Skills | C1 Telex Actor Fabric, C2 (worker guidance), C3 (issue-worker role) |
 | `telex-addressing-v1` + field-report transport | C1 Telex Actor Fabric | C2 Node Handoff, C4 orchestration |
-| `artifact-root-v1` | C1 Artifact Ledger & Sync | C1 Plugin Role Skills, C3 Project Surface |
+| `artifact-root-v1` + `artifact-operations-v1` | C1 Artifact Ledger & Sync | C1 Plugin Role Skills and Actor Fabric, C3 Project Surface |
 | `schema-v2` | C2 Format & Coverage Substrate | C3 (fields its surfaces read) |
 | Project boundary | C3 Project Surface | C3 Cross-Workstream Dependencies |
 | #124 deferral→debt | C2 reconciliation (creates) | C2 closeout (validates no open debt) |
@@ -238,10 +239,11 @@ control-plane north star (#102/#123).
 
 - **C1 (main effort) → C2 → C3.** Inside C1, Plugin Role Skills exports
   `role-context-v1` first. Telex integration consumes it; Artifact Sync's
-  branch/root work can run in parallel and later exports `artifact-root-v1` back
-  to the plugin. The campaign converges at the multi-builder dogfood gate. C2
-  imports role context and field-report transport from C1; C3 imports
-  `schema-v2`, orientation signals, and artifact-root discovery.
+  branch/root work can run in parallel and later exports `artifact-root-v1` plus
+  `artifact-operations-v1` back to the plugin and actor integration. The campaign
+  converges at the multi-builder dogfood gate. C2 imports role context and
+  field-report transport from C1; C3 imports `schema-v2`, orientation signals,
+  and artifact provider/operations discovery.
 - **Inside C2:** the Format & Coverage Substrate workstream goes first and exports
   `schema-v2` early (contract-first), so the other two can build against a stable
   shape.

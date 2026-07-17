@@ -23,7 +23,8 @@ authority without losing artifact history.
 - Preview copied paths, excluded runtime/personal data, target commit, and
   source-branch cleanup or archival.
 - Require explicit confirmation before the authority-changing operation.
-- Write the artifact branch through the accepted local lock.
+- Write the artifact branch through `artifact-operations-v1` under the accepted
+  local lock rather than bypassing the canonical mutation gateway.
 - Verify manifest, graph, brief, local specs, source links, and resolver state.
 - Remove or archive the former artifact copy so it cannot continue to look
   current.

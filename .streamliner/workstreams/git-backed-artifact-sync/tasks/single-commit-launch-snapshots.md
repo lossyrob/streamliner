@@ -9,18 +9,20 @@
 
 ## Outcome
 
-Launch and context preparation bind to one artifact commit and read the manifest,
-graph, brief, shared records, local specs, and provenance from that coherent
-snapshot. Artifact movement during preparation is detected and handled
-explicitly rather than producing a mixed-context worker launch.
+Launch and context preparation bind to one opaque artifact revision (with the
+local provider's Git commit retained as provenance) and read the manifest, graph,
+brief, shared records, local specs, and provenance through
+`artifact-operations-v1` from that coherent snapshot. Artifact movement during
+preparation is detected and handled explicitly rather than producing a
+mixed-context worker launch.
 
 ## Scope
 
 ### In scope
 
-- Define and implement the snapshot token/commit returned by
-  `artifact-root-v1`.
-- Make launch preparation and context assembly use the bound snapshot for every
+- Define and implement the snapshot/revision token returned by
+  `artifact-operations-v1`, including optional Git commit provenance.
+- Make launch preparation and context assembly use API snapshot reads for every
   artifact input.
 - Record the artifact commit and resolved shared-record references in launch
   provenance.

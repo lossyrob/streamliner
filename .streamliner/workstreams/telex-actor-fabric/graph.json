@@ -206,7 +206,7 @@
       "id": "orchestrator-context-assembly",
       "type": "task",
       "title": "Orchestrator launch and replacement context assembly",
-      "summary": "Consume orchestrator-launch-context-v1 to assemble initial, resume, and replacement packages from explicit role assignment, effective validated policy, artifact commit/current workstream state, pending Telex threads, actor binding, and unresolved actions without prior transcript dependence.",
+      "summary": "Consume orchestrator-launch-context-v1 to assemble initial, resume, and replacement packages from explicit role assignment, effective validated policy, artifact provider/revision and current workstream state through artifact-operations-v1, pending Telex threads, actor binding, and unresolved actions without prior transcript dependence.",
       "status": "planned",
       "attention": "focus",
       "repoIds": [

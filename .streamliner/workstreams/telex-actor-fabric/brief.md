@@ -67,11 +67,11 @@ package; it does not own `launch-policy-v1`.
 Introduce a local actor-binding record keyed by project, workstream, and
 orchestrator role. The record may retain the explicitly assigned role identifier
 and contract version, logical Telex backend ID and resolved local profile,
-durable address, artifact-root path and commit provenance, current and last
-session registry identifiers, pending Telex thread references, unresolved actor
-actions, and the last attachment result. It must not contain a loaded-role
-receipt, inferred role state, Telex message bodies, queue state, or a copied
-lease.
+durable address, artifact provider and opaque revision, optional local path/Git
+provenance, current and last session registry identifiers, pending Telex thread
+references, unresolved actor actions, and the last attachment result. It must not
+contain a loaded-role receipt, inferred role state, Telex message bodies, queue
+state, or a copied lease.
 
 Every actor mutation - launch, resume, replacement, repair, takeover, detach,
 and retirement - receives a stable idempotent `actorOperationId`. Persist the
@@ -98,7 +98,8 @@ Add a workstream-level Orchestrator control with these states and actions:
 
 Same-session resume is preferred when the Copilot session state still exists,
 the working directory is valid, the explicit role contract is compatible, the
-artifact root resolves, and no trusted live process already owns the session.
+artifact provider/revision resolves, and no trusted live process already owns
+the session.
 Resume reuses the same Streamliner registry row and Copilot session identity, but
 must still reapply the explicit orchestrator role and artifact location and run
 the released Telex Copilot resume/bridge-provisioning path. Conversation history
@@ -112,11 +113,12 @@ confirmed absent.
 
 Actor Fabric assembles every replacement orchestrator context package according
 to `orchestrator-launch-context-v1`. The package is rebuilt from the
-artifact-root path and recorded commit, the current workstream brief/graph/state,
-pending Telex thread references, the actor-binding record, unresolved actions,
-and the effective validated policy supplied through that contract. A
-replacement must become productive without access to the prior orchestrator
-transcript.
+artifact provider and recorded revision through `artifact-operations-v1`, the
+current workstream brief/graph/state, pending Telex thread references, the
+actor-binding record, unresolved actions, and the effective validated policy
+supplied through that contract. A local path and Git commit are optional provider
+provenance, not required context identities. A replacement must become
+productive without access to the prior orchestrator transcript.
 
 Sole-active behavior has two enforcement layers:
 
@@ -326,13 +328,13 @@ explicitly advances formation.
   same session as the primary occupant of multiple role addresses.
 - Keep the `streamliner` entry skill limited to orientation and discovery. It
   neither selects a role nor attaches a Telex address.
-- Persist explicit role assignment and artifact-root path/commit provenance in
-  the local actor-binding record so reboot recovery does not depend on remembered
-  chat.
+- Persist explicit role assignment, artifact provider/revision, and optional
+  local path/Git provenance in the local actor-binding record so reboot recovery
+  does not depend on remembered chat.
 - Assemble replacement orchestrator context from the Role Skills contract,
-  artifact commit and current workstream state, pending Telex thread references,
-  actor-binding state, and unresolved actions. Never require the prior chat
-  transcript.
+  artifact revision and current workstream state through
+  `artifact-operations-v1`, pending Telex thread references, actor-binding state,
+  and unresolved actions. Never require the prior chat transcript.
 - Consume effective validated launch policy through
   `orchestrator-launch-context-v1`; do not claim ownership of
   `launch-policy-v1`.
@@ -453,12 +455,13 @@ explicitly advances formation.
 - Released Telex v0.1.0 CLI, Copilot plugin/bridge, local exchange, address and
   station lifecycle, named local/shared backend profiles, lease epochs,
   acknowledgement, disposition, history, and directory/status contracts.
-- `artifact-root-v1` from Git-backed Artifact Ledger & Sync when available.
-  Before that checkpoint, the first slice uses the current source-root artifact
-  layout while recording explicit path/commit provenance.
+- `artifact-root-v1` and `artifact-operations-v1` from Git-backed Artifact Ledger
+  & Sync when available. Before that checkpoint, the first slice uses the
+  current source-root artifact layout while recording explicit local
+  path/commit provenance.
 - `paw-pr-lifecycle` marker, sentry, transition, and GitHub-verification policy.
 - GitHub and deterministic sentries as PR lifecycle authority.
-- Current workstream state, artifact commit provenance, pending Telex thread
+- Current workstream state, artifact revision/provenance, pending Telex thread
   references, actor-binding state, and unresolved actions as replacement
   orchestrator context inputs.
 
@@ -505,8 +508,9 @@ explicitly advances formation.
   before `telex-addressing-v1` can be frozen.
 - Plugin Role Skills Wave 2 must publish `orchestrator-launch-context-v1`
   before the bound-orchestrator checkpoint can complete.
-- Artifact Ledger & Sync must publish `artifact-root-v1` before multi-builder
-  actor launch can resolve the same artifact location on every machine.
+- Artifact Ledger & Sync must publish `artifact-root-v1` and
+  `artifact-operations-v1` before multi-builder actor launch can resolve the same
+  logical artifact snapshot on every machine.
 - Released Telex must continue to expose the Copilot attach/resume bridge and
   may need a safe remote handoff/takeover capability for later cross-environment
   operation.

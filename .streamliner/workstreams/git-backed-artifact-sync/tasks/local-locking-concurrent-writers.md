@@ -9,10 +9,11 @@
 
 ## Outcome
 
-Streamliner-owned local artifact writers, bootstrap/migration operations, and
-the sentry cannot race one another against the same artifact root. The product
-also behaves honestly when a builder edits files outside Streamliner or another
-machine advances the artifact branch.
+Streamliner-owned local artifact writers, API mutation/promotion,
+bootstrap/migration operations, and the sentry cannot race one another against
+the same artifact root. The product also behaves honestly when a builder edits
+the canonical files outside Streamliner or another machine advances the artifact
+branch.
 
 ## Scope
 
@@ -21,9 +22,11 @@ machine advances the artifact branch.
 - Define lock identity, ownership, timeout, stale-lock, and recovery behavior.
 - Serialize Streamliner-owned write, commit, fetch/update, and migration
   operations against one local artifact root.
+- Make the API mutation gateway the owner of lock acquisition for canonical
+  writes and promotion.
 - Decide whether locking is process-local, file-backed, API-owned, or layered.
 - Detect non-Streamliner local edits and classify them as dirty input rather
-  than overwriting them.
+  than overwriting them; expose adopt, commit, revert, or reconcile actions.
 - Define concurrent remote writer behavior through fetch state, push rejection,
   divergence, and semantic-conflict stops.
 - Cover multiple local source worktrees mapped to the same artifact worktree.

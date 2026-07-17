@@ -372,8 +372,10 @@ two builders/environments.
 
 Promoted into `.streamliner/workstreams/git-backed-artifact-sync/`. The formed
 workstream owns convention-first `streamliner-artifacts` bootstrap,
-`artifact-root-v1`, deterministic synchronization, shared policy storage and
-provenance, and the final Shared Project Operations campaign integration gate.
+`artifact-root-v1`, storage-neutral `artifact-operations-v1`, API-mediated
+canonical mutation and synchronization, isolated change workspaces, shared
+policy storage and provenance, and the final Shared Project Operations campaign
+integration gate.
 
 Retain this candidate as the historical shaping record until Streamliner has a
 first-class candidate archive or lifecycle migration.

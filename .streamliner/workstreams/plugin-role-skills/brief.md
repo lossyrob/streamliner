@@ -31,8 +31,9 @@ stable role identifiers, the installable role contract, and the first useful
 plugin experience. The second wave defines typed launch-policy composition and
 proves thin, explicit role delivery through worker and orchestrator context
 packages. The third wave completes marketplace identity migration,
-trust/compatibility remediation, and conditional `artifact-root-v1` adoption
-without moving builder-local prompt profiles into shared artifacts.
+trust/compatibility remediation, and conditional `artifact-root-v1` plus
+`artifact-operations-v1` adoption without moving builder-local prompt profiles
+into shared artifacts.
 
 Skills are the primary role mechanism because they remain composable inside a
 general Copilot session. Optional custom agents may provide convenient explicit
@@ -104,8 +105,10 @@ composition. The contract must define:
   prominently warned builder override when the contract permits it.
 
 Artifact Sync later stores and resolves shared policy documents, defaults,
-contract pins, and provenance through `artifact-root-v1`. It does not define the
-schema, merge semantics, compatibility rules, or failure behavior.
+contract pins, and provenance through `artifact-root-v1`, and exposes
+storage-neutral reads and canonical mutations through `artifact-operations-v1`.
+It does not define the policy schema, merge semantics, compatibility rules, or
+failure behavior.
 
 Role assignment is always explicit. A builder prompt, UI action, launch helper,
 or custom-agent entry point states the role. The system does not infer role from
@@ -131,7 +134,8 @@ launch/relaunch context package. The package must carry:
 
 - the explicit Workstream Orchestrator role contract ID and version;
 - project key and workstream identity;
-- resolved artifact root and exact artifact commit/provenance;
+- resolved artifact provider and opaque artifact revision, with local path and
+  Git commit included only as optional provider provenance;
 - current graph and brief state or bounded current-state summaries with
   authoritative references;
 - documentation entry points;
@@ -174,7 +178,8 @@ project operations:
 - support portable shared references or pins to plugin role and lifecycle
   contracts without copying contract bodies into shared artifacts;
 - continue to resolve today's source-root layout, then consume
-  `artifact-root-v1` when Artifact Sync exports it;
+  `artifact-root-v1` and `artifact-operations-v1` when Artifact Sync exports
+  them;
 - document installation, upgrade, compatibility, and degraded-context behavior;
 - add only those optional custom-agent wrappers that remain visibly thin over
   the shared skills.
@@ -326,13 +331,14 @@ node spec, implementation change, or commit has been created.
 - Use `streamliner@streamliner` as the canonical marketplace/plugin identity,
   with temporary compatibility for `streamliner@streamliner-local` during
   migration.
-- Support the current source-root layout first and adopt `artifact-root-v1`
-  later without changing role identifiers.
+- Support the current source-root layout first and adopt `artifact-root-v1` plus
+  `artifact-operations-v1` later without changing role identifiers.
 - Export orchestrator launch/relaunch context requirements; Actor Fabric owns
   package assembly, singleton binding, addressing, attachment, and lifecycle.
 - Require the orchestrator context package to carry explicit role/version,
-  project/workstream identity, artifact root and commit, current graph/brief
-  state, pending Telex thread references, actor binding, and unresolved actions.
+  project/workstream identity, artifact provider and revision (with optional
+  local path/Git provenance), current graph/brief state, pending Telex thread
+  references, actor binding, and unresolved actions.
 - Export stable role identifiers early enough to unblock Actor Fabric Wave 1.
 - Require `orchestrator-launch-context-v1` before Actor Fabric completes the
   bound-orchestrator UI.
@@ -390,7 +396,8 @@ node spec, implementation change, or commit has been created.
   outcome, authority, review, field-report, and policy concerns.
 - Installed `paw-pr-lifecycle` role guides and script contract as the reusable
   lifecycle-mechanics boundary.
-- Later `artifact-root-v1` from Git-backed Artifact Ledger and Sync.
+- Later `artifact-root-v1` and `artifact-operations-v1` from Git-backed Artifact
+  Ledger and Sync.
 
 ### Exports
 
@@ -402,9 +409,10 @@ node spec, implementation change, or commit has been created.
   compatibility/version semantics, provenance requirements, validation, and
   failure/remediation behavior.
 - `orchestrator-launch-context-v1`: required explicit role/version,
-  project/workstream identity, artifact root and commit, current graph/brief
-  state, pending Telex thread references, actor binding, unresolved actions, and
-  documentation/policy context.
+  project/workstream identity, artifact provider and opaque revision, optional
+  local path/Git provenance, current graph/brief state, pending Telex thread
+  references, actor binding, unresolved actions, and documentation/policy
+  context.
 - Versioned Node Worker Core, Node Implementer, and Node Reviewer contract
   layering.
 - Repository-installable canonical plugin skills and marketplace metadata.
@@ -418,8 +426,9 @@ node spec, implementation change, or commit has been created.
   station behavior.
 - Shared project/workstream policy semantics and local-profile separation for
   Artifact Sync to store, resolve, and report with provenance.
-- Artifact discovery requirements that work against source-root layout first
-  and later consume `artifact-root-v1`.
+- Artifact discovery and mutation requirements that work against source-root
+  layout first and later consume `artifact-root-v1` and
+  `artifact-operations-v1`.
 - Stable worker outcome-anchor, authority, durable-review, and field-report
   expectations for later hot-work, reconciliation, and execution-integrity
   workstreams.
@@ -436,9 +445,9 @@ node spec, implementation change, or commit has been created.
 - Actor Fabric consuming the explicit orchestrator role/scope contract without
   moving package assembly, singleton, or lifecycle ownership back into this
   workstream.
-- Artifact Sync providing `artifact-root-v1`, policy storage/resolution, and
-  provenance without redefining policy semantics or relocating personal prompt
-  profiles.
+- Artifact Sync providing `artifact-root-v1`, `artifact-operations-v1`, policy
+  storage/resolution, and provenance without redefining policy semantics or
+  relocating personal prompt profiles.
 - Distribution/Integration issue #40 eventually consuming the helper manifest
   for product-wide installation, update, launch, and diagnostics.
 

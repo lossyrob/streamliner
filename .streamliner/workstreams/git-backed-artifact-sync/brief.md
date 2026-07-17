@@ -8,10 +8,13 @@ without placing planning artifacts on source branches or requiring manual
 artifact-path knowledge.
 
 The workstream will establish one authoritative artifact root per project,
-export that root through `artifact-root-v1`, automate only deterministic Git
-synchronization, and route actionable operational attention through Telex. The
-result should preserve an understandable Git history while keeping messages and
-volatile runtime state out of the artifact branch.
+describe that local Git provider through `artifact-root-v1`, and put
+Streamliner-owned artifact mutations and synchronization behind the local API's
+storage-neutral `artifact-operations-v1` contract. Agents retain normal file
+editing ergonomics through isolated change workspaces, while the API serializes
+promotion into the canonical artifact worktree. The result should preserve an
+understandable Git history, remain adaptable to a future remote artifact store,
+and keep messages and volatile runtime state out of the artifact branch.
 
 ## Approach
 
@@ -20,7 +23,7 @@ mechanical synchronization, to cross-workstream integration and multi-builder
 validation. Formation does not count as a wave. Later-wave node boundaries
 remain provisional until the preceding contract or safety gate has passed.
 
-### Wave 1 - Artifact root and authority cutover
+### Wave 1 - Artifact provider, operations, and authority cutover
 
 Artifact Sync owns fresh-machine bootstrap. V1 is convention-first: starting
 from a source-repository checkout, Streamliner identifies the repository and its
@@ -44,11 +47,14 @@ diagnostics instead of silently falling back to source-branch artifacts.
 
 Implement a single resolver contract rather than allowing dashboard, launch,
 plugin, or workstream-loading code to derive paths independently. Migrate one
-selected authoritative artifact tree and switch core workstream reads and writes
-through the resolver. The migration must explicitly identify the source copy,
-establish the artifact-branch copy, cut authority over once, and remove or
-archive the old copy so both locations cannot appear current. Routine Git
-operations remain manual in this wave.
+selected authoritative artifact tree and switch core workstream reads through
+the resolver. Product-owned writes go through the local API's artifact mutation
+boundary rather than letting each caller mutate the canonical worktree directly.
+The migration must explicitly identify the source copy, establish the
+artifact-branch copy, cut authority over once, and remove or archive the old copy
+so both locations cannot appear current. Routine Git synchronization remains
+manual in this wave, but it is invoked and classified through the API rather than
+performed independently by agent sessions.
 
 `artifact-root-v1` should resolve at least:
 
@@ -63,23 +69,51 @@ operations remain manual in this wave.
   state before the sentry owns synchronization;
 - diagnostics for missing, stale, mismatched, or incompatible configuration.
 
+`artifact-root-v1` describes the local Git-backed provider. Consumers that
+mutate or synchronize artifacts use a separate storage-neutral
+`artifact-operations-v1` contract owned by the local Streamliner API. Its first
+version should define:
+
+- an opaque artifact `revision`, with optional `gitCommit` provenance for the
+  local Git provider;
+- coherent snapshot/list/read operations;
+- begin-change and validate operations;
+- whole-file, structured, or patch-based changes carrying an expected revision;
+- atomic application into the canonical artifact root under the accepted local
+  writer lock;
+- typed stale-revision, dirty-root, validation, trust, and compatibility errors;
+- commit/promotion provenance and a manual synchronization operation;
+- capability reporting so a later remote provider need not expose a local path
+  or pretend every revision is a Git commit.
+
+Simple Streamliner-owned graph/configuration changes should use this API in Wave
+1. Direct reads may still use resolved local files when useful. Direct edits to
+the canonical artifact worktree remain an explicit escape hatch, but they are
+classified as external dirty input: Streamliner must not overwrite or
+automatically synchronize them until the builder adopts, commits, reverts, or
+reconciles the change.
+
 **Checkpoint:** From a fresh source checkout, Streamliner can discover the
 conventional remote artifact branch, create or adopt its worktree, read the
 shared manifest, and open and update a project whose shared `.streamliner`
-artifacts exist only in that worktree.
+artifacts exist only in that worktree. Streamliner-owned updates use
+`artifact-operations-v1` with expected-revision checks rather than direct
+canonical-worktree mutation.
 
 **Authority gate:** The builder confirms that the resolver has one unambiguous
 authoritative root, the source-branch artifact copy is no longer authoritative,
 fresh-machine bootstrap does not depend on private setup knowledge, recovery is
-documented, and downstream consumers can rely on `artifact-root-v1`.
+documented, downstream consumers can rely on `artifact-root-v1`, and all
+Streamliner-owned canonical writes pass through `artifact-operations-v1`.
 
-### Wave 2 - Deterministic synchronization sentry
+### Wave 2 - API-owned synchronization and change workspaces
 
-Add deterministic Git inspection and event classification around the accepted
-artifact root. The sentry verifies repository, worktree, branch, and remote
-identity; classifies clean, ahead, behind, diverged, dirty, unavailable, and
-error states; and applies only operations admitted by an explicit safety
-policy.
+Add deterministic Git inspection and event classification behind the local API.
+The sentry verifies repository, worktree, branch, and remote identity; classifies
+clean, ahead, behind, diverged, dirty, unavailable, and error states; and applies
+only operations admitted by an explicit safety policy. Sessions do not each run
+fetch/commit/push against the canonical artifact worktree; they ask the API to
+perform or schedule those operations.
 
 The sentry records health, watch state, deduplication state, and recovery
 details under local Streamliner state. It never writes inboxes, acknowledgements,
@@ -93,17 +127,30 @@ coordination does not pretend to serialize other machines: concurrent remote
 writers are handled through Git state, push rejection, divergence
 classification, and conflict stops.
 
+For complex Markdown or multi-file changes, add isolated artifact change
+workspaces. A session begins a change against an expected revision, edits normal
+files in the isolated workspace with ordinary tools, then asks the API to
+validate and promote the resulting change set. The API rechecks the base
+revision, applies the accepted patch under the canonical writer lock, records
+provenance, and synchronizes according to policy. This centralizes promotion,
+not keystrokes. Direct canonical edits remain detectable external edits rather
+than an unsupported failure mode.
+
 Dry-run behavior, actionable diagnostics, and recovery procedures are part of
 the capability rather than follow-on documentation. Product-authored commits
 must remain attributable and inspectable; automatic batching and push behavior
 cannot be enabled until their ownership and failure semantics are accepted.
 
-**Checkpoint:** Two environments remain synchronized during clean operation and
-stop clearly before a semantic or ambiguous conflict is changed.
+**Checkpoint:** Two environments remain synchronized during clean operation,
+multiple local sessions can prepare changes without racing over the canonical
+worktree, and the API stops clearly before a stale, semantic, or ambiguous
+conflict is changed.
 
 **Safety gate:** The builder accepts the automatic-operation matrix, commit
 attribution and batching policy, dirty/diverged stop conditions, and recovery
-behavior before unattended synchronization is enabled.
+behavior before unattended synchronization is enabled. The gate also confirms
+that product-owned sync is API-mediated and that direct external edits pause
+automation rather than being overwritten.
 
 ### Wave 3 - Shared records, provenance, and attention
 
@@ -139,6 +186,12 @@ detects movement and retries/fails explicitly. This provenance allows a builder
 to determine which durable project state and plugin contract governed a launch
 without turning runtime launch records into another artifact store.
 
+The public launch and role surfaces should consume logical revisions and
+operations, not treat a worktree path as the permanent storage API. The local
+provider may expose a path capability for trusted local tools, while a future
+remote provider can implement the same read/change/validate/promote contract
+without a local checkout.
+
 Streamliner projects sync health through its local API and dashboard whether or
 not an agent is attached. After `telex-addressing-v1` is available, actionable
 events are routed to the responsible durable role address with pointers to the
@@ -172,7 +225,8 @@ must include:
    durable responsibility remains addressable;
 7. observing at least one implementer or reviewer lifecycle event routed through
    Actor Fabric;
-8. creating an artifact conflict through concurrent writers;
+8. preparing concurrent artifact changes through separate API change
+   workspaces, plus one direct external edit to the canonical worktree;
 9. stopping deterministic synchronization and routing the conflict to the
    responsible role through Telex;
 10. recording the disposition as a durable artifact or source-design promotion
@@ -209,12 +263,15 @@ explicit compatibility diagnostics, and no manual message relay.
 - **In scope:** Dedicated same-repository artifact branch policy; separate
   artifact worktree fresh-machine discovery, setup, or adoption; shared project
   manifest resolution; local repository-to-root mapping; migration with explicit
-  authority cutover; `artifact-root-v1`; loading and writing through the resolver;
-  deterministic sync classification and admitted safe operations; local health
-  and recovery state; local writer/sentry locking; shared launch policy/default
-  record storage and resolution; trusted single-commit launch provenance;
-  Streamliner health projection; Telex notification of actionable artifact
-  events; hosting the campaign integration gate.
+  authority cutover; `artifact-root-v1`; storage-neutral
+  `artifact-operations-v1`; API-mediated canonical mutations and synchronization;
+  expected-revision validation; isolated multi-file change workspaces; explicit
+  external/direct-edit detection and reconciliation; deterministic sync
+  classification and admitted safe operations; local health and recovery state;
+  local writer/sentry locking; shared launch policy/default record storage and
+  resolution; trusted single-commit launch provenance; Streamliner health
+  projection; Telex notification of actionable artifact events; hosting the
+  campaign integration gate.
 - **Out of scope:** File-backed inboxes or message status files; copying Telex
   history into Git; volatile session/watch state on the artifact branch;
   automatic semantic conflict resolution; hosted Streamliner synchronization;
@@ -225,7 +282,8 @@ explicit compatibility diagnostics, and no manual message relay.
 - **Deferred:** Cross-repository artifact roots; rich branch administration UI;
   hosted sentries; CRDT or database-backed collaborative editing; semantic merge
   automation; general policy authoring UI; portfolio-wide artifact roots; custom
-  artifact branch names and source-branch pointer mechanisms.
+  artifact branch names and source-branch pointer mechanisms; remote active-state
+  storage and hosted artifact mutation APIs.
 
 ## Current State
 
@@ -249,6 +307,12 @@ paths, workstream directories, and repo roots. Those consumers must be audited
 for current-checkout and path-derived assumptions so they do not bypass the new
 resolver.
 
+The local API already owns graph reads and a narrow atomic PATCH path for durable
+workstream configuration. It does not yet expose a general artifact snapshot,
+change-set, validation, or synchronization contract. Sessions and tools can
+therefore still write artifact files independently, with no single place to
+apply expected-revision checks or coordinate promotion into Git.
+
 Editable PAW launch prompt profiles are currently local runtime data in
 `~/.streamliner/state/paw-launch-prompt-profiles.json`. A committed
 `launchDefaults.promptProfileId` is deliberately only a best-effort local hint.
@@ -256,8 +320,9 @@ Migration must not copy this local profile store wholesale into the artifact
 branch. Evolved profiles need classification into stable plugin contracts,
 shared declarative policy/defaults, and builder-local overlays.
 
-Formation has produced this brief only. No graph, node specs, issues,
-implementation, or migration has been created.
+Formation produced the committed brief, graph, and initial Wave 1 local specs.
+No execution issues, implementation, artifact migration, or synchronization
+service has been created.
 
 ## Decisions
 
@@ -275,8 +340,19 @@ implementation, or migration has been created.
 - `artifact-root-v1` is the first useful export and the only supported path
   resolver for dashboard, workstream, launch, plugin-role, and future Project
   consumers.
-- Manual fetch, commit, and push operation is proven before synchronization is
-  automated.
+- `artifact-operations-v1` is the storage-neutral mutation and synchronization
+  contract. `artifact-root-v1` supplies the local Git provider; callers should
+  not treat its filesystem path as the permanent artifact API.
+- Streamliner-owned writes to the canonical artifact worktree go through the
+  local API with an expected revision, validation, local serialization, and
+  provenance. Direct reads may continue to use resolved files where useful.
+- Complex agent edits use isolated change workspaces and normal file tools, then
+  submit a change set for API validation and promotion.
+- Direct canonical-worktree edits remain an escape hatch. They are external
+  dirty input that pauses automatic mutation/sync until explicitly reconciled.
+- Manual fetch, commit, and push behavior is proven through the API before
+  synchronization is automated. Sessions do not independently synchronize the
+  canonical artifact worktree.
 - The sentry is deterministic. It may perform accepted mechanical operations
   but stops for semantic, ambiguous, dirty, or incompatible conditions according
   to policy.
@@ -299,7 +375,7 @@ implementation, or migration has been created.
   activated when its commit has not satisfied the accepted repository
   protection or approval rule.
 - Launch preparation reads graph, brief, manifest, shared policy, and related
-  references from one artifact commit snapshot.
+  references from one artifact revision/commit snapshot.
 - Streamliner-owned local writers and the sentry serialize operations against
   the same artifact root; Git divergence and push rejection remain the
   cross-machine concurrency boundary.
@@ -314,6 +390,12 @@ implementation, or migration has been created.
 ## Open Questions
 
 - What is the minimal shared project manifest schema, and how is it versioned for application and artifact compatibility?
+- Which `artifact-operations-v1` mutation shapes belong in V1: whole-file
+  replacement, typed graph operations, generic patches, or a deliberately small
+  combination?
+- What API/change-workspace lifecycle best preserves ordinary agent file editing
+  while preventing abandoned workspaces, stale promotions, or unbounded local
+  storage?
 - What exact operations are admitted in each clean/ahead/behind/dirty/diverged state, and how are product-authored commits attributed, scoped, and batched?
 - How does the local API determine that an agent-effective artifact commit has satisfied the project's protection or approval rule, especially when branch protection is unavailable or a repository is offline?
 - Which root, compatibility, or sync failures block node launch versus allowing
@@ -343,6 +425,13 @@ implementation, or migration has been created.
 - `artifact-root-v1`, including project/repository identity, paths, branch,
   commit/snapshot identity, shared manifest, availability, sync/blocking state,
   and diagnostics.
+- `artifact-operations-v1`, including opaque revisions, snapshots, reads,
+  begin-change, validation, expected-revision mutation, promotion, provenance,
+  synchronization, capability reporting, and typed conflict/error states.
+- API-mediated canonical write and synchronization behavior plus isolated
+  artifact change workspaces for complex agent edits.
+- Direct/external edit detection and explicit adopt/commit/revert/reconcile
+  behavior.
 - Convention-first fresh-machine artifact bootstrap and local
   repository-to-root mapping.
 - Artifact branch/worktree policy, migration authority cutover, rollback, and
@@ -374,6 +463,10 @@ Cross-workstream blind-spot review should focus on:
   defining its own address syntax, transport, acknowledgement, or history;
 - whether workstream registry, launch preparation, context assembly, dashboard
   routes, and future Project surfaces all consume the same resolver;
+- whether all Streamliner-owned artifact mutations and synchronization use
+  `artifact-operations-v1` while direct edits remain a safe, visible escape hatch;
+- whether isolated change workspaces preserve agent ergonomics without becoming
+  a second authoritative artifact store;
 - whether artifact commit provenance remains available through launch and Telex
   promotion without leaking runtime state into Git;
 - whether launch preparation can hold a coherent single-commit artifact snapshot
@@ -400,9 +493,12 @@ cases rather than being buried in generic implementation or test work:
   accidental rewrite, deletion, or corruption;
 - local writer/sentry locking, concurrent remote writers, rejected pushes, and
   deterministic divergence/conflict stops;
+- expected-revision API mutation, stale change-set handling, isolated workspace
+  cleanup, and external direct-edit reconciliation;
 - the Wave 4 campaign scenario spanning plugin installation, UI launch, shared
   Telex, reboot/replacement, implementer/reviewer lifecycle traffic, conflict
   disposition, and durable promotion.
 
-The graph, issues, and implementation remain intentionally uncreated until the
-builder accepts this revised formation brief.
+The formed graph and Wave 1 specs now carry these requirements. Execution issues
+and implementation remain intentionally uncreated until the campaign formation
+PR is accepted and this amended geometry is reviewed.

@@ -126,6 +126,18 @@
       ],
       "dependsOn": [
         "role-context-v1-gate"
+      ],
+      "externalDependsOn": [
+        {
+          "id": "artifact-operations-v1",
+          "target": {
+            "projectKey": "streamliner",
+            "workstreamId": "git-backed-artifact-sync",
+            "nodeId": "artifact-root-authority-gate"
+          },
+          "label": "Artifact Sync exports artifact-operations-v1 revision semantics",
+          "status": "pending"
+        }
       ]
     },
     {
@@ -146,7 +158,7 @@
       "id": "orchestrator-launch-context-contract",
       "type": "research",
       "title": "Orchestrator launch context contract",
-      "summary": "Define orchestrator-launch-context-v1 with explicit role/version, project/workstream identity, artifact root and commit, current brief/graph state, pending Telex thread references, actor binding, and unresolved actions for Actor Fabric assembly.",
+      "summary": "Define orchestrator-launch-context-v1 with explicit role/version, project/workstream identity, artifact provider and opaque revision (plus optional local path/Git provenance), current brief/graph state, pending Telex thread references, actor binding, and unresolved actions for Actor Fabric assembly.",
       "status": "planned",
       "attention": "focus",
       "repoIds": [
@@ -246,8 +258,8 @@
     {
       "id": "artifact-root-policy-adoption",
       "type": "task",
-      "title": "Artifact root and shared policy adoption",
-      "summary": "Consume artifact-root-v1 so role and launch-policy resolution uses shared artifact storage and provenance without changing logical role IDs, policy semantics, or builder-local prompt profiles.",
+      "title": "Artifact operations and shared policy adoption",
+      "summary": "Consume artifact-root-v1 and artifact-operations-v1 so role and launch-policy resolution uses shared artifact snapshots, storage-neutral revisions, canonical API mutations, and provenance without changing logical role IDs, policy semantics, or builder-local prompt profiles.",
       "status": "planned",
       "attention": "focus",
       "repoIds": [
@@ -265,6 +277,16 @@
             "nodeId": "artifact-root-authority-gate"
           },
           "label": "artifact-root-v1 from Git-backed Artifact Ledger and Sync",
+          "status": "pending"
+        },
+        {
+          "id": "artifact-operations-v1",
+          "target": {
+            "projectKey": "streamliner",
+            "workstreamId": "git-backed-artifact-sync",
+            "nodeId": "artifact-root-authority-gate"
+          },
+          "label": "artifact-operations-v1 from Git-backed Artifact Ledger and Sync",
           "status": "pending"
         }
       ]
@@ -358,7 +380,7 @@
     {
       "id": "artifact-root-policy-adopted",
       "title": "Artifact root policy adopted",
-      "summary": "Role and shared policy discovery consume artifact-root-v1 while preserving contract semantics and local profile separation.",
+      "summary": "Role and shared policy discovery consume artifact-root-v1 and artifact-operations-v1 while preserving contract semantics and local profile separation.",
       "status": "planned",
       "nodeIds": [
         "artifact-root-policy-adoption"

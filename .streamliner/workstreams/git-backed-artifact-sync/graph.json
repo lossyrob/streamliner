@@ -3,11 +3,11 @@
   "id": "git-backed-artifact-sync",
   "projectKey": "streamliner",
   "title": "Git-backed Artifact Ledger & Sync",
-  "summary": "The formation brief is committed. Wave 1 is detailed for convention-first artifact bootstrap, artifact-root-v1, compatibility, snapshots, locking, environment coverage, and authority cutover; later sentry, policy, attention, and campaign-integration waves remain sketches pending gates and upstream exports.",
+  "summary": "Wave 1 defines the local Git provider plus a storage-neutral artifact operations API, then proves convention-first bootstrap, API-mediated canonical mutations, compatibility, snapshots, locking, environment coverage, and authority cutover. Later waves add isolated change workspaces, API-owned synchronization, policy provenance, attention, and campaign integration.",
   "status": "active",
   "attention": "focus",
   "createdAt": "2026-07-11T02:58:06.857Z",
-  "updatedAt": "2026-07-11T03:11:17.877Z",
+  "updatedAt": "2026-07-17T20:32:37.573Z",
   "presentation": {
     "shortName": "Artifact Sync",
     "color": "#7B61A8"
@@ -47,7 +47,7 @@
       "id": "artifact-root-v1-contract",
       "type": "research",
       "title": "Define artifact-root-v1 and project manifest contract",
-      "summary": "Define the project manifest, repository identity, local repository-to-root mapping, resolver API, diagnostics, and authority semantics that every artifact consumer can rely on without deriving paths independently.",
+      "summary": "Define the local Git provider descriptor: project manifest, repository identity, repository-to-root mapping, resolver responses, diagnostics, path capability, and authority semantics consumed by artifact-operations-v1 and read-only callers.",
       "status": "ready",
       "attention": "focus",
       "repoIds": [
@@ -58,6 +58,24 @@
         "path": "tasks/artifact-root-v1-contract.md"
       },
       "dependsOn": []
+    },
+    {
+      "id": "artifact-operations-v1-contract",
+      "type": "research",
+      "title": "Define artifact-operations-v1 API contract",
+      "summary": "Define the storage-neutral local API contract for opaque revisions, coherent reads, begin-change, validation, expected-revision mutation, promotion, provenance, synchronization, capability reporting, and typed conflict states without making a local path or Git commit the permanent API.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/artifact-operations-v1-contract.md"
+      },
+      "dependsOn": [
+        "artifact-root-v1-contract"
+      ]
     },
     {
       "id": "app-artifact-schema-compatibility",
@@ -92,15 +110,15 @@
         "path": "tasks/convention-first-bootstrap.md"
       },
       "dependsOn": [
-        "artifact-root-v1-contract",
+        "artifact-operations-v1-contract",
         "app-artifact-schema-compatibility"
       ]
     },
     {
       "id": "single-commit-launch-snapshots",
       "type": "task",
-      "title": "Provide single-commit launch snapshots",
-      "summary": "Bind launch and context preparation to one artifact commit so manifest, graph, brief, shared records, and provenance are read coherently, with explicit retry or failure when the artifact root moves during preparation.",
+      "title": "Provide coherent artifact revision snapshots",
+      "summary": "Bind launch and context preparation to one opaque artifact revision so manifest, graph, brief, shared records, and provenance are read coherently; retain the local provider's Git commit as optional provenance and retry or fail explicitly when the revision moves during preparation.",
       "status": "planned",
       "attention": "focus",
       "repoIds": [
@@ -111,7 +129,7 @@
         "path": "tasks/single-commit-launch-snapshots.md"
       },
       "dependsOn": [
-        "artifact-root-v1-contract",
+        "artifact-operations-v1-contract",
         "app-artifact-schema-compatibility"
       ]
     },
@@ -130,7 +148,27 @@
         "path": "tasks/local-locking-concurrent-writers.md"
       },
       "dependsOn": [
-        "artifact-root-v1-contract"
+        "artifact-operations-v1-contract"
+      ]
+    },
+    {
+      "id": "api-mediated-artifact-mutations",
+      "type": "task",
+      "title": "Implement API-mediated artifact mutations",
+      "summary": "Route Streamliner-owned graph/config and canonical artifact writes through artifact-operations-v1 with expected revisions, validation, atomic application, local writer serialization, and provenance; classify direct canonical-worktree edits as external dirty input instead of overwriting them.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/api-mediated-artifact-mutations.md"
+      },
+      "dependsOn": [
+        "artifact-operations-v1-contract",
+        "app-artifact-schema-compatibility",
+        "local-locking-concurrent-writers"
       ]
     },
     {
@@ -169,14 +207,14 @@
       "dependsOn": [
         "convention-first-bootstrap",
         "single-commit-launch-snapshots",
-        "local-locking-concurrent-writers"
+        "api-mediated-artifact-mutations"
       ]
     },
     {
       "id": "artifact-root-authority-gate",
       "type": "gate",
       "title": "Artifact root authority gate",
-      "summary": "Builder validates artifact-root-v1, orphan-branch bootstrap, schema/app compatibility, single-commit reads, local locking, off-branch environments, migration rollback, and one unambiguous artifact authority before synchronization automation begins.",
+      "summary": "Builder validates artifact-root-v1, artifact-operations-v1, API-mediated canonical writes, orphan-branch bootstrap, schema/app compatibility, coherent snapshot reads, local locking, off-branch environments, migration rollback, and one unambiguous artifact authority before synchronization automation begins.",
       "status": "planned",
       "attention": "focus",
       "repoIds": [
@@ -184,14 +222,15 @@
       ],
       "dependsOn": [
         "off-branch-cloud-source-link-compatibility",
-        "migration-authority-cutover-rollback"
+        "migration-authority-cutover-rollback",
+        "api-mediated-artifact-mutations"
       ]
     },
     {
       "id": "deterministic-sentry-classification",
       "type": "task",
       "title": "Implement deterministic sentry classification",
-      "summary": "Classify repository, worktree, branch, remote, clean, ahead, behind, dirty, diverged, unavailable, and error states and persist local health without creating message or runtime files on the artifact branch.",
+      "summary": "Behind the local API, classify repository, worktree, branch, remote, clean, ahead, behind, external-edit dirty, diverged, unavailable, and error states and persist local health without creating message or runtime files on the artifact branch.",
       "status": "planned",
       "attention": "watch",
       "repoIds": [
@@ -219,7 +258,7 @@
       "id": "safe-sync-automation",
       "type": "task",
       "title": "Implement safe synchronization automation",
-      "summary": "Apply only the accepted mechanical fetch, update, commit, and push operations with dry-run, attribution, batching, pause, recovery, and explicit semantic-conflict stops.",
+      "summary": "Apply only the accepted mechanical fetch, update, commit, and push operations through the local API with dry-run, attribution, batching, pause, recovery, and explicit external-edit and semantic-conflict stops; sessions do not synchronize the canonical worktree independently.",
       "status": "planned",
       "attention": "watch",
       "repoIds": [
@@ -231,17 +270,32 @@
       ]
     },
     {
+      "id": "isolated-artifact-change-workspaces",
+      "type": "task",
+      "title": "Add isolated artifact change workspaces",
+      "summary": "Let agent sessions begin a change from an expected revision, edit ordinary files in an isolated workspace, validate the change set, and ask the API to promote it under the canonical writer lock; handle stale bases, abandonment, cleanup, and provenance without creating a second authoritative store.",
+      "status": "planned",
+      "attention": "watch",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "artifact-root-authority-gate"
+      ]
+    },
+    {
       "id": "deterministic-sentry-safety-gate",
       "type": "gate",
       "title": "Deterministic sentry safety gate",
-      "summary": "Builder accepts the state classifier, automatic-operation matrix, attribution, branch-protection behavior, history recovery, concurrent-writer stops, and semantic-conflict boundary before unattended synchronization is enabled.",
+      "summary": "Builder accepts API-owned synchronization, the state classifier and operation matrix, isolated change-workspace promotion, attribution, branch protection, history recovery, stale/external/concurrent-writer stops, and the semantic-conflict boundary before unattended synchronization is enabled.",
       "status": "planned",
       "attention": "focus",
       "repoIds": [
         "streamliner"
       ],
       "dependsOn": [
-        "safe-sync-automation"
+        "safe-sync-automation",
+        "isolated-artifact-change-workspaces"
       ]
     },
     {
@@ -355,7 +409,7 @@
       "id": "campaign-integration-scenario",
       "type": "task",
       "title": "Run the Shared Project Operations campaign scenario",
-      "summary": "With Namra or another cold second builder, exercise plugin installation, fresh artifact bootstrap, UI-launched orchestrator, shared Telex, reboot or station replacement, implementer/reviewer lifecycle traffic, an artifact conflict, Telex disposition, and durable promotion with provenance.",
+      "summary": "With Namra or another cold second builder, exercise plugin installation, fresh artifact bootstrap, UI-launched orchestrator, shared Telex, reboot or station replacement, implementer/reviewer lifecycle traffic, concurrent isolated change workspaces plus a direct external edit, conflict detection, Telex disposition, and API-mediated durable promotion with provenance.",
       "status": "planned",
       "attention": "focus",
       "repoIds": [
@@ -406,14 +460,16 @@
     {
       "id": "artifact-root-authoritative",
       "title": "Artifact root authoritative",
-      "summary": "artifact-root-v1, convention-first bootstrap, compatibility, snapshots, locking, off-branch operation, and migration rollback establish one usable artifact authority.",
+      "summary": "artifact-root-v1, artifact-operations-v1, convention-first bootstrap, API-mediated mutation, compatibility, snapshots, locking, off-branch operation, and migration rollback establish one usable artifact authority.",
       "status": "planned",
       "nodeIds": [
         "artifact-root-v1-contract",
+        "artifact-operations-v1-contract",
         "app-artifact-schema-compatibility",
         "convention-first-bootstrap",
         "single-commit-launch-snapshots",
         "local-locking-concurrent-writers",
+        "api-mediated-artifact-mutations",
         "off-branch-cloud-source-link-compatibility",
         "migration-authority-cutover-rollback",
         "artifact-root-authority-gate"
@@ -422,12 +478,13 @@
     {
       "id": "deterministic-sync-safe",
       "title": "Deterministic synchronization safe",
-      "summary": "The sentry classifies state, respects branch protection and history recovery, automates only admitted operations, and stops safely for ambiguity or semantic conflict.",
+      "summary": "The API-owned sentry classifies state, respects branch protection and history recovery, promotes isolated change workspaces, automates only admitted operations, and stops safely for stale, external, ambiguous, or semantic conflicts.",
       "status": "planned",
       "nodeIds": [
         "deterministic-sentry-classification",
         "branch-protection-history-recovery",
         "safe-sync-automation",
+        "isolated-artifact-change-workspaces",
         "deterministic-sentry-safety-gate"
       ]
     },
