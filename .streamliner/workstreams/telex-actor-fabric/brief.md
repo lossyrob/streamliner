@@ -190,6 +190,25 @@ to sentry, both use the same stable `sourceEventKey`, derived from the
 authoritative repository/PR/event/head/review-or-comment identity, so retries or
 handoffs cannot double-author the event.
 
+The `actor-fabric-dogfood-hardening` node is a bounded validation loop, not a
+single walkthrough. Each attempt records the actor bindings, Telex lease epochs,
+artifact revision, lifecycle evidence, injected failure, and observed result.
+Findings route by ownership:
+
+- an actor/runtime defect reopens the affected Wave 3 implementation node;
+- an address, event-envelope, or binding-contract defect returns to the
+  appropriate contract or substrate node;
+- a role, artifact, or lifecycle-policy mismatch routes to the owning
+  workstream rather than being patched locally;
+- a scope or authority change pauses for builder disposition.
+
+After repairs land, rerun the affected probe and then the complete actor scenario.
+The loop stops when an independent final run finds no new blocking defect, when a
+configured run budget is exhausted, when the same blocker repeats without new
+evidence, or when scope/external dependencies require builder action. The final
+gate consumes the attempt log, repair links, lease/fencing evidence, lifecycle
+events, provenance promotion, and the independent confirming run.
+
 **Final gate - durable actor operation:** one real workstream uses the UI to
 launch and operate its bound orchestrator, survives an API restart and machine
 reboot, resumes or explicitly replaces the prior session without transcript

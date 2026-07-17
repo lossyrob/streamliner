@@ -7,7 +7,7 @@
   "status": "active",
   "attention": "focus",
   "createdAt": "2026-07-11T02:58:06.641Z",
-  "updatedAt": "2026-07-11T02:58:06.641Z",
+  "updatedAt": "2026-07-17T21:51:06.024Z",
   "presentation": {
     "shortName": "Actor Fabric",
     "color": "#6F63D9"
@@ -347,8 +347,8 @@
     {
       "id": "actor-fabric-dogfood-hardening",
       "type": "task",
-      "title": "Actor fabric dogfood and hardening",
-      "summary": "Operate a real workstream through the bound orchestrator and node actor addresses, exercise offline queueing, station replacement, lifecycle routing, provenance promotion, address retirement, and injected partial failures, then reconcile the contract against observed behavior.",
+      "title": "Actor fabric validation loop and hardening",
+      "summary": "Repeatedly operate a real workstream through bound orchestrator and node addresses, exercise offline queueing, replacement, lifecycle routing, provenance, retirement, and injected failures, route findings to bounded repairs, rerun affected probes and the full scenario, and finish with an independent confirming run or a budget/repeated-blocker/scope stop.",
       "status": "planned",
       "attention": "focus",
       "repoIds": [
@@ -364,7 +364,7 @@
       "id": "actor-fabric-closure-gate",
       "type": "gate",
       "title": "Actor fabric closure gate",
-      "summary": "Builder validates actor-specific durability: singleton orchestrator operation, reboot/replacement without transcript dependence, lease fencing, idempotent recovery, implementer/reviewer routing, GitHub authority, provenance promotion, and no Streamliner-owned message transport.",
+      "summary": "Builder validates the actor-loop evidence: bounded attempts and repairs, an independent confirming run, singleton orchestrator operation, reboot/replacement without transcript dependence, lease fencing, idempotent recovery, implementer/reviewer routing, GitHub authority, provenance promotion, and no Streamliner-owned message transport.",
       "status": "planned",
       "attention": "focus",
       "repoIds": [

@@ -146,6 +146,11 @@ launch/relaunch context package. The package must carry:
 - unresolved actions, gates, blockers, and reconciliation obligations needed to
   resume responsibility.
 
+The contract cannot freeze its artifact identity fields until Artifact Sync's
+authority gate accepts `artifact-operations-v1` revision semantics. This is an
+explicit cross-workstream dependency, not an assumption that a local path and Git
+commit are permanent.
+
 Actor Fabric assembles this package at launch and relaunch from the role contract,
 resolved artifacts, Telex state, and actor lifecycle state. Plugin Role Skills
 owns the package requirements and role content, not package assembly or actor

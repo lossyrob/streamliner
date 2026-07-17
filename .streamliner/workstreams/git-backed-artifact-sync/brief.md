@@ -198,10 +198,10 @@ events are routed to the responsible durable role address with pointers to the
 project, commit, changed paths, and affected workstream. Routine clean status
 remains dashboard-only.
 
-**Checkpoint:** Role and launch consumers resolve one trusted single-commit
-artifact snapshot, plugin-owned validation and compatibility failures are
-legible, and responsible actors receive actionable artifact attention without
-polling Git.
+**Checkpoint:** Role and launch consumers resolve one trusted single-revision
+artifact snapshot (with Git commit provenance for the local provider),
+plugin-owned validation and compatibility failures are legible, and responsible
+actors receive actionable artifact attention without polling Git.
 
 ### Wave 4 - Campaign integration validation loop
 
@@ -216,8 +216,8 @@ must include:
 1. installing the canonical Streamliner plugin in a fresh environment;
 2. opening the source repository and bootstrapping the conventional
    `streamliner-artifacts` worktree without personal path instructions;
-3. loading the shared project manifest and a trusted single-commit policy
-   snapshot;
+3. loading the shared project manifest and a trusted single-revision policy
+   snapshot with local Git provenance;
 4. launching the workstream orchestrator from the Streamliner UI using the
    plugin-owned role and launch-policy contracts;
 5. coordinating through a shared Telex backend;
@@ -236,6 +236,26 @@ The validation loop measures remaining setup steps, manual Git choreography,
 false-positive attention, replacement/recovery clarity, conflict ownership, and
 whether a cold second builder can understand the project from the artifact
 history.
+
+Each attempt records the environment identities, plugin/contracts, artifact
+revision and Git provenance, Telex backend/address state, actor/session bindings,
+sync state, injected conflict, and result. A finding is routed to the workstream
+that owns the failed contract or behavior:
+
+- Plugin Role Skills repairs role, launch-policy, or marketplace failures;
+- Actor Fabric repairs addressing, attachment, replacement, or lifecycle-routing
+  failures;
+- Artifact Sync repairs bootstrap, mutation, synchronization, trust, or conflict
+  behavior.
+
+After a repair lands, rerun the affected sub-scenario and then the complete
+cold-builder scenario. The final pass must be run independently by the cold
+second builder rather than by the repair implementer alone. The loop stops when
+that independent pass finds no new blocker, when the configured harness-run
+budget is exhausted, when a blocker fingerprint repeats without new evidence, or
+when a scope/external dependency requires builder disposition. The campaign gate
+consumes the attempt log, bounded repair links, final artifact/Telex provenance,
+remaining risks, and independent confirming run.
 
 **Campaign integration gate:** Two builders can install the role context,
 bootstrap the shared artifact root, launch and replace a role-bound orchestrator,

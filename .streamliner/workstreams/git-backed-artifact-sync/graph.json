@@ -7,7 +7,7 @@
   "status": "active",
   "attention": "focus",
   "createdAt": "2026-07-11T02:58:06.857Z",
-  "updatedAt": "2026-07-17T20:32:37.573Z",
+  "updatedAt": "2026-07-17T21:51:06.024Z",
   "presentation": {
     "shortName": "Artifact Sync",
     "color": "#7B61A8"
@@ -408,8 +408,8 @@
     {
       "id": "campaign-integration-scenario",
       "type": "task",
-      "title": "Run the Shared Project Operations campaign scenario",
-      "summary": "With Namra or another cold second builder, exercise plugin installation, fresh artifact bootstrap, UI-launched orchestrator, shared Telex, reboot or station replacement, implementer/reviewer lifecycle traffic, concurrent isolated change workspaces plus a direct external edit, conflict detection, Telex disposition, and API-mediated durable promotion with provenance.",
+      "title": "Run the Shared Project Operations validation loop",
+      "summary": "With Namra or another cold second builder, repeatedly exercise plugin installation, bootstrap, UI-launched orchestration, shared Telex, replacement, lifecycle traffic, concurrent API change workspaces, direct external edits, conflict disposition, and durable promotion; route findings to owning workstreams, rerun after bounded repairs, and finish with an independent confirming pass or a run-budget/repeated-blocker/scope stop.",
       "status": "planned",
       "attention": "focus",
       "repoIds": [
@@ -445,7 +445,7 @@
       "id": "shared-project-operations-campaign-gate",
       "type": "gate",
       "title": "Shared Project Operations campaign integration gate",
-      "summary": "Builder accepts the complete cold-second-builder scenario: role context installs, artifact bootstrap is private-knowledge-free, the UI launches and replaces a role-bound orchestrator, lifecycle events flow through shared Telex, conflicts stop safely, and dispositions promote durably with Git and Telex provenance.",
+      "summary": "Builder accepts the bounded campaign validation evidence and independent confirming run: role context installs, artifact bootstrap is private-knowledge-free, the UI launches and replaces a role-bound orchestrator, lifecycle events flow through shared Telex, conflicts stop safely, repairs rerun cleanly, and dispositions promote durably with Git and Telex provenance.",
       "status": "planned",
       "attention": "focus",
       "repoIds": [

@@ -7,7 +7,7 @@
   "status": "active",
   "attention": "focus",
   "createdAt": "2026-07-11T03:00:00.000Z",
-  "updatedAt": "2026-07-11T03:00:00.000Z",
+  "updatedAt": "2026-07-17T21:51:06.024Z",
   "repos": [
     {
       "id": "streamliner",
@@ -166,6 +166,18 @@
       ],
       "dependsOn": [
         "role-context-v1-gate"
+      ],
+      "externalDependsOn": [
+        {
+          "id": "artifact-operations-v1",
+          "target": {
+            "projectKey": "streamliner",
+            "workstreamId": "git-backed-artifact-sync",
+            "nodeId": "artifact-root-authority-gate"
+          },
+          "label": "Artifact Sync exports accepted artifact-operations-v1 revision semantics",
+          "status": "pending"
+        }
       ]
     },
     {
