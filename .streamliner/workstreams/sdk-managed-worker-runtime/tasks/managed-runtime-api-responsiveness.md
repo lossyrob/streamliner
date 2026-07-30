@@ -66,4 +66,3 @@ Out of scope:
   without turning the registry into a raw event stream.
 - Tests or repeatable local diagnostics cover event coalescing and API
   responsiveness assumptions.
-

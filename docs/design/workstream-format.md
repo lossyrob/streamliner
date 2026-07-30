@@ -1,22 +1,3 @@
----
-kind: design-doc
-status: current
-last_updated: 2026-07-30
-update_semantics: rewrite-in-place
-authoritative_for: "Workstream artifact format and runtime-state boundaries"
-scope_tags:
-  - workstreams
-  - runtime-state
-  - artifacts
-code_paths:
-  - src/workstream-schema.ts
-  - src/workstream-view-model.ts
-  - src/session-registry*.ts
-references_decisions:
-  - 5
-  - 11
----
-
 # Workstream Artifact Format
 
 A workstream consists of two committed artifacts — a **brief** (`brief.md`) and a **dependency graph** (`graph.json`) — stored together in a workstream directory. These artifacts describe durable plan and progress. Fast-moving operational state lives separately in a local runtime store.
@@ -58,11 +39,12 @@ Fast-changing operational data is not part of the committed artifact set. Stream
     runtime.json
     sessions.json
     tracker-cache.json
+    positions.json
 ```
 
 The global `session-registry/` subtree is graph-independent and persists the builder's tracked-session catalog. Its authoritative file rules, merge behavior, and API contract live in [session-system.md](session-system.md).
 
-`projectKey` comes from `graph.json`. If omitted, it derives from the primary repo ID or the sole repo ID. The per-workstream subtree holds runtime overlay data such as active session IDs, observed session state, tracker snapshots, and transient node claims.
+`projectKey` comes from `graph.json`. If omitted, it derives from the primary repo ID or the sole repo ID. The per-workstream subtree holds runtime overlay data such as active session IDs, observed session state, tracker snapshots, transient node claims, and manual graph-node positions.
 
 Runtime state contracts:
 
@@ -83,6 +65,65 @@ Runtime state contracts:
 
 **Design docs, committed workstream artifacts, and local runtime state are separate layers.** The graph uses `repoId` + `path` references so the builder can place shared artifacts wherever they make sense, while fast-moving operational state stays out of Git.
 
+## Unified docs-site implementation contract
+
+Streamliner's own documentation should publish as one VitePress site rooted at
+`docs/`, not as separate sites per audience. The unified site preserves
+`docs/design/` as the Design section and adds peer sections for User Guide and
+Architecture.
+
+The intended source layout is:
+
+```text
+docs/
+  index.md                 ← site landing page and audience router
+  guide/
+    index.md               ← User Guide starter page
+  architecture/
+    index.md               ← Architecture starter map
+  design/
+    index.md               ← existing Design entry point
+    product.md
+    operating-model.md
+    design-layer.md
+    workstream-format.md
+    concepts/
+    decisions/
+  .vitepress/
+    config.ts              ← unified site config
+```
+
+Wave 2 should move VitePress configuration from the Design section to the
+unified `docs/` root, update `npm run docs:*` scripts to run against `docs`, and
+publish the built site artifact through GitHub Pages. The published navigation
+should make the three audience sections visible at the top level:
+
+| Section | Navigation expectation |
+|---|---|
+| User Guide | User-facing entry in top nav and sidebar, starting at `/guide/` |
+| Architecture | Contributor/agent orientation entry in top nav and sidebar, starting at `/architecture/` |
+| Design | Intended-system authority entry in top nav and sidebar, starting at `/design/` |
+
+Design content should remain source-compatible under `docs/design/`; Wave 2 may
+update VitePress links and sidebar paths, but should not weaken Design authority
+or publish shaping/candidate-workstream planning material. The storage location
+for that planning material is not part of the docs-site contract and may move
+independently.
+
+Minimum starter content means the unified site is inspectable and honest, not
+complete:
+
+| Section | Starter minimum |
+|---|---|
+| Site root | A landing page that identifies the three documentation families, states their authority boundaries, and routes readers to Guide, Architecture, and Design. |
+| User Guide | `docs/guide/index.md` with at least installation/startup pointers, the primary user workflows Streamliner supports today, and a clear note that the section is a starter guide. |
+| Architecture | `docs/architecture/index.md` with a current high-level codebase map: major runtime processes, important source directories, state/storage locations, and where agents should look first. |
+| Design | Existing `docs/design/` content preserved as the normative intended-system section, with decision records still discoverable. |
+
+GitHub Pages publishability is part of the contract: the docs build must produce
+a static artifact suitable for Pages, and any CI or repository Pages settings
+needed to publish that artifact belong to the Wave 2 implementation.
+
 ## Config file (`config.json`)
 
 Every Streamliner project has a config file that tells Streamliner where to find things. It lives alongside the workstreams directory — typically `.streamliner/config.json` in a source repo or `streamliner.json` at the root of a planning repo.
@@ -94,7 +135,20 @@ Every Streamliner project has a config file that tells Streamliner where to find
   "repos": {
     "{repo-id}": {
       "path": "{relative-path-to-repo-root}",
-      "designDocsPath": "docs/design"
+      "docs": {
+        "design": {
+          "path": "docs/design",
+          "required": true
+        },
+        "architecture": {
+          "path": "docs/architecture",
+          "required": false
+        },
+        "userGuide": {
+          "path": "docs/guide",
+          "required": false
+        }
+      }
     }
   }
 }
@@ -113,9 +167,37 @@ Every Streamliner project has a config file that tells Streamliner where to find
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `path` | string | ✓ | Path to the repo root, relative to the config file |
-| `designDocsPath` | string | | Path to design docs within the repo root. Default: `"docs/design"` |
+| `docs` | object | | Documentation-family catalog for the repo. If omitted, Streamliner uses conventional defaults and compatibility fields. |
+| `designDocsPath` | string | | Compatibility alias for `docs.design.path`. Default: `"docs/design"` |
 
-Repo IDs in the config must match the repo IDs in `graph.json` `repos` arrays and `designRefs`. The config describes the shareable artifact layout — it does not point at the runtime store. `designRefs.path` values are always repo-root-relative, not relative to `designDocsPath`.
+Documentation-family entries use this shape:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `path` | string | ✓ | Path to the documentation-family root, relative to the repo root |
+| `required` | boolean | | Whether missing docs in this family should block normal Streamliner context expectations. Default: `true` for Design, `false` for Architecture and User Guide. |
+
+Conventional defaults are:
+
+| Family | Config key | Default path | Required default |
+|---|---|---|---|
+| Design | `design` | `docs/design` | `true` |
+| Architecture | `architecture` | `docs/architecture` | `false` |
+| User Guide | `userGuide` | `docs/guide` | `false` |
+
+`docs/user-guide` is an accepted discovery fallback for User Guide when no
+explicit config exists, but new Streamliner docs should use `docs/guide`.
+
+Wave 3 should treat `docs.design.path` as the canonical target shape while
+preserving `designDocsPath` as a backward-compatible read alias. If both are
+present, `docs.design.path` wins. Wave 3 implementation planning must confirm
+all current `designDocsPath` consumers before changing parser or context-package
+code.
+
+Repo IDs in the config must match the repo IDs in `graph.json` `repos` arrays,
+`designRefs`, and `docRefs`. The config describes the shareable artifact layout
+— it does not point at the runtime store. Reference paths are always
+repo-root-relative, not relative to the configured documentation-family root.
 
 ## The Brief (`brief.md`)
 
@@ -186,6 +268,7 @@ The graph is the structured, machine-readable representation of the workstream's
 | `launchDefaults` | object | | Optional launch defaults for this workstream (see Launch Defaults). These pre-fill launch UI/API configuration without changing per-launch override behavior. |
 | `repos` | array | ✓ | Repositories involved (see Repo) |
 | `designRefs` | array | | Optional. Project-level design docs relevant to this workstream (see Design Reference). Workers retain access to the full design set; this field is a hint about what to surface first during context assembly and UI navigation. |
+| `docRefs` | array | | Optional. Typed hints to optional documentation families such as Architecture and User Guide (see Documentation Reference). These are surfaced as context and maintenance hints, not required inputs. |
 | `nodes` | array | ✓ | Work items and gates (see Node) |
 | `checkpoints` | array | ✓ | Progress milestones (see Checkpoint) |
 
@@ -199,6 +282,69 @@ Each design reference points to a project-level design artifact in a declared re
 | `path` | string | ✓ | Path to the design doc, relative to the repo root |
 
 Include the repo's design index when it has a design set, plus the specific docs that are likely to matter first. Do not list every document in the design corpus, and do not treat this field as an allowlist over what a worker may read.
+
+### Documentation Reference
+
+`docRefs` are optional typed documentation hints. They keep `designRefs` focused
+on normative Design authority while allowing workstreams to surface Architecture
+and User Guide pages that may help a worker orient or update user-facing docs.
+
+```json
+{
+  "docRefs": [
+    {
+      "kind": "architecture",
+      "repoId": "streamliner",
+      "path": "docs/architecture/session-system.md",
+      "purpose": "Current code map for launch context and registry modules"
+    },
+    {
+      "kind": "userGuide",
+      "repoId": "streamliner",
+      "path": "docs/guide/sessions.md",
+      "purpose": "User-facing behavior affected by this workstream"
+    }
+  ]
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `kind` | `"architecture"` or `"userGuide"` | ✓ | Documentation family for the hint |
+| `repoId` | string | ✓ | Declared repository ID that owns the document |
+| `path` | string | ✓ | Path to the document, relative to the repo root |
+| `purpose` | string | | Why this reference matters to the workstream or selected nodes |
+
+Missing optional documentation families or paths do not block graph parsing or
+worker launch. Context assembly surfaces them as unavailable optional hints, and
+workers report the impact in their final summary so reconciliation can decide
+whether to add docs, update downstream nodes, or leave the absence intentional.
+
+### Worker documentation impact
+
+Worker final summaries should include a documentation-impact block when a task
+touches behavior, implementation shape, or user-facing workflows:
+
+```markdown
+## Documentation impact
+
+- Design: changed | no change | follow-up needed — rationale
+- Architecture: changed | no change | absent | follow-up needed — rationale
+- User Guide: changed | no change | absent | follow-up needed — rationale
+```
+
+Workers update a documentation family when their task changes the thing that
+family owns:
+
+| Change type | Expected documentation behavior |
+|---|---|
+| Intended behavior, invariant, or architectural constraint changes | Update Design and/or add a decision record. |
+| Code organization, subsystem responsibilities, runtime flow, storage, or operational sharp edge changes | Update Architecture if that family exists; otherwise report follow-up impact. |
+| User-visible workflow, setup, command, UI behavior, or troubleshooting path changes | Update User Guide if that family exists; otherwise report follow-up impact. |
+
+Workers should not create optional documentation families opportunistically unless
+their node explicitly includes documentation structure. Reconciliation treats
+absent optional docs as follow-up context, not a failed launch or failed node.
 
 ### Presentation
 
@@ -261,6 +407,7 @@ Each node is a unit of work in the dependency graph.
 | `tracker` | object | | Where the node's spec lives (see Tracker Reference) |
 | `launch` | object | | Durable node launch classification and any existing shared-branch contract (see Node Launch Configuration) |
 | `dependsOn` | string[] | ✓ | IDs of nodes that must complete before this one |
+| `externalDependsOn` | array | | External dependencies outside this graph (see External Dependency). These affect operational readiness without rewriting the committed graph when upstream status changes. |
 
 ### Node Launch Configuration
 
@@ -297,6 +444,32 @@ node.
 
 Research nodes include **design sessions** — nodes whose purpose is to make implicit design explicit before downstream implementation begins. A design-session node is a valid early-wave node when the workstream's design is still implicit in the brief and graph. Its output is design documents and decision records, not code. After a design session completes, the downstream implementation graph can be refined because the intended design is now written down.
 
+### External Dependency
+
+`externalDependsOn` records prerequisites outside the current graph: another
+Streamliner workstream, a specific node in another workstream, or a manual/URL
+dependency that cannot be resolved from tracked graph data. Use same-graph
+`dependsOn` for local prerequisites.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `id` | string | ✓ | Kebab-case id unique within the owning node's `externalDependsOn` array |
+| `target` | object | | Resolvable upstream workstream target. Omit only for manual/URL dependencies. |
+| `target.projectKey` | string | ✓ when `target` present | Upstream project namespace |
+| `target.workstreamId` | string | ✓ when `target` present | Upstream workstream id |
+| `target.nodeId` | string | | Optional upstream node id; omitted means the whole workstream is the target |
+| `label` | string | | UI label; otherwise derived from target or URL |
+| `url` | string | | Optional tracker/design/external-system link |
+| `status` | `"pending"` or `"satisfied"` | | Manual override used only when the target is absent, unresolved, or errors; resolved targets are authoritative |
+
+A targeted dependency is satisfied when the upstream node is `"completed"` or
+`"retired"`, or when the upstream workstream is `"completed"`. Unresolved
+targeted dependencies are not ready unless manually marked `"satisfied"`.
+Streamliner renders target-backed cross-workstream dependencies as
+Streamliner-style ghost nodes with an explicit "other workstream" marker.
+Manual or URL-only external blockers keep the generic red dashed blocker
+treatment. Both forms use dashed edges into the local node.
+
 ### Artifact state vs. operational state
 
 The `status` field on workstreams, nodes, and checkpoints is the **durable artifact view** — the latest committed understanding. Streamliner also derives a fresher **operational view** at runtime by combining the committed graph with local runtime state, tracker snapshots, and session activity.
@@ -306,6 +479,10 @@ The rule:
 1. **Commit artifact changes** when the plan changes or durable progress should be promoted.
 2. **Update runtime state** for fast-moving operational facts.
 3. **Render the UI from both** — the graph is the committed base layer; runtime/tracker data is the overlay.
+
+Manual graph positions are runtime overlay state. Moving a card writes a
+machine-local positions file so the layout survives restarts and graph refreshes
+without churning `graph.json`.
 
 ### Repo
 
@@ -387,7 +564,12 @@ These constraints are enforced at parse time. Violations cause errors.
 | 11 | Timestamps are ISO 8601 |
 | 12 | `schemaVersion` must equal `1` |
 | 13 | `projectKey` is kebab-case when present |
-| 14 | Existing-shared nodes declare exactly one `repoId` and all shared launch fields |
-| 15 | Standard launch modes do not carry shared-branch fields |
+| 14 | `docRefs.kind` is one of the supported documentation-reference kinds |
+| 15 | `docRefs.repoId` must match a declared repo |
+| 16 | `docRefs.path` is repo-root-relative |
+| 17 | `externalDependsOn[].id` values are unique within each node |
+| 18 | External targets cannot point at the owning node |
+| 19 | Existing-shared nodes declare exactly one `repoId` and all shared launch fields |
+| 20 | Standard launch modes do not carry shared-branch fields |
 
-Runtime validation (tracker-cache freshness, cross-reference checks) is separate from parse-time schema validation.
+Runtime validation (tracker-cache freshness, cross-reference checks, and external target resolution) is separate from parse-time schema validation.

@@ -23,6 +23,10 @@ import {
   updateWorkstreamConfigurationFile,
   type WorkstreamConfigurationUpdateInput,
 } from "../workstream-configuration";
+import {
+  readWorkstreamPositions,
+  writeWorkstreamPositions,
+} from "../workstream-positions";
 import type { WorkstreamSourceType } from "../../workstream-registry-contract";
 
 function requestPath(body: unknown): string | null {
@@ -75,6 +79,13 @@ function requestConfiguration(body: unknown): WorkstreamConfigurationUpdateInput
     configuration.launchDefaults = body.launchDefaults as WorkstreamConfigurationUpdateInput["launchDefaults"];
   }
   return hasConfigurationField ? configuration : null;
+}
+
+function requestPositions(body: unknown): unknown | null {
+  if (!isRecord(body) || !hasOwn(body, "positions")) {
+    return null;
+  }
+  return body.positions;
 }
 
 function errorCode(error: unknown): string | undefined {
@@ -249,6 +260,57 @@ export function createWorkstreamsRouter(options: WorkstreamRegistryOptions = {})
         return;
       }
       res.status(500).json({ code: "workstream_file_unreadable", error: message });
+    }
+  });
+
+  async function assertReadableWorkstream(projectKey: string, workstreamId: string): Promise<void> {
+    try {
+      await readRegisteredGraph(projectKey, workstreamId, options);
+    } catch (error: unknown) {
+      if (errorCode(error) !== "ENOTREGISTERED") {
+        throw error;
+      }
+      await readSourceWorkstreamGraph(projectKey, workstreamId, options);
+    }
+  }
+
+  router.get("/workstreams/:projectKey/:workstreamId/positions", async (req, res) => {
+    const { projectKey, workstreamId } = req.params;
+    try {
+      await assertReadableWorkstream(projectKey, workstreamId);
+      const document = await readWorkstreamPositions(projectKey, workstreamId, options);
+      res.setHeader("Cache-Control", "no-cache");
+      res.json(document);
+    } catch (error: unknown) {
+      sendRegistryError(res, error);
+    }
+  });
+
+  router.put("/workstreams/:projectKey/:workstreamId/positions", async (req, res) => {
+    const positions = requestPositions(req.body);
+    if (positions === null) {
+      res.status(400).json({
+        code: "positions_required",
+        error: "Expected request body to include positions.",
+      });
+      return;
+    }
+
+    const { projectKey, workstreamId } = req.params;
+    try {
+      await assertReadableWorkstream(projectKey, workstreamId);
+      const document = await writeWorkstreamPositions(
+        projectKey,
+        workstreamId,
+        positions,
+        options,
+      );
+      res.json({
+        ...document,
+        savedAt: (options.now?.() ?? new Date()).toISOString(),
+      });
+    } catch (error: unknown) {
+      sendRegistryError(res, error);
     }
   });
 

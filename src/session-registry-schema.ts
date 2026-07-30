@@ -234,6 +234,7 @@ export const SESSION_REGISTRY_RUNTIME_PROGRESS_EVENT_TYPES = [
   "assistant_status",
   "tool_started",
   "tool_completed",
+  "subagent_status",
   "permission_decision",
   "mcp_status",
   "skill_status",

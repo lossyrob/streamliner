@@ -525,6 +525,7 @@ describe("reconcileOrphanReservedRows", () => {
     const result = reconcileOrphanReservedRows(registryStore, claimStore);
     expect(result.rowsDeleted).toBe(0);
     expect(result.rowsGraphBindingCleared).toBe(0);
+    expect(result.rowsGraphBindingRestored).toBe(0);
     const row = registryStore.getSession("orphan-with-session");
     expect(row?.copilotSessionId).toBe("real-session");
     expect(row?.graphBinding).toEqual({
@@ -536,6 +537,54 @@ describe("reconcileOrphanReservedRows", () => {
     const second = reconcileOrphanReservedRows(registryStore, claimStore);
     expect(second.rowsDeleted).toBe(0);
     expect(second.rowsGraphBindingCleared).toBe(0);
+    expect(second.rowsGraphBindingRestored).toBe(0);
+  });
+
+  it("restores graphBinding for older launched rows whose binding was cleared", () => {
+    registryStore.upsertSession({
+      id: "cleared-with-session",
+      title: "Recovered graph session",
+      description: "Graph launch for workstream sdk-managed-worker-runtime, node managed-node.",
+      cwd: "C:/x",
+      repo: null,
+      branch: null,
+      tags: [],
+      origin: { kind: "launched", launchClaimId: "pruned-claim" },
+      lifecycleStatus: "active",
+      graphBinding: null,
+    });
+    registryStore.attachObservedSession("cleared-with-session", {
+      copilotSessionId: "real-session",
+      cwd: "C:/x",
+      lastSeenAt: "2026-05-02T01:00:00.000Z",
+    });
+    registryStore.patchRuntimeMetadata("cleared-with-session", {
+      runtimeKind: "managed-sdk",
+      runtimeOwner: "streamliner-sdk",
+      lifecycleState: "pr_ready",
+      permissionProfile: "managed-autonomous",
+      launchClaimId: "pruned-claim",
+      progressEvents: [{
+        type: "lifecycle",
+        message: "Managed SDK launch reserved canonical registry row.",
+        data: {
+          workstreamId: "sdk-managed-worker-runtime",
+          nodeId: "managed-node",
+          launchClaimId: "pruned-claim",
+        },
+      }],
+    });
+
+    const result = reconcileOrphanReservedRows(registryStore, claimStore);
+    expect(result.rowsDeleted).toBe(0);
+    expect(result.rowsGraphBindingCleared).toBe(0);
+    expect(result.rowsGraphBindingRestored).toBe(1);
+    const row = registryStore.getSession("cleared-with-session");
+    expect(row?.graphBinding).toEqual({
+      workstreamId: "sdk-managed-worker-runtime",
+      nodeId: "managed-node",
+      launchClaimId: "pruned-claim",
+    });
   });
 
   it("preserves orphan managed SDK rows without a copilotSessionId and keeps graphBinding", () => {

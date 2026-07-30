@@ -9,7 +9,12 @@ import type {
   WorkstreamNodeLaunchMode,
 } from "./workstream-schema";
 
-export type NodeLaunchPreferredTerminal = "default" | "windows-terminal" | "powershell";
+export type NodeLaunchPreferredTerminal =
+  | "default"
+  | "windows-terminal"
+  | "powershell"
+  | "mac-terminal"
+  | "iterm2";
 export type NodeLaunchRuntimeKind = "terminal-cli" | "managed-sdk";
 
 export interface NodeLaunchTerminalPreferences {
@@ -301,7 +306,7 @@ export interface NodeLaunchOperationError {
 export interface NodeTerminalLaunchResponse {
   launchClaim: NodeLaunchClaimState;
   terminal: {
-    method: "windows-terminal" | "powershell";
+    method: "windows-terminal" | "powershell" | "mac-terminal" | "iterm2";
     pid?: number;
   };
   cwd: string;
@@ -315,7 +320,7 @@ export interface NodeTerminalLaunchResponse {
 export interface NodeCompanionTerminalLaunchResponse {
   launchClaim?: NodeLaunchClaimState;
   terminal: {
-    method: "windows-terminal" | "powershell";
+    method: "windows-terminal" | "powershell" | "mac-terminal" | "iterm2";
     pid?: number;
   };
   cwd: string;

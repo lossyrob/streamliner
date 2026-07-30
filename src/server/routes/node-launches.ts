@@ -41,6 +41,14 @@ interface ParsedResumeBody extends ParsedBody {
   launchClaimId: string;
 }
 
+const NODE_TERMINAL_PREFERENCES = [
+  "default",
+  "windows-terminal",
+  "powershell",
+  "mac-terminal",
+  "iterm2",
+] as const;
+
 function hasNonLoopbackForwardedFor(value: string | string[] | undefined): boolean {
   if (!value) {
     return false;
@@ -255,14 +263,13 @@ function parseTerminal(value: unknown): PawLaunchTerminalPreferences {
   }
   let preferredTerminal: PawLaunchTerminalPreferences["preferredTerminal"] = "default";
   if (
-    value.preferredTerminal === "windows-terminal" ||
-    value.preferredTerminal === "powershell" ||
-    value.preferredTerminal === "default"
+    typeof value.preferredTerminal === "string" &&
+    NODE_TERMINAL_PREFERENCES.includes(value.preferredTerminal as (typeof NODE_TERMINAL_PREFERENCES)[number])
   ) {
-    preferredTerminal = value.preferredTerminal;
+    preferredTerminal = value.preferredTerminal as PawLaunchTerminalPreferences["preferredTerminal"];
   } else if (value.preferredTerminal !== undefined) {
     throw badRequest(
-      "handoff.terminal.preferredTerminal must be \"default\", \"windows-terminal\", or \"powershell\".",
+      `handoff.terminal.preferredTerminal must be one of: ${NODE_TERMINAL_PREFERENCES.map((entry) => `"${entry}"`).join(", ")}.`,
       "handoff.terminal.preferredTerminal",
     );
   }

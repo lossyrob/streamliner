@@ -13,7 +13,10 @@ import {
   githubPullRequestSnapshotTone,
   githubStatusToneClass,
 } from "../github-status-view";
-import type { WorkstreamGraphNodeData } from "../workstream-graph";
+import type {
+  WorkstreamExternalGraphNodeData,
+  WorkstreamGraphNodeData,
+} from "../workstream-graph";
 import { trackerLabel, trackerUrl } from "../workstream-links";
 
 function formatLabel(value: string): string {
@@ -390,4 +393,50 @@ export function WorkstreamGraphGateNode({
   data,
 }: NodeProps<Node<WorkstreamGraphNodeData>>) {
   return <NodeShell data={data} gate />;
+}
+
+export function WorkstreamExternalDependencyNode({
+  data,
+}: NodeProps<Node<WorkstreamExternalGraphNodeData>>) {
+  const dependency = data.dependency;
+  const isCrossWorkstream = Boolean(dependency.target);
+  const rootClassName = [
+    "sl-node",
+    isCrossWorkstream ? "cross-workstream" : "external",
+    highlightClassName(data.highlight),
+    dependency.satisfied ? "status-green" : "status-red",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  return (
+    <div className={rootClassName} onDoubleClick={data.onOpenTarget ?? undefined}>
+      <Handle isConnectable={false} position={Position.Bottom} type="source" />
+      <Handle isConnectable={false} position={Position.Right} type="source" />
+      {isCrossWorkstream ? (
+        <div className="sl-node-ghost-marker" title="Dependency from another Streamliner workstream">
+          <span aria-hidden="true">↗</span>
+          <span>other workstream</span>
+        </div>
+      ) : null}
+      <div className="sl-node-badges">
+        <span className={`sl-node-pill ${isCrossWorkstream ? "status-accent" : "status-red"}`}>
+          {isCrossWorkstream ? "XWS" : "EXT"}
+        </span>
+        <span className={`sl-node-pill ${dependency.satisfied ? "status-green" : "status-red"}`}>
+          {dependency.statusLabel}
+        </span>
+      </div>
+      <div className="sl-node-title">{dependency.label}</div>
+      <div className="sl-node-summary">{dependency.detail}</div>
+      <div className="sl-node-meta">
+        <span>
+          {dependency.target
+            ? `${dependency.target.projectKey}/${dependency.target.workstreamId}`
+            : "Manual external dependency"}
+        </span>
+        {dependency.archived ? <span>archived</span> : null}
+      </div>
+    </div>
+  );
 }

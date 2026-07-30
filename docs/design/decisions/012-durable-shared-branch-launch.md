@@ -1,14 +1,4 @@
----
-kind: decision
-number: 11
-status: accepted
-date: 2026-07-30
-update_semantics: append-only
-superseded_by: null
-supersedes: null
----
-
-# 011. Durable shared-branch launch classification
+# 012. Durable shared-branch launch classification
 
 ## Context
 

@@ -8,7 +8,12 @@ export const DEFAULT_PAW_WORKFLOW_INSTRUCTIONS = [
 ].join("\n");
 
 export type TerminalLaunchMode = "manual";
-export type PreferredTerminal = "default" | "windows-terminal" | "powershell";
+export type PreferredTerminal =
+  | "default"
+  | "windows-terminal"
+  | "powershell"
+  | "mac-terminal"
+  | "iterm2";
 
 export interface PawLaunchTerminalConfiguration {
   launchMode: TerminalLaunchMode;

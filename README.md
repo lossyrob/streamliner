@@ -54,6 +54,9 @@ npm run dev
 ```
 
 On macOS/Linux, use `cp .env.template .env` instead of `Copy-Item`.
+Visible worker terminal launches use the local platform: Windows opens Windows
+Terminal or PowerShell; on macOS, Streamliner opens Apple Terminal.app by
+default and can explicitly use iTerm2.
 
 The checked-in `.env.template` points Streamliner at the sample session-launching workstream and sets the launch-context synthesis model to Claude Sonnet 4.6:
 

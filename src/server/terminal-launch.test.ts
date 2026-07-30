@@ -1,5 +1,5 @@
 import type { ChildProcess } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
@@ -9,18 +9,24 @@ import {
   buildSpawnEnv,
   copilotTerminalLaunchCooldownMs,
   buildCopilotInteractiveCommand,
+  buildCopilotInteractivePosixCommand,
   buildCopilotResumeCommand,
+  buildCopilotResumePosixCommand,
   getDefaultTerminalLaunchAdapter,
-  ensureCopilotPluginsAvailable,
+  MacTerminalLaunchAdapter,
+  resolveCopilotPluginDirsForLaunch,
   normalizeTerminalLaunchRequest,
+  selectDefaultTerminalLaunchAdapter,
   isWindowsTerminalAvailable,
   clearWindowsTerminalCache,
   launchCopilotTerminal,
   launchTerminal,
+  quotePosixShellLiteral,
   quotePowerShellLiteral,
   resetCopilotTerminalLaunchQueueForTest,
   type TerminalLaunchAdapter,
   type TerminalLaunchExecutor,
+  WindowsTerminalLaunchAdapter,
 } from "./terminal-launch";
 
 vi.mock("node:child_process", () => {
@@ -61,6 +67,34 @@ function readLaunchScriptFromSpawnCall(callIndex = 0): { path: string; content: 
     path: scriptPath,
     content: readFileSync(scriptPath, "utf8"),
   };
+}
+
+function readAppleScriptFromSpawnCall(callIndex = 0): string {
+  const args = vi.mocked(spawn).mock.calls[callIndex]?.[1] as string[] | undefined;
+  const scriptFlagIndex = args?.indexOf("-e") ?? -1;
+  const appleScript = scriptFlagIndex >= 0 ? args?.[scriptFlagIndex + 1] : undefined;
+  if (!appleScript) {
+    throw new Error(`Missing AppleScript in spawn call ${callIndex}.`);
+  }
+  return appleScript;
+}
+
+function readMacLaunchScriptFromSpawnCall(callIndex = 0): { path: string; content: string } {
+  const appleScript = readAppleScriptFromSpawnCall(callIndex);
+  const scriptPath = appleScript?.match(/streamliner-launch '([^']+\.sh)'/)?.[1];
+  if (!scriptPath) {
+    throw new Error(`Missing macOS launch script path in spawn call ${callIndex}.`);
+  }
+  return {
+    path: scriptPath,
+    content: readFileSync(scriptPath, "utf8"),
+  };
+}
+
+const windowsAdapter = new WindowsTerminalLaunchAdapter();
+
+function launchWithWindowsAdapter(options: Parameters<typeof launchTerminal>[0]) {
+  return launchTerminal(options, windowsAdapter);
 }
 
 describe("terminal-launch", () => {
@@ -149,7 +183,7 @@ describe("terminal-launch", () => {
     });
 
     it("spawns wt.exe with correct args for cwd only", () => {
-      launchTerminal({ cwd: "C:\\Users\\test\\workspace" });
+      launchWithWindowsAdapter({ cwd: "C:\\Users\\test\\workspace" });
 
       expect(spawn).toHaveBeenCalledWith(
         "wt.exe",
@@ -159,7 +193,7 @@ describe("terminal-launch", () => {
     });
 
     it("includes title when provided", () => {
-      launchTerminal({
+      launchWithWindowsAdapter({
         cwd: "C:\\Users\\test\\workspace",
         title: "My Session",
       });
@@ -178,7 +212,7 @@ describe("terminal-launch", () => {
     });
 
     it("includes valid tabColor", () => {
-      launchTerminal({
+      launchWithWindowsAdapter({
         cwd: "C:\\Users\\test\\workspace",
         tabColor: "#FF5733",
       });
@@ -191,7 +225,7 @@ describe("terminal-launch", () => {
     });
 
     it("omits invalid tabColor (invalid format)", () => {
-      launchTerminal({
+      launchWithWindowsAdapter({
         cwd: "C:\\Users\\test\\workspace",
         tabColor: "red",
       });
@@ -204,7 +238,7 @@ describe("terminal-launch", () => {
     });
 
     it("omits invalid tabColor (wrong hex format)", () => {
-      launchTerminal({
+      launchWithWindowsAdapter({
         cwd: "C:\\Users\\test\\workspace",
         tabColor: "#GGG",
       });
@@ -217,7 +251,7 @@ describe("terminal-launch", () => {
     });
 
     it("omits invalid tabColor (missing hash)", () => {
-      launchTerminal({
+      launchWithWindowsAdapter({
         cwd: "C:\\Users\\test\\workspace",
         tabColor: "FF0000",
       });
@@ -230,7 +264,7 @@ describe("terminal-launch", () => {
     });
 
     it("includes command when provided", () => {
-      launchTerminal({
+      launchWithWindowsAdapter({
         cwd: "C:\\Users\\test\\workspace",
         command: "npm run dev",
       });
@@ -264,7 +298,7 @@ describe("terminal-launch", () => {
         return Buffer.from("");
       });
 
-      launchTerminal({
+      launchWithWindowsAdapter({
         cwd: "C:\\Users\\test\\workspace",
         command: "npm run dev",
       });
@@ -288,7 +322,7 @@ describe("terminal-launch", () => {
     });
 
     it("passes additional environment values to the spawned terminal", () => {
-      launchTerminal({
+      launchWithWindowsAdapter({
         cwd: "C:\\Users\\test\\workspace",
         env: { STREAMLINER_LAUNCH_CLAIM_ID: "claim-1" },
       });
@@ -301,7 +335,7 @@ describe("terminal-launch", () => {
     });
 
     it("adds launch-local Copilot prompt bypass env before launching Streamliner Copilot workers", () => {
-      launchTerminal({
+      launchWithWindowsAdapter({
         cwd: "C:\\Users\\test\\workspace",
         command: "copilot --yolo",
         prepareCopilotCli: true,
@@ -316,7 +350,7 @@ describe("terminal-launch", () => {
     });
 
     it("includes title, color, and command together", () => {
-      launchTerminal({
+      launchWithWindowsAdapter({
         cwd: "C:\\Users\\test\\workspace",
         title: "Dev",
         tabColor: "#00FF00",
@@ -346,7 +380,7 @@ describe("terminal-launch", () => {
     });
 
     it("escapes semicolons in title and cwd to prevent WT subcommand injection", () => {
-      launchTerminal({
+      launchWithWindowsAdapter({
         cwd: "C:\\Users\\test;workspace",
         title: "foo ; new-tab cmd.exe",
       });
@@ -371,7 +405,7 @@ describe("terminal-launch", () => {
       };
       vi.mocked(spawn).mockReturnValue(mockChild as unknown as ChildProcess);
 
-      launchTerminal({ cwd: "C:\\Users\\test\\workspace" });
+      launchWithWindowsAdapter({ cwd: "C:\\Users\\test\\workspace" });
 
       expect(mockChild.unref).toHaveBeenCalled();
     });
@@ -383,7 +417,7 @@ describe("terminal-launch", () => {
       };
       vi.mocked(spawn).mockReturnValue(mockChild as unknown as ChildProcess);
 
-      const result = launchTerminal({ cwd: "C:\\Users\\test\\workspace" });
+      const result = launchWithWindowsAdapter({ cwd: "C:\\Users\\test\\workspace" });
 
       expect(result).toEqual({
         method: "windows-terminal",
@@ -400,7 +434,7 @@ describe("terminal-launch", () => {
     });
 
     it("falls back to PowerShell when WT unavailable", () => {
-      launchTerminal({ cwd: "C:\\Users\\test\\workspace" });
+      launchWithWindowsAdapter({ cwd: "C:\\Users\\test\\workspace" });
 
       expect(spawn).toHaveBeenCalledWith(
         "powershell.exe",
@@ -417,7 +451,7 @@ describe("terminal-launch", () => {
         throw new Error("not found");
       });
 
-      launchTerminal({ cwd: "C:\\Users\\test\\workspace" });
+      launchWithWindowsAdapter({ cwd: "C:\\Users\\test\\workspace" });
 
       expect(spawn).toHaveBeenCalledWith(
         "pwsh.exe",
@@ -427,7 +461,7 @@ describe("terminal-launch", () => {
     });
 
     it("includes command in PowerShell fallback", () => {
-      launchTerminal({
+      launchWithWindowsAdapter({
         cwd: "C:\\Users\\test\\workspace",
         command: "npm run dev",
       });
@@ -447,7 +481,7 @@ describe("terminal-launch", () => {
     });
 
     it("does not force all-allow env when a prepared Copilot launch has no all-allow flag", () => {
-      launchTerminal({
+      launchWithWindowsAdapter({
         cwd: "C:\\Users\\test\\workspace",
         command: "copilot --resume=session-1",
         prepareCopilotCli: true,
@@ -462,7 +496,7 @@ describe("terminal-launch", () => {
     });
 
     it("escapes single quotes in PowerShell path", () => {
-      launchTerminal({
+      launchWithWindowsAdapter({
         cwd: "C:\\Users\\O'Brien\\workspace",
       });
 
@@ -478,7 +512,7 @@ describe("terminal-launch", () => {
     });
 
     it("escapes single quotes in PowerShell path with command", () => {
-      launchTerminal({
+      launchWithWindowsAdapter({
         cwd: "C:\\Users\\O'Brien\\workspace",
         command: "npm run dev",
       });
@@ -504,7 +538,7 @@ describe("terminal-launch", () => {
       };
       vi.mocked(spawn).mockReturnValue(mockChild as unknown as ChildProcess);
 
-      launchTerminal({ cwd: "C:\\Users\\test\\workspace" });
+      launchWithWindowsAdapter({ cwd: "C:\\Users\\test\\workspace" });
 
       expect(mockChild.unref).toHaveBeenCalled();
     });
@@ -516,7 +550,7 @@ describe("terminal-launch", () => {
       };
       vi.mocked(spawn).mockReturnValue(mockChild as unknown as ChildProcess);
 
-      const result = launchTerminal({ cwd: "C:\\Users\\test\\workspace" });
+      const result = launchWithWindowsAdapter({ cwd: "C:\\Users\\test\\workspace" });
 
       expect(result).toEqual({
         method: "powershell",
@@ -534,7 +568,7 @@ describe("terminal-launch", () => {
         return Buffer.from("");
       });
 
-      launchTerminal({
+      launchWithWindowsAdapter({
         cwd: "C:\\Users\\test\\workspace",
         preferredTerminal: "powershell",
       });
@@ -548,10 +582,150 @@ describe("terminal-launch", () => {
     });
   });
 
+  describe("macOS Terminal adapter", () => {
+    const macAdapter = new MacTerminalLaunchAdapter();
+
+    it("spawns Terminal.app via osascript for the default preference and returns the osascript pid", () => {
+      const mockChild = {
+        pid: 24680,
+        unref: vi.fn(),
+      };
+      vi.mocked(spawn).mockReturnValue(mockChild as unknown as ChildProcess);
+
+      const result = launchTerminal({
+        cwd: "/Users/test/workspace",
+        title: "Mac Session",
+      }, macAdapter);
+
+      expect(spawn).toHaveBeenCalledWith(
+        "osascript",
+        [
+          "-e",
+          expect.stringContaining("tell application \"Terminal\" to do script"),
+        ],
+        expect.objectContaining({ detached: true, stdio: "ignore" }),
+      );
+      expect(vi.mocked(spawn).mock.calls[0][1]).toEqual(expect.arrayContaining([
+        expect.stringContaining("streamliner-launch '"),
+      ]));
+      const appleScript = readAppleScriptFromSpawnCall();
+      expect(appleScript).toContain("tell application \"Terminal\" to do script");
+      expect(appleScript).toContain("/bin/zsh -lc");
+      expect(appleScript).toContain("exec \\\"$1\\\"");
+      expect(appleScript).toContain("streamliner-launch '");
+      expect(mockChild.unref).toHaveBeenCalled();
+      expect(result).toEqual({ method: "mac-terminal", pid: 24680 });
+    });
+
+    it("spawns Terminal.app for an explicit mac-terminal preference", () => {
+      const result = launchTerminal({
+        cwd: "/Users/test/workspace",
+        preferredTerminal: "mac-terminal",
+      }, macAdapter);
+
+      expect(result.method).toBe("mac-terminal");
+      expect(readAppleScriptFromSpawnCall()).toContain(
+        "tell application \"Terminal\" to do script",
+      );
+      expect(readAppleScriptFromSpawnCall()).not.toContain("iTerm2");
+    });
+
+    it("spawns iTerm2 via osascript when explicitly requested", () => {
+      const mockChild = {
+        pid: 13579,
+        unref: vi.fn(),
+      };
+      vi.mocked(spawn).mockReturnValue(mockChild as unknown as ChildProcess);
+
+      const result = launchTerminal({
+        cwd: "/Users/test/workspace",
+        preferredTerminal: "iterm2",
+        title: "iTerm Session",
+      }, macAdapter);
+
+      const appleScript = readAppleScriptFromSpawnCall();
+      expect(spawn).toHaveBeenCalledWith(
+        "osascript",
+        [
+          "-e",
+          expect.stringContaining(
+            "tell application \"iTerm2\" to create window with default profile command",
+          ),
+        ],
+        expect.objectContaining({ detached: true, stdio: "ignore" }),
+      );
+      expect(appleScript).toContain("/bin/zsh -lc");
+      expect(appleScript).toContain("exec \\\"$1\\\"");
+      expect(appleScript).toContain("streamliner-launch '");
+      expect(appleScript).not.toContain("Terminal\" to do script");
+      expect(mockChild.unref).toHaveBeenCalled();
+      expect(result).toEqual({ method: "iterm2", pid: 13579 });
+    });
+
+    it.each(["mac-terminal", "iterm2"] as const)(
+      "writes a shared zsh launcher with safe cwd, env, title, command, and shell handoff for %s",
+      (preferredTerminal) => {
+        launchTerminal({
+          cwd: "/Users/test/O'Brien/work space",
+          command: "echo \"ready\" && copilot --yolo",
+          env: { STREAMLINER_LAUNCH_CLAIM_ID: "claim 'one'" },
+          prepareCopilotCli: true,
+          preferredTerminal,
+          title: "Rob's Session",
+        }, macAdapter);
+
+        const script = readMacLaunchScriptFromSpawnCall();
+        expect(script.path).toMatch(/launch-.*\.sh$/);
+        expect(script.content).toContain("#!/bin/zsh\nset -euo pipefail\nrm -f -- \"$0\"");
+        expect(script.content).toContain("cd -- '/Users/test/O'\\''Brien/work space'");
+        expect(script.content).toContain("export STREAMLINER_LAUNCH_CLAIM_ID='claim '\\''one'");
+        expect(script.content).toContain("export COPILOT_SETUP_TERMINAL='false'");
+        expect(script.content).toContain("export COPILOT_ALLOW_ALL='true'");
+        expect(script.content).toContain("printf '\\033]0;%s\\007' 'Rob'\\''s Session'");
+        expect(script.content).toContain("echo \"ready\" && copilot --yolo");
+        expect(script.content).toContain("streamliner_command_status=$?");
+        expect(script.content).toContain("exec /bin/zsh -l");
+      },
+    );
+
+    it("lands in cwd with an interactive shell when no command is provided", () => {
+      launchTerminal({
+        cwd: "/Users/test/workspace",
+      }, macAdapter);
+
+      const script = readMacLaunchScriptFromSpawnCall();
+      expect(script.content).toContain("cd -- '/Users/test/workspace'");
+      expect(script.content).toContain("exec /bin/zsh -l");
+      expect(script.content).not.toContain("streamliner_command_status");
+    });
+
+    it.each(["windows-terminal", "powershell"] as const)(
+      "uses Terminal.app rather than iTerm2 for explicit %s preference",
+      (preferredTerminal) => {
+        const result = launchTerminal({
+          cwd: "/Users/test/workspace",
+          preferredTerminal,
+          tabColor: "#FF5733",
+        }, macAdapter);
+
+        const args = vi.mocked(spawn).mock.calls[0][1] as string[];
+        const appleScript = readAppleScriptFromSpawnCall();
+        const script = readMacLaunchScriptFromSpawnCall();
+        expect(result.method).toBe("mac-terminal");
+        expect(appleScript).toContain("tell application \"Terminal\" to do script");
+        expect(appleScript).not.toContain("iTerm2");
+        expect(args.join("\n")).not.toContain("tabColor");
+        expect(script.content).not.toContain("#FF5733");
+      },
+    );
+  });
+
   describe("terminal adapter seam", () => {
     it("keeps the compatibility host preference values stable", () => {
       expect([...TERMINAL_HOST_PREFERENCES]).toEqual([
         "default",
+        "mac-terminal",
+        "iterm2",
         "windows-terminal",
         "powershell",
       ]);
@@ -599,8 +773,34 @@ describe("terminal-launch", () => {
       expect(spawn).not.toHaveBeenCalled();
     });
 
-    it("uses the Windows adapter as the current default adapter", () => {
-      expect(getDefaultTerminalLaunchAdapter().id).toBe("windows");
+    it("allows adapters to report an iTerm2 launch method", () => {
+      const launch = vi.fn<TerminalLaunchAdapter["launch"]>(
+        () => ({ method: "iterm2", pid: 42 }),
+      );
+      const adapter: TerminalLaunchAdapter = {
+        id: "test-adapter",
+        launch,
+      };
+
+      const result = launchTerminal({
+        cwd: "/Users/test/workspace",
+        preferredTerminal: "iterm2",
+      }, adapter);
+
+      expect(result).toEqual({ method: "iterm2", pid: 42 });
+      expect(adapter.launch).toHaveBeenCalledWith(expect.objectContaining({
+        cwd: "/Users/test/workspace",
+        hostPreference: "iterm2",
+      }));
+    });
+
+    it("selects the platform default terminal adapter", () => {
+      expect(selectDefaultTerminalLaunchAdapter("darwin").id).toBe("mac");
+      expect(selectDefaultTerminalLaunchAdapter("win32").id).toBe("windows");
+      expect(selectDefaultTerminalLaunchAdapter("linux").id).toBe("windows");
+      expect(getDefaultTerminalLaunchAdapter(process.platform).id).toBe(
+        process.platform === "darwin" ? "mac" : "windows",
+      );
     });
   });
 
@@ -708,10 +908,15 @@ describe("terminal-launch", () => {
       await queued;
     });
 
-    it("preflights enabled Copilot plugins before launching", async () => {
+    it("preflights enabled Copilot plugins by passing cache dirs to the launch command", async () => {
       const root = mkdtempSync(join(tmpdir(), "streamliner-copilot-settings-"));
       scriptRoots.push(root);
       const settingsPath = join(root, "settings.json");
+      const installedPluginsRoot = join(root, "installed-plugins");
+      const streamlinerDir = join(installedPluginsRoot, "streamliner-local", "streamliner");
+      const skillsDir = join(installedPluginsRoot, "lossyrob-skills", "lossyrob-skills");
+      mkdirSync(streamlinerDir, { recursive: true });
+      mkdirSync(skillsDir, { recursive: true });
       writeFileSync(
         settingsPath,
         JSON.stringify({
@@ -722,11 +927,6 @@ describe("terminal-launch", () => {
         }),
         "utf8",
       );
-      const run = vi.fn()
-        .mockReturnValueOnce("No plugins installed.")
-        .mockReturnValueOnce("")
-        .mockReturnValueOnce("")
-        .mockReturnValueOnce("streamliner streamliner-local\nlossyrob-skills lossyrob-skills\n");
       const launch = vi.fn<TerminalLaunchExecutor>(
         () => ({ method: "powershell" as const, pid: 42 }),
       );
@@ -734,30 +934,126 @@ describe("terminal-launch", () => {
       await launchCopilotTerminal({
         cwd: "C:\\Users\\test\\workspace",
         title: "plugins",
+        command: "copilot '--resume=session-1'",
       }, {
         launchTerminal: launch,
         cooldownMs: 0,
-        pluginPreflight: { settingsPath, run },
+        commandShellDialect: "powershell",
+        pluginPreflight: { settingsPath, installedPluginsRoot },
       });
 
-      expect(run).toHaveBeenCalledWith("copilot", ["plugin", "list"]);
-      expect(run).toHaveBeenCalledWith("copilot", ["plugin", "install", "streamliner@streamliner-local"]);
-      expect(run).toHaveBeenCalledWith("copilot", ["plugin", "install", "lossyrob-skills@lossyrob-skills"]);
-      expect(launch).toHaveBeenCalledTimes(1);
+      expect(launch).toHaveBeenCalledWith(expect.objectContaining({
+        command: `copilot '--plugin-dir' '${streamlinerDir}' '--plugin-dir' '${skillsDir}' '--resume=session-1'`,
+      }));
+    });
+
+    it("does not inject plugin args into PowerShell prompt text that mentions copilot", async () => {
+      const root = mkdtempSync(join(tmpdir(), "streamliner-copilot-settings-"));
+      scriptRoots.push(root);
+      const settingsPath = join(root, "settings.json");
+      const installedPluginsRoot = join(root, "installed-plugins");
+      const streamlinerDir = join(installedPluginsRoot, "streamliner-local", "streamliner");
+      mkdirSync(streamlinerDir, { recursive: true });
+      writeFileSync(
+        settingsPath,
+        JSON.stringify({
+          enabledPlugins: {
+            "streamliner@streamliner-local": true,
+          },
+        }),
+        "utf8",
+      );
+      const launch = vi.fn<TerminalLaunchExecutor>(
+        () => ({ method: "powershell" as const, pid: 42 }),
+      );
+
+      const command = buildCopilotInteractiveCommand({
+        cliArgs: ["--yolo"],
+        kickoffPrompt: "hello; copilot ; Write-Output PWNED #",
+      });
+
+      await launchCopilotTerminal({
+        cwd: "C:\\Users\\test\\workspace",
+        title: "plugins",
+        command,
+      }, {
+        launchTerminal: launch,
+        cooldownMs: 0,
+        commandShellDialect: "powershell",
+        pluginPreflight: { settingsPath, installedPluginsRoot },
+      });
+
+      const launchedCommand = launch.mock.calls[0][0].command ?? "";
+      expect(launchedCommand).toContain("[System.Convert]::FromBase64String");
+      expect(launchedCommand).not.toContain("Write-Output PWNED");
+      expect(launchedCommand).toContain(
+        `; copilot '--plugin-dir' '${streamlinerDir}' '--yolo' -i $streamlinerKickoffPrompt`,
+      );
+      expect(launchedCommand.indexOf("--plugin-dir")).toBeGreaterThan(
+        launchedCommand.indexOf("; copilot"),
+      );
+    });
+
+    it("preflights enabled Copilot plugins with POSIX quoting for macOS commands", async () => {
+      const root = mkdtempSync(join(tmpdir(), "streamliner-copilot-posix-settings-"));
+      scriptRoots.push(root);
+      const settingsPath = join(root, "settings.json");
+      const configPath = join(root, "config.json");
+      const streamlinerDir = join(root, "streamliner's plugin cache");
+      mkdirSync(streamlinerDir, { recursive: true });
+      writeFileSync(
+        settingsPath,
+        JSON.stringify({
+          enabledPlugins: {
+            "streamliner@streamliner-local": true,
+          },
+        }),
+        "utf8",
+      );
+      writeFileSync(
+        configPath,
+        JSON.stringify({
+          installedPlugins: [{
+            name: "streamliner",
+            marketplace: "streamliner-local",
+            cache_path: streamlinerDir,
+          }],
+        }),
+        "utf8",
+      );
+      const launch = vi.fn<TerminalLaunchExecutor>(
+        () => ({ method: "mac-terminal" as const, pid: 42 }),
+      );
+
+      const command = buildCopilotInteractivePosixCommand({
+        cliArgs: ["--resume=session-1"],
+        kickoffPrompt: "hello\ncopilot in prompt",
+      });
+
+      await launchCopilotTerminal({
+        cwd: "/Users/test/workspace",
+        title: "plugins",
+        command,
+      }, {
+        launchTerminal: launch,
+        cooldownMs: 0,
+        commandShellDialect: "posix",
+        pluginPreflight: { settingsPath, configPath },
+      });
+
+      expect(launch).toHaveBeenCalledWith(expect.objectContaining({
+        command: expect.stringContaining(
+          `\ncopilot '--plugin-dir' ${quotePosixShellLiteral(streamlinerDir)} '--resume=session-1' -i "$streamliner_kickoff_prompt"`,
+        ),
+      }));
+      expect(launch.mock.calls[0][0].command).not.toContain("copilot in prompt");
     });
 
     it("can disable Copilot plugin preflight with environment", () => {
-      const run = vi.fn(() => {
-        throw new Error("should not run");
-      });
-
-      ensureCopilotPluginsAvailable({
+      expect(resolveCopilotPluginDirsForLaunch({
         requiredPlugins: ["streamliner@streamliner-local"],
-        run,
         env: { STREAMLINER_COPILOT_PLUGIN_PREFLIGHT: "false" },
-      });
-
-      expect(run).not.toHaveBeenCalled();
+      })).toEqual([]);
     });
   });
 
@@ -768,11 +1064,11 @@ describe("terminal-launch", () => {
         kickoffPrompt: "Line 1\nLine 2",
       });
 
-      expect(command).toContain("ConvertFrom-Json");
+      expect(command).toContain("[System.Convert]::FromBase64String");
       expect(command).toContain("'--yolo' '--model' 'Rob''s model'");
       expect(command).toContain("-i $streamlinerKickoffPrompt");
       expect(command).not.toContain("$streamlinerKickoffPrompt .");
-      expect(command).toContain("\\n");
+      expect(command).not.toContain("\\n");
       expect(command).not.toContain("Line 1\nLine 2");
     });
 
@@ -786,6 +1082,31 @@ describe("terminal-launch", () => {
       expect(buildCopilotResumeCommand("session-1", ["--yolo", "--model=Rob's model"]))
         .toBe("copilot '--yolo' '--model=Rob''s model' '--resume=session-1'");
     });
+
+    it("quotes POSIX shell literals with spaces and apostrophes", () => {
+      expect(quotePosixShellLiteral("Rob's workspace")).toBe("'Rob'\\''s workspace'");
+      expect(quotePosixShellLiteral("two words")).toBe("'two words'");
+    });
+
+    it("builds a POSIX interactive command without interpolating raw prompt text", () => {
+      const command = buildCopilotInteractivePosixCommand({
+        cliArgs: ["--yolo", "--model", "Rob's model"],
+        kickoffPrompt: "Line 1\nLine 2 with 'quote'",
+      });
+
+      expect(command).toContain("streamliner_kickoff_prompt_base64=");
+      expect(command).toContain("base64 --decode");
+      expect(command).toContain("base64 -D");
+      expect(command).toContain("copilot '--yolo' '--model' 'Rob'\\''s model' -i \"$streamliner_kickoff_prompt\"");
+      expect(command).not.toContain("Line 1\nLine 2");
+      expect(command).not.toContain("ConvertFrom-Json");
+    });
+
+    it("builds a POSIX resume command with args before resume and safe session ids", () => {
+      expect(buildCopilotResumePosixCommand("session-1", ["--model=Rob's model"]))
+        .toBe("copilot '--model=Rob'\\''s model' '--resume=session-1'");
+      expect(() => buildCopilotResumePosixCommand("-session-1")).toThrow(/unsupported/);
+    });
   });
 
   describe("spawn options", () => {
@@ -794,7 +1115,7 @@ describe("terminal-launch", () => {
     });
 
     it("uses detached: true and stdio: 'ignore' for Windows Terminal", () => {
-      launchTerminal({ cwd: "C:\\Users\\test\\workspace" });
+      launchWithWindowsAdapter({ cwd: "C:\\Users\\test\\workspace" });
 
       const callArgs = vi.mocked(spawn).mock.calls[0];
       expect(callArgs[2]).toEqual(expect.objectContaining({ detached: true, stdio: "ignore" }));
@@ -805,7 +1126,7 @@ describe("terminal-launch", () => {
         throw new Error("not found");
       });
 
-      launchTerminal({ cwd: "C:\\Users\\test\\workspace" });
+      launchWithWindowsAdapter({ cwd: "C:\\Users\\test\\workspace" });
 
       const callArgs = vi.mocked(spawn).mock.calls[0];
       expect(callArgs[2]).toEqual(expect.objectContaining({ detached: true, stdio: "ignore" }));
@@ -822,7 +1143,7 @@ describe("terminal-launch", () => {
       ].join(separator);
       process.env.PATH = noiseyPath;
       try {
-        launchTerminal({ cwd: "C:\\Users\\test\\workspace" });
+        launchWithWindowsAdapter({ cwd: "C:\\Users\\test\\workspace" });
         const callArgs = vi.mocked(spawn).mock.calls[0];
         const spawnedEnv = (callArgs[2] as { env?: NodeJS.ProcessEnv }).env;
         expect(spawnedEnv).toBeDefined();

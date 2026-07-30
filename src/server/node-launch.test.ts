@@ -22,6 +22,7 @@ import {
   DuplicateActiveNodeLaunchOperationError,
   NodeLaunchRecordStore,
 } from "./node-launch-record-store";
+import type { TerminalLaunchOptions, TerminalLaunchResult } from "./terminal-launch";
 import type {
   ManagedSdkRunner,
   ManagedSdkRunnerResumeInput,
@@ -31,6 +32,15 @@ import { ManagedRuntimePatchCoalescer } from "./managed-runtime-patch-coalescer"
 
 const createdRoots: string[] = [];
 const activeApps: StreamlinerApiApp[] = [];
+
+type TerminalLaunchMethodForTest = TerminalLaunchResult["method"];
+
+function terminalResult(
+  method: TerminalLaunchMethodForTest,
+  pid: number,
+): TerminalLaunchResult {
+  return { method, pid };
+}
 
 function createRootDir(): string {
   const root = join(tmpdir(), `streamliner-node-launch-${process.pid}-${createdRoots.length}`);
@@ -354,6 +364,44 @@ describe("launchPreparedNode", () => {
       cliArgs: ["--yolo"],
     });
   });
+
+  it.each(["mac-terminal", "iterm2"] as const)(
+    "passes %s preference through to launchTerminal options",
+    async (preferredTerminal) => {
+      const root = createRootDir();
+      const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+      const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+      const handoff = fakeHandoff(root);
+      handoff.terminal.preferredTerminal = preferredTerminal;
+      const terminalCalls: TerminalLaunchOptions[] = [];
+
+      const result = await launchPreparedNode(
+        registryStore,
+        claimStore,
+        handoff,
+        {
+          now: () => new Date("2026-05-04T00:00:00.000Z"),
+          launchTerminal: (options) => {
+            terminalCalls.push(options);
+            return terminalResult(preferredTerminal, 5678);
+          },
+        },
+      );
+
+      expect(result.terminal).toEqual({ method: preferredTerminal, pid: 5678 });
+      expect(terminalCalls).toHaveLength(1);
+      expect(terminalCalls[0]).toEqual(expect.objectContaining({
+        preferredTerminal,
+        prepareCopilotCli: true,
+        env: expect.objectContaining({
+          STREAMLINER_LOG_LEVEL: "debug",
+          STREAMLINER_LAUNCH_CLAIM_ID: result.launchClaim.launchClaimId,
+        }),
+      }));
+      expect(terminalCalls[0]?.command).toContain("copilot");
+      expect(terminalCalls[0]?.command).toContain("-i");
+    },
+  );
 
   it("marks the claim failed when terminal spawn fails", async () => {
     const root = createRootDir();
@@ -934,6 +982,70 @@ describe("node launch API route", () => {
         blocksLaunch: true,
       }),
     }));
+  });
+
+  it.each(["mac-terminal", "iterm2"] as const)(
+    "accepts %s in prepared handoffs through POST /api/node-launches",
+    async (preferredTerminal) => {
+      const root = createRootDir();
+      const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+      const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+      const launchTerminal = vi.fn((options: TerminalLaunchOptions) => {
+        void options;
+        return terminalResult("powershell", 777);
+      });
+      const api = createStreamlinerApiApp({
+        store: registryStore,
+        launchClaimStore: claimStore,
+        nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
+        nodeLaunchDeps: { launchTerminal },
+      });
+      activeApps.push(api);
+      const baseHandoff = fakeHandoff(root);
+      const handoff = {
+        ...baseHandoff,
+        terminal: {
+          ...baseHandoff.terminal,
+          preferredTerminal,
+        },
+      };
+
+      await request(api.app)
+        .post("/api/node-launches")
+        .send({ handoff })
+        .expect(201);
+
+      expect(launchTerminal).toHaveBeenCalledTimes(1);
+      expect(launchTerminal.mock.calls[0]?.[0].preferredTerminal).toBe(preferredTerminal);
+    },
+  );
+
+  it("rejects unknown preferred terminals with the accepted values", async () => {
+    const root = createRootDir();
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const launchTerminal = vi.fn(() => terminalResult("powershell", 777));
+    const api = createStreamlinerApiApp({
+      store: registryStore,
+      launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
+      nodeLaunchDeps: { launchTerminal },
+    });
+    activeApps.push(api);
+    const handoff = fakeHandoff(root);
+    handoff.terminal.preferredTerminal = "fish" as never;
+
+    const response = await request(api.app)
+      .post("/api/node-launches")
+      .send({ handoff })
+      .expect(400);
+
+    expect(response.body).toEqual(expect.objectContaining({
+      code: "invalid_node_launch_handoff",
+      error: 'handoff.terminal.preferredTerminal must be one of: "default", "windows-terminal", "powershell", "mac-terminal", "iterm2".',
+      input: "handoff.terminal.preferredTerminal",
+    }));
+    expect(launchTerminal).not.toHaveBeenCalled();
   });
 
   it("launches a managed SDK handoff through POST /api/node-launches", async () => {

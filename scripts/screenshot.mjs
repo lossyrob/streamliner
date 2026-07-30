@@ -10,6 +10,7 @@
  *       --out   <abs-path-to-output.png> \
  *       [--path <url-path-or-query>] \
  *       [--selector <css-selector-to-wait-for>] \
+ *       [--session-fixture <json-file-with-session-upserts>] \
  *       [--viewport 1600x1000] \
  *       [--full-page] \
  *       [--select-node <node-id>] \
@@ -25,7 +26,7 @@
  *   4 — page never reached the expected UI state
  */
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtemp, mkdir } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
 import { dirname, resolve, isAbsolute } from "node:path";
@@ -61,6 +62,7 @@ function parseArgs(argv) {
       case "--out":        args.out = next(); break;
       case "--path":       args.path = next(); args.pathProvided = true; break;
       case "--selector":   args.selector = next(); break;
+      case "--session-fixture": args.sessionFixture = next(); break;
       case "--select-node":args.selectNode = next(); break;
       case "--click":      args.clickSelectors.push(next()); break;
       case "--viewport": {
@@ -86,6 +88,9 @@ function parseArgs(argv) {
   }
   if (!isAbsolute(args.graph)) args.graph = resolve(args.graph);
   if (!isAbsolute(args.out))   args.out   = resolve(args.out);
+  if (args.sessionFixture && !isAbsolute(args.sessionFixture)) {
+    args.sessionFixture = resolve(args.sessionFixture);
+  }
   if (args.stateRoot && !isAbsolute(args.stateRoot)) args.stateRoot = resolve(args.stateRoot);
   return args;
 }
@@ -152,6 +157,26 @@ async function waitForApiReady(baseUrl, timeoutMs) {
   throw new Error("timeout waiting for API ready");
 }
 
+async function seedSessionFixture(apiBaseUrl, fixturePath) {
+  if (!fixturePath) return;
+  const raw = JSON.parse(await readFile(fixturePath, "utf8"));
+  const sessions = Array.isArray(raw) ? raw : raw.sessions;
+  if (!Array.isArray(sessions)) {
+    throw new Error("--session-fixture must contain an array or { sessions: [...] }");
+  }
+  for (const [index, session] of sessions.entries()) {
+    const response = await fetch(`${apiBaseUrl}/api/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(session),
+    });
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`session fixture ${index} failed with ${response.status}: ${body}`);
+    }
+  }
+}
+
 async function main() {
   const args = parseArgs(process.argv);
   await mkdir(dirname(args.out), { recursive: true });
@@ -203,6 +228,7 @@ async function main() {
       const { workstream } = await registerResponse.json();
       args.path = `/workstreams/${encodeURIComponent(workstream.projectKey)}/${encodeURIComponent(workstream.workstreamId)}`;
     }
+    await seedSessionFixture(`http://127.0.0.1:${apiPort}`, args.sessionFixture);
     baseUrl = await waitForViteReady(vite, args.readyTimeoutMs);
   } catch (e) {
     console.error(e.message);

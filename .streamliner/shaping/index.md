@@ -16,8 +16,16 @@ Shaping notes are not project-level design authority. Durable product and archit
 
 ## Current candidates
 
+> For how a subset of these candidates is grouped into the current campaigns (and
+> which is the main effort), see [roadmap.md](roadmap.md). Candidates are the
+> durable backlog; the roadmap selects and shapes a subset without modifying them.
+
 | Candidate | Stage | Summary |
 |---|---|---|
+| [Workstream Format & Coverage Substrate](candidates/workstream-format-coverage-substrate.md) | Shaped | Foundational substrate: a canonical `graph.json` JSON Schema with validate-on-load, waves as first-class objects, node kind/size, debt/deferral state, and artifact-attachment slots. |
+| [Operating Point & Attention](candidates/operating-point-attention.md) | Shaped | Foundational values & attention layer: care knob, posture, sizing routing, preference-debt, encoded beliefs, and the human-floor surfacing model. |
+| [Memory & Learning System](candidates/memory-and-learning-system.md) | Shaping | Durable record of work distilled into compiled views (disposition/values, system-knowledge, process-knowledge); the disposition store the attention layer consults, plus the broader learning loop. Captured for later design. |
+| [Backlog Orchestration](candidates/backlog-orchestration.md) | Shaped | The Backlog as a first-class surface for out-of-geometry work (loose / deferred / high-spread), drained by autonomous backlog runs on the shared execution engine. |
 | [Workstream Design Mode](candidates/workstream-design-mode.md) | Shaped | Dogfood this session as a mode for turning ambiguous intent into candidate workstreams, dependency maps, and handoff briefs. |
 | [Documentation System](candidates/documentation-system.md) | Promoted | Formed as `.streamliner/workstreams/documentation-system/`: unified docs site plus Streamliner product support for design, architecture, and user-guide doc families. |
 | [Streamliner Agent and Skill Context](candidates/streamliner-agent-skill-context.md) | Shaped | Define Streamliner role context for designer, orchestrator, worker, closure review, and helper distribution edges. |
@@ -33,6 +41,23 @@ Shaping notes are not project-level design authority. Durable product and archit
 | [Checkpoint and Closeout Experience](candidates/checkpoint-closeout-experience.md) | Shaping | Make checkpoints builder-facing validation surfaces; model closeout observations materializing into normal closeout batch nodes/issues before gates pass. |
 | [Streamliner Performance and Robustness](candidates/streamliner-performance-robustness.md) | Seeded | Improve local API, multi-tab, backing-store, and background-worker responsiveness under real multi-workstream usage. |
 | [Session Attention Widget](candidates/session-attention-widget.md) | Seeded | Provide tray/notification and always-on-top overlay surfaces for actionable session attention states outside browser tabs. |
+| [Git-backed Artifact Sync](candidates/git-backed-artifact-sync.md) | Seeded | Store Streamliner artifacts on a dedicated Git branch and use deterministic loop-based sentries to synchronize artifacts, messages, and attention events across machines and teammates without a remote service. |
+| [Session Actor Control Plane](candidates/session-actor-control-plane.md) | Seeded | Treat selected terminal and SDK sessions as ephemeral, role-bound runtime actors with scoped autonomy, field reports, and local message/heartbeat semantics attached to work geometry. |
+| [Workstream Closeout Narrative](candidates/workstream-closeout-narrative.md) | Seeded | Generate a chronological closeout narrative per workstream that an orchestrator session can produce on demand; consumed via an external GenAI podcast generator for zoomed-out reflection. |
+
+## Shaping references
+
+Cross-cutting design sketches that inform several candidates (not committed design):
+
+- [Node Gate Flow](node-gate-flow.md) — mermaid sequence of a node through the gate
+  ladder (plan review → implement → PR review → audit → validation → merge → closeout)
+  between the orchestrator, implementer/reviewer/auditor/validator sessions, and the
+  builder, over telex. Grounds Operating Point & Attention, Node Handoff &
+  Reconciliation, Checkpoint & Closeout, and Backlog / Autonomous Execution.
+- [Work-Geometry Essay v3.5 — Plan Alignment](essay-v3.5-alignment.md) — parked review of how the
+  current plan aligns with the v3.5 essay, the rough edges (validation→defeater, WS-A node payload,
+  allocation framing, the 4th operating-point dial, measurement/geometry tax), and where each folds.
+  Captured, not yet applied.
 
 ## Operating notes
 

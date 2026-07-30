@@ -925,6 +925,73 @@ describe("App sessions route", () => {
     15_000,
   );
 
+  it(
+    "does not restore a deleted review template when an older refresh resolves later",
+    async () => {
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      const staleTemplate = {
+        id: "heavy-review",
+        name: "Heavy Review",
+        prompt: "Review issue {{githubRepo}}#{{githubIssue}}.",
+        updatedAt: "2026-05-03T18:00:00.000Z",
+      };
+      let resolveRefresh!: (response: Response) => void;
+      const refreshPromise = new Promise<Response>((resolve) => {
+        resolveRefresh = resolve;
+      });
+      let getCount = 0;
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({ version: 1, migrationWarnings: [], workstreams: [] });
+        }
+        if (path === "/api/paw-review-prompt-templates" && (!init?.method || init.method === "GET")) {
+          getCount += 1;
+          return getCount === 1
+            ? jsonResponse({ templates: [staleTemplate] })
+            : refreshPromise;
+        }
+        if (path === "/api/paw-review-prompt-templates/heavy-review" && init?.method === "DELETE") {
+          return new Response(null, { status: 204 });
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState({}, "", "/settings/review-templates");
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(100);
+
+      act(() => {
+        findButtonByLabel(container, "Select review template Heavy Review").click();
+      });
+      await settle();
+      act(() => {
+        findButton(container, "Refresh").click();
+      });
+      await settle();
+      expect(findButton(container, "Refreshing...")).toBeInstanceOf(HTMLButtonElement);
+
+      act(() => {
+        findButton(container, "Delete template").click();
+      });
+      await settle(100);
+      expect(container.textContent).toContain('Deleted "Heavy Review".');
+
+      act(() => {
+        resolveRefresh(jsonResponse({ templates: [staleTemplate] }));
+      });
+      await settle(100);
+
+      const listedTemplateIds = [...container.querySelectorAll(".sl-profile-list-item code")]
+        .map((code) => code.textContent?.trim());
+      expect(listedTemplateIds).not.toContain("heavy-review");
+    },
+    15_000,
+  );
+
   it("renders managed runtime state in My Sessions rows and details", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = requestPath(input);
@@ -997,6 +1064,9 @@ describe("App sessions route", () => {
     await settle();
 
     expect(container.textContent).toContain("Background session");
+    expect(container.textContent).toContain("Managed session console");
+    expect(container.textContent).toContain("Prepared final review handoff.");
+    expect(container.textContent).toContain("read-only");
     expect(container.textContent).toContain("managed autonomous");
     expect(container.textContent).toContain("sdk-session-123");
     expect(container.textContent).toContain("Terminal takeover");
@@ -1831,6 +1901,218 @@ describe("App sessions route", () => {
       expect(container.textContent).toContain("Issue:");
       expect(container.textContent).toContain("issue closed");
       expect(container.textContent).toContain("PR checks failing");
+    },
+    15_000,
+  );
+
+  it(
+    "resolves external dependencies from backend graph JSON text",
+    async () => {
+      const graph = buildWorkstreamGraph({
+        nodes: [
+          {
+            id: "implement-dashboard",
+            type: "task",
+            title: "Implement dashboard",
+            summary: "Render upstream dependency state.",
+            status: "ready",
+            attention: "focus",
+            repoIds: ["streamliner"],
+            dependsOn: [],
+            externalDependsOn: [
+              {
+                id: "upstream-approval",
+                label: "Upstream approval",
+                target: {
+                  projectKey: "streamliner",
+                  workstreamId: "upstream-workstream",
+                  nodeId: "approve-api",
+                },
+              },
+            ],
+          },
+        ],
+        checkpoints: [
+          {
+            id: "dashboard",
+            title: "Dashboard",
+            summary: "Dashboard work.",
+            status: "planned",
+            nodeIds: ["implement-dashboard"],
+          },
+        ],
+      });
+      const upstreamGraph = buildWorkstreamGraph({
+        id: "upstream-workstream",
+        title: "Upstream Workstream",
+        nodes: [
+          {
+            id: "approve-api",
+            type: "gate",
+            title: "Approve API",
+            summary: "Approve the upstream API contract.",
+            status: "completed",
+            attention: "watch",
+            repoIds: ["streamliner"],
+            dependsOn: [],
+          },
+        ],
+        checkpoints: [
+          {
+            id: "approval",
+            title: "Approval",
+            summary: "Approval work.",
+            status: "completed",
+            nodeIds: ["approve-api"],
+          },
+        ],
+      });
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [
+              buildTrackedWorkstream(),
+              buildTrackedWorkstream({
+                workstreamId: "upstream-workstream",
+                title: "Upstream Workstream",
+                path: "C:\\graphs\\upstream-workstream\\graph.json",
+              }),
+            ],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        if (path === "/api/workstreams/streamliner/upstream-workstream/graph") {
+          return jsonResponse(upstreamGraph);
+        }
+        if (path === "/api/workstreams/streamliner/api-test/positions") {
+          return jsonResponse({ schemaVersion: 1, positions: {} });
+        }
+        if (path === "/api/sessions?workstreamId=api-test") {
+          return jsonResponse([]);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return jsonResponse({ record: null, records: [] });
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState(
+        {},
+        "",
+        "/workstreams/streamliner/api-test/nodes/external%3Aimplement-dashboard%3Aupstream-approval",
+      );
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(300);
+
+      expect(container.textContent).toContain("Upstream approval");
+      expect(container.textContent).toContain("Approve API");
+      expect(container.textContent).toContain("Node completed");
+      expect(container.textContent).toContain("satisfied");
+      expect(container.textContent).toContain("Blocks");
+      expect(container.textContent).toContain("Implement dashboard");
+      expect(container.textContent).toContain("Open upstream");
+      expect(container.textContent).not.toContain("Initialize PAW launch");
+    },
+    15_000,
+  );
+
+  it(
+    "surfaces external dependency resolver errors as launch blockers",
+    async () => {
+      const graph = buildWorkstreamGraph({
+        nodes: [
+          {
+            id: "implement-dashboard",
+            type: "task",
+            title: "Implement dashboard",
+            summary: "Render upstream dependency state.",
+            status: "ready",
+            attention: "focus",
+            repoIds: ["streamliner"],
+            dependsOn: [],
+            externalDependsOn: [
+              {
+                id: "upstream-approval",
+                label: "Upstream approval",
+                target: {
+                  projectKey: "streamliner",
+                  workstreamId: "upstream-workstream",
+                  nodeId: "approve-api",
+                },
+              },
+            ],
+          },
+        ],
+        checkpoints: [
+          {
+            id: "dashboard",
+            title: "Dashboard",
+            summary: "Dashboard work.",
+            status: "planned",
+            nodeIds: ["implement-dashboard"],
+          },
+        ],
+      });
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = requestPath(input);
+        if (path === "/api/workstreams") {
+          return jsonResponse({
+            version: 1,
+            migrationWarnings: [],
+            workstreams: [
+              buildTrackedWorkstream(),
+              buildTrackedWorkstream({
+                workstreamId: "upstream-workstream",
+                title: "Upstream Workstream",
+                path: "C:\\graphs\\upstream-workstream\\graph.json",
+              }),
+            ],
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/graph") {
+          return jsonResponse(graph);
+        }
+        if (path === "/api/workstreams/streamliner/upstream-workstream/graph") {
+          return new Response("{not json", {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (path === "/api/workstreams/streamliner/api-test/positions") {
+          return jsonResponse({ schemaVersion: 1, positions: {} });
+        }
+        if (path === "/api/sessions?workstreamId=api-test") {
+          return jsonResponse([]);
+        }
+        if (path.startsWith("/api/node-launch-records?")) {
+          return jsonResponse({ record: null, records: [] });
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.pushState(
+        {},
+        "",
+        "/workstreams/streamliner/api-test/nodes/implement-dashboard",
+      );
+
+      act(() => {
+        root.render(<App />);
+      });
+      await settle(300);
+
+      expect(container.textContent).toContain("Upstream approval");
+      expect(container.textContent).toContain("error");
+      expect(container.textContent).toContain("Only ready nodes can be launched.");
+      expect(findButton(container, "Initialize PAW launch").disabled).toBe(true);
     },
     15_000,
   );
@@ -2811,6 +3093,8 @@ describe("App sessions route", () => {
       });
       await settle();
       expect(container.textContent).toContain("Creating WorkflowContext.md");
+      expect(container.textContent).toContain("Agent Message");
+      expect(container.textContent).toContain("read-only");
       act(() => {
         nodeLaunchRecord = {
           id: "launch-prompt-profiles-record",
@@ -4302,6 +4586,8 @@ describe("App sessions route", () => {
       await settle();
 
       expect(container.textContent).toContain("Snapshot progress before reopen.");
+      expect(container.textContent).toContain("PAW init progress");
+      expect(container.textContent).toContain("read-only");
       const source = MockEventSource.instances.find((candidate) => candidate.url.includes("run-reattach"));
       expect(source?.url).toBe("/api/launch-preparations/runs/run-reattach/events");
 

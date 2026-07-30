@@ -236,6 +236,49 @@ describe("indexSessionContext", () => {
     expect(patch?.derivedBranch).toBe("context-test");
   }, GIT_CONTEXT_TEST_TIMEOUT_MS);
 
+  it("resolves linked git worktree context without invoking git", () => {
+    const root = createRootDir();
+    const repo = join(root, "repo");
+    const commonGitDir = join(repo, ".git");
+    const linkedWorktree = join(root, "repo-worktree");
+    const linkedGitDir = join(commonGitDir, "worktrees", "repo-worktree");
+    const eventsPath = join(root, "events.jsonl");
+    const editedFile = join(linkedWorktree, "src", "context.ts");
+    mkdirSync(join(linkedWorktree, "src"), { recursive: true });
+    mkdirSync(linkedGitDir, { recursive: true });
+    writeFileSync(editedFile, "export const linked = true;\n", "utf8");
+    writeFileSync(join(linkedWorktree, ".git"), `gitdir: ${linkedGitDir}\n`, "utf8");
+    writeFileSync(join(linkedGitDir, "HEAD"), "ref: refs/heads/worktree-branch\n", "utf8");
+    writeFileSync(join(linkedGitDir, "commondir"), "../..\n", "utf8");
+    writeFileSync(
+      join(commonGitDir, "config"),
+      [
+        '[remote "origin"]',
+        "\turl = https://github.com/lossyrob/streamliner.git",
+      ].join("\n"),
+      "utf8",
+    );
+    writeFileSync(
+      eventsPath,
+      JSON.stringify({
+        type: "tool.execution",
+        timestamp: "2026-04-25T20:05:00.000Z",
+        data: { command: `Edited ${editedFile}` },
+      }),
+      "utf8",
+    );
+
+    const patch = indexSessionContext(
+      buildSession({ cwd: root, repo: null, branch: null }),
+      eventsPath,
+    );
+
+    expect(patch?.derivedWorktreePath).toBe(linkedWorktree);
+    expect(patch?.repo).toBe("lossyrob/streamliner");
+    expect(patch?.branch).toBe("worktree-branch");
+    expect(patch?.derivedBranch).toBe("worktree-branch");
+  });
+
   it("backfills missing repo from git even when the event cursor is unchanged", () => {
     const root = createRootDir();
     const repo = join(root, "repo");

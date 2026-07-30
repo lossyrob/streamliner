@@ -1,13 +1,17 @@
 import { useState } from "react";
 
 import type { WorkstreamNode } from "../workstream-schema";
-import type { WorkstreamDerivedNode } from "../workstream-view-model";
+import type {
+  WorkstreamDerivedNode,
+  WorkstreamExternalDependencyView,
+} from "../workstream-view-model";
 import type { WorkstreamGraphLayoutResult } from "../workstream-graph";
 import type { WorkstreamDocument } from "../workstream-schema";
 import type {
   NodeLaunchOperation,
   NodeLaunchRecord,
 } from "../node-launch-record-contract";
+import { handleInAppLinkClick } from "../dashboard-routing";
 import type {
   WorkstreamRuntimeNodeOverlay,
   WorkstreamRuntimeOverlayIssue,
@@ -22,16 +26,24 @@ import {
 import {
   formatManagedRuntimeLabel,
   managedLifecycleStatusClass,
-  resolveManagedRuntimeActions,
 } from "../managed-runtime-contract";
 import { trackerLabel, trackerUrl } from "../workstream-links";
 import { humanizeLaunchClaim } from "./launch-claim-display";
-import { ManagedRuntimeActionButton } from "./ManagedRuntimeActionButton";
+import {
+  ManagedRuntimeConsolePanel,
+} from "./ManagedRuntimeConsolePanel";
 
 interface NodeInspectorProps {
   entry: WorkstreamDerivedNode | null;
+  externalDependency?: WorkstreamExternalDependencyView | null;
   layout: WorkstreamGraphLayoutResult;
   workstream: WorkstreamDocument;
+  externalRouteForDependency?: (
+    dependency: WorkstreamExternalDependencyView,
+  ) => {
+    href: string;
+    onOpen: () => void | Promise<void>;
+  } | null;
   canLaunch?: boolean;
   launchDisabledReason?: string;
   launchRecord?: NodeLaunchRecord | null;
@@ -40,6 +52,9 @@ interface NodeInspectorProps {
   launchRecordError?: string | null;
   runtimeOverlay?: WorkstreamRuntimeNodeOverlay | null;
   onLaunch?: () => void;
+  onOpenConsole?: () => void;
+  onOpenConsoleInSessions?: () => void | Promise<void>;
+  onManagedRuntimeActionComplete?: () => void | Promise<void>;
   /**
    * Optional handler for releasing a stuck active launch operation or
    * resolving a stale terminal launch that is no longer blocked by a claim.
@@ -124,6 +139,19 @@ function runtimePillClass(status: string): string {
       return "muted";
     default:
       return "accent";
+  }
+}
+
+function externalDependencyPillClass(status: string): string {
+  switch (status) {
+    case "resolved":
+    case "manual":
+      return "status-green";
+    case "unresolved":
+    case "error":
+      return "status-red";
+    default:
+      return "status-amber";
   }
 }
 
@@ -220,7 +248,17 @@ function RuntimeIssueList({
   );
 }
 
-function RuntimeDetails({ overlay }: { overlay: WorkstreamRuntimeNodeOverlay | null }) {
+function RuntimeDetails({
+  overlay,
+  onOpenConsole,
+  onOpenConsoleInSessions,
+  onManagedRuntimeActionComplete,
+}: {
+  overlay: WorkstreamRuntimeNodeOverlay | null;
+  onOpenConsole?: () => void;
+  onOpenConsoleInSessions?: () => void | Promise<void>;
+  onManagedRuntimeActionComplete?: () => void | Promise<void>;
+}) {
   if (!overlay) {
     return null;
   }
@@ -312,40 +350,34 @@ function RuntimeDetails({ overlay }: { overlay: WorkstreamRuntimeNodeOverlay | n
         </dl>
         {managedRuntime && (
           <div className="sl-managed-runtime-inspector">
-            <div className="sl-runtime-issue muted">
-              <span className="sl-runtime-issue-code">
-                {formatManagedRuntimeLabel(managedRuntime.projection.permissionProfile)}
-              </span>
-              <span>
-                {managedRuntime.projection.summary ??
-                  managedRuntime.projection.blockerSummary ??
-                  managedRuntime.projection.errorSummary ??
-                  "Background session progress is summarized from sanitized lifecycle events."}
-              </span>
+            <div className="sl-managed-runtime-inspector-actions">
+              <button
+                className="sl-action-btn primary"
+                type="button"
+                disabled={!onOpenConsole}
+                onClick={onOpenConsole}
+              >
+                Open console
+              </button>
+              <button
+                className="sl-action-btn"
+                type="button"
+                disabled={!onOpenConsoleInSessions}
+                onClick={() => void onOpenConsoleInSessions?.()}
+              >
+                Open in Sessions
+              </button>
             </div>
-            {managedRuntime.progress.length > 0 && (
-              <ol>
-                {managedRuntime.progress.slice(-3).map((event) => (
-                  <li key={`${event.timestamp}-${event.phase}-${event.summary}`}>
-                    <span>{formatManagedRuntimeLabel(event.phase)}</span>
-                    <span>{event.summary}</span>
-                  </li>
-                ))}
-              </ol>
-            )}
-            <div className="sl-managed-runtime-placeholder-actions">
-              {resolveManagedRuntimeActions(managedRuntime.projection).map((action) => (
-                <ManagedRuntimeActionButton
-                  key={action.action}
-                  sessionId={primarySession?.id ?? ""}
-                  action={
-                    primarySession
-                      ? action
-                      : { ...action, available: false, reason: "No bound session." }
-                  }
-                />
-              ))}
-            </div>
+            <ManagedRuntimeConsolePanel
+              runtime={managedRuntime.projection}
+              sessionId={primarySession?.id ?? null}
+              title="Background session console"
+              subtitle={`${formatManagedRuntimeLabel(
+                managedRuntime.projection.permissionProfile,
+              )}; sanitized Streamliner activity only.`}
+              compact
+              onActionComplete={onManagedRuntimeActionComplete}
+            />
           </div>
         )}
         <RuntimeIssueList issues={overlay.degradationReasons} />
@@ -378,8 +410,10 @@ function LaunchPathRow({
 
 export function NodeInspector({
   entry,
+  externalDependency,
   layout,
   workstream,
+  externalRouteForDependency,
   canLaunch = false,
   launchDisabledReason,
   launchRecord,
@@ -388,6 +422,9 @@ export function NodeInspector({
   launchRecordError,
   runtimeOverlay = null,
   onLaunch,
+  onOpenConsole,
+  onOpenConsoleInSessions,
+  onManagedRuntimeActionComplete,
   onReleaseStuckOperation,
   onClearPreviousInit,
 }: NodeInspectorProps) {
@@ -395,6 +432,90 @@ export function NodeInspector({
   const [releaseError, setReleaseError] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
   const [clearError, setClearError] = useState<string | null>(null);
+
+  if (!entry && externalDependency) {
+    const route = externalRouteForDependency?.(externalDependency) ?? null;
+    const blockedNode = workstream.nodes.find((node) => node.id === externalDependency.nodeId);
+    return (
+      <div className="sl-sidebar-section">
+        <span className="sl-section-label">INSPECTOR</span>
+        <div className="sl-inspector-card">
+          <h3 className="sl-sidebar-title">{externalDependency.label}</h3>
+          <p className="sl-inspector-summary">{externalDependency.detail}</p>
+          <div className="sl-inspector-meta">
+            <span className="sl-pill status-red">external dependency</span>
+            <span className={`sl-pill ${externalDependencyPillClass(externalDependency.state)}`}>
+              {externalDependency.statusLabel}
+            </span>
+            {externalDependency.archived ? (
+              <span className="sl-pill muted">archived source</span>
+            ) : null}
+          </div>
+          <dl className="sl-node-launch-fields">
+            {blockedNode ? (
+              <div>
+                <dt>Blocks</dt>
+                <dd>{blockedNode.title}</dd>
+              </div>
+            ) : null}
+            {externalDependency.target ? (
+              <>
+                <div>
+                  <dt>Project</dt>
+                  <dd>{externalDependency.target.projectKey}</dd>
+                </div>
+                <div>
+                  <dt>Workstream</dt>
+                  <dd>{externalDependency.target.workstreamId}</dd>
+                </div>
+                {externalDependency.target.nodeId ? (
+                  <div>
+                    <dt>Node</dt>
+                    <dd>{externalDependency.target.nodeId}</dd>
+                  </div>
+                ) : null}
+              </>
+            ) : null}
+            {externalDependency.targetTitle ? (
+              <div>
+                <dt>Resolved target</dt>
+                <dd>{externalDependency.targetTitle}</dd>
+              </div>
+            ) : null}
+            {externalDependency.targetStatus ? (
+              <div>
+                <dt>Target status</dt>
+                <dd>{formatStatus(externalDependency.targetStatus)}</dd>
+              </div>
+            ) : null}
+            {externalDependency.ignoredStatus ? (
+              <div>
+                <dt>Manual status</dt>
+                <dd>Ignored because the target resolved.</dd>
+              </div>
+            ) : null}
+            {externalDependency.error ? (
+              <div>
+                <dt>Resolution error</dt>
+                <dd>{externalDependency.error}</dd>
+              </div>
+            ) : null}
+          </dl>
+          {route ? (
+            <a
+              className="sl-action-btn primary"
+              href={route.href}
+              onClick={(event) => handleInAppLinkClick(event, route.onOpen)}
+              target={externalDependency.target ? undefined : "_blank"}
+              rel={externalDependency.target ? undefined : "noopener noreferrer"}
+            >
+              {externalDependency.target ? "Open upstream" : "Open dependency URL"}
+            </a>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
 
   if (!entry) {
     return (
@@ -547,7 +668,12 @@ export function NodeInspector({
         </div>
       </div>
 
-      <RuntimeDetails overlay={runtimeOverlay} />
+      <RuntimeDetails
+        overlay={runtimeOverlay}
+        onOpenConsole={onOpenConsole}
+        onOpenConsoleInSessions={onOpenConsoleInSessions}
+        onManagedRuntimeActionComplete={onManagedRuntimeActionComplete}
+      />
 
       {(launchRecordLoading || launchRecordError || launchRecord || launchOperation || latestClaim) && (
         <div className="sl-sidebar-section">
@@ -772,6 +898,49 @@ export function NodeInspector({
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {entry.externalDependencies.length > 0 && (
+        <div className="sl-sidebar-section">
+          <span className="sl-section-label">
+            EXTERNAL DEPENDENCIES ({entry.externalDependencies.length})
+          </span>
+          <div className="sl-sidebar-list">
+            {entry.externalDependencies.map((dependency) => {
+              const route = externalRouteForDependency?.(dependency) ?? null;
+              const content = (
+                <>
+                  <div className="sl-sidebar-item-header">
+                    <span className="sl-sidebar-item-title">{dependency.label}</span>
+                    <span className={`sl-node-pill ${externalDependencyPillClass(dependency.state)}`}>
+                      {dependency.statusLabel}
+                    </span>
+                  </div>
+                  <div className="sl-sidebar-item-meta">
+                    <span>{dependency.detail}</span>
+                    {dependency.archived ? <span>archived</span> : null}
+                  </div>
+                </>
+              );
+              return route ? (
+                <a
+                  key={dependency.key}
+                  className="sl-sidebar-item"
+                  href={route.href}
+                  onClick={(event) => handleInAppLinkClick(event, route.onOpen)}
+                  target={dependency.target ? undefined : "_blank"}
+                  rel={dependency.target ? undefined : "noopener noreferrer"}
+                >
+                  {content}
+                </a>
+              ) : (
+                <div key={dependency.key} className="sl-sidebar-item">
+                  {content}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

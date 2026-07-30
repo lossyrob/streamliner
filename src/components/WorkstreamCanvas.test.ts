@@ -27,6 +27,7 @@ function buildLayout(): WorkstreamGraphLayoutResult {
           operationalStatus: "completed",
           dependencyReady: true,
           completionSource: "artifact",
+          externalDependencies: [],
         },
       },
       {
@@ -51,6 +52,7 @@ function buildLayout(): WorkstreamGraphLayoutResult {
           operationalStatus: "in-progress",
           dependencyReady: true,
           completionSource: null,
+          externalDependencies: [],
         },
       },
       {
@@ -75,6 +77,7 @@ function buildLayout(): WorkstreamGraphLayoutResult {
           operationalStatus: "planned",
           dependencyReady: false,
           completionSource: null,
+          externalDependencies: [],
         },
       },
       {
@@ -99,9 +102,11 @@ function buildLayout(): WorkstreamGraphLayoutResult {
           operationalStatus: "completed",
           dependencyReady: true,
           completionSource: "artifact",
+          externalDependencies: [],
         },
       },
     ],
+    externalNodes: [],
     edges: [],
     checkpointLanes: [],
     dependenciesByNode: new Map([
