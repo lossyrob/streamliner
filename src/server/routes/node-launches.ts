@@ -19,13 +19,16 @@ import {
 import type { NodeLaunchRecordStore } from "../node-launch-record-store";
 import {
   isBlockingNodeLaunchOperation,
+  type NodeBranchLease,
   type NodeTerminalLaunchResponse,
 } from "../../node-launch-record-contract";
 import { SessionRegistryFileStore } from "../../session-registry/file-store";
 import {
   WORKSTREAM_LAUNCH_REQUIRED_TRACKERS,
+  WORKSTREAM_NODE_LAUNCH_MODES,
   type WorkstreamLaunchPolicy,
   type WorkstreamLaunchRequiredTracker,
+  type WorkstreamNodeLaunchMode,
 } from "../../workstream-schema";
 import { isLoopbackAddress } from "../config";
 import { getApiLogger } from "../logger";
@@ -208,6 +211,49 @@ function recordField(record: Record<string, unknown>, key: string, label: string
   return value;
 }
 
+function parseExistingPullRequest(
+  value: unknown,
+  label: string,
+): NonNullable<PawLaunchMetadata["existingPullRequest"]> {
+  if (!isRecord(value)) {
+    throw badRequest(`${label} must be an object.`, label);
+  }
+  if (value.provider !== "azure-devops") {
+    throw badRequest(`${label}.provider must be "azure-devops".`, `${label}.provider`);
+  }
+  if (typeof value.id !== "number" || !Number.isInteger(value.id) || value.id <= 0) {
+    throw badRequest(`${label}.id must be a positive integer.`, `${label}.id`);
+  }
+  return { provider: "azure-devops", id: value.id };
+}
+
+function parseBranchLease(value: unknown, label: string): NodeBranchLease {
+  if (!isRecord(value)) {
+    throw badRequest(`${label} must be an object.`, label);
+  }
+  stringField(value, "leaseId", `${label}.leaseId`);
+  stringField(value, "branchLeaseKey", `${label}.branchLeaseKey`);
+  stringField(value, "graphPath", `${label}.graphPath`);
+  stringField(value, "nodeId", `${label}.nodeId`);
+  stringField(value, "cwd", `${label}.cwd`);
+  stringField(value, "targetBranch", `${label}.targetBranch`);
+  const requiredStartSha = stringField(
+    value,
+    "requiredStartSha",
+    `${label}.requiredStartSha`,
+  );
+  if (!/^[0-9a-f]{40}$/i.test(requiredStartSha)) {
+    throw badRequest(
+      `${label}.requiredStartSha must be a 40-character hexadecimal git SHA.`,
+      `${label}.requiredStartSha`,
+    );
+  }
+  if (value.status !== "active") {
+    throw badRequest(`${label}.status must be "active".`, `${label}.status`);
+  }
+  return value as unknown as NodeBranchLease;
+}
+
 function parseTerminal(value: unknown): PawLaunchTerminalPreferences {
   if (!isRecord(value)) {
     throw badRequest("handoff.terminal must be an object.", "handoff.terminal");
@@ -254,6 +300,78 @@ function parseLaunchMetadata(value: unknown): PawLaunchMetadata {
     : (() => {
       throw badRequest("handoff.launchMetadata must be an object.", "handoff.launchMetadata");
     })();
+  const launchMode = record.launchMode === undefined
+    ? "standard-github"
+    : WORKSTREAM_NODE_LAUNCH_MODES.includes(record.launchMode as WorkstreamNodeLaunchMode)
+      ? record.launchMode as WorkstreamNodeLaunchMode
+      : (() => {
+          throw badRequest(
+            `handoff.launchMetadata.launchMode must be one of: ${WORKSTREAM_NODE_LAUNCH_MODES.join(", ")}.`,
+            "handoff.launchMetadata.launchMode",
+          );
+        })();
+  const shared = launchMode === "existing-shared-azure-devops";
+  const completionMode = record.completionMode === undefined || record.completionMode === null
+    ? null
+    : record.completionMode === "branch-contribution"
+      ? record.completionMode
+      : (() => {
+          throw badRequest(
+            'handoff.launchMetadata.completionMode must be "branch-contribution".',
+            "handoff.launchMetadata.completionMode",
+          );
+        })();
+  const targetBranch = optionalTrimmedStringField(
+    record,
+    "targetBranch",
+    "handoff.launchMetadata.targetBranch",
+  );
+  const requiredStartSha = optionalTrimmedStringField(
+    record,
+    "requiredStartSha",
+    "handoff.launchMetadata.requiredStartSha",
+  )?.toLowerCase() ?? null;
+  const existingPullRequest = record.existingPullRequest === undefined ||
+      record.existingPullRequest === null
+    ? null
+    : parseExistingPullRequest(
+        record.existingPullRequest,
+        "handoff.launchMetadata.existingPullRequest",
+      );
+  const branchLease = record.branchLease === undefined || record.branchLease === null
+    ? null
+    : parseBranchLease(record.branchLease, "handoff.launchMetadata.branchLease");
+  if (
+    shared &&
+    (
+      completionMode !== "branch-contribution" ||
+      !targetBranch ||
+      !requiredStartSha ||
+      !/^[0-9a-f]{40}$/.test(requiredStartSha) ||
+      !existingPullRequest ||
+      !branchLease
+    )
+  ) {
+    throw badRequest(
+      "Shared launch metadata requires targetBranch, requiredStartSha, existingPullRequest, completionMode, and branchLease.",
+      "handoff.launchMetadata",
+    );
+  }
+  if (
+    !shared &&
+    (
+      completionMode !== null ||
+      targetBranch !== null ||
+      requiredStartSha !== null ||
+      existingPullRequest !== null ||
+      branchLease !== null
+    )
+  ) {
+    throw badRequest(
+      "Standard launch metadata cannot carry existing shared-branch fields.",
+      "handoff.launchMetadata.launchMode",
+    );
+  }
   return {
     launchNonce: nullableLaunchPromptTokenField(record, "launchNonce", "handoff.launchMetadata.launchNonce"),
     launchClaimRef: nullableStringField(record, "launchClaimRef"),
@@ -267,6 +385,12 @@ function parseLaunchMetadata(value: unknown): PawLaunchMetadata {
     workTitle: stringField(record, "workTitle", "handoff.launchMetadata.workTitle"),
     trackerUrl: nullableStringField(record, "trackerUrl"),
     launchPolicy: nullableLaunchPolicyField(record, "launchPolicy", "handoff.launchMetadata.launchPolicy"),
+    launchMode,
+    completionMode,
+    targetBranch,
+    requiredStartSha,
+    existingPullRequest,
+    branchLease,
   };
 }
 

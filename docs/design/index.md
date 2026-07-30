@@ -44,6 +44,7 @@ Streamliner helps a single builder direct many concurrent AI coding agent workst
 | 009 | [SDK-managed graph-node worker runtime](decisions/009-sdk-managed-worker-runtime.md) | accepted | 2026-05-07 |
 | 010 | [Terminal takeover and managed cleanup actions](decisions/010-terminal-takeover-and-cleanup.md) | accepted | 2026-05-09 |
 | 011 | [Documentation family foundation](decisions/011-documentation-family-foundation.md) | accepted | 2026-05-10 |
+| 012 | [Durable shared-branch launch classification](decisions/012-durable-shared-branch-launch.md) | accepted | 2026-07-30 |
 
 ## Open questions
 

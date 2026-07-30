@@ -40,6 +40,26 @@ export const WORKSTREAM_LAUNCH_TERMINAL_PREFERENCES = [
 export type WorkstreamLaunchTerminalPreference =
   (typeof WORKSTREAM_LAUNCH_TERMINAL_PREFERENCES)[number];
 
+export const WORKSTREAM_NODE_LAUNCH_MODES = [
+  "standard-github",
+  "standard-azure-devops",
+  "existing-shared-azure-devops",
+] as const;
+export type WorkstreamNodeLaunchMode =
+  (typeof WORKSTREAM_NODE_LAUNCH_MODES)[number];
+
+export const WORKSTREAM_EXISTING_PULL_REQUEST_PROVIDERS = [
+  "azure-devops",
+] as const;
+export type WorkstreamExistingPullRequestProvider =
+  (typeof WORKSTREAM_EXISTING_PULL_REQUEST_PROVIDERS)[number];
+
+export const WORKSTREAM_NODE_COMPLETION_MODES = [
+  "branch-contribution",
+] as const;
+export type WorkstreamNodeCompletionMode =
+  (typeof WORKSTREAM_NODE_COMPLETION_MODES)[number];
+
 export const WORKSTREAM_CHECKPOINT_STATUSES = ["planned", "completed"] as const;
 export type WorkstreamCheckpointStatus =
   (typeof WORKSTREAM_CHECKPOINT_STATUSES)[number];
@@ -155,6 +175,28 @@ export interface WorkstreamLaunchDefaults {
   reviewPromptTemplateId?: string | null;
 }
 
+export interface WorkstreamExistingPullRequest {
+  provider: WorkstreamExistingPullRequestProvider;
+  id: number;
+}
+
+export interface WorkstreamStandardNodeLaunchConfiguration {
+  mode: "standard-github" | "standard-azure-devops";
+}
+
+export interface WorkstreamExistingSharedNodeLaunchConfiguration {
+  mode: "existing-shared-azure-devops";
+  targetBranch: string;
+  requiredStartSha: string;
+  existingPullRequest: WorkstreamExistingPullRequest;
+  completionMode: "branch-contribution";
+  branchLeaseKey: string;
+}
+
+export type WorkstreamNodeLaunchConfiguration =
+  | WorkstreamStandardNodeLaunchConfiguration
+  | WorkstreamExistingSharedNodeLaunchConfiguration;
+
 export interface WorkstreamPresentation {
   shortName?: string | null;
   color?: string | null;
@@ -169,6 +211,7 @@ export interface WorkstreamNode {
   attention: WorkstreamAttention;
   repoIds: string[];
   tracker?: WorkstreamTracker;
+  launch?: WorkstreamNodeLaunchConfiguration;
   dependsOn: string[];
   externalDependsOn?: WorkstreamExternalDependency[];
 }

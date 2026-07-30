@@ -97,6 +97,14 @@ import {
   type SessionRegistryTrustedSignalSource,
   type SessionRegistryTrustedStartSource,
 } from "../session-registry-schema";
+import {
+  WORKSTREAM_EXISTING_PULL_REQUEST_PROVIDERS,
+  WORKSTREAM_NODE_COMPLETION_MODES,
+  WORKSTREAM_NODE_LAUNCH_MODES,
+  type WorkstreamExistingPullRequest,
+  type WorkstreamNodeCompletionMode,
+  type WorkstreamNodeLaunchMode,
+} from "../workstream-schema";
 
 const DEFAULT_REGISTRY_ROOT = resolve(
   homedir(),
@@ -1181,6 +1189,55 @@ function normalizePawLaunch(
   if (!isPawWorkflowKind(workflowKind)) {
     throw new Error(`Unsupported ${fieldName}.workflowKind "${workflowKind}".`);
   }
+  const launchModeValue = hasOwn(value, "launchMode")
+    ? ensureString(value.launchMode, `${fieldName}.launchMode`)
+    : undefined;
+  if (
+    launchModeValue !== undefined &&
+    !WORKSTREAM_NODE_LAUNCH_MODES.includes(launchModeValue as WorkstreamNodeLaunchMode)
+  ) {
+    throw new Error(`Unsupported ${fieldName}.launchMode "${launchModeValue}".`);
+  }
+  const completionModeValue = ensureOptionalString(
+    value.completionMode,
+    `${fieldName}.completionMode`,
+  );
+  if (
+    completionModeValue !== null &&
+    !WORKSTREAM_NODE_COMPLETION_MODES.includes(
+      completionModeValue as WorkstreamNodeCompletionMode,
+    )
+  ) {
+    throw new Error(`Unsupported ${fieldName}.completionMode "${completionModeValue}".`);
+  }
+  let existingPullRequest: WorkstreamExistingPullRequest | null = null;
+  if (value.existingPullRequest !== undefined && value.existingPullRequest !== null) {
+    if (!isJsonObject(value.existingPullRequest)) {
+      throw new Error(`Expected ${fieldName}.existingPullRequest to be an object or null.`);
+    }
+    const provider = ensureString(
+      value.existingPullRequest.provider,
+      `${fieldName}.existingPullRequest.provider`,
+    );
+    if (!WORKSTREAM_EXISTING_PULL_REQUEST_PROVIDERS.includes(
+      provider as WorkstreamExistingPullRequest["provider"],
+    )) {
+      throw new Error(
+        `Unsupported ${fieldName}.existingPullRequest.provider "${provider}".`,
+      );
+    }
+    const id = ensureNonNegativeInteger(
+      value.existingPullRequest.id,
+      `${fieldName}.existingPullRequest.id`,
+    );
+    if (id === 0) {
+      throw new Error(`Expected ${fieldName}.existingPullRequest.id to be positive.`);
+    }
+    existingPullRequest = {
+      provider: provider as WorkstreamExistingPullRequest["provider"],
+      id,
+    };
+  }
   return {
     workId: ensureString(value.workId, `${fieldName}.workId`),
     workTitle: ensureString(value.workTitle, `${fieldName}.workTitle`),
@@ -1194,6 +1251,40 @@ function normalizePawLaunch(
       value.streamlinerContextPath,
       `${fieldName}.streamlinerContextPath`,
     ),
+    ...(launchModeValue !== undefined
+      ? { launchMode: launchModeValue as WorkstreamNodeLaunchMode }
+      : {}),
+    ...(hasOwn(value, "completionMode")
+      ? { completionMode: completionModeValue as WorkstreamNodeCompletionMode | null }
+      : {}),
+    ...(hasOwn(value, "targetBranch")
+      ? { targetBranch: ensureOptionalString(value.targetBranch, `${fieldName}.targetBranch`) }
+      : {}),
+    ...(hasOwn(value, "requiredStartSha")
+      ? {
+          requiredStartSha: ensureOptionalString(
+            value.requiredStartSha,
+            `${fieldName}.requiredStartSha`,
+          ),
+        }
+      : {}),
+    ...(hasOwn(value, "existingPullRequest") ? { existingPullRequest } : {}),
+    ...(hasOwn(value, "branchLeaseId")
+      ? {
+          branchLeaseId: ensureOptionalString(
+            value.branchLeaseId,
+            `${fieldName}.branchLeaseId`,
+          ),
+        }
+      : {}),
+    ...(hasOwn(value, "branchLeaseKey")
+      ? {
+          branchLeaseKey: ensureOptionalString(
+            value.branchLeaseKey,
+            `${fieldName}.branchLeaseKey`,
+          ),
+        }
+      : {}),
   };
 }
 

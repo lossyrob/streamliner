@@ -405,8 +405,36 @@ Each node is a unit of work in the dependency graph.
 | `status` | enum | ✓ | `"planned"`, `"ready"`, `"in-progress"`, `"blocked"`, or `"completed"` |
 | `repoIds` | string[] | ✓ | References to declared repos (can be empty) |
 | `tracker` | object | | Where the node's spec lives (see Tracker Reference) |
+| `launch` | object | | Durable node launch classification and any existing shared-branch contract (see Node Launch Configuration) |
 | `dependsOn` | string[] | ✓ | IDs of nodes that must complete before this one |
 | `externalDependsOn` | array | | External dependencies outside this graph (see External Dependency). These affect operational readiness without rewriting the committed graph when upstream status changes. |
+
+### Node Launch Configuration
+
+`node.launch` is optional. When absent, the node preserves the historical
+`standard-github` launch behavior. When present, `mode` is required:
+
+- `standard-github` — the worker owns a normal GitHub branch and PR.
+- `standard-azure-devops` — the worker owns a normal Azure DevOps branch and PR.
+- `existing-shared-azure-devops` — the worker contributes to an existing shared
+  Azure DevOps branch and PR.
+
+Standard modes reject shared-branch fields. Existing-shared mode requires all of
+the following:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `mode` | `"existing-shared-azure-devops"` | ✓ | Selects the fail-closed shared contribution path |
+| `targetBranch` | string | ✓ | Existing branch that the worker must use without creating or switching branches |
+| `requiredStartSha` | 40-character hex string | ✓ | Exact local and remote branch head required for fresh preparation and launch |
+| `existingPullRequest` | object | ✓ | Existing PR identity `{ "provider": "azure-devops", "id": <positive integer> }` |
+| `completionMode` | `"branch-contribution"` | ✓ | Completes a bounded branch contribution rather than shipping the aggregate PR |
+| `branchLeaseKey` | string | ✓ | Logical repository-and-branch exclusivity key shared by every node targeting this branch |
+
+Launch preparation must receive a matching launch configuration. The backend
+re-reads the graph and rejects missing or mismatched modes and fields; callers
+cannot select shared mode for a standard node or the standard path for a shared
+node.
 
 ### Node types
 
@@ -541,5 +569,7 @@ These constraints are enforced at parse time. Violations cause errors.
 | 16 | `docRefs.path` is repo-root-relative |
 | 17 | `externalDependsOn[].id` values are unique within each node |
 | 18 | External targets cannot point at the owning node |
+| 19 | Existing-shared nodes declare exactly one `repoId` and all shared launch fields |
+| 20 | Standard launch modes do not carry shared-branch fields |
 
 Runtime validation (tracker-cache freshness, cross-reference checks, and external target resolution) is separate from parse-time schema validation.

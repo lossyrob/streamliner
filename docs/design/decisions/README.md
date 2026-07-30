@@ -54,3 +54,4 @@ What follows from this choice.
 | 009 | [SDK-managed graph-node worker runtime](009-sdk-managed-worker-runtime.md) | accepted | 2026-05-07 |
 | 010 | [Terminal takeover and managed cleanup actions](010-terminal-takeover-and-cleanup.md) | accepted | 2026-05-09 |
 | 011 | [Documentation family foundation](011-documentation-family-foundation.md) | accepted | 2026-05-10 |
+| 012 | [Durable shared-branch launch classification](012-durable-shared-branch-launch.md) | accepted | 2026-07-30 |

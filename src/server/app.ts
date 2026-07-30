@@ -188,6 +188,8 @@ export function createStreamlinerApiApp(
     ...options.nodeLaunchDeps,
     managedSdkRunner,
     runtimePatchCoalescer,
+    branchLeaseCoordinator:
+      options.nodeLaunchDeps?.branchLeaseCoordinator ?? nodeLaunchRecordStore,
   };
 
   app.disable("x-powered-by");

@@ -1,3 +1,9 @@
+import type {
+  WorkstreamExistingPullRequest,
+  WorkstreamNodeCompletionMode,
+  WorkstreamNodeLaunchMode,
+} from "./workstream-schema";
+
 export const SESSION_REGISTRY_SCHEMA_VERSION = 1 as const;
 
 export const SESSION_REGISTRY_LIFECYCLE_STATUSES = [
@@ -378,6 +384,13 @@ export interface SessionRegistryPawLaunch {
   pawWorkDir: string;
   workflowContextPath: string | null;
   streamlinerContextPath: string | null;
+  launchMode?: WorkstreamNodeLaunchMode;
+  completionMode?: WorkstreamNodeCompletionMode | null;
+  targetBranch?: string | null;
+  requiredStartSha?: string | null;
+  existingPullRequest?: WorkstreamExistingPullRequest | null;
+  branchLeaseId?: string | null;
+  branchLeaseKey?: string | null;
 }
 
 export interface SessionRegistryRuntimeProgressEvent {

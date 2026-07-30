@@ -5,6 +5,8 @@ import type {
   SessionRegistryPawLaunch,
   SessionRegistryRecord,
 } from "../session-registry-schema";
+import type { NodeBranchLeaseCoordinator } from "../node-launch-record-contract";
+import type { WorkstreamNode } from "../workstream-schema";
 import type { SessionRegistryStore } from "../session-registry-contract";
 import { buildLaunchedSessionDescription } from "../session-registry-filter";
 import type { SessionRegistryFileStore } from "../session-registry/file-store";
@@ -14,8 +16,15 @@ import {
   kickoffNonceLine,
   LAUNCH_NONCE_PROMPT_LINE_PREFIX,
   markClaimFailed,
+  type MarkClaimFailedOutcome,
 } from "../session-registry/launch-claims";
-import type { PawLaunchHandoff } from "./launch-preparation";
+import {
+  LaunchPreparationError,
+  resolvedNodeLaunchContract,
+  validateExistingSharedBranchResumeState,
+  validateExistingSharedBranchState,
+  type PawLaunchHandoff,
+} from "./launch-preparation";
 import {
   buildCopilotInteractiveCommandForShell,
   launchCopilotTerminal,
@@ -38,6 +47,10 @@ import { ManagedRuntimePatchCoalescer } from "./managed-runtime-patch-coalescer"
 export type NodeLaunchErrorCode =
   | "launch_policy_blocked"
   | "launch_policy_unavailable"
+  | "launch_mode_mismatch"
+  | "shared_branch_stale"
+  | "branch_lease_conflict"
+  | "branch_lease_unavailable"
   | "duplicate_active_launch"
   | "launch_claim_failed"
   | "terminal_spawn_failed"
@@ -118,6 +131,7 @@ export interface NodeLaunchDeps {
   launchTerminal?: (options: TerminalLaunchOptions) => TerminalLaunchResult;
   managedSdkRunner?: ManagedSdkRunner;
   runtimePatchCoalescer?: ManagedRuntimePatchCoalescer;
+  branchLeaseCoordinator?: NodeBranchLeaseCoordinator;
   now?: () => Date;
 }
 
@@ -240,10 +254,18 @@ function lineageMetadataFor(handoff: PawLaunchHandoff): Record<string, unknown> 
     streamlinerContextPath: handoff.streamlinerContextPath,
     contextPackagePath: handoff.contextPackage.contextPackagePath,
     trackerUrl: handoff.launchMetadata.trackerUrl,
+    launchMode: handoff.launchMetadata.launchMode,
+    completionMode: handoff.launchMetadata.completionMode,
+    targetBranch: handoff.launchMetadata.targetBranch,
+    requiredStartSha: handoff.launchMetadata.requiredStartSha,
+    existingPullRequest: handoff.launchMetadata.existingPullRequest,
+    branchLeaseId: handoff.launchMetadata.branchLease?.leaseId ?? null,
+    branchLeaseKey: handoff.launchMetadata.branchLease?.branchLeaseKey ?? null,
   };
 }
 
 function pawLaunchFor(handoff: PawLaunchHandoff): SessionRegistryPawLaunch {
+  const launchMode = handoff.launchMetadata.launchMode ?? "standard-github";
   return {
     workId: handoff.launchMetadata.workId,
     workTitle: handoff.launchMetadata.workTitle,
@@ -251,6 +273,19 @@ function pawLaunchFor(handoff: PawLaunchHandoff): SessionRegistryPawLaunch {
     pawWorkDir: handoff.pawWorkDir,
     workflowContextPath: handoff.workflowContextPath,
     streamlinerContextPath: handoff.streamlinerContextPath,
+    launchMode,
+    ...(launchMode === "existing-shared-azure-devops"
+      ? {
+          completionMode: handoff.launchMetadata.completionMode ?? null,
+          targetBranch: handoff.launchMetadata.targetBranch ?? null,
+          requiredStartSha: handoff.launchMetadata.requiredStartSha ?? null,
+          existingPullRequest: handoff.launchMetadata.existingPullRequest
+            ? { ...handoff.launchMetadata.existingPullRequest }
+            : null,
+          branchLeaseId: handoff.launchMetadata.branchLease?.leaseId ?? null,
+          branchLeaseKey: handoff.launchMetadata.branchLease?.branchLeaseKey ?? null,
+        }
+      : {}),
   };
 }
 
@@ -266,6 +301,90 @@ function errorLogDetails(error: unknown): Record<string, string> | string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function hasWorkerOwnershipEvidence(
+  session: SessionRegistryRecord | null,
+): boolean {
+  return Boolean(
+    session?.copilotSessionId ||
+    session?.runtime?.sdkSessionId ||
+    session?.copilotProcessState === "live",
+  );
+}
+
+async function recoverSharedBranchLeaseAfterFailedLaunch(input: {
+  handoff: PawLaunchHandoff;
+  failed: MarkClaimFailedOutcome | null;
+  failureCode: string;
+  failureReason: string;
+  hadWorkerOwnershipEvidence: boolean;
+  registryStore: SessionRegistryFileStore;
+  deps: NodeLaunchDeps;
+  logger: {
+    warn: (message: string, fields?: Record<string, unknown>) => void;
+    error: (message: string, fields?: Record<string, unknown>) => void;
+  };
+}): Promise<string | null> {
+  const branchLease = input.handoff.launchMetadata.branchLease;
+  if (
+    !branchLease ||
+    input.handoff.launchMetadata.launchMode !==
+      "existing-shared-azure-devops" ||
+    !input.deps.branchLeaseCoordinator ||
+    !input.failed?.ok ||
+    input.failed.claim?.status !== "failed"
+  ) {
+    return null;
+  }
+  if (input.hadWorkerOwnershipEvidence) {
+    input.logger.warn(
+      "shared branch lease left bound after failed launch because worker ownership evidence exists",
+      {
+        branchLeaseId: branchLease.leaseId,
+        launchClaimId: input.failed.claim.launchClaimId,
+        registryId: input.failed.claim.reservedRegistryId,
+      },
+    );
+    return null;
+  }
+  const registryId = input.failed.claim.reservedRegistryId;
+  if (registryId && input.registryStore.getSession(registryId)) {
+    input.logger.warn(
+      "shared branch lease left bound after failed launch because registry cleanup is incomplete",
+      {
+        branchLeaseId: branchLease.leaseId,
+        launchClaimId: input.failed.claim.launchClaimId,
+        registryId,
+      },
+    );
+    return null;
+  }
+  try {
+    await input.deps.branchLeaseCoordinator.recoverBranchLeaseAfterFailedLaunch({
+      leaseId: branchLease.leaseId,
+      branchLeaseKey: branchLease.branchLeaseKey,
+      graphPath: input.handoff.launchMetadata.graphPath,
+      nodeId: input.handoff.launchMetadata.nodeId,
+      cwd: input.handoff.cwd,
+      targetBranch: branchLease.targetBranch,
+      requiredStartSha: branchLease.requiredStartSha,
+      launchClaimId: input.failed.claim.launchClaimId,
+      registryId,
+      failureCode: input.failureCode,
+      failureReason: input.failureReason,
+      now: input.deps.now?.(),
+    });
+    return null;
+  } catch (error: unknown) {
+    input.logger.error("failed to recover shared branch lease after launch failure", {
+      branchLeaseId: branchLease.leaseId,
+      launchClaimId: input.failed.claim.launchClaimId,
+      registryId,
+      err: errorLogDetails(error),
+    });
+    return errorMessage(error);
+  }
 }
 
 function lifecycleProgressMessage(state: SessionRegistryManagedLifecycleState): string {
@@ -321,13 +440,13 @@ function hasActiveManagedRuntime(
     .some((session) => isManagedRuntimeActive(session.runtime));
 }
 
-function assertLaunchPolicyAllows(handoff: PawLaunchHandoff): void {
+function assertLaunchPolicyAllows(handoff: PawLaunchHandoff): WorkstreamNode | null {
   const policyResult = evaluateLaunchPolicyFromGraph({
     graphPath: handoff.launchMetadata.graphPath,
     nodeId: handoff.launchMetadata.nodeId,
   });
   if (policyResult.ok) {
-    return;
+    return policyResult.node;
   }
   if (policyResult.kind === "blocked") {
     const details = launchPolicyDetails(policyResult.violation);
@@ -353,7 +472,7 @@ function assertLaunchPolicyAllows(handoff: PawLaunchHandoff): void {
       "node launch policy graph unavailable; allowing unconfigured prepared handoff",
       details,
     );
-    return;
+    return null;
   }
   throw new NodeLaunchError(
     "launch_policy_unavailable",
@@ -362,6 +481,186 @@ function assertLaunchPolicyAllows(handoff: PawLaunchHandoff): void {
     null,
     details,
   );
+}
+
+function assertLaunchModeAllows(
+  handoff: PawLaunchHandoff,
+  node: WorkstreamNode | null,
+): void {
+  const expected = resolvedNodeLaunchContract(node);
+  const launchMode = handoff.launchMetadata.launchMode ?? "standard-github";
+  if (launchMode !== expected.launchMode) {
+    throw new NodeLaunchError(
+      "launch_mode_mismatch",
+      409,
+      `Node launch mode is ${expected.launchMode}, but prepared handoff uses ${launchMode}.`,
+      null,
+      {
+        expectedLaunchMode: expected.launchMode,
+        receivedLaunchMode: launchMode,
+      },
+    );
+  }
+  if (launchMode !== "existing-shared-azure-devops") {
+    if (
+      handoff.launchMetadata.branchLease ||
+      handoff.launchMetadata.requiredStartSha ||
+      handoff.launchMetadata.existingPullRequest ||
+      handoff.launchMetadata.completionMode
+    ) {
+      throw new NodeLaunchError(
+        "launch_mode_mismatch",
+        409,
+        "Standard node launch handoffs cannot carry existing shared-branch metadata.",
+      );
+    }
+    return;
+  }
+  const shared = expected.sharedBranch;
+  const branchLease = handoff.launchMetadata.branchLease;
+  if (
+    !node ||
+    !shared ||
+    !branchLease ||
+    handoff.branch !== shared.targetBranch ||
+    handoff.launchMetadata.targetBranch !== shared.targetBranch ||
+    handoff.launchMetadata.requiredStartSha !== shared.requiredStartSha ||
+    handoff.launchMetadata.completionMode !== shared.completionMode ||
+    handoff.launchMetadata.existingPullRequest?.provider !==
+      shared.existingPullRequest.provider ||
+    handoff.launchMetadata.existingPullRequest?.id !==
+      shared.existingPullRequest.id ||
+    branchLease.branchLeaseKey !== shared.branchLeaseKey
+  ) {
+    throw new NodeLaunchError(
+      "launch_mode_mismatch",
+      409,
+      "Prepared shared-branch handoff does not match the selected node's durable launch contract.",
+    );
+  }
+}
+
+async function assertSharedBranchReady(
+  handoff: PawLaunchHandoff,
+  deps: NodeLaunchDeps,
+): Promise<void> {
+  if (handoff.launchMetadata.launchMode !== "existing-shared-azure-devops") {
+    return;
+  }
+  const branchLease = handoff.launchMetadata.branchLease;
+  const requiredStartSha = handoff.launchMetadata.requiredStartSha;
+  const targetBranch = handoff.launchMetadata.targetBranch;
+  if (!branchLease || !requiredStartSha || !targetBranch) {
+    throw new NodeLaunchError(
+      "launch_mode_mismatch",
+      409,
+      "Prepared shared-branch handoff is missing branch lease or start-SHA metadata.",
+    );
+  }
+  if (!deps.branchLeaseCoordinator) {
+    throw new NodeLaunchError(
+      "branch_lease_unavailable",
+      503,
+      "Shared-branch launch requires the integrated node launch record store.",
+    );
+  }
+  try {
+    await validateExistingSharedBranchState({
+      cwd: handoff.cwd,
+      targetBranch,
+      requiredStartSha,
+    });
+    await deps.branchLeaseCoordinator.assertBranchLeaseActive({
+      leaseId: branchLease.leaseId,
+      branchLeaseKey: branchLease.branchLeaseKey,
+      graphPath: handoff.launchMetadata.graphPath,
+      nodeId: handoff.launchMetadata.nodeId,
+      cwd: handoff.cwd,
+      targetBranch,
+      requiredStartSha,
+    });
+  } catch (error: unknown) {
+    if (error instanceof LaunchPreparationError) {
+      throw new NodeLaunchError(
+        "shared_branch_stale",
+        error.statusCode,
+        error.message,
+        null,
+        error.details,
+      );
+    }
+    const leaseError = error as {
+      code?: unknown;
+      statusCode?: unknown;
+      message?: unknown;
+    };
+    throw new NodeLaunchError(
+      typeof leaseError.code === "string" &&
+          leaseError.code.startsWith("branch_lease")
+        ? (typeof leaseError.statusCode === "number" && leaseError.statusCode === 409)
+          ? "branch_lease_conflict"
+          : "branch_lease_unavailable"
+        : "branch_lease_unavailable",
+      typeof leaseError.statusCode === "number" ? leaseError.statusCode : 500,
+      typeof leaseError.message === "string" ? leaseError.message : String(error),
+    );
+  }
+}
+
+async function reclaimSharedBranchForResume(
+  handoff: PawLaunchHandoff,
+  launchClaimId: string,
+  registryId: string,
+  deps: NodeLaunchDeps,
+  now: Date,
+): Promise<void> {
+  if (handoff.launchMetadata.launchMode !== "existing-shared-azure-devops") {
+    return;
+  }
+  const branchLease = handoff.launchMetadata.branchLease;
+  const targetBranch = handoff.launchMetadata.targetBranch;
+  const requiredStartSha = handoff.launchMetadata.requiredStartSha;
+  if (!branchLease || !targetBranch || !requiredStartSha || !deps.branchLeaseCoordinator) {
+    throw new NodeLaunchError(
+      "branch_lease_unavailable",
+      503,
+      "Shared-branch session resume requires its persisted branch lease metadata.",
+    );
+  }
+  try {
+    await validateExistingSharedBranchResumeState({
+      cwd: handoff.cwd,
+      targetBranch,
+      requiredStartSha,
+    });
+    await deps.branchLeaseCoordinator.reclaimBranchLeaseForSession({
+      leaseId: branchLease.leaseId,
+      branchLeaseKey: branchLease.branchLeaseKey,
+      graphPath: handoff.launchMetadata.graphPath,
+      nodeId: handoff.launchMetadata.nodeId,
+      cwd: handoff.cwd,
+      targetBranch,
+      requiredStartSha,
+      launchClaimId,
+      registryId,
+      now,
+    });
+  } catch (error: unknown) {
+    if (error instanceof LaunchPreparationError) {
+      throw new NodeLaunchError(
+        "shared_branch_stale",
+        error.statusCode,
+        error.message,
+        null,
+        error.details,
+      );
+    }
+    throw new NodeLaunchError(
+      "branch_lease_conflict",
+      409,
+      errorMessage(error),
+    );
+  }
 }
 
 function resumePromptForManagedSdkNode(
@@ -385,20 +684,22 @@ function resumePromptForManagedSdkNode(
   ].join("\n");
 }
 
-function reserveLaunchClaimForHandoff(
+async function reserveLaunchClaimForHandoff(
   registryStore: SessionRegistryFileStore,
   claimStore: LaunchClaimStore,
   handoff: PawLaunchHandoff,
   deps: NodeLaunchDeps,
   options: { recordCliArgs?: boolean } = {},
-): { claim: LaunchClaim; now: Date } {
+): Promise<{ claim: LaunchClaim; now: Date }> {
   // Launch claim reservation/failure cleanup intentionally still uses the
   // concrete file store because createLaunchClaim/markClaimFailed need
   // conditional row cleanup helpers that are outside SessionRegistryStore.
   if (handoff.launchMetadata.launchNonce !== null) {
     assertLaunchPromptToken(handoff.launchMetadata.launchNonce, "launch nonce");
   }
-  assertLaunchPolicyAllows(handoff);
+  const node = assertLaunchPolicyAllows(handoff);
+  assertLaunchModeAllows(handoff, node);
+  await assertSharedBranchReady(handoff, deps);
   const now = deps.now?.() ?? new Date();
   const blockingClaim = findBlockingLaunchClaim(
     claimStore,
@@ -448,6 +749,38 @@ function reserveLaunchClaimForHandoff(
       claimOutcome.error.message,
     );
   }
+  const branchLease = handoff.launchMetadata.branchLease;
+  if (branchLease && deps.branchLeaseCoordinator) {
+    try {
+      await deps.branchLeaseCoordinator.bindBranchLeaseToLaunch({
+        leaseId: branchLease.leaseId,
+        branchLeaseKey: branchLease.branchLeaseKey,
+        graphPath: handoff.launchMetadata.graphPath,
+        nodeId: handoff.launchMetadata.nodeId,
+        cwd: handoff.cwd,
+        targetBranch: branchLease.targetBranch,
+        requiredStartSha: branchLease.requiredStartSha,
+        launchClaimId: claimOutcome.claim.launchClaimId,
+        registryId: claimOutcome.claim.reservedRegistryId,
+        now,
+      });
+    } catch (error: unknown) {
+      markClaimFailed(
+        registryStore,
+        claimStore,
+        claimOutcome.claim.launchClaimId,
+        "internal-error",
+        errorMessage(error),
+        deps.now ? { now: deps.now } : undefined,
+      );
+      throw new NodeLaunchError(
+        "branch_lease_conflict",
+        409,
+        `Failed to bind shared branch lease to launch claim: ${errorMessage(error)}`,
+        claimOutcome.claim,
+      );
+    }
+  }
   return { claim: claimOutcome.claim, now };
 }
 
@@ -457,7 +790,7 @@ export async function launchPreparedNode(
   handoff: PawLaunchHandoff,
   deps: NodeLaunchDeps = {},
 ): Promise<NodeLaunchResult> {
-  const { claim, now } = reserveLaunchClaimForHandoff(
+  const { claim, now } = await reserveLaunchClaimForHandoff(
     registryStore,
     claimStore,
     handoff,
@@ -507,8 +840,15 @@ export async function launchPreparedNode(
   } catch (error: unknown) {
     const logger = getApiLogger().withScope("node-launch");
     const message = errorMessage(error);
+    const hadWorkerOwnershipEvidence = hasWorkerOwnershipEvidence(
+      claim.reservedRegistryId
+        ? registryStore.getSession(claim.reservedRegistryId)
+        : null,
+    );
     let failedClaim: LaunchClaim | null = claim;
+    let failedOutcome: MarkClaimFailedOutcome | null = null;
     let failureTransitionError: string | null = null;
+    let leaseRecoveryError: string | null = null;
     try {
       const failed = markClaimFailed(
         registryStore,
@@ -518,6 +858,7 @@ export async function launchPreparedNode(
         message,
         deps.now ? { now: deps.now } : undefined,
       );
+      failedOutcome = failed;
       if (failed.ok && failed.claim) {
         failedClaim = failed.claim;
       } else {
@@ -532,20 +873,36 @@ export async function launchPreparedNode(
         err: errorLogDetails(markError),
       });
     }
+    leaseRecoveryError = await recoverSharedBranchLeaseAfterFailedLaunch({
+      handoff,
+      failed: failedOutcome,
+      failureCode: "terminal-spawn-failed",
+      failureReason: message,
+      hadWorkerOwnershipEvidence,
+      registryStore,
+      deps,
+      logger,
+    });
     logger.error("terminal spawn failed", {
       launchClaimId: claim.launchClaimId,
       workstreamId: claim.workstreamId,
       nodeId: claim.nodeId,
       failureTransition: failureTransitionError ? "failed" : "recorded",
+      branchLeaseRecovery: leaseRecoveryError ? "failed" : "completed-or-not-applicable",
       err: errorLogDetails(error),
     });
-    const transitionMessage = failureTransitionError
-      ? `; also failed to mark launch claim failed: ${failureTransitionError}`
-      : "";
+    const transitionMessage = [
+      failureTransitionError
+        ? `also failed to mark launch claim failed: ${failureTransitionError}`
+        : null,
+      leaseRecoveryError
+        ? `also failed to recover shared branch lease: ${leaseRecoveryError}`
+        : null,
+    ].filter((entry): entry is string => entry !== null);
     throw new NodeLaunchError(
       "terminal_spawn_failed",
       500,
-      `Failed to launch terminal: ${message}${transitionMessage}`,
+      `Failed to launch terminal: ${message}${transitionMessage.length > 0 ? `; ${transitionMessage.join("; ")}` : ""}`,
       failedClaim,
     );
   }
@@ -646,7 +1003,7 @@ export async function launchManagedSdkNode(
   handoff: PawLaunchHandoff,
   deps: NodeLaunchDeps = {},
 ): Promise<NodeManagedSdkLaunchResult> {
-  const { claim, now } = reserveLaunchClaimForHandoff(
+  const { claim, now } = await reserveLaunchClaimForHandoff(
     registryStore,
     claimStore,
     handoff,
@@ -749,6 +1106,10 @@ export async function launchManagedSdkNode(
     const message = errorMessage(error);
     const logger = getApiLogger().withScope("node-launch");
     const cleanupFailures: string[] = [];
+    const hadWorkerOwnershipEvidence = hasWorkerOwnershipEvidence(
+      registryStore.getSession(registryId),
+    );
+    let failedOutcome: MarkClaimFailedOutcome | null = null;
     try {
       runtimePatches.patchNow(registryId, {
         lifecycleState: "failed",
@@ -777,6 +1138,7 @@ export async function launchManagedSdkNode(
         message,
         deps.now ? { now: deps.now } : undefined,
       );
+      failedOutcome = failed;
       if (!failed.ok) {
         cleanupFailures.push("mark launch claim failed: launch claim was not found");
       }
@@ -790,6 +1152,19 @@ export async function launchManagedSdkNode(
         registryId,
         err: errorLogDetails(claimFailureError),
       });
+    }
+    const leaseRecoveryError = await recoverSharedBranchLeaseAfterFailedLaunch({
+      handoff,
+      failed: failedOutcome,
+      failureCode: "internal-error",
+      failureReason: message,
+      hadWorkerOwnershipEvidence,
+      registryStore,
+      deps,
+      logger,
+    });
+    if (leaseRecoveryError) {
+      cleanupFailures.push(`recover shared branch lease: ${leaseRecoveryError}`);
     }
     logger.error("managed SDK start failed", {
       launchClaimId: claim.launchClaimId,
@@ -839,13 +1214,21 @@ export async function resumeManagedSdkNode(
   if (handoff.launchMetadata.launchNonce !== null) {
     assertLaunchPromptToken(handoff.launchMetadata.launchNonce, "launch nonce");
   }
-  assertLaunchPolicyAllows(handoff);
+  const node = assertLaunchPolicyAllows(handoff);
+  assertLaunchModeAllows(handoff, node);
   const now = deps.now?.() ?? new Date();
   const { claim, registryId, session, sdkSessionId } = managedResumeTarget(
     registryStore,
     claimStore,
     handoff,
     launchClaimId,
+  );
+  await reclaimSharedBranchForResume(
+    handoff,
+    claim.launchClaimId,
+    registryId,
+    deps,
+    now,
   );
   const graphBinding = {
     workstreamId: claim.workstreamId,

@@ -52,6 +52,7 @@ export default defineConfig({
           { text: '009 — SDK-Managed Graph-Node Worker Runtime', link: '/decisions/009-sdk-managed-worker-runtime' },
           { text: '010 — Terminal Takeover and Managed Cleanup Actions', link: '/decisions/010-terminal-takeover-and-cleanup' },
           { text: '011 — Documentation Family Foundation', link: '/decisions/011-documentation-family-foundation' },
+          { text: '012 — Durable Shared-Branch Launch Classification', link: '/decisions/012-durable-shared-branch-launch' },
         ]
       }
     ],
