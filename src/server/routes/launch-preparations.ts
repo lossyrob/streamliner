@@ -336,6 +336,7 @@ export function createLaunchPreparationsRouter(options: {
       contextPreparer: options.deps?.contextPreparer,
       existingLaunch,
       defaultCliArgs,
+      branchLeaseCoordinator: options.deps?.nodeLaunchRecordStore,
       onProgress,
     };
   };

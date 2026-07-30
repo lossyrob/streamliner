@@ -1,14 +1,18 @@
+import { readFileSync } from "node:fs";
+
 import { Router } from "express";
 
 import type { LaunchClaimStore } from "../../launch-claim-contract";
 import type { LaunchClaim } from "../../launch-claim-schema";
 import type {
   NodeLaunchClaimState,
+  NodeBranchLease,
   NodeLaunchOperation,
   NodeLaunchOperationStatus,
   NodeLaunchRecord,
   NodeLaunchRecordResetResponse,
 } from "../../node-launch-record-contract";
+import { parseWorkstreamDocument } from "../../workstream-view-model";
 import { SessionRegistryFileStore } from "../../session-registry/file-store";
 import { stopSession } from "../../session-registry/stop";
 import {
@@ -17,6 +21,10 @@ import {
   summarizeLaunchClaim,
 } from "../node-launch";
 import { NodeLaunchRecordStore } from "../node-launch-record-store";
+import {
+  resolvedNodeLaunchContract,
+  validateExistingSharedBranchState,
+} from "../launch-preparation";
 import { isLoopbackAddress } from "../config";
 
 function hasNonLoopbackForwardedFor(value: string | string[] | undefined): boolean {
@@ -102,6 +110,142 @@ function withLatestClaim(
 function nonEmptyString(value: string | null | undefined): string | null {
   const trimmed = value?.trim() ?? "";
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function bodyString(
+  body: Record<string, unknown>,
+  key: string,
+  label: string,
+): string {
+  const value = body[key];
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw Object.assign(new Error(`${label} is required.`), {
+      statusCode: 400,
+      code: "invalid_branch_lease_request",
+    });
+  }
+  return value.trim();
+}
+
+function optionalBodyString(
+  body: Record<string, unknown>,
+  key: string,
+): string | null {
+  const value = body[key];
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    throw Object.assign(new Error(`${key} must be a string.`), {
+      statusCode: 400,
+      code: "invalid_branch_lease_request",
+    });
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function bodySha(
+  body: Record<string, unknown>,
+  key: string,
+  label: string,
+): string {
+  const sha = bodyString(body, key, label).toLowerCase();
+  if (!/^[0-9a-f]{40}$/.test(sha)) {
+    throw Object.assign(
+      new Error(`${label} must be a 40-character hexadecimal git SHA.`),
+      {
+        statusCode: 400,
+        code: "invalid_branch_lease_request",
+      },
+    );
+  }
+  return sha;
+}
+
+function requestBody(body: unknown): Record<string, unknown> {
+  return typeof body === "object" && body !== null && !Array.isArray(body)
+    ? body as Record<string, unknown>
+    : {};
+}
+
+function assertJsonLoopbackRequest(
+  req: {
+    socket: { remoteAddress?: string };
+    headers: Record<string, string | string[] | undefined>;
+  },
+  res: {
+    status: (code: number) => { json: (body: unknown) => void };
+  },
+  action: string,
+): boolean {
+  if (isNonLoopbackRequest(req)) {
+    res.status(403).json({ error: `${action} must originate from loopback.` });
+    return false;
+  }
+  const contentType = req.headers["content-type"] ?? "";
+  if (typeof contentType !== "string" || !contentType.startsWith("application/json")) {
+    res.status(415).json({ error: "Content-Type must be application/json." });
+    return false;
+  }
+  return true;
+}
+
+function assertLeaseClaimAuthorization(
+  branchLease: NodeBranchLease,
+  bodyLaunchClaimId: string | null,
+  bodyRegistryId: string | null,
+  claimStore: LaunchClaimStore | undefined,
+): void {
+  if (
+    branchLease.launchClaimId !== null &&
+    branchLease.launchClaimId !== bodyLaunchClaimId
+  ) {
+    throw Object.assign(
+      new Error(`Branch lease requires launchClaimId ${branchLease.launchClaimId}.`),
+      { statusCode: 409, code: "branch_lease_claim_mismatch" },
+    );
+  }
+  if (branchLease.registryId !== null && branchLease.registryId !== bodyRegistryId) {
+    throw Object.assign(
+      new Error(`Branch lease requires registryId ${branchLease.registryId}.`),
+      { statusCode: 409, code: "branch_lease_registry_mismatch" },
+    );
+  }
+  if (!branchLease.launchClaimId || !claimStore) {
+    return;
+  }
+  const claim = claimStore.getClaim(branchLease.launchClaimId);
+  if (!claim) {
+    return;
+  }
+  const claimRegistryId = claim.boundRegistryId ?? claim.reservedRegistryId;
+  if (
+    claim.workstreamId !== branchLease.workstreamId ||
+    claim.nodeId !== branchLease.nodeId ||
+    (branchLease.registryId !== null && claimRegistryId !== branchLease.registryId)
+  ) {
+    throw Object.assign(
+      new Error("Persisted launch claim no longer matches the branch lease owner."),
+      { statusCode: 409, code: "branch_lease_claim_mismatch" },
+    );
+  }
+}
+
+function branchLeaseRouteError(
+  res: { status: (code: number) => { json: (body: unknown) => void } },
+  error: unknown,
+): boolean {
+  if (!(error instanceof Error) || !("statusCode" in error)) {
+    return false;
+  }
+  const statusCode = (error as Error & { statusCode?: unknown }).statusCode;
+  const code = (error as Error & { code?: unknown }).code;
+  res.status(typeof statusCode === "number" ? statusCode : 500).json({
+    code: typeof code === "string" ? code : "branch_lease_operation_failed",
+    error: error.message,
+  });
+  return true;
 }
 
 function stalePendingBindingMetadata(
@@ -292,6 +436,22 @@ export function createNodeLaunchRecordsRouter(options: {
     }
   });
 
+  router.get("/node-launch-records/branch-leases", async (req, res, next) => {
+    try {
+      const graphPath = nonEmptyQueryString(req.query.graphPath, "graphPath");
+      const nodeId = optionalNonEmptyQueryString(req.query.nodeId, "nodeId");
+      const activeOnly = req.query.activeOnly === "true";
+      const branchLeases = await store.listBranchLeases({
+        graphPath,
+        ...(nodeId ? { nodeId } : {}),
+        activeOnly,
+      });
+      res.json({ branchLeases });
+    } catch (error: unknown) {
+      next(error);
+    }
+  });
+
   router.post("/node-launch-records/launch-claims/:launchClaimId/release", (req, res, next) => {
     try {
       if (isNonLoopbackRequest(req)) {
@@ -335,6 +495,169 @@ export function createNodeLaunchRecordsRouter(options: {
     }
   });
 
+  router.post("/node-launch-records/branch-leases/:branchLeaseId/release", async (req, res, next) => {
+    try {
+      if (!assertJsonLoopbackRequest(req, res, "Branch lease release")) {
+        return;
+      }
+      const branchLeaseId = nonEmptyQueryString(
+        req.params.branchLeaseId,
+        "branchLeaseId",
+      );
+      const body = requestBody(req.body);
+      const graphPath = bodyString(body, "graphPath", "graphPath");
+      const nodeId = bodyString(body, "nodeId", "nodeId");
+      const acceptedEndSha = bodySha(body, "acceptedEndSha", "acceptedEndSha");
+      const acceptedBy = bodyString(body, "acceptedBy", "acceptedBy");
+      const reason = bodyString(body, "reason", "reason");
+      const launchClaimId = optionalBodyString(body, "launchClaimId");
+      const registryId = optionalBodyString(body, "registryId");
+      const branchLease = await store.getBranchLease(branchLeaseId);
+      if (!branchLease) {
+        res.status(404).json({
+          code: "branch_lease_not_found",
+          error: `Branch lease ${branchLeaseId} does not exist.`,
+        });
+        return;
+      }
+      assertLeaseClaimAuthorization(
+        branchLease,
+        launchClaimId,
+        registryId,
+        options.claimStore,
+      );
+      const record = await store.get(graphPath, nodeId);
+      if (record && record.branchLease?.leaseId !== branchLeaseId) {
+        res.status(409).json({
+          code: "branch_lease_owner_mismatch",
+          error: "Node launch record does not own the requested branch lease.",
+        });
+        return;
+      }
+      await validateExistingSharedBranchState({
+        cwd: record?.cwd ?? branchLease.cwd,
+        targetBranch: branchLease.targetBranch,
+        requiredStartSha: acceptedEndSha,
+      });
+      const released = await store.releaseBranchLease({
+        leaseId: branchLeaseId,
+        graphPath,
+        nodeId,
+        launchClaimId,
+        registryId,
+        acceptedEndSha,
+        acceptedBy,
+        reason,
+      });
+      res.json({ branchLease: released });
+    } catch (error: unknown) {
+      if (!branchLeaseRouteError(res, error)) {
+        next(error);
+      }
+    }
+  });
+
+  router.post("/node-launch-records/branch-leases/:branchLeaseId/transfer", async (req, res, next) => {
+    try {
+      if (!assertJsonLoopbackRequest(req, res, "Branch lease transfer")) {
+        return;
+      }
+      const branchLeaseId = nonEmptyQueryString(
+        req.params.branchLeaseId,
+        "branchLeaseId",
+      );
+      const body = requestBody(req.body);
+      const graphPath = bodyString(body, "graphPath", "graphPath");
+      const nodeId = bodyString(body, "nodeId", "nodeId");
+      const targetGraphPath = bodyString(
+        body,
+        "targetGraphPath",
+        "targetGraphPath",
+      );
+      const targetNodeId = bodyString(body, "targetNodeId", "targetNodeId");
+      const reviewedBy = bodyString(body, "reviewedBy", "reviewedBy");
+      const reason = bodyString(body, "reason", "reason");
+      const launchClaimId = optionalBodyString(body, "launchClaimId");
+      const registryId = optionalBodyString(body, "registryId");
+      const branchLease = await store.getBranchLease(branchLeaseId);
+      if (!branchLease) {
+        res.status(404).json({
+          code: "branch_lease_not_found",
+          error: `Branch lease ${branchLeaseId} does not exist.`,
+        });
+        return;
+      }
+      assertLeaseClaimAuthorization(
+        branchLease,
+        launchClaimId,
+        registryId,
+        options.claimStore,
+      );
+      const record = await store.get(graphPath, nodeId);
+      if (record && record.branchLease?.leaseId !== branchLeaseId) {
+        res.status(409).json({
+          code: "branch_lease_owner_mismatch",
+          error: "Node launch record does not own the requested branch lease.",
+        });
+        return;
+      }
+
+      const workstream = parseWorkstreamDocument(
+        readFileSync(targetGraphPath, "utf8"),
+      );
+      const targetNode = workstream.nodes.find(
+        (candidate) => candidate.id === targetNodeId,
+      );
+      if (!targetNode) {
+        res.status(404).json({
+          code: "unknown_node",
+          error: `Unknown target node: ${targetNodeId}`,
+        });
+        return;
+      }
+      const targetContract = resolvedNodeLaunchContract(targetNode);
+      if (!targetContract.sharedBranch || targetNode.repoIds.length !== 1) {
+        res.status(409).json({
+          code: "branch_lease_transfer_target_mismatch",
+          error: "Branch lease transfer target must be an existing-shared-azure-devops node with exactly one target repo.",
+        });
+        return;
+      }
+      await validateExistingSharedBranchState({
+        cwd: record?.cwd ?? branchLease.cwd,
+        targetBranch: targetContract.sharedBranch.targetBranch,
+        requiredStartSha: targetContract.sharedBranch.requiredStartSha,
+      });
+      const transferred = await store.transferBranchLease({
+        leaseId: branchLeaseId,
+        graphPath,
+        nodeId,
+        launchClaimId,
+        registryId,
+        target: {
+          branchLeaseKey: targetContract.sharedBranch.branchLeaseKey,
+          projectKey:
+            workstream.projectKey ?? workstream.repos[0]?.id ?? workstream.id,
+          workstreamId: workstream.id,
+          graphPath: targetGraphPath,
+          nodeId: targetNode.id,
+          targetRepoId: targetNode.repoIds[0]!,
+          cwd: record?.cwd ?? branchLease.cwd,
+          targetBranch: targetContract.sharedBranch.targetBranch,
+          requiredStartSha: targetContract.sharedBranch.requiredStartSha,
+          existingPullRequest: targetContract.sharedBranch.existingPullRequest,
+        },
+        reviewedBy,
+        reason,
+      });
+      res.json(transferred);
+    } catch (error: unknown) {
+      if (!branchLeaseRouteError(res, error)) {
+        next(error);
+      }
+    }
+  });
+
   router.post("/node-launch-records/clear", async (req, res, next) => {
     try {
       if (isNonLoopbackRequest(req)) {
@@ -362,6 +685,15 @@ export function createNodeLaunchRecordsRouter(options: {
 
       const existingRecord = await store.get(graphPath, nodeId);
       const existingOperation = await store.getOperation(graphPath, nodeId);
+      if (existingRecord?.branchLease?.status === "active") {
+        res.status(409).json({
+          code: "branch_lease_still_active",
+          error:
+            "Release or explicitly transfer the active shared-branch lease before clearing node launch state.",
+          branchLease: existingRecord.branchLease,
+        });
+        return;
+      }
       const workstreamId = existingRecord?.workstreamId
         ?? existingOperation?.handoff?.launchMetadata.workstreamId
         ?? requestedWorkstreamId

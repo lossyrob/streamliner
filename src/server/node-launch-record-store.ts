@@ -8,6 +8,14 @@ import { setTimeout as delay } from "node:timers/promises";
 import {
   isBlockingNodeLaunchOperation,
   isPendingPostPreparationTerminalLaunchOperation,
+  type NodeBranchLease,
+  type NodeBranchLeaseAcquireInput,
+  type NodeBranchLeaseFailedLaunchRecoveryInput,
+  type NodeBranchLeaseLaunchBindingInput,
+  type NodeBranchLeaseOwnerInput,
+  type NodeBranchLeaseReleaseInput,
+  type NodeBranchLeaseTransferInput,
+  type NodeBranchLeaseTransferResult,
   type NodeLaunchHandoff,
   type NodeCompanionTerminalLaunchResponse,
   type NodeLaunchOperation,
@@ -26,6 +34,7 @@ interface NodeLaunchRecordDocument {
   version: 1;
   records: StoredNodeLaunchRecord[];
   operations: StoredNodeLaunchOperation[];
+  branchLeases: NodeBranchLease[];
 }
 
 type StoredNodeLaunchRecord = Omit<NodeLaunchRecord, "pathStatus">;
@@ -108,6 +117,25 @@ export class DuplicateActiveNodeLaunchOperationError extends Error {
   }
 }
 
+export class NodeBranchLeaseError extends Error {
+  readonly statusCode: number;
+  readonly code: string;
+  readonly branchLease: NodeBranchLease | null;
+
+  constructor(
+    code: string,
+    statusCode: number,
+    message: string,
+    branchLease: NodeBranchLease | null = null,
+  ) {
+    super(message);
+    this.name = "NodeBranchLeaseError";
+    this.code = code;
+    this.statusCode = statusCode;
+    this.branchLease = branchLease;
+  }
+}
+
 function defaultRecordsPath(): string {
   const stateRoot = resolve(process.env.STREAMLINER_STATE_ROOT ?? join(homedir(), ".streamliner", "state"));
   return join(stateRoot, "node-launch-records.json");
@@ -153,6 +181,122 @@ function optionalBooleanField(record: Record<string, unknown>, key: string): boo
   return typeof value === "boolean" ? value : undefined;
 }
 
+function optionalNumberField(record: Record<string, unknown>, key: string): number | undefined {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function normalizeBranchLeaseKey(branchLeaseKey: string): string {
+  return branchLeaseKey.trim().toLowerCase();
+}
+
+function normalizeStoredBranchLease(value: unknown): NodeBranchLease | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const leaseId = stringField(value, "leaseId");
+  const branchLeaseKey = stringField(value, "branchLeaseKey");
+  const graphPath = stringField(value, "graphPath");
+  const nodeId = stringField(value, "nodeId");
+  const cwd = stringField(value, "cwd");
+  const targetBranch = stringField(value, "targetBranch");
+  const requiredStartSha = stringField(value, "requiredStartSha").toLowerCase();
+  const acquiredAt = stringField(value, "acquiredAt");
+  const updatedAt = stringField(value, "updatedAt");
+  const status = value.status;
+  const existingPullRequest = isRecord(value.existingPullRequest)
+    ? {
+        provider: value.existingPullRequest.provider,
+        id: value.existingPullRequest.id,
+      }
+    : null;
+  if (
+    !leaseId ||
+    !branchLeaseKey ||
+    !graphPath ||
+    !nodeId ||
+    !cwd ||
+    !targetBranch ||
+    !/^[0-9a-f]{40}$/.test(requiredStartSha) ||
+    !acquiredAt ||
+    !updatedAt ||
+    (status !== "active" && status !== "released" && status !== "transferred") ||
+    existingPullRequest?.provider !== "azure-devops" ||
+    typeof existingPullRequest.id !== "number" ||
+    !Number.isInteger(existingPullRequest.id) ||
+    existingPullRequest.id <= 0
+  ) {
+    return null;
+  }
+  const transferAudit = Array.isArray(value.transferAudit)
+    ? value.transferAudit
+      .filter(isRecord)
+      .map((entry) => ({
+        fromLeaseId: stringField(entry, "fromLeaseId"),
+        fromGraphPath: stringField(entry, "fromGraphPath"),
+        fromNodeId: stringField(entry, "fromNodeId"),
+        toLeaseId: stringField(entry, "toLeaseId"),
+        toGraphPath: stringField(entry, "toGraphPath"),
+        toNodeId: stringField(entry, "toNodeId"),
+        reviewedBy: stringField(entry, "reviewedBy"),
+        reason: stringField(entry, "reason"),
+        transferredAt: stringField(entry, "transferredAt"),
+      }))
+      .filter((entry) => Object.values(entry).every((item) => item.length > 0))
+    : [];
+  const failedLaunches = Array.isArray(value.failedLaunches)
+    ? value.failedLaunches
+      .filter(isRecord)
+      .map((entry) => ({
+        launchClaimId: stringField(entry, "launchClaimId"),
+        registryId: nullableStringField(entry, "registryId"),
+        failureCode: stringField(entry, "failureCode"),
+        failureReason: stringField(entry, "failureReason"),
+        failedAt: stringField(entry, "failedAt"),
+      }))
+      .filter((entry) =>
+        entry.launchClaimId.length > 0 &&
+        entry.failureCode.length > 0 &&
+        entry.failureReason.length > 0 &&
+        entry.failedAt.length > 0
+      )
+    : [];
+  return {
+    leaseId,
+    branchLeaseKey,
+    status,
+    projectKey: stringField(value, "projectKey"),
+    workstreamId: stringField(value, "workstreamId"),
+    graphPath,
+    nodeId,
+    targetRepoId: stringField(value, "targetRepoId"),
+    cwd,
+    targetBranch,
+    requiredStartSha,
+    existingPullRequest: {
+      provider: "azure-devops",
+      id: existingPullRequest.id,
+    },
+    launchMode: "existing-shared-azure-devops",
+    completionMode: "branch-contribution",
+    launchClaimId: nullableStringField(value, "launchClaimId"),
+    registryId: nullableStringField(value, "registryId"),
+    acquiredAt,
+    updatedAt,
+    reclaimedAt: nullableStringField(value, "reclaimedAt"),
+    reclaimCount: optionalNumberField(value, "reclaimCount") ?? 0,
+    releasedAt: nullableStringField(value, "releasedAt"),
+    releasedBy: nullableStringField(value, "releasedBy"),
+    releaseReason: nullableStringField(value, "releaseReason"),
+    endSha: nullableStringField(value, "endSha"),
+    transferredAt: nullableStringField(value, "transferredAt"),
+    transferredToLeaseId: nullableStringField(value, "transferredToLeaseId"),
+    transferredFromLeaseId: nullableStringField(value, "transferredFromLeaseId"),
+    transferAudit,
+    failedLaunches,
+  };
+}
+
 function normalizeStoredRecord(value: unknown): StoredNodeLaunchRecord | null {
   if (!isRecord(value)) {
     return null;
@@ -187,6 +331,44 @@ function normalizeStoredRecord(value: unknown): StoredNodeLaunchRecord | null {
     launchNonce: nullableStringField(value, "launchNonce"),
     launchClaimRef: nullableStringField(value, "launchClaimRef"),
     trackerUrl: nullableStringField(value, "trackerUrl"),
+    launchMode:
+      value.launchMode === "standard-github" ||
+      value.launchMode === "standard-azure-devops" ||
+      value.launchMode === "existing-shared-azure-devops"
+        ? value.launchMode
+        : undefined,
+    ...(Object.prototype.hasOwnProperty.call(value, "completionMode")
+      ? {
+          completionMode: value.completionMode === "branch-contribution"
+            ? value.completionMode
+            : null,
+        }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(value, "targetBranch")
+      ? { targetBranch: nullableStringField(value, "targetBranch") }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(value, "requiredStartSha")
+      ? { requiredStartSha: nullableStringField(value, "requiredStartSha") }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(value, "existingPullRequest")
+      ? {
+          existingPullRequest:
+            isRecord(value.existingPullRequest) &&
+            value.existingPullRequest.provider === "azure-devops" &&
+            typeof value.existingPullRequest.id === "number"
+              ? {
+                  provider: "azure-devops" as const,
+                  id: value.existingPullRequest.id,
+                }
+              : null,
+        }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(value, "branchLease")
+      ? { branchLease: normalizeStoredBranchLease(value.branchLease) }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(value, "endSha")
+      ? { endSha: nullableStringField(value, "endSha") }
+      : {}),
     createdAt: stringField(value, "createdAt") || updatedAt,
     updatedAt,
   };
@@ -418,6 +600,352 @@ export class NodeLaunchRecordStore {
     return document.records
       .filter((candidate) => normalizeGraphPathForKey(candidate.graphPath) === key)
       .map(withPathStatus);
+  }
+
+  async getBranchLease(leaseId: string): Promise<NodeBranchLease | null> {
+    const document = await this.readDocument();
+    const branchLease = document.branchLeases.find((candidate) => candidate.leaseId === leaseId);
+    return branchLease ? structuredClone(branchLease) : null;
+  }
+
+  async listBranchLeases(input: {
+    graphPath?: string;
+    nodeId?: string;
+    activeOnly?: boolean;
+  } = {}): Promise<NodeBranchLease[]> {
+    const document = await this.readDocument();
+    const graphKey = input.graphPath
+      ? normalizeGraphPathForKey(input.graphPath)
+      : null;
+    return document.branchLeases
+      .filter((branchLease) =>
+        (!graphKey || normalizeGraphPathForKey(branchLease.graphPath) === graphKey) &&
+        (!input.nodeId || branchLease.nodeId === input.nodeId) &&
+        (!input.activeOnly || branchLease.status === "active")
+      )
+      .map((branchLease) => structuredClone(branchLease));
+  }
+
+  async acquireBranchLease(input: NodeBranchLeaseAcquireInput): Promise<NodeBranchLease> {
+    assertBranchLeaseContractInput(input);
+    return await this.updateDocument((document) => {
+      const timestamp = (input.now ?? new Date()).toISOString();
+      const normalizedKey = normalizeBranchLeaseKey(input.branchLeaseKey);
+      const active = document.branchLeases.find((candidate) =>
+        candidate.status === "active" &&
+        normalizeBranchLeaseKey(candidate.branchLeaseKey) === normalizedKey
+      );
+      if (active) {
+        const sameOwner =
+          normalizeGraphPathForKey(active.graphPath) === normalizeGraphPathForKey(input.graphPath) &&
+          active.nodeId === input.nodeId;
+        if (!sameOwner) {
+          throw new NodeBranchLeaseError(
+            "branch_lease_conflict",
+            409,
+            `Branch lease '${input.branchLeaseKey}' is held by node ${active.nodeId}.`,
+            structuredClone(active),
+          );
+        }
+        if (
+          active.targetRepoId !== input.targetRepoId ||
+          normalizePathForComparison(active.cwd) !== normalizePathForComparison(input.cwd) ||
+          active.targetBranch !== input.targetBranch ||
+          active.requiredStartSha !== input.requiredStartSha.toLowerCase() ||
+          active.existingPullRequest.provider !== input.existingPullRequest.provider ||
+          active.existingPullRequest.id !== input.existingPullRequest.id
+        ) {
+          throw new NodeBranchLeaseError(
+            "branch_lease_owner_mismatch",
+            409,
+            `Existing branch lease '${input.branchLeaseKey}' does not match the requested shared-branch contract.`,
+            structuredClone(active),
+          );
+        }
+        if (active.launchClaimId) {
+          throw new NodeBranchLeaseError(
+            "branch_lease_bound_to_session",
+            409,
+            `Branch lease '${input.branchLeaseKey}' is already bound to launch claim ${active.launchClaimId}; resume that session or transfer the lease explicitly.`,
+            structuredClone(active),
+          );
+        }
+        active.reclaimedAt = timestamp;
+        active.reclaimCount += 1;
+        active.updatedAt = timestamp;
+        return structuredClone(active);
+      }
+
+      const branchLease: NodeBranchLease = {
+        leaseId: randomUUID(),
+        branchLeaseKey: input.branchLeaseKey.trim(),
+        status: "active",
+        projectKey: input.projectKey,
+        workstreamId: input.workstreamId,
+        graphPath: input.graphPath,
+        nodeId: input.nodeId,
+        targetRepoId: input.targetRepoId,
+        cwd: input.cwd,
+        targetBranch: input.targetBranch,
+        requiredStartSha: input.requiredStartSha.toLowerCase(),
+        existingPullRequest: { ...input.existingPullRequest },
+        launchMode: "existing-shared-azure-devops",
+        completionMode: "branch-contribution",
+        launchClaimId: null,
+        registryId: null,
+        acquiredAt: timestamp,
+        updatedAt: timestamp,
+        reclaimedAt: null,
+        reclaimCount: 0,
+        releasedAt: null,
+        releasedBy: null,
+        releaseReason: null,
+        endSha: null,
+        transferredAt: null,
+        transferredToLeaseId: null,
+        transferredFromLeaseId: null,
+        transferAudit: [],
+        failedLaunches: [],
+      };
+      document.branchLeases.push(branchLease);
+      return structuredClone(branchLease);
+    });
+  }
+
+  async assertBranchLeaseActive(input: NodeBranchLeaseOwnerInput): Promise<NodeBranchLease> {
+    const document = await this.readDocument();
+    const branchLease = findActiveBranchLease(document, input);
+    return structuredClone(branchLease);
+  }
+
+  async bindBranchLeaseToLaunch(
+    input: NodeBranchLeaseLaunchBindingInput,
+  ): Promise<NodeBranchLease> {
+    return await this.updateDocument((document) => {
+      const branchLease = findActiveBranchLease(document, input);
+      if (branchLease.launchClaimId && branchLease.launchClaimId !== input.launchClaimId) {
+        throw new NodeBranchLeaseError(
+          "branch_lease_claim_mismatch",
+          409,
+          `Branch lease ${branchLease.leaseId} is already bound to launch claim ${branchLease.launchClaimId}.`,
+          structuredClone(branchLease),
+        );
+      }
+      if (branchLease.registryId && branchLease.registryId !== input.registryId) {
+        throw new NodeBranchLeaseError(
+          "branch_lease_registry_mismatch",
+          409,
+          `Branch lease ${branchLease.leaseId} is already bound to registry row ${branchLease.registryId}.`,
+          structuredClone(branchLease),
+        );
+      }
+      branchLease.launchClaimId = input.launchClaimId;
+      branchLease.registryId = input.registryId;
+      branchLease.updatedAt = (input.now ?? new Date()).toISOString();
+      updateStoredLaunchMetadataForLease(document, branchLease, input.launchClaimId);
+      return structuredClone(branchLease);
+    });
+  }
+
+  async reclaimBranchLeaseForSession(
+    input: NodeBranchLeaseLaunchBindingInput,
+  ): Promise<NodeBranchLease> {
+    return await this.updateDocument((document) => {
+      const branchLease = findActiveBranchLease(document, input);
+      if (
+        branchLease.launchClaimId !== input.launchClaimId ||
+        branchLease.registryId !== input.registryId
+      ) {
+        throw new NodeBranchLeaseError(
+          "branch_lease_session_mismatch",
+          409,
+          `Branch lease ${branchLease.leaseId} is not bound to the requested launch session.`,
+          structuredClone(branchLease),
+        );
+      }
+      const timestamp = (input.now ?? new Date()).toISOString();
+      branchLease.reclaimedAt = timestamp;
+      branchLease.reclaimCount += 1;
+      branchLease.updatedAt = timestamp;
+      updateStoredLaunchMetadataForLease(document, branchLease, input.launchClaimId);
+      return structuredClone(branchLease);
+    });
+  }
+
+  async recoverBranchLeaseAfterFailedLaunch(
+    input: NodeBranchLeaseFailedLaunchRecoveryInput,
+  ): Promise<NodeBranchLease> {
+    assertNonEmptyBranchLeaseField(input.failureCode, "failureCode");
+    assertNonEmptyBranchLeaseField(input.failureReason, "failureReason");
+    return await this.updateDocument((document) => {
+      const branchLease = findActiveBranchLease(document, input);
+      if (
+        branchLease.launchClaimId !== input.launchClaimId ||
+        branchLease.registryId !== input.registryId
+      ) {
+        throw new NodeBranchLeaseError(
+          "branch_lease_session_mismatch",
+          409,
+          `Branch lease ${branchLease.leaseId} is not bound to the failed launch session.`,
+          structuredClone(branchLease),
+        );
+      }
+      const timestamp = (input.now ?? new Date()).toISOString();
+      branchLease.failedLaunches = [
+        ...branchLease.failedLaunches,
+        {
+          launchClaimId: input.launchClaimId,
+          registryId: input.registryId,
+          failureCode: input.failureCode,
+          failureReason: input.failureReason,
+          failedAt: timestamp,
+        },
+      ];
+      branchLease.launchClaimId = null;
+      branchLease.registryId = null;
+      branchLease.updatedAt = timestamp;
+      updateStoredLaunchMetadataForLease(document, branchLease, null);
+      return structuredClone(branchLease);
+    });
+  }
+
+  async releaseBranchLease(input: NodeBranchLeaseReleaseInput): Promise<NodeBranchLease> {
+    assertGitSha(input.acceptedEndSha, "acceptedEndSha");
+    assertNonEmptyBranchLeaseField(input.acceptedBy, "acceptedBy");
+    assertNonEmptyBranchLeaseField(input.reason, "reason");
+    return await this.updateDocument((document) => {
+      const branchLease = findBranchLeaseById(document, input.leaseId);
+      assertBranchLeaseOwner(branchLease, input.graphPath, input.nodeId);
+      assertBranchLeaseSessionAuthorization(
+        branchLease,
+        input.launchClaimId,
+        input.registryId,
+      );
+      if (branchLease.status !== "active") {
+        throw new NodeBranchLeaseError(
+          "branch_lease_not_active",
+          409,
+          `Branch lease ${branchLease.leaseId} is ${branchLease.status}.`,
+          structuredClone(branchLease),
+        );
+      }
+      const timestamp = (input.now ?? new Date()).toISOString();
+      branchLease.status = "released";
+      branchLease.releasedAt = timestamp;
+      branchLease.releasedBy = input.acceptedBy;
+      branchLease.releaseReason = input.reason;
+      branchLease.endSha = input.acceptedEndSha.toLowerCase();
+      branchLease.updatedAt = timestamp;
+      updateStoredLaunchMetadataForLease(
+        document,
+        branchLease,
+        branchLease.launchClaimId,
+      );
+      return structuredClone(branchLease);
+    });
+  }
+
+  async transferBranchLease(
+    input: NodeBranchLeaseTransferInput,
+  ): Promise<NodeBranchLeaseTransferResult> {
+    assertBranchLeaseContractInput(input.target);
+    assertNonEmptyBranchLeaseField(input.reviewedBy, "reviewedBy");
+    assertNonEmptyBranchLeaseField(input.reason, "reason");
+    return await this.updateDocument((document) => {
+      const branchLease = findBranchLeaseById(document, input.leaseId);
+      assertBranchLeaseOwner(branchLease, input.graphPath, input.nodeId);
+      assertBranchLeaseSessionAuthorization(
+        branchLease,
+        input.launchClaimId,
+        input.registryId,
+      );
+      if (branchLease.status !== "active") {
+        throw new NodeBranchLeaseError(
+          "branch_lease_not_active",
+          409,
+          `Branch lease ${branchLease.leaseId} is ${branchLease.status}.`,
+          structuredClone(branchLease),
+        );
+      }
+      if (
+        normalizeBranchLeaseKey(branchLease.branchLeaseKey) !==
+          normalizeBranchLeaseKey(input.target.branchLeaseKey) ||
+        branchLease.targetBranch !== input.target.targetBranch ||
+        branchLease.targetRepoId !== input.target.targetRepoId ||
+        normalizePathForComparison(branchLease.cwd) !==
+          normalizePathForComparison(input.target.cwd) ||
+        branchLease.existingPullRequest.provider !== input.target.existingPullRequest.provider ||
+        branchLease.existingPullRequest.id !== input.target.existingPullRequest.id
+      ) {
+        throw new NodeBranchLeaseError(
+          "branch_lease_transfer_target_mismatch",
+          409,
+          "Reviewed branch lease transfer must keep the same logical repository, branch, and existing pull request.",
+          structuredClone(branchLease),
+        );
+      }
+
+      const timestamp = (input.now ?? new Date()).toISOString();
+      const nextLeaseId = randomUUID();
+      const audit = {
+        fromLeaseId: branchLease.leaseId,
+        fromGraphPath: branchLease.graphPath,
+        fromNodeId: branchLease.nodeId,
+        toLeaseId: nextLeaseId,
+        toGraphPath: input.target.graphPath,
+        toNodeId: input.target.nodeId,
+        reviewedBy: input.reviewedBy,
+        reason: input.reason,
+        transferredAt: timestamp,
+      };
+      branchLease.status = "transferred";
+      branchLease.transferredAt = timestamp;
+      branchLease.transferredToLeaseId = nextLeaseId;
+      branchLease.updatedAt = timestamp;
+      branchLease.transferAudit = [...branchLease.transferAudit, audit];
+
+      const nextLease: NodeBranchLease = {
+        leaseId: nextLeaseId,
+        branchLeaseKey: input.target.branchLeaseKey.trim(),
+        status: "active",
+        projectKey: input.target.projectKey,
+        workstreamId: input.target.workstreamId,
+        graphPath: input.target.graphPath,
+        nodeId: input.target.nodeId,
+        targetRepoId: input.target.targetRepoId,
+        cwd: input.target.cwd,
+        targetBranch: input.target.targetBranch,
+        requiredStartSha: input.target.requiredStartSha.toLowerCase(),
+        existingPullRequest: { ...input.target.existingPullRequest },
+        launchMode: "existing-shared-azure-devops",
+        completionMode: "branch-contribution",
+        launchClaimId: null,
+        registryId: null,
+        acquiredAt: timestamp,
+        updatedAt: timestamp,
+        reclaimedAt: null,
+        reclaimCount: 0,
+        releasedAt: null,
+        releasedBy: null,
+        releaseReason: null,
+        endSha: null,
+        transferredAt: null,
+        transferredToLeaseId: null,
+        transferredFromLeaseId: branchLease.leaseId,
+        transferAudit: [...branchLease.transferAudit],
+        failedLaunches: [...branchLease.failedLaunches],
+      };
+      document.branchLeases.push(nextLease);
+      updateStoredLaunchMetadataForLease(
+        document,
+        branchLease,
+        branchLease.launchClaimId,
+      );
+      return {
+        previousLease: structuredClone(branchLease),
+        branchLease: structuredClone(nextLease),
+      };
+    });
   }
 
   async getOperation(graphPath: string, nodeId: string): Promise<NodeLaunchOperation | null> {
@@ -956,7 +1484,7 @@ export class NodeLaunchRecordStore {
 
   private async readDocument(): Promise<NodeLaunchRecordDocument> {
     if (!existsSync(this.recordsPath)) {
-      return { version: 1, records: [], operations: [] };
+      return { version: 1, records: [], operations: [], branchLeases: [] };
     }
     const parsed = JSON.parse(await readFile(this.recordsPath, "utf8")) as unknown;
     if (!isRecord(parsed) || !Array.isArray(parsed.records)) {
@@ -971,6 +1499,11 @@ export class NodeLaunchRecordStore {
         ? parsed.operations
           .map(normalizeStoredOperation)
           .filter((operation): operation is StoredNodeLaunchOperation => operation !== null)
+        : [],
+      branchLeases: Array.isArray(parsed.branchLeases)
+        ? parsed.branchLeases
+          .map(normalizeStoredBranchLease)
+          .filter((branchLease): branchLease is NodeBranchLease => branchLease !== null)
         : [],
     };
   }
@@ -1039,6 +1572,17 @@ function storedRecordFromHandoff(
     launchNonce: metadata.launchNonce,
     launchClaimRef: metadata.launchClaimRef,
     trackerUrl: metadata.trackerUrl,
+    launchMode: metadata.launchMode ?? "standard-github",
+    completionMode: metadata.completionMode ?? null,
+    targetBranch: metadata.targetBranch ?? null,
+    requiredStartSha: metadata.requiredStartSha ?? null,
+    existingPullRequest: metadata.existingPullRequest
+      ? { ...metadata.existingPullRequest }
+      : null,
+    branchLease: metadata.branchLease
+      ? structuredClone(metadata.branchLease)
+      : null,
+    endSha: existing?.endSha ?? null,
     createdAt: existing?.createdAt ?? timestamp,
     updatedAt: timestamp,
   };
@@ -1054,7 +1598,18 @@ function operationFromHandoff(
   const graphPath = handoff.launchMetadata.graphPath;
   const nodeId = handoff.launchMetadata.nodeId;
   const existing = findStoredOperation(document, graphPath, nodeId);
-  const launchHandoff = toNodeLaunchHandoff(handoff);
+  const launchHandoff = structuredClone(toNodeLaunchHandoff(handoff));
+  const currentRecord = findStoredRecord(document, graphPath, nodeId);
+  if (
+    currentRecord?.branchLease &&
+    launchHandoff.launchMetadata.branchLease?.leaseId ===
+      currentRecord.branchLease.leaseId
+  ) {
+    launchHandoff.launchMetadata.branchLease = structuredClone(
+      currentRecord.branchLease,
+    );
+    launchHandoff.launchMetadata.launchClaimRef = currentRecord.launchClaimRef;
+  }
   const nextOperation: StoredNodeLaunchOperation = {
     id: existing?.id ?? recordId(graphPath, nodeId),
     graphPath,
@@ -1132,5 +1687,165 @@ function upsertStoredOperation(
     document.operations[existingIndex] = operation;
   } else {
     document.operations.push(operation);
+  }
+}
+
+function findBranchLeaseById(
+  document: NodeLaunchRecordDocument,
+  leaseId: string,
+): NodeBranchLease {
+  const branchLease = document.branchLeases.find((candidate) => candidate.leaseId === leaseId);
+  if (!branchLease) {
+    throw new NodeBranchLeaseError(
+      "branch_lease_not_found",
+      404,
+      `Branch lease ${leaseId} does not exist.`,
+    );
+  }
+  return branchLease;
+}
+
+function assertNonEmptyBranchLeaseField(value: string, field: string): void {
+  if (!value.trim()) {
+    throw new NodeBranchLeaseError(
+      "invalid_branch_lease",
+      400,
+      `${field} is required.`,
+    );
+  }
+}
+
+function assertGitSha(value: string, field: string): void {
+  if (!/^[0-9a-f]{40}$/i.test(value)) {
+    throw new NodeBranchLeaseError(
+      "invalid_branch_lease",
+      400,
+      `${field} must be a 40-character hexadecimal git SHA.`,
+    );
+  }
+}
+
+function assertBranchLeaseContractInput(
+  input: Omit<NodeBranchLeaseAcquireInput, "now">,
+): void {
+  assertNonEmptyBranchLeaseField(input.branchLeaseKey, "branchLeaseKey");
+  assertNonEmptyBranchLeaseField(input.projectKey, "projectKey");
+  assertNonEmptyBranchLeaseField(input.workstreamId, "workstreamId");
+  assertNonEmptyBranchLeaseField(input.graphPath, "graphPath");
+  assertNonEmptyBranchLeaseField(input.nodeId, "nodeId");
+  assertNonEmptyBranchLeaseField(input.targetRepoId, "targetRepoId");
+  assertNonEmptyBranchLeaseField(input.cwd, "cwd");
+  assertNonEmptyBranchLeaseField(input.targetBranch, "targetBranch");
+  assertGitSha(input.requiredStartSha, "requiredStartSha");
+  if (
+    input.existingPullRequest.provider !== "azure-devops" ||
+    !Number.isInteger(input.existingPullRequest.id) ||
+    input.existingPullRequest.id <= 0
+  ) {
+    throw new NodeBranchLeaseError(
+      "invalid_branch_lease",
+      400,
+      "existingPullRequest must identify a positive Azure DevOps pull request id.",
+    );
+  }
+}
+
+function assertBranchLeaseOwner(
+  branchLease: NodeBranchLease,
+  graphPath: string,
+  nodeId: string,
+): void {
+  if (
+    normalizeGraphPathForKey(branchLease.graphPath) !== normalizeGraphPathForKey(graphPath) ||
+    branchLease.nodeId !== nodeId
+  ) {
+    throw new NodeBranchLeaseError(
+      "branch_lease_owner_mismatch",
+      409,
+      `Branch lease ${branchLease.leaseId} is owned by node ${branchLease.nodeId}.`,
+      structuredClone(branchLease),
+    );
+  }
+}
+
+function findActiveBranchLease(
+  document: NodeLaunchRecordDocument,
+  input: NodeBranchLeaseOwnerInput,
+): NodeBranchLease {
+  const branchLease = findBranchLeaseById(document, input.leaseId);
+  assertBranchLeaseOwner(branchLease, input.graphPath, input.nodeId);
+  if (branchLease.status !== "active") {
+    throw new NodeBranchLeaseError(
+      "branch_lease_not_active",
+      409,
+      `Branch lease ${branchLease.leaseId} is ${branchLease.status}.`,
+      structuredClone(branchLease),
+    );
+  }
+  if (
+    normalizeBranchLeaseKey(branchLease.branchLeaseKey) !==
+      normalizeBranchLeaseKey(input.branchLeaseKey) ||
+    normalizePathForComparison(branchLease.cwd) !==
+      normalizePathForComparison(input.cwd) ||
+    branchLease.targetBranch !== input.targetBranch ||
+    branchLease.requiredStartSha !== input.requiredStartSha.toLowerCase()
+  ) {
+    throw new NodeBranchLeaseError(
+      "branch_lease_contract_mismatch",
+      409,
+      `Branch lease ${branchLease.leaseId} does not match the shared-branch launch contract.`,
+      structuredClone(branchLease),
+    );
+  }
+  return branchLease;
+}
+
+function assertBranchLeaseSessionAuthorization(
+  branchLease: NodeBranchLease,
+  launchClaimId: string | null | undefined,
+  registryId: string | null | undefined,
+): void {
+  if (
+    branchLease.launchClaimId !== null &&
+    branchLease.launchClaimId !== launchClaimId
+  ) {
+    throw new NodeBranchLeaseError(
+      "branch_lease_claim_mismatch",
+      409,
+      `Branch lease ${branchLease.leaseId} requires launch claim ${branchLease.launchClaimId}.`,
+      structuredClone(branchLease),
+    );
+  }
+  if (branchLease.registryId !== null && branchLease.registryId !== registryId) {
+    throw new NodeBranchLeaseError(
+      "branch_lease_registry_mismatch",
+      409,
+      `Branch lease ${branchLease.leaseId} requires registry row ${branchLease.registryId}.`,
+      structuredClone(branchLease),
+    );
+  }
+}
+
+function updateStoredLaunchMetadataForLease(
+  document: NodeLaunchRecordDocument,
+  branchLease: NodeBranchLease,
+  launchClaimId: string | null,
+): void {
+  const record = findStoredRecord(document, branchLease.graphPath, branchLease.nodeId);
+  if (record) {
+    record.launchClaimRef = launchClaimId;
+    record.branchLease = structuredClone(branchLease);
+    record.endSha = branchLease.endSha;
+    record.updatedAt = branchLease.updatedAt;
+  }
+  const operation = findStoredOperation(
+    document,
+    branchLease.graphPath,
+    branchLease.nodeId,
+  );
+  if (operation?.handoff) {
+    operation.handoff.launchMetadata.launchClaimRef = launchClaimId;
+    operation.handoff.launchMetadata.branchLease = structuredClone(branchLease);
+    operation.updatedAt = branchLease.updatedAt;
   }
 }

@@ -2,7 +2,12 @@ import type {
   LaunchClaimFailureCode,
   LaunchClaimStatus,
 } from "./launch-claim-schema";
-import type { WorkstreamLaunchPolicy } from "./workstream-schema";
+import type {
+  WorkstreamExistingPullRequest,
+  WorkstreamLaunchPolicy,
+  WorkstreamNodeCompletionMode,
+  WorkstreamNodeLaunchMode,
+} from "./workstream-schema";
 
 export type NodeLaunchPreferredTerminal = "default" | "windows-terminal" | "powershell";
 export type NodeLaunchRuntimeKind = "terminal-cli" | "managed-sdk";
@@ -30,6 +35,137 @@ export interface NodePostPreparationIntent {
   launchCompanion?: NodePostPreparationCompanionIntent;
 }
 
+export type NodeBranchLeaseStatus = "active" | "released" | "transferred";
+
+export interface NodeBranchLeaseTransferAudit {
+  fromLeaseId: string;
+  fromGraphPath: string;
+  fromNodeId: string;
+  toLeaseId: string;
+  toGraphPath: string;
+  toNodeId: string;
+  reviewedBy: string;
+  reason: string;
+  transferredAt: string;
+}
+
+export interface NodeBranchLeaseFailedLaunchAudit {
+  launchClaimId: string;
+  registryId: string | null;
+  failureCode: string;
+  failureReason: string;
+  failedAt: string;
+}
+
+export interface NodeBranchLease {
+  leaseId: string;
+  branchLeaseKey: string;
+  status: NodeBranchLeaseStatus;
+  projectKey: string;
+  workstreamId: string;
+  graphPath: string;
+  nodeId: string;
+  targetRepoId: string;
+  cwd: string;
+  targetBranch: string;
+  requiredStartSha: string;
+  existingPullRequest: WorkstreamExistingPullRequest;
+  launchMode: "existing-shared-azure-devops";
+  completionMode: "branch-contribution";
+  launchClaimId: string | null;
+  registryId: string | null;
+  acquiredAt: string;
+  updatedAt: string;
+  reclaimedAt: string | null;
+  reclaimCount: number;
+  releasedAt: string | null;
+  releasedBy: string | null;
+  releaseReason: string | null;
+  endSha: string | null;
+  transferredAt: string | null;
+  transferredToLeaseId: string | null;
+  transferredFromLeaseId: string | null;
+  transferAudit: NodeBranchLeaseTransferAudit[];
+  failedLaunches: NodeBranchLeaseFailedLaunchAudit[];
+}
+
+export interface NodeBranchLeaseOwnerInput {
+  leaseId: string;
+  branchLeaseKey: string;
+  graphPath: string;
+  nodeId: string;
+  cwd: string;
+  targetBranch: string;
+  requiredStartSha: string;
+}
+
+export interface NodeBranchLeaseAcquireInput {
+  branchLeaseKey: string;
+  projectKey: string;
+  workstreamId: string;
+  graphPath: string;
+  nodeId: string;
+  targetRepoId: string;
+  cwd: string;
+  targetBranch: string;
+  requiredStartSha: string;
+  existingPullRequest: WorkstreamExistingPullRequest;
+  now?: Date;
+}
+
+export interface NodeBranchLeaseLaunchBindingInput extends NodeBranchLeaseOwnerInput {
+  launchClaimId: string;
+  registryId: string | null;
+  now?: Date;
+}
+
+export interface NodeBranchLeaseFailedLaunchRecoveryInput
+  extends NodeBranchLeaseLaunchBindingInput {
+  failureCode: string;
+  failureReason: string;
+}
+
+export interface NodeBranchLeaseReleaseInput {
+  leaseId: string;
+  graphPath: string;
+  nodeId: string;
+  launchClaimId?: string | null;
+  registryId?: string | null;
+  acceptedEndSha: string;
+  acceptedBy: string;
+  reason: string;
+  now?: Date;
+}
+
+export interface NodeBranchLeaseTransferInput {
+  leaseId: string;
+  graphPath: string;
+  nodeId: string;
+  launchClaimId?: string | null;
+  registryId?: string | null;
+  target: Omit<NodeBranchLeaseAcquireInput, "now">;
+  reviewedBy: string;
+  reason: string;
+  now?: Date;
+}
+
+export interface NodeBranchLeaseTransferResult {
+  previousLease: NodeBranchLease;
+  branchLease: NodeBranchLease;
+}
+
+export interface NodeBranchLeaseCoordinator {
+  acquireBranchLease(input: NodeBranchLeaseAcquireInput): Promise<NodeBranchLease>;
+  assertBranchLeaseActive(input: NodeBranchLeaseOwnerInput): Promise<NodeBranchLease>;
+  bindBranchLeaseToLaunch(input: NodeBranchLeaseLaunchBindingInput): Promise<NodeBranchLease>;
+  reclaimBranchLeaseForSession(input: NodeBranchLeaseLaunchBindingInput): Promise<NodeBranchLease>;
+  recoverBranchLeaseAfterFailedLaunch(
+    input: NodeBranchLeaseFailedLaunchRecoveryInput,
+  ): Promise<NodeBranchLease>;
+  releaseBranchLease(input: NodeBranchLeaseReleaseInput): Promise<NodeBranchLease>;
+  transferBranchLease(input: NodeBranchLeaseTransferInput): Promise<NodeBranchLeaseTransferResult>;
+}
+
 export interface NodeLaunchMetadata {
   launchNonce: string | null;
   launchClaimRef: string | null;
@@ -43,6 +179,12 @@ export interface NodeLaunchMetadata {
   workTitle: string;
   trackerUrl: string | null;
   launchPolicy?: WorkstreamLaunchPolicy | null;
+  launchMode?: WorkstreamNodeLaunchMode;
+  completionMode?: WorkstreamNodeCompletionMode | null;
+  targetBranch?: string | null;
+  requiredStartSha?: string | null;
+  existingPullRequest?: WorkstreamExistingPullRequest | null;
+  branchLease?: NodeBranchLease | null;
 }
 
 export interface NodeLaunchContextPackage {
@@ -233,6 +375,13 @@ export interface NodeLaunchRecord {
   launchNonce: string | null;
   launchClaimRef: string | null;
   trackerUrl: string | null;
+  launchMode?: WorkstreamNodeLaunchMode;
+  completionMode?: WorkstreamNodeCompletionMode | null;
+  targetBranch?: string | null;
+  requiredStartSha?: string | null;
+  existingPullRequest?: WorkstreamExistingPullRequest | null;
+  branchLease?: NodeBranchLease | null;
+  endSha?: string | null;
   createdAt: string;
   updatedAt: string;
   pathStatus: NodeLaunchRecordPathStatus;

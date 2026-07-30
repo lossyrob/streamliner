@@ -12,12 +12,24 @@ import {
   type SessionEvent,
 } from "@github/copilot-sdk";
 
-import type { NodeLaunchRecord } from "../node-launch-record-contract";
 import type {
+  NodeBranchLease,
+  NodeBranchLeaseCoordinator,
+  NodeLaunchRecord,
+} from "../node-launch-record-contract";
+import type {
+  WorkstreamExistingPullRequest,
   WorkstreamDocument,
   WorkstreamLaunchDefaults,
   WorkstreamLaunchPolicy,
   WorkstreamNode,
+  WorkstreamNodeCompletionMode,
+  WorkstreamNodeLaunchMode,
+} from "../workstream-schema";
+import {
+  WORKSTREAM_EXISTING_PULL_REQUEST_PROVIDERS,
+  WORKSTREAM_NODE_COMPLETION_MODES,
+  WORKSTREAM_NODE_LAUNCH_MODES,
 } from "../workstream-schema";
 import { renderWorkstreamTerminalTitleTemplate } from "../workstream-launch-templates";
 import {
@@ -58,6 +70,10 @@ const execFileAsync = promisify(execFile);
 export type LaunchPreparationErrorCode =
   | "invalid_node_id"
   | "invalid_launch_configuration"
+  | "launch_mode_mismatch"
+  | "shared_branch_stale"
+  | "branch_lease_conflict"
+  | "branch_lease_unavailable"
   | "launch_policy_blocked"
   | "paw_init_failed"
   | "context_preparation_failed"
@@ -106,6 +122,15 @@ export interface PawLaunchTerminalPreferences {
 
 export type PawLaunchRuntimeKind = "terminal-cli" | "managed-sdk";
 
+export interface ExistingSharedBranchLaunchConfiguration {
+  launchMode: "existing-shared-azure-devops";
+  targetBranch: string;
+  requiredStartSha: string;
+  existingPullRequest: WorkstreamExistingPullRequest;
+  completionMode: "branch-contribution";
+  branchLeaseKey: string;
+}
+
 export interface PawLaunchConfigurationInput {
   cwd?: string;
   cliArgs?: string[];
@@ -113,6 +138,12 @@ export interface PawLaunchConfigurationInput {
   workflowInstructions?: string | null;
   terminal?: Partial<PawLaunchTerminalPreferences>;
   runtimeKind?: PawLaunchRuntimeKind;
+  launchMode?: WorkstreamNodeLaunchMode;
+  targetBranch?: string;
+  requiredStartSha?: string;
+  existingPullRequest?: WorkstreamExistingPullRequest;
+  completionMode?: WorkstreamNodeCompletionMode;
+  branchLeaseKey?: string;
 }
 
 export interface ResolvedPawLaunchConfiguration {
@@ -122,6 +153,8 @@ export interface ResolvedPawLaunchConfiguration {
   workflowInstructions: string;
   terminal: PawLaunchTerminalPreferences;
   runtimeKind?: PawLaunchRuntimeKind;
+  launchMode?: WorkstreamNodeLaunchMode;
+  sharedBranch?: ExistingSharedBranchLaunchConfiguration | null;
 }
 
 interface ParsedPawLaunchConfiguration {
@@ -131,6 +164,8 @@ interface ParsedPawLaunchConfiguration {
   workflowInstructions: string;
   terminal: PawLaunchTerminalPreferences;
   runtimeKind: PawLaunchRuntimeKind;
+  launchMode: WorkstreamNodeLaunchMode;
+  sharedBranch: ExistingSharedBranchLaunchConfiguration | null;
 }
 
 export interface PawInitRunnerInput {
@@ -153,6 +188,7 @@ export type PawLaunchProgressEventType =
   | "tool.completed"
   | "context.saving"
   | "context.saved"
+  | "branch_lease.acquired"
   | "paw_init.started"
   | "completed"
   | "failed";
@@ -240,6 +276,7 @@ export interface PreparePawLaunchOptions {
   contextPreparer?: LaunchContextPreparer;
   existingLaunch?: NodeLaunchRecord | null;
   defaultCliArgs?: string[];
+  branchLeaseCoordinator?: NodeBranchLeaseCoordinator;
 }
 
 export interface PawLaunchMetadata {
@@ -255,6 +292,12 @@ export interface PawLaunchMetadata {
   workTitle: string;
   trackerUrl: string | null;
   launchPolicy: WorkstreamLaunchPolicy | null;
+  launchMode?: WorkstreamNodeLaunchMode;
+  completionMode?: WorkstreamNodeCompletionMode | null;
+  targetBranch?: string | null;
+  requiredStartSha?: string | null;
+  existingPullRequest?: WorkstreamExistingPullRequest | null;
+  branchLease?: NodeBranchLease | null;
 }
 
 export interface PawLaunchHandoff {
@@ -443,6 +486,77 @@ function normalizeOptionalHexColor(value: unknown, field: string): string | null
   return trimmed.toLowerCase();
 }
 
+function normalizeRequiredString(value: unknown, field: string): string {
+  const normalized = normalizeOptionalString(value, field);
+  if (!normalized) {
+    throw new LaunchPreparationError(
+      "invalid_launch_configuration",
+      400,
+      `${field} is required.`,
+      "validation",
+      field,
+    );
+  }
+  return normalized;
+}
+
+function normalizeRequiredStartSha(value: unknown, field: string): string {
+  const sha = normalizeRequiredString(value, field).toLowerCase();
+  if (!/^[0-9a-f]{40}$/.test(sha)) {
+    throw new LaunchPreparationError(
+      "invalid_launch_configuration",
+      400,
+      `${field} must be a 40-character hexadecimal git SHA.`,
+      "validation",
+      field,
+    );
+  }
+  return sha;
+}
+
+function normalizeExistingPullRequest(
+  value: unknown,
+  field: string,
+): WorkstreamExistingPullRequest {
+  if (!isRecord(value)) {
+    throw new LaunchPreparationError(
+      "invalid_launch_configuration",
+      400,
+      `${field} must be an object.`,
+      "validation",
+      field,
+    );
+  }
+  const provider = assertOptionalEnum(
+    value.provider,
+    WORKSTREAM_EXISTING_PULL_REQUEST_PROVIDERS,
+    `${field}.provider`,
+  );
+  if (!provider) {
+    throw new LaunchPreparationError(
+      "invalid_launch_configuration",
+      400,
+      `${field}.provider is required.`,
+      "validation",
+      `${field}.provider`,
+    );
+  }
+  if (
+    typeof value.id !== "number" ||
+    !Number.isInteger(value.id) ||
+    value.id <= 0
+  ) {
+    throw new LaunchPreparationError(
+      "invalid_launch_configuration",
+      400,
+      `${field}.id must be a positive integer.`,
+      "validation",
+      `${field}.id`,
+    );
+  }
+  return { provider, id: value.id };
+}
+
 function assertOptionalRecord(value: unknown, field: string): Record<string, unknown> | undefined {
   if (value === undefined) {
     return undefined;
@@ -512,7 +626,7 @@ function parseConfigurationInput(
   defaults: { cliArgs?: string[]; terminal?: Partial<PawLaunchTerminalPreferences> } = {},
 ): ParsedPawLaunchConfiguration {
   const rawCwd = assertOptionalString(input?.cwd, "configuration.cwd");
-  const workflowInstructions = assertOptionalString(
+  let workflowInstructions = assertOptionalString(
     input?.workflowInstructions,
     "configuration.workflowInstructions",
   )?.trim() || DEFAULT_WORKFLOW_INSTRUCTIONS;
@@ -526,6 +640,70 @@ function parseConfigurationInput(
     RUNTIME_KINDS,
     "configuration.runtimeKind",
   ) ?? "terminal-cli";
+  const launchMode = assertOptionalEnum(
+    input?.launchMode,
+    WORKSTREAM_NODE_LAUNCH_MODES,
+    "configuration.launchMode",
+  ) ?? "standard-github";
+  const hasSharedFields = [
+    input?.targetBranch,
+    input?.requiredStartSha,
+    input?.existingPullRequest,
+    input?.completionMode,
+    input?.branchLeaseKey,
+  ].some((field) => field !== undefined);
+  let sharedBranch: ExistingSharedBranchLaunchConfiguration | null = null;
+  if (launchMode === "existing-shared-azure-devops") {
+    sharedBranch = {
+      launchMode,
+      targetBranch: normalizeRequiredString(
+        input?.targetBranch,
+        "configuration.targetBranch",
+      ),
+      requiredStartSha: normalizeRequiredStartSha(
+        input?.requiredStartSha,
+        "configuration.requiredStartSha",
+      ),
+      existingPullRequest: normalizeExistingPullRequest(
+        input?.existingPullRequest,
+        "configuration.existingPullRequest",
+      ),
+      completionMode: assertOptionalEnum(
+        input?.completionMode,
+        WORKSTREAM_NODE_COMPLETION_MODES,
+        "configuration.completionMode",
+      ) ?? (() => {
+        throw new LaunchPreparationError(
+          "invalid_launch_configuration",
+          400,
+          "configuration.completionMode is required.",
+          "validation",
+          "configuration.completionMode",
+        );
+      })(),
+      branchLeaseKey: normalizeRequiredString(
+        input?.branchLeaseKey,
+        "configuration.branchLeaseKey",
+      ),
+    };
+    workflowInstructions = [
+      "Streamliner existing shared-branch safety contract (overrides conflicting launch guidance):",
+      `- Use only the existing branch ${sharedBranch.targetBranch} at required start SHA ${sharedBranch.requiredStartSha}.`,
+      "- Do not create or switch branches, create another worktree, merge, rebase, force-push, or create a pull request.",
+      `- Complete only a ${sharedBranch.completionMode} for existing Azure DevOps PR ${sharedBranch.existingPullRequest.id}.`,
+      `- Treat backend branch lease ${sharedBranch.branchLeaseKey} as the sole write authority.`,
+      "",
+      workflowInstructions,
+    ].join("\n");
+  } else if (hasSharedFields) {
+    throw new LaunchPreparationError(
+      "invalid_launch_configuration",
+      400,
+      "Shared-branch configuration fields require configuration.launchMode to be existing-shared-azure-devops.",
+      "validation",
+      "configuration.launchMode",
+    );
+  }
 
   return {
     cwd: rawCwd === undefined
@@ -540,6 +718,8 @@ function parseConfigurationInput(
       ...terminalOverrides,
     },
     runtimeKind,
+    launchMode,
+    sharedBranch,
   };
 }
 
@@ -551,6 +731,125 @@ function resolveConfiguration(
     ...parsed,
     cwd: parsed.cwd ?? normalizeAbsolutePath(options.cwd ?? process.cwd(), "configuration.cwd"),
   };
+}
+
+export interface ResolvedNodeLaunchContract {
+  launchMode: WorkstreamNodeLaunchMode;
+  sharedBranch: ExistingSharedBranchLaunchConfiguration | null;
+}
+
+export function resolvedNodeLaunchContract(
+  node: WorkstreamNode | null | undefined,
+): ResolvedNodeLaunchContract {
+  if (!node?.launch) {
+    return {
+      launchMode: "standard-github",
+      sharedBranch: null,
+    };
+  }
+  if (node.launch.mode !== "existing-shared-azure-devops") {
+    return {
+      launchMode: node.launch.mode,
+      sharedBranch: null,
+    };
+  }
+  return {
+    launchMode: node.launch.mode,
+    sharedBranch: {
+      launchMode: node.launch.mode,
+      targetBranch: node.launch.targetBranch,
+      requiredStartSha: node.launch.requiredStartSha,
+      existingPullRequest: { ...node.launch.existingPullRequest },
+      completionMode: node.launch.completionMode,
+      branchLeaseKey: node.launch.branchLeaseKey,
+    },
+  };
+}
+
+function sameExistingPullRequest(
+  left: WorkstreamExistingPullRequest,
+  right: WorkstreamExistingPullRequest,
+): boolean {
+  return left.provider === right.provider && left.id === right.id;
+}
+
+function validateConfigurationForNode(
+  parsed: ParsedPawLaunchConfiguration,
+  node: WorkstreamNode | null,
+  graphConfigured: boolean,
+): void {
+  const expected = resolvedNodeLaunchContract(node);
+  if (parsed.launchMode !== expected.launchMode) {
+    throw new LaunchPreparationError(
+      "launch_mode_mismatch",
+      409,
+      `Node launch mode is ${expected.launchMode}, but configuration.launchMode resolved to ${parsed.launchMode}.`,
+      "validation",
+      "configuration.launchMode",
+      {
+        expectedLaunchMode: expected.launchMode,
+        receivedLaunchMode: parsed.launchMode,
+      },
+    );
+  }
+  if (parsed.launchMode === "existing-shared-azure-devops" && !graphConfigured) {
+    throw new LaunchPreparationError(
+      "launch_mode_mismatch",
+      409,
+      "existing-shared-azure-devops launches require durable node launch metadata from a graph.",
+      "validation",
+      "graphPath",
+    );
+  }
+  if (expected.sharedBranch === null) {
+    if (parsed.sharedBranch !== null) {
+      throw new LaunchPreparationError(
+        "launch_mode_mismatch",
+        409,
+        "Standard nodes cannot use existing shared-branch launch configuration.",
+        "validation",
+        "configuration.launchMode",
+      );
+    }
+    return;
+  }
+  const received = parsed.sharedBranch;
+  if (
+    !received ||
+    received.targetBranch !== expected.sharedBranch.targetBranch ||
+    received.requiredStartSha !== expected.sharedBranch.requiredStartSha ||
+    received.completionMode !== expected.sharedBranch.completionMode ||
+    received.branchLeaseKey !== expected.sharedBranch.branchLeaseKey ||
+    !sameExistingPullRequest(
+      received.existingPullRequest,
+      expected.sharedBranch.existingPullRequest,
+    )
+  ) {
+    throw new LaunchPreparationError(
+      "launch_mode_mismatch",
+      409,
+      "Shared-branch launch configuration must exactly match the selected node's durable launch metadata.",
+      "validation",
+      "configuration",
+      {
+        expectedLaunchMode: expected.launchMode,
+        targetBranch: expected.sharedBranch.targetBranch,
+        requiredStartSha: expected.sharedBranch.requiredStartSha,
+        existingPullRequest: expected.sharedBranch.existingPullRequest,
+        completionMode: expected.sharedBranch.completionMode,
+        branchLeaseKey: expected.sharedBranch.branchLeaseKey,
+      },
+    );
+  }
+  if (!parsed.cwd) {
+    throw new LaunchPreparationError(
+      "invalid_launch_configuration",
+      400,
+      "configuration.cwd is required for existing shared-branch launches.",
+      "validation",
+      "configuration.cwd",
+    );
+  }
 }
 
 function launchCwdDefaultFromContext(
@@ -912,6 +1211,10 @@ function existingLaunchRecordPromptLines(record: NodeLaunchRecord | null | undef
     `- Previous context package: ${record.contextFilePath} (${pathStatusLabel(record.pathStatus.contextFileExists)})`,
     `- Last prepared: ${record.updatedAt}`,
     `- Latest launch claim: ${latestClaim}`,
+    `- Launch mode: ${record.launchMode ?? "standard-github"}`,
+    `- Branch lease: ${record.branchLease?.leaseId ?? "none"}`,
+    `- Required start SHA: ${record.requiredStartSha ?? "none"}`,
+    `- End SHA: ${record.endSha ?? "none"}`,
   ];
 }
 
@@ -969,6 +1272,224 @@ async function currentGitBranch(cwd: string): Promise<string | null> {
   }
 }
 
+export interface ExistingSharedBranchState {
+  cwd: string;
+  repositoryRoot: string;
+  targetBranch: string;
+  localHeadSha: string;
+  remoteHeadSha: string;
+}
+
+async function gitOutput(cwd: string, args: string[]): Promise<string> {
+  const { stdout } = await execFileAsync(
+    "git",
+    ["-C", cwd, ...args],
+    {
+      timeout: 30_000,
+      windowsHide: true,
+      maxBuffer: 1024 * 1024,
+    },
+  );
+  return stdout.trim();
+}
+
+export async function validateExistingSharedBranchState(input: {
+  cwd: string;
+  targetBranch: string;
+  requiredStartSha: string;
+}): Promise<ExistingSharedBranchState> {
+  const requiredStartSha = input.requiredStartSha.toLowerCase();
+  try {
+    const repositoryRoot = await gitOutput(input.cwd, ["rev-parse", "--show-toplevel"]);
+    const currentBranch = await gitOutput(input.cwd, ["branch", "--show-current"]);
+    if (currentBranch !== input.targetBranch) {
+      throw new LaunchPreparationError(
+        "shared_branch_stale",
+        409,
+        `Shared launch cwd is on branch '${currentBranch || "(detached)"}', expected '${input.targetBranch}'.`,
+        "validation",
+        "configuration.targetBranch",
+      );
+    }
+    const localHeadSha = (
+      await gitOutput(input.cwd, ["rev-parse", "HEAD"])
+    ).toLowerCase();
+    if (localHeadSha !== requiredStartSha) {
+      throw new LaunchPreparationError(
+        "shared_branch_stale",
+        409,
+        `Shared branch local HEAD is ${localHeadSha}, expected ${requiredStartSha}.`,
+        "validation",
+        "configuration.requiredStartSha",
+        { localHeadSha, requiredStartSha },
+      );
+    }
+    const remoteOutput = await gitOutput(input.cwd, [
+      "ls-remote",
+      "--heads",
+      "origin",
+      `refs/heads/${input.targetBranch}`,
+    ]);
+    const remoteHeadSha = remoteOutput.split(/\s+/)[0]?.toLowerCase() ?? "";
+    if (!/^[0-9a-f]{40}$/.test(remoteHeadSha)) {
+      throw new LaunchPreparationError(
+        "shared_branch_stale",
+        409,
+        `Remote branch origin/${input.targetBranch} does not exist or did not return a git SHA.`,
+        "validation",
+        "configuration.targetBranch",
+      );
+    }
+    if (remoteHeadSha !== requiredStartSha) {
+      throw new LaunchPreparationError(
+        "shared_branch_stale",
+        409,
+        `Shared branch remote HEAD is ${remoteHeadSha}, expected ${requiredStartSha}.`,
+        "validation",
+        "configuration.requiredStartSha",
+        { remoteHeadSha, requiredStartSha },
+      );
+    }
+    return {
+      cwd: normalizeManifestPath(resolve(input.cwd)),
+      repositoryRoot: normalizeManifestPath(resolve(repositoryRoot)),
+      targetBranch: input.targetBranch,
+      localHeadSha,
+      remoteHeadSha,
+    };
+  } catch (error: unknown) {
+    if (error instanceof LaunchPreparationError) {
+      throw error;
+    }
+    throw new LaunchPreparationError(
+      "shared_branch_stale",
+      409,
+      `Could not validate existing shared branch: ${error instanceof Error ? error.message : String(error)}`,
+      "validation",
+      "configuration.cwd",
+    );
+  }
+}
+
+export async function validateExistingSharedBranchResumeState(input: {
+  cwd: string;
+  targetBranch: string;
+  requiredStartSha: string;
+}): Promise<ExistingSharedBranchState> {
+  try {
+    const repositoryRoot = await gitOutput(input.cwd, ["rev-parse", "--show-toplevel"]);
+    const currentBranch = await gitOutput(input.cwd, ["branch", "--show-current"]);
+    if (currentBranch !== input.targetBranch) {
+      throw new LaunchPreparationError(
+        "shared_branch_stale",
+        409,
+        `Shared launch cwd is on branch '${currentBranch || "(detached)"}', expected '${input.targetBranch}'.`,
+        "validation",
+        "configuration.targetBranch",
+      );
+    }
+    const localHeadSha = (
+      await gitOutput(input.cwd, ["rev-parse", "HEAD"])
+    ).toLowerCase();
+    const remoteOutput = await gitOutput(input.cwd, [
+      "ls-remote",
+      "--heads",
+      "origin",
+      `refs/heads/${input.targetBranch}`,
+    ]);
+    const remoteHeadSha = remoteOutput.split(/\s+/)[0]?.toLowerCase() ?? "";
+    if (localHeadSha !== remoteHeadSha) {
+      throw new LaunchPreparationError(
+        "shared_branch_stale",
+        409,
+        `Shared branch local HEAD ${localHeadSha} does not match remote HEAD ${remoteHeadSha}.`,
+        "validation",
+        "configuration.requiredStartSha",
+        { localHeadSha, remoteHeadSha },
+      );
+    }
+    try {
+      await execFileAsync("git", [
+        "-C",
+        input.cwd,
+        "merge-base",
+        "--is-ancestor",
+        input.requiredStartSha,
+        localHeadSha,
+      ], {
+        timeout: 30_000,
+        windowsHide: true,
+        maxBuffer: 1024 * 1024,
+      });
+    } catch {
+      throw new LaunchPreparationError(
+        "shared_branch_stale",
+        409,
+        `Shared branch HEAD ${localHeadSha} is not descended from required start SHA ${input.requiredStartSha}.`,
+        "validation",
+        "configuration.requiredStartSha",
+        { localHeadSha, requiredStartSha: input.requiredStartSha },
+      );
+    }
+    return {
+      cwd: normalizeManifestPath(resolve(input.cwd)),
+      repositoryRoot: normalizeManifestPath(resolve(repositoryRoot)),
+      targetBranch: input.targetBranch,
+      localHeadSha,
+      remoteHeadSha,
+    };
+  } catch (error: unknown) {
+    if (error instanceof LaunchPreparationError) {
+      throw error;
+    }
+    throw new LaunchPreparationError(
+      "shared_branch_stale",
+      409,
+      `Could not validate existing shared branch resume: ${error instanceof Error ? error.message : String(error)}`,
+      "validation",
+      "configuration.cwd",
+    );
+  }
+}
+
+function validateExistingSharedPawInitResult(
+  configuration: ResolvedPawLaunchConfiguration,
+  pawInit: PawInitRunnerResult,
+): void {
+  const sharedBranch = configuration.sharedBranch;
+  if (!sharedBranch) {
+    return;
+  }
+  if (pawInit.branch !== sharedBranch.targetBranch) {
+    throw new LaunchPreparationError(
+      "launch_mode_mismatch",
+      409,
+      `PAW init returned branch '${pawInit.branch}', expected existing shared branch '${sharedBranch.targetBranch}'.`,
+      "paw-init",
+      "targetBranch",
+    );
+  }
+  if (!sameResolvedPath(pawInit.cwd, configuration.cwd)) {
+    throw new LaunchPreparationError(
+      "launch_mode_mismatch",
+      409,
+      "PAW init must use the configured existing shared-branch checkout and cannot create or switch to another worktree.",
+      "paw-init",
+      "cwd",
+    );
+  }
+  const checkoutRoot = checkoutRootForPawWorkDir(pawInit.pawWorkDir);
+  if (!sameResolvedPath(checkoutRoot, configuration.cwd)) {
+    throw new LaunchPreparationError(
+      "launch_mode_mismatch",
+      409,
+      "PAW init must place shared-branch artifacts in the configured existing checkout.",
+      "paw-init",
+      "pawWorkDir",
+    );
+  }
+}
+
 interface StreamlinerLaunchManifest {
   schemaVersion: 1;
   contextId: string;
@@ -994,6 +1515,8 @@ interface StreamlinerLaunchManifest {
     launchCwd: string;
     launchCwdInitialBranch: string | null;
     existingLaunch: NodeLaunchRecord | null;
+    launchMode: WorkstreamNodeLaunchMode;
+    sharedBranch: ExistingSharedBranchLaunchConfiguration | null;
   };
   worktreePolicy: {
     rule: string;
@@ -1036,9 +1559,13 @@ function buildStreamlinerLaunchManifest(
       launchCwd: normalizeManifestPath(input.cwd),
       launchCwdInitialBranch,
       existingLaunch: input.existingLaunch ?? null,
+      launchMode: input.configuration.launchMode ?? "standard-github",
+      sharedBranch: input.configuration.sharedBranch ?? null,
     },
     worktreePolicy: {
-      rule: "Treat launchCwd as the base/coordination checkout. Do not check out the target node branch in launchCwd. If targetBranch differs from launchCwdInitialBranch, create or reuse a sibling worktree for targetBranch. If the selected node targets a different repository than launchCwd, use a checkout or worktree for that selected target repository. Place .paw/work/<workId> in the execution checkout and pass that path to complete_paw_init.",
+      rule: input.configuration.sharedBranch
+        ? "Use launchCwd as the existing shared-branch checkout. Do not create or switch branches, create another worktree, merge, rebase, force-push, or create a pull request. targetBranch must equal the configured shared target branch and .paw/work/<workId> must stay inside launchCwd."
+        : "Treat launchCwd as the base/coordination checkout. Do not check out the target node branch in launchCwd. If targetBranch differs from launchCwdInitialBranch, create or reuse a sibling worktree for targetBranch. If the selected node targets a different repository than launchCwd, use a checkout or worktree for that selected target repository. Place .paw/work/<workId> in the execution checkout and pass that path to complete_paw_init.",
       launchCwd: normalizeManifestPath(input.cwd),
       launchCwdInitialBranch,
     },
@@ -1168,6 +1695,7 @@ async function sendPromptAndWaitForIdle(
 }
 
 export function buildPawInitPrompt(input: PawInitRunnerInput): string {
+  const sharedBranch = input.configuration.sharedBranch;
   return [
     "Initialize a PAW workflow for a Streamliner graph launch.",
     "",
@@ -1186,6 +1714,15 @@ export function buildPawInitPrompt(input: PawInitRunnerInput): string {
     "- Set `Initial Prompt: none`; Streamliner owns the actual kickoff prompt that will be sent to the launched Copilot session.",
     "- If an existing Streamliner launch record is provided, treat this as an idempotent resume candidate. Inspect the existing worktree, PAW work dir, WorkflowContext.md, and Streamliner context. If they are present, match this selected node/work, and are still valid, reuse them instead of rerunning PAW init or overwriting durable PAW state. Repair or regenerate only missing, stale, or invalid artifacts.",
     "- Do not fail merely because WorkflowContext.md or the PAW work directory already exists.",
+    ...(sharedBranch
+      ? [
+          "- This is an existing shared Azure DevOps branch contribution. Do not create or switch branches, create another worktree, merge, rebase, force-push, or create a pull request.",
+          `- Use exactly the existing branch '${sharedBranch.targetBranch}' at start SHA ${sharedBranch.requiredStartSha}.`,
+          `- The existing Azure DevOps pull request is ${sharedBranch.existingPullRequest.id}; completion mode is ${sharedBranch.completionMode}.`,
+          `- The backend branch lease key is '${sharedBranch.branchLeaseKey}'. Prompt text is not lease authority.`,
+          "- Keep pawWorkDir inside the configured launch cwd and return the configured target branch unchanged.",
+        ]
+      : []),
     "",
     ...repoInstructionsPromptBlock(input.stagedContextPackage.metadata.repoInstructions),
     "Selected Streamliner node:",
@@ -1226,8 +1763,12 @@ export function buildPawInitPrompt(input: PawInitRunnerInput): string {
     "When PAW init has completed its reasoning and WorkflowContext.md is present, call `complete_paw_init` exactly once with:",
     "- `workTitle`: the PAW work title derived by paw-init.",
     "- `workId`: the PAW work ID derived by paw-init.",
-    "- `targetBranch`: the target branch derived by paw-init.",
-    "- `pawWorkDir`: optional absolute PAW work directory. If omitted, Streamliner uses `<cwd>/.paw/work/<workId>`. Use a selected target repository checkout/worktree path when the launch cwd is only a coordination checkout.",
+    sharedBranch
+      ? `- \`targetBranch\`: exactly '${sharedBranch.targetBranch}'; do not derive or create another branch.`
+      : "- `targetBranch`: the target branch derived by paw-init.",
+    sharedBranch
+      ? "- `pawWorkDir`: optional absolute PAW work directory inside the configured launch cwd. Do not create or use another checkout/worktree."
+      : "- `pawWorkDir`: optional absolute PAW work directory. If omitted, Streamliner uses `<cwd>/.paw/work/<workId>`. Use a selected target repository checkout/worktree path when the launch cwd is only a coordination checkout.",
     "- `artifactLifecycle`: optional artifact lifecycle if resolved.",
     "- `additionalKickoffInstructions`: optional filtered worker-startup guidance that should be appended to the final kickoff prompt.",
     "  If the builder included an explicit 'Additional instructions' section or equivalent session-operating guidance, preserve that guidance here unless it is fully represented by durable WorkflowContext fields.",
@@ -1279,6 +1820,18 @@ export async function defaultPawInitRunner(
             "additionalKickoffInstructions",
           );
           const pawWorkDir = resolvePawWorkDir(input.cwd, workId, args.pawWorkDir);
+          if (input.configuration.sharedBranch) {
+            if (targetBranch !== input.configuration.sharedBranch.targetBranch) {
+              throw new Error(
+                `targetBranch must remain ${input.configuration.sharedBranch.targetBranch} for an existing shared-branch launch.`,
+              );
+            }
+            if (!sameResolvedPath(checkoutRootForPawWorkDir(pawWorkDir), input.cwd)) {
+              throw new Error(
+                "pawWorkDir must stay inside the configured existing shared-branch checkout.",
+              );
+            }
+          }
           const repoInstructionsCheck = await checkExecutionRepoInstructions(
             input.stagedContextPackage.metadata.repoInstructions,
             pawWorkDir,
@@ -1441,9 +1994,17 @@ export function buildStreamlinerContextSavePrompt(
     "- After you produce the complete Markdown, call `save_streamliner_context` exactly once with that Markdown in the `content` argument.",
     "- If any optional source read fails, do not retry the same missing path. Continue with the manifest, graph metadata, issue URL, and any sources already read.",
     "- Do not create PAW files, branches, worktrees, or WorkflowContext.md in this step.",
-    "- The launch cwd is the base/coordination checkout. Do not check out the target node branch in the launch cwd.",
-    "- If PAW init later needs a different target branch than the launch cwd started on, create or reuse a sibling worktree for that target branch.",
-    "- If the selected node targets a different repository than the launch cwd, create or reuse a checkout/worktree for the selected target repository and put `.paw/work/<workId>` there.",
+    ...(input.configuration.sharedBranch
+      ? [
+          "- The launch cwd is the existing shared-branch checkout. Do not create or switch branches, create another worktree, merge, rebase, force-push, or create a pull request.",
+          `- Keep the branch exactly '${input.configuration.sharedBranch.targetBranch}' and keep \`.paw/work/<workId>\` inside the launch cwd.`,
+          `- The required start SHA is ${input.configuration.sharedBranch.requiredStartSha}; the backend lease remains the sole exclusivity authority.`,
+        ]
+      : [
+          "- The launch cwd is the base/coordination checkout. Do not check out the target node branch in the launch cwd.",
+          "- If PAW init later needs a different target branch than the launch cwd started on, create or reuse a sibling worktree for that target branch.",
+          "- If the selected node targets a different repository than the launch cwd, create or reuse a checkout/worktree for the selected target repository and put `.paw/work/<workId>` there.",
+        ]),
     "- If an existing Streamliner launch record is provided, inspect the existing Streamliner context file when helpful, but still save one current context through `save_streamliner_context` so Streamliner can install or refresh it.",
     "",
     "Selected Streamliner node:",
@@ -1600,12 +2161,25 @@ export async function defaultPawLaunchSessionRunner(
             "additionalKickoffInstructions",
           );
           const pawWorkDir = await resolvePawWorkDirForLaunch(input, workId, args.pawWorkDir);
-          validatePawWorktreePolicy({
-            launchCwd: input.cwd,
-            launchCwdInitialBranch,
-            targetBranch,
-            pawWorkDir,
-          });
+          if (input.configuration.sharedBranch) {
+            if (targetBranch !== input.configuration.sharedBranch.targetBranch) {
+              throw new Error(
+                `targetBranch must remain ${input.configuration.sharedBranch.targetBranch} for an existing shared-branch launch.`,
+              );
+            }
+            if (!sameResolvedPath(checkoutRootForPawWorkDir(pawWorkDir), input.cwd)) {
+              throw new Error(
+                "pawWorkDir must stay inside the configured existing shared-branch checkout.",
+              );
+            }
+          } else {
+            validatePawWorktreePolicy({
+              launchCwd: input.cwd,
+              launchCwdInitialBranch,
+              targetBranch,
+              pawWorkDir,
+            });
+          }
           const repoInstructionsCheck = await checkExecutionRepoInstructions(
             contextPackage.metadata.repoInstructions,
             pawWorkDir,
@@ -1881,7 +2455,17 @@ export function buildKickoffPrompt(input: {
     `- Launch nonce: ${input.launchMetadata.launchNonce ?? "none"}`,
     `- Launch claim: ${input.launchMetadata.launchClaimRef ?? "not-created"}`,
     `- Target repos: ${input.launchMetadata.targetRepoIds.join(", ") || "none"}`,
+    `- Launch mode: ${input.launchMetadata.launchMode ?? "standard-github"}`,
   );
+  if (input.launchMetadata.launchMode === "existing-shared-azure-devops") {
+    lines.push(
+      `- Completion mode: ${input.launchMetadata.completionMode}`,
+      `- Existing pull request: ${input.launchMetadata.existingPullRequest?.provider} #${input.launchMetadata.existingPullRequest?.id}`,
+      `- Required start SHA: ${input.launchMetadata.requiredStartSha}`,
+      `- Branch lease: ${input.launchMetadata.branchLease?.leaseId ?? "missing"} (${input.launchMetadata.branchLease?.branchLeaseKey ?? "missing"})`,
+      "- Do not create or switch branches, create a worktree, merge, rebase, force-push, or create a pull request.",
+    );
+  }
   const kickoffAdditionalInstructions = input.kickoffAdditionalInstructions?.trim();
   if (kickoffAdditionalInstructions) {
     lines.push(
@@ -1972,6 +2556,81 @@ export async function preparePawLaunch(
     cliArgs: options.defaultCliArgs,
     terminal: terminalDefaults,
   });
+  validateConfigurationForNode(
+    parsedConfiguration,
+    launchDefaultsNode,
+    Boolean(policyGraphPath),
+  );
+  let branchLease: NodeBranchLease | null = null;
+  if (parsedConfiguration.sharedBranch) {
+    const sharedConfiguration = resolveConfiguration(parsedConfiguration, {
+      cwd: parsedConfiguration.cwd,
+    });
+    await validateExistingSharedBranchState({
+      cwd: sharedConfiguration.cwd,
+      targetBranch: parsedConfiguration.sharedBranch.targetBranch,
+      requiredStartSha: parsedConfiguration.sharedBranch.requiredStartSha,
+    });
+    if (!options.branchLeaseCoordinator || !launchDefaultsNode || !launchDefaultsWorkstream) {
+      throw new LaunchPreparationError(
+        "branch_lease_unavailable",
+        503,
+        "Existing shared-branch launch preparation requires the integrated node launch record store.",
+        "validation",
+        "configuration.branchLeaseKey",
+      );
+    }
+    try {
+      branchLease = await options.branchLeaseCoordinator.acquireBranchLease({
+        branchLeaseKey: parsedConfiguration.sharedBranch.branchLeaseKey,
+        projectKey:
+          launchDefaultsWorkstream.projectKey ??
+          launchDefaultsWorkstream.repos[0]?.id ??
+          launchDefaultsWorkstream.id,
+        workstreamId: launchDefaultsWorkstream.id,
+        graphPath: policyGraphPath!,
+        nodeId: launchDefaultsNode.id,
+        targetRepoId: launchDefaultsNode.repoIds[0]!,
+        cwd: sharedConfiguration.cwd,
+        targetBranch: parsedConfiguration.sharedBranch.targetBranch,
+        requiredStartSha: parsedConfiguration.sharedBranch.requiredStartSha,
+        existingPullRequest: parsedConfiguration.sharedBranch.existingPullRequest,
+        now: options.now?.(),
+      });
+      emitProgress(
+        options.onProgress,
+        "branch_lease.acquired",
+        `Acquired shared branch lease ${branchLease.leaseId}.`,
+        {
+          branchLease: structuredClone(branchLease),
+        },
+      );
+    } catch (error: unknown) {
+      const branchLeaseError = error as {
+        code?: unknown;
+        statusCode?: unknown;
+        branchLease?: unknown;
+        message?: unknown;
+      };
+      throw new LaunchPreparationError(
+        typeof branchLeaseError.code === "string" &&
+            branchLeaseError.code.startsWith("branch_lease")
+          ? "branch_lease_conflict"
+          : "branch_lease_unavailable",
+        typeof branchLeaseError.statusCode === "number"
+          ? branchLeaseError.statusCode
+          : 500,
+        typeof branchLeaseError.message === "string"
+          ? branchLeaseError.message
+          : String(error),
+        "validation",
+        "configuration.branchLeaseKey",
+        isRecord(branchLeaseError.branchLease)
+          ? { branchLease: branchLeaseError.branchLease }
+          : undefined,
+      );
+    }
+  }
 
   const contextPreparer = options.contextPreparer ?? prepareLaunchContextPackage;
   let stagedContextPackage: LaunchContextPackage;
@@ -2097,6 +2756,14 @@ export async function preparePawLaunch(
   const configuration = resolveConfiguration(parsedConfiguration, {
     cwd: launchCwdDefaultFromContext(stagedContextPackage, options.cwd),
   });
+  validateExistingSharedPawInitResult(configuration, pawInit);
+  if (configuration.sharedBranch) {
+    await validateExistingSharedBranchState({
+      cwd: pawInit.cwd,
+      targetBranch: configuration.sharedBranch.targetBranch,
+      requiredStartSha: configuration.sharedBranch.requiredStartSha,
+    });
+  }
   const terminal: PawLaunchTerminalPreferences = {
     ...configuration.terminal,
     title: configuration.terminal.title ?? pawInit.workTitle,
@@ -2114,6 +2781,14 @@ export async function preparePawLaunch(
     workTitle: pawInit.workTitle,
     trackerUrl: trackerUrlOf(stagedContextPackage),
     launchPolicy,
+    launchMode: configuration.launchMode ?? "standard-github",
+    completionMode: configuration.sharedBranch?.completionMode ?? null,
+    targetBranch: configuration.sharedBranch?.targetBranch ?? null,
+    requiredStartSha: configuration.sharedBranch?.requiredStartSha ?? null,
+    existingPullRequest: configuration.sharedBranch
+      ? { ...configuration.sharedBranch.existingPullRequest }
+      : null,
+    branchLease,
   };
   const kickoffPrompt = buildKickoffPrompt({
     workflowContextPath: pawInit.workflowContextPath,

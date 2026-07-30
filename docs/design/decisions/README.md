@@ -1,7 +1,7 @@
 ---
 kind: design-doc
 status: current
-last_updated: 2026-05-02
+last_updated: 2026-07-30
 update_semantics: rewrite-in-place
 authoritative_for: "Decision record conventions and catalog"
 scope_tags:
@@ -18,6 +18,8 @@ references_decisions:
   - 7
   - 8
   - 9
+  - 10
+  - 11
 ---
 
 # Decision Records
@@ -73,3 +75,5 @@ What follows from this choice.
 | 007 | [Tracked workstream registry](007-tracked-workstream-registry.md) | accepted | 2026-05-01 |
 | 008 | [PAW artifacts for workflow status](008-paw-artifacts-for-workflow-status.md) | accepted | 2026-05-02 |
 | 009 | [SDK-managed graph-node worker runtime](009-sdk-managed-worker-runtime.md) | accepted | 2026-05-07 |
+| 010 | [Terminal takeover and managed cleanup actions](010-terminal-takeover-and-cleanup.md) | accepted | 2026-05-09 |
+| 011 | [Durable shared-branch launch classification](011-durable-shared-branch-launch.md) | accepted | 2026-07-30 |

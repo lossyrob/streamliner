@@ -4,6 +4,7 @@ import type {
   WorkstreamCheckpointStatus,
   WorkstreamDesignReference,
   WorkstreamDocument,
+  WorkstreamExistingPullRequest,
   WorkstreamGithubIssueSnapshot,
   WorkstreamGithubPullRequestSnapshot,
   WorkstreamGithubSnapshot,
@@ -13,8 +14,12 @@ import type {
   WorkstreamLaunchRequiredTracker,
   WorkstreamLaunchTerminalDefaults,
   WorkstreamLaunchTerminalPreference,
+  WorkstreamNodeCompletionMode,
   WorkstreamNode,
+  WorkstreamNodeLaunchConfiguration,
+  WorkstreamNodeLaunchMode,
   WorkstreamNodeStatus,
+  WorkstreamExistingPullRequestProvider,
   WorkstreamPresentation,
   WorkstreamTracker,
   WorkstreamTrackerType,
@@ -27,6 +32,9 @@ import {
   WORKSTREAM_CHECKPOINT_STATUSES,
   WORKSTREAM_LAUNCH_REQUIRED_TRACKERS,
   WORKSTREAM_LAUNCH_TERMINAL_PREFERENCES,
+  WORKSTREAM_EXISTING_PULL_REQUEST_PROVIDERS,
+  WORKSTREAM_NODE_COMPLETION_MODES,
+  WORKSTREAM_NODE_LAUNCH_MODES,
   WORKSTREAM_NODE_STATUSES,
   WORKSTREAM_NODE_TYPES,
   WORKSTREAM_SCHEMA_VERSION,
@@ -327,6 +335,79 @@ function parseLaunchDefaults(value: unknown, label: string): WorkstreamLaunchDef
   };
 }
 
+function parseExistingPullRequest(
+  value: unknown,
+  label: string,
+): WorkstreamExistingPullRequest {
+  const record = asObject(value, label);
+  return {
+    provider: asEnum<WorkstreamExistingPullRequestProvider>(
+      record.provider,
+      `${label}.provider`,
+      WORKSTREAM_EXISTING_PULL_REQUEST_PROVIDERS,
+    ),
+    id: asInteger(record.id, `${label}.id`),
+  };
+}
+
+function parseRequiredStartSha(value: unknown, label: string): string {
+  const sha = asNonEmptyString(value, label).trim().toLowerCase();
+  if (!/^[0-9a-f]{40}$/.test(sha)) {
+    throw new Error(`Expected ${label} to be a 40-character hexadecimal git SHA.`);
+  }
+  return sha;
+}
+
+function parseNodeLaunchConfiguration(
+  value: unknown,
+  label: string,
+): WorkstreamNodeLaunchConfiguration {
+  const record = asObject(value, label);
+  const mode = asEnum<WorkstreamNodeLaunchMode>(
+    record.mode,
+    `${label}.mode`,
+    WORKSTREAM_NODE_LAUNCH_MODES,
+  );
+  const hasSharedFields = [
+    record.targetBranch,
+    record.requiredStartSha,
+    record.existingPullRequest,
+    record.completionMode,
+    record.branchLeaseKey,
+  ].some((field) => field !== undefined);
+
+  if (mode !== "existing-shared-azure-devops") {
+    if (hasSharedFields) {
+      throw new Error(
+        `Expected ${label} shared-branch fields to be absent unless mode is existing-shared-azure-devops.`,
+      );
+    }
+    return { mode };
+  }
+
+  return {
+    mode,
+    targetBranch: asNonEmptyString(record.targetBranch, `${label}.targetBranch`).trim(),
+    requiredStartSha: parseRequiredStartSha(
+      record.requiredStartSha,
+      `${label}.requiredStartSha`,
+    ),
+    existingPullRequest: parseExistingPullRequest(
+      record.existingPullRequest,
+      `${label}.existingPullRequest`,
+    ),
+    completionMode: asEnum<WorkstreamNodeCompletionMode>(
+      record.completionMode,
+      `${label}.completionMode`,
+      WORKSTREAM_NODE_COMPLETION_MODES,
+    ),
+    branchLeaseKey: asNonEmptyString(
+      record.branchLeaseKey,
+      `${label}.branchLeaseKey`,
+    ).trim(),
+  };
+}
+
 function parsePresentation(value: unknown, label: string): WorkstreamPresentation {
   const record = asObject(value, label);
   return {
@@ -386,6 +467,10 @@ function parseNode(
       typeof tracker === "undefined"
         ? undefined
         : parseTracker(tracker, `${label}.tracker`),
+    launch:
+      typeof record.launch === "undefined"
+        ? undefined
+        : parseNodeLaunchConfiguration(record.launch, `${label}.launch`),
     dependsOn: asIdArray(record.dependsOn ?? [], `${label}.dependsOn`),
   };
 }
@@ -456,6 +541,15 @@ function assertSemanticallyValid(
       if (dependencyId === node.id) {
         throw new Error("A node cannot depend on itself");
       }
+    }
+
+    if (
+      node.launch?.mode === "existing-shared-azure-devops" &&
+      node.repoIds.length !== 1
+    ) {
+      throw new Error(
+        `Node '${node.id}' must declare exactly one repoId for existing-shared-azure-devops launch mode.`,
+      );
     }
 
     if (node.tracker?.type === "github") {

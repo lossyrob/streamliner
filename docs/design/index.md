@@ -19,6 +19,7 @@ references_decisions:
   - 8
   - 9
   - 10
+  - 11
 ---
 
 # Streamliner — Design
@@ -66,6 +67,7 @@ Streamliner helps a single builder direct many concurrent AI coding agent workst
 | 008 | [PAW artifacts for workflow status](decisions/008-paw-artifacts-for-workflow-status.md) | accepted | 2026-05-02 |
 | 009 | [SDK-managed graph-node worker runtime](decisions/009-sdk-managed-worker-runtime.md) | accepted | 2026-05-07 |
 | 010 | [Terminal takeover and managed cleanup actions](decisions/010-terminal-takeover-and-cleanup.md) | accepted | 2026-05-09 |
+| 011 | [Durable shared-branch launch classification](decisions/011-durable-shared-branch-launch.md) | accepted | 2026-07-30 |
 
 ## Open questions
 

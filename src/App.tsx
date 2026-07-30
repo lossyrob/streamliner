@@ -3014,6 +3014,16 @@ function GraphDashboard({
             workflowInstructions: configuration.workflowInstructions,
             cliArgs: configuration.cliArgs,
             terminal: configuration.terminal,
+            launchMode: targetEntry.node.launch?.mode ?? "standard-github",
+            ...(targetEntry.node.launch?.mode === "existing-shared-azure-devops"
+              ? {
+                  targetBranch: targetEntry.node.launch.targetBranch,
+                  requiredStartSha: targetEntry.node.launch.requiredStartSha,
+                  existingPullRequest: targetEntry.node.launch.existingPullRequest,
+                  completionMode: targetEntry.node.launch.completionMode,
+                  branchLeaseKey: targetEntry.node.launch.branchLeaseKey,
+                }
+              : {}),
           },
           ...(postPreparation ? { postPreparation } : {}),
         }),

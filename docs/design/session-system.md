@@ -1,7 +1,7 @@
 ---
 kind: design-doc
 status: draft
-last_updated: 2026-05-22
+last_updated: 2026-07-30
 update_semantics: rewrite-in-place
 authoritative_for: "Session launching, lifecycle, registry contract, tracking, and runtime overlay"
 scope_tags:
@@ -33,6 +33,8 @@ references_decisions:
   - 6
   - 8
   - 9
+  - 10
+  - 11
 ---
 
 # Session System
@@ -52,6 +54,8 @@ The Wave 3 launch MVP is **PAW-only graph launch**. The contract is the interfac
 | Target repo | Graph `repos` + config | Where the code lives |
 | Backend-readable graph path | Workstream registry entry | Local `graph.json` path the backend can read |
 | Launch policy | Graph `launchPolicy` | Optional durable preconditions, such as requiring a GitHub issue tracker before launch |
+| Node launch mode | Graph `node.launch.mode` | Durable classification: standard GitHub, standard Azure DevOps, or existing shared Azure DevOps contribution |
+| Shared branch contract | Graph `node.launch` + matching launch configuration | Existing branch, exact start SHA, existing PR, contribution completion mode, and logical branch lease key |
 | Launch instructions | Builder edit + default text | Natural-language guidance for the graph-launched PAW session. PAW init may use it to derive work title, work ID, target branch, review policy, and model settings, but general operating guidance belongs in the kickoff prompt rather than verbatim `Custom Workflow Instructions`. |
 | PAW prompt profile | Local Streamliner state + graph `launchDefaults.promptProfileId` | Optional reusable text snippet that can populate or update the launch instructions field. A workstream may store a local profile id as a best-effort default selection. |
 | CLI arguments | Default + builder override | Copilot CLI flags for the later worker launch; an explicit empty list is valid |
@@ -81,6 +85,60 @@ Node launch has an explicit runtime dimension:
 Runtime selection is independent of the recorded permission profile. Choosing `managed-sdk` says Streamliner owns the worker process and lifecycle; the builder's explicit node-launch action is also the consent boundary for autonomous tool execution. The first managed PAW worker records a `managed-autonomous` permission profile and runs with a Copilot CLI YOLO/allow-all-equivalent posture, so model-requested tool calls do not introduce per-tool approval prompts. Streamliner still scopes the launch to the selected node, worktree, repo, branch, and PAW context, projects redacted progress, and keeps deterministic backend guardrails for Streamliner-owned actions such as terminal takeover and cleanup.
 
 Terminal-first launch must not be removed or degraded by the managed runtime. If managed launch fails before a worker session exists, the launch fails honestly and remains retryable; it does not silently fall back to a terminal launch unless the builder explicitly chooses that runtime.
+
+### Durable Launch Modes and Existing Shared Branches
+
+Graph nodes classify launch behavior durably ([Decision
+011](decisions/011-durable-shared-branch-launch.md)). Missing `node.launch`
+metadata remains compatible with `standard-github`. Explicit
+`standard-azure-devops` and `existing-shared-azure-devops` modes must be echoed
+by launch preparation, and the backend re-reads the graph before worker start.
+Mode or field mismatches fail closed.
+
+Existing-shared preparation requires an explicit checkout path and verifies:
+
+1. the checkout is on `targetBranch`;
+2. local `HEAD` equals `requiredStartSha`;
+3. `git ls-remote origin refs/heads/<targetBranch>` equals the same SHA;
+4. the integrated node launch record store grants the active logical branch
+   lease to this graph node.
+
+Preparation and kickoff prompts prohibit branch/worktree creation, branch
+switching, merge, rebase, force-push, and PR creation. The backend does not
+repair stale state automatically. It revalidates the graph contract, branch
+head, and lease immediately before creating the launch claim.
+
+The branch lease is cross-node runtime state in the node launch record store,
+keyed by `branchLeaseKey`, not by preparation run id. Claim creation binds the
+lease to the launch claim and reserved registry row. A managed same-session
+resume reclaims only that exact claim/row and accepts a branch head advanced
+from the recorded start SHA only when local and remote heads agree and the
+start SHA remains an ancestor. Replacement requires explicit reviewed transfer.
+If terminal spawn or managed SDK start fails after claim binding but before any
+worker ownership evidence exists, successful failed-claim/registry cleanup
+atomically clears the lease's claim and registry pointers while retaining the
+same active lease, node owner, start SHA, and lease id. The lease records the
+failed claim in an audit list so the same node can retry without opening the
+branch to another node. If worker evidence exists or registry cleanup is
+incomplete, the lease stays bound and requires reviewed recovery.
+
+Accepted contributions release the lease with an accepted end SHA. The local
+API exposes these JSON routes; mutations are loopback-only:
+
+- `GET /api/node-launch-records/branch-leases?graphPath=...`
+- `POST /api/node-launch-records/branch-leases/:id/release`
+- `POST /api/node-launch-records/branch-leases/:id/transfer`
+
+The mutating routes check the current graph/node owner and any bound launch claim and
+registry row. Release revalidates local and remote heads against
+`acceptedEndSha`. Transfer re-reads the target node's durable shared contract,
+revalidates its required start SHA, records reviewer/reason audit data, retires
+the old lease, and creates the replacement lease. Clearing node launch state is
+blocked while its branch lease is active.
+
+The prepared handoff, node launch record, launch-claim lineage, and session
+`pawLaunch` surface retain launch mode, completion mode, existing PR, required
+start SHA, and branch lease identity for orchestration and recovery.
 
 ### Launch Sequence
 

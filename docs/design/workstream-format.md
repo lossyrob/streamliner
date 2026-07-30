@@ -1,7 +1,7 @@
 ---
 kind: design-doc
 status: current
-last_updated: 2026-05-08
+last_updated: 2026-07-30
 update_semantics: rewrite-in-place
 authoritative_for: "Workstream artifact format and runtime-state boundaries"
 scope_tags:
@@ -14,6 +14,7 @@ code_paths:
   - src/session-registry*.ts
 references_decisions:
   - 5
+  - 11
 ---
 
 # Workstream Artifact Format
@@ -258,7 +259,35 @@ Each node is a unit of work in the dependency graph.
 | `status` | enum | ✓ | `"planned"`, `"ready"`, `"in-progress"`, `"blocked"`, or `"completed"` |
 | `repoIds` | string[] | ✓ | References to declared repos (can be empty) |
 | `tracker` | object | | Where the node's spec lives (see Tracker Reference) |
+| `launch` | object | | Durable node launch classification and any existing shared-branch contract (see Node Launch Configuration) |
 | `dependsOn` | string[] | ✓ | IDs of nodes that must complete before this one |
+
+### Node Launch Configuration
+
+`node.launch` is optional. When absent, the node preserves the historical
+`standard-github` launch behavior. When present, `mode` is required:
+
+- `standard-github` — the worker owns a normal GitHub branch and PR.
+- `standard-azure-devops` — the worker owns a normal Azure DevOps branch and PR.
+- `existing-shared-azure-devops` — the worker contributes to an existing shared
+  Azure DevOps branch and PR.
+
+Standard modes reject shared-branch fields. Existing-shared mode requires all of
+the following:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `mode` | `"existing-shared-azure-devops"` | ✓ | Selects the fail-closed shared contribution path |
+| `targetBranch` | string | ✓ | Existing branch that the worker must use without creating or switching branches |
+| `requiredStartSha` | 40-character hex string | ✓ | Exact local and remote branch head required for fresh preparation and launch |
+| `existingPullRequest` | object | ✓ | Existing PR identity `{ "provider": "azure-devops", "id": <positive integer> }` |
+| `completionMode` | `"branch-contribution"` | ✓ | Completes a bounded branch contribution rather than shipping the aggregate PR |
+| `branchLeaseKey` | string | ✓ | Logical repository-and-branch exclusivity key shared by every node targeting this branch |
+
+Launch preparation must receive a matching launch configuration. The backend
+re-reads the graph and rejects missing or mismatched modes and fields; callers
+cannot select shared mode for a standard node or the standard path for a shared
+node.
 
 ### Node types
 
@@ -358,5 +387,7 @@ These constraints are enforced at parse time. Violations cause errors.
 | 11 | Timestamps are ISO 8601 |
 | 12 | `schemaVersion` must equal `1` |
 | 13 | `projectKey` is kebab-case when present |
+| 14 | Existing-shared nodes declare exactly one `repoId` and all shared launch fields |
+| 15 | Standard launch modes do not carry shared-branch fields |
 
 Runtime validation (tracker-cache freshness, cross-reference checks) is separate from parse-time schema validation.
