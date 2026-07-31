@@ -1,0 +1,5 @@
+﻿<toast><visual><binding template="ToastGeneric">
+  <image placement="appLogoOverride" hint-crop="circle" src="file:///C:/Users/robemanuele/proj/streamliner/streamliner-desktop-mvp/.paw/work/streamliner-desktop-mvp/spikes/toast-xml/images/workstream-blue-ro-circle.png"/>
+  <text>Logo circle: RO workstream</text>
+  <text>Round appLogoOverride: best for compact workstream identity.</text>
+</binding></visual></toast>

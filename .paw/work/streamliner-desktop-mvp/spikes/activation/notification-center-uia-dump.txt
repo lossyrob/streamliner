@@ -1,0 +1,399 @@
+2: name=[] class=[TrayNotifyWnd] type=[ControlType.Pane] rect=[3546,2100,294,60] enabled=True
+20: name=[Widgets 61°F Clear] class=[ToggleButton] type=[ControlType.Button] rect=[3341,2100,190,60] enabled=True
+21: name=[] class=[Image] type=[ControlType.Image] rect=[3355,2114,30,30] enabled=True
+22: name=[63°F] class=[TextBlock] type=[ControlType.Text] rect=[3395,2109,29,20] enabled=True
+23: name=[Clear] class=[TextBlock] type=[ControlType.Text] rect=[3395,2129,34,20] enabled=True
+24: name=[] class=[Image] type=[ControlType.Image] rect=[3355,2114,30,30] enabled=True
+25: name=[61°F] class=[TextBlock] type=[ControlType.Text] rect=[3395,2109,26,20] enabled=True
+26: name=[Clear] class=[TextBlock] type=[ControlType.Text] rect=[3395,2129,34,20] enabled=True
+27: name=[Show Hidden Icons] class=[SystemTray.NormalButton] type=[ControlType.Button] rect=[3546,2100,40,60] enabled=True
+28: name=[CPC-robem-6K84H DEVBOX 1] class=[SystemTray.NormalButton] type=[ControlType.Button] rect=[3586,2100,40,60] enabled=True
+29: name=[] class=[Image] type=[ControlType.Image] rect=[3596,2120,20,20] enabled=True
+30: name=[ OneDrive - Microsoft
+Backed up and synced] class=[SystemTray.NormalButton] type=[ControlType.Button] rect=[3626,2100,40,60] enabled=True
+31: name=[] class=[Image] type=[ControlType.Image] rect=[3636,2120,20,20] enabled=True
+32: name=[] class=[] type=[ControlType.Custom] rect=[Empty] enabled=False
+33: name=[Network Network
+Internet access] class=[SystemTray.AccentButton] type=[ControlType.Button] rect=[3666,2100,35,60] enabled=True
+34: name=[Volume Remote Audio: 100%] class=[SystemTray.OmniButtonRight] type=[ControlType.Button] rect=[3701,2100,35,60] enabled=True
+35: name=[Clock 10:11 PM
+‎5/‎30/‎2026] class=[SystemTray.OmniButton] type=[ControlType.Button] rect=[3736,2100,89,60] enabled=True
+36: name=[Show Desktop] class=[SystemTray.ShowDesktopButton] type=[ControlType.Button] rect=[3825,2100,15,60] enabled=True
+41: name=[bin - File Explorer] class=[CabinetWClass] type=[ControlType.Window] rect=[Empty] enabled=True
+44: name=[Pull requests · lossyrob/streamliner and 3 more pages - Personal - Microsoft​ Edge] class=[Chrome_WidgetWin_1] type=[ControlType.Window] rect=[Empty] enabled=True
+46: name=[Pull requests · lossyrob/streamliner - Sleeping - Microsoft Edge - Personal] class=[BrowserRootView] type=[ControlType.Pane] rect=[Empty] enabled=True
+47: name=[] class=[NonClientView] type=[ControlType.Pane] rect=[Empty] enabled=True
+48: name=[] class=[EdgeBrowserFrameViewWin] type=[ControlType.Pane] rect=[Empty] enabled=True
+53: name=[] class=[BrowserView] type=[ControlType.Pane] rect=[Empty] enabled=True
+54: name=[] class=[TopContainerView] type=[ControlType.Pane] rect=[Empty] enabled=True
+55: name=[App bar] class=[EdgeToolbarView] type=[ControlType.ToolBar] rect=[Empty] enabled=True
+58: name=[Address and search bar] class=[OmniboxViewViews] type=[ControlType.Edit] rect=[Empty] enabled=True
+68: name=[] class=[SidebarContentsSplitView] type=[ControlType.Pane] rect=[Empty] enabled=True
+69: name=[] class=[SidebarContentsSplitView] type=[ControlType.Pane] rect=[Empty] enabled=True
+70: name=[] class=[SidebarContentsSplitView] type=[ControlType.Pane] rect=[Empty] enabled=True
+71: name=[] class=[View] type=[ControlType.Pane] rect=[Empty] enabled=True
+72: name=[] class=[MultiContentsView] type=[ControlType.Pane] rect=[Empty] enabled=True
+73: name=[] class=[View] type=[ControlType.Pane] rect=[Empty] enabled=True
+74: name=[Pull requests · lossyrob/streamliner] class=[] type=[ControlType.Document] rect=[5,100,1908,1577] enabled=True
+76: name=[] class=[] type=[ControlType.Group] rect=[Empty] enabled=True
+85: name=[streamliner] class=[prc-Breadcrumbs-ItemWrapper-k0NLn] type=[ControlType.ListItem] rect=[227,120,126,40] enabled=True
+86: name=[streamliner] class=[styles-module__contextCrumb__IzGIq prc-Breadcrumbs-Item-jcraJ] type=[ControlType.Hyperlink] rect=[227,120,126,40] enabled=True
+95: name=[You have unread notifications ( g then n )] class=[prc-Button-ButtonBase-9n-Xk styles-module__appHeaderButton__axedQ styles-module__notificationIndicator__D_jL0 prc-Button-IconButton-fyge7] type=[ControlType.Hyperlink] rect=[1784,120,40,40] enabled=True
+122: name=[Pull requests: lossyrob/streamliner] class=[sr-only] type=[ControlType.Text] rect=[189,255,2,2] enabled=True
+155: name=[[Graph Change Notifications] Replace graph polling with workstream events] class=[js-issues-list-check] type=[ControlType.CheckBox] rect=[210,444,17,17] enabled=True
+157: name=[[Graph Change Notifications] Replace graph polling with workstream events] class=[Link--primary v-align-middle no-underline h4 js-navigation-open markdown-title] type=[ControlType.Hyperlink] rect=[276,441,691,28] enabled=True
+165: name=[Assigned to ] class=[AvatarStack-body tooltipped tooltipped-sw tooltipped-multiline tooltipped-align-right-1 mt-1] type=[ControlType.Group] rect=[Empty] enabled=True
+176: name=[Assigned to ] class=[AvatarStack-body tooltipped tooltipped-sw tooltipped-multiline tooltipped-align-right-1 mt-1] type=[ControlType.Group] rect=[Empty] enabled=True
+185: name=[Assigned to ] class=[AvatarStack-body tooltipped tooltipped-sw tooltipped-multiline tooltipped-align-right-1 mt-1] type=[ControlType.Group] rect=[Empty] enabled=True
+196: name=[Assigned to ] class=[AvatarStack-body tooltipped tooltipped-sw tooltipped-multiline tooltipped-align-right-1 mt-1] type=[ControlType.Group] rect=[Empty] enabled=True
+197: name=[[Serialize Streamliner-owned Copilot terminal launches] Serialize Copilot starts (#109)] class=[js-issues-list-check] type=[ControlType.CheckBox] rect=[210,760,17,17] enabled=True
+199: name=[[Serialize Streamliner-owned Copilot terminal launches] Serialize Copilot starts (#109)] class=[Link--primary v-align-middle no-underline h4 js-navigation-open markdown-title] type=[ControlType.Hyperlink] rect=[276,758,773,28] enabled=True
+207: name=[Assigned to ] class=[AvatarStack-body tooltipped tooltipped-sw tooltipped-multiline tooltipped-align-right-1 mt-1] type=[ControlType.Group] rect=[Empty] enabled=True
+218: name=[Assigned to ] class=[AvatarStack-body tooltipped tooltipped-sw tooltipped-multiline tooltipped-align-right-1 mt-1] type=[ControlType.Group] rect=[Empty] enabled=True
+227: name=[Assigned to ] class=[AvatarStack-body tooltipped tooltipped-sw tooltipped-multiline tooltipped-align-right-1 mt-1] type=[ControlType.Group] rect=[Empty] enabled=True
+238: name=[Assigned to ] class=[AvatarStack-body tooltipped tooltipped-sw tooltipped-multiline tooltipped-align-right-1 mt-1] type=[ControlType.Group] rect=[Empty] enabled=True
+250: name=[Assigned to ] class=[AvatarStack-body tooltipped tooltipped-sw tooltipped-multiline tooltipped-align-right-1 mt-1] type=[ControlType.Group] rect=[Empty] enabled=True
+262: name=[Assigned to ] class=[AvatarStack-body tooltipped tooltipped-sw tooltipped-multiline tooltipped-align-right-1 mt-1] type=[ControlType.Group] rect=[Empty] enabled=True
+271: name=[Assigned to ] class=[AvatarStack-body tooltipped tooltipped-sw tooltipped-multiline tooltipped-align-right-1 mt-1] type=[ControlType.Group] rect=[Empty] enabled=True
+280: name=[Assigned to ] class=[AvatarStack-body tooltipped tooltipped-sw tooltipped-multiline tooltipped-align-right-1 mt-1] type=[ControlType.Group] rect=[Empty] enabled=True
+291: name=[Assigned to ] class=[AvatarStack-body tooltipped tooltipped-sw tooltipped-multiline tooltipped-align-right-1 mt-1] type=[ControlType.Group] rect=[Empty] enabled=True
+302: name=[Assigned to ] class=[AvatarStack-body tooltipped tooltipped-sw tooltipped-multiline tooltipped-align-right-1 mt-1] type=[ControlType.Group] rect=[Empty] enabled=True
+312: name=[Assigned to ] class=[AvatarStack-body tooltipped tooltipped-sw tooltipped-multiline tooltipped-align-right-1 mt-1] type=[ControlType.Group] rect=[Empty] enabled=True
+321: name=[Assigned to ] class=[AvatarStack-body tooltipped tooltipped-sw tooltipped-multiline tooltipped-align-right-1 mt-1] type=[ControlType.Group] rect=[Empty] enabled=True
+332: name=[Assigned to ] class=[AvatarStack-body tooltipped tooltipped-sw tooltipped-multiline tooltipped-align-right-1 mt-1] type=[ControlType.Group] rect=[Empty] enabled=True
+341: name=[Assigned to ] class=[AvatarStack-body tooltipped tooltipped-sw tooltipped-multiline tooltipped-align-right-1 mt-1] type=[ControlType.Group] rect=[Empty] enabled=True
+352: name=[Assigned to ] class=[AvatarStack-body tooltipped tooltipped-sw tooltipped-multiline tooltipped-align-right-1 mt-1] type=[ControlType.Group] rect=[Empty] enabled=True
+364: name=[Assigned to ] class=[AvatarStack-body tooltipped tooltipped-sw tooltipped-multiline tooltipped-align-right-1 mt-1] type=[ControlType.Group] rect=[Empty] enabled=True
+376: name=[Assigned to ] class=[AvatarStack-body tooltipped tooltipped-sw tooltipped-multiline tooltipped-align-right-1 mt-1] type=[ControlType.Group] rect=[Empty] enabled=True
+387: name=[Assigned to ] class=[AvatarStack-body tooltipped tooltipped-sw tooltipped-multiline tooltipped-align-right-1 mt-1] type=[ControlType.Group] rect=[Empty] enabled=True
+398: name=[Assigned to ] class=[AvatarStack-body tooltipped tooltipped-sw tooltipped-multiline tooltipped-align-right-1 mt-1] type=[ControlType.Group] rect=[Empty] enabled=True
+408: name=[Assigned to ] class=[AvatarStack-body tooltipped tooltipped-sw tooltipped-multiline tooltipped-align-right-1 mt-1] type=[ControlType.Group] rect=[Empty] enabled=True
+417: name=[Assigned to ] class=[AvatarStack-body tooltipped tooltipped-sw tooltipped-multiline tooltipped-align-right-1 mt-1] type=[ControlType.Group] rect=[Empty] enabled=True
+456: name=[] class=[Textfield] type=[ControlType.Edit] rect=[Empty] enabled=True
+457: name=[Tab bar] class=[EdgeTabStripRegionView] type=[ControlType.Tab] rect=[Empty] enabled=True
+461: name=[] class=[TopContainerOverlayView] type=[ControlType.Pane] rect=[Empty] enabled=True
+462: name=[dbagent — orchestrator-initial-prompt-v1.md] class=[Zed::Window] type=[ControlType.Window] rect=[Empty] enabled=True
+472: name=[Streamliner Fix] class=[ListViewItem] type=[ControlType.TabItem] rect=[331,157,222,40] enabled=True
+474: name=[Streamliner Fix] class=[TextBlock] type=[ControlType.Text] rect=[374,167,99,20] enabled=True
+500: name=[worktrees [feature/issue-118-graph-notifications] - PowerShell 7.6 (24976)] class=[ListViewItem] type=[ControlType.TabItem] rect=[1885,157,222,40] enabled=True
+502: name=[worktrees [feature/issue-118-graph-notifications] - PowerShell 7.6 (24976)] class=[TextBlock] type=[ControlType.Text] rect=[1928,167,127,20] enabled=True
+508: name=[Streamliner Sync] class=[ListViewItem] type=[ControlType.TabItem] rect=[2329,157,222,40] enabled=True
+510: name=[Streamliner Sync] class=[TextBlock] type=[ControlType.Text] rect=[2397,167,102,20] enabled=True
+527: name=[Vertical] class=[ScrollBar] type=[ControlType.ScrollBar] rect=[3502,197,20,1469] enabled=True
+528: name=[Vertical Small Decrease] class=[RepeatButton] type=[ControlType.Button] rect=[3502,197,20,20] enabled=True
+529: name=[Vertical Large Decrease] class=[RepeatButton] type=[ControlType.Button] rect=[Empty] enabled=True
+530: name=[Vertical Large Increase] class=[RepeatButton] type=[ControlType.Button] rect=[3502,217,20,1429] enabled=True
+531: name=[Vertical Small Increase] class=[RepeatButton] type=[ControlType.Button] rect=[3502,1646,20,20] enabled=True
+532: name=[copy pasta] class=[Chrome_WidgetWin_1] type=[ControlType.Window] rect=[Empty] enabled=True
+534: name=[copy pasta - Personal] class=[BrowserRootView] type=[ControlType.Pane] rect=[Empty] enabled=True
+535: name=[] class=[NonClientView] type=[ControlType.Pane] rect=[Empty] enabled=True
+536: name=[] class=[EdgeBrowserFrameViewWin] type=[ControlType.Pane] rect=[Empty] enabled=True
+541: name=[] class=[BrowserView] type=[ControlType.Pane] rect=[Empty] enabled=True
+542: name=[] class=[TopContainerView] type=[ControlType.Pane] rect=[Empty] enabled=True
+543: name=[App available] class=[AXVirtualView] type=[ControlType.Text] rect=[Empty] enabled=True
+544: name=[] class=[SidebarContentsSplitView] type=[ControlType.Pane] rect=[Empty] enabled=True
+545: name=[] class=[SidebarContentsSplitView] type=[ControlType.Pane] rect=[Empty] enabled=True
+546: name=[] class=[SidebarContentsSplitView] type=[ControlType.Pane] rect=[Empty] enabled=True
+547: name=[] class=[View] type=[ControlType.Pane] rect=[Empty] enabled=True
+548: name=[] class=[MultiContentsView] type=[ControlType.Pane] rect=[Empty] enabled=True
+549: name=[] class=[View] type=[ControlType.Pane] rect=[Empty] enabled=True
+558: name=[Settings and more] class=[fui-Button r1piff0w fui-MenuButton ___1dyu79p f1lomnli fmrjy3i f114z1sh f98we5q fh7aqbb f1u5pz3u f16bzlmw f7l96nu f1mlqyoo f1wyqtx f1ydpxhl f1ov2yly f1efbba5 f1dia40e f3q6uje f1tzbmiy fyuafwn f1tkt595 fcf7tgq f1q6drqx f1gd4y6v f118yszu f18dccc5 f15g7o45 f12r34xd fvgu4vg fu7seja f1wz7o44 f1l3owui f7rdcz1 fp9akmo f8ebmxv f1wbl5e4 fbpg9m6 f3h6u1t fuipobn fv47p4e f16sun06 fv3nk1n f5f17dl f1wf3bbg] type=[ControlType.Button] rect=[3367,63,41,41] enabled=True
+559: name=[Account manager for Rob Emanuele] class=[fui-Button r1piff0w fui-MenuButton ___1dyu79p f1lomnli fmrjy3i f114z1sh f98we5q fh7aqbb f1u5pz3u f16bzlmw f7l96nu f1mlqyoo f1wyqtx f1ydpxhl f1ov2yly f1efbba5 f1dia40e f3q6uje f1tzbmiy fyuafwn f1tkt595 fcf7tgq f1q6drqx f1gd4y6v f118yszu f18dccc5 f15g7o45 f12r34xd fvgu4vg fu7seja f1wz7o44 f1l3owui f7rdcz1 fp9akmo f8ebmxv f1wbl5e4 fbpg9m6 f3h6u1t fuipobn fv47p4e f16sun06 fv3nk1n f5f17dl f1wf3bbg] type=[ControlType.Button] rect=[3417,63,41,41] enabled=True
+560: name=[Rob Emanuele] class=[fui-Avatar r11ouoti ___xzhot70 f1pe50rz f15q0it8 ftmrmur] type=[ControlType.Image] rect=[3422,68,31,31] enabled=True
+570: name=[Notifications 2 unread] class=[fui-Tab ___1n654pf f1drj5c3 f16z8u4g f1p99hwk f1410nsr f14prqux fanjz7j f2bc6ao f3jhdtd fddbaav f5c49di f1h4jgr0 f898ecj f1v06gxd f19fj05r f7d9gor fsvis68 f1h11fyl f1ksauwf f1hennsi f1weirht f12skvnv f15a4g4d f11qw3zu fmloiwc f1lomnli frdtq94 fyg69wq f10cthmz fxuebdf fetiogr fmgob90 f8ci5w3 fpzjsxn f59hv1i f1650vbq f1aus5yi f1n4jgi2 f199l2qj fkf9lmy fk0mhp8 fb1nfjg f1grl3l1 fderfxt f1qnfp4b fle9l9j f10oe0of f19rgp5d f160l2fo f16b2ljy f7rdcz1 f1il8ex2 f1852nel f1n8tpmf fccs1nm f6kngxx f157hjdn fv4ho4g f16kt08w ffr0yqk f18ycqdn fbdg0y9 f1vakoyg f4pbjdg f174qlhp felhg1l f1y35nr f1ycw8tc f1l5zut9 f1vr4i6p f12asg9f feo4af9 f1lyku3d ffrzfok flamj82 fa2qhca fch6by3 fztdcc6 f1fantdd f1klolvh fck0cio fvfrssw frbh6e f1s89mdc fanar40 f1iv83x9 fntevs0 fukxyxe f1j5cwq1 f3hs6dx f1b3hft f1ydzst6 f18mtjev f9kkcep f1g4po4f frkzom0 f1j5q7c8 f2re6qv faoagdz fekhphh] type=[ControlType.TabItem] rect=[17,302,201,41] enabled=True
+667: name=[More options] class=[fui-Button r1piff0w fui-MenuButton ___15cww60 f1lomnli fmrjy3i f114z1sh f98we5q fh7aqbb f1u5pz3u f16bzlmw f7l96nu f1mlqyoo f1wyqtx f1ydpxhl f1ov2yly f1efbba5 f1dia40e f3q6uje f1tzbmiy fyuafwn f1tkt595 fcf7tgq f1q6drqx f1gd4y6v f118yszu f18dccc5 f15g7o45 f12r34xd fvgu4vg fu7seja f1wz7o44 f1l3owui f7rdcz1 fp9akmo f8ebmxv f1wbl5e4 fbpg9m6 f3h6u1t fuipobn fv47p4e f16sun06 fv3nk1n f5f17dl f1wf3bbg f1q4p8rt] type=[ControlType.Button] rect=[3397,138,41,41] enabled=True
+683: name=[​] class=[] type=[ControlType.Text] rect=[Empty] enabled=True
+684: name=[
+] class=[scriptor-EOP] type=[ControlType.Text] rect=[Empty] enabled=True
+701: name=[​] class=[] type=[ControlType.Text] rect=[Empty] enabled=True
+702: name=[
+] class=[scriptor-EOP] type=[ControlType.Text] rect=[Empty] enabled=True
+703: name=[​] class=[] type=[ControlType.Text] rect=[Empty] enabled=True
+704: name=[
+] class=[scriptor-EOP] type=[ControlType.Text] rect=[Empty] enabled=True
+705: name=[​] class=[] type=[ControlType.Text] rect=[Empty] enabled=True
+706: name=[
+] class=[scriptor-EOP] type=[ControlType.Text] rect=[Empty] enabled=True
+707: name=[​] class=[] type=[ControlType.Text] rect=[Empty] enabled=True
+708: name=[
+] class=[scriptor-EOP] type=[ControlType.Text] rect=[Empty] enabled=True
+711: name=[​] class=[] type=[ControlType.Text] rect=[Empty] enabled=True
+712: name=[
+] class=[scriptor-EOP] type=[ControlType.Text] rect=[Empty] enabled=True
+725: name=[​] class=[] type=[ControlType.Text] rect=[Empty] enabled=True
+726: name=[
+] class=[scriptor-EOP] type=[ControlType.Text] rect=[Empty] enabled=True
+730: name=[​] class=[] type=[ControlType.Text] rect=[Empty] enabled=True
+731: name=[
+] class=[scriptor-EOP] type=[ControlType.Text] rect=[Empty] enabled=True
+735: name=[​] class=[] type=[ControlType.Text] rect=[Empty] enabled=True
+736: name=[
+] class=[scriptor-EOP] type=[ControlType.Text] rect=[Empty] enabled=True
+744: name=[​] class=[] type=[ControlType.Text] rect=[Empty] enabled=True
+745: name=[
+] class=[scriptor-EOP] type=[ControlType.Text] rect=[Empty] enabled=True
+747: name=[​] class=[] type=[ControlType.Text] rect=[Empty] enabled=True
+748: name=[
+] class=[scriptor-EOP] type=[ControlType.Text] rect=[Empty] enabled=True
+754: name=[​] class=[] type=[ControlType.Text] rect=[Empty] enabled=True
+755: name=[
+] class=[scriptor-EOP] type=[ControlType.Text] rect=[Empty] enabled=True
+757: name=[​] class=[] type=[ControlType.Text] rect=[Empty] enabled=True
+758: name=[
+] class=[scriptor-EOP] type=[ControlType.Text] rect=[Empty] enabled=True
+760: name=[​] class=[] type=[ControlType.Text] rect=[Empty] enabled=True
+761: name=[
+] class=[scriptor-EOP] type=[ControlType.Text] rect=[Empty] enabled=True
+763: name=[​] class=[] type=[ControlType.Text] rect=[Empty] enabled=True
+764: name=[
+] class=[scriptor-EOP] type=[ControlType.Text] rect=[Empty] enabled=True
+766: name=[​] class=[] type=[ControlType.Text] rect=[Empty] enabled=True
+767: name=[
+] class=[scriptor-EOP] type=[ControlType.Text] rect=[Empty] enabled=True
+771: name=[​] class=[] type=[ControlType.Text] rect=[Empty] enabled=True
+772: name=[
+] class=[scriptor-EOP] type=[ControlType.Text] rect=[Empty] enabled=True
+780: name=[​] class=[] type=[ControlType.Text] rect=[Empty] enabled=True
+781: name=[
+] class=[scriptor-EOP] type=[ControlType.Text] rect=[Empty] enabled=True
+782: name=[​] class=[] type=[ControlType.Text] rect=[Empty] enabled=True
+783: name=[
+] class=[scriptor-EOP] type=[ControlType.Text] rect=[Empty] enabled=True
+788: name=[] class=[] type=[ControlType.Group] rect=[Empty] enabled=True
+789: name=[] class=[fui-FluentProvider blockUiButtonHover-2200fui-FluentProviderr8j ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+790: name=[] class=[fui-FluentProvider contentAdditionButton-7951fui-FluentProviderr8l ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+791: name=[] class=[scriptor-live-region-polite] type=[ControlType.Group] rect=[Empty] enabled=True
+792: name=[] class=[fui-FluentProvider blockUiButtonHover-7463fui-FluentProviderrae ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+793: name=[] class=[fui-FluentProvider contentAdditionButton-7371fui-FluentProviderrag ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+794: name=[] class=[fui-FluentProvider blockUiButtonHover-4023fui-FluentProviderrai ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+795: name=[] class=[fui-FluentProvider contentAdditionButton-4828fui-FluentProviderrak ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+796: name=[] class=[fui-FluentProvider blockUiButtonHover-3820fui-FluentProviderram ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+797: name=[] class=[fui-FluentProvider contentAdditionButton-3437fui-FluentProviderrao ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+798: name=[] class=[fui-FluentProvider blockUiButtonHover-179fui-FluentProviderraq ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+799: name=[] class=[fui-FluentProvider contentAdditionButton-6778fui-FluentProviderras ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+801: name=[] class=[fui-FluentProvider blockUiButtonHover-3917fui-FluentProviderrbv ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+802: name=[] class=[fui-FluentProvider contentAdditionButton-296fui-FluentProviderrc1 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+803: name=[] class=[fui-FluentProvider blockUiButtonHover-6809fui-FluentProviderrc3 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+804: name=[] class=[fui-FluentProvider contentAdditionButton-7247fui-FluentProviderrc5 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+806: name=[] class=[fui-FluentProvider blockUiButtonHover-1613fui-FluentProviderrc8 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+807: name=[] class=[fui-FluentProvider contentAdditionButton-8922fui-FluentProviderrca ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+808: name=[] class=[fui-FluentProvider blockUiButtonHover-9382fui-FluentProviderrcc ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+809: name=[] class=[fui-FluentProvider contentAdditionButton-7948fui-FluentProviderrce ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+810: name=[] class=[fui-FluentProvider blockUiButtonHover-4685fui-FluentProviderrcg ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+811: name=[] class=[fui-FluentProvider contentAdditionButton-9709fui-FluentProviderrci ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+812: name=[] class=[fui-FluentProvider blockUiButtonHover-302fui-FluentProviderrck ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+813: name=[] class=[fui-FluentProvider contentAdditionButton-7726fui-FluentProviderrcm ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+814: name=[] class=[fui-FluentProvider blockUiButtonHover-6044fui-FluentProviderrco ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+815: name=[] class=[fui-FluentProvider contentAdditionButton-1268fui-FluentProviderrcq ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+816: name=[] class=[fui-FluentProvider blockUiButtonHover-8529fui-FluentProviderrcs ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+817: name=[] class=[fui-FluentProvider contentAdditionButton-885fui-FluentProviderrcu ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+818: name=[] class=[fui-FluentProvider blockUiButtonHover-334fui-FluentProviderrd0 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+819: name=[] class=[fui-FluentProvider contentAdditionButton-920fui-FluentProviderrd2 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+820: name=[] class=[fui-FluentProvider blockUiButtonHover-1872fui-FluentProviderrd4 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+821: name=[] class=[fui-FluentProvider contentAdditionButton-7432fui-FluentProviderrd6 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+822: name=[] class=[fui-FluentProvider blockUiButtonHover-6164fui-FluentProviderrd8 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+823: name=[] class=[fui-FluentProvider contentAdditionButton-6232fui-FluentProviderrda ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+824: name=[] class=[fui-FluentProvider blockUiButtonHover-5132fui-FluentProviderrdc ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+825: name=[] class=[fui-FluentProvider contentAdditionButton-9025fui-FluentProviderrde ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+826: name=[] class=[fui-FluentProvider blockUiButtonHover-5452fui-FluentProviderrdl ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+827: name=[] class=[fui-FluentProvider contentAdditionButton-490fui-FluentProviderrdn ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+828: name=[] class=[fui-FluentProvider blockUiButtonHover-7418fui-FluentProviderrdp ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+829: name=[] class=[fui-FluentProvider contentAdditionButton-4778fui-FluentProviderrdr ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+830: name=[] class=[fui-FluentProvider blockUiButtonHover-988fui-FluentProviderrdt ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+831: name=[] class=[fui-FluentProvider contentAdditionButton-3960fui-FluentProviderrdv ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+832: name=[] class=[fui-FluentProvider blockUiButtonHover-9145fui-FluentProviderre1 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+833: name=[] class=[fui-FluentProvider contentAdditionButton-7375fui-FluentProviderre3 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+834: name=[] class=[fui-FluentProvider blockUiButtonHover-3240fui-FluentProviderre5 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+835: name=[] class=[fui-FluentProvider contentAdditionButton-9403fui-FluentProviderre7 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+836: name=[] class=[fui-FluentProvider blockUiButtonHover-7076fui-FluentProviderre9 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+837: name=[] class=[fui-FluentProvider contentAdditionButton-7380fui-FluentProviderreb ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+838: name=[] class=[fui-FluentProvider blockUiButtonHover-8436fui-FluentProviderred ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+839: name=[] class=[fui-FluentProvider contentAdditionButton-7323fui-FluentProviderref ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+840: name=[] class=[fui-FluentProvider blockUiButtonHover-5962fui-FluentProviderreh ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+841: name=[] class=[fui-FluentProvider contentAdditionButton-4893fui-FluentProviderrej ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+842: name=[] class=[fui-FluentProvider blockUiButtonHover-9689fui-FluentProviderrel ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+843: name=[] class=[fui-FluentProvider contentAdditionButton-9005fui-FluentProviderren ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+844: name=[] class=[fui-FluentProvider blockUiButtonHover-3101fui-FluentProviderreu ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+845: name=[] class=[fui-FluentProvider contentAdditionButton-6507fui-FluentProviderrf0 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+846: name=[] class=[fui-FluentProvider blockUiButtonHover-3580fui-FluentProviderrf2 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+847: name=[] class=[fui-FluentProvider contentAdditionButton-7217fui-FluentProviderrf4 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+848: name=[] class=[fui-FluentProvider blockUiButtonHover-3826fui-FluentProviderrf6 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+849: name=[] class=[fui-FluentProvider contentAdditionButton-6697fui-FluentProviderrf8 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+850: name=[] class=[fui-FluentProvider blockUiButtonHover-2697fui-FluentProviderrfa ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+851: name=[] class=[fui-FluentProvider contentAdditionButton-1083fui-FluentProviderrfc ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+852: name=[] class=[fui-FluentProvider blockUiButtonHover-620fui-FluentProviderrfe ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+853: name=[] class=[fui-FluentProvider contentAdditionButton-5676fui-FluentProviderrfg ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+854: name=[] class=[fui-FluentProvider blockUiButtonHover-1469fui-FluentProviderrfi ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+855: name=[] class=[fui-FluentProvider contentAdditionButton-3409fui-FluentProviderrfk ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+856: name=[] class=[fui-FluentProvider blockUiButtonHover-3770fui-FluentProviderrfm ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+857: name=[] class=[fui-FluentProvider contentAdditionButton-502fui-FluentProviderrfo ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+858: name=[] class=[fui-FluentProvider blockUiButtonHover-3254fui-FluentProviderrfq ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+859: name=[] class=[fui-FluentProvider contentAdditionButton-4904fui-FluentProviderrfs ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+860: name=[] class=[fui-FluentProvider blockUiButtonHover-7414fui-FluentProviderrfu ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+861: name=[] class=[fui-FluentProvider contentAdditionButton-4576fui-FluentProviderrg0 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+862: name=[] class=[fui-FluentProvider blockUiButtonHover-1917fui-FluentProviderrg2 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+863: name=[] class=[fui-FluentProvider contentAdditionButton-3439fui-FluentProviderrg4 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+864: name=[] class=[fui-FluentProvider blockUiButtonHover-595fui-FluentProviderrg6 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+865: name=[] class=[fui-FluentProvider contentAdditionButton-8810fui-FluentProviderrg8 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+866: name=[] class=[fui-FluentProvider blockUiButtonHover-2403fui-FluentProviderrga ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+867: name=[] class=[fui-FluentProvider contentAdditionButton-3392fui-FluentProviderrgc ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+868: name=[] class=[fui-FluentProvider blockUiButtonHover-9805fui-FluentProviderrge ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+869: name=[] class=[fui-FluentProvider contentAdditionButton-936fui-FluentProviderrgg ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+870: name=[] class=[fui-FluentProvider blockUiButtonHover-2569fui-FluentProviderrgi ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+871: name=[] class=[fui-FluentProvider contentAdditionButton-8778fui-FluentProviderrgk ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+872: name=[] class=[fui-FluentProvider blockUiButtonHover-5539fui-FluentProviderrgm ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+873: name=[] class=[fui-FluentProvider contentAdditionButton-7897fui-FluentProviderrgo ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+874: name=[] class=[fui-FluentProvider blockUiButtonHover-731fui-FluentProviderrgq ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+875: name=[] class=[fui-FluentProvider contentAdditionButton-5064fui-FluentProviderrgs ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+876: name=[] class=[fui-FluentProvider blockUiButtonHover-5818fui-FluentProviderrgu ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+877: name=[] class=[fui-FluentProvider contentAdditionButton-4187fui-FluentProviderrh0 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+878: name=[] class=[fui-FluentProvider blockUiButtonHover-8869fui-FluentProviderrh2 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+879: name=[] class=[fui-FluentProvider contentAdditionButton-1324fui-FluentProviderrh4 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+880: name=[] class=[fui-FluentProvider blockUiButtonHover-945fui-FluentProviderrh6 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+881: name=[] class=[fui-FluentProvider contentAdditionButton-5615fui-FluentProviderrh8 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+882: name=[] class=[fui-FluentProvider blockUiButtonHover-2955fui-FluentProviderrha ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+883: name=[] class=[fui-FluentProvider contentAdditionButton-3919fui-FluentProviderrhc ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+884: name=[] class=[fui-FluentProvider blockUiButtonHover-402fui-FluentProviderrhe ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+885: name=[] class=[fui-FluentProvider contentAdditionButton-6621fui-FluentProviderrhg ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+886: name=[] class=[fui-FluentProvider blockUiButtonHover-569fui-FluentProviderrhi ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+887: name=[] class=[fui-FluentProvider contentAdditionButton-4027fui-FluentProviderrhk ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+888: name=[] class=[fui-FluentProvider blockUiButtonHover-7833fui-FluentProviderrhm ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+889: name=[] class=[fui-FluentProvider contentAdditionButton-1136fui-FluentProviderrho ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+890: name=[] class=[fui-FluentProvider blockUiButtonHover-4635fui-FluentProviderrhq ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+891: name=[] class=[fui-FluentProvider contentAdditionButton-9377fui-FluentProviderrhs ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+892: name=[] class=[fui-FluentProvider blockUiButtonHover-4478fui-FluentProviderrhu ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+893: name=[] class=[fui-FluentProvider contentAdditionButton-7068fui-FluentProviderri0 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+894: name=[] class=[fui-FluentProvider blockUiButtonHover-5134fui-FluentProviderri2 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+895: name=[] class=[fui-FluentProvider contentAdditionButton-6633fui-FluentProviderri4 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+896: name=[] class=[fui-FluentProvider blockUiButtonHover-8824fui-FluentProviderri6 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+897: name=[] class=[fui-FluentProvider contentAdditionButton-475fui-FluentProviderri8 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+898: name=[] class=[fui-FluentProvider blockUiButtonHover-5226fui-FluentProviderria ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+899: name=[] class=[fui-FluentProvider contentAdditionButton-8340fui-FluentProviderric ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+900: name=[] class=[fui-FluentProvider blockUiButtonHover-1381fui-FluentProviderrie ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+901: name=[] class=[fui-FluentProvider contentAdditionButton-3624fui-FluentProviderrig ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+902: name=[] class=[fui-FluentProvider blockUiButtonHover-7103fui-FluentProviderrii ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+903: name=[] class=[fui-FluentProvider contentAdditionButton-4934fui-FluentProviderrik ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+904: name=[] class=[fui-FluentProvider blockUiButtonHover-2796fui-FluentProviderrim ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+905: name=[] class=[fui-FluentProvider contentAdditionButton-9769fui-FluentProviderrio ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+906: name=[] class=[fui-FluentProvider blockUiButtonHover-7794fui-FluentProviderriq ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+907: name=[] class=[fui-FluentProvider contentAdditionButton-8885fui-FluentProviderris ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+908: name=[] class=[fui-FluentProvider blockUiButtonHover-6730fui-FluentProviderriu ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+909: name=[] class=[fui-FluentProvider contentAdditionButton-8044fui-FluentProviderrj0 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+910: name=[] class=[fui-FluentProvider blockUiButtonHover-7001fui-FluentProviderrj2 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+911: name=[] class=[fui-FluentProvider contentAdditionButton-2543fui-FluentProviderrj4 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+912: name=[] class=[fui-FluentProvider blockUiButtonHover-2470fui-FluentProviderrj6 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+913: name=[] class=[fui-FluentProvider contentAdditionButton-9613fui-FluentProviderrj8 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+914: name=[] class=[fui-FluentProvider loopApp-fui-FluentProviderr0 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+915: name=[] class=[fui-FluentProvider blockUiButtonHover-4021fui-FluentProviderrjh ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+916: name=[] class=[fui-FluentProvider contentAdditionButton-1789fui-FluentProviderrjj ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+917: name=[] class=[fui-FluentProvider blockUiButtonHover-431fui-FluentProviderrjq ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+918: name=[] class=[fui-FluentProvider contentAdditionButton-5407fui-FluentProviderrjs ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+919: name=[] class=[fui-FluentProvider blockUiButtonHover-5559fui-FluentProviderrju ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+920: name=[] class=[fui-FluentProvider contentAdditionButton-2233fui-FluentProviderrk0 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+921: name=[] class=[fui-FluentProvider blockUiButtonHover-9450fui-FluentProviderrk2 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+922: name=[] class=[fui-FluentProvider contentAdditionButton-655fui-FluentProviderrk4 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+923: name=[] class=[fui-FluentProvider blockUiButtonHover-5182fui-FluentProviderrk6 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+924: name=[] class=[fui-FluentProvider contentAdditionButton-9413fui-FluentProviderrk8 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+925: name=[] class=[fui-FluentProvider blockUiButtonHover-4898fui-FluentProviderrka ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+926: name=[] class=[fui-FluentProvider contentAdditionButton-899fui-FluentProviderrkc ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+927: name=[] class=[fui-FluentProvider blockUiButtonHover-3783fui-FluentProviderrke ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+928: name=[] class=[fui-FluentProvider contentAdditionButton-2036fui-FluentProviderrkg ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+929: name=[] class=[fui-FluentProvider blockUiButtonHover-7344fui-FluentProviderrlk ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+930: name=[] class=[fui-FluentProvider contentAdditionButton-5820fui-FluentProviderrlm ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+931: name=[] class=[fui-FluentProvider blockUiButtonHover-3147fui-FluentProviderrm4 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+932: name=[] class=[fui-FluentProvider contentAdditionButton-4120fui-FluentProviderrm6 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+933: name=[] class=[fui-FluentProvider blockUiButtonHover-6863fui-FluentProviderrm8 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+934: name=[] class=[fui-FluentProvider contentAdditionButton-5473fui-FluentProviderrma ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+935: name=[] class=[fui-FluentProvider blockUiButtonHover-7472fui-FluentProviderrmc ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+936: name=[] class=[fui-FluentProvider contentAdditionButton-7835fui-FluentProviderrme ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+937: name=[] class=[fui-FluentProvider blockUiButtonHover-2960fui-FluentProviderrmg ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+938: name=[] class=[fui-FluentProvider contentAdditionButton-7452fui-FluentProviderrmi ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+939: name=[] class=[fui-FluentProvider loopApp-fui-FluentProviderr0 ___1mayyon fzsm9es fpnujl fhhqpb5 f5c49di fizqr10 f596ufk f1h4jgr0] type=[ControlType.Group] rect=[Empty] enabled=True
+940: name=[] class=[Textfield] type=[ControlType.Edit] rect=[Empty] enabled=True
+941: name=[] class=[TopContainerOverlayView] type=[ControlType.Pane] rect=[Empty] enabled=True
+942: name=[DBAgent Portfolio Canvas — Wave Geometry and 4 more pages - Work - Microsoft​ Edge] class=[Chrome_WidgetWin_1] type=[ControlType.Window] rect=[Empty] enabled=True
+944: name=[DBAgent Portfolio Canvas — Wave Geometry - Microsoft Edge - Work] class=[BrowserRootView] type=[ControlType.Pane] rect=[Empty] enabled=True
+945: name=[] class=[NonClientView] type=[ControlType.Pane] rect=[Empty] enabled=True
+946: name=[] class=[EdgeBrowserFrameViewWin] type=[ControlType.Pane] rect=[Empty] enabled=True
+951: name=[] class=[BrowserView] type=[ControlType.Pane] rect=[Empty] enabled=True
+952: name=[] class=[TopContainerView] type=[ControlType.Pane] rect=[Empty] enabled=True
+953: name=[App bar] class=[EdgeToolbarView] type=[ControlType.ToolBar] rect=[Empty] enabled=True
+965: name=[] class=[SidebarContentsSplitView] type=[ControlType.Pane] rect=[Empty] enabled=True
+966: name=[] class=[SidebarContentsSplitView] type=[ControlType.Pane] rect=[Empty] enabled=True
+967: name=[] class=[SidebarContentsSplitView] type=[ControlType.Pane] rect=[Empty] enabled=True
+968: name=[] class=[View] type=[ControlType.Pane] rect=[Empty] enabled=True
+969: name=[] class=[MultiContentsView] type=[ControlType.Pane] rect=[Empty] enabled=True
+970: name=[] class=[View] type=[ControlType.Pane] rect=[Empty] enabled=True
+974: name=[DBAgent Portfolio Canvas — Wave Geometry _proto · Streamliner backend] class=[] type=[ControlType.Text] rect=[30,115,866,26] enabled=True
+978: name=[in-progress] class=[] type=[ControlType.Text] rect=[3324,115,68,17] enabled=True
+979: name=[ready] class=[] type=[ControlType.Text] rect=[3430,115,33,17] enabled=True
+980: name=[planned] class=[] type=[ControlType.Text] rect=[3502,115,48,17] enabled=True
+981: name=[blocked] class=[] type=[ControlType.Text] rect=[3589,115,47,17] enabled=True
+983: name=[soft-data] class=[] type=[ControlType.Text] rect=[3341,137,54,17] enabled=True
+984: name=[soft-coord] class=[] type=[ControlType.Text] rect=[3443,137,62,17] enabled=True
+985: name=[external] class=[] type=[ControlType.Text] rect=[3554,137,47,17] enabled=True
+986: name=[spine (workstream-colored)] class=[] type=[ControlType.Text] rect=[3650,137,160,17] enabled=True
+2140: name=[Hide details panel] class=[inspector-close] type=[ControlType.Button] rect=[3787,223,33,34] enabled=True
+2141: name=[Click a wave card or external dependency to see detail. Drag any node to refine the layout.] class=[] type=[ControlType.Text] rect=[3378,232,434,45] enabled=True
+2142: name=[HOW TO READ] class=[] type=[ControlType.Text] rect=[3378,296,435,18] enabled=True
+2143: name=[This is an ] class=[] type=[ControlType.Text] rect=[3378,322,68,22] enabled=True
+2144: name=[ELK layered] class=[] type=[ControlType.Text] rect=[3445,322,85,22] enabled=True
+2145: name=[ graph. The Y-axis is ] class=[] type=[ControlType.Text] rect=[3529,322,143,22] enabled=True
+2146: name=[topological depth] class=[] type=[ControlType.Text] rect=[3671,322,131,22] enabled=True
+2147: name=[ — each wave sits below all of its hard upstream dependencies, so a wave deep on the canvas means it's waiting on multiple upstream things. ELK reorders within each rank to minimize edge crossings.] class=[] type=[ControlType.Text] rect=[3378,345,430,92] enabled=True
+2148: name=[Each wave card has a ] class=[] type=[ControlType.Text] rect=[3378,444,150,22] enabled=True
+2149: name=[colored left border] class=[] type=[ControlType.Text] rect=[3527,444,139,22] enabled=True
+2150: name=[ identifying its workstream, and a workstream badge at the top. A ] class=[] type=[ControlType.Text] rect=[3378,444,386,46] enabled=True
+2151: name=[candidate] class=[] type=[ControlType.Text] rect=[3730,468,73,22] enabled=True
+2152: name=[ shows as a single ★-marked card. A ] class=[] type=[ControlType.Text] rect=[3378,491,250,22] enabled=True
+2153: name=[formed workstream] class=[] type=[ControlType.Text] rect=[3627,491,147,22] enabled=True
+2154: name=[ shows each wave separately so you can tell which waves are ready while later ones wait.] class=[] type=[ControlType.Text] rect=[3378,515,412,45] enabled=True
+2155: name=[Status: ] class=[] type=[ControlType.Text] rect=[3378,567,50,22] enabled=True
+2156: name=[ready] class=[] type=[ControlType.Text] rect=[3427,567,42,22] enabled=True
+2157: name=[ (yellow glow) = all hard deps done; ] class=[] type=[ControlType.Text] rect=[3468,567,251,22] enabled=True
+2158: name=[in-progress] class=[] type=[ControlType.Text] rect=[3718,567,84,22] enabled=True
+2159: name=[ = blue; ] class=[] type=[ControlType.Text] rect=[3378,591,53,22] enabled=True
+2160: name=[done] class=[] type=[ControlType.Text] rect=[3430,591,38,22] enabled=True
+2161: name=[ = green; ] class=[] type=[ControlType.Text] rect=[3467,591,68,22] enabled=True
+2162: name=[blocked] class=[] type=[ControlType.Text] rect=[3534,591,58,22] enabled=True
+2163: name=[ = red dashed; ] class=[] type=[ControlType.Text] rect=[3592,591,104,22] enabled=True
+2164: name=[planned] class=[] type=[ControlType.Text] rect=[3695,591,61,22] enabled=True
+2165: name=[ = gray dashed.] class=[] type=[ControlType.Text] rect=[3378,591,427,45] enabled=True
+2166: name=[Edges: ] class=[] type=[ControlType.Text] rect=[3378,644,49,22] enabled=True
+2167: name=[green] class=[] type=[ControlType.Text] rect=[3426,644,43,22] enabled=True
+2168: name=[ = hard import, ] class=[] type=[ControlType.Text] rect=[3468,644,110,22] enabled=True
+2169: name=[blue dashed] class=[] type=[ControlType.Text] rect=[3577,644,90,22] enabled=True
+2170: name=[ = soft-data, ] class=[] type=[ControlType.Text] rect=[3666,644,90,22] enabled=True
+2171: name=[purple dotted] class=[] type=[ControlType.Text] rect=[3378,644,426,45] enabled=True
+2172: name=[ = soft-coord, ] class=[] type=[ControlType.Text] rect=[3427,667,100,22] enabled=True
+2173: name=[red dashed] class=[] type=[ControlType.Text] rect=[3526,667,82,22] enabled=True
+2174: name=[ = external. Workstream-colored lines are intra-workstream spine (wave-to-next-wave). Fulfilled edges (upstream done) dim. Edges from an in-progress wave to a downstream ready/planned/blocked wave highlight to surface the next-launch surface.] class=[] type=[ControlType.Text] rect=[3378,667,426,116] enabled=True
+2175: name=[Drag any node] class=[] type=[ControlType.Text] rect=[3378,790,108,22] enabled=True
+2176: name=[ to pin its position. Pinned positions are auto-saved to the Streamliner filesystem (1-second debounce after the last drag) and persist across page reloads, browser changes, machines (when committed), and reconciliation updates.] class=[] type=[ControlType.Text] rect=[3378,790,422,116] enabled=True
+2177: name=[Filter bar at top] class=[] type=[ControlType.Text] rect=[3378,913,115,22] enabled=True
+2178: name=[: pick Ready / In progress / Blocked / Done / Planned / Hot to focus the graph on a subset. Focus-set nodes stay fully bright; 1-hop neighbors dim partially (so you can see what connects to the focus set); everything else fades but stays in place. Edges between focus and neighbor are still drawn so the connection structure is visible.] class=[] type=[ControlType.Text] rect=[3378,913,433,139] enabled=True
+2179: name=[] class=[Textfield] type=[ControlType.Edit] rect=[Empty] enabled=True
+2180: name=[Tab bar] class=[EdgeTabStripRegionView] type=[ControlType.Tab] rect=[Empty] enabled=True
+2184: name=[] class=[TopContainerOverlayView] type=[ControlType.Pane] rect=[Empty] enabled=True
+2185: name=[Home - File Explorer] class=[CabinetWClass] type=[ControlType.Window] rect=[Empty] enabled=True
+2187: name=[] class=[Tauri Window] type=[ControlType.Window] rect=[3346,1666,469,469] enabled=True
+2188: name=[] class=[WRY_WEBVIEW] type=[ControlType.Pane] rect=[3346,1666,469,469] enabled=True
+2189: name=[tauri.localhost/overlay.html] class=[Chrome_WidgetWin_1] type=[ControlType.Pane] rect=[3346,1666,469,469] enabled=True
+2190: name=[tauri.localhost/overlay.html - Web content] class=[BrowserRootView] type=[ControlType.Pane] rect=[3346,1666,470,470] enabled=True
+2191: name=[] class=[NonClientView] type=[ControlType.Pane] rect=[3346,1666,470,470] enabled=True
+2192: name=[] class=[EmbeddedBrowserFrameView] type=[ControlType.Pane] rect=[3346,1666,470,470] enabled=True
+2193: name=[tauri.localhost/overlay.html] class=[Label] type=[ControlType.Text] rect=[Empty] enabled=True
+2194: name=[] class=[BrowserCaptionButtonContainer] type=[ControlType.Pane] rect=[Empty] enabled=True
+2195: name=[Minimize] class=[EdgeWindowsCaptionButton] type=[ControlType.Button] rect=[Empty] enabled=True
+2196: name=[Maximize] class=[EdgeWindowsCaptionButton] type=[ControlType.Button] rect=[Empty] enabled=True
+2197: name=[Close] class=[EdgeWindowsCaptionButton] type=[ControlType.Button] rect=[Empty] enabled=True
+2198: name=[] class=[BrowserView] type=[ControlType.Pane] rect=[3346,1666,470,470] enabled=True
+2199: name=[] class=[TopContainerView] type=[ControlType.Pane] rect=[Empty] enabled=True
+2200: name=[] class=[SidebarContentsSplitView] type=[ControlType.Pane] rect=[3346,1666,470,470] enabled=True
+2201: name=[] class=[SidebarContentsSplitView] type=[ControlType.Pane] rect=[3346,1666,470,470] enabled=True
+2202: name=[] class=[View] type=[ControlType.Pane] rect=[3346,1666,470,470] enabled=True
+2203: name=[] class=[MultiContentsView] type=[ControlType.Pane] rect=[3346,1666,470,470] enabled=True
+2204: name=[] class=[View] type=[ControlType.Pane] rect=[3346,1666,470,470] enabled=True
+2205: name=[] class=[EmbeddedBrowserDownloadView] type=[ControlType.Pane] rect=[Empty] enabled=True
+2206: name=[] class=[EmbeddedBrowserTabRootView] type=[ControlType.Pane] rect=[Empty] enabled=True
+2207: name=[] class=[TopContainerOverlayView] type=[ControlType.Pane] rect=[3346,1666,470,470] enabled=True

@@ -1,0 +1,2 @@
+Removed shortcut: C:\Users\robemanuele\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Streamliner Activation Spike.lnk
+Removed registry key: HKCU:\Software\Classes\streamliner-spike

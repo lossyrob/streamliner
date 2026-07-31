@@ -50,10 +50,16 @@ Use `npm run api` for a non-watch API process. The API serves `GET /api/health`,
 | `STREAMLINER_LAUNCH_CLAIMS_ROOT` | `~/.streamliner/state/launch-claims` | Override the launch-claim store root used by `createLaunchClaim` and the binding pass (see `docs/design/session-system.md` Launch Claim Lifecycle) |
 | `GITHUB_TOKEN` / `GH_TOKEN` | unset | Optional token for live GitHub issue/PR status. If unset, the API resolves a repo-specific `gh auth token` profile and then falls back to anonymous GitHub REST. |
 | `STREAMLINER_GITHUB_AUTH_CONFIG` | `~/.streamliner/state/github-auth.json` | Optional local config file that maps GitHub repositories to `gh` auth profiles for live issue/PR status. |
+| `STREAMLINER_DASHBOARD_BASE_URL` | `http://127.0.0.1:5173` | Base URL the notification API uses to compose dashboard deep links and exposes via `GET /api/client-config`. |
+| `STREAMLINER_API_BASE_URL` | `http://127.0.0.1:4319` | Base URL the `streamliner` CLI and the desktop app use to reach the local API. |
 
 When no `STREAMLINER_GRAPH` is set and no recent graph is available, `GET /api/graph.json` returns a 404. The dashboard handles that by falling back to Vite's static `public/example-project.json` fixture. Use the "Load workstream…" button to select a different workstream JSON file.
 
 The API process writes structured JSON-lines logs to `~/.streamliner/state/logs/api-YYYY-MM-DD.log`. See [`docs/operations/logging.md`](docs/operations/logging.md) for the format, scope reference, and grep/jq recipes.
+
+## Notifications
+
+Streamliner emits operational notifications (workstream online, PR created/approved, issue closed, reconciled, done) through `POST /api/notifications`, re-broadcasts them over SSE at `GET /api/notifications/events`, and persists them to an append-only NDJSON store. The `streamliner notify` CLI (`npm run build:cli` then `npm link`) is the producer entry point and is callable from any cwd. The Streamliner Desktop app under `desktop/` consumes the stream and raises native toasts plus a durable feed. See [`docs/operations/notifications.md`](docs/operations/notifications.md) for the full API/CLI reference and the `toasty.exe` migration mapping.
 
 ## GitHub status authentication
 

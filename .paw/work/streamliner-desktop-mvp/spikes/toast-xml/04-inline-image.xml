@@ -1,0 +1,7 @@
+﻿<toast><visual><binding template="ToastGeneric">
+  <image placement="appLogoOverride" hint-crop="none" src="file:///C:/Users/robemanuele/proj/streamliner/streamliner-desktop-mvp/.paw/work/streamliner-desktop-mvp/spikes/toast-xml/images/workstream-orange-api-square.png"/>
+  <text>API workstream</text>
+  <text>Deploy finished; inline event chip below.</text>
+  <image src="file:///C:/Users/robemanuele/proj/streamliner/streamliner-desktop-mvp/.paw/work/streamliner-desktop-mvp/spikes/toast-xml/images/event-done-green.png"/>
+  <text placement="attribution">event: deploy-succeeded</text>
+</binding></visual></toast>

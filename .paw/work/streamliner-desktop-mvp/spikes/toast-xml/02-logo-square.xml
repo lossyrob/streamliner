@@ -1,0 +1,5 @@
+﻿<toast><visual><binding template="ToastGeneric">
+  <image placement="appLogoOverride" hint-crop="none" src="file:///C:/Users/robemanuele/proj/streamliner/streamliner-desktop-mvp/.paw/work/streamliner-desktop-mvp/spikes/toast-xml/images/workstream-orange-api-square.png"/>
+  <text>Logo square: API workstream</text>
+  <text>Square/uncropped appLogoOverride preserves corners and badge shape.</text>
+</binding></visual></toast>

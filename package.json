@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "bin": {
+    "streamliner": "dist/cli/streamliner.mjs"
+  },
   "scripts": {
     "dev": "concurrently -n api,web --kill-others-on-fail \"npm:dev:api\" \"npm:dev:web\"",
     "dev:stable": "concurrently -n api,web --kill-others-on-fail \"npm:api\" \"npm:dev:web\"",
@@ -10,7 +13,9 @@
     "dev:api": "tsx watch src/server/index.ts",
     "dev:web": "node scripts/wait-for-api.mjs && node --max-http-header-size=65536 ./node_modules/vite/bin/vite.js",
     "api": "tsx src/server/index.ts",
+    "streamliner": "tsx src/cli/streamliner.ts",
     "build": "tsc -b && vite build",
+    "build:cli": "esbuild src/cli/streamliner.ts --bundle --platform=node --format=esm --outfile=dist/cli/streamliner.mjs --banner:js=\"#!/usr/bin/env node\" && node -e \"const fs=require('node:fs');const p='dist/cli/streamliner.mjs';const shebang='#!/usr/bin/env node';let s=fs.readFileSync(p,'utf8');const duplicate=shebang+'\\n'+shebang+'\\n';if(s.startsWith(duplicate))s=shebang+'\\n'+s.slice(duplicate.length);fs.writeFileSync(p,s);\"",
     "lint": "eslint .",
     "refresh-copilot-plugin": "node scripts/refresh-copilot-plugin.mjs",
     "preview": "concurrently -n api,preview --kill-others-on-fail \"npm:api\" \"npm:preview:web\"",
@@ -48,6 +53,7 @@
     "@types/supertest": "^7.2.0",
     "@vitejs/plugin-react": "^6.0.1",
     "concurrently": "^9.2.1",
+    "esbuild": "^0.28.0",
     "eslint": "^9.39.4",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.2",

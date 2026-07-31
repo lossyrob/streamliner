@@ -1,0 +1,12 @@
+
+HKEY_CURRENT_USER\Software\Classes\streamliner-spike
+    (Default)    REG_SZ    URL:Streamliner Spike Protocol
+    URL Protocol    REG_SZ    
+
+HKEY_CURRENT_USER\Software\Classes\streamliner-spike\shell
+
+HKEY_CURRENT_USER\Software\Classes\streamliner-spike\shell\open
+
+HKEY_CURRENT_USER\Software\Classes\streamliner-spike\shell\open\command
+    (Default)    REG_SZ    "C:\Program Files\PowerShell\7\pwsh.exe" -NoProfile -ExecutionPolicy Bypass -File "C:\Users\robemanuele\proj\streamliner\streamliner-desktop-mvp\.paw\work\streamliner-desktop-mvp\spikes\activation\handler.ps1" "%1"
+

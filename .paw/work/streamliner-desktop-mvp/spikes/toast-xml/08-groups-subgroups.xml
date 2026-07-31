@@ -1,0 +1,10 @@
+﻿<toast><visual><binding template="ToastGeneric">
+  <image placement="appLogoOverride" hint-crop="none" src="file:///C:/Users/robemanuele/proj/streamliner/streamliner-desktop-mvp/.paw/work/streamliner-desktop-mvp/spikes/toast-xml/images/workstream-orange-api-square.png"/>
+  <text>Adaptive group grid test</text>
+  <group>
+    <subgroup hint-weight="1"><text hint-style="captionSubtle">WORK</text><text hint-style="base">API</text></subgroup>
+    <subgroup hint-weight="1"><text hint-style="captionSubtle">EVENT</text><text hint-style="base">BLOCKED</text></subgroup>
+    <subgroup hint-weight="1"><text hint-style="captionSubtle">AGE</text><text hint-style="base">4m</text></subgroup>
+  </group>
+  <image src="file:///C:/Users/robemanuele/proj/streamliner/streamliner-desktop-mvp/.paw/work/streamliner-desktop-mvp/spikes/toast-xml/images/event-blocked-red.png"/>
+</binding></visual></toast>

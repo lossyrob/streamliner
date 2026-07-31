@@ -1,0 +1,4 @@
+﻿<toast><visual><binding template="ToastGeneric">
+  <image placement="appLogoOverride" hint-crop="circle" src="file:///C:/Users/robemanuele/proj/streamliner/streamliner-desktop-mvp/.paw/work/streamliner-desktop-mvp/spikes/toast-xml/images/workstream-blue-ro-circle.png"/>
+  <text>Audio schema test</text><text>Custom audio accepted only with ms-appx/ms-winsoundevent; local file custom audio is unreliable for desktop apps.</text>
+</binding></visual><audio src="ms-winsoundevent:Notification.Looping.Alarm" loop="false"/></toast>

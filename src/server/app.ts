@@ -27,6 +27,7 @@ import {
 import { createLaunchClaimsRouter } from "./routes/launch-claims";
 import { createNodeLaunchesRouter } from "./routes/node-launches";
 import { createNodeLaunchRecordsRouter } from "./routes/node-launch-records";
+import { createNotificationsRouter } from "./routes/notifications";
 import { createPawLaunchPromptProfilesRouter } from "./routes/paw-launch-prompt-profiles";
 import { createPawReviewPromptTemplatesRouter } from "./routes/paw-review-prompt-templates";
 import { createPawWorkflowContextRouter } from "./routes/paw-workflow-context";
@@ -38,6 +39,12 @@ import { createSessionsRouter } from "./routes/sessions";
 import { createWorkstreamsRouter } from "./routes/workstreams";
 import { SessionRegistryEventStream } from "./session-events";
 import { WorkstreamEventStream } from "./workstream-events";
+import { NotificationStore } from "./notification-store";
+import { NotificationEventStream } from "./notification-events";
+import {
+  NOTIFICATIONS_EVENTS_PATH,
+} from "../notification-contract";
+import { resolveDashboardBaseUrl } from "./notification-config";
 import type { NodeLaunchDeps } from "./node-launch";
 import { DefaultManagedSdkRunner } from "./managed-sdk-runner";
 import { ManagedRuntimePatchCoalescer } from "./managed-runtime-patch-coalescer";
@@ -52,6 +59,7 @@ export interface StreamlinerApiApp {
   app: Express;
   eventStream: SessionRegistryEventStream;
   workstreamEventStream: WorkstreamEventStream;
+  notificationEventStream: NotificationEventStream;
   close: () => void;
 }
 
@@ -95,6 +103,8 @@ export interface StreamlinerApiAppOptions {
   workstreamEventDebounceMs?: number;
   workstreamEventWatchIntervalMs?: number;
   workstreamEventHeartbeatIntervalMs?: number;
+  notificationStorePath?: string;
+  dashboardBaseUrl?: string;
 }
 
 const malformedJsonHandler: ErrorRequestHandler = (error, _req, res, next) => {
@@ -138,6 +148,12 @@ export function createStreamlinerApiApp(
     watchIntervalMs: options.workstreamEventWatchIntervalMs,
     heartbeatIntervalMs: options.workstreamEventHeartbeatIntervalMs,
   });
+  const dashboardBaseUrl = options.dashboardBaseUrl ?? resolveDashboardBaseUrl();
+  const notificationStore = new NotificationStore({
+    storePath: options.notificationStorePath,
+    now: options.now,
+  });
+  const notificationEventStream = new NotificationEventStream(notificationStore);
   const nodeLaunchRecordStore = options.launchPreparationDeps?.nodeLaunchRecordStore
     ?? new NodeLaunchRecordStore({
       recordsPath: options.nodeLaunchRecordsPath ?? (
@@ -201,6 +217,7 @@ export function createStreamlinerApiApp(
       skip: (path) =>
         path.startsWith(`${SESSION_REGISTRY_API_BASE_PATH}/events`) ||
         path.startsWith("/api/workstreams/events") ||
+        path.startsWith(NOTIFICATIONS_EVENTS_PATH) ||
         /^\/api\/launch-preparations\/runs\/[^/]+\/events(?:\?|$)/.test(path),
     }),
   );
@@ -208,7 +225,25 @@ export function createStreamlinerApiApp(
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true });
   });
+  app.get("/api/client-config", (_req, res) => {
+    res.json({ dashboardBaseUrl });
+  });
   app.get("/api/workstreams/events", workstreamEventStream.handle);
+  app.get(NOTIFICATIONS_EVENTS_PATH, notificationEventStream.handle);
+  // Notifications are a localhost-only write surface, not a registry mutation:
+  // mount the router (incl. POST) BEFORE the readonly guard so a read-only
+  // preview can still receive orchestrator notifications. Safety relies on the
+  // API binding to 127.0.0.1 (as it does today) — read-only preview no longer
+  // means "zero request-driven filesystem writes".
+  app.use(
+    "/api",
+    createNotificationsRouter({
+      store: notificationStore,
+      eventStream: notificationEventStream,
+      workstreamRegistryPath: options.workstreamRegistryPath,
+      dashboardBaseUrl,
+    }),
+  );
   if (options.readonlyMode) {
     app.use((req, res, next) => {
       if (READONLY_METHODS.has(req.method)) {
@@ -383,9 +418,11 @@ export function createStreamlinerApiApp(
     app,
     eventStream,
     workstreamEventStream,
+    notificationEventStream,
     close: () => {
       eventStream.close();
       workstreamEventStream.close();
+      notificationEventStream.close();
     },
   };
 }

@@ -1,0 +1,8 @@
+﻿<toast><visual><binding template="ToastGeneric">
+  <image placement="appLogoOverride" hint-crop="circle" src="file:///C:/Users/robemanuele/proj/streamliner/streamliner-desktop-mvp/.paw/work/streamliner-desktop-mvp/spikes/toast-xml/images/workstream-blue-ro-circle.png"/>
+  <text>Line 1 title styling - bold</text>
+  <text>Line 2 body text with enough words to test truncation on the right side of the toast viewport and confirm wrapping/clipping.</text>
+  <text>Line 3 body text: rendered in expanded/notification-center view, often not all visible in popup.</text>
+  <text>Line 4 body text: low priority, may be clipped in compact popup.</text>
+  <text placement="attribution">attribution row: repo/name â€¢ event-type</text>
+</binding></visual></toast>

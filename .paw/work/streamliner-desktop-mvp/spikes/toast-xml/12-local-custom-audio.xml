@@ -1,0 +1,4 @@
+﻿<toast><visual><binding template="ToastGeneric">
+  <image placement="appLogoOverride" hint-crop="circle" src="file:///C:/Users/robemanuele/proj/streamliner/streamliner-desktop-mvp/.paw/work/streamliner-desktop-mvp/spikes/toast-xml/images/workstream-blue-ro-circle.png"/>
+  <text>Local custom audio test</text><text>Submitted with file URI WAV; visual render is normal.</text>
+</binding></visual><audio src="file:///C:/Users/robemanuele/proj/streamliner/streamliner-desktop-mvp/.paw/work/streamliner-desktop-mvp/spikes/toast-xml/custom-audio-test.wav"/></toast>

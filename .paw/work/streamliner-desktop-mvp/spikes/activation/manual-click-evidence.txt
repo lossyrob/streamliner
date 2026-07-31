@@ -1,0 +1,9 @@
+2026-05-30T22:08:16.6857514-04:00 clicked popup coordinate 3570,2025 for popup-click-001
+2026-05-30T22:08:40.3103220-04:00 opened notification center with Win+N for action-center-001 after 9s
+2026-05-30T22:09:04.3336063-04:00 clicked clock/date coordinate 3745,2130 to open notification center
+2026-05-30T22:09:19.3898671-04:00 clicked notification center coordinate 3540,193 for action-center-001
+2026-05-30T22:10:10.1060688-04:00 opened notification center by clock for action-center-002
+2026-05-30T22:10:10.2636408-04:00 clicked notification center body coordinate 3580,245 for action-center-002
+2026-05-30T22:12:03.7242354-04:00 sender process exited with code 0 for post-exit-001
+2026-05-30T22:12:17.3597041-04:00 opened notification center after sender exit for post-exit-001
+2026-05-30T22:12:17.5357412-04:00 clicked notification center body coordinate 3580,245 for post-exit-001

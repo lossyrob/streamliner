@@ -58,6 +58,6 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    exclude: ['prototype/**', 'node_modules/**', 'tests/e2e/**'],
+    exclude: ['prototype/**', '**/node_modules/**', 'desktop/**', 'tests/e2e/**'],
   },
 })
