@@ -10,9 +10,8 @@ import {
 } from "./copilot-session-discovery";
 import {
   computeEventsFingerprint,
-  countUserMessageTurns,
   DEFAULT_SUMMARY_MODEL,
-  extractRecentUserTurns,
+  scanUserMessageTurns,
   shutdownSharedCopilotClient,
   summarizeSession,
   type SummarizeSessionResult,
@@ -58,10 +57,9 @@ interface SummaryCandidate {
 
 interface SummarizerDependencies {
   computeEventsFingerprint: typeof computeEventsFingerprint;
-  countUserMessageTurns: typeof countUserMessageTurns;
-  extractRecentUserTurns: typeof extractRecentUserTurns;
+  scanUserMessageTurns: typeof scanUserMessageTurns;
   summarizeSession: (options: {
-    turns: Awaited<ReturnType<typeof extractRecentUserTurns>>;
+    turns: Awaited<ReturnType<typeof scanUserMessageTurns>>["recentTurns"];
     context: {
       title?: string | null;
       repo?: string | null;
@@ -115,6 +113,30 @@ function eventsFingerprintFromSummaryFingerprint(value: string | null): string |
   }
   const withoutUserTurns = value.split("|userTurns=", 1)[0] || "";
   return withoutUserTurns.split("|summary=", 1)[0] || null;
+}
+
+function eventsSizeFromSummaryFingerprint(value: string | null): number | null {
+  const fingerprint = eventsFingerprintFromSummaryFingerprint(value);
+  const separator = fingerprint?.lastIndexOf(":") ?? -1;
+  if (!fingerprint || separator < 0) {
+    return null;
+  }
+  const parsed = Number.parseInt(fingerprint.slice(separator + 1), 10);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function eventsSizeFromFingerprint(value: string): number | null {
+  const separator = value.lastIndexOf(":");
+  if (separator < 0) {
+    return null;
+  }
+  const parsed = Number.parseInt(value.slice(separator + 1), 10);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function fingerprintWithEventsSize(value: string, eventsSize: number): string {
+  const separator = value.lastIndexOf(":");
+  return separator < 0 ? value : `${value.slice(0, separator + 1)}${eventsSize}`;
 }
 
 function summaryFormatVersionFromSummaryFingerprint(value: string | null): string | null {
@@ -210,10 +232,8 @@ export class SessionRegistryBackgroundWorker {
     this.summarizer = {
       computeEventsFingerprint:
         options.summarizer?.computeEventsFingerprint ?? computeEventsFingerprint,
-      countUserMessageTurns:
-        options.summarizer?.countUserMessageTurns ?? countUserMessageTurns,
-      extractRecentUserTurns:
-        options.summarizer?.extractRecentUserTurns ?? extractRecentUserTurns,
+      scanUserMessageTurns:
+        options.summarizer?.scanUserMessageTurns ?? scanUserMessageTurns,
       summarizeSession: options.summarizer?.summarizeSession ?? summarizeSession,
       indexSessionContext: options.summarizer?.indexSessionContext ?? indexSessionContext,
       indexSessionActivity: options.summarizer?.indexSessionActivity ?? indexSessionActivity,
@@ -364,8 +384,7 @@ export class SessionRegistryBackgroundWorker {
           }
         }
       }
-      const allSessions = this.store.listSessions({ includeArchived: true });
-      const indexedSessions = this.selectIndexedSessionBatch(allSessions);
+      const indexedSessions = this.selectIndexedSessionBatch();
       await this.indexSessionActivities(indexedSessions);
       await this.indexSessionContexts(indexedSessions);
       await this.indexSessionPawWorkflows(indexedSessions);
@@ -469,27 +488,18 @@ export class SessionRegistryBackgroundWorker {
     return candidates;
   }
 
-  private selectIndexedSessionBatch(
-    sessions: SessionRegistryListItem[],
-  ): SessionRegistryListItem[] {
+  private selectIndexedSessionBatch(): SessionRegistryListItem[] {
     if (this.maxIndexedSessionsPerCycle <= 0) {
       return [];
     }
 
-    const candidates = sessions.filter((session) => session.lifecycleStatus !== "archived");
-    if (candidates.length <= this.maxIndexedSessionsPerCycle) {
-      this.indexedSessionCursor = 0;
-      return candidates;
-    }
-
-    const selected: SessionRegistryListItem[] = [];
-    const start = this.indexedSessionCursor % candidates.length;
-    for (let index = 0; index < this.maxIndexedSessionsPerCycle; index += 1) {
-      selected.push(candidates[(start + index) % candidates.length]);
-    }
-    this.indexedSessionCursor =
-      (start + this.maxIndexedSessionsPerCycle) % candidates.length;
-    return selected;
+    const batch = this.store.listSessionBatch({
+      startIndex: this.indexedSessionCursor,
+      limit: this.maxIndexedSessionsPerCycle,
+      includeArchived: false,
+    });
+    this.indexedSessionCursor = batch.nextIndex;
+    return batch.items;
   }
 
   private async indexSessionContexts(sessions: SessionRegistryListItem[]): Promise<void> {
@@ -603,8 +613,45 @@ export class SessionRegistryBackgroundWorker {
 
   private async summarizeCandidate(candidate: SummaryCandidate): Promise<void> {
     try {
-      const totalUserTurns = await this.summarizer.countUserMessageTurns(candidate.eventsPath);
-      const nextFingerprint = summaryFingerprint(candidate.fingerprint, totalUserTurns);
+      const lastSummaryTurnCount = userTurnCountFromSummaryFingerprint(
+        candidate.session.aiSummaryEventsFingerprint,
+      );
+      const summaryFormatChanged =
+        summaryFormatVersionFromSummaryFingerprint(candidate.session.aiSummaryEventsFingerprint) !==
+        SESSION_REGISTRY_SUMMARY_FORMAT_VERSION;
+      const previousEventsSize = eventsSizeFromSummaryFingerprint(
+        candidate.session.aiSummaryEventsFingerprint,
+      );
+      const currentEventsSize = eventsSizeFromFingerprint(candidate.fingerprint);
+      const canScanIncrementally =
+        candidate.session.aiSummaryStatus === "ready" &&
+        candidate.session.aiSummary !== null &&
+        !summaryFormatChanged &&
+        lastSummaryTurnCount !== null &&
+        previousEventsSize !== null &&
+        currentEventsSize !== null &&
+        currentEventsSize >= previousEventsSize;
+      const turnScan = await this.summarizer.scanUserMessageTurns(candidate.eventsPath, {
+        maxTurns: 4,
+        maxCharsPerTurn: 1500,
+        ...(currentEventsSize !== null ? { endOffset: currentEventsSize } : {}),
+        ...(canScanIncrementally
+          ? {
+              startOffset: previousEventsSize,
+              baseTurnIndex: lastSummaryTurnCount,
+            }
+          : {}),
+      });
+      const usedIncrementalScan =
+        canScanIncrementally && turnScan.startOffset === previousEventsSize;
+      const totalUserTurns = usedIncrementalScan
+        ? lastSummaryTurnCount + turnScan.totalTurns
+        : turnScan.totalTurns;
+      const scannedEventsFingerprint = fingerprintWithEventsSize(
+        candidate.fingerprint,
+        turnScan.endOffset,
+      );
+      const nextFingerprint = summaryFingerprint(scannedEventsFingerprint, totalUserTurns);
       if (totalUserTurns === 0) {
         this.tryPatch(candidate.session.id, {
           aiSummary: null,
@@ -617,12 +664,6 @@ export class SessionRegistryBackgroundWorker {
         return;
       }
 
-      const lastSummaryTurnCount = userTurnCountFromSummaryFingerprint(
-        candidate.session.aiSummaryEventsFingerprint,
-      );
-      const summaryFormatChanged =
-        summaryFormatVersionFromSummaryFingerprint(candidate.session.aiSummaryEventsFingerprint) !==
-        SESSION_REGISTRY_SUMMARY_FORMAT_VERSION;
       if (
         candidate.session.aiSummaryStatus === "ready" &&
         candidate.session.aiSummary !== null &&
@@ -630,21 +671,20 @@ export class SessionRegistryBackgroundWorker {
         lastSummaryTurnCount !== null &&
         totalUserTurns - lastSummaryTurnCount < SESSION_REGISTRY_SUMMARY_REFRESH_USER_TURNS
       ) {
-        this.tryPatch(candidate.session.id, {
-          aiSummaryEventsFingerprint: summaryFingerprint(
-            candidate.fingerprint,
-            lastSummaryTurnCount,
-          ),
-          aiSummaryStatus: "ready",
-          aiSummaryError: null,
-        });
+        if (totalUserTurns === lastSummaryTurnCount) {
+          this.tryPatch(candidate.session.id, {
+            aiSummaryEventsFingerprint: summaryFingerprint(
+              scannedEventsFingerprint,
+              lastSummaryTurnCount,
+            ),
+            aiSummaryStatus: "ready",
+            aiSummaryError: null,
+          });
+        }
         return;
       }
 
-      const turns = await this.summarizer.extractRecentUserTurns(candidate.eventsPath, {
-        maxTurns: 4,
-        maxCharsPerTurn: 1500,
-      });
+      const turns = turnScan.recentTurns;
       if (turns.length === 0) {
         this.tryPatch(candidate.session.id, {
           aiSummary: null,

@@ -1,13 +1,15 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   computeEventsFingerprint,
   countUserMessageTurns,
   extractRecentUserTurns,
+  scanUserMessageTurns,
+  summarizeSession,
 } from "./session-summarizer";
 
 const createdDirs: string[] = [];
@@ -112,6 +114,125 @@ describe("countUserMessageTurns", () => {
 
   it("returns zero when the events file is missing", async () => {
     await expect(countUserMessageTurns("/definitely/does/not/exist.jsonl")).resolves.toBe(0);
+  });
+});
+
+describe("scanUserMessageTurns", () => {
+  it("counts all turns while retaining only the requested recent window", async () => {
+    const eventsPath = writeEventsFile(
+      Array.from({ length: 8 }, (_, index) => ({
+        type: "user.message",
+        data: { content: `turn-${index + 1}` },
+      })),
+    );
+
+    await expect(scanUserMessageTurns(eventsPath, { maxTurns: 3 })).resolves.toEqual({
+      totalTurns: 8,
+      recentTurns: [
+        expect.objectContaining({ index: 1, absoluteIndex: 6, content: "turn-6" }),
+        expect.objectContaining({ index: 2, absoluteIndex: 7, content: "turn-7" }),
+        expect.objectContaining({ index: 3, absoluteIndex: 8, content: "turn-8" }),
+      ],
+      startOffset: 0,
+      endOffset: statSync(eventsPath).size,
+    });
+  });
+
+  it("scans only events appended after a known byte offset", async () => {
+    const eventsPath = writeEventsFile([
+      { type: "user.message", data: { content: "old-1" } },
+      { type: "user.message", data: { content: "old-2" } },
+    ]);
+    writeFileSync(eventsPath, "\n", { flag: "a" });
+    const startOffset = computeEventsFingerprint(eventsPath);
+    const offset = Number.parseInt(startOffset?.split(":").at(-1) ?? "", 10);
+    writeFileSync(
+      eventsPath,
+      `${[
+        { type: "user.message", data: { content: "new-1" } },
+        { type: "assistant.message", data: { content: "noise" } },
+        { type: "user.message", data: { content: "new-2" } },
+      ].map((event) => JSON.stringify(event)).join("\n")}\n`,
+      { flag: "a" },
+    );
+    const endOffsetFingerprint = computeEventsFingerprint(eventsPath);
+    const endOffset = Number.parseInt(endOffsetFingerprint?.split(":").at(-1) ?? "", 10);
+    writeFileSync(
+      eventsPath,
+      JSON.stringify({ type: "user.message", data: { content: "too-late" } }),
+      { flag: "a" },
+    );
+
+    await expect(
+      scanUserMessageTurns(eventsPath, {
+        maxTurns: 4,
+        startOffset: offset,
+        endOffset,
+        baseTurnIndex: 2,
+      }),
+    ).resolves.toEqual({
+      totalTurns: 2,
+      recentTurns: [
+        expect.objectContaining({ absoluteIndex: 3, content: "new-1" }),
+        expect.objectContaining({ absoluteIndex: 4, content: "new-2" }),
+      ],
+      startOffset: offset,
+      endOffset,
+    });
+  });
+
+  it("falls back to a full scan when the requested start is mid-line", async () => {
+    const eventsPath = writeEventsFile([
+      { type: "user.message", data: { content: "first" } },
+      { type: "user.message", data: { content: "second" } },
+    ]);
+    writeFileSync(eventsPath, "\n", { flag: "a" });
+    const size = statSync(eventsPath).size;
+
+    const result = await scanUserMessageTurns(eventsPath, {
+      maxTurns: 2,
+      startOffset: 10,
+      endOffset: size,
+      baseTurnIndex: 20,
+    });
+
+    expect(result).toEqual({
+      totalTurns: 2,
+      recentTurns: [
+        expect.objectContaining({ absoluteIndex: 1, content: "first" }),
+        expect.objectContaining({ absoluteIndex: 2, content: "second" }),
+      ],
+      startOffset: 0,
+      endOffset: size,
+    });
+  });
+});
+
+describe("summarizeSession", () => {
+  it("disconnects and deletes its ephemeral SDK helper session", async () => {
+    const helperSessionId = `summary-helper-${Date.now()}`;
+    const disconnect = vi.fn(async () => {});
+    const deleteSession = vi.fn(async () => {});
+    const createSession = vi.fn(async (config: {
+      createSessionFsHandler: (session: { sessionId: string }) => unknown;
+    }) => {
+      config.createSessionFsHandler({ sessionId: helperSessionId });
+      return {
+        sessionId: helperSessionId,
+        sendAndWait: vi.fn(async () => ({ data: { content: "First sentence. Second sentence." } })),
+        disconnect,
+      };
+    });
+
+    const result = await summarizeSession({
+      turns: [{ index: 1, absoluteIndex: 1, content: "Investigate memory growth." }],
+      model: "test-model",
+      client: { createSession, deleteSession },
+    });
+
+    expect(result.summary).toBe("First sentence. Second sentence.");
+    expect(disconnect).toHaveBeenCalledOnce();
+    expect(deleteSession).toHaveBeenCalledWith(helperSessionId);
   });
 });
 

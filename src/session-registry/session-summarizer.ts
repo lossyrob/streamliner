@@ -1,4 +1,11 @@
-import { createReadStream, existsSync, statSync } from "node:fs";
+import {
+  closeSync,
+  createReadStream,
+  existsSync,
+  openSync,
+  readSync,
+  statSync,
+} from "node:fs";
 import { createInterface } from "node:readline";
 
 import {
@@ -19,6 +26,16 @@ export interface RecentUserTurn {
 export interface ExtractUserTurnsOptions {
   maxTurns?: number;
   maxCharsPerTurn?: number;
+  startOffset?: number;
+  endOffset?: number;
+  baseTurnIndex?: number;
+}
+
+export interface UserTurnScanResult {
+  totalTurns: number;
+  recentTurns: RecentUserTurn[];
+  startOffset: number;
+  endOffset: number;
 }
 
 interface RawEventLine {
@@ -29,6 +46,64 @@ interface RawEventLine {
 
 const DEFAULT_MAX_TURNS = 4;
 const DEFAULT_MAX_CHARS_PER_TURN = 1500;
+const SCAN_YIELD_INTERVAL_LINES = 250;
+const LINE_BOUNDARY_SCAN_CHUNK_BYTES = 64 * 1024;
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => {
+    setImmediate(resolve);
+  });
+}
+
+function isLineBoundary(eventsPath: string, offset: number): boolean {
+  if (offset === 0) {
+    return true;
+  }
+  const fd = openSync(eventsPath, "r");
+  try {
+    const byte = Buffer.allocUnsafe(1);
+    return readSync(fd, byte, 0, 1, offset - 1) === 1 && byte[0] === 0x0a;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function lastCompleteLineEndOffset(eventsPath: string, requestedEndOffset: number): number {
+  if (requestedEndOffset <= 0) {
+    return 0;
+  }
+  const fd = openSync(eventsPath, "r");
+  try {
+    const completeTrailingRecordEnd = (lineStart: number): number => {
+      if (lineStart === requestedEndOffset) {
+        return requestedEndOffset;
+      }
+      const trailing = Buffer.allocUnsafe(requestedEndOffset - lineStart);
+      const bytesRead = readSync(fd, trailing, 0, trailing.length, lineStart);
+      try {
+        JSON.parse(trailing.subarray(0, bytesRead).toString("utf8").trim());
+        return requestedEndOffset;
+      } catch {
+        return lineStart;
+      }
+    };
+    let cursor = requestedEndOffset;
+    while (cursor > 0) {
+      const chunkStart = Math.max(0, cursor - LINE_BOUNDARY_SCAN_CHUNK_BYTES);
+      const buffer = Buffer.allocUnsafe(cursor - chunkStart);
+      const bytesRead = readSync(fd, buffer, 0, buffer.length, chunkStart);
+      for (let index = bytesRead - 1; index >= 0; index -= 1) {
+        if (buffer[index] === 0x0a) {
+          return completeTrailingRecordEnd(chunkStart + index + 1);
+        }
+      }
+      cursor = chunkStart;
+    }
+    return completeTrailingRecordEnd(0);
+  } finally {
+    closeSync(fd);
+  }
+}
 
 function toStringContent(value: unknown): string | null {
   if (typeof value === "string") return value;
@@ -68,16 +143,55 @@ export async function extractRecentUserTurns(
   eventsPath: string,
   options: ExtractUserTurnsOptions = {},
 ): Promise<RecentUserTurn[]> {
+  const scan = await scanUserMessageTurns(eventsPath, options);
+  return scan.recentTurns;
+}
+
+export async function scanUserMessageTurns(
+  eventsPath: string,
+  options: ExtractUserTurnsOptions = {},
+): Promise<UserTurnScanResult> {
   const maxTurns = options.maxTurns ?? DEFAULT_MAX_TURNS;
   const maxCharsPerTurn = options.maxCharsPerTurn ?? DEFAULT_MAX_CHARS_PER_TURN;
-  if (!existsSync(eventsPath)) return [];
+  if (!existsSync(eventsPath)) {
+    return { totalTurns: 0, recentTurns: [], startOffset: 0, endOffset: 0 };
+  }
 
-  const stream = createReadStream(eventsPath, { encoding: "utf8" });
+  const stat = statSync(eventsPath);
+  const requestedStartOffset = Number.isFinite(options.startOffset)
+    ? Math.max(0, Math.floor(options.startOffset ?? 0))
+    : 0;
+  const requestedEndOffset = Number.isFinite(options.endOffset)
+    ? Math.min(stat.size, Math.max(0, Math.floor(options.endOffset ?? 0)))
+    : stat.size;
+  const endOffset = lastCompleteLineEndOffset(eventsPath, requestedEndOffset);
+  const startOffset =
+    requestedStartOffset <= endOffset && isLineBoundary(eventsPath, requestedStartOffset)
+      ? requestedStartOffset
+      : 0;
+  if (endOffset <= startOffset) {
+    return { totalTurns: 0, recentTurns: [], startOffset, endOffset };
+  }
+  const baseTurnIndex = Number.isFinite(options.baseTurnIndex)
+    ? startOffset === requestedStartOffset
+      ? Math.max(0, Math.floor(options.baseTurnIndex ?? 0))
+      : 0
+    : 0;
+  const stream = createReadStream(eventsPath, {
+    encoding: "utf8",
+    ...(startOffset > 0 ? { start: startOffset } : {}),
+    end: endOffset - 1,
+  });
   const lines = createInterface({ input: stream, crlfDelay: Number.POSITIVE_INFINITY });
 
-  const collected: RecentUserTurn[] = [];
-  let index = 0;
+  const recentTurns: RecentUserTurn[] = [];
+  let totalTurns = 0;
+  let linesScanned = 0;
   for await (const line of lines) {
+    linesScanned += 1;
+    if (linesScanned % SCAN_YIELD_INTERVAL_LINES === 0) {
+      await yieldToEventLoop();
+    }
     if (!line || line[0] !== "{") continue;
     let parsed: RawEventLine;
     try {
@@ -88,38 +202,30 @@ export async function extractRecentUserTurns(
     if (parsed.type !== "user.message") continue;
     const content = toStringContent(parsed.data?.content);
     if (!content) continue;
-    const absoluteIndex = index + 1;
-    collected.push({
-      index: absoluteIndex,
-      absoluteIndex,
-      content: truncate(content, maxCharsPerTurn),
-      timestamp: parsed.timestamp,
-    });
-    index += 1;
+    totalTurns += 1;
+    if (maxTurns > 0) {
+      recentTurns.push({
+        index: totalTurns,
+        absoluteIndex: baseTurnIndex + totalTurns,
+        content: truncate(content, maxCharsPerTurn),
+        timestamp: parsed.timestamp,
+      });
+      if (recentTurns.length > maxTurns) {
+        recentTurns.shift();
+      }
+    }
   }
 
-  return collected.slice(-maxTurns).map((turn, idx) => ({ ...turn, index: idx + 1 }));
+  return {
+    totalTurns,
+    recentTurns: recentTurns.map((turn, index) => ({ ...turn, index: index + 1 })),
+    startOffset,
+    endOffset,
+  };
 }
 
 export async function countUserMessageTurns(eventsPath: string): Promise<number> {
-  if (!existsSync(eventsPath)) return 0;
-
-  const stream = createReadStream(eventsPath, { encoding: "utf8" });
-  const lines = createInterface({ input: stream, crlfDelay: Number.POSITIVE_INFINITY });
-  let count = 0;
-  for await (const line of lines) {
-    if (!line || line[0] !== "{") continue;
-    let parsed: RawEventLine;
-    try {
-      parsed = JSON.parse(line) as RawEventLine;
-    } catch {
-      continue;
-    }
-    if (parsed.type !== "user.message") continue;
-    if (!toStringContent(parsed.data?.content)) continue;
-    count += 1;
-  }
-  return count;
+  return (await scanUserMessageTurns(eventsPath, { maxTurns: 0 })).totalTurns;
 }
 
 export interface SessionSummaryContext {
@@ -201,6 +307,7 @@ type CopilotSdkModule = typeof import("@github/copilot-sdk");
 interface SharedCopilotClient {
   start: () => Promise<void>;
   createSession: (config: unknown) => Promise<unknown>;
+  deleteSession: (sessionId: string) => Promise<void>;
   stop: () => Promise<unknown>;
 }
 
@@ -246,6 +353,7 @@ export async function getSharedCopilotClient(): Promise<unknown> {
     const sdk = await loadSdk();
     const client = new sdk.CopilotClient({
       sessionFs: getCopilotSdkSessionFsConfig(),
+      logLevel: "error",
     });
     await client.start();
     sharedClient = client as unknown as SharedCopilotClient;
@@ -273,6 +381,7 @@ export async function summarizeSession(
   const sdk = await loadSdk();
   const client = (options.client ?? (await getSharedCopilotClient())) as {
     createSession: (config: unknown) => Promise<unknown>;
+    deleteSession?: (sessionId: string) => Promise<void>;
   };
 
   const timeoutMs = options.timeoutMs ?? 60_000;
@@ -324,6 +433,13 @@ export async function summarizeSession(
     } catch {
       // best-effort cleanup; a failed destroy shouldn't mask the primary result
     } finally {
+      if (helperSessionId && typeof client.deleteSession === "function") {
+        try {
+          await client.deleteSession(helperSessionId);
+        } catch {
+          // The isolated session filesystem is still removed below.
+        }
+      }
       await cleanupSessionFsHandle(sessionFsHandle);
       if (helperSessionId) {
         await cleanupResidualDefaultCopilotSessionState(helperSessionId);

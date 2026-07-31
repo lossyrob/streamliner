@@ -487,6 +487,40 @@ describe("SessionRegistryFileStore", () => {
     ).toHaveLength(1);
   });
 
+  it("returns bounded list batches and wraps the cursor", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+    for (let index = 0; index < 5; index += 1) {
+      store.upsertSession({
+        title: `Session ${index}`,
+        cwd: `C:\\session-${index}`,
+        origin: { kind: "manual" },
+      });
+    }
+    const expectedIds = store.listSessions().map((session) => session.id);
+
+    const first = store.listSessionBatch({
+      startIndex: 0,
+      limit: 3,
+      includeArchived: false,
+    });
+    expect(first.items.map((session) => session.id)).toEqual(expectedIds.slice(0, 3));
+    expect(first).toEqual(expect.objectContaining({ nextIndex: 3, total: 5 }));
+
+    const wrapped = store.listSessionBatch({
+      startIndex: first.nextIndex,
+      limit: 3,
+      includeArchived: false,
+    });
+    expect(wrapped.items.map((session) => session.id)).toEqual([
+      expectedIds[3],
+      expectedIds[4],
+      expectedIds[0],
+    ]);
+    expect(wrapped).toEqual(expect.objectContaining({ nextIndex: 1, total: 5 }));
+  });
+
   it("preserves unknown fields across rewrites", () => {
     const rootDir = createRootDir();
     createdRoots.push(rootDir);
