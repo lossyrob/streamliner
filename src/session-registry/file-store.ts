@@ -229,6 +229,18 @@ export interface SessionRegistryFileStoreOptions {
   writeLockWaitTimeoutMs?: number;
 }
 
+export interface SessionRegistryListBatchOptions {
+  startIndex: number;
+  limit: number;
+  includeArchived?: boolean;
+}
+
+export interface SessionRegistryListBatch {
+  items: SessionRegistryListItem[];
+  nextIndex: number;
+  total: number;
+}
+
 export interface SessionRegistryDerivedStatePatch {
   aiSummary?: string | null;
   aiSummaryModel?: string | null;
@@ -2246,6 +2258,36 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
       );
 
     return items.map((item) => cloneValue(item));
+  }
+
+  listSessionBatch(options: SessionRegistryListBatchOptions): SessionRegistryListBatch {
+    this.refreshFromDisk();
+
+    const candidates = options.includeArchived
+      ? this.index.entries
+      : this.index.entries.filter((entry) => entry.lifecycleStatus !== "archived");
+    const total = candidates.length;
+    const requestedLimit = Number.isFinite(options.limit)
+      ? Math.floor(options.limit)
+      : 0;
+    if (total === 0 || requestedLimit <= 0) {
+      return { items: [], nextIndex: 0, total };
+    }
+
+    const limit = Math.min(requestedLimit, total);
+    const normalizedStart = Number.isFinite(options.startIndex)
+      ? ((Math.floor(options.startIndex) % total) + total) % total
+      : 0;
+    const items: SessionRegistryListItem[] = [];
+    for (let offset = 0; offset < limit; offset += 1) {
+      items.push(cloneValue(candidates[(normalizedStart + offset) % total]));
+    }
+
+    return {
+      items,
+      nextIndex: total <= limit ? 0 : (normalizedStart + limit) % total,
+      total,
+    };
   }
 
   getSession(id: string): SessionRegistryRecord | null {
