@@ -1,0 +1,118 @@
+{
+  "schemaVersion": 1,
+  "id": "app-native-spike",
+  "projectKey": "streamliner-spike",
+  "title": "App-native Streamliner spike",
+  "summary": "Prove exact-revision workstream context can bind to Copilot App-owned local sessions without Streamliner-owned worktrees or terminals.",
+  "status": "active",
+  "attention": "focus",
+  "createdAt": "2026-08-20T19:00:00.000Z",
+  "updatedAt": "2026-08-20T19:00:00.000Z",
+  "repos": [
+    {
+      "id": "streamliner",
+      "owner": "lossyrob",
+      "name": "streamliner",
+      "role": "primary"
+    }
+  ],
+  "designRefs": [
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/index.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/workstream-format.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/concepts/context-package.md"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "architecture-research",
+      "type": "research",
+      "title": "Map the App-native boundary",
+      "summary": "Establish the ownership split between durable Streamliner artifacts and Copilot App session orchestration.",
+      "status": "completed",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/architecture-research.md"
+      },
+      "dependsOn": []
+    },
+    {
+      "id": "app-native-implementation",
+      "type": "task",
+      "title": "Exercise an App-created worker",
+      "summary": "Claim exact-revision context inside a native child worktree session and produce harmless completion evidence.",
+      "status": "ready",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/app-native-implementation.md"
+      },
+      "dependsOn": [
+        "architecture-research"
+      ]
+    },
+    {
+      "id": "builder-acceptance-gate",
+      "type": "gate",
+      "title": "Builder accepts the App boundary",
+      "summary": "Evaluate cold start, binding provenance, coordination, canvas projection, and remaining product risks.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/builder-acceptance-gate.md"
+      },
+      "dependsOn": [
+        "app-native-implementation"
+      ]
+    },
+    {
+      "id": "artifact-promotion",
+      "type": "task",
+      "title": "Promote the production boundary",
+      "summary": "Turn accepted spike findings into a production adapter and shared artifact-branch policy.",
+      "status": "planned",
+      "attention": "watch",
+      "repoIds": [
+        "streamliner"
+      ],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/artifact-promotion.md"
+      },
+      "dependsOn": [
+        "builder-acceptance-gate"
+      ]
+    }
+  ],
+  "checkpoints": [
+    {
+      "id": "native-loop-proven",
+      "title": "Native orchestration loop proven",
+      "summary": "A Copilot App child session claimed one exact artifact revision and reported completion.",
+      "status": "planned",
+      "nodeIds": [
+        "architecture-research",
+        "app-native-implementation",
+        "builder-acceptance-gate"
+      ]
+    }
+  ]
+}
