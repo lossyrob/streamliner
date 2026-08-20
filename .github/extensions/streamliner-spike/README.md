@@ -16,7 +16,7 @@ This is spike evidence, not a settled design decision.
 | Artifact read | `git rev-parse` once, then `git cat-file` by commit | Narrow `ArtifactRevisionProvider` interface |
 | Runtime binding | Locked atomic JSON under the user's Copilot home | Versioned Streamliner-owned local provider |
 | Session lifecycle | Native App `create_session` and `send_session_message` | App API only |
-| Projection | Read-only extension tools and loopback Canvas | App-hosted Streamliner extension surface |
+| Projection | Read-only extension tools and bundled React Flow loopback Canvas | App-hosted Streamliner extension surface |
 
 The extension does not read Copilot App SQLite, Rust internals, Zustand state, or
 private WebSocket traffic. It does not launch terminals or create worktrees.
@@ -29,6 +29,12 @@ private WebSocket traffic. It does not launch terminals or create worktrees.
   the repository.
 - `lib/orchestration.mjs` prepares and claims bounded Layer 0-3 context.
 - `lib/projection.mjs` overlays volatile App bindings on the durable graph.
+- `ui/src/projection-adapter.mjs` converts that projection to read-only React
+  Flow nodes, dependency edges, and deterministic Dagre positions.
+- `ui/src/main.jsx` and `ui/src/styles.css` own the responsive Canvas UI and
+  selected-node inspector.
+- `build-ui.mjs` reproducibly bundles the browser UI into versioned
+  `assets/react-flow-v1/` files served by `lib/renderer.mjs`.
 - `fixtures/artifact-tree/` is the dedicated artifact-ref tree.
 - `seed-toy-artifacts.mjs` creates a deterministic local artifact commit/ref
   without changing the source checkout.
@@ -38,9 +44,16 @@ private WebSocket traffic. It does not launch terminals or create worktrees.
 From this repository worktree:
 
 ```powershell
+npm ci
+npm run build:streamliner-spike
 node .github\extensions\streamliner-spike\seed-toy-artifacts.mjs refs/heads/streamliner-artifacts-spike
-node --test .github\extensions\streamliner-spike\spike.test.mjs
+node --test .github\extensions\streamliner-spike\spike.node-test.mjs
 ```
+
+The generated browser bundle is committed so a fresh checkout can load the
+project extension immediately. Run `npm run build:streamliner-spike` after any
+UI-source change; the build empties and recreates only the versioned asset
+directory. Two consecutive builds must produce identical files and hashes.
 
 Reload project extensions, then call
 `streamliner_spike_prepare_launch` with:
@@ -60,7 +73,45 @@ with native `send_session_message`.
 
 Open canvas `streamliner-spike-workstream` with the resolved artifact commit (or
 the local ref) and invoke `get_projection` or `refresh`. The iframe server binds
-only to `127.0.0.1` and uses the documented App theme variables.
+only to `127.0.0.1`, serves no CDN content, and uses the documented App theme
+variables and attributes.
+
+## React Flow Canvas boundary
+
+The Canvas reuses the repository's installed React, `@xyflow/react`, and Dagre
+packages. It adapts the dashboard's proven UX concepts: top-to-bottom dependency
+flow, status-bearing cards, fit-to-view, pan/zoom controls, minimap, and a
+persistent selected-node inspector.
+
+The extension does not import `WorkstreamCanvas`, `WorkstreamGraphNode`, the
+dashboard theme sheet, router, registry clients, or dashboard view models. Its
+browser bundle is a new narrow adapter over `/api/projection`, because those
+dashboard components depend on richer application-only state. Current parity is
+therefore limited to the small toy graph and runtime-binding fields exposed by
+the spike projection.
+
+The graph is intentionally read-only: node dragging, edge creation, graph
+editing, and artifact writes are disabled. The layout refits when the Canvas
+panel is resized; narrow panels move selected-node detail below the graph and
+hide the minimap.
+
+## Visual verification
+
+Use the repository screenshot harness as the dashboard reference:
+
+```powershell
+node scripts\screenshot.mjs `
+  --graph .streamliner\workstreams\session-launching-and-tracking\graph.json `
+  --out .screenshots\after-app-native-react-flow.png `
+  --viewport 1600x1000
+```
+
+After opening the extension Canvas, use Playwright against its returned
+`http://127.0.0.1:<port>/` URL. Wait for `.react-flow__node`, capture a wide
+unselected state, click
+`[data-id="builder-acceptance-gate"]` for selected-node detail, then repeat at a
+`520x900` viewport. Screenshots are local evidence under `.screenshots/` and are
+never committed.
 
 ## State and security properties
 
@@ -89,8 +140,11 @@ only to `127.0.0.1` and uses the documented App theme variables.
   synchronization, authorization, and concurrent artifact writers remain open.
 - The graph is read-only and supports only local task trackers in prepared
   context.
-- Canvas verification proves RPC routing and loopback rendering, not pixel-level
-  host behavior.
+- The Canvas does not yet reproduce checkpoint swimlanes, external dependency
+  ghosts, rich tracker/session status, dashboard navigation, saved node
+  positions, or editable graph operations.
+- Direct Playwright capture verifies the loopback document at representative
+  panel sizes. It does not prove pixel identity inside every App host theme.
 
 ## Evidence
 
@@ -129,9 +183,24 @@ action validation rejected the expected invalid calls. After
 `http://127.0.0.1:54344/`; the old server was unreachable, the new server was
 healthy, and refresh showed the completed binding and ready gate.
 
-Five focused Node tests passed for exact-revision isolation, hashed/idempotent
+The React Flow enhancement was then exercised on the same Canvas instance. It
+opened at `http://127.0.0.1:60459/` and rehydrated after provider reload at
+`http://127.0.0.1:62512/`; the old server stopped, `/health` reported
+`react-flow-v1`, and both Canvas actions retained the completed binding.
+Playwright captures at `1320x860` and `520x900` confirmed fit-to-view, dependency
+edges, controls, minimap behavior, selected gate detail, and resize refitting.
+The narrow unselected state gives the full height to the graph, while selection
+moves detail below it. Before/after `scripts/screenshot.mjs` captures of the
+representative dashboard graph showed no dashboard visual change.
+
+Seven focused Node tests cover exact-revision isolation, hashed/idempotent
 claims, projection transitions, deterministic LF-canonical artifact seeding,
-and fail-closed locking. The repository lint and production build also passed.
+fail-closed locking, projection-to-React-Flow adaptation, and versioned renderer
+asset/API behavior. The repository lint and production build also pass.
+The targeted existing `WorkstreamCanvas` suite passes (3 tests). A repository
+wide run reached 847 passing tests; 12 unrelated Windows Git/registry tests
+timed out or hit an advisory-lock `EPERM`, so full-suite baseline stability
+remains outside this UI spike.
 
 ## Recommendation
 
