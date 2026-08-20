@@ -94,5 +94,50 @@ only to `127.0.0.1` and uses the documented App theme variables.
 
 ## Evidence
 
-The exercised commit, nested App session, Canvas lifecycle results, and residual
-risks are recorded here after the end-to-end run.
+Exercised on 2026-08-20:
+
+| Check | Result |
+|---|---|
+| Extension commit | `0450d4b6c9c86326192686b602c80707a41d5601` |
+| Local artifact ref | `refs/heads/streamliner-artifacts-spike` |
+| Exact artifact revision | `fefc3cf54f142054c1ec4c95080bb425d301f415` |
+| Prepared launch | `launch-74469c66-61c0-4e2d-8a9f-77c3b0fbaf60` |
+| Context digest | `d8d0c54e447c905c57561b1d83b5769a8b576a357a9dd791a058bb64bcd1a4ff` |
+| App child project-session | `a40e7eeb-dddf-4930-b1fd-f7719496c4e3` |
+| Child SDK session | `db5b4225-672c-48da-8723-5321fc4392e8` |
+| Child branch | `lossyrob-app-native-claim-proof` |
+| Child proof commit | `e66c029393b84dd1e890bf38722eababe35e19d5` |
+
+The orchestrator prepared a 3,691-character Layer 0-3 context with no
+truncation, then called native App `create_session` with only the capability
+token. The cold child loaded the project extension, claimed the token on its
+first task action, received the exact graph/brief/task source manifest, committed
+`spike-proof/app-native-child.md`, called the completion tool, and reported back
+through native `send_session_message`. The persisted projection moved
+`app-native-implementation` from `launch-prepared` through `session-claimed` to
+`runtime-completed`, which made `builder-acceptance-gate` operationally
+`gate-ready`. A native follow-up message confirmed child HEAD
+`e66c029393b84dd1e890bf38722eababe35e19d5` on
+`lossyrob-app-native-claim-proof` with a clean worktree.
+
+Canvas discovery returned both `get_projection` and `refresh`. The first open of
+instance `streamliner-spike-proof` served a themed page from
+`http://127.0.0.1:56038/`; `/health`, `/`, and `/api/projection` returned
+success, and the document used the App theme contract. Input-schema and reserved
+action validation rejected the expected invalid calls. After
+`extensions_reload`, the same instance rehydrated at
+`http://127.0.0.1:54344/`; the old server was unreachable, the new server was
+healthy, and refresh showed the completed binding and ready gate.
+
+Five focused Node tests passed for exact-revision isolation, hashed/idempotent
+claims, projection transitions, deterministic LF-canonical artifact seeding,
+and fail-closed locking. The repository lint and production build also passed.
+
+## Recommendation
+
+The spike removes the core feasibility uncertainty for local App-owned
+worktrees and sessions. Continue the pivot behind a narrow production adapter,
+while retaining the documented residual risks as explicit follow-up gates. Do
+not migrate remote artifact-branch policy or delete the existing runtime until
+session-identity correlation, abandoned-launch recovery, and shared-ref
+concurrency have production contracts.
