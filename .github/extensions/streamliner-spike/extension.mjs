@@ -6,10 +6,13 @@ import {
     prepareLaunch,
 } from "./lib/orchestration.mjs";
 import { buildProjection } from "./lib/projection.mjs";
+import { buildPortfolioProjection } from "./lib/portfolio-projection.mjs";
 import { createCanvasServer } from "./lib/renderer.mjs";
 import { RuntimeStore } from "./lib/runtime-store.mjs";
+import { PORTFOLIO_CANVAS_ASSETS } from "./lib/ui-assets.mjs";
 
 const DEFAULT_WORKSTREAM_PATH = ".streamliner/workstreams/app-native-spike";
+const DEFAULT_PORTFOLIO_PATH = ".streamliner/portfolio.json";
 const store = new RuntimeStore();
 const canvasInstances = new Map();
 
@@ -19,6 +22,10 @@ function repoPath(input) {
 
 function workstreamPath(input) {
     return input.workstreamPath || DEFAULT_WORKSTREAM_PATH;
+}
+
+function portfolioPath(input) {
+    return input.portfolioPath || DEFAULT_PORTFOLIO_PATH;
 }
 
 function serializeToolResult(value) {
@@ -89,6 +96,7 @@ const canvas = createCanvas({
                 workstreamPath: workstreamPath(ctx.input),
             };
             const getProjection = () => buildProjection({ ...config, store });
+            getProjection();
             const server = await createCanvasServer({ getProjection });
             entry = { ...server, config, getProjection };
             canvasInstances.set(ctx.instanceId, entry);
@@ -97,6 +105,82 @@ const canvas = createCanvas({
         return {
             title: projection.workstream.title,
             status: `${projection.summary.nodeCount} nodes | ${projection.artifact.revision.slice(0, 8)}`,
+            url: entry.url,
+        };
+    },
+    onClose: async (ctx) => {
+        const entry = canvasInstances.get(ctx.instanceId);
+        if (entry) {
+            canvasInstances.delete(ctx.instanceId);
+            await entry.close();
+        }
+    },
+});
+
+const portfolioCanvas = createCanvas({
+    id: "streamliner-spike-portfolio",
+    displayName: "Streamliner portfolio spike",
+    description: "Interactive exact-revision portfolio of workstreams, public checkpoints, dependencies, and App bindings.",
+    inputSchema: {
+        type: "object",
+        properties: {
+            repoPath: {
+                type: "string",
+                description: "Path inside the local Git worktree that owns the artifact ref.",
+            },
+            revision: {
+                type: "string",
+                minLength: 1,
+                description: "Exact commit or local ref containing the portfolio artifacts.",
+            },
+            portfolioPath: {
+                type: "string",
+                description: "Repository-relative portfolio manifest path.",
+            },
+        },
+        required: ["revision"],
+        additionalProperties: false,
+    },
+    actions: [
+        {
+            name: "get_portfolio_projection",
+            description: "Read the exact-revision portfolio and current local runtime bindings.",
+            handler: async (ctx) => requireCanvasInstance(ctx.instanceId).getProjection(),
+        },
+        {
+            name: "refresh_portfolio",
+            description: "Refresh portfolio artifacts and runtime bindings, then notify the open Canvas.",
+            handler: async (ctx) => {
+                const entry = requireCanvasInstance(ctx.instanceId);
+                const projection = entry.getProjection();
+                entry.broadcast(projection);
+                return projection;
+            },
+        },
+    ],
+    open: async (ctx) => {
+        let entry = canvasInstances.get(ctx.instanceId);
+        if (!entry) {
+            const config = {
+                repoPath: repoPath(ctx.input),
+                revision: ctx.input.revision,
+                portfolioPath: portfolioPath(ctx.input),
+            };
+            const getProjection = () => buildPortfolioProjection({ ...config, store });
+            getProjection();
+            const server = await createCanvasServer({
+                getProjection,
+                assets: PORTFOLIO_CANVAS_ASSETS,
+                projectionRoute: "/api/portfolio/projection",
+                refreshRoute: "/api/portfolio/refresh",
+            });
+            entry = { ...server, config, getProjection };
+            canvasInstances.set(ctx.instanceId, entry);
+        }
+        const projection = entry.getProjection();
+        return {
+            title: projection.portfolio.title,
+            status: `${projection.summary.workstreamCount} workstreams | ${projection.artifact.revision.slice(0, 8)}`,
             url: entry.url,
         };
     },
@@ -230,6 +314,36 @@ await joinSession({
                 store,
             })),
         },
+        {
+            name: "streamliner_spike_inspect_portfolio",
+            description: "Inspect an exact-revision portfolio projection with local runtime bindings.",
+            parameters: {
+                type: "object",
+                properties: {
+                    repoPath: {
+                        type: "string",
+                        description: "Path inside the local source worktree.",
+                    },
+                    revision: {
+                        type: "string",
+                        minLength: 1,
+                        description: "Exact commit or local artifact ref.",
+                    },
+                    portfolioPath: {
+                        type: "string",
+                        description: "Repository-relative portfolio manifest path.",
+                    },
+                },
+                required: ["revision"],
+                additionalProperties: false,
+            },
+            handler: async (args) => serializeToolResult(buildPortfolioProjection({
+                repoPath: repoPath(args),
+                revision: args.revision,
+                portfolioPath: portfolioPath(args),
+                store,
+            })),
+        },
     ],
-    canvases: [canvas],
+    canvases: [canvas, portfolioCanvas],
 });

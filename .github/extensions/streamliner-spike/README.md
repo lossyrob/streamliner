@@ -33,6 +33,11 @@ private WebSocket traffic. It does not launch terminals or create worktrees.
   Flow nodes, dependency edges, and deterministic Dagre positions.
 - `ui/src/main.jsx` and `ui/src/styles.css` own the responsive Canvas UI and
   selected-node inspector.
+- `lib/portfolio-projection.mjs` resolves one portfolio manifest and every
+  referenced workstream graph from the same Git commit before applying local
+  launch overlays.
+- `portfolio-ui/` adapts the semantic-zoom portfolio prototype into the second
+  bundled Canvas.
 - `build-ui.mjs` reproducibly bundles the browser UI into versioned
   `assets/react-flow-v1/` files served by `lib/renderer.mjs`.
 - `fixtures/artifact-tree/` is the dedicated artifact-ref tree.
@@ -75,6 +80,44 @@ Open canvas `streamliner-spike-workstream` with the resolved artifact commit (or
 the local ref) and invoke `get_projection` or `refresh`. The iframe server binds
 only to `127.0.0.1`, serves no CDN content, and uses the documented App theme
 variables and attributes.
+
+Open `streamliner-spike-portfolio` with the same `repoPath` and revision plus
+`"portfolioPath": ".streamliner/portfolio.json"`. Its actions are
+`get_portfolio_projection` and `refresh_portfolio`; the equivalent extension
+tool is `streamliner_spike_inspect_portfolio`.
+
+## Portfolio Canvas
+
+The deterministic artifact tree now includes `.streamliner/portfolio.json` and
+three workstreams: Artifact foundation, App-native Streamliner spike, and
+Portfolio experience. Seven waves export seven public checkpoints. Three
+cross-workstream dependencies use validated, branch-local, and proposed
+availability states with explicit risk and operator action. Portfolio artifacts
+are read from one exact commit; completed and prepared launch records remain in
+the local runtime store.
+
+The Canvas reuses the strongest concepts from
+`.streamliner/shaping/spikes/work-geometry-canvas/semantic-zoom-flow/` and
+`PORTFOLIO-LAYER.md`:
+
+- project overview above autonomous workstream columns
+- waves as the public checkpoint boundary
+- summary/detail semantic zoom
+- checkpoint-to-checkpoint cross-workstream edges
+- selection-driven risk and action inspection
+
+The production extension adapts those concepts rather than copying the
+prototype. It reads the committed manifest instead of static TypeScript data,
+uses only documented App theme tokens, overlays real local launch records, and
+shares the extension's versioned loopback asset server. The UI adds selectable
+workstreams, waves, tasks, and dependency edges; dependency-path focus;
+summary/detail controls; fit/reset controls; focus-only and dependency-state
+filters; and risk, action, availability, completion, and runtime inspection.
+
+Panels at 760 pixels or narrower deliberately switch from full React Flow
+geometry to a scrollable workstream/checkpoint/task list with the same
+selection, filters, semantic detail, dependency contracts, and inspector. This
+avoids reducing the portfolio to unreadable miniature text.
 
 ## React Flow Canvas boundary
 
@@ -145,6 +188,9 @@ never committed.
   positions, or editable graph operations.
 - Direct Playwright capture verifies the loopback document at representative
   panel sizes. It does not prove pixel identity inside every App host theme.
+- Portfolio geometry is a project view, not a full startup Home: environment
+  sessions, ad-hoc session attachment, campaigns, cross-project aggregation,
+  persisted operator layout, and mutation/control flows remain out of scope.
 
 ## Evidence
 
@@ -201,6 +247,18 @@ The targeted existing `WorkstreamCanvas` suite passes (3 tests). A repository
 wide run reached 847 passing tests; 12 unrelated Windows Git/registry tests
 timed out or hit an advisory-lock `EPERM`, so full-suite baseline stability
 remains outside this UI spike.
+
+The portfolio artifact ref resolves to
+`3fb5fa4e7258250a06a958656f1e420b135a7275`. Its projection contains three
+workstreams, seven waves/checkpoints, three dependency states, and three runtime
+bindings (one completed and two prepared). Summary/detail, workstream, wave,
+task, dependency-focus, focus-only, dependency-state filter, and deliberate
+narrow-list states were captured with Playwright and inspected. After reload,
+portfolio instance `streamliner-portfolio-proof` rehydrated from port 57620 to
+63439 while the old server stopped; the existing workstream Canvas opened
+independently on port 63464 at the same exact revision. Both action pairs
+returned the expected runtime overlays, and portfolio input/reserved-action
+validation failed closed.
 
 ## Recommendation
 

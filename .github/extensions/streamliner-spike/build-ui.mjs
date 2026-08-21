@@ -5,38 +5,47 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-    CANVAS_ASSET_ROOT,
-    CANVAS_ASSET_ROUTE,
-    CANVAS_ASSET_VERSION,
+    PORTFOLIO_CANVAS_ASSETS,
+    WORKSTREAM_CANVAS_ASSETS,
 } from "./lib/ui-assets.mjs";
 
 const extensionRoot = dirname(fileURLToPath(import.meta.url));
-const uiRoot = resolve(extensionRoot, "ui");
+const targets = [
+    { source: "ui", assets: WORKSTREAM_CANVAS_ASSETS },
+    { source: "portfolio-ui", assets: PORTFOLIO_CANVAS_ASSETS },
+];
 
-await build({
-    configFile: false,
-    root: uiRoot,
-    base: CANVAS_ASSET_ROUTE,
-    publicDir: false,
-    plugins: [react()],
-    build: {
-        outDir: CANVAS_ASSET_ROOT,
-        emptyOutDir: true,
-        target: "es2022",
-        minify: "esbuild",
-        sourcemap: false,
-        manifest: "manifest.json",
-        assetsInlineLimit: 0,
-        rollupOptions: {
-            input: resolve(uiRoot, "index.html"),
-            output: {
-                entryFileNames: "assets/app-[hash].js",
-                chunkFileNames: "assets/chunk-[hash].js",
-                assetFileNames: "assets/[name]-[hash][extname]",
+for (const target of targets) {
+    const uiRoot = resolve(extensionRoot, target.source);
+    await build({
+        configFile: false,
+        root: uiRoot,
+        base: target.assets.route,
+        publicDir: false,
+        plugins: [react()],
+        build: {
+            outDir: target.assets.root,
+            emptyOutDir: true,
+            target: "es2022",
+            minify: "esbuild",
+            sourcemap: false,
+            manifest: "manifest.json",
+            assetsInlineLimit: 0,
+            rollupOptions: {
+                input: resolve(uiRoot, "index.html"),
+                output: {
+                    entryFileNames: "assets/app-[hash].js",
+                    chunkFileNames: "assets/chunk-[hash].js",
+                    assetFileNames: "assets/[name]-[hash][extname]",
+                },
             },
         },
-    },
-});
+    });
+    normalizeGeneratedText(target.assets.root);
+    process.stdout.write(
+        `Built ${target.assets.version} Canvas assets at ${target.assets.root}\n`,
+    );
+}
 
 function normalizeGeneratedText(directory) {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
@@ -49,9 +58,3 @@ function normalizeGeneratedText(directory) {
         }
     }
 }
-
-normalizeGeneratedText(CANVAS_ASSET_ROOT);
-
-process.stdout.write(
-    `Built ${CANVAS_ASSET_VERSION} Canvas assets at ${CANVAS_ASSET_ROOT}\n`,
-);

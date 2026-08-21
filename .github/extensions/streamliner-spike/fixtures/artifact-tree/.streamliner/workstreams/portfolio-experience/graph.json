@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "id": "portfolio-experience",
+  "projectKey": "streamliner-spike",
+  "title": "Portfolio experience",
+  "summary": "Turn public workstream checkpoints and runtime bindings into a usable operator canvas.",
+  "status": "active",
+  "attention": "focus",
+  "createdAt": "2026-08-21T12:00:00.000Z",
+  "updatedAt": "2026-08-21T12:00:00.000Z",
+  "repos": [{"id": "streamliner", "owner": "lossyrob", "name": "streamliner", "role": "primary"}],
+  "designRefs": [{"repoId": "streamliner", "path": "PORTFOLIO-LAYER.md"}],
+  "nodes": [
+    {
+      "id": "portfolio-projection",
+      "type": "task",
+      "title": "Exact portfolio projection",
+      "summary": "Join three workstreams, public checkpoints, dependencies, and runtime bindings from a coherent snapshot.",
+      "status": "ready",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "tracker": {"type": "local", "path": "tasks/portfolio-projection.md"},
+      "dependsOn": []
+    },
+    {
+      "id": "portfolio-canvas",
+      "type": "task",
+      "title": "Interactive portfolio Canvas",
+      "summary": "Render semantic zoom, checkpoint dependencies, filters, focus, and inspection in a read-only App Canvas.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "tracker": {"type": "local", "path": "tasks/portfolio-canvas.md"},
+      "dependsOn": ["portfolio-projection"]
+    },
+    {
+      "id": "portfolio-validation-gate",
+      "type": "gate",
+      "title": "Portfolio usability gate",
+      "summary": "Validate wide and narrow operator workflows and honest parity limits.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "tracker": {"type": "local", "path": "tasks/portfolio-validation-gate.md"},
+      "dependsOn": ["portfolio-canvas"]
+    }
+  ],
+  "checkpoints": []
+}

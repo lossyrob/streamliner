@@ -44,18 +44,7 @@ function runtimeStatus(node, binding, dependenciesComplete) {
     return node.status;
 }
 
-export function buildProjection({
-    repoPath,
-    revision,
-    workstreamPath,
-    store,
-}) {
-    const snapshot = readWorkstreamSnapshot({
-        repoPath,
-        revision,
-        workstreamPath,
-    });
-    const state = store.read();
+export function buildProjectionFromSnapshot(snapshot, state, requestedRevision) {
     const matchingLaunches = state.launches.filter((launch) =>
         launch.repositoryKey === snapshot.repositoryKey
         && launch.workstreamId === snapshot.graph.id
@@ -91,6 +80,7 @@ export function buildProjection({
             type: node.type,
             title: node.title,
             summary: node.summary,
+            attention: node.attention,
             durableStatus: node.status,
             runtimeStatus: runtimeStatus(node, binding, dependenciesComplete),
             dependenciesComplete,
@@ -104,7 +94,7 @@ export function buildProjection({
         artifact: {
             provider: "git-exact-revision-v1",
             repositoryKey: snapshot.repositoryKey,
-            requestedRevision: revision,
+            requestedRevision,
             revision: snapshot.commit,
             workstreamPath: snapshot.workstreamPath,
             graphPath: snapshot.graphPath,
@@ -133,4 +123,18 @@ export function buildProjection({
             }))
         ),
     };
+}
+
+export function buildProjection({
+    repoPath,
+    revision,
+    workstreamPath,
+    store,
+}) {
+    const snapshot = readWorkstreamSnapshot({
+        repoPath,
+        revision,
+        workstreamPath,
+    });
+    return buildProjectionFromSnapshot(snapshot, store.read(), revision);
 }

@@ -4,9 +4,7 @@ import { extname, isAbsolute, relative, resolve, sep } from "node:path";
 
 import {
     assertCanvasAssetsAvailable,
-    CANVAS_ASSET_ROOT,
-    CANVAS_ASSET_ROUTE,
-    CANVAS_ASSET_VERSION,
+    WORKSTREAM_CANVAS_ASSETS,
 } from "./ui-assets.mjs";
 
 const CONTENT_TYPES = new Map([
@@ -34,16 +32,16 @@ function sendJson(response, statusCode, value) {
     response.end(`${JSON.stringify(value)}\n`);
 }
 
-function assetPathForRoute(route) {
+function assetPathForRoute(route, assets) {
     if (route === "/") {
-        return resolve(CANVAS_ASSET_ROOT, "index.html");
+        return resolve(assets.root, "index.html");
     }
-    if (!route.startsWith(CANVAS_ASSET_ROUTE)) {
+    if (!route.startsWith(assets.route)) {
         return null;
     }
     let assetName;
     try {
-        assetName = decodeURIComponent(route.slice(CANVAS_ASSET_ROUTE.length))
+        assetName = decodeURIComponent(route.slice(assets.route.length))
             || "index.html";
     } catch {
         return null;
@@ -51,8 +49,8 @@ function assetPathForRoute(route) {
     if (assetName.includes("\0") || assetName.includes("\\")) {
         return null;
     }
-    const candidate = resolve(CANVAS_ASSET_ROOT, ...assetName.split("/"));
-    const relativePath = relative(CANVAS_ASSET_ROOT, candidate);
+    const candidate = resolve(assets.root, ...assetName.split("/"));
+    const relativePath = relative(assets.root, candidate);
     if (
         relativePath.startsWith(`..${sep}`)
         || relativePath === ".."
@@ -98,8 +96,13 @@ function sendAsset(response, assetPath) {
     }
 }
 
-export async function createCanvasServer({ getProjection }) {
-    assertCanvasAssetsAvailable();
+export async function createCanvasServer({
+    getProjection,
+    assets = WORKSTREAM_CANVAS_ASSETS,
+    projectionRoute = "/api/projection",
+    refreshRoute = "/api/refresh",
+}) {
+    assertCanvasAssetsAvailable(assets);
     const eventStreams = new Set();
     const broadcast = (projection) => {
         const payload = `event: projection\ndata: ${JSON.stringify(projection)}\n\n`;
@@ -113,7 +116,7 @@ export async function createCanvasServer({ getProjection }) {
             sendJson(response, 200, {
                 ok: true,
                 binding: "127.0.0.1",
-                assetVersion: CANVAS_ASSET_VERSION,
+                assetVersion: assets.version,
             });
             return;
         }
@@ -129,8 +132,8 @@ export async function createCanvasServer({ getProjection }) {
             return;
         }
         if (
-            (request.method === "GET" && route === "/api/projection")
-            || (request.method === "POST" && route === "/api/refresh")
+            (request.method === "GET" && route === projectionRoute)
+            || (request.method === "POST" && route === refreshRoute)
         ) {
             try {
                 const projection = getProjection();
@@ -144,7 +147,7 @@ export async function createCanvasServer({ getProjection }) {
             return;
         }
         if (request.method === "GET") {
-            const assetPath = assetPathForRoute(route);
+            const assetPath = assetPathForRoute(route, assets);
             if (assetPath) {
                 sendAsset(response, assetPath);
                 return;

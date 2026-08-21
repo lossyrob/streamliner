@@ -21,13 +21,20 @@ import {
     prepareLaunch,
 } from "./lib/orchestration.mjs";
 import { buildProjection } from "./lib/projection.mjs";
+import { buildPortfolioProjection } from "./lib/portfolio-projection.mjs";
 import { createCanvasServer } from "./lib/renderer.mjs";
 import { RuntimeStore } from "./lib/runtime-store.mjs";
 import {
     CANVAS_ASSET_ROUTE,
     CANVAS_ASSET_VERSION,
+    PORTFOLIO_CANVAS_ASSETS,
 } from "./lib/ui-assets.mjs";
 import { projectionToFlow } from "./ui/src/projection-adapter.mjs";
+import {
+    dependencyFocusIds,
+    filterPortfolio,
+    portfolioToFlow,
+} from "./portfolio-ui/src/portfolio-adapter.mjs";
 
 const extensionRoot = dirname(fileURLToPath(import.meta.url));
 const fixtureRoot = join(extensionRoot, "fixtures", "artifact-tree");
@@ -387,4 +394,163 @@ test("renderer serves the versioned React Flow bundle and projection API", async
         server.url,
     ));
     assert.equal(missingResponse.status, 404);
+});
+
+test("portfolio projection reads three workstreams from one exact revision", () => {
+    const fixture = createFixtureRepository();
+    const stateRoot = mkdtempSync(join(tmpdir(), "streamliner-spike-state-"));
+    createdRoots.push(stateRoot);
+    const store = new RuntimeStore({ stateFile: join(stateRoot, "runtime.json") });
+    const projection = buildPortfolioProjection({
+        repoPath: fixture.root,
+        revision: fixture.firstRevision,
+        portfolioPath: ".streamliner/portfolio.json",
+        store,
+    });
+    assert.equal(projection.artifact.revision, fixture.firstRevision);
+    assert.equal(projection.summary.workstreamCount, 3);
+    assert.equal(projection.summary.dependencyCount, 3);
+    assert.equal(
+        projection.workstreams
+            .find((workstream) => workstream.id === "app-native-spike")
+            .waves.find((wave) => wave.id === "native-session-loop")
+            .status,
+        "in-progress",
+    );
+    assert.deepEqual(
+        new Set(projection.dependencies.map((edge) => edge.state)),
+        new Set(["validated", "branch-local", "proposed"]),
+    );
+    assert.equal(
+        projection.workstreams.every((workstream) =>
+            workstream.waves.every((wave) =>
+                wave.nodes.every((node) => typeof node.runtimeStatus === "string")
+            )
+        ),
+        true,
+    );
+});
+
+test("portfolio projection overlays volatile bindings outside the artifact ref", () => {
+    const fixture = createFixtureRepository();
+    const stateRoot = mkdtempSync(join(tmpdir(), "streamliner-spike-state-"));
+    createdRoots.push(stateRoot);
+    const store = new RuntimeStore({ stateFile: join(stateRoot, "runtime.json") });
+    prepareLaunch({
+        repoPath: fixture.root,
+        revision: fixture.firstRevision,
+        workstreamPath: ".streamliner/workstreams/portfolio-experience",
+        nodeId: "portfolio-projection",
+        preparedBySessionId: "portfolio-orchestrator",
+        store,
+    });
+    const projection = buildPortfolioProjection({
+        repoPath: fixture.root,
+        revision: fixture.firstRevision,
+        portfolioPath: ".streamliner/portfolio.json",
+        store,
+    });
+    assert.equal(projection.summary.runtimeBindingCount, 1);
+    assert.equal(
+        projection.workstreams
+            .find((workstream) => workstream.id === "portfolio-experience")
+            .waves[0].nodes[0].runtimeStatus,
+        "launch-prepared",
+    );
+});
+
+test("portfolio adapter transforms checkpoint dependencies and filters focus", () => {
+    const projection = {
+        ...exampleProjection(),
+        portfolio: { id: "portfolio", title: "Portfolio", project: { title: "Project" } },
+        workstreams: [
+            {
+                id: "one",
+                title: "One",
+                summary: "One",
+                region: "A",
+                attention: "focus",
+                risk: "low",
+                availability: "validated",
+                runtimeBindings: 0,
+                waves: [{
+                    id: "one-wave",
+                    index: 0,
+                    title: "One wave",
+                    summary: "One",
+                    completedNodes: 1,
+                    totalNodes: 1,
+                    status: "completed",
+                    publicCheckpoint: { title: "One checkpoint", availability: "validated", export: "contract" },
+                    nodes: exampleProjection().nodes.slice(0, 1),
+                }],
+            },
+            {
+                id: "two",
+                title: "Two",
+                summary: "Two",
+                region: "B",
+                attention: "watch",
+                risk: "high",
+                availability: "proposed",
+                runtimeBindings: 0,
+                waves: [{
+                    id: "two-wave",
+                    index: 0,
+                    title: "Two wave",
+                    summary: "Two",
+                    completedNodes: 0,
+                    totalNodes: 1,
+                    status: "planned",
+                    publicCheckpoint: { title: "Two checkpoint", availability: "proposed", export: "canvas" },
+                    nodes: exampleProjection().nodes.slice(1, 2),
+                }],
+            },
+        ],
+        dependencies: [{
+            id: "one-to-two",
+            label: "Contract",
+            state: "proposed",
+            from: { workstreamId: "one", waveId: "one-wave", export: "contract" },
+            to: { workstreamId: "two", waveId: "two-wave", import: "input" },
+            risk: "Risk",
+            action: "Act",
+        }],
+    };
+    const flow = portfolioToFlow(projection, {
+        level: "summary",
+        filters: { attentionOnly: false, dependencyState: "all" },
+        selection: { type: "dependency", id: "one-to-two" },
+        onSelectTask: () => {},
+    });
+    assert.equal(flow.nodes.filter((node) => node.type === "portfolioHeader").length, 2);
+    assert.equal(flow.edges.some((edge) => edge.id === "one-to-two"), true);
+    assert.equal(dependencyFocusIds(projection, { type: "dependency", id: "one-to-two" }).size, 3);
+    const attention = filterPortfolio(projection, {
+        attentionOnly: true,
+        dependencyState: "all",
+    });
+    assert.deepEqual(attention.workstreams.map((item) => item.id), ["one"]);
+    assert.equal(attention.dependencies.length, 0);
+});
+
+test("renderer serves the portfolio bundle on portfolio-specific API routes", async (context) => {
+    const projection = { portfolio: { id: "portfolio" }, workstreams: [], dependencies: [] };
+    const server = await createCanvasServer({
+        getProjection: () => projection,
+        assets: PORTFOLIO_CANVAS_ASSETS,
+        projectionRoute: "/api/portfolio/projection",
+        refreshRoute: "/api/portfolio/refresh",
+    });
+    context.after(() => server.close());
+    const health = await (await fetch(new URL("/health", server.url))).json();
+    assert.equal(health.assetVersion, "portfolio-v1");
+    assert.deepEqual(
+        await (await fetch(new URL("/api/portfolio/projection", server.url))).json(),
+        projection,
+    );
+    assert.equal(
+        (await fetch(new URL("/api/projection", server.url))).status,
+        404,
+    );
 });

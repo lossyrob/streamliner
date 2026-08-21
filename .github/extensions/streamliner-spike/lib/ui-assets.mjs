@@ -2,21 +2,28 @@ import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const CANVAS_ASSET_VERSION = "react-flow-v1";
-export const CANVAS_ASSET_ROUTE = `/ui/${CANVAS_ASSET_VERSION}/`;
-export const CANVAS_ASSET_ROOT = resolve(
-    dirname(fileURLToPath(import.meta.url)),
-    "..",
-    "assets",
-    CANVAS_ASSET_VERSION,
-);
+const extensionRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-export function assertCanvasAssetsAvailable() {
-    const indexPath = resolve(CANVAS_ASSET_ROOT, "index.html");
-    const manifestPath = resolve(CANVAS_ASSET_ROOT, "manifest.json");
+function assetDefinition(version) {
+    return {
+        version,
+        route: `/ui/${version}/`,
+        root: resolve(extensionRoot, "assets", version),
+    };
+}
+
+export const WORKSTREAM_CANVAS_ASSETS = assetDefinition("react-flow-v1");
+export const PORTFOLIO_CANVAS_ASSETS = assetDefinition("portfolio-v1");
+export const CANVAS_ASSET_VERSION = WORKSTREAM_CANVAS_ASSETS.version;
+export const CANVAS_ASSET_ROUTE = WORKSTREAM_CANVAS_ASSETS.route;
+export const CANVAS_ASSET_ROOT = WORKSTREAM_CANVAS_ASSETS.root;
+
+export function assertCanvasAssetsAvailable(assets = WORKSTREAM_CANVAS_ASSETS) {
+    const indexPath = resolve(assets.root, "index.html");
+    const manifestPath = resolve(assets.root, "manifest.json");
     if (!existsSync(indexPath) || !existsSync(manifestPath)) {
         throw new Error(
-            "Streamliner spike Canvas assets are missing. Run npm run build:streamliner-spike.",
+            `Streamliner spike Canvas assets ${assets.version} are missing. Run npm run build:streamliner-spike.`,
         );
     }
 }
