@@ -53,8 +53,11 @@ function normalizeGeneratedText(directory) {
         if (entry.isDirectory()) {
             normalizeGeneratedText(path);
         } else if (/\.(css|html|js|json)$/.test(entry.name)) {
-            const content = readFileSync(path, "utf8").replace(/\r\n?/g, "\n");
-            writeFileSync(path, content, "utf8");
+            const content = readFileSync(path, "utf8");
+            const normalized = content.replace(/\r\n?/g, "\n");
+            if (normalized !== content) {
+                writeFileSync(path, normalized, "utf8");
+            }
         }
     }
 }

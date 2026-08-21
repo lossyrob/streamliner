@@ -119,6 +119,52 @@ geometry to a scrollable workstream/checkpoint/task list with the same
 selection, filters, semantic detail, dependency contracts, and inspector. This
 avoids reducing the portfolio to unreadable miniature text.
 
+## Durable portfolio positions
+
+Wide Portfolio Canvas waves are draggable, including Shift multi-selection
+drag. Routine layout is local operator state, stored outside the repository at:
+
+```text
+~/.copilot/extensions/streamliner-spike/artifacts/portfolio-positions/
+  {repositoryKey}/{projectId}--{portfolioId}--{domainHash}.json
+```
+
+The schema-versioned document is keyed by stable repository/project/portfolio
+identity and deliberately excludes artifact revision and Canvas `instanceId`.
+It also carries a monotonic `revision` plus a reset `generation`. Every partial
+PATCH includes its generation. Reset atomically replaces the overlay with an
+empty document and increments generation; queued pre-reset saves receive HTTP
+409 with the current snapshot instead of resurrecting old pins.
+Its `positions` map accepts only:
+
+- `wave:<workstreamId>:<waveId>` exact checkpoint pins
+- `ws:<workstreamId>` workstream top-left anchors
+
+Layout applies in three stages: compute current auto-layout, translate every
+workstream to its saved anchor, then apply exact wave pins. A newly reconciled
+wave therefore remains near its workstream even when it has no exact pin.
+Header/decorative nodes are never persisted independently.
+
+The loopback server exposes domain-scoped `GET`, partial `PATCH { upsert,
+remove }`, and sendBeacon-compatible `POST ...?method=patch` routes at
+`/api/portfolio/positions`. IDs and finite coordinates are validated. Each
+partial update takes the extracted extension file lock, reads current state,
+merges only touched IDs, and atomically renames a temporary file. The browser
+debounces and serializes routine saves, preserves unacknowledged FIFO
+operations, retries failed diffs with bounded backoff, flushes their merged
+latest-state diff on unload best-effort, resynchronizes when SSE connects, and
+ignores stale snapshots by revision/generation. It displays
+pending/saving/saved/error state with exact pin count.
+
+`get_portfolio_positions` and `reset_portfolio_positions` are safe Canvas
+actions scoped to the already-open portfolio. The UI can unpin selected waves
+or reset the entire local layout. Narrow mode is read-only and explains that
+saved wide geometry will return when the panel widens.
+
+Routine drag state never writes to `streamliner-artifacts`. A future explicit
+**publish layout** operation could review selected local pins and promote a
+shared baseline; implicit drag saves must remain local.
+
 ## React Flow Canvas boundary
 
 The Canvas reuses the repository's installed React, `@xyflow/react`, and Dagre
@@ -191,6 +237,12 @@ never committed.
 - Portfolio geometry is a project view, not a full startup Home: environment
   sessions, ad-hoc session attachment, campaigns, cross-project aggregation,
   persisted operator layout, and mutation/control flows remain out of scope.
+- Repeated provider reloads exposed a host/runtime rehydration uncertainty: the
+  chat's Canvas context continued to list old loopback ports after those servers
+  had stopped. Provider discovery, Canvas actions, and explicit re-open of the
+  same instance remained healthy and immediately returned new reachable ports.
+  Production should add a rehydration watchdog/health signal so stale renderer
+  URL metadata cannot look like a hanging agent task.
 
 ## Evidence
 
@@ -259,6 +311,44 @@ portfolio instance `streamliner-portfolio-proof` rehydrated from port 57620 to
 independently on port 63464 at the same exact revision. Both action pairs
 returned the expected runtime overlays, and portfolio input/reserved-action
 validation failed closed.
+
+Durable positioning was exercised on the real Canvas. A single App-native wave
+drag and a Shift multi-drag of two Artifact foundation waves produced three
+exact pins and two `ws:` anchors in the local positions file. The same pins
+survived page reload, extension process reload, the same Canvas instance,
+different instance IDs, and artifact advancement from `3fb5fa4e...` through
+`a6e8c037...` to `dbfa5d24...`. The final revision added new checkpoint waves
+without changing existing stable IDs; the unpinned
+`wave:artifact-foundation:layout-reconciliation` inherited x `224.674` from
+`ws:artifact-foundation`, while exact pins retained precedence. UI unpin removed
+the App-native exact pin and its now-unused anchor; the reset Canvas action then
+removed the remaining three entries atomically.
+
+The session task tracker briefly showed `Capturing position baseline` as
+`in_progress` long after the screenshot command had completed. No PowerShell or
+background process was running; the SQL todo status simply had not been advanced
+during implementation. That bookkeeping error was corrected separately from the
+Canvas diagnosis. At the same time, six loopback URLs supplied by stale Canvas
+context all timed out, while the extension provider was ready and RPC actions
+worked. Explicitly re-opening the same portfolio instances returned healthy
+`portfolio-v1` URLs on ports 55730 and 63109. This distinguishes stale host URL
+metadata from extension/session RPC connectivity.
+
+The reset race was exercised with two independent portfolio servers. Instance A
+read generation 0, instance B reset to revision 1 / generation 1, and instance A
+then submitted its queued generation-0 PATCH. The server returned HTTP 409 with
+the current empty snapshot; both instances reported generation 1 with zero
+pins. Same-process instances receive immediate position/reset SSE broadcasts.
+Separate extension processes do not share an SSE bus; their next
+generation-guarded PATCH or reconnect GET performs reconciliation.
+
+The final live concurrency pass added conditional base revisions and durable
+mutation IDs. Instance A committed revision 2; instance B's stale base revision
+received 409, rebased, and committed revision 3. Retrying A's mutation returned
+`duplicate: true` and preserved B's newer coordinate. Reset advanced generation
+to 2, and B's queued generation-1 mutation then received a generation conflict;
+the final overlay remained empty. This covers lost-response retry, concurrent
+rebase, and cross-instance reset without last-writer resurrection.
 
 ## Recommendation
 

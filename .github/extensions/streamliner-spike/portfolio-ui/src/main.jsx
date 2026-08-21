@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
     Background,
@@ -9,6 +9,7 @@ import {
     Position,
     ReactFlow,
     ReactFlowProvider,
+    applyNodeChanges,
     useReactFlow,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
@@ -18,6 +19,8 @@ import {
     filterPortfolio,
     formatPortfolioLabel,
     portfolioToFlow,
+    positionPatchForDraggedNodes,
+    workstreamAnchorId,
 } from "./portfolio-adapter.mjs";
 import "./styles.css";
 
@@ -44,7 +47,7 @@ function WaveNode({ data }) {
     const first = workstream.waves[0]?.id === wave.id;
     const last = workstream.waves.at(-1)?.id === wave.id;
     return (
-        <article className={`portfolio-wave portfolio-wave--${wave.status}`}>
+        <article className={`portfolio-wave portfolio-wave--${wave.status} ${data.pinned ? "portfolio-wave--pinned" : ""}`}>
             {!first ? <Handle id="spine-in" type="target" position={Position.Top} /> : null}
             {!last ? <Handle id="spine-out" type="source" position={Position.Bottom} /> : null}
             <Handle id="checkpoint-in" type="target" position={Position.Left} />
@@ -64,6 +67,7 @@ function WaveNode({ data }) {
                 <span>{wave.completedNodes}/{wave.totalNodes} complete</span>
                 <span>Exports {wave.publicCheckpoint.export}</span>
             </div>
+            {data.pinned ? <span className="pin-indicator">Pinned locally</span> : null}
             {level === "detail" ? (
                 <div className="wave-tasks">
                     {wave.nodes.map((node) => (
@@ -105,7 +109,17 @@ function useNarrowPanel() {
     return narrow;
 }
 
-function PortfolioFlow({ projection, level, filters, selection, setSelection }) {
+function PortfolioFlow({
+    projection,
+    level,
+    filters,
+    selection,
+    setSelection,
+    positions,
+    onPositionPatch,
+    onSelectionIds,
+    positionsReady,
+}) {
     const reactFlow = useReactFlow();
     const onSelectTask = useCallback((workstreamId, waveId, taskId) => {
         setSelection({ type: "task", workstreamId, waveId, taskId });
@@ -114,8 +128,12 @@ function PortfolioFlow({ projection, level, filters, selection, setSelection }) 
         level,
         filters,
         selection,
+        positions,
         onSelectTask,
-    }), [projection, level, filters, selection, onSelectTask]);
+    }), [projection, level, filters, selection, positions, onSelectTask]);
+    const [nodes, setNodes] = useState(flow.nodes);
+    const selectedIdsRef = useRef(new Set());
+    useEffect(() => setNodes(flow.nodes), [flow.nodes]);
 
     useEffect(() => {
         const timeout = setTimeout(() => {
@@ -138,15 +156,37 @@ function PortfolioFlow({ projection, level, filters, selection, setSelection }) 
 
     return (
         <ReactFlow
-            nodes={flow.nodes}
+            nodes={nodes}
             edges={flow.edges}
             nodeTypes={nodeTypes}
-            nodesDraggable={false}
+            nodesDraggable={positionsReady}
             nodesConnectable={false}
+            selectionOnDrag
+            multiSelectionKeyCode="Shift"
             minZoom={0.25}
             maxZoom={1.35}
             panOnScroll
-            onNodeClick={(_event, node) => {
+            onNodesChange={(changes) => setNodes((current) => applyNodeChanges(changes, current))}
+            onSelectionChange={({ nodes: selectedNodes }) => {
+                const ids = selectedNodes.map((node) => node.id);
+                selectedIdsRef.current = new Set(ids);
+                onSelectionIds(ids);
+            }}
+            onNodeDragStop={(_event, node) => {
+                const current = nodes.map((candidate) =>
+                    candidate.id === node.id ? node : candidate
+                );
+                const selected = current.filter((candidate) =>
+                    selectedIdsRef.current.has(candidate.id)
+                );
+                onPositionPatch(positionPatchForDraggedNodes(
+                    selected.length > 1 ? selected : [node],
+                    current,
+                    flow.filtered,
+                ));
+            }}
+            onNodeClick={(event, node) => {
+                if (event.shiftKey) return;
                 if (node.id.startsWith("header:")) {
                     setSelection({ type: "workstream", workstreamId: node.id.slice(7) });
                 } else if (node.id.startsWith("wave:")) {
@@ -260,6 +300,10 @@ function NarrowPortfolio({ projection, level, filters, selection, setSelection }
     const focus = dependencyFocusIds(filtered, selection);
     return (
         <div className="narrow-portfolio">
+            <div className="narrow-layout-note">
+                Wide layout dragging is unavailable at this width. Saved pins
+                remain active and will be restored when the panel widens.
+            </div>
             {filtered.workstreams.map((workstream) => (
                 <section key={workstream.id} className="narrow-workstream">
                     <button type="button" onClick={() => setSelection({ type: "workstream", workstreamId: workstream.id })}>
@@ -298,13 +342,310 @@ function NarrowPortfolio({ projection, level, filters, selection, setSelection }
     );
 }
 
+function applyPositionPatch(current, patch) {
+    const next = { ...current };
+    for (const id of patch.remove || []) delete next[id];
+    Object.assign(next, patch.upsert || {});
+    return next;
+}
+
+function mergePositionPatches(patches) {
+    let merged = {};
+    for (const patch of patches) {
+        merged = applyPositionPatch(merged, patch);
+    }
+    return {
+        upsert: merged,
+        remove: patches
+            .flatMap((patch) => patch.remove || [])
+            .filter((id) => !Object.hasOwn(merged, id)),
+    };
+}
+
+function usePortfolioPositions(domainKey) {
+    const [positions, setPositions] = useState({});
+    const [status, setStatus] = useState({ state: "loading", savedAt: null, error: null });
+    const [path, setPath] = useState(null);
+    const pendingRef = useRef({ upsert: {}, remove: new Set() });
+    const queueRef = useRef([]);
+    const processingRef = useRef(false);
+    const retryCountRef = useRef(0);
+    const retryTimerRef = useRef(null);
+    const timerRef = useRef(null);
+    const processPromiseRef = useRef(Promise.resolve());
+    const revisionRef = useRef(-1);
+    const generationRef = useRef(0);
+    const authoritativeRef = useRef({
+        revision: -1,
+        generation: 0,
+        positions: {},
+    });
+    const unloadMutationIdRef = useRef(null);
+
+    const hasOutstanding = useCallback(() => (
+        queueRef.current.length > 0
+        || Object.keys(pendingRef.current.upsert).length > 0
+        || pendingRef.current.remove.size > 0
+    ), []);
+
+    const reconcileServer = useCallback((serverPositions) => {
+        const pending = {
+            upsert: pendingRef.current.upsert,
+            remove: [...pendingRef.current.remove],
+        };
+        return applyPositionPatch(
+            serverPositions,
+            mergePositionPatches([...queueRef.current, pending]),
+        );
+    }, []);
+
+    const acceptServerState = useCallback((body, authoritative = false) => {
+        if (
+            !Number.isSafeInteger(body?.revision)
+            || !Number.isSafeInteger(body?.generation)
+            || body.revision < revisionRef.current
+            || body.generation < generationRef.current
+        ) {
+            setPositions(reconcileServer(authoritativeRef.current.positions));
+            return;
+        }
+        if (authoritative || body.generation > generationRef.current) {
+            queueRef.current = [];
+            pendingRef.current = { upsert: {}, remove: new Set() };
+            if (timerRef.current) {
+                clearTimeout(timerRef.current);
+                timerRef.current = null;
+            }
+        }
+        revisionRef.current = body.revision;
+        generationRef.current = body.generation;
+        authoritativeRef.current = {
+            revision: body.revision,
+            generation: body.generation,
+            positions: body.positions || {},
+        };
+        setPath(body.path);
+        setPositions(reconcileServer(body.positions || {}));
+        if (!hasOutstanding()) {
+            setStatus({
+                state: "saved",
+                savedAt: body.savedAt || body.updatedAt,
+                error: null,
+            });
+        }
+    }, [hasOutstanding, reconcileServer]);
+
+    const processQueue = useCallback(() => {
+        if (processingRef.current) return processPromiseRef.current;
+        processingRef.current = true;
+        const operation = (async () => {
+            while (queueRef.current.length > 0) {
+                const payload = queueRef.current[0];
+                if (!Number.isSafeInteger(payload.baseRevision)) {
+                    payload.baseRevision = revisionRef.current;
+                }
+                setStatus((current) => ({ ...current, state: "saving", error: null }));
+                const response = await fetch("/api/portfolio/positions", {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload),
+                });
+                const body = await response.json();
+                if (response.status === 409) {
+                    if (body.conflict === "generation") {
+                        acceptServerState(body, true);
+                    } else {
+                        acceptServerState(body);
+                        payload.baseRevision = body.revision;
+                    }
+                    continue;
+                }
+                if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+                const index = queueRef.current.indexOf(payload);
+                if (index >= 0) queueRef.current.splice(index, 1);
+                retryCountRef.current = 0;
+                acceptServerState(body);
+            }
+        })()
+            .catch((error) => {
+                setStatus({ state: "error", savedAt: null, error: error.message });
+                if (queueRef.current.length > 0 && retryCountRef.current < 3) {
+                    retryCountRef.current += 1;
+                    const delay = 250 * (2 ** (retryCountRef.current - 1));
+                    retryTimerRef.current = setTimeout(() => {
+                        retryTimerRef.current = null;
+                        void processQueue().catch(() => undefined);
+                    }, delay);
+                }
+                throw error;
+            })
+            .finally(() => {
+                processingRef.current = false;
+            });
+        processPromiseRef.current = operation;
+        return operation;
+    }, [acceptServerState]);
+
+    const flush = useCallback(() => {
+        if (timerRef.current) {
+            clearTimeout(timerRef.current);
+            timerRef.current = null;
+        }
+        const pending = pendingRef.current;
+        const payload = {
+            mutationId: crypto.randomUUID(),
+            generation: generationRef.current,
+            baseRevision: null,
+            upsert: pending.upsert,
+            remove: [...pending.remove],
+        };
+        if (!Object.keys(payload.upsert).length && !payload.remove.length) {
+            return processQueue();
+        }
+        pendingRef.current = { upsert: {}, remove: new Set() };
+        queueRef.current.push(payload);
+        return processQueue();
+    }, [processQueue]);
+
+    const queuePatch = useCallback((patch) => {
+        for (const id of patch.remove || []) {
+            delete pendingRef.current.upsert[id];
+            pendingRef.current.remove.add(id);
+        }
+        for (const [id, value] of Object.entries(patch.upsert || {})) {
+            pendingRef.current.remove.delete(id);
+            pendingRef.current.upsert[id] = value;
+        }
+        setPositions((current) => applyPositionPatch(current, patch));
+        setStatus((current) => ({ ...current, state: "pending", error: null }));
+        if (timerRef.current) clearTimeout(timerRef.current);
+        timerRef.current = setTimeout(() => {
+            timerRef.current = null;
+            void flush().catch(() => undefined);
+        }, 700);
+    }, [flush]);
+
+    const resetAll = useCallback(async () => {
+        if (timerRef.current) {
+            clearTimeout(timerRef.current);
+            timerRef.current = null;
+        }
+        pendingRef.current = { upsert: {}, remove: new Set() };
+        queueRef.current = [];
+        try {
+            await processPromiseRef.current.catch(() => undefined);
+            setStatus((current) => ({ ...current, state: "saving", error: null }));
+            const response = await fetch("/api/portfolio/positions", {
+                method: "DELETE",
+            });
+            const body = await response.json();
+            if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+            acceptServerState(body, true);
+        } catch (error) {
+            setStatus({ state: "error", savedAt: null, error: error.message });
+        }
+    }, [acceptServerState]);
+
+    useEffect(() => {
+        if (!domainKey) return undefined;
+        const events = new EventSource("/events");
+        let cancelled = false;
+        const sync = async () => {
+            try {
+                const response = await fetch("/api/portfolio/positions");
+                const body = await response.json();
+                if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+                if (!cancelled) acceptServerState(body);
+            } catch (error) {
+                if (!cancelled) {
+                    setStatus({ state: "error", savedAt: null, error: error.message });
+                }
+            }
+        };
+        events.addEventListener("positions", (event) => {
+            const body = JSON.parse(event.data);
+            acceptServerState(body, Boolean(body.reset));
+        });
+        events.addEventListener("open", () => void sync());
+        void sync();
+        return () => {
+            cancelled = true;
+            events.close();
+        };
+    }, [acceptServerState, domainKey]);
+
+    useEffect(() => {
+        const unload = () => {
+            const pending = {
+                upsert: pendingRef.current.upsert,
+                remove: [...pendingRef.current.remove],
+            };
+            const payload = mergePositionPatches([
+                ...queueRef.current,
+                pending,
+            ]);
+            if (!unloadMutationIdRef.current) {
+                unloadMutationIdRef.current = crypto.randomUUID();
+            }
+            payload.mutationId = unloadMutationIdRef.current;
+            payload.generation = generationRef.current;
+            payload.baseRevision = revisionRef.current;
+            if (!Object.keys(payload.upsert).length && !payload.remove.length) return;
+            const body = JSON.stringify(payload);
+            const blob = new Blob([body], { type: "application/json" });
+            const url = "/api/portfolio/positions?method=patch";
+            if (!navigator.sendBeacon?.(url, blob)) {
+                void fetch(url, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body,
+                    keepalive: true,
+                });
+            }
+        };
+        addEventListener("beforeunload", unload);
+        addEventListener("pagehide", unload);
+        return () => {
+            removeEventListener("beforeunload", unload);
+            removeEventListener("pagehide", unload);
+            if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+        };
+    }, []);
+
+    return { positions, status, path, queuePatch, flush, resetAll };
+}
+
 function App() {
     const [projection, setProjection] = useState(null);
     const [selection, setSelection] = useState(PROJECT_SELECTION);
     const [level, setLevel] = useState("summary");
     const [filters, setFilters] = useState({ attentionOnly: false, dependencyState: "all" });
+    const [selectedNodeIds, setSelectedNodeIds] = useState([]);
     const [error, setError] = useState(null);
     const narrow = useNarrowPanel();
+    const positionDomainKey = projection
+        ? `${projection.artifact.repositoryKey}:${projection.portfolio.project.id}:${projection.portfolio.id}`
+        : null;
+    const positionState = usePortfolioPositions(positionDomainKey);
+    const exactPinnedIds = Object.keys(positionState.positions).filter((id) =>
+        id.startsWith("wave:")
+    );
+    const resetSelectedPositions = useCallback(() => {
+        const remove = selectedNodeIds.filter((id) => id.startsWith("wave:"));
+        if (!remove.length || !projection) return;
+        const remaining = new Set(exactPinnedIds.filter((id) => !remove.includes(id)));
+        const impactedWorkstreams = new Set(remove.map((id) => id.split(":")[1]));
+        for (const workstreamId of impactedWorkstreams) {
+            const hasRemaining = [...remaining].some((id) =>
+                id.startsWith(`wave:${workstreamId}:`)
+            );
+            if (!hasRemaining) remove.push(workstreamAnchorId(workstreamId));
+        }
+        positionState.queuePatch({ upsert: {}, remove });
+    }, [selectedNodeIds, projection, exactPinnedIds, positionState]);
+    const resetAllPositions = useCallback(() => {
+        void positionState.resetAll();
+    }, [positionState]);
     const load = useCallback(async (refresh = false) => {
         try {
             const response = await fetch(refresh ? "/api/portfolio/refresh" : "/api/portfolio/projection", {
@@ -346,6 +687,11 @@ function App() {
                         <option value="risk">At-risk dependencies</option>
                         <option value="validated">Validated dependencies</option>
                     </select>
+                    <span className={`position-status position-status--${positionState.status.state}`} title={positionState.status.error || positionState.path || ""}>
+                        {positionState.status.state} | {exactPinnedIds.length} pinned
+                    </span>
+                    <button type="button" disabled={narrow || !selectedNodeIds.some((id) => id.startsWith("wave:"))} onClick={resetSelectedPositions}>Unpin selected</button>
+                    <button type="button" disabled={narrow || !Object.keys(positionState.positions).length} onClick={resetAllPositions}>Reset layout</button>
                     <button type="button" onClick={() => void load(true)}>Refresh</button>
                 </div>
             </header>
@@ -366,7 +712,17 @@ function App() {
                             <NarrowPortfolio projection={projection} level={level} filters={filters} selection={selection} setSelection={setSelection} />
                         ) : (
                             <ReactFlowProvider>
-                                <PortfolioFlow projection={projection} level={level} filters={filters} selection={selection} setSelection={setSelection} />
+                                <PortfolioFlow
+                                    projection={projection}
+                                    level={level}
+                                    filters={filters}
+                                    selection={selection}
+                                    setSelection={setSelection}
+                                    positions={positionState.positions}
+                                    onPositionPatch={positionState.queuePatch}
+                                    onSelectionIds={setSelectedNodeIds}
+                                    positionsReady={positionState.status.state !== "loading"}
+                                />
                             </ReactFlowProvider>
                         )}
                     </section>

@@ -43,6 +43,17 @@
       "repoIds": ["streamliner"],
       "tracker": {"type": "local", "path": "tasks/artifact-consistency-gate.md"},
       "dependsOn": ["shared-ref-writer"]
+    },
+    {
+      "id": "layout-reconciliation-proof",
+      "type": "task",
+      "title": "Layout reconciliation proof",
+      "summary": "Add a stable checkpoint node after pins exist and verify it inherits the workstream anchor.",
+      "status": "planned",
+      "attention": "watch",
+      "repoIds": ["streamliner"],
+      "tracker": {"type": "local", "path": "tasks/layout-reconciliation-proof.md"},
+      "dependsOn": ["artifact-consistency-gate"]
     }
   ],
   "checkpoints": []

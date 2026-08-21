@@ -10,6 +10,92 @@ export function formatPortfolioLabel(value) {
     return String(value || "unknown").replaceAll("_", " ").replaceAll("-", " ");
 }
 
+export function wavePositionId(workstreamId, waveId) {
+    return `wave:${workstreamId}:${waveId}`;
+}
+
+export function workstreamAnchorId(workstreamId) {
+    return `ws:${workstreamId}`;
+}
+
+export function applyPortfolioPositions(nodes, projection, positions = {}) {
+    const next = nodes.map((node) => ({
+        ...node,
+        position: { ...node.position },
+        data: { ...node.data, pinned: Boolean(positions[node.id]) },
+    }));
+    const byId = new Map(next.map((node) => [node.id, node]));
+    for (const workstream of projection.workstreams) {
+        const waveNodes = workstream.waves
+            .map((wave) => byId.get(wavePositionId(workstream.id, wave.id)))
+            .filter(Boolean);
+        if (waveNodes.length === 0) continue;
+        const baseX = Math.min(...waveNodes.map((node) => node.position.x));
+        const baseY = Math.min(...waveNodes.map((node) => node.position.y));
+        const anchor = positions[workstreamAnchorId(workstream.id)];
+        if (anchor) {
+            const dx = anchor.x - baseX;
+            const dy = anchor.y - baseY;
+            const header = byId.get(`header:${workstream.id}`);
+            for (const node of [header, ...waveNodes].filter(Boolean)) {
+                node.position = {
+                    x: node.position.x + dx,
+                    y: node.position.y + dy,
+                };
+            }
+        }
+        for (const wave of workstream.waves) {
+            const id = wavePositionId(workstream.id, wave.id);
+            const pin = positions[id];
+            const node = byId.get(id);
+            if (pin && node) {
+                node.position = { x: pin.x, y: pin.y };
+                node.data.pinned = true;
+            }
+        }
+    }
+    return next;
+}
+
+export function positionPatchForDraggedNodes(draggedNodes, currentNodes, projection) {
+    const waveToWorkstream = new Map();
+    for (const workstream of projection.workstreams) {
+        for (const wave of workstream.waves) {
+            waveToWorkstream.set(wavePositionId(workstream.id, wave.id), workstream.id);
+        }
+    }
+    const upsert = {};
+    const impacted = new Set();
+    const draggedIds = new Set();
+    for (const node of draggedNodes) {
+        const workstreamId = waveToWorkstream.get(node.id);
+        if (!workstreamId) continue;
+        impacted.add(workstreamId);
+        draggedIds.add(node.id);
+        upsert[node.id] = { x: node.position.x, y: node.position.y };
+    }
+    const currentById = new Map(currentNodes.map((node) => [node.id, node]));
+    for (const workstreamId of impacted) {
+        const workstream = projection.workstreams.find((item) => item.id === workstreamId);
+        const allWaveIds = workstream?.waves.map((wave) =>
+            wavePositionId(workstreamId, wave.id)
+        ) || [];
+        if (!allWaveIds.length || !allWaveIds.every((id) => draggedIds.has(id))) {
+            continue;
+        }
+        const positions = workstream?.waves
+            .map((wave) => currentById.get(wavePositionId(workstreamId, wave.id))?.position)
+            .filter(Boolean);
+        if (positions?.length) {
+            upsert[workstreamAnchorId(workstreamId)] = {
+                x: Math.min(...positions.map((position) => position.x)),
+                y: Math.min(...positions.map((position) => position.y)),
+            };
+        }
+    }
+    return { upsert, remove: [] };
+}
+
 export function filterPortfolio(projection, filters) {
     const workstreams = projection.workstreams.filter((workstream) =>
         !filters.attentionOnly || workstream.attention === "focus"
@@ -108,7 +194,7 @@ export function portfolioToFlow(projection, options) {
                 width: COLUMN_WIDTH,
                 height,
                 style: { width: COLUMN_WIDTH, height },
-                draggable: false,
+                draggable: true,
                 selectable: true,
                 selected: ["wave", "task"].includes(options.selection?.type)
                     && options.selection.workstreamId === workstream.id
@@ -167,5 +253,16 @@ export function portfolioToFlow(projection, options) {
             data: { dependency },
         });
     }
-    return { nodes, edges, filtered, focus, wavePositions };
+    const positionedNodes = applyPortfolioPositions(
+        nodes,
+        filtered,
+        options.positions,
+    );
+    return {
+        nodes: positionedNodes,
+        edges,
+        filtered,
+        focus,
+        wavePositions,
+    };
 }

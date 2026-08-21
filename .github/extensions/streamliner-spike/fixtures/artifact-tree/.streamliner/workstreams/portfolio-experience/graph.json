@@ -43,6 +43,17 @@
       "repoIds": ["streamliner"],
       "tracker": {"type": "local", "path": "tasks/portfolio-validation-gate.md"},
       "dependsOn": ["portfolio-canvas"]
+    },
+    {
+      "id": "portfolio-layout-publish",
+      "type": "task",
+      "title": "Publish shared layout baseline",
+      "summary": "Design an explicit reviewed operation that can promote selected local pins into shared artifact state.",
+      "status": "planned",
+      "attention": "watch",
+      "repoIds": ["streamliner"],
+      "tracker": {"type": "local", "path": "tasks/portfolio-layout-publish.md"},
+      "dependsOn": ["portfolio-validation-gate"]
     }
   ],
   "checkpoints": []

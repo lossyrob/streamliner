@@ -10,10 +10,15 @@ import { buildPortfolioProjection } from "./lib/portfolio-projection.mjs";
 import { createCanvasServer } from "./lib/renderer.mjs";
 import { RuntimeStore } from "./lib/runtime-store.mjs";
 import { PORTFOLIO_CANVAS_ASSETS } from "./lib/ui-assets.mjs";
+import {
+    PortfolioPositionStore,
+    portfolioPositionDomain,
+} from "./lib/portfolio-position-store.mjs";
 
 const DEFAULT_WORKSTREAM_PATH = ".streamliner/workstreams/app-native-spike";
 const DEFAULT_PORTFOLIO_PATH = ".streamliner/portfolio.json";
 const store = new RuntimeStore();
+const positionStore = new PortfolioPositionStore();
 const canvasInstances = new Map();
 
 function repoPath(input) {
@@ -40,7 +45,45 @@ function requireCanvasInstance(instanceId) {
             `Canvas instance ${instanceId} is not open.`,
         );
     }
+
     return entry;
+}
+
+function positionResponse(result) {
+    const document = result.document;
+    return {
+        path: result.path,
+        schemaVersion: document.schemaVersion,
+        domain: document.domain,
+        revision: document.revision,
+        generation: document.generation,
+        updatedAt: document.updatedAt,
+        positions: document.positions,
+        pinnedCount: Object.keys(document.positions).filter((id) => id.startsWith("wave:")).length,
+        entryCount: Object.keys(document.positions).length,
+        ...(result.savedAt ? {
+            savedAt: result.savedAt,
+            upserts: result.upserts,
+            removes: result.removes,
+            reset: Boolean(result.reset),
+            mutationId: result.mutationId,
+            duplicate: Boolean(result.duplicate),
+        } : {}),
+    };
+}
+
+function samePositionDomain(left, right) {
+    return left?.repositoryKey === right?.repositoryKey
+        && left?.projectId === right?.projectId
+        && left?.portfolioId === right?.portfolioId;
+}
+
+function broadcastPositionDomain(domain, result) {
+    for (const entry of canvasInstances.values()) {
+        if (samePositionDomain(entry.positionDomain, domain)) {
+            entry.broadcastEvent("positions", result);
+        }
+    }
 }
 
 const canvas = createCanvas({
@@ -157,6 +200,24 @@ const portfolioCanvas = createCanvas({
                 return projection;
             },
         },
+        {
+            name: "get_portfolio_positions",
+            description: "Read the local durable position overlay for this portfolio.",
+            handler: async (ctx) => {
+                const entry = requireCanvasInstance(ctx.instanceId);
+                return positionResponse(positionStore.read(entry.positionDomain));
+            },
+        },
+        {
+            name: "reset_portfolio_positions",
+            description: "Remove every local pinned position for this portfolio and restore auto-layout.",
+            handler: async (ctx) => {
+                const entry = requireCanvasInstance(ctx.instanceId);
+                const result = positionResponse(positionStore.reset(entry.positionDomain));
+                broadcastPositionDomain(entry.positionDomain, result);
+                return result;
+            },
+        },
     ],
     open: async (ctx) => {
         let entry = canvasInstances.get(ctx.instanceId);
@@ -167,14 +228,38 @@ const portfolioCanvas = createCanvas({
                 portfolioPath: portfolioPath(ctx.input),
             };
             const getProjection = () => buildPortfolioProjection({ ...config, store });
-            getProjection();
+            const initialProjection = getProjection();
+            const positionDomain = portfolioPositionDomain(initialProjection);
+            const positionsController = {
+                get: () => positionResponse(positionStore.read(positionDomain)),
+                patch: (patch) => {
+                    const result = positionResponse(
+                        positionStore.patch(positionDomain, patch),
+                    );
+                    broadcastPositionDomain(positionDomain, result);
+                    return result;
+                },
+                reset: () => {
+                    const result = positionResponse(positionStore.reset(positionDomain));
+                    broadcastPositionDomain(positionDomain, result);
+                    return result;
+                },
+            };
             const server = await createCanvasServer({
                 getProjection,
                 assets: PORTFOLIO_CANVAS_ASSETS,
                 projectionRoute: "/api/portfolio/projection",
                 refreshRoute: "/api/portfolio/refresh",
+                positionsRoute: "/api/portfolio/positions",
+                positionsController,
             });
-            entry = { ...server, config, getProjection };
+            entry = {
+                ...server,
+                config,
+                getProjection,
+                positionDomain,
+                positionsController,
+            };
             canvasInstances.set(ctx.instanceId, entry);
         }
         const projection = entry.getProjection();

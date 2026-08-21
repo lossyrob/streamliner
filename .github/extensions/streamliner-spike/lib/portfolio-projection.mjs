@@ -5,6 +5,7 @@ import {
     resolveArtifactRevision,
 } from "./git-artifact-provider.mjs";
 import { buildProjectionFromSnapshot } from "./projection.mjs";
+import { isPortfolioDomainId } from "./portfolio-position-store.mjs";
 
 function parseManifest(text, path) {
     let manifest;
@@ -16,11 +17,38 @@ function parseManifest(text, path) {
     if (
         manifest?.schemaVersion !== 1
         || typeof manifest.id !== "string"
+        || !isPortfolioDomainId(manifest.id)
+        || !isPortfolioDomainId(manifest.project?.id)
         || !Array.isArray(manifest.workstreams)
         || manifest.workstreams.length < 3
         || !Array.isArray(manifest.dependencies)
     ) {
         throw new Error(`${path} is not a schemaVersion 1 portfolio manifest.`);
+    }
+    const workstreamIds = new Set();
+    for (const workstream of manifest.workstreams) {
+        if (
+            !isPortfolioDomainId(workstream?.id)
+            || workstreamIds.has(workstream.id)
+            || !Array.isArray(workstream.waves)
+        ) {
+            throw new Error(`${path} contains an invalid portfolio workstream.`);
+        }
+        workstreamIds.add(workstream.id);
+        const waveIds = new Set();
+        const checkpointIds = new Set();
+        for (const wave of workstream.waves) {
+            if (
+                !isPortfolioDomainId(wave?.id)
+                || waveIds.has(wave.id)
+                || !isPortfolioDomainId(wave.publicCheckpoint?.id)
+                || checkpointIds.has(wave.publicCheckpoint.id)
+            ) {
+                throw new Error(`${path} contains an invalid public checkpoint.`);
+            }
+            waveIds.add(wave.id);
+            checkpointIds.add(wave.publicCheckpoint.id);
+        }
     }
     return manifest;
 }

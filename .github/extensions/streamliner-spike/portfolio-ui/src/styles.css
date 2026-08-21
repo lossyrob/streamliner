@@ -33,6 +33,7 @@ code { font-family: var(--font-mono, Consolas, monospace); font-size: var(--text
 .eyebrow { color: var(--muted); font-size: var(--text-caption, 12px); font-weight: var(--font-weight-semibold, 600); letter-spacing: .07em; text-transform: uppercase; }
 .toolbar-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
 .toolbar-actions > button, .toolbar-actions select { min-height: 34px; padding: 5px 10px; }
+.toolbar-actions > button:disabled { cursor: default; opacity: .45; }
 .toolbar-actions label { display: flex; align-items: center; gap: 5px; color: var(--muted); }
 .segmented { display: flex; padding: 2px; border: 1px solid var(--border); border-radius: 10px; }
 .segmented button { min-height: 28px; padding: 3px 9px; border: 0; }
@@ -65,6 +66,7 @@ code { font-family: var(--font-mono, Consolas, monospace); font-size: var(--text
 .portfolio-wave--completed { border-color: var(--accent); }
 .portfolio-wave--in-progress { border-style: solid; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-muted) 70%, transparent); }
 .portfolio-wave--blocked { border-color: var(--danger); }
+.portfolio-wave--pinned { box-shadow: inset 0 0 0 1px var(--accent), 0 6px 20px color-mix(in srgb, var(--text) 9%, transparent); }
 .portfolio-wave header { display: flex; align-items: flex-start; gap: 9px; }
 .portfolio-wave header > div { min-width: 0; flex: 1; }
 .portfolio-wave h3 { font-size: 15px; line-height: 1.2; }
@@ -74,6 +76,7 @@ code { font-family: var(--font-mono, Consolas, monospace); font-size: var(--text
 .availability--proposed, .muted-pill { background: color-mix(in srgb, var(--muted) 12%, transparent); color: var(--muted); }
 .availability--branch-local, .availability--preview { background: var(--danger-muted); color: var(--danger); }
 .wave-meta { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; }
+.pin-indicator { width: fit-content; padding: 1px 6px; border-radius: 999px; background: var(--accent-muted); color: var(--accent); font-size: 10px; font-weight: 600; }
 .wave-tasks { display: grid; gap: 6px; margin-top: 8px; }
 .task-row { min-height: 64px; padding: 8px 9px; display: flex; align-items: center; justify-content: space-between; gap: 8px; text-align: left; }
 .task-row > span:first-child { display: grid; min-width: 0; }
@@ -98,7 +101,13 @@ code { font-family: var(--font-mono, Consolas, monospace); font-size: var(--text
 .overview-grid span { color: var(--muted); font-size: 11px; }
 .portfolio-loading, .portfolio-error { padding: 20px; color: var(--muted); }
 .portfolio-error { color: var(--danger); background: var(--danger-muted); }
+.position-status { padding: 3px 8px; border-radius: 999px; background: color-mix(in srgb, var(--muted) 12%, transparent); color: var(--muted); font-size: 11px; white-space: nowrap; }
+.position-status--pending { background: var(--danger-muted); color: var(--danger); }
+.position-status--saving { background: var(--accent-muted); color: var(--accent); }
+.position-status--saved { background: var(--accent-muted); color: var(--accent); }
+.position-status--error { background: var(--danger-muted); color: var(--danger); }
 .narrow-portfolio { height: 100%; overflow-y: auto; padding: 12px; display: grid; grid-auto-rows: max-content; align-content: start; gap: 12px; }
+.narrow-layout-note { padding: 9px 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--accent-muted); color: var(--accent); font-size: 12px; }
 .narrow-workstream, .narrow-dependencies { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); overflow: hidden; }
 .narrow-workstream > button { width: 100%; padding: 11px 12px; display: grid; gap: 2px; border: 0; border-radius: 0; text-align: left; }
 .narrow-workstream small, .narrow-wave small, .narrow-task small { color: var(--muted); }

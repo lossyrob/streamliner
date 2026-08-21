@@ -32,6 +32,20 @@ function sendJson(response, statusCode, value) {
     response.end(`${JSON.stringify(value)}\n`);
 }
 
+async function readJsonRequest(request) {
+    const chunks = [];
+    let total = 0;
+    for await (const chunk of request) {
+        total += chunk.length;
+        if (total > 256 * 1024) {
+            throw new Error("Request body exceeds 256 KiB.");
+        }
+        chunks.push(chunk);
+    }
+    const text = Buffer.concat(chunks).toString("utf8");
+    return text ? JSON.parse(text) : {};
+}
+
 function assetPathForRoute(route, assets) {
     if (route === "/") {
         return resolve(assets.root, "index.html");
@@ -101,17 +115,21 @@ export async function createCanvasServer({
     assets = WORKSTREAM_CANVAS_ASSETS,
     projectionRoute = "/api/projection",
     refreshRoute = "/api/refresh",
+    positionsRoute = null,
+    positionsController = null,
 }) {
     assertCanvasAssetsAvailable(assets);
     const eventStreams = new Set();
-    const broadcast = (projection) => {
-        const payload = `event: projection\ndata: ${JSON.stringify(projection)}\n\n`;
+    const broadcastEvent = (eventName, value) => {
+        const payload = `event: ${eventName}\ndata: ${JSON.stringify(value)}\n\n`;
         for (const response of eventStreams) {
             response.write(payload);
         }
     };
+    const broadcast = (projection) => broadcastEvent("projection", projection);
     const server = createServer((request, response) => {
-        const route = new URL(request.url || "/", "http://127.0.0.1").pathname;
+        const requestUrl = new URL(request.url || "/", "http://127.0.0.1");
+        const route = requestUrl.pathname;
         if (request.method === "GET" && route === "/health") {
             sendJson(response, 200, {
                 ok: true,
@@ -146,6 +164,46 @@ export async function createCanvasServer({
             }
             return;
         }
+        if (positionsRoute && positionsController && route === positionsRoute) {
+            if (request.method === "GET") {
+                try {
+                    sendJson(response, 200, positionsController.get());
+                } catch (error) {
+                    sendJson(response, 500, { error: error.message });
+                }
+                return;
+            }
+            if (
+                request.method === "PATCH"
+                || (request.method === "POST" && requestUrl.searchParams.get("method") === "patch")
+            ) {
+                void (async () => {
+                    try {
+                        const result = positionsController.patch(
+                            await readJsonRequest(request),
+                        );
+                        broadcastEvent("positions", result);
+                        sendJson(response, 200, result);
+                    } catch (error) {
+                        sendJson(response, error.statusCode || 400, {
+                            error: error.message,
+                            ...(error.details || {}),
+                        });
+                    }
+                })();
+                return;
+            }
+            if (request.method === "DELETE" && typeof positionsController.reset === "function") {
+                try {
+                    const result = positionsController.reset();
+                    broadcastEvent("positions", result);
+                    sendJson(response, 200, result);
+                } catch (error) {
+                    sendJson(response, 500, { error: error.message });
+                }
+                return;
+            }
+        }
         if (request.method === "GET") {
             const assetPath = assetPathForRoute(route, assets);
             if (assetPath) {
@@ -166,6 +224,7 @@ export async function createCanvasServer({
     return {
         url: `http://127.0.0.1:${address.port}/`,
         broadcast,
+        broadcastEvent,
         close: () => new Promise((resolve, reject) => {
             for (const response of eventStreams) {
                 response.end();

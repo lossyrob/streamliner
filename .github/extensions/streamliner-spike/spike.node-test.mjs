@@ -5,6 +5,7 @@ import {
     existsSync,
     mkdtempSync,
     mkdirSync,
+    readdirSync,
     readFileSync,
     rmSync,
     writeFileSync,
@@ -25,6 +26,11 @@ import { buildPortfolioProjection } from "./lib/portfolio-projection.mjs";
 import { createCanvasServer } from "./lib/renderer.mjs";
 import { RuntimeStore } from "./lib/runtime-store.mjs";
 import {
+    PortfolioPositionStore,
+    portfolioPositionDomain,
+    portfolioPositionDomainKey,
+} from "./lib/portfolio-position-store.mjs";
+import {
     CANVAS_ASSET_ROUTE,
     CANVAS_ASSET_VERSION,
     PORTFOLIO_CANVAS_ASSETS,
@@ -33,7 +39,9 @@ import { projectionToFlow } from "./ui/src/projection-adapter.mjs";
 import {
     dependencyFocusIds,
     filterPortfolio,
+    applyPortfolioPositions,
     portfolioToFlow,
+    positionPatchForDraggedNodes,
 } from "./portfolio-ui/src/portfolio-adapter.mjs";
 
 const extensionRoot = dirname(fileURLToPath(import.meta.url));
@@ -554,3 +562,257 @@ test("renderer serves the portfolio bundle on portfolio-specific API routes", as
         404,
     );
 });
+
+test("portfolio positions use stable domain identity independent of revision", () => {
+    const first = portfolioPositionDomain({
+        artifact: { repositoryKey: "1234567890abcdef1234", revision: "a".repeat(40) },
+        portfolio: { id: "portfolio", project: { id: "project" } },
+    });
+    const second = portfolioPositionDomain({
+        artifact: { repositoryKey: "1234567890abcdef1234", revision: "b".repeat(40) },
+        portfolio: { id: "portfolio", project: { id: "project" } },
+    });
+    assert.deepEqual(first, second);
+    assert.equal(portfolioPositionDomainKey(first), portfolioPositionDomainKey(second));
+});
+
+test("portfolio position store validates schema and merges concurrent partial patches", () => {
+    const root = mkdtempSync(join(tmpdir(), "streamliner-portfolio-positions-"));
+    createdRoots.push(root);
+    const domain = {
+        repositoryKey: "1234567890abcdef1234",
+        projectId: "project",
+        portfolioId: "portfolio",
+    };
+    const first = new PortfolioPositionStore({ positionsRoot: root });
+    const second = new PortfolioPositionStore({ positionsRoot: root });
+    const firstResult = first.patch(domain, {
+        mutationId: "mutation-one",
+        generation: 0,
+        baseRevision: 0,
+        upsert: { "wave:one:first": { x: 10, y: 20 } },
+    });
+    assert.equal(firstResult.document.revision, 1);
+    assert.throws(() => second.patch(domain, {
+        mutationId: "mutation-two",
+        generation: 0,
+        baseRevision: 0,
+        upsert: { "wave:two:first": { x: 30, y: 40 } },
+    }), /revision 0 is stale/);
+    const secondResult = second.patch(domain, {
+        mutationId: "mutation-two",
+        generation: 0,
+        baseRevision: 1,
+        upsert: { "wave:two:first": { x: 30, y: 40 } },
+    });
+    assert.equal(secondResult.document.revision, 2);
+    const duplicate = first.patch(domain, {
+        mutationId: "mutation-one",
+        generation: 0,
+        baseRevision: 0,
+        upsert: { "wave:one:first": { x: -100, y: -100 } },
+    });
+    assert.equal(duplicate.duplicate, true);
+    assert.deepEqual(duplicate.document.positions["wave:one:first"].x, 10);
+    first.patch(domain, {
+        mutationId: "mutation-three",
+        generation: 0,
+        baseRevision: 2,
+        upsert: { "ws:one": { x: 5, y: 15 } },
+        remove: ["wave:one:first"],
+    });
+    const result = second.read(domain);
+    assert.deepEqual(Object.keys(result.document.positions).sort(), [
+        "wave:two:first",
+        "ws:one",
+    ]);
+    assert.equal(result.document.schemaVersion, 1);
+    assert.equal(
+        readdirSync(join(root, domain.repositoryKey)).some((name) => name.endsWith(".tmp")),
+        false,
+    );
+    assert.throws(
+        () => first.patch(domain, {
+            mutationId: "mutation-bad-id",
+            generation: 0,
+            baseRevision: 3,
+            upsert: { "../escape": { x: 1, y: 2 } },
+        }),
+        /Invalid portfolio position id/,
+    );
+    assert.throws(
+        () => first.patch(domain, {
+            mutationId: "mutation-infinite",
+            generation: 0,
+            baseRevision: 3,
+            upsert: { "wave:one:first": { x: Infinity, y: 2 } },
+        }),
+        /finite/,
+    );
+    const resetResult = second.reset(domain);
+    assert.equal(resetResult.count, 0);
+    assert.equal(resetResult.document.generation, 1);
+    assert.deepEqual(first.read(domain).document.positions, {});
+    assert.throws(
+        () => first.patch(domain, {
+            mutationId: "mutation-stale-generation",
+            generation: 0,
+            baseRevision: resetResult.document.revision,
+            upsert: { "wave:one:first": { x: 90, y: 100 } },
+        }),
+        /stale/,
+    );
+    assert.deepEqual(first.read(domain).document.positions, {});
+    writeFileSync(first.pathFor(domain), JSON.stringify({
+        schemaVersion: 2,
+        domain,
+        positions: {},
+    }));
+    assert.throws(() => first.read(domain), /Unsupported portfolio positions document/);
+});
+
+test("portfolio anchor translation precedes exact wave pins and survives added waves", () => {
+    const projection = {
+        workstreams: [{
+            id: "one",
+            waves: [
+                { id: "first" },
+                { id: "second" },
+                { id: "added" },
+            ],
+        }],
+    };
+    const nodes = [
+        { id: "header:one", position: { x: 40, y: 20 }, data: {} },
+        { id: "wave:one:first", position: { x: 40, y: 160 }, data: {} },
+        { id: "wave:one:second", position: { x: 40, y: 320 }, data: {} },
+        { id: "wave:one:added", position: { x: 40, y: 480 }, data: {} },
+    ];
+    const positioned = applyPortfolioPositions(nodes, projection, {
+        "ws:one": { x: 500, y: 600 },
+        "wave:one:second": { x: 900, y: 950 },
+    });
+    const byId = new Map(positioned.map((node) => [node.id, node.position]));
+    assert.deepEqual(byId.get("wave:one:first"), { x: 500, y: 600 });
+    assert.deepEqual(byId.get("wave:one:second"), { x: 900, y: 950 });
+    assert.deepEqual(byId.get("wave:one:added"), { x: 500, y: 920 });
+});
+
+test("drag patches exact wave pins and workstream anchors while ignoring headers", () => {
+    const projection = {
+        workstreams: [{
+            id: "one",
+            waves: [{ id: "first" }, { id: "second" }],
+        }],
+    };
+    const nodes = [
+        { id: "header:one", position: { x: 0, y: 0 } },
+        { id: "wave:one:first", position: { x: 100, y: 200 } },
+        { id: "wave:one:second", position: { x: 100, y: 400 } },
+    ];
+    const patch = positionPatchForDraggedNodes(
+        [nodes[0], nodes[1]],
+        nodes,
+        projection,
+    );
+    assert.deepEqual(Object.keys(patch.upsert), ["wave:one:first"]);
+    const workstreamPatch = positionPatchForDraggedNodes(
+        [nodes[1], nodes[2]],
+        nodes,
+        projection,
+    );
+    assert.deepEqual(Object.keys(workstreamPatch.upsert).sort(), [
+        "wave:one:first",
+        "wave:one:second",
+        "ws:one",
+    ]);
+    assert.deepEqual(workstreamPatch.upsert["ws:one"], { x: 100, y: 200 });
+});
+
+test("renderer exposes merge-safe portfolio position routes including beacon POST", async (context) => {
+    let positions = {};
+    let revision = 0;
+    let generation = 0;
+    const server = await createCanvasServer({
+        getProjection: () => ({ portfolio: { id: "portfolio" } }),
+        assets: PORTFOLIO_CANVAS_ASSETS,
+        projectionRoute: "/api/portfolio/projection",
+        refreshRoute: "/api/portfolio/refresh",
+        positionsRoute: "/api/portfolio/positions",
+        positionsController: {
+            get: () => ({ positions, schemaVersion: 1, revision, generation }),
+            patch: (patch) => {
+                positions = applyPositionPatchForTest(positions, patch);
+                revision += 1;
+                return { positions, schemaVersion: 1, revision, generation, savedAt: "now" };
+            },
+            reset: () => {
+                positions = {};
+                revision += 1;
+                generation += 1;
+                return {
+                    positions,
+                    schemaVersion: 1,
+                    revision,
+                    generation,
+                    savedAt: "reset",
+                    reset: true,
+                };
+            },
+        },
+    });
+    context.after(() => server.close());
+    const patchResponse = await fetch(new URL("/api/portfolio/positions", server.url), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            mutationId: "renderer-mutation-one",
+            generation: 0,
+            baseRevision: 0,
+            upsert: { "wave:one:first": { x: 1, y: 2 } },
+        }),
+    });
+    assert.equal(patchResponse.status, 200);
+    const beaconResponse = await fetch(new URL(
+        "/api/portfolio/positions?method=patch",
+        server.url,
+    ), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            mutationId: "renderer-mutation-two",
+            generation: 0,
+            baseRevision: 1,
+            remove: ["wave:one:first"],
+        }),
+    });
+    assert.equal(beaconResponse.status, 200);
+    assert.deepEqual(
+        (await (await fetch(new URL("/api/portfolio/positions", server.url))).json()).positions,
+        {},
+    );
+    await fetch(new URL("/api/portfolio/positions", server.url), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            mutationId: "renderer-mutation-three",
+            generation: 0,
+            baseRevision: 2,
+            upsert: { "wave:two:first": { x: 3, y: 4 } },
+        }),
+    });
+    assert.equal(
+        (await fetch(new URL("/api/portfolio/positions", server.url), {
+            method: "DELETE",
+        })).status,
+        200,
+    );
+    assert.deepEqual(positions, {});
+});
+
+function applyPositionPatchForTest(current, patch) {
+    const next = { ...current };
+    for (const id of patch.remove || []) delete next[id];
+    Object.assign(next, patch.upsert || {});
+    return next;
+}

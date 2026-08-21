@@ -45,6 +45,20 @@
             "availability": "proposed",
             "export": "shared ref lifecycle"
           }
+        },
+        {
+          "id": "layout-reconciliation",
+          "index": 2,
+          "title": "Layout reconciliation",
+          "summary": "Prove newly reconciled checkpoint nodes inherit the saved workstream anchor.",
+          "nodeIds": ["layout-reconciliation-proof"],
+          "publicCheckpoint": {
+            "id": "layout-reconciliation-proof",
+            "title": "Anchor reconciliation proof",
+            "status": "planned",
+            "availability": "proposed",
+            "export": "anchor reconciliation evidence"
+          }
         }
       ]
     },
@@ -134,6 +148,20 @@
             "status": "planned",
             "availability": "proposed",
             "export": "portfolio canvas"
+          }
+        },
+        {
+          "id": "shared-layout-baseline",
+          "index": 2,
+          "title": "Shared layout baseline",
+          "summary": "Define an explicit future promotion path from local operator pins to a reviewed shared layout.",
+          "nodeIds": ["portfolio-layout-publish"],
+          "publicCheckpoint": {
+            "id": "shared-layout-contract",
+            "title": "Shared layout publication contract",
+            "status": "planned",
+            "availability": "proposed",
+            "export": "shared layout baseline"
           }
         }
       ]
