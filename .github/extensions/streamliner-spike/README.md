@@ -372,6 +372,60 @@ to 2, and B's queued generation-1 mutation then received a generation conflict;
 the final overlay remained empty. This covers lost-response retry, concurrent
 rebase, and cross-instance reset without last-writer resurrection.
 
+### Final PAW and plugin-distribution lifecycle
+
+The P1/P4 follow-up completed on 2026-08-24:
+
+| Check | Result |
+|---|---|
+| Integrated candidate | `02e8fbcd74310c6b9ff8d88b4b5df3d5d38d9a6e` |
+| Draft evaluation PR | [#141](https://github.com/lossyrob/streamliner/pull/141) |
+| Exact artifact revision | `238ebc9fc48c6e628986e6a934dbb1df7a99d9ff` |
+| Artifact digest | `33d9d79f1319722839e557841130264056fd13e5e69c92fc94ac66f109251e6a` |
+| PAW implementation child | `86e616e2-c5d8-4e86-9c0d-51cf3aa98676` on `lossyrob-super-train` |
+| PAW launch/context | `launch-2171b54e-8925-409e-ab57-9647b9ab864f` / `ctx-d6f9e9e0-a868-498b-b32d-718a97747d0c` |
+| PAW completion | `2026-08-24T21:03:02.431Z` |
+| Final reviewer sessions | `59234418-e47e-497d-8ab7-553891080e9f`, `577cd345-d43c-45e1-b24b-369c152f9dc4` |
+| Fresh plugin-only parent | `4d35d20a-6c66-4d68-acb3-46914e97c8af` on `lossyrob-fresh-plugin-runtime-proof` |
+| Live plugin child | `db56d1ff-98cc-4fcd-8168-3321996740c4` on `lossyrob-ideal-couscous` |
+| Authoritative launch/context | `launch-f3845776-38c9-46c9-95b2-aff1c4cad27f` / `ctx-8dba3688-2f97-4930-9980-674ceb61edb7` |
+| Authoritative completion | `2026-08-24T21:07:55.870Z` |
+| Final package digest | `889f0e845074126829322be845cd7d88dbb11ee5f8b7c150dfc62f6d0b18e067` across 26 files |
+
+The PAW child claimed and initialized the exact revision in its App-owned
+worktree, implemented the plugin package, incorporated independent review, and
+completed its original launch only after the implementation was integrated and
+draft PR #141 existed. A newer P4 launch for the same node correctly remained
+authoritative in the latest-binding projection. Its original plugin-created
+child then completed that launch in place. The final projection shows
+`plugin-distribution-validation` as `runtime-completed` and
+`plugin-distribution-gate` as `gate-ready` with dependencies complete.
+
+A fresh main-based App session had no project-scoped spike extension and loaded
+`plugin:streamliner-app-native-spike:streamliner-spike` from the privately
+installed package. The package exposed no hooks and required no Streamliner web
+server. Both Canvases read the exact artifact revision; the workstream projected
+six nodes and two gates, and the portfolio projected three workstreams, ten
+waves, and ten checkpoints. Supported compatibility returned no diagnostics,
+while one six-component incompatible probe returned exactly six structured
+diagnostics. The required worker identifier was
+`streamliner-app-native-spike:streamliner-app-native-worker`.
+
+The final workstream Canvas refresh independently observed the completed
+binding and ready gate. Reloading the provider and reopening the same Canvas
+instance changed its loopback URL from port 61283 to 55571; the old listener
+stopped and the new HTML root returned HTTP 200. After the proof, the direct
+plugin installation and generated `dist/streamliner-app-native-spike` package
+were removed. `copilot plugin list` retained the separate
+`streamliner@streamliner-local` installation, and extension reload exposed only
+the project-scoped spike provider in this worktree.
+
+The remaining production work is distribution and host integration rather than
+core feasibility: use a private marketplace instead of deprecated direct
+installation, improve qualified-agent discovery, define reliable PAW
+continuation after skill-context delivery, and add a host health contract for
+stale Canvas URL metadata.
+
 ## Recommendation
 
 The spike removes the core feasibility uncertainty for local App-owned
