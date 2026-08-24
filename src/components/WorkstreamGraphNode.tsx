@@ -346,6 +346,7 @@ function NodeShell({
     gate ? "gate" : "task",
     statusClassName(data.entry.operationalStatus),
     highlightClassName(data.highlight),
+    data.displayDimmed ? "display-dimmed" : "",
   ]
     .filter(Boolean)
     .join(" ");

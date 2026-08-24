@@ -27,7 +27,6 @@ const GRAPH_MARGIN = 64;
 const LANE_PADDING_X = 48;
 const LANE_PADDING_TOP = 88;
 const LANE_PADDING_BOTTOM = 56;
-const LANE_GAP_Y = 72;
 
 export type WorkstreamCheckpointLaneState =
   | "completed"
@@ -65,6 +64,7 @@ export interface WorkstreamGraphNodeData extends Record<string, unknown> {
   repoLabel: string;
   highlight: WorkstreamGraphNodeHighlight;
   showId: boolean;
+  displayDimmed: boolean;
   sessionStatus: GraphNodeSessionStatusSummary | null;
   sessionStatusState: GraphNodeSessionStatusState;
   runtimeOverlay: WorkstreamRuntimeNodeOverlay | null;
@@ -328,43 +328,124 @@ function edgeHighlightFor(
   return "muted";
 }
 
-function separateCheckpointLanes(
+function checkpointNodeIds(
+  workstream: WorkstreamDocument,
   viewModel: WorkstreamViewModel,
-  layoutNodes: WorkstreamGraphLayoutNode[],
-): WorkstreamGraphLayoutNode[] {
-  const separatedNodes = layoutNodes.map((node) => ({ ...node }));
-  const positionById = new Map(separatedNodes.map((node) => [node.id, node]));
-  let previousLaneBottom = -Infinity;
+): Map<string, string[]> {
+  const checkpointIndexesByNode = new Map<string, number[]>();
+  for (const [index, progress] of viewModel.checkpoints.entries()) {
+    for (const nodeId of progress.checkpoint.nodeIds) {
+      const indexes = checkpointIndexesByNode.get(nodeId) ?? [];
+      indexes.push(index);
+      checkpointIndexesByNode.set(nodeId, indexes);
+    }
+  }
+
+  const dependentsByNode = new Map(
+    workstream.nodes.map((node) => [node.id, [] as string[]]),
+  );
+  for (const node of workstream.nodes) {
+    for (const dependencyId of node.dependsOn) {
+      dependentsByNode.get(dependencyId)?.push(node.id);
+    }
+  }
+
+  const checkpointIndexByNode = new Map<string, number>();
+  for (const [nodeId, candidateIndexes] of checkpointIndexesByNode) {
+    const node = workstream.nodes.find((candidate) => candidate.id === nodeId);
+    const dependencyIds = node?.dependsOn ?? [];
+    const dependentIds = dependentsByNode.get(nodeId) ?? [];
+    // Repeated milestone membership should not pull a node against its edges.
+    const checkpointIndex = candidateIndexes
+      .map((candidateIndex) => {
+        const backwardsDependencies = dependencyIds.filter((dependencyId) => {
+          const dependencyIndexes = checkpointIndexesByNode.get(dependencyId);
+          return (
+            dependencyIndexes !== undefined &&
+            Math.min(...dependencyIndexes) > candidateIndex
+          );
+        }).length;
+        const backwardsDependents = dependentIds.filter((dependentId) => {
+          const dependentIndexes = checkpointIndexesByNode.get(dependentId);
+          return (
+            dependentIndexes !== undefined &&
+            Math.max(...dependentIndexes) < candidateIndex
+          );
+        }).length;
+        return {
+          candidateIndex,
+          backwardsEdges: backwardsDependencies + backwardsDependents,
+        };
+      })
+      .sort(
+        (left, right) =>
+          left.backwardsEdges - right.backwardsEdges ||
+          left.candidateIndex - right.candidateIndex,
+      )[0]?.candidateIndex;
+
+    if (checkpointIndex !== undefined) {
+      checkpointIndexByNode.set(nodeId, checkpointIndex);
+    }
+  }
+
+  return new Map(
+    viewModel.checkpoints.map((progress, index) => {
+      const nodeIds = progress.checkpoint.nodeIds.filter(
+        (nodeId) => checkpointIndexByNode.get(nodeId) === index,
+      );
+      return [progress.checkpoint.id, nodeIds];
+    }),
+  );
+}
+
+function graphHasPath(
+  graph: InstanceType<typeof dagre.graphlib.Graph>,
+  startId: string,
+  targetId: string,
+): boolean {
+  const seen = new Set<string>();
+  const stack = [startId];
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current || seen.has(current)) {
+      continue;
+    }
+    if (current === targetId) {
+      return true;
+    }
+    seen.add(current);
+    stack.push(...(graph.successors(current) ?? []));
+  }
+
+  return false;
+}
+
+function addCheckpointOrderConstraints(
+  graph: InstanceType<typeof dagre.graphlib.Graph>,
+  viewModel: WorkstreamViewModel,
+  nodeIdsByCheckpoint: ReadonlyMap<string, string[]>,
+): void {
+  let previousNodeIds: string[] = [];
 
   for (const progress of viewModel.checkpoints) {
-    const members = progress.checkpoint.nodeIds
-      .map((nodeId) => positionById.get(nodeId))
-      .filter((node): node is WorkstreamGraphLayoutNode => Boolean(node));
-    if (members.length === 0) {
+    const nodeIds = nodeIdsByCheckpoint.get(progress.checkpoint.id) ?? [];
+    if (nodeIds.length === 0) {
       continue;
     }
 
-    const laneTop =
-      Math.min(...members.map((member) => member.y)) - LANE_PADDING_TOP;
-    const laneBottom =
-      Math.max(...members.map((member) => member.y + member.height)) +
-      LANE_PADDING_BOTTOM;
-    const requiredLaneTop = previousLaneBottom + LANE_GAP_Y;
-    const deltaY =
-      Number.isFinite(previousLaneBottom) && laneTop < requiredLaneTop
-        ? requiredLaneTop - laneTop
-        : 0;
-
-    if (deltaY > 0) {
-      for (const member of members) {
-        member.y += deltaY;
+    for (const sourceId of previousNodeIds) {
+      for (const targetId of nodeIds) {
+        if (!graphHasPath(graph, targetId, sourceId)) {
+          graph.setEdge(sourceId, targetId, {
+            minlen: 3,
+            weight: graph.hasEdge(sourceId, targetId) ? 1 : 0,
+          });
+        }
       }
     }
-
-    previousLaneBottom = laneBottom + deltaY;
+    previousNodeIds = nodeIds;
   }
-
-  return separatedNodes;
 }
 
 export function buildWorkstreamGraphBaseLayout(
@@ -414,30 +495,33 @@ export function buildWorkstreamGraphBaseLayout(
     graph.setEdge(edge.sourceId, edge.targetId);
   }
 
+  const nodeIdsByCheckpoint = checkpointNodeIds(workstream, viewModel);
+  addCheckpointOrderConstraints(graph, viewModel, nodeIdsByCheckpoint);
   dagre.layout(graph);
 
-  const layoutNodes = separateCheckpointLanes(
+  const layoutNodes = viewModel.derivedNodes.map((entry) => {
+    const { width, height } = nodeSizeForType(entry.node.type);
+    const position = graph.node(entry.node.id) as
+      | { x: number; y: number }
+      | undefined;
+
+    return {
+      id: entry.node.id,
+      x: (position?.x ?? width / 2) - width / 2,
+      y: (position?.y ?? height / 2) - height / 2,
+      width,
+      height,
+      highlight: "none" as const,
+      repoLabel: repoLabelForNode(workstream, entry),
+      entry,
+    };
+  });
+
+  const checkpointLanes = buildCheckpointLanes(
     viewModel,
-    viewModel.derivedNodes.map((entry) => {
-      const { width, height } = nodeSizeForType(entry.node.type);
-      const position = graph.node(entry.node.id) as
-        | { x: number; y: number }
-        | undefined;
-
-      return {
-        id: entry.node.id,
-        x: (position?.x ?? width / 2) - width / 2,
-        y: (position?.y ?? height / 2) - height / 2,
-        width,
-        height,
-        highlight: "none",
-        repoLabel: repoLabelForNode(workstream, entry),
-        entry,
-      };
-    }),
+    layoutNodes,
+    nodeIdsByCheckpoint,
   );
-
-  const checkpointLanes = buildCheckpointLanes(viewModel, layoutNodes);
   const externalNodes = externalDependencies.map((dependency) => {
     const position = graph.node(dependency.graphNodeId) as
       | { x: number; y: number }
@@ -579,12 +663,13 @@ function laneStateFor(
 function buildCheckpointLanes(
   viewModel: WorkstreamViewModel,
   layoutNodes: WorkstreamGraphLayoutNode[],
+  nodeIdsByCheckpoint: ReadonlyMap<string, string[]>,
 ): WorkstreamGraphCheckpointLane[] {
   const positionById = new Map(layoutNodes.map((ln) => [ln.id, ln]));
 
   return viewModel.checkpoints
     .map((progress, index) => {
-      const members = progress.checkpoint.nodeIds
+      const members = (nodeIdsByCheckpoint.get(progress.checkpoint.id) ?? [])
         .map((id) => positionById.get(id))
         .filter((ln): ln is WorkstreamGraphLayoutNode => ln !== undefined);
 

@@ -293,6 +293,147 @@ describe("buildWorkstreamGraphLayout", () => {
     }
   });
 
+  it("keeps every node below its dependencies when checkpoint lanes move nodes", () => {
+    const workstream = buildFixture(
+      [
+        {
+          id: "foundation",
+          type: "task",
+          title: "Foundation",
+          summary: "Foundation",
+          status: "completed",
+          attention: "focus",
+          repoIds: ["main"],
+          dependsOn: [],
+        },
+        {
+          id: "parallel",
+          type: "task",
+          title: "Parallel",
+          summary: "Parallel",
+          status: "completed",
+          attention: "focus",
+          repoIds: ["main"],
+          dependsOn: [],
+        },
+        {
+          id: "checkpointed-source",
+          type: "task",
+          title: "Checkpointed source",
+          summary: "Checkpointed source",
+          status: "in-progress",
+          attention: "focus",
+          repoIds: ["main"],
+          dependsOn: ["foundation"],
+        },
+        {
+          id: "uncheckpointed-target",
+          type: "task",
+          title: "Uncheckpointed target",
+          summary: "Uncheckpointed target",
+          status: "planned",
+          attention: "watch",
+          repoIds: ["main"],
+          dependsOn: ["checkpointed-source"],
+        },
+      ],
+      [
+        {
+          id: "wave-1",
+          title: "Foundation",
+          summary: "Foundation",
+          status: "completed",
+          nodeIds: ["foundation"],
+        },
+        {
+          id: "wave-2",
+          title: "Parallel",
+          summary: "Parallel",
+          status: "completed",
+          nodeIds: ["parallel"],
+        },
+        {
+          id: "wave-3",
+          title: "Source",
+          summary: "Source",
+          status: "planned",
+          nodeIds: ["checkpointed-source"],
+        },
+      ],
+    );
+    const viewModel = buildWorkstreamViewModel(
+      workstream,
+      undefined,
+      new Date("2026-03-30T20:06:10.348Z"),
+    );
+    const layout = buildWorkstreamGraphLayout(workstream, viewModel, null);
+    const positionById = new Map(layout.nodes.map((node) => [node.id, node]));
+
+    for (const node of workstream.nodes) {
+      const target = positionById.get(node.id);
+      expect(target).toBeDefined();
+      for (const dependencyId of node.dependsOn) {
+        const source = positionById.get(dependencyId);
+        expect(source).toBeDefined();
+        expect(source!.y + source!.height).toBeLessThan(target!.y);
+      }
+    }
+  });
+
+  it("renders repeated nodes in only one checkpoint lane", () => {
+    const workstream = buildFixture(
+      [
+        {
+          id: "shared",
+          type: "task",
+          title: "Shared",
+          summary: "Shared",
+          status: "completed",
+          attention: "focus",
+          repoIds: ["main"],
+          dependsOn: [],
+        },
+        {
+          id: "release",
+          type: "gate",
+          title: "Release",
+          summary: "Release",
+          status: "planned",
+          attention: "focus",
+          repoIds: ["main"],
+          dependsOn: ["shared"],
+        },
+      ],
+      [
+        {
+          id: "wave-1",
+          title: "Build",
+          summary: "Build",
+          status: "completed",
+          nodeIds: ["shared"],
+        },
+        {
+          id: "wave-2",
+          title: "Release",
+          summary: "Release",
+          status: "planned",
+          nodeIds: ["shared", "release"],
+        },
+      ],
+    );
+    const viewModel = buildWorkstreamViewModel(
+      workstream,
+      undefined,
+      new Date("2026-03-30T20:06:10.348Z"),
+    );
+    const layout = buildWorkstreamGraphLayout(workstream, viewModel, null);
+
+    expect(layout.checkpointLanes.map((lane) => lane.nodeIds)).toEqual([
+      ["shared"],
+      ["release"],
+    ]);
+  });
+
   it("adds external dependency ghosts to layout and selection ancestry", () => {
     const workstream = buildFixture([
       {

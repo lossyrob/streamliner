@@ -2297,6 +2297,8 @@ function GraphDashboard({
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(
     selectedNodeIdFromRoute ?? null,
   );
+  const [dimCompleted, setDimCompleted] = useState(false);
+  const [dimPlanned, setDimPlanned] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [launchDialogOpen, setLaunchDialogOpen] = useState(false);
   const [launchDialogTarget, setLaunchDialogTarget] = useState<LaunchOperationTarget | null>(null);
@@ -3918,6 +3920,10 @@ function GraphDashboard({
         onAddWorkstream={onManageSources}
         onConfigureWorkstream={handleOpenConfigurationDialog}
         configureDisabledReason={configureDisabledReason}
+        dimCompleted={dimCompleted}
+        dimPlanned={dimPlanned}
+        onDimCompletedChange={setDimCompleted}
+        onDimPlannedChange={setDimPlanned}
         onUntrackWorkstream={(entry) => {
           void (async () => {
             if (isSourceWorkstreamEntry(entry)) {
@@ -3940,6 +3946,8 @@ function GraphDashboard({
             initialFitKey={initialViewportFitKey}
             selectedNodeId={selectedNodeId}
             onNodeSelect={setSelectedNodeId}
+            dimCompleted={dimCompleted}
+            dimPlanned={dimPlanned}
             nodeSessionStatuses={nodeSessionStatuses}
             nodeSessionStatusState={nodeSessionStatusState}
             runtimeOverlay={runtimeOverlay}

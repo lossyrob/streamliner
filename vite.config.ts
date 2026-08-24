@@ -42,6 +42,10 @@ function reactRefreshPreambleFallback(): Plugin {
 
 export default defineConfig({
   plugins: [react(), reactRefreshPreambleFallback()],
+  optimizeDeps: {
+    // Prototype HTML under _proto is served by the API, not bundled by Vite.
+    entries: ['index.html'],
+  },
   server: {
     host: STREAMLINER_VITE_HOST,
     proxy: {

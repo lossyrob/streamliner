@@ -108,6 +108,8 @@ interface WorkstreamCanvasProps {
   initialFitKey: string;
   selectedNodeId: string | null;
   onNodeSelect: (nodeId: string | null) => void;
+  dimCompleted?: boolean;
+  dimPlanned?: boolean;
   nodeSessionStatuses?: ReadonlyMap<string, GraphNodeSessionStatusSummary>;
   nodeSessionStatusState?: GraphNodeSessionStatusState;
   runtimeOverlay?: WorkstreamRuntimeOverlay | null;
@@ -131,6 +133,8 @@ export function WorkstreamCanvas({
   initialFitKey,
   selectedNodeId,
   onNodeSelect,
+  dimCompleted = false,
+  dimPlanned = false,
   nodeSessionStatuses = new Map(),
   nodeSessionStatusState = "ready",
   runtimeOverlay = null,
@@ -178,6 +182,9 @@ export function WorkstreamCanvas({
             repoLabel: ln.repoLabel,
             highlight: ln.highlight,
             showId: false,
+            displayDimmed:
+              (dimCompleted && ln.entry.operationalStatus === "completed") ||
+              (dimPlanned && ln.entry.operationalStatus === "planned"),
             sessionStatus: nodeSessionStatuses.get(ln.id) ?? null,
             sessionStatusState: nodeSessionStatusState,
             runtimeOverlay: runtimeOverlay?.nodesById.get(ln.id) ?? null,
@@ -192,6 +199,8 @@ export function WorkstreamCanvas({
       }),
     [
       layout.nodes,
+      dimCompleted,
+      dimPlanned,
       nodePositions,
       nodeSessionStatusState,
       nodeSessionStatuses,

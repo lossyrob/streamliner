@@ -15,6 +15,10 @@ interface WorkstreamHeaderProps {
   onConfigureWorkstream: () => void;
   configureDisabledReason?: string | null;
   onUntrackWorkstream: (entry: WorkstreamRegistryListEntry) => void | Promise<void>;
+  dimCompleted: boolean;
+  dimPlanned: boolean;
+  onDimCompletedChange: (dimmed: boolean) => void;
+  onDimPlannedChange: (dimmed: boolean) => void;
 }
 
 function statusPillClass(status: string): string {
@@ -53,6 +57,10 @@ export function WorkstreamHeader({
   onConfigureWorkstream,
   configureDisabledReason,
   onUntrackWorkstream,
+  dimCompleted,
+  dimPlanned,
+  onDimCompletedChange,
+  onDimPlannedChange,
 }: WorkstreamHeaderProps) {
   const [showWorkstreams, setShowWorkstreams] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -119,6 +127,26 @@ export function WorkstreamHeader({
         </div>
       </div>
       <div className="sl-header-actions">
+        <div className="sl-graph-display-controls" role="group" aria-label="Graph display">
+          <button
+            className={`sl-action-btn${dimCompleted ? " active" : ""}`}
+            type="button"
+            aria-pressed={dimCompleted}
+            onClick={() => onDimCompletedChange(!dimCompleted)}
+            title="Fade completed items while keeping them on the graph"
+          >
+            Dim completed
+          </button>
+          <button
+            className={`sl-action-btn${dimPlanned ? " active" : ""}`}
+            type="button"
+            aria-pressed={dimPlanned}
+            onClick={() => onDimPlannedChange(!dimPlanned)}
+            title="Fade planned items while keeping them on the graph"
+          >
+            Dim planned
+          </button>
+        </div>
         <div className="sl-recents-container" ref={dropdownRef}>
           <a
             className="sl-action-btn"

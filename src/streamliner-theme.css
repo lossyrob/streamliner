@@ -358,6 +358,15 @@ body,
   border-color: var(--sl-accent-border);
 }
 
+.sl-graph-display-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 10px;
+  margin-right: 4px;
+  border-right: 1px solid var(--sl-card-border);
+}
+
 .sl-icon-action {
   width: 32px;
   height: 32px;
@@ -4688,8 +4697,24 @@ a.sl-session-context-ref {
     0 8px 30px rgba(31, 58, 105, 0.08);
 }
 
+.sl-node.display-dimmed {
+  opacity: 0.32;
+  filter: grayscale(0.45);
+}
+
+.sl-node.display-dimmed.selected,
+.sl-node.display-dimmed.ancestor,
+.sl-node.display-dimmed.descendant {
+  opacity: 1;
+  filter: none;
+}
+
 .sl-node.dim {
   opacity: 0.34;
+}
+
+.sl-node.display-dimmed.dim {
+  opacity: 0.18;
 }
 
 .sl-node.status-retired {

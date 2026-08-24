@@ -17,7 +17,11 @@ import type { WorkstreamDerivedNode } from "../workstream-view-model";
 const fitBoundsMock = vi.hoisted(() => vi.fn());
 const reactFlowProps = vi.hoisted(() => ({
   latest: null as {
-    nodes?: Array<{ id: string; position: { x: number; y: number } }>;
+    nodes?: Array<{
+      id: string;
+      position: { x: number; y: number };
+      data?: Record<string, unknown>;
+    }>;
     nodesDraggable?: boolean;
     onNodeDragStop?: (
       event: MouseEvent,
@@ -169,6 +173,8 @@ describe("WorkstreamCanvas", () => {
       nodeSessionStatuses: ReadonlyMap<string, GraphNodeSessionStatusSummary>;
       nodePositions: ReadonlyMap<string, { x: number; y: number; updatedAt: string }>;
       onNodePositionChange: (nodeId: string, position: { x: number; y: number }) => void;
+      dimCompleted: boolean;
+      dimPlanned: boolean;
     }> = {},
   ): void {
     act(() => {
@@ -178,6 +184,8 @@ describe("WorkstreamCanvas", () => {
           initialFitKey={props.initialFitKey ?? "streamliner/api-test:"}
           selectedNodeId={props.selectedNodeId ?? null}
           onNodeSelect={vi.fn()}
+          dimCompleted={props.dimCompleted}
+          dimPlanned={props.dimPlanned}
           nodeSessionStatuses={props.nodeSessionStatuses}
           nodePositions={props.nodePositions}
           onNodePositionChange={props.onNodePositionChange}
@@ -258,5 +266,67 @@ describe("WorkstreamCanvas", () => {
     });
 
     expect(onNodePositionChange).toHaveBeenCalledWith("task-a", { x: 360, y: 512 });
+  });
+
+  it("independently dims completed and planned nodes", () => {
+    const completed = {
+      ...buildLayout().nodes[0],
+      id: "completed",
+      entry: {
+        ...buildDerivedNode("completed"),
+        node: { ...buildDerivedNode("completed").node, status: "completed" as const },
+        operationalStatus: "completed" as const,
+      },
+    };
+    const planned = {
+      ...buildLayout().nodes[0],
+      id: "planned",
+      entry: {
+        ...buildDerivedNode("planned"),
+        node: { ...buildDerivedNode("planned").node, status: "planned" as const },
+        operationalStatus: "planned" as const,
+      },
+    };
+    const ready = buildLayout().nodes[0];
+
+    renderCanvas({
+      layout: {
+        ...buildLayout(),
+        nodes: [completed, planned, ready],
+      },
+      dimCompleted: true,
+      dimPlanned: false,
+    });
+
+    expect(
+      reactFlowProps.latest?.nodes?.find((node) => node.id === "completed")?.data
+        ?.displayDimmed,
+    ).toBe(true);
+    expect(
+      reactFlowProps.latest?.nodes?.find((node) => node.id === "planned")?.data
+        ?.displayDimmed,
+    ).toBe(false);
+    expect(
+      reactFlowProps.latest?.nodes?.find((node) => node.id === "task-a")?.data
+        ?.displayDimmed,
+    ).toBe(false);
+
+    renderCanvas({
+      layout: {
+        ...buildLayout(),
+        nodes: [completed, planned, ready],
+      },
+      dimCompleted: false,
+      dimPlanned: true,
+    });
+
+    expect(
+      reactFlowProps.latest?.nodes?.find((node) => node.id === "completed")?.data
+        ?.displayDimmed,
+    ).toBe(false);
+    expect(
+      reactFlowProps.latest?.nodes?.find((node) => node.id === "planned")?.data
+        ?.displayDimmed,
+    ).toBe(true);
   });
 });
