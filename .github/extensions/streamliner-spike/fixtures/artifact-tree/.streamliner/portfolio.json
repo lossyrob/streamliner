@@ -111,6 +111,20 @@
             "availability": "proposed",
             "export": "production adapter"
           }
+        },
+        {
+          "id": "plugin-distribution",
+          "index": 3,
+          "title": "Plugin distribution",
+          "summary": "Package and validate the App-native extension, skill, agent, and compatibility contract in a fresh repository session.",
+          "nodeIds": ["plugin-distribution-validation", "plugin-distribution-gate"],
+          "publicCheckpoint": {
+            "id": "plugin-distribution-proof",
+            "title": "Plugin-installed App contract",
+            "status": "ready",
+            "availability": "preview",
+            "export": "plugin distribution evidence"
+          }
         }
       ]
     },

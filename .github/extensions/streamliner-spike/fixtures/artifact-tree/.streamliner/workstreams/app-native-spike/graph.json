@@ -84,6 +84,42 @@
       ]
     },
     {
+      "id": "plugin-distribution-validation",
+      "type": "task",
+      "title": "Validate plugin-installed App launch contract",
+      "summary": "Package the proven extension with a plugin-owned agent and skill, add explicit compatibility diagnostics, and make the package reproducible for a fresh App session.",
+      "status": "ready",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/plugin-distribution-validation.md"
+      },
+      "dependsOn": [
+        "architecture-research"
+      ]
+    },
+    {
+      "id": "plugin-distribution-gate",
+      "type": "gate",
+      "title": "Plugin distribution accepted",
+      "summary": "Validate installation into a fresh main-based App session, extension and Canvas discovery, plugin role context, nested child claim, schema diagnostics, and cleanup.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/plugin-distribution-gate.md"
+      },
+      "dependsOn": [
+        "plugin-distribution-validation"
+      ]
+    },
+    {
       "id": "artifact-promotion",
       "type": "task",
       "title": "Promote the production boundary",
@@ -112,6 +148,16 @@
         "architecture-research",
         "app-native-implementation",
         "builder-acceptance-gate"
+      ]
+    },
+    {
+      "id": "plugin-package-proven",
+      "title": "Plugin-installed App contract proven",
+      "summary": "The App-native extension, agent, skill, compatibility checks, and nested launch work in a fresh repository session without a project-scoped extension.",
+      "status": "planned",
+      "nodeIds": [
+        "plugin-distribution-validation",
+        "plugin-distribution-gate"
       ]
     }
   ]

@@ -31,8 +31,9 @@ claims the token in that same App-created worktree.
 
 ## Current State
 
-The architecture research node is complete. The App-created implementation
-worker is ready and gates downstream acceptance.
+The architecture research node is complete. The original App-created worker
+proof is preserved. Plugin distribution validation is now ready and gates the
+remaining fresh-repository installation evidence.
 
 ## Decisions
 

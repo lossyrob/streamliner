@@ -3,6 +3,7 @@ import { createCanvas, CanvasError, joinSession } from "@github/copilot-sdk/exte
 import {
     claimPreparedLaunch,
     completeClaimedLaunch,
+    initializeClaimedLaunch,
     prepareLaunch,
 } from "./lib/orchestration.mjs";
 import { buildProjection } from "./lib/projection.mjs";
@@ -368,6 +369,29 @@ await joinSession({
                 completingSessionId: invocation.sessionId,
                 store,
             })),
+        },
+        {
+            name: "streamliner_spike_initialize_paw",
+            description: "Idempotently initialize PAW artifacts in the current App-owned worktree for a launch claimed by this session.",
+            parameters: {
+                type: "object",
+                properties: {
+                    launchId: {
+                        type: "string",
+                        minLength: 1,
+                    },
+                },
+                required: ["launchId"],
+                additionalProperties: false,
+            },
+            handler: async (args, invocation) => serializeToolResult(
+                initializeClaimedLaunch({
+                    launchId: args.launchId,
+                    initializingSessionId: invocation.sessionId,
+                    workspacePath: process.cwd(),
+                    store,
+                }),
+            ),
         },
         {
             name: "streamliner_spike_inspect_projection",

@@ -4,8 +4,20 @@ import {
     randomUUID,
     timingSafeEqual,
 } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import {
+    existsSync,
+    mkdirSync,
+    readFileSync,
+    renameSync,
+    writeFileSync,
+} from "node:fs";
+import { dirname, join, relative } from "node:path";
 
-import { readNodeArtifactSnapshot } from "./git-artifact-provider.mjs";
+import {
+    readNodeArtifactSnapshot,
+    resolveRepository,
+} from "./git-artifact-provider.mjs";
 
 const MAX_CONTEXT_CHARACTERS = 12000;
 const MAX_TASK_CHARACTERS = 4200;
@@ -47,6 +59,89 @@ function hashesEqual(left, right) {
     const rightBuffer = Buffer.from(right, "hex");
     return leftBuffer.length === rightBuffer.length
         && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function git(cwd, ...args) {
+    try {
+        return execFileSync("git", args, {
+            cwd,
+            encoding: "utf8",
+            windowsHide: true,
+        }).trim();
+    } catch (error) {
+        const detail = error.stderr?.toString().trim() || error.message;
+        throw new Error(`Git ${args[0]} failed during App-aware PAW initialization: ${detail}`);
+    }
+}
+
+function writeTextAtomic(path, content) {
+    mkdirSync(dirname(path), { recursive: true });
+    const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
+    writeFileSync(temporary, content, "utf8");
+    renameSync(temporary, path);
+}
+
+function normalizedRemoteIdentity(cwd) {
+    let remote = git(cwd, "remote", "get-url", "origin")
+        .trim()
+        .replace(/\\/g, "/")
+        .replace(/\.git$/i, "");
+    remote = remote
+        .replace(/^https?:\/\//i, "")
+        .replace(/^ssh:\/\/git@/i, "")
+        .replace(/^git@([^:]+):/i, "$1/");
+    return remote.toLowerCase();
+}
+
+function workflowContextFor(launch, cwd, currentBranch) {
+    const rootCommit = git(cwd, "rev-list", "--max-parents=0", "HEAD")
+        .split(/\r?\n/)[0]
+        .toLowerCase();
+    const repositoryIdentity = `${normalizedRemoteIdentity(cwd)}@${rootCommit}`;
+    const node = launch.contextBundle.layers
+        .find((layer) => layer.id === 1)?.content?.node;
+    return `# WorkflowContext
+
+Work Title: ${node?.title || launch.nodeId}
+Work ID: ${launch.nodeId}
+Base Branch: main
+Target Branch: ${currentBranch}
+Execution Mode: current-checkout
+Repository Identity: ${repositoryIdentity}
+Execution Binding: none
+Workflow Mode: minimal
+Review Strategy: local
+Review Policy: final-pr-only
+Session Policy: continuous
+Final Agent Review: disabled
+Final Review Mode: single-model
+Final Review Interactive: false
+Final Review Models: none
+Final Review Specialists: all
+Final Review Interaction Mode: parallel
+Final Review Specialist Models: none
+Final Review Perspectives: none
+Final Review Perspective Cap: 1
+Implementation Model: none
+Plan Generation Mode: single-model
+Plan Generation Models: none
+Planning Docs Review: disabled
+Planning Review Mode: single-model
+Planning Review Interactive: false
+Planning Review Models: none
+Planning Review Specialists: all
+Planning Review Interaction Mode: parallel
+Planning Review Specialist Models: none
+Planning Review Perspectives: none
+Planning Review Perspective Cap: 1
+Custom Workflow Instructions: App owns this worktree and session. Do not create or switch branches, create another worktree, open a terminal, create a PR, or complete the Streamliner launch until the orchestrator provides implementation, independent review, integration, and draft PR evidence.
+Initial Prompt: ${node?.summary || "Implement the claimed Streamliner node."}
+Issue URL: none
+Remote: origin
+Artifact Lifecycle: commit-and-persist
+Artifact Paths: auto-derived
+Additional Inputs: streamliner-context=context.md; streamliner-claim=claim.json
+`;
 }
 
 function buildContextBundle(snapshot, provenance) {
@@ -285,6 +380,7 @@ export function claimPreparedLaunch({
         if (!launch) {
             throw new Error("Binding token is invalid.");
         }
+
         let reclaimed = false;
         if (launch.status === "prepared") {
             launch.status = "claimed";
@@ -309,6 +405,106 @@ export function claimPreparedLaunch({
             context: launch.contextBundle,
         };
     });
+}
+
+export function initializeClaimedLaunch({
+    launchId,
+    initializingSessionId,
+    workspacePath,
+    store,
+}) {
+    const launch = store.read().launches.find((record) => record.launchId === launchId);
+    if (!launch) {
+        throw new Error(`Launch ${launchId} does not exist.`);
+    }
+    if (launch.claimedBySessionId !== initializingSessionId) {
+        throw new Error(`Launch ${launchId} is not claimed by this App session.`);
+    }
+    if (!["claimed", "completed"].includes(launch.status)) {
+        throw new Error(`Launch ${launchId} cannot initialize PAW from ${launch.status}.`);
+    }
+    const cwd = workspacePath || process.cwd();
+    const repository = resolveRepository(cwd);
+    if (repository.repositoryKey !== launch.repositoryKey) {
+        throw new Error(
+            `Launch ${launchId} belongs to repository ${launch.repositoryKey}, not ${repository.repositoryKey}.`,
+        );
+    }
+    const currentBranch = git(cwd, "branch", "--show-current");
+    if (!currentBranch) {
+        throw new Error("App-aware PAW initialization requires a named worktree branch.");
+    }
+    const workDirectory = join(cwd, ".paw", "work", launch.nodeId);
+    const claimPath = join(workDirectory, "claim.json");
+    const contextPath = join(workDirectory, "context.md");
+    const workflowContextPath = join(workDirectory, "WorkflowContext.md");
+    const existingClaim = existsSync(claimPath)
+        ? JSON.parse(readFileSync(claimPath, "utf8"))
+        : null;
+    if (
+        existingClaim
+        && (
+            existingClaim.launchId !== launch.launchId
+            || existingClaim.artifactDigest !== launch.artifactDigest
+            || existingClaim.claimedBySessionId !== initializingSessionId
+        )
+    ) {
+        throw new Error(
+            `PAW work ${launch.nodeId} is already initialized for different launch evidence.`,
+        );
+    }
+    const initializedAt = existingClaim?.initializedAt || new Date().toISOString();
+    const claim = {
+        schemaVersion: 1,
+        launchId: launch.launchId,
+        contextId: launch.contextBundle.contextId,
+        claimedBySessionId: initializingSessionId,
+        artifactRevision: launch.artifactRevision,
+        artifactDigest: launch.artifactDigest,
+        workstreamId: launch.workstreamId,
+        nodeId: launch.nodeId,
+        initializedAt,
+        appOwnedWorktree: true,
+        nestedWorktreeCreated: false,
+        terminalLaunched: false,
+    };
+    const files = {
+        claim: `${JSON.stringify(claim, null, 2)}\n`,
+        context: `# Streamliner claimed context\n\n${launch.contextBundle.markdown}\n`,
+        workflow: workflowContextFor(launch, cwd, currentBranch),
+    };
+    let changed = false;
+    for (const [path, content] of [
+        [claimPath, files.claim],
+        [contextPath, files.context],
+        [workflowContextPath, files.workflow],
+    ]) {
+        if (!existsSync(path) || readFileSync(path, "utf8") !== content) {
+            writeTextAtomic(path, content);
+            changed = true;
+        }
+    }
+    const toRelative = (path) => relative(cwd, path).replace(/\\/g, "/");
+    return {
+        schemaVersion: 1,
+        launchId,
+        workId: launch.nodeId,
+        branch: currentBranch,
+        artifactRevision: launch.artifactRevision,
+        artifactDigest: launch.artifactDigest,
+        claimedBySessionId: initializingSessionId,
+        initializedAt,
+        reused: Boolean(existingClaim) && !changed,
+        appOwnedWorktree: true,
+        nestedWorktreeCreated: false,
+        terminalLaunched: false,
+        paths: {
+            workDirectory: toRelative(workDirectory),
+            workflowContext: toRelative(workflowContextPath),
+            context: toRelative(contextPath),
+            claim: toRelative(claimPath),
+        },
+    };
 }
 
 export function completeClaimedLaunch({

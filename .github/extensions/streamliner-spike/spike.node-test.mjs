@@ -19,6 +19,7 @@ import { readNodeArtifactSnapshot } from "./lib/git-artifact-provider.mjs";
 import {
     claimPreparedLaunch,
     completeClaimedLaunch,
+    initializeClaimedLaunch,
     prepareLaunch,
 } from "./lib/orchestration.mjs";
 import { buildProjection } from "./lib/projection.mjs";
@@ -63,6 +64,7 @@ function createFixtureRepository() {
     git(root, "init", "-b", "main");
     git(root, "config", "user.name", "Streamliner Spike Test");
     git(root, "config", "user.email", "streamliner-spike@example.invalid");
+    git(root, "remote", "add", "origin", "https://github.com/lossyrob/streamliner.git");
     cpSync(fixtureRoot, root, { recursive: true });
     git(root, "add", ".");
     git(root, "commit", "-m", "Seed artifact fixture");
@@ -144,7 +146,7 @@ test("binding token persists hashed and claims idempotently in one child session
     assert.ok(claimed.context.budget.actualCharacters <= claimed.context.budget.maxCharacters);
     assert.match(
         claimed.context.layers.find((layer) => layer.id === 2).content.currentState,
-        /worker is ready and gates downstream acceptance/,
+        /Plugin distribution validation is now ready/,
     );
     assert.match(
         claimed.context.layers.find((layer) => layer.id === 0).content.boundaries,
@@ -162,6 +164,63 @@ test("binding token persists hashed and claims idempotently in one child session
         claimingSessionId: "different-session",
         store,
     }), /another session/);
+});
+
+test("App-aware PAW initialization is idempotent in the claimed worktree", () => {
+    const fixture = createFixtureRepository();
+    const stateRoot = mkdtempSync(join(tmpdir(), "streamliner-spike-state-"));
+    createdRoots.push(stateRoot);
+    const store = new RuntimeStore({ stateFile: join(stateRoot, "runtime.json") });
+    const prepared = prepareLaunch({
+        repoPath: fixture.root,
+        revision: fixture.firstRevision,
+        workstreamPath: fixture.workstreamPath,
+        nodeId: "plugin-distribution-validation",
+        preparedBySessionId: "orchestrator-session",
+        store,
+    });
+    claimPreparedLaunch({
+        bindingToken: prepared.bindingToken,
+        claimingSessionId: "paw-child-session",
+        store,
+    });
+    const initialized = initializeClaimedLaunch({
+        launchId: prepared.launchId,
+        initializingSessionId: "paw-child-session",
+        workspacePath: fixture.root,
+        store,
+    });
+    assert.equal(initialized.reused, false);
+    assert.equal(initialized.appOwnedWorktree, true);
+    assert.equal(initialized.nestedWorktreeCreated, false);
+    assert.equal(initialized.terminalLaunched, false);
+    const workflowContext = readFileSync(
+        join(fixture.root, initialized.paths.workflowContext),
+        "utf8",
+    );
+    assert.match(workflowContext, /Execution Mode: current-checkout/);
+    assert.match(workflowContext, /Work ID: plugin-distribution-validation/);
+    assert.match(workflowContext, /Repository Identity: github\.com\/lossyrob\/streamliner@/);
+    const claim = JSON.parse(readFileSync(
+        join(fixture.root, initialized.paths.claim),
+        "utf8",
+    ));
+    assert.equal(claim.artifactRevision, fixture.firstRevision);
+    assert.equal(claim.claimedBySessionId, "paw-child-session");
+    const reused = initializeClaimedLaunch({
+        launchId: prepared.launchId,
+        initializingSessionId: "paw-child-session",
+        workspacePath: fixture.root,
+        store,
+    });
+    assert.equal(reused.reused, true);
+    assert.equal(reused.initializedAt, initialized.initializedAt);
+    assert.throws(() => initializeClaimedLaunch({
+        launchId: prepared.launchId,
+        initializingSessionId: "different-session",
+        workspacePath: fixture.root,
+        store,
+    }), /not claimed by this App session/);
 });
 
 test("projection overlays prepared, claimed, and completed App bindings", () => {
