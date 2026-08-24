@@ -166,6 +166,7 @@ export interface ResolvedPawLaunchConfiguration {
   workflowInstructions: string;
   terminal: PawLaunchTerminalPreferences;
   runtimeKind?: PawLaunchRuntimeKind;
+  preparationTarget?: PawLaunchPreparationTarget;
   launchMode?: WorkstreamNodeLaunchMode;
   sharedBranch?: ExistingSharedBranchLaunchConfiguration | null;
 }
@@ -177,6 +178,7 @@ interface ParsedPawLaunchConfiguration {
   workflowInstructions: string;
   terminal: PawLaunchTerminalPreferences;
   runtimeKind: PawLaunchRuntimeKind;
+  preparationTarget: PawLaunchPreparationTarget;
   launchMode: WorkstreamNodeLaunchMode;
   sharedBranch: ExistingSharedBranchLaunchConfiguration | null;
 }
@@ -651,6 +653,7 @@ function normalizeTerminalPreferences(
 function parseConfigurationInput(
   input: PawLaunchConfigurationInput | undefined,
   defaults: { cliArgs?: string[]; terminal?: Partial<PawLaunchTerminalPreferences> } = {},
+  preparationTarget: PawLaunchPreparationTarget = "node-launch",
 ): ParsedPawLaunchConfiguration {
   const rawCwd = assertOptionalString(input?.cwd, "configuration.cwd");
   let workflowInstructions = assertOptionalString(
@@ -718,7 +721,9 @@ function parseConfigurationInput(
       `- Use only the existing branch ${sharedBranch.targetBranch} at required start SHA ${sharedBranch.requiredStartSha}.`,
       "- Do not create or switch branches, create another worktree, merge, rebase, force-push, or create a pull request.",
       `- Complete only a ${sharedBranch.completionMode} for existing Azure DevOps PR ${sharedBranch.existingPullRequest.id}.`,
-      `- Treat backend branch lease ${sharedBranch.branchLeaseKey} as the sole write authority.`,
+      preparationTarget === "external-session"
+        ? "- The external session caller owns writer exclusivity and lifecycle coordination; Streamliner will not acquire a branch lease."
+        : `- Treat backend branch lease ${sharedBranch.branchLeaseKey} as the sole write authority.`,
       "",
       workflowInstructions,
     ].join("\n");
@@ -745,6 +750,7 @@ function parseConfigurationInput(
       ...terminalOverrides,
     },
     runtimeKind,
+    preparationTarget,
     launchMode,
     sharedBranch,
   };
@@ -1723,6 +1729,7 @@ async function sendPromptAndWaitForIdle(
 
 export function buildPawInitPrompt(input: PawInitRunnerInput): string {
   const sharedBranch = input.configuration.sharedBranch;
+  const externalSession = input.configuration.preparationTarget === "external-session";
   return [
     "Initialize a PAW workflow for a Streamliner graph launch.",
     "",
@@ -1746,7 +1753,9 @@ export function buildPawInitPrompt(input: PawInitRunnerInput): string {
           "- This is an existing shared Azure DevOps branch contribution. Do not create or switch branches, create another worktree, merge, rebase, force-push, or create a pull request.",
           `- Use exactly the existing branch '${sharedBranch.targetBranch}' at start SHA ${sharedBranch.requiredStartSha}.`,
           `- The existing Azure DevOps pull request is ${sharedBranch.existingPullRequest.id}; completion mode is ${sharedBranch.completionMode}.`,
-          `- The backend branch lease key is '${sharedBranch.branchLeaseKey}'. Prompt text is not lease authority.`,
+          externalSession
+            ? "- The external session caller owns writer exclusivity and lifecycle coordination; Streamliner will not acquire a branch lease."
+            : `- The backend branch lease key is '${sharedBranch.branchLeaseKey}'. Prompt text is not lease authority.`,
           "- Keep pawWorkDir inside the configured launch cwd and return the configured target branch unchanged.",
         ]
       : []),
@@ -2025,7 +2034,9 @@ export function buildStreamlinerContextSavePrompt(
       ? [
           "- The launch cwd is the existing shared-branch checkout. Do not create or switch branches, create another worktree, merge, rebase, force-push, or create a pull request.",
           `- Keep the branch exactly '${input.configuration.sharedBranch.targetBranch}' and keep \`.paw/work/<workId>\` inside the launch cwd.`,
-          `- The required start SHA is ${input.configuration.sharedBranch.requiredStartSha}; the backend lease remains the sole exclusivity authority.`,
+          input.configuration.preparationTarget === "external-session"
+            ? `- The required start SHA is ${input.configuration.sharedBranch.requiredStartSha}; the external session caller owns writer exclusivity and lifecycle coordination.`
+            : `- The required start SHA is ${input.configuration.sharedBranch.requiredStartSha}; the backend lease remains the sole exclusivity authority.`,
         ]
       : [
           "- The launch cwd is the base/coordination checkout. Do not check out the target node branch in the launch cwd.",
@@ -2448,6 +2459,7 @@ export function buildKickoffPrompt(input: {
   workflowContextPath: string;
   streamlinerContextPath: string;
   launchMetadata: PawLaunchMetadata;
+  preparationTarget?: PawLaunchPreparationTarget;
   kickoffAdditionalInstructions?: string;
 }): string {
   const lines = [
@@ -2489,7 +2501,14 @@ export function buildKickoffPrompt(input: {
       `- Completion mode: ${input.launchMetadata.completionMode}`,
       `- Existing pull request: ${input.launchMetadata.existingPullRequest?.provider} #${input.launchMetadata.existingPullRequest?.id}`,
       `- Required start SHA: ${input.launchMetadata.requiredStartSha}`,
-      `- Branch lease: ${input.launchMetadata.branchLease?.leaseId ?? "missing"} (${input.launchMetadata.branchLease?.branchLeaseKey ?? "missing"})`,
+      ...(input.preparationTarget === "external-session"
+        ? [
+            "- Branch coordination: external session caller (no Streamliner branch lease).",
+            "- The external session caller owns writer exclusivity and lifecycle coordination for this shared branch.",
+          ]
+        : [
+            `- Branch lease: ${input.launchMetadata.branchLease?.leaseId ?? "missing"} (${input.launchMetadata.branchLease?.branchLeaseKey ?? "missing"})`,
+          ]),
       "- Do not create or switch branches, create a worktree, merge, rebase, force-push, or create a pull request.",
     );
   }
@@ -2591,7 +2610,7 @@ export async function preparePawLaunch(
   const parsedConfiguration = parseConfigurationInput(options.configuration, {
     cliArgs: options.defaultCliArgs,
     terminal: terminalDefaults,
-  });
+  }, options.target);
   validateConfigurationForNode(
     parsedConfiguration,
     launchDefaultsNode,
@@ -2836,6 +2855,7 @@ export async function preparePawLaunch(
     workflowContextPath: pawInit.workflowContextPath,
     streamlinerContextPath: pawInit.streamlinerContextPath,
     launchMetadata,
+    preparationTarget: options.target,
     kickoffAdditionalInstructions: pawInit.kickoffAdditionalInstructions,
   });
   const cwd = pawInit.cwd || normalizeManifestPath(configuration.cwd);

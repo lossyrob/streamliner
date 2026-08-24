@@ -10,8 +10,10 @@ import type {
   PrepareLaunchContextPackageOptions,
 } from "./launch-context";
 import {
+  buildPawInitPrompt,
   preparePawLaunch,
   type PawInitRunner,
+  type PawInitRunnerInput,
 } from "./launch-preparation";
 import { NodeLaunchRecordStore } from "./node-launch-record-store";
 import {
@@ -417,13 +419,18 @@ describe("shared launch preparation", () => {
     const store = new NodeLaunchRecordStore({
       recordsPath: join(root, "state", "node-launch-records.json"),
     });
+    const pawInitCalls: PawInitRunnerInput[] = [];
+    const initialize = pawRunner(repo);
 
     const handoff = await preparePawLaunch({
       target: "external-session",
       nodeId: "shared-node",
       graphPath,
       configuration: sharedConfiguration(repo),
-      pawInitRunner: pawRunner(repo),
+      pawInitRunner: async (input) => {
+        pawInitCalls.push(input);
+        return await initialize(input);
+      },
       contextPreparer: async (options) => contextPackage(repo.root, options),
       branchLeaseCoordinator: store,
     });
@@ -439,6 +446,19 @@ describe("shared launch preparation", () => {
         branchLease: null,
       }),
     }));
+    expect(handoff.kickoffPrompt).toContain(
+      "Branch coordination: external session caller (no Streamliner branch lease).",
+    );
+    expect(handoff.kickoffPrompt).not.toContain("Branch lease: missing");
+    expect(pawInitCalls[0]?.configuration.workflowInstructions).toContain(
+      "The external session caller owns writer exclusivity and lifecycle coordination",
+    );
+    expect(buildPawInitPrompt(pawInitCalls[0]!)).toContain(
+      "The external session caller owns writer exclusivity and lifecycle coordination",
+    );
+    expect(buildPawInitPrompt(pawInitCalls[0]!)).not.toContain(
+      "backend branch lease key",
+    );
     await expect(store.listBranchLeases({})).resolves.toEqual([]);
   });
 
