@@ -8,5 +8,5 @@
   "repository": "https://github.com/lossyrob/streamliner",
   "agents": "agents/",
   "skills": "skills/",
-  "extensions": "extensions/streamliner-spike"
+  "extensions": "extensions/"
 }

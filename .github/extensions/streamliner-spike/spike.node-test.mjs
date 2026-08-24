@@ -17,7 +17,6 @@ import { fileURLToPath } from "node:url";
 
 import {
     readNodeArtifactSnapshot,
-    readWorkstreamSnapshot,
 } from "./lib/git-artifact-provider.mjs";
 import {
     claimPreparedLaunch,
@@ -142,6 +141,21 @@ test("artifact readers reject unsupported schemas with explicit compatibility di
     const graph = JSON.parse(readFileSync(graphPath, "utf8"));
     graph.schemaVersion = 2;
     writeFileSync(graphPath, `${JSON.stringify(graph, null, 2)}\n`);
+    rmSync(join(
+        fixture.root,
+        ".streamliner",
+        "workstreams",
+        "app-native-spike",
+        "brief.md",
+    ));
+    rmSync(join(
+        fixture.root,
+        ".streamliner",
+        "workstreams",
+        "app-native-spike",
+        "tasks",
+        "app-native-implementation.md",
+    ));
     const portfolioPath = join(fixture.root, ".streamliner", "portfolio.json");
     const portfolio = JSON.parse(readFileSync(portfolioPath, "utf8"));
     portfolio.schemaVersion = 2;
@@ -151,10 +165,11 @@ test("artifact readers reject unsupported schemas with explicit compatibility di
     const revision = git(fixture.root, "rev-parse", "HEAD");
 
     assert.throws(
-        () => readWorkstreamSnapshot({
+        () => readNodeArtifactSnapshot({
             repoPath: fixture.root,
             revision,
             workstreamPath: fixture.workstreamPath,
+            nodeId: "app-native-implementation",
         }),
         /incompatibility: workstream artifact schemaVersion 2.*supported range is 1\.\.1/,
     );

@@ -11,7 +11,9 @@ Streamliner lifecycle hooks:
 
 The extension remains canonical under `.github/extensions/streamliner-spike/`.
 The package builder copies it into the installable output, so the plugin does
-not maintain a second extension implementation.
+not maintain a second extension implementation. The plugin manifest registers
+the provider parent `extensions/`, allowing Copilot CLI and the App to discover
+its `streamliner-spike/extension.mjs` child provider.
 
 ## Build
 

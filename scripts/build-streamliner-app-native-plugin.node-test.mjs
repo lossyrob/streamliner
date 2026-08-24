@@ -52,7 +52,7 @@ test("plugin assembly is complete, hook-free, and reproducible", () => {
         assert.equal(plugin.version, COMPATIBILITY_MANIFEST.package.version);
         assert.equal(plugin.agents, "agents/");
         assert.equal(plugin.skills, "skills/");
-        assert.equal(plugin.extensions, "extensions/streamliner-spike");
+        assert.equal(plugin.extensions, "extensions/");
         assert.equal("hooks" in plugin, false);
 
         const readme = readFileSync(join(first.outputRoot, "README.md"), "utf8");
@@ -103,6 +103,8 @@ test("plugin assembly is complete, hook-free, and reproducible", () => {
         assert.match(agent, /second action must call `streamliner_spike_initialize_paw`/);
         assert.match(agent, /same App-created session, worktree, and branch/);
         assert.match(agent, /native `send_session_message`/);
+        assert.match(agent, /`streamliner_spike_complete_launch`/);
+        assert.doesNotMatch(agent, /^tools:/m);
 
         const skill = readFileSync(
             join(

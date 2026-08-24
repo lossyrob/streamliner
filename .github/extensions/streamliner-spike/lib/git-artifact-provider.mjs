@@ -135,8 +135,8 @@ export function readWorkstreamSnapshot({
     const graphPath = `${normalizedWorkstreamPath}/graph.json`;
     const briefPath = `${normalizedWorkstreamPath}/brief.md`;
     const graphText = readBlobAtRevision(resolved.root, resolved.commit, graphPath);
-    const brief = readBlobAtRevision(resolved.root, resolved.commit, briefPath);
     const graph = parseGraph(graphText, graphPath);
+    const brief = readBlobAtRevision(resolved.root, resolved.commit, briefPath);
     return {
         ...resolved,
         workstreamPath: normalizedWorkstreamPath,

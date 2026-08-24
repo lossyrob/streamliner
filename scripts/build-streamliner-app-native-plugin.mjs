@@ -226,7 +226,7 @@ function validatePluginSource() {
     if (
         manifest.agents !== "agents/"
         || manifest.skills !== "skills/"
-        || manifest.extensions !== "extensions/streamliner-spike"
+        || manifest.extensions !== "extensions/"
     ) {
         throw new Error("Plugin component paths do not match the canonical package layout.");
     }
