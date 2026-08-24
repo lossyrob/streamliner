@@ -142,7 +142,7 @@ start SHA, and branch lease identity for orchestration and recovery.
 
 ### Launch Sequence
 
-Launch is a two-phase process: a **PAW init phase** that prepares all worker artifacts, followed by a runtime-specific **worker start phase**. The preparation phase is not the worker session itself; it exists to assemble context, initialize PAW, compile the prompt, resolve runtime inputs, select the working directory, and preserve launch metadata. For `terminal-cli`, the worker start phase is the Copilot CLI interactive launch described below. For `managed-sdk`, the worker start phase creates the managed registry/runtime state and starts the SDK worker described in [SDK-Managed Worker Runtime](#sdk-managed-worker-runtime); terminal settings may still be retained for later takeover, but no visible terminal is started automatically.
+Launch is normally a two-phase process: a **PAW init phase** that prepares all worker artifacts, followed by a runtime-specific **worker start phase**. The preparation phase is not the worker session itself; it exists to assemble context, initialize PAW, compile the prompt, resolve runtime inputs, select the working directory, and preserve launch metadata. For `terminal-cli`, the worker start phase is the Copilot CLI interactive launch described below. For `managed-sdk`, the worker start phase creates the managed registry/runtime state and starts the SDK worker described in [SDK-Managed Worker Runtime](#sdk-managed-worker-runtime); terminal settings may still be retained for later takeover, but no visible terminal is started automatically. The `external-session` preparation target stops after PAW init and returns a handoff for the Copilot App or another local caller to create the worker session itself.
 
 #### Phase 1 — PAW Launch Initialization
 
@@ -154,9 +154,9 @@ Streamliner's backend prepares a PAW handoff with one fully capable internal Cop
 4. **Runs PAW init** — the same SDK session uses the `paw-init` skill with Copilot CLI-style repository, shell, GitHub, configured MCP, and custom-tool access. The prompts supply the builder launch instructions, selected node, tracker URL, saved context path, and manifest-derived worktree policy, and tell PAW init to use documented defaults/best judgment rather than asking follow-up questions. Streamliner asks PAW init to treat the builder text as launch guidance and configuration input, not as verbatim custom workflow-stage instructions unless the text explicitly defines a custom PAW sequence.
 5. **Installs the context file** — after `paw-init` writes or validates `WorkflowContext.md` through the normal PAW workflow path, the Streamliner-owned completion tool, `complete_paw_init`, copies the saved context package to `.paw/work/<work-id>/streamliner/context.md` and verifies that `WorkflowContext.md` records the installed Streamliner context as an Additional Input. For Streamliner PAW Lite node launches, `WorkflowContext.md` should use `Custom Workflow Instructions: none` and `Initial Prompt: none`; kickoff-prompt text, generated context content, and node-orientation prose belong in Streamliner's kickoff prompt or generated launch `context.md`. The Additional Inputs line should only carry the worker-facing Streamliner context file, not internal launch metadata such as staged context package paths, graph path, context ID, node ID, or nonce.
 6. **Filters kickoff-only guidance** — the SDK session returns `additionalKickoffInstructions` through `complete_paw_init`. This text contains only builder guidance that should appear in the launched worker's initial prompt and excludes workflow configuration already encoded in `WorkflowContext.md`.
-7. **Preserves launch metadata** — carries the launch nonce, future claim reference fields, and the evaluated launch-policy snapshot through metadata without owning claim persistence.
+7. **Preserves launch metadata** — carries the launch nonce, future claim reference fields, and the evaluated launch-policy snapshot through metadata without owning claim persistence. Existing shared-branch preparation validates the exact required local and remote SHA both before and after PAW init. External preparation performs both checks but does not acquire a Streamliner branch lease.
 8. **Compiles kickoff prompt** — renders the Streamliner PAW-lite launch template with the issue URL, `WorkflowContext.md`, installed Streamliner context path, launch metadata needed for binding, and filtered additional kickoff instructions.
-9. **Returns structured output** — returns the handoff the terminal launcher needs.
+9. **Returns structured output** — returns either the full internal node-launch handoff or the narrower App-friendly external-session handoff.
 
 Launch preparation output:
 
@@ -175,6 +175,8 @@ Launch preparation output:
 | `contextPackage` | object | Context package metadata from context assembly |
 | `kickoffPrompt` | string | Initial prompt passed to Copilot CLI interactive mode |
 | `kickoffAdditionalInstructions` | string | Optional filtered builder guidance appended to the kickoff template after PAW workflow configuration has been removed |
+
+For `target: "external-session"`, the response is deliberately narrower: `target`, `cwd`, `branch`, `recommendedWorkspaceType`, `kickoffPrompt`, `workflowContextPath`, `streamlinerContextPath`, and `launchMetadata`. `recommendedWorkspaceType` is `worktree` for standard launches and `branch` when PAW must remain on an existing shared branch. The external result omits terminal and managed-runtime inputs, internal context-package/session-state details, and SDK debug state. Preparation does not create a launch claim, bind a session-registry row, acquire a branch lease, or write a blocking node launch operation. A caller must not submit this handoff to `POST /api/node-launches`; that route rejects external handoffs explicitly.
 
 #### Phase 2 — Copilot CLI Interactive Launch
 
@@ -374,6 +376,8 @@ Request body:
 | `graphPath` | no | Backend-readable graph file to use; the UI supplies the active workstream registry path. |
 | `launchNonce` | no | Optional nonce preserved in metadata and the kickoff prompt for later claim binding. |
 | `configuration` | no | PAW launch configuration overrides: workflow instruction text, CLI args, environment, and terminal preferences. |
+| `target` | no | `node-launch` (default) for Streamliner-managed launch preparation, or `external-session` for an App-friendly handoff with no Streamliner runtime ownership. |
+| `postPreparation` | no | Run-route terminal/companion intent for `node-launch`; rejected when `target` is `external-session`. |
 
 The synchronous response body, and the run route's final `result`, contain:
 
@@ -386,9 +390,9 @@ The synchronous response body, and the run route's final `result`, contain:
 | `launchMetadata` | Workstream/node/repo/branch/work/nonce/claim/tracker metadata. |
 | `contextPackage` | Full context package metadata produced by context assembly. |
 
-Validation, PAW initialization, and context-preparation failures return JSON with `code`, `error`, `step`, and `input` fields. The route never starts a terminal.
+Validation, PAW initialization, and context-preparation failures return JSON with `code`, `error`, `step`, and `input` fields. The synchronous route never starts a terminal. The run route may execute `postPreparation` only for the default `node-launch` target.
 
-The dialog uses the run route. `POST /api/launch-preparations/runs` returns a `runId`, then the browser subscribes to `GET /api/launch-preparations/runs/:runId/events` as an SSE stream. Streamed events are intentionally sanitized progress records: phase changes, assistant status messages, tool start/finish names, final success, or typed failure. Raw prompts, full tool arguments, secrets, and model reasoning deltas are not browser-facing status.
+The dialog uses the run route. `POST /api/launch-preparations/runs` returns a `runId`, then the browser subscribes to `GET /api/launch-preparations/runs/:runId/events` as an SSE stream. Streamed events are intentionally sanitized progress records: phase changes, assistant status messages, tool start/finish names, final success, or typed failure. Raw prompts, full tool arguments, secrets, and model reasoning deltas are not browser-facing status. External-session runs still use the in-memory run manager for progress and result retrieval, but they do not create or update the durable per-node blocking operation.
 
 Internal SDK launch sessions persist under Streamliner's local state rather than the normal Copilot session-state root. The default root is `~/.streamliner/state/copilot-sdk/paw-launch/<context-id>/`, with `STREAMLINER_COPILOT_SDK_STATE_ROOT` available for override. Run progress and API logs surface the SDK `sessionId` and workspace path for debugging, but these internal sessions are not intended to appear in Streamliner's observed Sessions view.
 

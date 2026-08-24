@@ -132,6 +132,8 @@ export interface PawLaunchTerminalPreferences {
 }
 
 export type PawLaunchRuntimeKind = "terminal-cli" | "managed-sdk";
+export type PawLaunchPreparationTarget = "node-launch" | "external-session";
+export type ExternalSessionWorkspaceType = "worktree" | "branch";
 
 export interface ExistingSharedBranchLaunchConfiguration {
   launchMode: "existing-shared-azure-devops";
@@ -271,6 +273,7 @@ export type LaunchContextPreparer = (
 
 export interface PreparePawLaunchOptions {
   nodeId: string;
+  target?: PawLaunchPreparationTarget;
   graphPath?: string;
   defaultGraphPath?: string;
   launchNonce?: string | null;
@@ -328,6 +331,19 @@ export interface PawLaunchHandoff {
   contextPackage: LaunchContextPackage;
   sdkSession?: PawLaunchSdkSessionDebug;
 }
+
+export interface ExternalSessionHandoff {
+  target: "external-session";
+  cwd: string;
+  branch: string;
+  recommendedWorkspaceType: ExternalSessionWorkspaceType;
+  kickoffPrompt: string;
+  workflowContextPath: string;
+  streamlinerContextPath: string;
+  launchMetadata: PawLaunchMetadata;
+}
+
+export type PawLaunchPreparationResult = PawLaunchHandoff | ExternalSessionHandoff;
 
 interface CompletePawInitArgs {
   workTitle: string;
@@ -2487,9 +2503,18 @@ export function buildKickoffPrompt(input: {
   return `${lines.join("\n")}\n`;
 }
 
+export function preparePawLaunch(
+  options: PreparePawLaunchOptions & { target: "external-session" },
+): Promise<ExternalSessionHandoff>;
+export function preparePawLaunch(
+  options: PreparePawLaunchOptions & { target?: "node-launch" },
+): Promise<PawLaunchHandoff>;
+export function preparePawLaunch(
+  options: PreparePawLaunchOptions,
+): Promise<PawLaunchPreparationResult>;
 export async function preparePawLaunch(
   options: PreparePawLaunchOptions,
-): Promise<PawLaunchHandoff> {
+): Promise<PawLaunchPreparationResult> {
   if (!options.nodeId.trim()) {
     throw new LaunchPreparationError(
       "invalid_node_id",
@@ -2572,6 +2597,7 @@ export async function preparePawLaunch(
     launchDefaultsNode,
     Boolean(policyGraphPath),
   );
+  const externalSession = options.target === "external-session";
   let branchLease: NodeBranchLease | null = null;
   if (parsedConfiguration.sharedBranch) {
     const sharedConfiguration = resolveConfiguration(parsedConfiguration, {
@@ -2582,64 +2608,69 @@ export async function preparePawLaunch(
       targetBranch: parsedConfiguration.sharedBranch.targetBranch,
       requiredStartSha: parsedConfiguration.sharedBranch.requiredStartSha,
     });
-    if (!options.branchLeaseCoordinator || !launchDefaultsNode || !launchDefaultsWorkstream) {
-      throw new LaunchPreparationError(
-        "branch_lease_unavailable",
-        503,
-        "Existing shared-branch launch preparation requires the integrated node launch record store.",
-        "validation",
-        "configuration.branchLeaseKey",
-      );
-    }
-    try {
-      branchLease = await options.branchLeaseCoordinator.acquireBranchLease({
-        branchLeaseKey: parsedConfiguration.sharedBranch.branchLeaseKey,
-        projectKey:
-          launchDefaultsWorkstream.projectKey ??
-          launchDefaultsWorkstream.repos[0]?.id ??
-          launchDefaultsWorkstream.id,
-        workstreamId: launchDefaultsWorkstream.id,
-        graphPath: policyGraphPath!,
-        nodeId: launchDefaultsNode.id,
-        targetRepoId: launchDefaultsNode.repoIds[0]!,
-        cwd: sharedConfiguration.cwd,
-        targetBranch: parsedConfiguration.sharedBranch.targetBranch,
-        requiredStartSha: parsedConfiguration.sharedBranch.requiredStartSha,
-        existingPullRequest: parsedConfiguration.sharedBranch.existingPullRequest,
-        now: options.now?.(),
-      });
-      emitProgress(
-        options.onProgress,
-        "branch_lease.acquired",
-        `Acquired shared branch lease ${branchLease.leaseId}.`,
-        {
-          branchLease: structuredClone(branchLease),
-        },
-      );
-    } catch (error: unknown) {
-      const branchLeaseError = error as {
-        code?: unknown;
-        statusCode?: unknown;
-        branchLease?: unknown;
-        message?: unknown;
-      };
-      throw new LaunchPreparationError(
-        typeof branchLeaseError.code === "string" &&
-            branchLeaseError.code.startsWith("branch_lease")
-          ? "branch_lease_conflict"
-          : "branch_lease_unavailable",
-        typeof branchLeaseError.statusCode === "number"
-          ? branchLeaseError.statusCode
-          : 500,
-        typeof branchLeaseError.message === "string"
-          ? branchLeaseError.message
-          : String(error),
-        "validation",
-        "configuration.branchLeaseKey",
-        isRecord(branchLeaseError.branchLease)
-          ? { branchLease: branchLeaseError.branchLease }
-          : undefined,
-      );
+    if (!externalSession) {
+      const branchLeaseCoordinator = options.branchLeaseCoordinator;
+      const sharedNode = launchDefaultsNode;
+      const sharedWorkstream = launchDefaultsWorkstream;
+      if (!branchLeaseCoordinator || !sharedNode || !sharedWorkstream) {
+        throw new LaunchPreparationError(
+          "branch_lease_unavailable",
+          503,
+          "Existing shared-branch launch preparation requires the integrated node launch record store.",
+          "validation",
+          "configuration.branchLeaseKey",
+        );
+      }
+      try {
+        branchLease = await branchLeaseCoordinator.acquireBranchLease({
+          branchLeaseKey: parsedConfiguration.sharedBranch.branchLeaseKey,
+          projectKey:
+            sharedWorkstream.projectKey ??
+            sharedWorkstream.repos[0]?.id ??
+            sharedWorkstream.id,
+          workstreamId: sharedWorkstream.id,
+          graphPath: policyGraphPath!,
+          nodeId: sharedNode.id,
+          targetRepoId: sharedNode.repoIds[0]!,
+          cwd: sharedConfiguration.cwd,
+          targetBranch: parsedConfiguration.sharedBranch.targetBranch,
+          requiredStartSha: parsedConfiguration.sharedBranch.requiredStartSha,
+          existingPullRequest: parsedConfiguration.sharedBranch.existingPullRequest,
+          now: options.now?.(),
+        });
+        emitProgress(
+          options.onProgress,
+          "branch_lease.acquired",
+          `Acquired shared branch lease ${branchLease.leaseId}.`,
+          {
+            branchLease: structuredClone(branchLease),
+          },
+        );
+      } catch (error: unknown) {
+        const branchLeaseError = error as {
+          code?: unknown;
+          statusCode?: unknown;
+          branchLease?: unknown;
+          message?: unknown;
+        };
+        throw new LaunchPreparationError(
+          typeof branchLeaseError.code === "string" &&
+              branchLeaseError.code.startsWith("branch_lease")
+            ? "branch_lease_conflict"
+            : "branch_lease_unavailable",
+          typeof branchLeaseError.statusCode === "number"
+            ? branchLeaseError.statusCode
+            : 500,
+          typeof branchLeaseError.message === "string"
+            ? branchLeaseError.message
+            : String(error),
+          "validation",
+          "configuration.branchLeaseKey",
+          isRecord(branchLeaseError.branchLease)
+            ? { branchLease: branchLeaseError.branchLease }
+            : undefined,
+        );
+      }
     }
   }
 
@@ -2807,9 +2838,23 @@ export async function preparePawLaunch(
     launchMetadata,
     kickoffAdditionalInstructions: pawInit.kickoffAdditionalInstructions,
   });
+  const cwd = pawInit.cwd || normalizeManifestPath(configuration.cwd);
+
+  if (externalSession) {
+    return {
+      target: "external-session",
+      cwd,
+      branch: pawInit.branch,
+      recommendedWorkspaceType: configuration.sharedBranch ? "branch" : "worktree",
+      kickoffPrompt,
+      workflowContextPath: pawInit.workflowContextPath,
+      streamlinerContextPath: pawInit.streamlinerContextPath,
+      launchMetadata,
+    };
+  }
 
   return {
-    cwd: pawInit.cwd || normalizeManifestPath(configuration.cwd),
+    cwd,
     branch: pawInit.branch,
     pawWorkDir: pawInit.pawWorkDir,
     workflowContextPath: pawInit.workflowContextPath,

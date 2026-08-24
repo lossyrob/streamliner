@@ -408,6 +408,99 @@ describe("shared launch preparation", () => {
     expect(handoff.kickoffPrompt).toContain("Do not create or switch branches");
   });
 
+  it("prepares shared branches for an external session without acquiring a lease", async () => {
+    const root = createRootDir();
+    const repo = createSharedRepo(root);
+    const graphPath = writeGraph(repo, [
+      node("shared-node", sharedLaunch(repo)),
+    ]);
+    const store = new NodeLaunchRecordStore({
+      recordsPath: join(root, "state", "node-launch-records.json"),
+    });
+
+    const handoff = await preparePawLaunch({
+      target: "external-session",
+      nodeId: "shared-node",
+      graphPath,
+      configuration: sharedConfiguration(repo),
+      pawInitRunner: pawRunner(repo),
+      contextPreparer: async (options) => contextPackage(repo.root, options),
+      branchLeaseCoordinator: store,
+    });
+
+    expect(handoff).toEqual(expect.objectContaining({
+      target: "external-session",
+      cwd: normalizePath(repo.root),
+      branch: repo.branch,
+      recommendedWorkspaceType: "branch",
+      launchMetadata: expect.objectContaining({
+        launchMode: "existing-shared-azure-devops",
+        requiredStartSha: repo.sha,
+        branchLease: null,
+      }),
+    }));
+    await expect(store.listBranchLeases({})).resolves.toEqual([]);
+  });
+
+  it("rejects a stale exact shared branch SHA before external PAW initialization", async () => {
+    const root = createRootDir();
+    const repo = createSharedRepo(root);
+    const staleRepo = { ...repo, sha: "0".repeat(40) };
+    const graphPath = writeGraph(repo, [
+      node("shared-node", sharedLaunch(staleRepo)),
+    ]);
+    const store = new NodeLaunchRecordStore({
+      recordsPath: join(root, "state", "node-launch-records.json"),
+    });
+
+    await expect(preparePawLaunch({
+      target: "external-session",
+      nodeId: "shared-node",
+      graphPath,
+      configuration: sharedConfiguration(staleRepo),
+      pawInitRunner: pawRunner(repo),
+      contextPreparer: async (options) => contextPackage(repo.root, options),
+      branchLeaseCoordinator: store,
+    })).rejects.toMatchObject({
+      code: "shared_branch_stale",
+      input: "configuration.requiredStartSha",
+    });
+    await expect(store.listBranchLeases({})).resolves.toEqual([]);
+  });
+
+  it("revalidates the exact shared branch SHA after external PAW initialization", async () => {
+    const root = createRootDir();
+    const repo = createSharedRepo(root);
+    const graphPath = writeGraph(repo, [
+      node("shared-node", sharedLaunch(repo)),
+    ]);
+    const store = new NodeLaunchRecordStore({
+      recordsPath: join(root, "state", "node-launch-records.json"),
+    });
+    const initialize = pawRunner(repo);
+    const advancingRunner: PawInitRunner = async (input) => {
+      const result = await initialize(input);
+      writeFileSync(join(repo.root, "advanced-during-init.txt"), "advanced\n", "utf8");
+      git(repo.root, "add", "advanced-during-init.txt");
+      git(repo.root, "commit", "-m", "Advance during PAW init");
+      return result;
+    };
+
+    await expect(preparePawLaunch({
+      target: "external-session",
+      nodeId: "shared-node",
+      graphPath,
+      configuration: sharedConfiguration(repo),
+      pawInitRunner: advancingRunner,
+      contextPreparer: async (options) => contextPackage(repo.root, options),
+      branchLeaseCoordinator: store,
+    })).rejects.toMatchObject({
+      code: "shared_branch_stale",
+      input: "configuration.requiredStartSha",
+    });
+    await expect(store.listBranchLeases({})).resolves.toEqual([]);
+  });
+
   it("records shared launch metadata on the launch record, claim lineage, and session", { timeout: 20_000 }, async () => {
     const root = createRootDir();
     const repo = createSharedRepo(root);

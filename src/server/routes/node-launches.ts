@@ -417,6 +417,12 @@ function parseContextPackage(value: unknown): LaunchContextPackage {
 function parseBody(body: unknown): ParsedBody {
   const bodyRecord = isRecord(body) ? body : {};
   const handoffRecord = recordField(bodyRecord, "handoff", "handoff");
+  if (handoffRecord.target === "external-session") {
+    throw badRequest(
+      "External session handoffs cannot be launched through /api/node-launches.",
+      "handoff.target",
+    );
+  }
   const launchMetadata = parseLaunchMetadata(handoffRecord.launchMetadata);
   return {
     handoff: {
