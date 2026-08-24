@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   LaunchPreparationError,
-  type PawLaunchHandoff,
+  type PawLaunchPreparationResult,
   type PawLaunchProgressEvent,
   type PawLaunchProgressSink,
 } from "./launch-preparation";
@@ -56,7 +56,7 @@ export interface LaunchPreparationPostPreparationOutcome {
 }
 
 export interface LaunchPreparationRunCompletion {
-  result: PawLaunchHandoff;
+  result: PawLaunchPreparationResult;
   postPreparation?: LaunchPreparationPostPreparationOutcome;
   operation?: NodeLaunchOperation | null;
 }
@@ -70,7 +70,7 @@ export interface LaunchPreparationRunEvent {
 export interface LaunchPreparationRunSnapshot {
   runId: string;
   status: LaunchPreparationRunStatus;
-  result?: PawLaunchHandoff;
+  result?: PawLaunchPreparationResult;
   postPreparation?: LaunchPreparationPostPreparationOutcome;
   operation?: NodeLaunchOperation | null;
   error?: LaunchPreparationRunError;
@@ -83,7 +83,7 @@ interface LaunchPreparationRunState {
   nextEventId: number;
   events: LaunchPreparationRunEvent[];
   listeners: Set<(event: LaunchPreparationRunEvent) => void>;
-  result?: PawLaunchHandoff;
+  result?: PawLaunchPreparationResult;
   postPreparation?: LaunchPreparationPostPreparationOutcome;
   operation?: NodeLaunchOperation | null;
   error?: LaunchPreparationRunError;
@@ -92,7 +92,7 @@ interface LaunchPreparationRunState {
 export type LaunchPreparationRunExecutor = (
   progress: PawLaunchProgressSink,
   publish: (name: Exclude<LaunchPreparationRunEventName, "progress" | "completed" | "failed">, payload: unknown) => void,
-) => Promise<PawLaunchHandoff | LaunchPreparationRunCompletion>;
+) => Promise<PawLaunchPreparationResult | LaunchPreparationRunCompletion>;
 
 function toRunError(error: unknown): LaunchPreparationRunError {
   if (error instanceof LaunchPreparationError) {
@@ -227,7 +227,7 @@ export class LaunchPreparationRunManager {
 }
 
 function normalizeCompletion(
-  value: PawLaunchHandoff | LaunchPreparationRunCompletion,
+  value: PawLaunchPreparationResult | LaunchPreparationRunCompletion,
 ): LaunchPreparationRunCompletion {
   if (
     typeof value === "object" &&
@@ -237,5 +237,5 @@ function normalizeCompletion(
   ) {
     return value as LaunchPreparationRunCompletion;
   }
-  return { result: value as PawLaunchHandoff };
+  return { result: value as PawLaunchPreparationResult };
 }

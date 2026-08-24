@@ -132,6 +132,8 @@ export interface PawLaunchTerminalPreferences {
 }
 
 export type PawLaunchRuntimeKind = "terminal-cli" | "managed-sdk";
+export type PawLaunchPreparationTarget = "node-launch" | "external-session";
+export type ExternalSessionWorkspaceType = "worktree" | "branch";
 
 export interface ExistingSharedBranchLaunchConfiguration {
   launchMode: "existing-shared-azure-devops";
@@ -164,6 +166,7 @@ export interface ResolvedPawLaunchConfiguration {
   workflowInstructions: string;
   terminal: PawLaunchTerminalPreferences;
   runtimeKind?: PawLaunchRuntimeKind;
+  preparationTarget?: PawLaunchPreparationTarget;
   launchMode?: WorkstreamNodeLaunchMode;
   sharedBranch?: ExistingSharedBranchLaunchConfiguration | null;
 }
@@ -175,6 +178,7 @@ interface ParsedPawLaunchConfiguration {
   workflowInstructions: string;
   terminal: PawLaunchTerminalPreferences;
   runtimeKind: PawLaunchRuntimeKind;
+  preparationTarget: PawLaunchPreparationTarget;
   launchMode: WorkstreamNodeLaunchMode;
   sharedBranch: ExistingSharedBranchLaunchConfiguration | null;
 }
@@ -271,6 +275,7 @@ export type LaunchContextPreparer = (
 
 export interface PreparePawLaunchOptions {
   nodeId: string;
+  target?: PawLaunchPreparationTarget;
   graphPath?: string;
   defaultGraphPath?: string;
   launchNonce?: string | null;
@@ -328,6 +333,19 @@ export interface PawLaunchHandoff {
   contextPackage: LaunchContextPackage;
   sdkSession?: PawLaunchSdkSessionDebug;
 }
+
+export interface ExternalSessionHandoff {
+  target: "external-session";
+  cwd: string;
+  branch: string;
+  recommendedWorkspaceType: ExternalSessionWorkspaceType;
+  kickoffPrompt: string;
+  workflowContextPath: string;
+  streamlinerContextPath: string;
+  launchMetadata: PawLaunchMetadata;
+}
+
+export type PawLaunchPreparationResult = PawLaunchHandoff | ExternalSessionHandoff;
 
 interface CompletePawInitArgs {
   workTitle: string;
@@ -635,6 +653,7 @@ function normalizeTerminalPreferences(
 function parseConfigurationInput(
   input: PawLaunchConfigurationInput | undefined,
   defaults: { cliArgs?: string[]; terminal?: Partial<PawLaunchTerminalPreferences> } = {},
+  preparationTarget: PawLaunchPreparationTarget = "node-launch",
 ): ParsedPawLaunchConfiguration {
   const rawCwd = assertOptionalString(input?.cwd, "configuration.cwd");
   let workflowInstructions = assertOptionalString(
@@ -702,7 +721,9 @@ function parseConfigurationInput(
       `- Use only the existing branch ${sharedBranch.targetBranch} at required start SHA ${sharedBranch.requiredStartSha}.`,
       "- Do not create or switch branches, create another worktree, merge, rebase, force-push, or create a pull request.",
       `- Complete only a ${sharedBranch.completionMode} for existing Azure DevOps PR ${sharedBranch.existingPullRequest.id}.`,
-      `- Treat backend branch lease ${sharedBranch.branchLeaseKey} as the sole write authority.`,
+      preparationTarget === "external-session"
+        ? "- The external session caller owns writer exclusivity and lifecycle coordination; Streamliner will not acquire a branch lease."
+        : `- Treat backend branch lease ${sharedBranch.branchLeaseKey} as the sole write authority.`,
       "",
       workflowInstructions,
     ].join("\n");
@@ -729,6 +750,7 @@ function parseConfigurationInput(
       ...terminalOverrides,
     },
     runtimeKind,
+    preparationTarget,
     launchMode,
     sharedBranch,
   };
@@ -1707,6 +1729,7 @@ async function sendPromptAndWaitForIdle(
 
 export function buildPawInitPrompt(input: PawInitRunnerInput): string {
   const sharedBranch = input.configuration.sharedBranch;
+  const externalSession = input.configuration.preparationTarget === "external-session";
   return [
     "Initialize a PAW workflow for a Streamliner graph launch.",
     "",
@@ -1730,7 +1753,9 @@ export function buildPawInitPrompt(input: PawInitRunnerInput): string {
           "- This is an existing shared Azure DevOps branch contribution. Do not create or switch branches, create another worktree, merge, rebase, force-push, or create a pull request.",
           `- Use exactly the existing branch '${sharedBranch.targetBranch}' at start SHA ${sharedBranch.requiredStartSha}.`,
           `- The existing Azure DevOps pull request is ${sharedBranch.existingPullRequest.id}; completion mode is ${sharedBranch.completionMode}.`,
-          `- The backend branch lease key is '${sharedBranch.branchLeaseKey}'. Prompt text is not lease authority.`,
+          externalSession
+            ? "- The external session caller owns writer exclusivity and lifecycle coordination; Streamliner will not acquire a branch lease."
+            : `- The backend branch lease key is '${sharedBranch.branchLeaseKey}'. Prompt text is not lease authority.`,
           "- Keep pawWorkDir inside the configured launch cwd and return the configured target branch unchanged.",
         ]
       : []),
@@ -2009,7 +2034,9 @@ export function buildStreamlinerContextSavePrompt(
       ? [
           "- The launch cwd is the existing shared-branch checkout. Do not create or switch branches, create another worktree, merge, rebase, force-push, or create a pull request.",
           `- Keep the branch exactly '${input.configuration.sharedBranch.targetBranch}' and keep \`.paw/work/<workId>\` inside the launch cwd.`,
-          `- The required start SHA is ${input.configuration.sharedBranch.requiredStartSha}; the backend lease remains the sole exclusivity authority.`,
+          input.configuration.preparationTarget === "external-session"
+            ? `- The required start SHA is ${input.configuration.sharedBranch.requiredStartSha}; the external session caller owns writer exclusivity and lifecycle coordination.`
+            : `- The required start SHA is ${input.configuration.sharedBranch.requiredStartSha}; the backend lease remains the sole exclusivity authority.`,
         ]
       : [
           "- The launch cwd is the base/coordination checkout. Do not check out the target node branch in the launch cwd.",
@@ -2432,6 +2459,7 @@ export function buildKickoffPrompt(input: {
   workflowContextPath: string;
   streamlinerContextPath: string;
   launchMetadata: PawLaunchMetadata;
+  preparationTarget?: PawLaunchPreparationTarget;
   kickoffAdditionalInstructions?: string;
 }): string {
   const lines = [
@@ -2473,7 +2501,14 @@ export function buildKickoffPrompt(input: {
       `- Completion mode: ${input.launchMetadata.completionMode}`,
       `- Existing pull request: ${input.launchMetadata.existingPullRequest?.provider} #${input.launchMetadata.existingPullRequest?.id}`,
       `- Required start SHA: ${input.launchMetadata.requiredStartSha}`,
-      `- Branch lease: ${input.launchMetadata.branchLease?.leaseId ?? "missing"} (${input.launchMetadata.branchLease?.branchLeaseKey ?? "missing"})`,
+      ...(input.preparationTarget === "external-session"
+        ? [
+            "- Branch coordination: external session caller (no Streamliner branch lease).",
+            "- The external session caller owns writer exclusivity and lifecycle coordination for this shared branch.",
+          ]
+        : [
+            `- Branch lease: ${input.launchMetadata.branchLease?.leaseId ?? "missing"} (${input.launchMetadata.branchLease?.branchLeaseKey ?? "missing"})`,
+          ]),
       "- Do not create or switch branches, create a worktree, merge, rebase, force-push, or create a pull request.",
     );
   }
@@ -2487,9 +2522,18 @@ export function buildKickoffPrompt(input: {
   return `${lines.join("\n")}\n`;
 }
 
+export function preparePawLaunch(
+  options: PreparePawLaunchOptions & { target: "external-session" },
+): Promise<ExternalSessionHandoff>;
+export function preparePawLaunch(
+  options: PreparePawLaunchOptions & { target?: "node-launch" },
+): Promise<PawLaunchHandoff>;
+export function preparePawLaunch(
+  options: PreparePawLaunchOptions,
+): Promise<PawLaunchPreparationResult>;
 export async function preparePawLaunch(
   options: PreparePawLaunchOptions,
-): Promise<PawLaunchHandoff> {
+): Promise<PawLaunchPreparationResult> {
   if (!options.nodeId.trim()) {
     throw new LaunchPreparationError(
       "invalid_node_id",
@@ -2566,12 +2610,13 @@ export async function preparePawLaunch(
   const parsedConfiguration = parseConfigurationInput(options.configuration, {
     cliArgs: options.defaultCliArgs,
     terminal: terminalDefaults,
-  });
+  }, options.target);
   validateConfigurationForNode(
     parsedConfiguration,
     launchDefaultsNode,
     Boolean(policyGraphPath),
   );
+  const externalSession = options.target === "external-session";
   let branchLease: NodeBranchLease | null = null;
   if (parsedConfiguration.sharedBranch) {
     const sharedConfiguration = resolveConfiguration(parsedConfiguration, {
@@ -2582,64 +2627,69 @@ export async function preparePawLaunch(
       targetBranch: parsedConfiguration.sharedBranch.targetBranch,
       requiredStartSha: parsedConfiguration.sharedBranch.requiredStartSha,
     });
-    if (!options.branchLeaseCoordinator || !launchDefaultsNode || !launchDefaultsWorkstream) {
-      throw new LaunchPreparationError(
-        "branch_lease_unavailable",
-        503,
-        "Existing shared-branch launch preparation requires the integrated node launch record store.",
-        "validation",
-        "configuration.branchLeaseKey",
-      );
-    }
-    try {
-      branchLease = await options.branchLeaseCoordinator.acquireBranchLease({
-        branchLeaseKey: parsedConfiguration.sharedBranch.branchLeaseKey,
-        projectKey:
-          launchDefaultsWorkstream.projectKey ??
-          launchDefaultsWorkstream.repos[0]?.id ??
-          launchDefaultsWorkstream.id,
-        workstreamId: launchDefaultsWorkstream.id,
-        graphPath: policyGraphPath!,
-        nodeId: launchDefaultsNode.id,
-        targetRepoId: launchDefaultsNode.repoIds[0]!,
-        cwd: sharedConfiguration.cwd,
-        targetBranch: parsedConfiguration.sharedBranch.targetBranch,
-        requiredStartSha: parsedConfiguration.sharedBranch.requiredStartSha,
-        existingPullRequest: parsedConfiguration.sharedBranch.existingPullRequest,
-        now: options.now?.(),
-      });
-      emitProgress(
-        options.onProgress,
-        "branch_lease.acquired",
-        `Acquired shared branch lease ${branchLease.leaseId}.`,
-        {
-          branchLease: structuredClone(branchLease),
-        },
-      );
-    } catch (error: unknown) {
-      const branchLeaseError = error as {
-        code?: unknown;
-        statusCode?: unknown;
-        branchLease?: unknown;
-        message?: unknown;
-      };
-      throw new LaunchPreparationError(
-        typeof branchLeaseError.code === "string" &&
-            branchLeaseError.code.startsWith("branch_lease")
-          ? "branch_lease_conflict"
-          : "branch_lease_unavailable",
-        typeof branchLeaseError.statusCode === "number"
-          ? branchLeaseError.statusCode
-          : 500,
-        typeof branchLeaseError.message === "string"
-          ? branchLeaseError.message
-          : String(error),
-        "validation",
-        "configuration.branchLeaseKey",
-        isRecord(branchLeaseError.branchLease)
-          ? { branchLease: branchLeaseError.branchLease }
-          : undefined,
-      );
+    if (!externalSession) {
+      const branchLeaseCoordinator = options.branchLeaseCoordinator;
+      const sharedNode = launchDefaultsNode;
+      const sharedWorkstream = launchDefaultsWorkstream;
+      if (!branchLeaseCoordinator || !sharedNode || !sharedWorkstream) {
+        throw new LaunchPreparationError(
+          "branch_lease_unavailable",
+          503,
+          "Existing shared-branch launch preparation requires the integrated node launch record store.",
+          "validation",
+          "configuration.branchLeaseKey",
+        );
+      }
+      try {
+        branchLease = await branchLeaseCoordinator.acquireBranchLease({
+          branchLeaseKey: parsedConfiguration.sharedBranch.branchLeaseKey,
+          projectKey:
+            sharedWorkstream.projectKey ??
+            sharedWorkstream.repos[0]?.id ??
+            sharedWorkstream.id,
+          workstreamId: sharedWorkstream.id,
+          graphPath: policyGraphPath!,
+          nodeId: sharedNode.id,
+          targetRepoId: sharedNode.repoIds[0]!,
+          cwd: sharedConfiguration.cwd,
+          targetBranch: parsedConfiguration.sharedBranch.targetBranch,
+          requiredStartSha: parsedConfiguration.sharedBranch.requiredStartSha,
+          existingPullRequest: parsedConfiguration.sharedBranch.existingPullRequest,
+          now: options.now?.(),
+        });
+        emitProgress(
+          options.onProgress,
+          "branch_lease.acquired",
+          `Acquired shared branch lease ${branchLease.leaseId}.`,
+          {
+            branchLease: structuredClone(branchLease),
+          },
+        );
+      } catch (error: unknown) {
+        const branchLeaseError = error as {
+          code?: unknown;
+          statusCode?: unknown;
+          branchLease?: unknown;
+          message?: unknown;
+        };
+        throw new LaunchPreparationError(
+          typeof branchLeaseError.code === "string" &&
+              branchLeaseError.code.startsWith("branch_lease")
+            ? "branch_lease_conflict"
+            : "branch_lease_unavailable",
+          typeof branchLeaseError.statusCode === "number"
+            ? branchLeaseError.statusCode
+            : 500,
+          typeof branchLeaseError.message === "string"
+            ? branchLeaseError.message
+            : String(error),
+          "validation",
+          "configuration.branchLeaseKey",
+          isRecord(branchLeaseError.branchLease)
+            ? { branchLease: branchLeaseError.branchLease }
+            : undefined,
+        );
+      }
     }
   }
 
@@ -2805,11 +2855,26 @@ export async function preparePawLaunch(
     workflowContextPath: pawInit.workflowContextPath,
     streamlinerContextPath: pawInit.streamlinerContextPath,
     launchMetadata,
+    preparationTarget: options.target,
     kickoffAdditionalInstructions: pawInit.kickoffAdditionalInstructions,
   });
+  const cwd = pawInit.cwd || normalizeManifestPath(configuration.cwd);
+
+  if (externalSession) {
+    return {
+      target: "external-session",
+      cwd,
+      branch: pawInit.branch,
+      recommendedWorkspaceType: configuration.sharedBranch ? "branch" : "worktree",
+      kickoffPrompt,
+      workflowContextPath: pawInit.workflowContextPath,
+      streamlinerContextPath: pawInit.streamlinerContextPath,
+      launchMetadata,
+    };
+  }
 
   return {
-    cwd: pawInit.cwd || normalizeManifestPath(configuration.cwd),
+    cwd,
     branch: pawInit.branch,
     pawWorkDir: pawInit.pawWorkDir,
     workflowContextPath: pawInit.workflowContextPath,

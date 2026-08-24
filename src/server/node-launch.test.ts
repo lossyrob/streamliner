@@ -403,6 +403,39 @@ describe("launchPreparedNode", () => {
     },
   );
 
+  it("rejects external session handoffs through POST /api/node-launches", async () => {
+    const root = createRootDir();
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const launchTerminal = vi.fn(() => terminalResult("powershell", 42));
+    const api = createStreamlinerApiApp({
+      store: registryStore,
+      launchClaimStore: claimStore,
+      nodeLaunchDeps: { launchTerminal },
+    });
+    activeApps.push(api);
+
+    const response = await request(api.app)
+      .post("/api/node-launches")
+      .send({
+        handoff: {
+          ...fakeHandoff(root),
+          target: "external-session",
+          recommendedWorkspaceType: "worktree",
+        },
+      })
+      .expect(400);
+
+    expect(response.body).toEqual({
+      code: "invalid_node_launch_handoff",
+      error: "External session handoffs cannot be launched through /api/node-launches.",
+      input: "handoff.target",
+    });
+    expect(launchTerminal).not.toHaveBeenCalled();
+    expect(claimStore.listClaims()).toEqual([]);
+    expect(registryStore.listSessions()).toEqual([]);
+  });
+
   it("marks the claim failed when terminal spawn fails", async () => {
     const root = createRootDir();
     const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });

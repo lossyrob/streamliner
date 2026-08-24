@@ -862,6 +862,43 @@ describe("preparePawLaunch", () => {
     );
   });
 
+  it("prepares an App-friendly external session handoff without launch-only inputs", async () => {
+    const root = createRootDir();
+    const result = await preparePawLaunch({
+      target: "external-session",
+      nodeId: "launch-prompt-profiles",
+      cwd: root,
+      stateRoot: join(root, "state"),
+      launchNonce: "nonce-external",
+      pawInitRunner: createPawInitRunner(),
+      contextPreparer: createContextPreparer(root),
+    });
+
+    expect(result).toEqual({
+      target: "external-session",
+      cwd: normalizePath(root),
+      branch: "feature/launch-prompt-profiles",
+      recommendedWorkspaceType: "worktree",
+      kickoffPrompt: expect.stringContaining("Start by loading the paw-lite workflow"),
+      workflowContextPath: normalizePath(
+        join(root, ".paw", "work", "launch-prompt-profiles", "WorkflowContext.md"),
+      ),
+      streamlinerContextPath: normalizePath(
+        join(root, ".paw", "work", "launch-prompt-profiles", "streamliner", "context.md"),
+      ),
+      launchMetadata: expect.objectContaining({
+        launchNonce: "nonce-external",
+        nodeId: "launch-prompt-profiles",
+        branch: "feature/launch-prompt-profiles",
+        branchLease: null,
+      }),
+    });
+    expect(result).not.toHaveProperty("terminal");
+    expect(result).not.toHaveProperty("runtimeKind");
+    expect(result).not.toHaveProperty("contextPackage");
+    expect(result).not.toHaveProperty("sessionStateRoot");
+  });
+
   it.each(["mac-terminal", "iterm2"] as const)(
     "accepts %s in launch configuration",
     async (preferredTerminal) => {
@@ -1522,6 +1559,38 @@ describe("launch preparation API route", () => {
     }));
   });
 
+  it("preserves graph launch policy for external session preparation", async () => {
+    const root = createRootDir();
+    const graphPath = writeLaunchPolicyGraph(root, {
+      launchPolicy: { requiredTracker: "github-issue" },
+    });
+    const store = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const api = createStreamlinerApiApp({
+      graphPath,
+      store,
+      launchPreparationDeps: {
+        cwd: root,
+        stateRoot: join(root, "state"),
+        pawInitRunner: createPawInitRunner(),
+        contextPreparer: createContextPreparer(root),
+      },
+    });
+    activeApps.push(api);
+
+    const response = await request(api.app)
+      .post("/api/launch-preparations")
+      .send({
+        target: "external-session",
+        nodeId: "launch-prompt-profiles",
+      })
+      .expect(412);
+
+    expect(response.body).toEqual(expect.objectContaining({
+        code: "launch_policy_blocked",
+        input: "launchPolicy",
+    }));
+  });
+
   it("passes an existing prepared launch record into repeat PAW initialization", async () => {
     const root = createRootDir();
     const graphPath = normalizePath(writeLaunchPolicyGraph(root, {
@@ -1662,6 +1731,106 @@ describe("launch preparation API route", () => {
         workflowContextPath: expect.stringContaining("WorkflowContext.md"),
       }),
     }));
+  });
+
+  it("runs external session preparation without persisting a blocking node operation", async () => {
+    const root = createRootDir();
+    const graphPath = normalizePath(writeLaunchPolicyGraph(root));
+    const registryStore = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const claimStore = new LaunchClaimFileStore({ rootDir: join(root, "claims") });
+    const nodeLaunchRecordStore = new NodeLaunchRecordStore({
+      recordsPath: join(root, "state", "node-launch-records.json"),
+    });
+    const api = createStreamlinerApiApp({
+      graphPath,
+      store: registryStore,
+      launchClaimStore: claimStore,
+      nodeLaunchRecordsPath: join(root, "state", "node-launch-records.json"),
+      launchPreparationDeps: {
+        cwd: root,
+        stateRoot: join(root, "state"),
+        nodeLaunchRecordStore,
+        pawInitRunner: createPawInitRunner(),
+        contextPreparer: createContextPreparer(root),
+      },
+    });
+    activeApps.push(api);
+
+    const started = await request(api.app)
+      .post("/api/launch-preparations/runs")
+      .send({
+        target: "external-session",
+        nodeId: "launch-prompt-profiles",
+        graphPath,
+      })
+      .expect(202);
+
+    expect(started.body).not.toHaveProperty("operation");
+    const snapshot = await waitForLaunchPreparationRun(api, started.body.runId);
+    expect(snapshot.body.result).toEqual(expect.objectContaining({
+      target: "external-session",
+      branch: "feature/launch-prompt-profiles",
+      recommendedWorkspaceType: "worktree",
+      workflowContextPath: expect.stringContaining("WorkflowContext.md"),
+      streamlinerContextPath: expect.stringContaining("streamliner/context.md"),
+      launchMetadata: expect.objectContaining({
+        graphPath,
+        nodeId: "launch-prompt-profiles",
+      }),
+    }));
+    await expect(
+      nodeLaunchRecordStore.getOperation(graphPath, "launch-prompt-profiles"),
+    ).resolves.toBeNull();
+    await expect(
+      nodeLaunchRecordStore.get(graphPath, "launch-prompt-profiles"),
+    ).resolves.toBeNull();
+    expect(claimStore.listClaims()).toEqual([]);
+    expect(registryStore.listSessions()).toEqual([]);
+  });
+
+  it.each([
+    "/api/launch-preparations",
+    "/api/launch-preparations/runs",
+  ])("rejects postPreparation for external session preparation through %s", async (path) => {
+    const root = createRootDir();
+    const graphPath = normalizePath(writeLaunchPolicyGraph(root));
+    const store = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const nodeLaunchRecordStore = new NodeLaunchRecordStore({
+      recordsPath: join(root, "state", "node-launch-records.json"),
+    });
+    const api = createStreamlinerApiApp({
+      graphPath,
+      store,
+      launchPreparationDeps: {
+        cwd: root,
+        stateRoot: join(root, "state"),
+        nodeLaunchRecordStore,
+        pawInitRunner: createPawInitRunner(),
+        contextPreparer: createContextPreparer(root),
+      },
+    });
+    activeApps.push(api);
+
+    await request(api.app)
+      .post(path)
+      .send({
+        target: "external-session",
+        nodeId: "launch-prompt-profiles",
+        graphPath,
+        postPreparation: {
+          launchTerminal: {},
+        },
+      })
+      .expect(400, {
+        code: "invalid_launch_configuration",
+        error: "postPreparation is not supported for external-session preparation.",
+        step: "validation",
+        input: "postPreparation",
+      });
+
+    await expect(
+      nodeLaunchRecordStore.getOperation(graphPath, "launch-prompt-profiles"),
+    ).resolves.toBeNull();
   });
 
   it("launches terminal and companion from a post-preparation run on the server", async () => {

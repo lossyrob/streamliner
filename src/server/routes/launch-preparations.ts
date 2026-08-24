@@ -11,6 +11,7 @@ import {
   type PawLaunchSessionRunner,
   type PawInitRunner,
   type PawLaunchConfigurationInput,
+  type PawLaunchPreparationTarget,
   type PawLaunchProgressEvent,
 } from "../launch-preparation";
 import {
@@ -78,6 +79,37 @@ function requestConfiguration(value: unknown): PawLaunchConfigurationInput | und
     );
   }
   return value as PawLaunchConfigurationInput;
+}
+
+function requestPreparationTarget(value: unknown): PawLaunchPreparationTarget {
+  if (value === undefined || value === null || value === "node-launch") {
+    return "node-launch";
+  }
+  if (value === "external-session") {
+    return value;
+  }
+  throw new LaunchPreparationError(
+    "invalid_launch_configuration",
+    400,
+    'target must be "node-launch" or "external-session".',
+    "validation",
+    "target",
+  );
+}
+
+function rejectExternalPostPreparation(
+  target: PawLaunchPreparationTarget,
+  value: unknown,
+): void {
+  if (target === "external-session" && value !== undefined && value !== null) {
+    throw new LaunchPreparationError(
+      "invalid_launch_configuration",
+      400,
+      "postPreparation is not supported for external-session preparation.",
+      "validation",
+      "postPreparation",
+    );
+  }
 }
 
 function hasExplicitCliArgs(configuration: PawLaunchConfigurationInput | undefined): boolean {
@@ -316,11 +348,13 @@ export function createLaunchPreparationsRouter(options: {
       ? await options.deps?.nodeLaunchRecordStore?.get(lookupGraphPath, nodeId)
       : null;
     const configuration = requestConfiguration(body.configuration);
+    const target = requestPreparationTarget(body.target);
     const defaultCliArgs = hasExplicitCliArgs(configuration)
       ? undefined
       : [...(await (options.deps?.loadDefaultCliArgs?.() ?? readSessionLaunchSettings().then((settings) => settings.defaultCliArgs)))];
     return {
       nodeId,
+      target,
       graphPath,
       defaultGraphPath: options.defaultGraphPath,
       launchNonce,
@@ -347,11 +381,16 @@ export function createLaunchPreparationsRouter(options: {
     const graphPath = typeof body.graphPath === "string"
       ? body.graphPath
       : options.defaultGraphPath;
-    const operationStore = options.deps?.nodeLaunchRecordStore;
+    let operationStore: NodeLaunchRecordStore | undefined;
     let operationStarted = false;
 
     try {
       const prepareOptions = await buildPrepareOptions(body);
+      const target = prepareOptions.target ?? "node-launch";
+      rejectExternalPostPreparation(target, body.postPreparation);
+      operationStore = target === "external-session"
+        ? undefined
+        : options.deps?.nodeLaunchRecordStore;
       const existingOperation = graphPath && nodeId.trim()
         ? await operationStore?.getOperation(graphPath, nodeId)
         : null;
@@ -364,8 +403,8 @@ export function createLaunchPreparationsRouter(options: {
         return;
       }
       const runId = randomUUID();
-      if (graphPath && nodeId.trim()) {
-        await operationStore?.startPreparationOperation({ graphPath, nodeId, runId });
+      if (operationStore && graphPath && nodeId.trim()) {
+        await operationStore.startPreparationOperation({ graphPath, nodeId, runId });
         operationStarted = true;
       }
       const progress = (event: PawLaunchProgressEvent) => {
@@ -383,7 +422,9 @@ export function createLaunchPreparationsRouter(options: {
         ...prepareOptions,
         onProgress: progress,
       });
-      await operationStore?.markPreparationSucceeded(result);
+      if (!("target" in result)) {
+        await operationStore?.markPreparationSucceeded(result);
+      }
       res.status(200).json(result);
     } catch (error: unknown) {
       if (operationStarted && graphPath && nodeId.trim()) {
@@ -411,11 +452,16 @@ export function createLaunchPreparationsRouter(options: {
     const body = requestBodyRecord(req.body);
     try {
       const prepareOptions = await buildPrepareOptions(body);
+      const target = prepareOptions.target ?? "node-launch";
+      const externalSession = target === "external-session";
       const nodeId = typeof body.nodeId === "string" ? body.nodeId : "";
       const graphPath = typeof body.graphPath === "string"
         ? body.graphPath
         : options.defaultGraphPath;
-      const operationStore = options.deps?.nodeLaunchRecordStore;
+      const operationStore = externalSession
+        ? undefined
+        : options.deps?.nodeLaunchRecordStore;
+      rejectExternalPostPreparation(target, body.postPreparation);
       const postPreparation = requestPostPreparation(body.postPreparation);
       if (postPreparation && (!graphPath || !nodeId.trim())) {
         throw new LaunchPreparationError(
@@ -447,8 +493,8 @@ export function createLaunchPreparationsRouter(options: {
         return;
       }
       const runId = randomUUID();
-      const startedOperation = graphPath && nodeId.trim()
-        ? await operationStore?.startPreparationOperation({
+      const startedOperation = operationStore && graphPath && nodeId.trim()
+        ? await operationStore.startPreparationOperation({
           graphPath,
           nodeId,
           runId,
@@ -474,6 +520,10 @@ export function createLaunchPreparationsRouter(options: {
             ...prepareOptions,
             onProgress: progress,
           });
+          if ("target" in result) {
+            preparationSucceeded = true;
+            return result;
+          }
           await operationStore?.markPreparationSucceeded(result);
           preparationSucceeded = true;
           if (!hasPostPreparationTerminalIntent(postPreparation)) {
@@ -647,7 +697,7 @@ export function createLaunchPreparationsRouter(options: {
       res.status(202).json({
         runId: snapshot.runId,
         status: snapshot.status,
-        operation: startedOperation,
+        ...(!externalSession ? { operation: startedOperation } : {}),
       });
     } catch (error: unknown) {
       if (error instanceof LaunchPreparationError) {
