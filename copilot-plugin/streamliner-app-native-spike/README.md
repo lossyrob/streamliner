@@ -26,19 +26,32 @@ The deterministic package is written to
 file hashes and a package digest without timestamps or machine-specific paths.
 Two builds from the same checkout produce the same digest.
 
+The optional `--out` argument accepts a new directory outside the repository or
+a directory already marked by this builder's `package-manifest.json`. Inside
+the repository, use the dedicated default. The builder rejects unowned paths
+before recursive cleanup.
+
 ## Local private install
 
 Build first, then install the generated directory into the current user's
 private Copilot plugin cache:
 
 ```powershell
-copilot plugin install .\dist\streamliner-app-native-spike
+copilot plugin install ./dist/streamliner-app-native-spike
+```
+
+Copilot CLI `1.0.81-8` accepts that slash-relative form. To avoid relative-path
+parsing differences entirely, resolve and pass an absolute Windows path:
+
+```powershell
+$pluginPath = (Resolve-Path ./dist/streamliner-app-native-spike).Path
+copilot plugin install $pluginPath
 ```
 
 For an isolated SDK or CLI smoke test that should not persist an installation:
 
 ```powershell
-copilot --plugin-dir .\dist\streamliner-app-native-spike
+copilot --plugin-dir ./dist/streamliner-app-native-spike
 ```
 
 After a persistent install, start a fresh Copilot App session in any repository.
@@ -73,7 +86,7 @@ Remove the cached plugin and local generated package:
 
 ```powershell
 copilot plugin uninstall streamliner-app-native-spike
-Remove-Item -Recurse -Force .\dist\streamliner-app-native-spike
+Remove-Item -Recurse -Force ./dist/streamliner-app-native-spike
 ```
 
 Cleanup does not remove local spike runtime or position state. If that evidence

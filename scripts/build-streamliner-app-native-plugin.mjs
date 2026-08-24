@@ -2,6 +2,8 @@
 
 import { createHash } from "node:crypto";
 import {
+    existsSync,
+    lstatSync,
     mkdirSync,
     readFileSync,
     readdirSync,
@@ -75,9 +77,45 @@ function pathContains(parent, child) {
         || (!childRelative.startsWith("..") && !isAbsolute(childRelative));
 }
 
+function samePath(left, right) {
+    return pathContains(left, right) && pathContains(right, left);
+}
+
+function assertOwnedOutputRoot(outputRoot) {
+    const markerPath = join(outputRoot, "package-manifest.json");
+    let marker;
+    try {
+        marker = JSON.parse(readFileSync(markerPath, "utf8"));
+    } catch (error) {
+        throw new Error(
+            `Refusing to remove unowned plugin package output ${outputRoot}; expected a valid ${markerPath}: ${error.message}`,
+        );
+    }
+    if (
+        marker?.schemaVersion !== 1
+        || marker.name !== COMPATIBILITY_MANIFEST.package.name
+        || marker.version !== COMPATIBILITY_MANIFEST.package.version
+        || marker.source?.plugin !== "copilot-plugin/streamliner-app-native-spike"
+        || marker.source?.extension !== ".github/extensions/streamliner-spike"
+    ) {
+        throw new Error(
+            `Refusing to remove unowned plugin package output ${outputRoot}; ${markerPath} does not identify this builder.`,
+        );
+    }
+}
+
 function assertSafeOutputRoot(outputRoot) {
     if (outputRoot === parse(outputRoot).root) {
         throw new Error("Plugin package output cannot be a filesystem root.");
+    }
+    const outputExists = existsSync(outputRoot);
+    if (outputExists) {
+        const output = lstatSync(outputRoot);
+        if (output.isSymbolicLink() || !output.isDirectory()) {
+            throw new Error(
+                `Plugin package output must be a real directory, not a file or symbolic link: ${outputRoot}`,
+            );
+        }
     }
     for (const protectedRoot of [
         REPOSITORY_ROOT,
@@ -92,6 +130,16 @@ function assertSafeOutputRoot(outputRoot) {
                 `Plugin package output ${outputRoot} overlaps protected source ${protectedRoot}.`,
             );
         }
+    }
+    const isDefaultOutput = samePath(outputRoot, DEFAULT_PACKAGE_ROOT);
+    const isInsideRepository = pathContains(REPOSITORY_ROOT, outputRoot);
+    if (isInsideRepository && !isDefaultOutput && !outputExists) {
+        throw new Error(
+            `Custom plugin package output inside the repository is not allowed until it is marked as builder-owned: ${outputRoot}. Use the dedicated default ${DEFAULT_PACKAGE_ROOT} or an output outside the repository.`,
+        );
+    }
+    if (outputExists && !isDefaultOutput) {
+        assertOwnedOutputRoot(outputRoot);
     }
 }
 
