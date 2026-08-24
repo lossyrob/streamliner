@@ -11,6 +11,7 @@ import { buildPortfolioProjection } from "./lib/portfolio-projection.mjs";
 import { createCanvasServer } from "./lib/renderer.mjs";
 import { RuntimeStore } from "./lib/runtime-store.mjs";
 import { PORTFOLIO_CANVAS_ASSETS } from "./lib/ui-assets.mjs";
+import { inspectCompatibility } from "./lib/compatibility.mjs";
 import {
     PortfolioPositionStore,
     portfolioPositionDomain,
@@ -36,6 +37,14 @@ function portfolioPath(input) {
 
 function serializeToolResult(value) {
     return JSON.stringify(value, null, 2);
+}
+
+function compatibilityAction() {
+    return {
+        name: "get_compatibility",
+        description: "Inspect this Canvas package's supported schemas and asset versions.",
+        handler: async () => inspectCompatibility(),
+    };
 }
 
 function requireCanvasInstance(instanceId) {
@@ -112,6 +121,7 @@ const canvas = createCanvas({
         additionalProperties: false,
     },
     actions: [
+        compatibilityAction(),
         {
             name: "get_projection",
             description: "Read the current graph and runtime binding projection for this canvas.",
@@ -186,6 +196,7 @@ const portfolioCanvas = createCanvas({
         additionalProperties: false,
     },
     actions: [
+        compatibilityAction(),
         {
             name: "get_portfolio_projection",
             description: "Read the exact-revision portfolio and current local runtime bindings.",
@@ -281,6 +292,43 @@ const portfolioCanvas = createCanvas({
 
 await joinSession({
     tools: [
+        {
+            name: "streamliner_app_native_spike_inspect_compatibility",
+            description: "Inspect the installed App-native Streamliner spike package and optionally check candidate schema or Canvas asset versions.",
+            parameters: {
+                type: "object",
+                properties: {
+                    workstreamArtifactSchemaVersion: {
+                        type: "integer",
+                        minimum: 0,
+                    },
+                    portfolioArtifactSchemaVersion: {
+                        type: "integer",
+                        minimum: 0,
+                    },
+                    runtimeStateSchemaVersion: {
+                        type: "integer",
+                        minimum: 0,
+                    },
+                    portfolioPositionsSchemaVersion: {
+                        type: "integer",
+                        minimum: 0,
+                    },
+                    workstreamCanvasAssetVersion: {
+                        type: "string",
+                        minLength: 1,
+                    },
+                    portfolioCanvasAssetVersion: {
+                        type: "string",
+                        minLength: 1,
+                    },
+                },
+                additionalProperties: false,
+            },
+            handler: async (args) => serializeToolResult(
+                inspectCompatibility(args),
+            ),
+        },
         {
             name: "streamliner_spike_prepare_launch",
             description: "Prepare an App-native toy-node launch from one exact Git artifact revision and return a one-time binding token.",

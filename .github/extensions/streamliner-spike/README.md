@@ -24,6 +24,10 @@ private WebSocket traffic. It does not launch terminals or create worktrees.
 ## Files
 
 - `extension.mjs` wires globally unique tools and the Canvas.
+- `compatibility.json` is the canonical package, schema, and Canvas asset
+  compatibility contract.
+- `lib/compatibility.mjs` validates that contract and produces explicit
+  incompatibility diagnostics before unsupported state is loaded.
 - `lib/git-artifact-provider.mjs` reads one exact Git revision without checkout.
 - `lib/runtime-store.mjs` persists hashed binding tokens and launch state outside
   the repository.
@@ -43,6 +47,10 @@ private WebSocket traffic. It does not launch terminals or create worktrees.
 - `fixtures/artifact-tree/` is the dedicated artifact-ref tree.
 - `seed-toy-artifacts.mjs` creates a deterministic local artifact commit/ref
   without changing the source checkout.
+- `copilot-plugin/streamliner-app-native-spike/` owns the distributable worker
+  agent, launch skill, plugin manifest, and private installation guide.
+- `scripts/build-streamliner-app-native-plugin.mjs` deterministically copies
+  this canonical extension into a local installable plugin package.
 
 ## Reproduce
 
@@ -51,6 +59,7 @@ From this repository worktree:
 ```powershell
 npm ci
 npm run build:streamliner-spike
+npm run build:streamliner-app-native-plugin
 node .github\extensions\streamliner-spike\seed-toy-artifacts.mjs refs/heads/streamliner-artifacts-spike
 node --test .github\extensions\streamliner-spike\spike.node-test.mjs
 ```
@@ -59,6 +68,11 @@ The generated browser bundle is committed so a fresh checkout can load the
 project extension immediately. Run `npm run build:streamliner-spike` after any
 UI-source change; the build empties and recreates only the versioned asset
 directory. Two consecutive builds must produce identical files and hashes.
+
+The plugin package is written to `dist/streamliner-app-native-spike` with a
+content-only `package-manifest.json`. It contains no lifecycle hooks. See
+`copilot-plugin/streamliner-app-native-spike/README.md` for private path
+installation and cleanup.
 
 Reload project extensions, then call
 `streamliner_spike_prepare_launch` with:
@@ -77,14 +91,22 @@ perform the bounded task, call `streamliner_spike_complete_launch`, and report
 with native `send_session_message`.
 
 Open canvas `streamliner-spike-workstream` with the resolved artifact commit (or
-the local ref) and invoke `get_projection` or `refresh`. The iframe server binds
+the local ref) and invoke `get_projection`, `refresh`, or `get_compatibility`.
+The iframe server binds
 only to `127.0.0.1`, serves no CDN content, and uses the documented App theme
 variables and attributes.
 
 Open `streamliner-spike-portfolio` with the same `repoPath` and revision plus
 `"portfolioPath": ".streamliner/portfolio.json"`. Its actions are
-`get_portfolio_projection` and `refresh_portfolio`; the equivalent extension
+`get_portfolio_projection`, `refresh_portfolio`, and `get_compatibility`; the equivalent extension
 tool is `streamliner_spike_inspect_portfolio`.
+
+The globally unique
+`streamliner_app_native_spike_inspect_compatibility` tool reports package
+`0.1.0`, workstream and portfolio artifact schema ranges, runtime and positions
+schemas, and both Canvas asset versions. Optional probes return structured
+diagnostics without attempting a partial load. Artifact and local-state readers
+throw the same explicit diagnostic when they encounter unsupported schemas.
 
 ## Portfolio Canvas
 

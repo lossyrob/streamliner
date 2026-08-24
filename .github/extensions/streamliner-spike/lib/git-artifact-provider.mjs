@@ -2,6 +2,8 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { isAbsolute, posix, resolve, win32 } from "node:path";
 
+import { assertWorkstreamArtifactSchema } from "./compatibility.mjs";
+
 function git(cwd, args, options = {}) {
     try {
         return execFileSync("git", args, {
@@ -87,13 +89,13 @@ function parseGraph(graphText, graphPath) {
     } catch (error) {
         throw new Error(`Invalid JSON in ${graphPath}: ${error.message}`);
     }
+    assertWorkstreamArtifactSchema(graph?.schemaVersion, graphPath);
     if (
-        graph?.schemaVersion !== 1
-        || typeof graph.id !== "string"
+        typeof graph.id !== "string"
         || typeof graph.title !== "string"
         || !Array.isArray(graph.nodes)
     ) {
-        throw new Error(`${graphPath} is not a Streamliner schemaVersion 1 graph.`);
+        throw new Error(`${graphPath} is not a valid supported Streamliner graph.`);
     }
     const ids = new Set();
     for (const node of graph.nodes) {

@@ -6,8 +6,11 @@ import {
     withFileLock,
     writeJsonAtomic,
 } from "./locked-json-file.mjs";
+import {
+    assertRuntimeStateSchema,
+    RUNTIME_STATE_SCHEMA_VERSION,
+} from "./compatibility.mjs";
 
-const SCHEMA_VERSION = 1;
 const MAX_LAUNCH_RECORDS = 100;
 
 function defaultStateFile() {
@@ -17,13 +20,13 @@ function defaultStateFile() {
         "extensions",
         "streamliner-spike",
         "artifacts",
-        "runtime-v1.json",
+        `runtime-v${RUNTIME_STATE_SCHEMA_VERSION}.json`,
     );
 }
 
 function emptyState() {
     return {
-        schemaVersion: SCHEMA_VERSION,
+        schemaVersion: RUNTIME_STATE_SCHEMA_VERSION,
         updatedAt: null,
         launches: [],
     };
@@ -45,9 +48,10 @@ export class RuntimeStore {
         } catch (error) {
             throw new Error(`Cannot read Streamliner spike runtime state: ${error.message}`);
         }
-        if (state?.schemaVersion !== SCHEMA_VERSION || !Array.isArray(state.launches)) {
+        assertRuntimeStateSchema(state?.schemaVersion, this.stateFile);
+        if (!Array.isArray(state.launches)) {
             throw new Error(
-                `Unsupported Streamliner spike runtime schema in ${this.stateFile}.`,
+                `Invalid Streamliner spike runtime state in ${this.stateFile}: launches must be an array.`,
             );
         }
         return state;

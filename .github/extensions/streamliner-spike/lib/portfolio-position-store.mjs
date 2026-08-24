@@ -7,8 +7,12 @@ import {
     withFileLock,
     writeJsonAtomic,
 } from "./locked-json-file.mjs";
+import {
+    assertPortfolioPositionsSchema,
+    PORTFOLIO_POSITIONS_SCHEMA_VERSION,
+} from "./compatibility.mjs";
 
-export const PORTFOLIO_POSITIONS_SCHEMA_VERSION = 1;
+export { PORTFOLIO_POSITIONS_SCHEMA_VERSION };
 const ID_SEGMENT = "[a-z0-9]+(?:-[a-z0-9]+)*";
 const POSITION_ID_PATTERN = new RegExp(
     `^(?:ws:${ID_SEGMENT}|wave:${ID_SEGMENT}:${ID_SEGMENT})$`,
@@ -121,9 +125,9 @@ export class PortfolioPositionStore {
     read(domain) {
         const file = this.pathFor(domain);
         const document = readJsonIfExists(file, emptyDocument(domain));
+        assertPortfolioPositionsSchema(document?.schemaVersion, file);
         if (
-            document?.schemaVersion !== PORTFOLIO_POSITIONS_SCHEMA_VERSION
-            || document.domain?.repositoryKey !== domain.repositoryKey
+            document.domain?.repositoryKey !== domain.repositoryKey
             || document.domain?.projectId !== domain.projectId
             || document.domain?.portfolioId !== domain.portfolioId
             || !document.positions

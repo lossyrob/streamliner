@@ -15,7 +15,10 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { readNodeArtifactSnapshot } from "./lib/git-artifact-provider.mjs";
+import {
+    readNodeArtifactSnapshot,
+    readWorkstreamSnapshot,
+} from "./lib/git-artifact-provider.mjs";
 import {
     claimPreparedLaunch,
     completeClaimedLaunch,
@@ -36,6 +39,15 @@ import {
     CANVAS_ASSET_VERSION,
     PORTFOLIO_CANVAS_ASSETS,
 } from "./lib/ui-assets.mjs";
+import {
+    assertCanvasAssetVersion,
+    assertPortfolioArtifactSchema,
+    assertPortfolioPositionsSchema,
+    assertRuntimeStateSchema,
+    assertWorkstreamArtifactSchema,
+    COMPATIBILITY_MANIFEST,
+    inspectCompatibility,
+} from "./lib/compatibility.mjs";
 import { projectionToFlow } from "./ui/src/projection-adapter.mjs";
 import {
     dependencyFocusIds,
@@ -79,6 +91,84 @@ test.after(() => {
     for (const root of createdRoots) {
         rmSync(root, { recursive: true, force: true });
     }
+});
+
+test("compatibility manifest accepts the package contract and diagnoses every unsupported probe", () => {
+    assert.equal(
+        COMPATIBILITY_MANIFEST.package.name,
+        "streamliner-app-native-spike",
+    );
+    assert.equal(COMPATIBILITY_MANIFEST.package.version, "0.1.0");
+    assert.equal(assertWorkstreamArtifactSchema(1), 1);
+    assert.equal(assertPortfolioArtifactSchema(1), 1);
+    assert.equal(assertRuntimeStateSchema(1), 1);
+    assert.equal(assertPortfolioPositionsSchema(1), 1);
+    assert.equal(
+        assertCanvasAssetVersion(
+            "streamliner-spike-workstream",
+            "react-flow-v1",
+        ),
+        "react-flow-v1",
+    );
+
+    const report = inspectCompatibility({
+        workstreamArtifactSchemaVersion: 2,
+        portfolioArtifactSchemaVersion: 2,
+        runtimeStateSchemaVersion: 2,
+        portfolioPositionsSchemaVersion: 2,
+        workstreamCanvasAssetVersion: "react-flow-v2",
+        portfolioCanvasAssetVersion: "portfolio-v2",
+    });
+    assert.equal(report.compatible, false);
+    assert.equal(report.diagnostics.length, 6);
+    assert.equal(
+        report.diagnostics.every((diagnostic) =>
+            diagnostic.code === "streamliner_app_native_spike_incompatible"
+            && diagnostic.message.includes("streamliner-app-native-spike@0.1.0")
+        ),
+        true,
+    );
+});
+
+test("artifact readers reject unsupported schemas with explicit compatibility diagnostics", () => {
+    const fixture = createFixtureRepository();
+    const graphPath = join(
+        fixture.root,
+        ".streamliner",
+        "workstreams",
+        "app-native-spike",
+        "graph.json",
+    );
+    const graph = JSON.parse(readFileSync(graphPath, "utf8"));
+    graph.schemaVersion = 2;
+    writeFileSync(graphPath, `${JSON.stringify(graph, null, 2)}\n`);
+    const portfolioPath = join(fixture.root, ".streamliner", "portfolio.json");
+    const portfolio = JSON.parse(readFileSync(portfolioPath, "utf8"));
+    portfolio.schemaVersion = 2;
+    writeFileSync(portfolioPath, `${JSON.stringify(portfolio, null, 2)}\n`);
+    git(fixture.root, "add", ".");
+    git(fixture.root, "commit", "-m", "Use unsupported schemas");
+    const revision = git(fixture.root, "rev-parse", "HEAD");
+
+    assert.throws(
+        () => readWorkstreamSnapshot({
+            repoPath: fixture.root,
+            revision,
+            workstreamPath: fixture.workstreamPath,
+        }),
+        /incompatibility: workstream artifact schemaVersion 2.*supported range is 1\.\.1/,
+    );
+    const stateRoot = mkdtempSync(join(tmpdir(), "streamliner-spike-state-"));
+    createdRoots.push(stateRoot);
+    assert.throws(
+        () => buildPortfolioProjection({
+            repoPath: fixture.root,
+            revision,
+            portfolioPath: ".streamliner/portfolio.json",
+            store: new RuntimeStore({ stateFile: join(stateRoot, "runtime.json") }),
+        }),
+        /incompatibility: portfolio artifact schemaVersion 2.*supported range is 1\.\.1/,
+    );
 });
 
 test("artifact provider reads one exact revision without changing checkout", () => {
@@ -326,6 +416,22 @@ test("runtime store fails closed instead of evicting an abandoned lock", () => {
     assert.throws(() => store.mutate(() => {}), /Timed out/);
     assert.equal(existsSync(store.lockFile), true);
     assert.equal(store.read().launches.length, 0);
+});
+
+test("runtime store rejects incompatible persisted schemas explicitly", () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "streamliner-spike-state-"));
+    createdRoots.push(stateRoot);
+    const stateFile = join(stateRoot, "runtime.json");
+    writeFileSync(stateFile, JSON.stringify({
+        schemaVersion: 2,
+        updatedAt: null,
+        launches: [],
+    }));
+    const store = new RuntimeStore({ stateFile });
+    assert.throws(
+        () => store.read(),
+        /incompatibility: runtime state schemaVersion 2.*required version is 1/,
+    );
 });
 
 function exampleProjection() {
@@ -727,7 +833,10 @@ test("portfolio position store validates schema and merges concurrent partial pa
         domain,
         positions: {},
     }));
-    assert.throws(() => first.read(domain), /Unsupported portfolio positions document/);
+    assert.throws(
+        () => first.read(domain),
+        /incompatibility: portfolio positions schemaVersion 2.*required version is 1/,
+    );
 });
 
 test("portfolio anchor translation precedes exact wave pins and survives added waves", () => {

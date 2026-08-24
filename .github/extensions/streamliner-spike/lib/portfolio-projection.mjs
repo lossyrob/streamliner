@@ -4,6 +4,7 @@ import {
     readWorkstreamSnapshot,
     resolveArtifactRevision,
 } from "./git-artifact-provider.mjs";
+import { assertPortfolioArtifactSchema } from "./compatibility.mjs";
 import { buildProjectionFromSnapshot } from "./projection.mjs";
 import { isPortfolioDomainId } from "./portfolio-position-store.mjs";
 
@@ -14,16 +15,16 @@ function parseManifest(text, path) {
     } catch (error) {
         throw new Error(`Invalid JSON in ${path}: ${error.message}`);
     }
+    assertPortfolioArtifactSchema(manifest?.schemaVersion, path);
     if (
-        manifest?.schemaVersion !== 1
-        || typeof manifest.id !== "string"
+        typeof manifest.id !== "string"
         || !isPortfolioDomainId(manifest.id)
         || !isPortfolioDomainId(manifest.project?.id)
         || !Array.isArray(manifest.workstreams)
         || manifest.workstreams.length < 3
         || !Array.isArray(manifest.dependencies)
     ) {
-        throw new Error(`${path} is not a schemaVersion 1 portfolio manifest.`);
+        throw new Error(`${path} is not a valid supported portfolio manifest.`);
     }
     const workstreamIds = new Set();
     for (const workstream of manifest.workstreams) {

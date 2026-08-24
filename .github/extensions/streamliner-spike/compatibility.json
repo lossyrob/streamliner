@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "package": {
+    "name": "streamliner-app-native-spike",
+    "version": "0.1.0"
+  },
+  "artifactSchemas": {
+    "workstream": {
+      "minimum": 1,
+      "maximum": 1
+    },
+    "portfolio": {
+      "minimum": 1,
+      "maximum": 1
+    }
+  },
+  "runtimeStateSchema": 1,
+  "portfolioPositionsSchema": 1,
+  "canvasAssets": {
+    "streamliner-spike-workstream": "react-flow-v1",
+    "streamliner-spike-portfolio": "portfolio-v1"
+  }
+}
