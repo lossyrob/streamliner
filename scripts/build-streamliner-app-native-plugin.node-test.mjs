@@ -10,6 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
 import { COMPATIBILITY_MANIFEST } from "../.github/extensions/streamliner-spike/lib/compatibility.mjs";
 import {
@@ -18,7 +19,7 @@ import {
     REPOSITORY_ROOT,
 } from "./build-streamliner-app-native-plugin.mjs";
 
-test("plugin assembly is complete, hook-free, and reproducible", () => {
+test("plugin assembly is complete, hook-free, and reproducible", async () => {
     const root = mkdtempSync(join(tmpdir(), "streamliner-app-native-plugin-"));
     try {
         const first = buildStreamlinerAppNativePlugin({
@@ -64,6 +65,10 @@ test("plugin assembly is complete, hook-free, and reproducible", () => {
             readme,
             /copilot plugin install \.\\dist\\streamliner-app-native-spike/,
         );
+        assert.match(
+            readme,
+            /streamliner-app-native-spike:streamliner-app-native-worker/,
+        );
 
         const paths = first.packageManifest.files.map((file) => file.path);
         for (const requiredPath of [
@@ -105,6 +110,38 @@ test("plugin assembly is complete, hook-free, and reproducible", () => {
         assert.match(agent, /native `send_session_message`/);
         assert.match(agent, /`streamliner_spike_complete_launch`/);
         assert.doesNotMatch(agent, /^tools:/m);
+
+        const compatibilityToolModule = await import(pathToFileURL(join(
+            first.outputRoot,
+            "extensions",
+            "streamliner-spike",
+            "lib",
+            "compatibility-tool.mjs",
+        )).href);
+        const compatibilityTool = compatibilityToolModule.COMPATIBILITY_TOOL;
+        assert.deepEqual(
+            Object.keys(compatibilityTool.parameters.properties).sort(),
+            [
+                "portfolioArtifactSchemaVersion",
+                "portfolioCanvasAssetVersion",
+                "portfolioPositionsSchemaVersion",
+                "runtimeStateSchemaVersion",
+                "workstreamArtifactSchemaVersion",
+                "workstreamCanvasAssetVersion",
+            ],
+        );
+        assert.deepEqual(compatibilityTool.parameters.required, []);
+        assert.equal(compatibilityTool.parameters.additionalProperties, false);
+        const compatibilityReport = JSON.parse(await compatibilityTool.handler({
+            workstreamArtifactSchemaVersion: 2,
+            portfolioArtifactSchemaVersion: 2,
+            runtimeStateSchemaVersion: 2,
+            portfolioPositionsSchemaVersion: 2,
+            workstreamCanvasAssetVersion: "react-flow-v2",
+            portfolioCanvasAssetVersion: "portfolio-v2",
+        }));
+        assert.equal(compatibilityReport.compatible, false);
+        assert.equal(compatibilityReport.diagnostics.length, 6);
 
         const skill = readFileSync(
             join(

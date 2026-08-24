@@ -63,6 +63,18 @@ The package supplies the extension independently of project-scoped
 This spike package is intended for local/private evaluation only. Do not upload
 it to a gist, marketplace, or remote package registry.
 
+## Worker agent
+
+Plugin agents are namespace-qualified. When creating the App worker session,
+select:
+
+```text
+streamliner-app-native-spike:streamliner-app-native-worker
+```
+
+The unqualified `streamliner-app-native-worker` name does not resolve from an
+installed plugin.
+
 ## Inspect compatibility
 
 Call `streamliner_app_native_spike_inspect_compatibility` with no arguments to
