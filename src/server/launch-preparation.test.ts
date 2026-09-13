@@ -926,12 +926,12 @@ describe("preparePawLaunch", () => {
   it("defaults launch cwd to the graph repo root when the server cwd differs", async () => {
     const root = createRootDir();
     const serverRoot = join(root, "streamliner-server");
-    const graphRepoRoot = join(root, "dbagent-worktree");
+    const graphRepoRoot = join(root, "example-project-worktree");
     const graphPath = join(
       graphRepoRoot,
       ".streamliner",
       "workstreams",
-      "local-scenario-iteration-loop",
+      "example-workstream",
       "graph.json",
     );
     mkdirSync(dirname(graphPath), { recursive: true });
@@ -939,9 +939,9 @@ describe("preparePawLaunch", () => {
       graphPath,
       JSON.stringify({
         schemaVersion: 1,
-        id: "local-scenario-iteration-loop",
-        projectKey: "dbagent",
-        title: "Local Scenario Iteration Loop",
+        id: "example-workstream",
+        projectKey: "example-project",
+        title: "Example Workstream",
         summary: "Exercise PAW launch cwd selection.",
         status: "active",
         attention: "focus",
@@ -949,22 +949,22 @@ describe("preparePawLaunch", () => {
         updatedAt: "2026-05-04T19:00:00.000Z",
         repos: [
           {
-            id: "dbagent",
-            owner: "lossyrob",
-            name: "dbagent",
+            id: "example-project",
+            owner: "example-org",
+            name: "example-project",
             role: "primary",
           },
         ],
         designRefs: [],
         nodes: [
           {
-            id: "runner-diagnostics-resume",
+            id: "example-task",
             type: "task",
-            title: "Runner diagnostics resume",
+            title: "Example task",
             summary: "Initialize PAW from a graph outside the Streamliner server checkout.",
             status: "ready",
             attention: "focus",
-            repoIds: ["dbagent"],
+            repoIds: ["example-project"],
             dependsOn: [],
           },
         ],
@@ -975,19 +975,19 @@ describe("preparePawLaunch", () => {
 
     const runnerCalls: PawLaunchSessionRunnerInput[] = [];
     const result = await preparePawLaunch({
-      nodeId: "runner-diagnostics-resume",
+      nodeId: "example-task",
       graphPath,
       cwd: serverRoot,
       stateRoot: join(root, "state"),
       pawLaunchRunner: async (input) => {
         runnerCalls.push(input);
-        const workId = "runner-diagnostics-resume";
+        const workId = "example-task";
         const pawWorkDir = join(input.cwd, ".paw", "work", workId);
         return {
           cwd: normalizePath(input.cwd),
-          branch: "feature/runner-diagnostics-resume-2",
+          branch: "feature/example-task",
           workId,
-          workTitle: "Runner Diagnostics Resume",
+          workTitle: "Example Task",
           pawWorkDir: normalizePath(pawWorkDir),
           workflowContextPath: normalizePath(join(pawWorkDir, "WorkflowContext.md")),
           streamlinerContextPath: normalizePath(join(pawWorkDir, "streamliner", "context.md")),
@@ -1014,7 +1014,7 @@ describe("preparePawLaunch", () => {
     );
     expect(result.cwd).toBe(normalizePath(graphRepoRoot));
     expect(result.pawWorkDir).toBe(
-      normalizePath(join(graphRepoRoot, ".paw", "work", "runner-diagnostics-resume")),
+      normalizePath(join(graphRepoRoot, ".paw", "work", "example-task")),
     );
   });
 

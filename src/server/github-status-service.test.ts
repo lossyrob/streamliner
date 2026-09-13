@@ -295,8 +295,7 @@ describe("GitHub status API", () => {
   });
 
   it("ignores cross-referenced timeline events (mere mentions) when listing linked PRs", async () => {
-    // Reproduces the inference-relay-model-provider-boundary regression: a
-    // PR that only mentions the issue in its body (e.g. a "design note"
+    // A PR that only mentions the issue in its body (e.g. a "design note"
     // PR) should NOT show up as a linked PR. Only `connected` events
     // (GitHub's official "Linked pull requests" sidebar / closing-keyword
     // signal) are treated as actionable.

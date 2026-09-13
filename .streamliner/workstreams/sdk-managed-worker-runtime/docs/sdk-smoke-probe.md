@@ -58,6 +58,8 @@ try {
 
 ## Observed output
 
+Local username and session ID are replaced with placeholders below.
+
 ```json
 {
   "status": {
@@ -67,7 +69,7 @@ try {
   "auth": {},
   "session": {
     "sessionIdPresent": true,
-    "workspacePath": "C:\\Users\\robemanuele\\.copilot\\session-state\\410c4aa0-0be4-4dbf-9175-4d29120d0b2a",
+    "workspacePath": "C:\\Users\\<user>\\.copilot\\session-state\\<session-id>",
     "capabilities": {
       "ui": {
         "elicitation": false

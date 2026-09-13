@@ -69,8 +69,8 @@ describe("copilot session discovery", () => {
       "session-2",
       [
         "id: session-2",
-        "cwd: C:\\Users\\robemanuele\\proj\\dbagent\\dbagent",
-        "repository: azure-data-database-platform/dbagent",
+        "cwd: C:\\work\\example-project",
+        "repository: example-org/example-project",
         "branch: main",
         "summary: |-",
         "  Edit Presentation Spec",
@@ -91,7 +91,7 @@ describe("copilot session discovery", () => {
       expect.objectContaining({
         sessionId: "session-2",
         title: "Edit Presentation Spec",
-        description: "azure-data-database-platform/dbagent · main",
+        description: "example-org/example-project · main",
         lifecycleStatus: "ended",
         observedSessionKind: "interactive",
         copilotProcessState: "none",
@@ -122,7 +122,7 @@ describe("copilot session discovery", () => {
           copilotSessionId: "session-2",
           title: "Edit Presentation Spec",
           titleSource: "auto",
-          repo: "azure-data-database-platform/dbagent",
+          repo: "example-org/example-project",
           branch: "main",
           lifecycleStatus: "ended",
           observedSessionKind: "interactive",

@@ -354,7 +354,7 @@ describe("indexSessionContext", () => {
       "remote",
       "add",
       "origin",
-      "https://robemanuele_microsoft@github.com/azure-data-database-platform/dbagent.git",
+      "https://example-user@github.com/example-org/example-project.git",
     ]);
     const stat = statSync(eventsPath);
 
@@ -373,7 +373,7 @@ describe("indexSessionContext", () => {
 
     expect(patch).toEqual(
       expect.objectContaining({
-        repo: "azure-data-database-platform/dbagent",
+        repo: "example-org/example-project",
         branch: "main",
         derivedBranch: "main",
       }),

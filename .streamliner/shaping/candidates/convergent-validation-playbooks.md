@@ -185,13 +185,13 @@ Behavior:
 
 ```yaml
 kind: ValidationLoopWave
-playbook: dbagent-scenarios-validation
+playbook: example-scenarios-validation
 runner:
   type: agent-playbook
-  entrypoint: playbooks/dbagent/e2e/create-index.md
+  entrypoint: playbooks/example-project/e2e/create-record.md
 target:
-  repo: lossyrob/dbagent
-  integration_branch: workstream/dbagent-validation
+  repo: example-org/example-project
+  integration_branch: workstream/example-validation
 outputs:
   result_file: .streamliner/validation-result.json
 on_findings:

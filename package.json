@@ -2,6 +2,7 @@
   "name": "streamliner-scaffold-web-app",
   "private": true,
   "version": "0.0.0",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "concurrently -n api,web --kill-others-on-fail \"npm:dev:api\" \"npm:dev:web\"",
