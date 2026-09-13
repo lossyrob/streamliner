@@ -1,6 +1,6 @@
-// _proto/canvas — quick-and-dirty prototype API for the DBAgent portfolio canvas.
+// _proto/canvas — quick-and-dirty prototype API for a local portfolio canvas.
 //
-// Prototype API for the dbagent planning artifacts. NOT a generalized
+// Prototype API for project planning artifacts. NOT a generalized
 // Streamliner feature yet. When this proves out, the contract that should be
 // promoted is:
 //   - Read a portfolio document
@@ -8,7 +8,7 @@
 //   - Atomic writes so concurrent saves do not interleave
 //
 // Endpoints:
-//   GET    /api/_proto/canvas/portfolio      -> the dbagent portfolio.json
+//   GET    /api/_proto/canvas/portfolio      -> the configured portfolio.json
 //   GET    /api/_proto/canvas/positions      -> the positions overlay (may be {})
 //   PUT    /api/_proto/canvas/positions      -> legacy full-overlay upsert
 //                                              (routine drags use PATCH below)
@@ -37,22 +37,12 @@
 //
 // Storage:
 //   - portfolio.json: read-only here, sourced from the planning repo
-//   - positions/colors/terminal state: lives in the dbagent portfolio state
-//     directory configured by dbagent/streamliner.json.
+//   - positions/colors/terminal state: lives in the portfolio state
+//     directory configured by the project's streamliner.json.
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { Router } from "express";
-
-// Root of the dbagent planning artifacts. The workstream-doc lookup walks
-// `<DBAGENT_ROOT>/workstreams/<id>/brief.md` for formed workstreams and
-// `<DBAGENT_ROOT>/shaping/candidates/<id>.md` for candidates, with a fuzzy
-// token-subset fallback because portfolio IDs sometimes use short slugs while
-// disk uses fully-spelled folder/file names.
-const DBAGENT_ROOT = resolve(
-  "C:\\Users\\robemanuele\\proj\\planning\\planning\\streamliner\\dbagent",
-);
-const PROJECT_CONFIG_PATH = join(DBAGENT_ROOT, "streamliner.json");
 
 interface PortfolioConfig {
   path?: string;
@@ -63,13 +53,13 @@ interface ProjectConfig {
   portfolio?: PortfolioConfig;
 }
 
-function readProjectConfig(): ProjectConfig {
-  if (!existsSync(PROJECT_CONFIG_PATH)) {
+function readProjectConfig(configPath: string): ProjectConfig {
+  if (!existsSync(configPath)) {
     return {};
   }
-  const parsed = JSON.parse(readFileSync(PROJECT_CONFIG_PATH, "utf-8")) as unknown;
+  const parsed = JSON.parse(readFileSync(configPath, "utf-8")) as unknown;
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`${PROJECT_CONFIG_PATH} must contain a JSON object.`);
+    throw new Error(`${configPath} must contain a JSON object.`);
   }
 
   const record = parsed as Record<string, unknown>;
@@ -81,20 +71,20 @@ function readProjectConfig(): ProjectConfig {
     typeof record.portfolio !== "object" ||
     Array.isArray(record.portfolio)
   ) {
-    throw new Error(`${PROJECT_CONFIG_PATH} field "portfolio" must be an object.`);
+    throw new Error(`${configPath} field "portfolio" must be an object.`);
   }
 
   const portfolioRecord = record.portfolio as Record<string, unknown>;
   const portfolio: PortfolioConfig = {};
   if (portfolioRecord.path !== undefined) {
     if (typeof portfolioRecord.path !== "string" || !portfolioRecord.path.trim()) {
-      throw new Error(`${PROJECT_CONFIG_PATH} field "portfolio.path" must be a non-empty string.`);
+      throw new Error(`${configPath} field "portfolio.path" must be a non-empty string.`);
     }
     portfolio.path = portfolioRecord.path;
   }
   if (portfolioRecord.stateDir !== undefined) {
     if (typeof portfolioRecord.stateDir !== "string" || !portfolioRecord.stateDir.trim()) {
-      throw new Error(`${PROJECT_CONFIG_PATH} field "portfolio.stateDir" must be a non-empty string.`);
+      throw new Error(`${configPath} field "portfolio.stateDir" must be a non-empty string.`);
     }
     portfolio.stateDir = portfolioRecord.stateDir;
   }
@@ -102,23 +92,10 @@ function readProjectConfig(): ProjectConfig {
   return { portfolio };
 }
 
-function resolveProjectPath(configuredPath: string | undefined, fallbackRelativePath: string): string {
+function resolveProjectPath(projectRoot: string, configuredPath: string | undefined, fallbackRelativePath: string): string {
   const candidate = configuredPath?.trim() || fallbackRelativePath;
-  return isAbsolute(candidate) ? resolve(candidate) : resolve(DBAGENT_ROOT, candidate);
+  return isAbsolute(candidate) ? resolve(candidate) : resolve(projectRoot, candidate);
 }
-
-const PROJECT_CONFIG = readProjectConfig();
-const PORTFOLIO_PATH = resolveProjectPath(
-  PROJECT_CONFIG.portfolio?.path,
-  join("portfolio", "portfolio.json"),
-);
-const PORTFOLIO_STATE_DIR = resolveProjectPath(
-  PROJECT_CONFIG.portfolio?.stateDir,
-  join("portfolio", "state"),
-);
-const POSITIONS_PATH = join(PORTFOLIO_STATE_DIR, "positions.json");
-const COLORS_PATH = join(PORTFOLIO_STATE_DIR, "colors.json");
-const TERMINAL_ACTIVE_PATH = join(PORTFOLIO_STATE_DIR, "terminal-active.json");
 
 interface PinnedPosition {
   x: number;
@@ -156,9 +133,9 @@ const IGNORED_TOKENS = new Set([
 ]);
 
 // Synonym groups: every token in a group is considered equivalent for matching.
-// These cover the abbreviations the dbagent portfolio uses against fully-spelled
-// disk folder names (e.g. id `vmagent-cas-db-access` -> disk
-// `vmagent-cas-database-access`). Add new groups sparingly; over-matching makes
+// These cover portfolio abbreviations against fully-spelled disk folder names
+// (e.g. id `example-db-access` -> disk `example-database-access`).
+// Add new groups sparingly; over-matching makes
 // fuzzy resolution pick wrong folders.
 const TOKEN_SYNONYMS: ReadonlyArray<ReadonlySet<string>> = [
   new Set(["db", "database"]),
@@ -253,6 +230,7 @@ async function readIfExists(path: string): Promise<string | null> {
 }
 
 async function resolveWorkstreamDoc(
+  projectRoot: string,
   id: string,
   preferred: "formed" | "candidate" | "auto" = "auto",
 ): Promise<{
@@ -262,7 +240,7 @@ async function resolveWorkstreamDoc(
   const triedPaths: string[] = [];
 
   const tryFormed = async (): Promise<ResolvedDoc | null> => {
-    const workstreamsDir = join(DBAGENT_ROOT, "workstreams");
+    const workstreamsDir = join(projectRoot, "workstreams");
     const directBrief = join(workstreamsDir, id, "brief.md");
     triedPaths.push(directBrief);
     const direct = await readIfExists(directBrief);
@@ -277,7 +255,7 @@ async function resolveWorkstreamDoc(
   };
 
   const tryCandidate = async (): Promise<ResolvedDoc | null> => {
-    const candidatesDir = join(DBAGENT_ROOT, "shaping", "candidates");
+    const candidatesDir = join(projectRoot, "shaping", "candidates");
     const directCandidate = join(candidatesDir, `${id}.md`);
     triedPaths.push(directCandidate);
     const direct = await readIfExists(directCandidate);
@@ -307,13 +285,40 @@ async function resolveWorkstreamDoc(
   return { doc: null, triedPaths };
 }
 
-export function createProtoCanvasRouter(): Router {
+export function createProtoCanvasRouter(
+  projectRoot = process.env.STREAMLINER_PROTO_CANVAS_PROJECT_ROOT,
+): Router {
   const router = Router();
+  const configuredRoot = projectRoot?.trim();
+  if (!configuredRoot) {
+    router.use((_req, res) => {
+      res.status(503).json({
+        error: "Set STREAMLINER_PROTO_CANVAS_PROJECT_ROOT to a local project directory to use the portfolio prototype.",
+      });
+    });
+    return router;
+  }
+
+  const PROJECT_ROOT = resolve(configuredRoot);
+  const PROJECT_CONFIG = readProjectConfig(join(PROJECT_ROOT, "streamliner.json"));
+  const PORTFOLIO_PATH = resolveProjectPath(
+    PROJECT_ROOT,
+    PROJECT_CONFIG.portfolio?.path,
+    join("portfolio", "portfolio.json"),
+  );
+  const PORTFOLIO_STATE_DIR = resolveProjectPath(
+    PROJECT_ROOT,
+    PROJECT_CONFIG.portfolio?.stateDir,
+    join("portfolio", "state"),
+  );
+  const POSITIONS_PATH = join(PORTFOLIO_STATE_DIR, "positions.json");
+  const COLORS_PATH = join(PORTFOLIO_STATE_DIR, "colors.json");
+  const TERMINAL_ACTIVE_PATH = join(PORTFOLIO_STATE_DIR, "terminal-active.json");
 
   router.get("/portfolio", async (_req, res) => {
     if (!existsSync(PORTFOLIO_PATH)) {
       res.status(500).json({
-        error: `Hard-coded portfolio path missing: ${PORTFOLIO_PATH}`,
+        error: `Configured portfolio path missing: ${PORTFOLIO_PATH}`,
       });
       return;
     }
@@ -556,7 +561,7 @@ export function createProtoCanvasRouter(): Router {
       return;
     }
     // Defense-in-depth: reject anything with path separators so a hostile id
-    // can't reach outside DBAGENT_ROOT via the fuzzy-match step.
+    // can't reach outside the configured project root via the fuzzy-match step.
     if (id.includes("/") || id.includes("\\") || id.includes("..")) {
       res.status(400).json({ error: "Workstream id must be a slug." });
       return;
@@ -567,7 +572,7 @@ export function createProtoCanvasRouter(): Router {
       : rawType === "formed" ? "formed"
       : "auto";
     try {
-      const { doc, triedPaths } = await resolveWorkstreamDoc(id, preferred);
+      const { doc, triedPaths } = await resolveWorkstreamDoc(PROJECT_ROOT, id, preferred);
       if (!doc) {
         res.status(404).json({
           error: `No brief or candidate markdown found for workstream '${id}'.`,

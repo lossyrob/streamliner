@@ -6,6 +6,10 @@
 
 A command center for orchestrating multi-issue development work with AI coding agents. Streamliner provides an interactive dependency graph for planning, monitoring, and evolving bodies of work that span multiple GitHub issues and agent sessions.
 
+**Work in progress.** Streamliner is intended for one trusted user on a local
+machine. Expect rough edges and evolving formats. Keep its API on loopback;
+it is not a hosted or multi-user service.
+
 ## What it does
 
 Streamliner loads a **workstream** — a structured JSON artifact describing a dependency graph of work items — and renders it as an interactive visualization.
@@ -41,37 +45,82 @@ The data pipeline is fully layered:
 - [dagre](https://github.com/dagrejs/dagre) (`@dagrejs/dagre`) — directed graph auto-layout
 - [Vitest](https://vitest.dev/) — testing
 
-## Quick start
+## Quick start: explore the example workstreams
 
-Clone the repo, install dependencies, copy the local environment template, then start the API and web app together:
+Use **Node.js 24 LTS (24.x)** with its bundled **npm 11**. Node and npm are
+sufficient for viewing graphs; Copilot and PAW are used by optional agent
+features.
 
 ```powershell
 git clone https://github.com/lossyrob/streamliner.git
 cd streamliner
-npm install
+npm ci
+```
+
+Prepare the local environment and disable automatic session
+discovery/summarization for this first run.
+
+PowerShell:
+
+```powershell
 Copy-Item .env.template .env
+Add-Content -Path .env -Value 'STREAMLINER_INTERNAL_DISABLE_SESSION_WORKER=1'
+```
+
+macOS/Linux:
+
+```bash
+cp .env.template .env
+printf '\nSTREAMLINER_INTERNAL_DISABLE_SESSION_WORKER=1\n' >> .env
+```
+
+Then start both the local API and web app:
+
+```powershell
 npm run dev
 ```
 
-On macOS/Linux, use `cp .env.template .env` instead of `Copy-Item`.
-Visible worker terminal launches use the local platform: Windows opens Windows
-Terminal or PowerShell; on macOS, Streamliner opens Apple Terminal.app by
-default and can explicitly use iTerm2.
+Open [http://localhost:5173](http://localhost:5173), or the URL printed by Vite
+if that port is busy. The API health endpoint defaults to
+[http://127.0.0.1:4319/api/health](http://127.0.0.1:4319/api/health).
 
-The checked-in `.env.template` points Streamliner at the sample session-launching workstream and sets the launch-context synthesis model to Claude Sonnet 4.6:
+On fresh state, register this clone before opening a graph:
 
-```dotenv
-STREAMLINER_GRAPH=.streamliner/workstreams/session-launching-and-tracking/graph.json
-STREAMLINER_CONTEXT_MODEL=claude-sonnet-4.6
-STREAMLINER_API_HOST=127.0.0.1
-STREAMLINER_API_PORT=4319
-```
+1. Open **Workstreams**.
+2. Under **Add source**, choose **Project root**.
+3. Enter the absolute path to this clone, then click **Add source**.
+4. Open a discovered workstream, such as **Session launching and tracking**.
 
-Edit `.env` to choose a different workstream graph or Copilot SDK model. `.env` is ignored by Git, and Streamliner loads it automatically when running the local API, Vite config, and API wait script.
+Project-root scanning discovers graphs under `.streamliner\workstreams`.
+The checked-in workstreams document Streamliner's own development; use them
+as reference examples and create a workstream for your own project before
+launching agents.
 
-Open [http://localhost:5173](http://localhost:5173) to see the configured workstream graph. `npm run dev` starts both the local API and Vite; the API is available directly at [http://127.0.0.1:4319/api/health](http://127.0.0.1:4319/api/health).
+`.env` is ignored by Git and loaded automatically. The template's
+`STREAMLINER_GRAPH` value configures the legacy graph endpoint and default
+launch context. Registered sources populate the dashboard.
 
-Useful commands:
+**Session data:** normal startup enables a worker that discovers local
+Copilot sessions and can send eligible recent user-message excerpts and
+session context to Copilot for summaries. The first-run setting above
+disables that worker. Leave agent launch, relaunch, and cleanup controls
+unused while exploring; those are separate actions that can modify local
+repositories or run commands.
+
+## Optional integrations
+
+| Capability | Additional setup |
+|------------|------------------|
+| Live GitHub issue/PR status | Optional [GitHub authentication](DEVELOPING.md#github-status-authentication); anonymous lookups are supported but may be rate-limited. |
+| PAW-backed agent execution | Install and authenticate Copilot CLI, install PAW skills, configure models available to your account, and follow the [agent workflow setup](DEVELOPING.md#optional-agent-workflows). |
+| Local session observation and summaries | Remove the first-run `STREAMLINER_INTERNAL_DISABLE_SESSION_WORKER=1` setting and restart the API when you want to enable the worker described above. |
+
+Visible worker terminals use Windows Terminal or PowerShell on Windows,
+and Apple Terminal.app by default on macOS, with iTerm2 also supported.
+The viewer setup does not establish that every agent-launch integration is
+configured or supported on your machine.
+
+## Development commands
 
 | Command | Purpose |
 |---------|---------|
@@ -82,8 +131,9 @@ Useful commands:
 | `npm run lint` | Run ESLint |
 | `npm run build` | Type-check and build the web app |
 
-See [DEVELOPING.md](DEVELOPING.md) for full development setup and workflow.
+See [DEVELOPING.md](DEVELOPING.md) for environment settings, isolated worktree
+previews, and development workflow.
 
 ## License
 
-Private — not yet licensed for distribution.
+Licensed under the [MIT License](LICENSE). Copyright (c) 2026 Rob Emanuele.

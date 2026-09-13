@@ -362,8 +362,8 @@ export function createStreamlinerApiApp(
   );
 
   // Static prototype page. Visit http://<api-host>:<api-port>/_proto/canvas/
-  // for the DBAgent portfolio canvas. Hard-coded to read from the planning
-  // repo via the /api/_proto/canvas/* routes above.
+  // for the portfolio canvas. The /api/_proto/canvas/* routes above require
+  // an explicitly configured local project root.
   app.use(
     "/_proto/canvas",
     express.static(resolvePath(process.cwd(), "_proto", "canvas"), {

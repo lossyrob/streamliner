@@ -4817,9 +4817,9 @@ describe("App sessions route", () => {
             role: "primary",
           },
           {
-            id: "dbagent",
-            owner: "lossyrob",
-            name: "dbagent",
+            id: "example-project",
+            owner: "example-org",
+            name: "example-project",
             role: "secondary",
           },
         ],
@@ -4847,7 +4847,7 @@ describe("App sessions route", () => {
             summary: "Show runtime launch overlays.",
             status: "ready",
             attention: "watch",
-            repoIds: ["dbagent"],
+            repoIds: ["example-project"],
             tracker: {
               type: "github",
               owner: "lossyrob",
@@ -4999,7 +4999,7 @@ describe("App sessions route", () => {
     "sends and repopulates sticky PAW launch cwd overrides per repo",
     async () => {
       const graph = buildLaunchGraph();
-      const customCwd = "C:\\Users\\robemanuele\\proj\\dbagent\\dbagent-local-scenario-iteration-loop";
+      const customCwd = "C:\\work\\example-project\\example-workstream";
       const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = requestPath(input);
         if (path === "/api/workstreams") {

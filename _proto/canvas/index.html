@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DBAgent Portfolio Canvas — Wave Geometry</title>
+<title>Portfolio Canvas — Wave Geometry</title>
 <script type="importmap">
 {
   "imports": {
@@ -2896,7 +2896,7 @@ function App() {
         <div style=${{textAlign:'center',maxWidth:'600px'}}>
           <div style=${{fontSize:'1.05rem',color:'var(--red)',marginBottom:'8px'}}>Failed to load canvas</div>
           <div style=${{color:'var(--muted)',fontSize:'0.78rem',whiteSpace:'pre-wrap'}}>${bootState.error}</div>
-          <div style=${{color:'var(--faint)',fontSize:'0.72rem',marginTop:'18px'}}>Is the Streamliner API running? <code>npm run dev:api</code></div>
+          <div style=${{color:'var(--faint)',fontSize:'0.72rem',marginTop:'18px'}}>Check the API connection and set <code>STREAMLINER_PROTO_CANVAS_PROJECT_ROOT</code> in <code>.env</code>, then restart the API with <code>npm run dev:api</code>.</div>
         </div>
       </div>
     `;
@@ -2905,7 +2905,7 @@ function App() {
   return html`
     <header className="topbar">
       <div>
-        <h1>DBAgent Portfolio Canvas — Wave Geometry <span style=${{color:'var(--faint)',fontSize:'0.62rem',fontWeight:'400',marginLeft:'8px'}}>_proto · Streamliner backend</span></h1>
+        <h1>Portfolio Canvas — Wave Geometry <span style=${{color:'var(--faint)',fontSize:'0.62rem',fontWeight:'400',marginLeft:'8px'}}>_proto · Streamliner backend</span></h1>
         <div className="meta">
           ELK layered layout · drag pins position (auto-saved to filesystem) · Y = topological depth · Portfolio last reconciled ${PORTFOLIO.lastReconciledAt}
         </div>

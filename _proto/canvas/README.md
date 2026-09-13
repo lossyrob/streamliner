@@ -1,37 +1,48 @@
-# `_proto/canvas` — DBAgent Portfolio Canvas (prototype)
+# `_proto/canvas` — Portfolio Canvas (prototype)
 
 > Quick-and-dirty prototype that uses Streamliner's API server to give the
-> DBAgent portfolio canvas filesystem-backed position persistence.
+> portfolio canvas filesystem-backed position persistence.
 >
-> Project-specific paths. Single page. Will be promoted into a proper Streamliner
+> Explicitly configured local project. Single page. Will be promoted into a proper Streamliner
 > feature later - at that point the contract that should survive is
 > "portfolio document + positions overlay keyed by node/workstream anchor ID
 > + atomic writes."
 
 ## What this is
 
-A single static page (`index.html`) that loads the DBAgent portfolio data
-from the dbagent planning repo and renders it as a draggable React
+A single static page (`index.html`) that loads portfolio data
+from a configured local project and renders it as a draggable React
 Flow canvas. Drag positions are auto-saved (1s debounce) to a
 filesystem-backed positions file via API endpoints under
 `/api/_proto/canvas/`.
 
-This replaces the previous `localStorage`-backed prototype that lived in
-the planning repo at
-`C:\Users\robemanuele\proj\planning\planning\streamliner\dbagent\portfolio\portfolio-canvas.html`.
-That file remains usable as the standalone fallback; this prototype is
-the durable workspace for layout work.
+This replaces the earlier `localStorage`-backed prototype with a durable
+workspace for layout work. If you still use that standalone page, see
+the migration instructions below.
 
 ## Project-configured paths
 
+Set `STREAMLINER_PROTO_CANVAS_PROJECT_ROOT` in your ignored `.env` file or
+process environment before starting the API. Use the directory containing
+your project's `streamliner.json`, `workstreams`, and `shaping` artifacts.
+An absolute path is recommended; a relative root is resolved from the API
+process's working directory. Restart the API after changing the setting.
+
+When the setting is absent or blank, all `/api/_proto/canvas/*` endpoints
+return HTTP 503 with a configuration-required message. No project files are
+read or written, and other Streamliner APIs remain available.
+
+For an example root of `C:\work\example-project`, the default paths are:
+
 | Resource | Path |
 |---|---|
-| Portfolio source (read-only) | `C:\Users\robemanuele\proj\planning\planning\streamliner\dbagent\portfolio\portfolio.json` |
-| Portfolio state store (read/write) | `C:\Users\robemanuele\proj\planning\planning\streamliner\dbagent\portfolio\state\` |
+| Portfolio source (read-only) | `C:\work\example-project\portfolio\portfolio.json` |
+| Portfolio state store (read/write) | `C:\work\example-project\portfolio\state\` |
 
 The route reads `portfolio.path` and `portfolio.stateDir` from
-`C:\Users\robemanuele\proj\planning\planning\streamliner\dbagent\streamliner.json`.
-Relative paths are resolved from the dbagent project root. If the config
+`streamliner.json` in the configured project root.
+Relative portfolio and state paths are resolved from that root; absolute
+paths are used directly. If the config
 is absent, the prototype falls back to `portfolio\portfolio.json` and
 `portfolio\state`.
 
@@ -56,7 +67,8 @@ folder.
 ## How to run
 
 ```powershell
-cd C:\Users\robemanuele\proj\streamliner\streamliner
+cd C:\work\streamliner
+$env:STREAMLINER_PROTO_CANVAS_PROJECT_ROOT = "C:\work\example-project"
 npm run api          # starts the API server on STREAMLINER_API_PORT (default 4319)
 # then open:
 start http://127.0.0.1:4319/_proto/canvas/
@@ -99,7 +111,7 @@ the **Export N pinned** button (green button under the existing Reset
 button), save the downloaded JSON to:
 
 ```
-C:\Users\robemanuele\proj\planning\planning\streamliner\dbagent\portfolio\state\positions.json
+C:\work\example-project\portfolio\state\positions.json
 ```
 
 Reload the prototype — your positions are loaded. The format is
@@ -122,8 +134,8 @@ keeping:
 
 What needs to change:
 
-- **No more project-specific route constants** — accept portfolio +
-  positions paths from first-class Streamliner config
+- **First-class project selection** — select registered projects rather than
+  one prototype root supplied through the environment
 - **TypeScript + Vite-built bundle** instead of esm.sh imports for
   production
 - **Multi-document support** — register multiple canvases, switch
@@ -142,9 +154,9 @@ _proto/canvas/
 └── wave-progress-prototype.html   ← static design sheet for wave progress markers
 src/server/routes/
 └── proto-canvas.ts                ← Express router for the prototype endpoints
-C:\Users\robemanuele\proj\planning\planning\streamliner\dbagent\portfolio\state\
+C:\work\example-project\portfolio\state\
 └── positions.json / colors.json / terminal-active.json
 ```
 
 The static-file middleware mount lives in
-`src/server/app.ts:~250` (search for `_proto/canvas`).
+`src/server/app.ts` (search for `_proto/canvas`).

@@ -2,18 +2,22 @@
 
 ## Prerequisites
 
-- **Node.js** ≥ 20 (LTS recommended)
-- **npm** ≥ 10 (ships with Node 20+)
+- **Node.js 24 LTS (24.x)** is the documented development baseline.
+- **npm 11**, bundled with Node 24.
 
 ## Setup
 
 Clone the repository and install dependencies:
 
 ```bash
-git clone git@github.com:lossyrob/streamliner.git
+git clone https://github.com/lossyrob/streamliner.git
 cd streamliner
-npm install
+npm ci
 ```
+
+For a first run focused on viewing graphs, follow the
+[README quick start](README.md#quick-start-explore-the-example-workstreams).
+It disables the automatic session worker and explains source registration.
 
 ## Development servers
 
@@ -38,7 +42,10 @@ Use `npm run api` for a non-watch API process. The API serves `GET /api/health`,
 |----------|---------|-------------|
 | `STREAMLINER_API_HOST` | `127.0.0.1` | API bind host |
 | `STREAMLINER_API_PORT` | `4319` | API port used by direct callers and the Vite proxy |
+| `STREAMLINER_PROTO_CANVAS_PROJECT_ROOT` | unset | Local project directory for the [portfolio prototype](_proto/canvas/README.md). Its API returns HTTP 503 until configured; other APIs are unaffected. |
 | `STREAMLINER_GRAPH` | unset | Optional graph file path served by `GET /api/graph.json` |
+| `STREAMLINER_INTERNAL_DISABLE_SESSION_WORKER` | unset | Set to `1` to disable automatic local session discovery/summarization, for example during graph-only exploration. |
+| `STREAMLINER_PAW_SKILL_DIR` | auto-discovered | Optional PAW skills directory containing `paw-init/SKILL.md`; multiple directories may be separated by semicolons. |
 | `STREAMLINER_LOG_LEVEL` | `info` | Minimum log level (`debug`/`info`/`warn`/`error`) |
 | `STREAMLINER_LOG_DIR` | `~/.streamliner/state/logs` | Override the log file directory |
 | `STREAMLINER_LOG_CONSOLE` | `1` | Set to `0` to suppress console mirroring of log entries |
@@ -51,9 +58,39 @@ Use `npm run api` for a non-watch API process. The API serves `GET /api/health`,
 | `GITHUB_TOKEN` / `GH_TOKEN` | unset | Optional token for live GitHub issue/PR status. If unset, the API resolves a repo-specific `gh auth token` profile and then falls back to anonymous GitHub REST. |
 | `STREAMLINER_GITHUB_AUTH_CONFIG` | `~/.streamliner/state/github-auth.json` | Optional local config file that maps GitHub repositories to `gh` auth profiles for live issue/PR status. |
 
-When no `STREAMLINER_GRAPH` is set and no recent graph is available, `GET /api/graph.json` returns a 404. The dashboard handles that by falling back to Vite's static `public/example-project.json` fixture. Use the "Load workstream…" button to select a different workstream JSON file.
+When no `STREAMLINER_GRAPH` is set and no recent graph is available,
+`GET /api/graph.json` returns a 404. The dashboard uses the workstream registry:
+on fresh state, open **Workstreams**, choose **Project root** under
+**Add source**, enter this clone's absolute path, and add it. The source scanner
+discovers `.streamliner\workstreams` and makes those graphs available to open.
 
 The API process writes structured JSON-lines logs to `~/.streamliner/state/logs/api-YYYY-MM-DD.log`. See [`docs/operations/logging.md`](docs/operations/logging.md) for the format, scope reference, and grep/jq recipes.
+
+## Optional agent workflows
+
+Graph viewing can be used independently of agent execution. Before using
+PAW-backed launches:
+
+- Install Copilot CLI and authenticate with an account that can use Copilot.
+- Install [PAW](https://github.com/lossyrob/phased-agent-workflow) skills.
+  Streamliner looks for `paw-init/SKILL.md` in its supported local skill
+  locations; set `STREAMLINER_PAW_SKILL_DIR` explicitly if needed.
+- Follow the [Streamliner plugin setup](#copilot-cli-streamliner-plugin) for
+  trusted session signals.
+- Check that the models named in your local configuration and launch
+  instructions are available to your account. The environment template uses
+  `STREAMLINER_CONTEXT_MODEL=claude-sonnet-4.6` for launch-context synthesis;
+  change it if your account needs a different model.
+
+Normal API startup enables the session worker unless
+`STREAMLINER_INTERNAL_DISABLE_SESSION_WORKER=1` is set. It discovers local
+Copilot sessions and can send eligible recent user-message excerpts and
+session context to Copilot for summaries. Remove that first-run opt-out and
+restart the API when you want session observation and summarization.
+
+Use agent features only with trusted local projects. Launch, relaunch, and
+cleanup actions can execute commands or modify repositories, and model-backed
+features use your configured Copilot account.
 
 ## GitHub status authentication
 
@@ -153,10 +190,11 @@ plugin cache.
 Use the main checkout for the local marketplace registration. The Copilot CLI
 stores the marketplace as an absolute path in its own config, so registering
 from a temporary worktree will leave Copilot pointing at that worktree even
-after the PR is merged.
+after the PR is merged. Set `$repo` below to the absolute path of your
+persistent Streamliner clone.
 
 ```powershell
-$repo = "C:\Users\robemanuele\proj\streamliner\streamliner"
+$repo = "C:\work\streamliner"
 
 git -C $repo switch main
 git -C $repo pull --ff-only
@@ -185,7 +223,7 @@ If `streamliner-local` is already registered to an old worktree, remove and
 re-add it from the main checkout:
 
 ```powershell
-$repo = "C:\Users\robemanuele\proj\streamliner\streamliner"
+$repo = "C:\work\streamliner"
 
 copilot plugin uninstall streamliner
 copilot plugin marketplace remove streamliner-local
