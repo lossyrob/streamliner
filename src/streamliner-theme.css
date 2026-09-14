@@ -1857,6 +1857,31 @@ a.sl-action-btn {
   gap: 10px;
   padding: 4px 2px 8px;
   border-bottom: 1px solid var(--sl-card-border);
+  cursor: pointer;
+  user-select: none;
+}
+
+.sl-session-group-head:hover {
+  opacity: 0.8;
+}
+
+.sl-session-group-head:focus-visible {
+  outline: 2px solid var(--sl-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.sl-session-group.collapsed .sl-session-group-head {
+  border-bottom-color: transparent;
+  padding-bottom: 4px;
+}
+
+.sl-session-group-chevron {
+  font-size: 9px;
+  color: var(--sl-text-dim);
+  flex-shrink: 0;
+  width: 12px;
+  text-align: center;
 }
 
 .sl-session-group-title {

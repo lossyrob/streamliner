@@ -96,6 +96,7 @@ const SESSION_QUERY_DEBOUNCE_MS = 250;
 const DEFAULT_STALE_SESSION_DAYS = 7;
 const SESSION_STALE_DAYS_STORAGE_KEY = "streamliner:sessionsStaleDays";
 const SESSION_GROUP_MODE_STORAGE_KEY = "streamliner:sessionsGroupMode";
+const SESSION_COLLAPSED_GROUPS_STORAGE_KEY = "streamliner:collapsedSessionGroups";
 const SESSION_FACET_ALL = "__all__";
 
 type GroupMode = "recency" | "repo" | "folder" | "workstream" | "flat";
@@ -606,6 +607,25 @@ function readGroupMode(): GroupMode {
     return stored;
   }
   return DEFAULT_GROUP_MODE;
+}
+
+function readCollapsedGroups(): Set<string> {
+  if (typeof window === "undefined") {
+    return new Set();
+  }
+  try {
+    const stored = window.localStorage.getItem(SESSION_COLLAPSED_GROUPS_STORAGE_KEY);
+    if (!stored) {
+      return new Set();
+    }
+    const parsed: unknown = JSON.parse(stored);
+    if (Array.isArray(parsed)) {
+      return new Set(parsed.filter((item): item is string => typeof item === "string"));
+    }
+  } catch {
+    // ignore corrupt storage
+  }
+  return new Set();
 }
 
 // Parent directory of a cwd, robust to `/`, `\\`, trailing separators, and Windows roots.
@@ -1369,6 +1389,7 @@ export function SessionsPage({
   const [workstreamFacet, setWorkstreamFacet] = useState(SESSION_FACET_ALL);
   const [staleSessionDays, setStaleSessionDays] = useState(readStaleSessionDays);
   const [groupMode, setGroupMode] = useState<GroupMode>(readGroupMode);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(readCollapsedGroups);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedConsoleId, setSelectedConsoleId] = useState<string | null>(null);
   const [draft, setDraft] = useState<SessionDraft>(createEmptyDraft);
@@ -2233,6 +2254,27 @@ export function SessionsPage({
     }
   }, [groupMode]);
 
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(
+        SESSION_COLLAPSED_GROUPS_STORAGE_KEY,
+        JSON.stringify([...collapsedGroups]),
+      );
+    }
+  }, [collapsedGroups]);
+
+  const toggleGroupCollapse = useCallback((key: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }, []);
+
   const openSessionSheet = useCallback(
     async (session: SessionRegistryListItem) => {
       // If another session is currently dirty, flush before swapping.
@@ -2716,9 +2758,28 @@ export function SessionsPage({
             or All workstreams to widen the list.
           </div>
         ) : (
-          orderedGroups.map((group) => (
-            <section key={group.key} className="sl-session-group">
-              <div className="sl-session-group-head">
+          orderedGroups.map((group) => {
+            const isCollapsed = collapsedGroups.has(group.key);
+            return (
+            <section key={group.key} className={`sl-session-group${isCollapsed ? " collapsed" : ""}`}>
+              <div
+                className="sl-session-group-head"
+                role="button"
+                tabIndex={0}
+                aria-expanded={!isCollapsed}
+                onClick={() => toggleGroupCollapse(group.key)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    if (event.key === " ") {
+                      event.preventDefault();
+                    }
+                    toggleGroupCollapse(group.key);
+                  }
+                }}
+              >
+                <span className="sl-session-group-chevron" aria-hidden="true">
+                  {isCollapsed ? "▶" : "▼"}
+                </span>
                 <span className="sl-session-group-title">
                   {group.label}
                   {group.code && group.code !== group.label && (
@@ -2730,6 +2791,7 @@ export function SessionsPage({
                   latest: {timeAgo(group.latestTs)}
                 </span>
               </div>
+              {!isCollapsed && (
                 <div className="sl-session-rows">
                   {group.sessions.map((session) => {
                     const summary = getSessionSummaryDisplay(session);
@@ -2908,8 +2970,10 @@ export function SessionsPage({
                     );
                   })}
                 </div>
+              )}
             </section>
-          ))
+            );
+          })
         )}
       </div>
 
