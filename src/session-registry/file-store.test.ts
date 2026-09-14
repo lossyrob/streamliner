@@ -5,6 +5,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir, uptime } from "node:os";
@@ -24,6 +25,7 @@ import {
   buildSessionRegistryActivityEvidence,
   type SessionRegistryRecord,
 } from "../session-registry-schema";
+import { LOCK_UNPARSEABLE_STALE_AGE_MS } from "./lock-liveness";
 import { SessionRegistryFileStore } from "./file-store";
 
 function createRootDir(): string {
@@ -32,6 +34,11 @@ function createRootDir(): string {
 
 function readJsonFile<T>(path: string): T {
   return JSON.parse(readFileSync(path, "utf8")) as T;
+}
+
+function ageOutLock(lockPath: string): void {
+  const staleAt = new Date(Date.now() - LOCK_UNPARSEABLE_STALE_AGE_MS - 1_000);
+  utimesSync(lockPath, staleAt, staleAt);
 }
 
 const createdRoots: string[] = [];
@@ -1409,10 +1416,10 @@ describe("SessionRegistryFileStore", () => {
     expect(rebuilds).toEqual([["external-entry"], ["external-entry"]]);
   });
 
-  it("blocks writes when an advisory lock already exists", () => {
+  it("blocks writes when a fresh malformed advisory lock already exists", () => {
     const rootDir = createRootDir();
     createdRoots.push(rootDir);
-    const store = new SessionRegistryFileStore({ rootDir });
+    const store = new SessionRegistryFileStore({ rootDir, writeLockWaitTimeoutMs: 0 });
     writeFileSync(join(rootDir, "registry.lock"), "locked", "utf8");
 
     expect(() =>
@@ -1463,6 +1470,41 @@ setTimeout(() => process.exit(0), holdMs + 50);
     await childExit;
   });
 
+  it("waits briefly for a fresh malformed advisory lock to clear", async () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({
+      rootDir,
+      writeLockWaitTimeoutMs: 2_000,
+    });
+    const lockPath = join(rootDir, "registry.lock");
+    writeFileSync(lockPath, "{", "utf8");
+    const script = `
+const { rmSync } = require("node:fs");
+const lockPath = process.argv[1];
+const holdMs = Number(process.argv[2]);
+setTimeout(() => {
+  rmSync(lockPath, { force: true });
+}, holdMs);
+setTimeout(() => process.exit(0), holdMs + 50);
+`;
+    const stderr: Buffer[] = [];
+    const child = spawn(process.execPath, ["-e", script, lockPath, "250"], {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
+    const childExit = waitForChildExit(child, stderr);
+
+    const created = store.upsertSession({
+      title: "Recovered malformed lock after wait",
+      cwd: "C:\\repo",
+      origin: { kind: "manual" },
+    });
+
+    expect(created.title).toBe("Recovered malformed lock after wait");
+    await childExit;
+  });
+
   it("recovers stale advisory locks from exited processes", () => {
     const rootDir = createRootDir();
     createdRoots.push(rootDir);
@@ -1481,6 +1523,24 @@ setTimeout(() => process.exit(0), holdMs + 50);
 
     expect(created.title).toBe("Recovered");
     expect(existsSync(join(rootDir, "registry.lock"))).toBe(false);
+  });
+
+  it("reclaims an old malformed registry.lock after the safety grace period", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir, writeLockWaitTimeoutMs: 0 });
+    const lockPath = join(rootDir, "registry.lock");
+    writeFileSync(lockPath, "{", "utf8");
+    ageOutLock(lockPath);
+
+    const created = store.upsertSession({
+      title: "Recovered malformed lock",
+      cwd: "C:\\repo",
+      origin: { kind: "manual" },
+    });
+
+    expect(created.title).toBe("Recovered malformed lock");
+    expect(existsSync(lockPath)).toBe(false);
   });
 
   it("reclaims a registry lock acquired before the last system boot even when its PID is reused", () => {
@@ -1560,6 +1620,25 @@ setTimeout(() => process.exit(0), holdMs + 50);
 
     expect(created.title).toBe("Recovered past stale recovery lock");
     expect(existsSync(join(rootDir, "registry.lock.recovery"))).toBe(false);
+    expect(existsSync(join(rootDir, "registry.lock"))).toBe(false);
+  });
+
+  it("reclaims an old malformed registry.lock.recovery after the safety grace period", () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir, writeLockWaitTimeoutMs: 0 });
+    const recoveryLockPath = join(rootDir, "registry.lock.recovery");
+    writeFileSync(recoveryLockPath, "", "utf8");
+    ageOutLock(recoveryLockPath);
+
+    const created = store.upsertSession({
+      title: "Recovered malformed recovery lock",
+      cwd: "C:\\repo",
+      origin: { kind: "manual" },
+    });
+
+    expect(created.title).toBe("Recovered malformed recovery lock");
+    expect(existsSync(recoveryLockPath)).toBe(false);
     expect(existsSync(join(rootDir, "registry.lock"))).toBe(false);
   });
 

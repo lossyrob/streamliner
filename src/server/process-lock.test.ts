@@ -1,9 +1,10 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir, uptime } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { LOCK_UNPARSEABLE_STALE_AGE_MS } from "../session-registry/lock-liveness";
 import { StreamlinerApiLockError, acquireApiProcessLock } from "./process-lock";
 
 const ORIGINAL_ROOT = process.env.STREAMLINER_SESSION_REGISTRY_ROOT;
@@ -18,6 +19,11 @@ function useTempRoot(): string {
 
 function readLock(root: string): { pid: number; acquiredAt?: string; acquiredUptimeMs?: number } {
   return JSON.parse(readFileSync(join(root, "api.lock"), "utf8"));
+}
+
+function ageOutLock(lockPath: string): void {
+  const staleAt = new Date(Date.now() - LOCK_UNPARSEABLE_STALE_AGE_MS - 1_000);
+  utimesSync(lockPath, staleAt, staleAt);
 }
 
 afterEach(() => {
@@ -89,6 +95,19 @@ describe("acquireApiProcessLock", () => {
     expect(existsSync(lockPath)).toBe(false);
   });
 
+  it("reclaims an old malformed lock file after the safety grace period", () => {
+    const root = useTempRoot();
+    const lockPath = join(root, "api.lock");
+    writeFileSync(lockPath, "", "utf8");
+    ageOutLock(lockPath);
+
+    const release = acquireApiProcessLock();
+    expect(readLock(root).pid).toBe(process.pid);
+
+    release();
+    expect(existsSync(lockPath)).toBe(false);
+  });
+
   it("throws when a live process holds a fresh current-boot lock", () => {
     const root = useTempRoot();
     const lockPath = join(root, "api.lock");
@@ -117,6 +136,15 @@ describe("acquireApiProcessLock", () => {
     expect(() => acquireApiProcessLock()).toThrow(StreamlinerApiLockError);
     expect(existsSync(lockPath)).toBe(true);
     expect(readLock(root).pid).toBe(process.pid);
+  });
+
+  it("throws for a fresh malformed lock file inside the safety grace period", () => {
+    const root = useTempRoot();
+    const lockPath = join(root, "api.lock");
+    writeFileSync(lockPath, "{", "utf8");
+
+    expect(() => acquireApiProcessLock()).toThrow(StreamlinerApiLockError);
+    expect(readFileSync(lockPath, "utf8")).toBe("{");
   });
 
   it("reclaims a legacy dead lock without acquiredUptimeMs", () => {

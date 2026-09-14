@@ -2,13 +2,11 @@ import {
   closeSync,
   existsSync,
   mkdirSync,
-  openSync,
   readFileSync,
   readdirSync,
   renameSync,
   rmSync,
   statSync,
-  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -38,10 +36,11 @@ import {
   normalizeSessionRegistryRuntimeMetadata,
 } from "./managed-runtime";
 import {
-  isProcessLockStale,
+  createLockFileAtomically,
+  getLockFileStatus,
+  inspectLockFile,
   newLockMetadata,
-  type ProcessLockMetadata,
-  readLockMetadataFile,
+  removeReclaimableLockFile,
 } from "./lock-liveness";
 import {
   DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE,
@@ -3838,7 +3837,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
 
         let fd: number;
         try {
-          fd = openSync(this.lockPath, "wx");
+          fd = createLockFileAtomically(this.lockPath, newLockMetadata());
         } catch (error: unknown) {
           const code =
             error instanceof Error && "code" in error
@@ -3867,26 +3866,6 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
               continue;
             }
             throw new SessionRegistryLockedError(this.lockPath);
-          }
-          throw error;
-        }
-
-        try {
-          writeFileSync(
-            fd,
-            JSON.stringify(newLockMetadata()),
-            "utf8",
-          );
-        } catch (error: unknown) {
-          try {
-            closeSync(fd);
-          } catch {
-            // Best effort cleanup; the original error is more important.
-          }
-          try {
-            unlinkSync(this.lockPath);
-          } catch {
-            // Best effort cleanup; the original error is more important.
           }
           throw error;
         }
@@ -3923,55 +3902,30 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
   }
 
   private removeStaleLock(): boolean {
-    const lockMetadata = this.readLockMetadata();
-    if (!lockMetadata || !isProcessLockStale(lockMetadata)) {
-      return false;
-    }
-
-    rmSync(this.lockPath, { force: true });
-    return true;
+    return removeReclaimableLockFile(this.lockPath);
   }
 
+  /** True for a primary registry lock that is not safely reclaimable. */
   private hasActiveRegistryLock(): boolean {
-    const lockMetadata = this.readLockMetadata();
-    return lockMetadata !== null && !isProcessLockStale(lockMetadata);
+    const inspection = inspectLockFile(this.lockPath);
+    return inspection.status === "active";
   }
 
   private acquireRecoveryLock(): number | null {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       let fd: number;
       try {
-        fd = openSync(this.recoveryLockPath, "wx");
+        fd = createLockFileAtomically(this.recoveryLockPath, newLockMetadata());
       } catch (error: unknown) {
         const code =
           error instanceof Error && "code" in error
             ? String((error as NodeJS.ErrnoException).code)
             : "";
         if (code === "EEXIST") {
-          if (attempt === 0 && !this.hasActiveRecoveryLock()) {
+          if (attempt === 0 && removeReclaimableLockFile(this.recoveryLockPath)) {
             continue;
           }
           return null;
-        }
-        throw error;
-      }
-
-      try {
-        writeFileSync(
-          fd,
-          JSON.stringify(newLockMetadata()),
-          "utf8",
-        );
-      } catch (error: unknown) {
-        try {
-          closeSync(fd);
-        } catch {
-          // Best effort cleanup; the original error is more important.
-        }
-        try {
-          unlinkSync(this.recoveryLockPath);
-        } catch {
-          // Best effort cleanup; the original error is more important.
         }
         throw error;
       }
@@ -3991,21 +3945,12 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
   }
 
   private hasActiveRecoveryLock(): boolean {
-    const metadata = this.readLockMetadata(this.recoveryLockPath);
-    if (!metadata) {
+    const status = getLockFileStatus(this.recoveryLockPath);
+    if (status === "reclaimable") {
+      rmSync(this.recoveryLockPath, { force: true });
       return false;
     }
-
-    if (!isProcessLockStale(metadata)) {
-      return true;
-    }
-
-    rmSync(this.recoveryLockPath, { force: true });
-    return false;
-  }
-
-  private readLockMetadata(lockPath = this.lockPath): ProcessLockMetadata | null {
-    return readLockMetadataFile(lockPath);
+    return status === "active";
   }
 
   private findRecordIdByCopilotSessionId(

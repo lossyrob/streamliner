@@ -1,5 +1,16 @@
-import { readFileSync } from "node:fs";
+import {
+  linkSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { randomUUID } from "node:crypto";
 import { uptime } from "node:os";
+import { dirname } from "node:path";
 
 /**
  * Reboot-safe liveness checks for advisory lock files.
@@ -62,6 +73,13 @@ export interface LockLivenessOverrides {
    * delays reclamation, so it is safe to keep generous.
    */
   bootStaleMarginMs?: number;
+  /** Current wall clock in ms. Defaults to `Date.now()`. */
+  nowMs?: number;
+  /**
+   * Minimum age for an unparseable lock file before it can be reclaimed.
+   * Defaults to `LOCK_UNPARSEABLE_STALE_AGE_MS`.
+   */
+  unparseableStaleAgeMs?: number;
 }
 
 /**
@@ -70,6 +88,14 @@ export interface LockLivenessOverrides {
  * `acquiredUptimeMs` exceeds the current uptime by more than this margin.
  */
 export const LOCK_BOOT_STALE_MARGIN_MS = 60_000;
+export const LOCK_UNPARSEABLE_STALE_AGE_MS = 60_000;
+const LOCK_MTIME_SKEW_TOLERANCE_MS = 1_000;
+
+export type LockFileStatus = "missing" | "active" | "reclaimable";
+export interface LockFileInspection {
+  status: LockFileStatus;
+  metadata: ProcessLockMetadata | null;
+}
 
 export function processExists(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) {
@@ -200,4 +226,122 @@ export function readLockMetadataFile(lockPath: string): ProcessLockMetadata | nu
     return null;
   }
   return parseLockMetadata(raw);
+}
+
+/**
+ * Inspect the current on-disk state of a lock file.
+ *
+ * Returns:
+ * - `"missing"` when the file does not exist
+ * - `"active"` when the file exists but is not yet safely reclaimable
+ * - `"reclaimable"` when the file is either stale by PID/boot liveness or has
+ *   remained unparseable beyond the malformed-lock grace period
+ *
+ * For malformed/partial lock files, the grace period prevents a live peer that
+ * is still in the middle of writing from having its lock reclaimed.
+ */
+export function inspectLockFile(
+  lockPath: string,
+  overrides: LockLivenessOverrides = {},
+): LockFileInspection {
+  let stats: { mtimeMs: number };
+  try {
+    stats = statSync(lockPath);
+  } catch {
+    return { status: "missing", metadata: null };
+  }
+
+  let raw: string;
+  try {
+    raw = readFileSync(lockPath, "utf8");
+  } catch {
+    return { status: "active", metadata: null };
+  }
+
+  const metadata = parseLockMetadata(raw);
+  if (metadata) {
+    return {
+      status: isProcessLockStale(metadata, overrides) ? "reclaimable" : "active",
+      metadata,
+    };
+  }
+
+  const nowMs = overrides.nowMs ?? Date.now();
+  const staleAgeMs = overrides.unparseableStaleAgeMs ?? LOCK_UNPARSEABLE_STALE_AGE_MS;
+  if (
+    !Number.isFinite(nowMs) ||
+    !Number.isFinite(stats.mtimeMs) ||
+    nowMs + LOCK_MTIME_SKEW_TOLERANCE_MS < stats.mtimeMs
+  ) {
+    return { status: "active", metadata: null };
+  }
+
+  return {
+    status: nowMs - stats.mtimeMs >= staleAgeMs ? "reclaimable" : "active",
+    metadata: null,
+  };
+}
+
+/** Convenience wrapper that returns only the status portion of `inspectLockFile`. */
+export function getLockFileStatus(
+  lockPath: string,
+  overrides: LockLivenessOverrides = {},
+): LockFileStatus {
+  return inspectLockFile(lockPath, overrides).status;
+}
+
+/**
+ * Remove `lockPath` only when it is safely reclaimable.
+ *
+ * Returns `true` when the file was removed, otherwise `false`. Malformed lock
+ * files are only removed after the configured grace period has elapsed.
+ */
+export function removeReclaimableLockFile(
+  lockPath: string,
+  overrides: LockLivenessOverrides = {},
+): boolean {
+  if (getLockFileStatus(lockPath, overrides) !== "reclaimable") {
+    return false;
+  }
+  rmSync(lockPath, { force: true });
+  return true;
+}
+
+/**
+ * Atomically create a new lock file containing fully-written metadata.
+ *
+ * The metadata is first written to a temporary sibling file, then linked into
+ * place as `lockPath`. Because hard-link creation fails when the destination
+ * already exists, this preserves the advisory lock's create-only-if-absent
+ * semantics while ensuring readers never observe a partial file. Returns a
+ * read-only file descriptor for the created lock file.
+ */
+export function createLockFileAtomically(
+  lockPath: string,
+  metadata: Record<string, unknown>,
+  space?: number,
+): number {
+  mkdirSync(dirname(lockPath), { recursive: true });
+  const tempPath = `${lockPath}.${process.pid}.${randomUUID()}.tmp`;
+  let linked = false;
+  try {
+    writeFileSync(tempPath, JSON.stringify(metadata, null, space), "utf8");
+    linkSync(tempPath, lockPath);
+    linked = true;
+    return openSync(lockPath, "r");
+  } finally {
+    if (linked) {
+      try {
+        unlinkSync(tempPath);
+      } catch {
+        // best effort
+      }
+    } else {
+      try {
+        rmSync(tempPath, { force: true });
+      } catch {
+        // best effort
+      }
+    }
+  }
 }

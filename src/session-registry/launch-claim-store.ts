@@ -1,13 +1,11 @@
 import {
   closeSync,
   mkdirSync,
-  openSync,
   readFileSync,
   readdirSync,
   renameSync,
   rmSync,
   statSync,
-  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -34,10 +32,11 @@ import {
   type LaunchClaimStore,
 } from "../launch-claim-contract";
 import {
-  isProcessLockStale,
+  createLockFileAtomically,
+  getLockFileStatus,
+  inspectLockFile,
   newLockMetadata,
-  type ProcessLockMetadata,
-  readLockMetadataFile,
+  removeReclaimableLockFile,
 } from "./lock-liveness";
 
 const DEFAULT_LAUNCH_CLAIMS_ROOT = resolve(
@@ -412,7 +411,7 @@ export class LaunchClaimFileStore implements LaunchClaimStore {
         }
         let fd: number;
         try {
-          fd = openSync(this.lockPath, "wx");
+          fd = createLockFileAtomically(this.lockPath, newLockMetadata());
         } catch (error: unknown) {
           const code =
             error instanceof Error && "code" in error
@@ -429,30 +428,11 @@ export class LaunchClaimFileStore implements LaunchClaimStore {
               this.releaseRecoveryLock(recoveryLockFd);
               recoveryLockFd = null;
             }
-            if (Date.now() < deadline) {
+            if (this.hasActivePrimaryLock() && Date.now() < deadline) {
               sleepSync(WRITE_LOCK_WAIT_INTERVAL_MS);
               continue;
             }
             throw new LaunchClaimLockedError(`Launch claim store is locked at ${this.lockPath}.`);
-          }
-          throw error;
-        }
-        try {
-          writeFileSync(
-            fd,
-            JSON.stringify(newLockMetadata()),
-            "utf8",
-          );
-        } catch (error: unknown) {
-          try {
-            closeSync(fd);
-          } catch {
-            // best effort
-          }
-          try {
-            unlinkSync(this.lockPath);
-          } catch {
-            // best effort
           }
           throw error;
         }
@@ -478,48 +458,30 @@ export class LaunchClaimFileStore implements LaunchClaimStore {
   }
 
   private removeStaleLock(): boolean {
-    const meta = this.readLockMetadata(this.lockPath);
-    if (!meta || !isProcessLockStale(meta)) {
-      return false;
-    }
-    rmSync(this.lockPath, { force: true });
-    return true;
+    return removeReclaimableLockFile(this.lockPath);
+  }
+
+  /** True for a primary launch-claims lock that is not safely reclaimable. */
+  private hasActivePrimaryLock(): boolean {
+    const inspection = inspectLockFile(this.lockPath);
+    return inspection.status === "active";
   }
 
   private acquireRecoveryLock(): number | null {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       let fd: number;
       try {
-        fd = openSync(this.recoveryLockPath, "wx");
+        fd = createLockFileAtomically(this.recoveryLockPath, newLockMetadata());
       } catch (error: unknown) {
         const code =
           error instanceof Error && "code" in error
             ? String((error as NodeJS.ErrnoException).code)
             : "";
         if (code === "EEXIST") {
-          if (attempt === 0 && !this.hasActiveRecoveryLock()) {
+          if (attempt === 0 && removeReclaimableLockFile(this.recoveryLockPath)) {
             continue;
           }
           return null;
-        }
-        throw error;
-      }
-      try {
-        writeFileSync(
-          fd,
-          JSON.stringify(newLockMetadata()),
-          "utf8",
-        );
-      } catch (error: unknown) {
-        try {
-          closeSync(fd);
-        } catch {
-          // best effort
-        }
-        try {
-          unlinkSync(this.recoveryLockPath);
-        } catch {
-          // best effort
         }
         throw error;
       }
@@ -537,19 +499,12 @@ export class LaunchClaimFileStore implements LaunchClaimStore {
   }
 
   private hasActiveRecoveryLock(): boolean {
-    const meta = this.readLockMetadata(this.recoveryLockPath);
-    if (!meta) {
+    const status = getLockFileStatus(this.recoveryLockPath);
+    if (status === "reclaimable") {
+      rmSync(this.recoveryLockPath, { force: true });
       return false;
     }
-    if (!isProcessLockStale(meta)) {
-      return true;
-    }
-    rmSync(this.recoveryLockPath, { force: true });
-    return false;
-  }
-
-  private readLockMetadata(lockPath: string): ProcessLockMetadata | null {
-    return readLockMetadataFile(lockPath);
+    return status === "active";
   }
 
   /**
