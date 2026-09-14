@@ -1,237 +1,273 @@
-# Session Actor Control Plane
+# Telex-backed Session Actor Control Plane
 
 ## Status
 
-Seeded
+Promoted to `.streamliner/workstreams/telex-actor-fabric/`.
 
 ## Summary
 
-Treat selected Copilot sessions as ephemeral, role-bound runtime actors attached to Streamliner work geometry.
+Attach selected Streamliner sessions to durable Telex responsibility addresses so
+orchestrators, workers, and supporting roles can coordinate without the builder
+copying messages between sessions.
+
+Telex owns the message fabric: addresses, stations, delivery, liveness,
+acknowledgement, history, and local or networked backends. Streamliner owns how
+project/workstream/node roles map onto those addresses, which session is serving a
+role, what coordination events mean, and how messages update the operational
+picture.
+
+Actors remain ephemeral sessions serving durable responsibilities. A workstream
+orchestrator can stop and be replaced; its Telex address and queued messages
+remain.
+
+## Why It Matters
+
+Real Streamliner work now involves:
+
+- long-running terminal and SDK-managed sessions;
+- a workstream orchestrator coordinating several workers;
+- sessions waiting on PRs, reviews, CI, or another workstream;
+- workers discovering blockers, scope pressure, or missing work;
+- laptop, devbox, and teammate environments participating in the same project;
+- lifecycle events that should wake an orchestrator immediately instead of on
+  its next polling turn.
+
+The missing product layer is no longer a message transport. Telex is released and
+provides that transport. The missing layer is the Streamliner integration that
+binds work geometry and session lifecycle to the fabric.
+
+## Ownership Boundary
+
+| Concern | Owner |
+|---|---|
+| Address registration, station attachment, store-and-forward delivery, liveness, acknowledgements, and message history | Telex |
+| Local SQLite and shared Postgres backend behavior | Telex |
+| Streamliner project/workstream/node role identifiers | Plugin Role Skills (`role-context-v1`) |
+| Mapping those roles and scopes to Telex addresses | This workstream (`telex-addressing-v1`) |
+| Session registry, launch claims, runtime projection, and managed/terminal session identity | Streamliner |
+| Meaning and routing of workstream events, field reports, blockers, and escalation | Streamliner |
+| Durable briefs, graphs, reports, and decisions | Streamliner artifacts, not Telex history |
+
+Streamliner should consume Telex as a released dependency. It should not fork,
+vendor, or recreate Telex's mailbox, daemon, persistence, backend, or Copilot
+bridge.
+
+## Address and Actor Model
+
+A Telex address names a durable responsibility. A station is the current session
+serving it.
+
+Illustrative addresses:
+
+```text
+project:<projectKey>/role:designer
+project:<projectKey>/workstream:<workstreamId>/role:orchestrator
+project:<projectKey>/workstream:<workstreamId>/node:<nodeId>/role:worker
+project:<projectKey>/role:artifact-sentry
+```
+
+Formation may refine the exact syntax, but `telex-addressing-v1` should guarantee:
+
+- stable derivation from Streamliner project/workstream/node identity;
+- role identifiers imported from `role-context-v1`;
+- no dependence on a Copilot session ID or process ID;
+- enough scope to route a message to the responsible actor;
+- compatibility with local and shared Telex backend profiles.
+
+Not every observed session becomes an actor. A session becomes an actor when it
+accepts a role, mission boundary, address attachment, and reporting obligation.
+
+## Project Configuration
+
+Streamliner should reference a Telex backend by configured profile name, never by
+copying credentials into project artifacts.
+
+The first configuration seam is expected to include:
+
+```text
+projectKey
+telexBackendProfile
+telexAddressNamespace
+```
+
+Local SQLite is sufficient for same-machine dogfood. Multi-builder operation uses
+a shared Telex backend. Backend installation, authentication, schema management,
+and transport behavior remain Telex concerns.
+
+## Candidate Scope
+
+### In Scope
+
+- Define `telex-addressing-v1`.
+- Import stable role identifiers from `role-context-v1`.
+- Add project-level Telex backend/profile references.
+- Attach and detach eligible terminal or managed sessions to role addresses.
+- Represent address, station, liveness, and message-attention state in the
+  Streamliner session/actor projection.
+- Route worker lifecycle events such as #121 to the bound orchestrator address.
+- Define a small set of Streamliner coordination message profiles: handoff,
+  blocker, field report, map correction, review ready, merge ready, and
+  escalation.
+- Bind a workstream orchestrator to its durable address and support replacement
+  or resumption by another session.
+- Preserve Telex message/thread identifiers when an event is promoted into a
+  durable artifact, issue, or reconciliation record.
+- Dogfood the integration against a real multi-session workstream.
 
-This candidate explores a local-first actor substrate where terminal and SDK sessions can operate with scoped autonomy inside a defined mission boundary, receive structured messages, produce field reports, and report status/evidence back to Streamliner without becoming the source of truth.
+### Out of Scope
+
+- Implementing a mailbox, queue, daemon, lease, heartbeat protocol, delivery
+  buffer, acknowledgement store, or message-history database.
+- Reimplementing Telex's Copilot bridge or backend authentication.
+- Storing workstream artifacts in Telex.
+- Making every observed session messageable.
+- General-purpose chat UI.
+- Full autonomous wave progression.
+- Hosted Streamliner services or a new remote relay.
+- Designing multi-user authorization beyond consuming the configured Telex and
+  repository access models.
 
-The goal is not to turn Streamliner into a generalized actor framework or anthropomorphized agent-team simulator. The goal is to make long-running orchestration and worker sessions visible, interruptible, addressable, and operationally useful while keeping workstreams, artifacts, and registry state authoritative.
-
-Actors are ephemeral field roles, not persistent teammates.
-
-A node worker, issue worker, wave orchestrator, or workstream orchestrator may exist only for the duration of its assigned mission. Actor identity is a responsibility handle attached to a scope and role, not a durable personality.
-
-## Problem
-
-Current Streamliner orchestration assumptions lean toward backend-managed flows or isolated launch-and-wait session execution.
-
-In practice, real workflows increasingly involve:
-
-- long-running terminal sessions;
-- loop-based waiting on PRs, reviews, CI, and follow-up issues;
-- launching child sessions from other sessions;
-- coordinating active workstreams through visible orchestrators;
-- recovering and continuing interrupted orchestration;
-- shaping on one machine while execution runs elsewhere;
-- workers discovering that the workstream map is incomplete or stale.
-
-The current system has no explicit model for:
-
-- session roles;
-- session authority boundaries;
-- structured messaging into running sessions;
-- field reports and map corrections;
-- orchestration ownership and reporting;
-- parent/child session relationships;
-- session heartbeat/watch states.
-
-Git commits and notes are currently serving as an improvised runtime coordination layer.
-
-## Thesis
-
-Streamliner should treat selected sessions as addressable runtime actors attached to work geometry.
-
-Workstreams, nodes, gates, artifacts, and graph state remain authoritative.
-
-Actors operate within scoped authority boundaries and report back from the field.
-
-The actor closest to the work is often the first to know the map is wrong.
-
-This model intentionally borrows from mission-oriented command doctrine:
-
-- builder intent defines mission and boundaries;
-- actors operate autonomously inside those bounds;
-- actors report evidence, blockers, and map corrections;
-- orchestrators maintain situational awareness and revise plans;
-- gates and escalations remain explicit builder decision points.
-
-The backend/control plane should maintain the common operating picture rather than dictating every action.
-
-## Scope
-
-In scope:
-
-- actor vocabulary and doctrine;
-- actor taxonomy and authority boundaries;
-- ephemeral actor identity model;
-- local actor registry metadata;
-- local mailbox/message protocol;
-- heartbeat/watch states;
-- structured message lifecycle;
-- field report formats;
-- parent/child session relationships;
-- terminal workstream orchestrator dogfood;
-- loop-compatible message handling flows.
-
-Out of scope:
-
-- remote relay services;
-- distributed actor routing;
-- remote active workstream storage;
-- hosted Streamliner control plane;
-- multi-user coordination;
-- replacing workstream artifacts with session memory;
-- turning every session into an actor;
-- fully autonomous wave progression.
-
-Those are future candidate/workstream concerns.
-
-## Actor model
-
-### Principles
-
-- Actors are runtime execution contexts, not durable sources of truth.
-- Actor identity is role-bound and mission-bound.
-- Sessions become actors only when attached to scoped authority and reporting obligations.
-- Not all sessions need mailbox semantics.
-- Workstreams and artifacts remain authoritative.
-- Actor autonomy must stay bounded and reviewable.
-- Locality matters: actors run in explicit environments.
-
-### Actor levels
-
-The system should support progressively stronger actor semantics.
-
-Examples:
-
-- observed session;
-- attached session;
-- mission session;
-- reporting actor;
-- messageable actor;
-- orchestrator actor.
-
-This prevents lightweight issue or node work from requiring heavyweight orchestration semantics.
-
-### Field reports
-
-Actors should report:
-
-- outcome;
-- evidence;
-- blockers;
-- downstream impacts;
-- map corrections;
-- follow-up recommendations;
-- escalation conditions.
-
-Field reports are intended to update the common operating picture without relying on transcript archaeology.
-
-## Wave intent
-
-Actual wave formation should determine final wave boundaries and node grouping.
-
-The expected progression is approximately:
-
-### Wave 1 intent: actor doctrine and contracts
-
-Establish the conceptual and architectural contract for session actors.
-
-Likely areas:
-
-- actor terminology;
-- authority boundaries;
-- actor identity semantics;
-- field-report model;
-- relationship to workstreams and orchestration;
-- alignment updates to top-level doctrine/orchestration docs.
-
-This wave should answer:
-
-- what is and is not an actor;
-- how actors differ from persistent teammates;
-- how actor autonomy is bounded;
-- how actors relate to artifact authority.
-
-### Wave 2 intent: local mailbox and actor substrate
-
-Implement the first local actor substrate.
-
-Likely areas:
-
-- actor registry/runtime metadata;
-- mailbox/message lifecycle;
-- loop-compatible CLI/API commands;
-- heartbeat/watch states;
-- parent/child actor relationships;
-- minimal UI projection.
-
-This wave should prove that a local terminal session can:
-
-- attach to an actor role;
-- receive structured messages;
-- acknowledge/fail messages;
-- report state;
-- remain visible and interruptible.
-
-### Wave 3 intent: workstream orchestrator dogfood
-
-Use the actor substrate against a real workstream orchestration loop.
-
-Likely areas:
-
-- workstream orchestrator role/playbook;
-- actor-driven orchestration flows;
-- field-report ingestion;
-- session-to-session coordination;
-- parent/child launch tracking;
-- reconciliation and map-correction flows.
-
-This wave should answer whether actor-operated orchestration materially improves:
-
-- situational awareness;
-- orchestration visibility;
-- interruption/recovery;
-- cross-session coordination;
-- builder leverage.
-
-## Expected exports
-
-Potential exports from this workstream include:
-
-- actor doctrine/design docs;
-- actor role definitions;
-- mailbox/message protocol;
-- field-report formats;
-- actor runtime metadata;
-- orchestration playbooks;
-- actor-aware session projections;
-- loop-compatible CLI/API commands.
-
-## Relationship to other candidates
-
-This candidate intentionally precedes:
-
-- Autonomous Wave Progression;
-- Cross-environment relay/messaging concepts described in `DISTRIBUTED-CONTROL-PLANE.md`;
-- remote active-state storage;
-- hosted coordination surfaces.
-
-Those future capabilities should consume a proven local actor substrate rather than inventing distributed behavior before the local operational loop is validated.
-
-## Open questions
-
-- Which sessions should naturally graduate into actors?
-- What is the minimal actor registry shape?
-- Which message types should exist initially?
-- How should actors checkpoint or compact state?
-- How should field reports materialize into durable artifacts?
-- Which actions should require explicit builder escalation?
-- How much orchestration state belongs in Streamliner vs actor runtime memory?
-- How should terminal takeover interact with actor ownership?
-- Which actor capabilities belong only to orchestrators?
+### Deferred
+
+- Broadcast/dispatch markets and capability-card routing.
+- Portfolio-level actors spanning several projects.
+- Rich conversation UI beyond operational message/attention surfaces.
+- Policy-driven automatic reassignment when a station disappears.
+
+## Field Reports and Durable Promotion
+
+Telex carries concise operational messages. It does not replace the workstream
+record.
+
+A worker field report should identify:
+
+- the project, workstream, and node;
+- outcome and evidence;
+- blockers and downstream impacts;
+- map corrections or scope pressure;
+- requested disposition;
+- links or pointers to commits, PRs, issues, and artifacts.
+
+When a report changes the durable plan, Streamliner or the orchestrator promotes
+the result into `brief.md`, `graph.json`, a reconciliation note, an issue, or a
+design record. The promoted artifact should retain the Telex message/thread ID as
+provenance.
+
+## Wave Intent
+
+Actual formation should decide node boundaries. The likely progression is:
+
+### Wave 1: Telex integration contract
+
+- Verify the supported released Telex CLI/plugin integration surface.
+- Define project configuration and `telex-addressing-v1`.
+- Map `role-context-v1` roles onto project/workstream/node addresses.
+- Define the first Streamliner coordination message profiles.
+- Decide the thin adapter boundary between the Streamliner API/plugin and Telex.
+
+**Checkpoint:** another workstream can bind a known Streamliner role to a stable
+Telex address without inventing its own naming or transport behavior.
+
+### Wave 2: Session attachment and operational projection
+
+- Attach/detach terminal and managed sessions.
+- Project address/station/liveness/message-attention state into Streamliner.
+- Route lifecycle events and acknowledgements.
+- Support bound-orchestrator replacement and resumption.
+- Add minimal API/UI operations needed to inspect or act on coordination state.
+
+**Checkpoint:** an orchestrator and worker can exchange and disposition messages
+through Telex while Streamliner shows who is serving each responsibility.
+
+### Wave 3: Orchestrator and multi-builder dogfood
+
+- Run a real workstream using the plugin role skills and Telex addresses.
+- Route worker completion, blockers, field reports, and review/merge readiness.
+- Exercise station replacement and an offline recipient.
+- Exercise a shared Telex backend from two environments/builders.
+- Promote at least one message outcome into a durable artifact with provenance.
+
+**Gate:** coordination no longer requires the builder to carry messages between
+sessions, and the durable project record remains understandable without reading
+Telex history.
+
+## Expected Exports
+
+- `telex-addressing-v1`.
+- Project Telex profile-reference contract.
+- Streamliner actor/session projection fields.
+- Streamliner coordination message profiles.
+- Field-report transport and provenance convention.
+- Bound-orchestrator attach/resume behavior.
+- Lifecycle-event routing consumed by #121 and later autonomous execution.
+
+## Dependencies
+
+### Imports
+
+- Released Telex and its supported plugin/CLI/backend contracts.
+- `role-context-v1` from Streamliner Plugin Role Skills.
+- Existing Streamliner session registry, launch pipeline, lifecycle plugin hooks,
+  and managed-runtime session identity.
+- Existing project/workstream/node identifiers.
+
+### Enables
+
+- Campaign 2 Node Handoff, Boundary Pressure & Reconciliation.
+- Campaign 4 Automated PAW Review and Autonomous Wave Progression.
+- Artifact-sync attention routing in the Shared Project Operations campaign.
+- Session attention/desktop notification surfaces.
+
+## Review Criteria
+
+This workstream succeeds when:
+
+- Streamliner does not contain a second message transport;
+- a role address survives session replacement;
+- terminal and managed sessions can serve the same address model;
+- lifecycle and field-report events reach the responsible orchestrator;
+- offline/store-and-forward behavior works through Telex;
+- shared-backend operation works across two environments;
+- durable decisions are promoted into artifacts instead of being stranded in
+  message history;
+- the builder no longer performs routine session-to-session relay.
+
+## Open Questions
+
+- Should the first Streamliner adapter invoke the Telex CLI, use a future library
+  interface, or support both behind one boundary?
+- Which roles attach automatically at Streamliner launch, and which require
+  explicit builder/session confirmation?
+- Which message profiles belong in the first useful slice?
+- How should Streamliner display an unoccupied but queued address?
+- When a terminal takeover occurs, does the new session inherit the managed
+  session's station attachment or explicitly reattach?
+- How should Telex backend/profile health appear in project diagnostics?
+
+## Handoff Brief
+
+Form the Telex-backed Actor Fabric & Bound Orchestrator workstream inside the
+Shared Project Operations campaign.
+
+The workstream must adopt released Telex as the complete message fabric and keep
+Streamliner focused on integration: project/profile configuration, durable
+role-address derivation, session attachment, actor/liveness projection,
+Streamliner-specific coordination message profiles, lifecycle routing, bound
+orchestrator behavior, and promotion of message outcomes into durable artifacts.
+
+Wave 1 should produce `telex-addressing-v1` and a thin integration contract.
+Wave 2 should make terminal and managed sessions attachable and visible. Wave 3
+should dogfood a real orchestrator/worker flow across multiple sessions and a
+shared backend. Do not implement a Streamliner mailbox or persist message files
+under `.streamliner`.
+
+## Promotion
+
+Promoted into `.streamliner/workstreams/telex-actor-fabric/`. Formation made the
+bound-orchestrator UI the first usable product slice after the contract proof,
+added explicit role/subrole imports, idempotent actor operations and reboot
+reconciliation, and resolved cross-workstream dependencies against Plugin Role
+Skills.
+
+Retain this candidate as the historical shaping record until Streamliner has a
+first-class candidate archive or lifecycle migration.

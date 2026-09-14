@@ -1,0 +1,515 @@
+{
+  "schemaVersion": 1,
+  "id": "git-backed-artifact-sync",
+  "projectKey": "streamliner",
+  "title": "Git-backed Artifact Ledger & Sync",
+  "summary": "Wave 1 defines the local Git provider plus a storage-neutral artifact operations API, then proves convention-first bootstrap, API-mediated canonical mutations, compatibility, snapshots, locking, environment coverage, and authority cutover. Later waves add isolated change workspaces, API-owned synchronization, policy provenance, attention, and campaign integration.",
+  "status": "active",
+  "attention": "focus",
+  "createdAt": "2026-07-11T02:58:06.857Z",
+  "updatedAt": "2026-07-17T21:51:06.024Z",
+  "presentation": {
+    "shortName": "Artifact Sync",
+    "color": "#7B61A8"
+  },
+  "repos": [
+    {
+      "id": "streamliner",
+      "owner": "lossyrob",
+      "name": "streamliner",
+      "role": "primary"
+    }
+  ],
+  "designRefs": [
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/index.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/workstream-format.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/session-system.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/006-local-streamliner-api-service.md"
+    },
+    {
+      "repoId": "streamliner",
+      "path": "docs/design/decisions/007-tracked-workstream-registry.md"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "artifact-root-v1-contract",
+      "type": "research",
+      "title": "Define artifact-root-v1 and project manifest contract",
+      "summary": "Define the local Git provider descriptor: project manifest, repository identity, repository-to-root mapping, resolver responses, diagnostics, path capability, and authority semantics consumed by artifact-operations-v1 and read-only callers.",
+      "status": "ready",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/artifact-root-v1-contract.md"
+      },
+      "dependsOn": []
+    },
+    {
+      "id": "artifact-operations-v1-contract",
+      "type": "research",
+      "title": "Define artifact-operations-v1 API contract",
+      "summary": "Define the storage-neutral local API contract for opaque revisions, coherent reads, begin-change, validation, expected-revision mutation, promotion, provenance, synchronization, capability reporting, and typed conflict states without making a local path or Git commit the permanent API.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/artifact-operations-v1-contract.md"
+      },
+      "dependsOn": [
+        "artifact-root-v1-contract"
+      ]
+    },
+    {
+      "id": "app-artifact-schema-compatibility",
+      "type": "research",
+      "title": "Define application and artifact schema compatibility",
+      "summary": "Define manifest and artifact version negotiation, supported upgrade/downgrade behavior, incompatible-app diagnostics, and the boundary between Artifact Sync compatibility checks and plugin-owned launch-policy-v1 validation.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/app-artifact-schema-compatibility.md"
+      },
+      "dependsOn": [
+        "artifact-root-v1-contract"
+      ]
+    },
+    {
+      "id": "convention-first-bootstrap",
+      "type": "task",
+      "title": "Implement convention-first artifact bootstrap",
+      "summary": "From a source checkout, discover or preview-create the artifact-only orphan streamliner-artifacts branch, create or adopt its worktree after explicit confirmation, read the shared manifest, and persist the local repository-to-root mapping.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/convention-first-bootstrap.md"
+      },
+      "dependsOn": [
+        "artifact-operations-v1-contract",
+        "app-artifact-schema-compatibility"
+      ]
+    },
+    {
+      "id": "single-commit-launch-snapshots",
+      "type": "task",
+      "title": "Provide coherent artifact revision snapshots",
+      "summary": "Bind launch and context preparation to one opaque artifact revision so manifest, graph, brief, shared records, and provenance are read coherently; retain the local provider's Git commit as optional provenance and retry or fail explicitly when the revision moves during preparation.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/single-commit-launch-snapshots.md"
+      },
+      "dependsOn": [
+        "artifact-operations-v1-contract",
+        "app-artifact-schema-compatibility"
+      ]
+    },
+    {
+      "id": "local-locking-concurrent-writers",
+      "type": "task",
+      "title": "Define local locking and concurrent-writer behavior",
+      "summary": "Serialize Streamliner-owned local artifact writes and sentry operations, preserve honest behavior for non-Streamliner editors, and define how remote concurrent writers become push rejection, divergence, or conflict attention rather than false local coordination.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/local-locking-concurrent-writers.md"
+      },
+      "dependsOn": [
+        "artifact-operations-v1-contract"
+      ]
+    },
+    {
+      "id": "api-mediated-artifact-mutations",
+      "type": "task",
+      "title": "Implement API-mediated artifact mutations",
+      "summary": "Route Streamliner-owned graph/config and canonical artifact writes through artifact-operations-v1 with expected revisions, validation, atomic application, local writer serialization, and provenance; classify direct canonical-worktree edits as external dirty input instead of overwriting them.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/api-mediated-artifact-mutations.md"
+      },
+      "dependsOn": [
+        "artifact-operations-v1-contract",
+        "app-artifact-schema-compatibility",
+        "local-locking-concurrent-writers"
+      ]
+    },
+    {
+      "id": "off-branch-cloud-source-link-compatibility",
+      "type": "task",
+      "title": "Validate off-branch, cloud-agent, and source-link compatibility",
+      "summary": "Prove that source checkouts, artifact-only worktrees, cloud-agent environments, design references, local specs, and source links remain resolvable without assuming artifacts and source files share one branch or filesystem root.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/off-branch-cloud-source-link-compatibility.md"
+      },
+      "dependsOn": [
+        "convention-first-bootstrap",
+        "single-commit-launch-snapshots"
+      ]
+    },
+    {
+      "id": "migration-authority-cutover-rollback",
+      "type": "task",
+      "title": "Implement migration authority cutover and rollback",
+      "summary": "Move an existing source-branch artifact tree to the artifact branch with preview, explicit authority selection, verification, rollback, and removal or archival of the former copy so two locations cannot remain plausibly authoritative.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "tracker": {
+        "type": "local",
+        "path": "tasks/migration-authority-cutover-rollback.md"
+      },
+      "dependsOn": [
+        "convention-first-bootstrap",
+        "single-commit-launch-snapshots",
+        "api-mediated-artifact-mutations"
+      ]
+    },
+    {
+      "id": "artifact-root-authority-gate",
+      "type": "gate",
+      "title": "Artifact root authority gate",
+      "summary": "Builder validates artifact-root-v1, artifact-operations-v1, API-mediated canonical writes, orphan-branch bootstrap, schema/app compatibility, coherent snapshot reads, local locking, off-branch environments, migration rollback, and one unambiguous artifact authority before synchronization automation begins.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "off-branch-cloud-source-link-compatibility",
+        "migration-authority-cutover-rollback",
+        "api-mediated-artifact-mutations"
+      ]
+    },
+    {
+      "id": "deterministic-sentry-classification",
+      "type": "task",
+      "title": "Implement deterministic sentry classification",
+      "summary": "Behind the local API, classify repository, worktree, branch, remote, clean, ahead, behind, external-edit dirty, diverged, unavailable, and error states and persist local health without creating message or runtime files on the artifact branch.",
+      "status": "planned",
+      "attention": "watch",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "artifact-root-authority-gate"
+      ]
+    },
+    {
+      "id": "branch-protection-history-recovery",
+      "type": "task",
+      "title": "Handle branch protection and artifact history recovery",
+      "summary": "Define protected-branch, approval, rejected-push, force-update, deletion, corruption, and history-recovery behavior so automation preserves auditability and can restore an understandable artifact ledger.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "artifact-root-authority-gate"
+      ]
+    },
+    {
+      "id": "safe-sync-automation",
+      "type": "task",
+      "title": "Implement safe synchronization automation",
+      "summary": "Apply only the accepted mechanical fetch, update, commit, and push operations through the local API with dry-run, attribution, batching, pause, recovery, and explicit external-edit and semantic-conflict stops; sessions do not synchronize the canonical worktree independently.",
+      "status": "planned",
+      "attention": "watch",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "deterministic-sentry-classification",
+        "branch-protection-history-recovery"
+      ]
+    },
+    {
+      "id": "isolated-artifact-change-workspaces",
+      "type": "task",
+      "title": "Add isolated artifact change workspaces",
+      "summary": "Let agent sessions begin a change from an expected revision, edit ordinary files in an isolated workspace, validate the change set, and ask the API to promote it under the canonical writer lock; handle stale bases, abandonment, cleanup, and provenance without creating a second authoritative store.",
+      "status": "planned",
+      "attention": "watch",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "artifact-root-authority-gate"
+      ]
+    },
+    {
+      "id": "deterministic-sentry-safety-gate",
+      "type": "gate",
+      "title": "Deterministic sentry safety gate",
+      "summary": "Builder accepts API-owned synchronization, the state classifier and operation matrix, isolated change-workspace promotion, attribution, branch protection, history recovery, stale/external/concurrent-writer stops, and the semantic-conflict boundary before unattended synchronization is enabled.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "safe-sync-automation",
+        "isolated-artifact-change-workspaces"
+      ]
+    },
+    {
+      "id": "shared-launch-policy-record-resolution",
+      "type": "task",
+      "title": "Resolve shared launch-policy-v1 records",
+      "summary": "Store and resolve committed launch-policy-v1 instances, defaults, and role references with artifact commit provenance while leaving schema, precedence, compatibility, interpretation, merging, and validation to Plugin Role Skills.",
+      "status": "planned",
+      "attention": "watch",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "deterministic-sentry-safety-gate"
+      ],
+      "externalDependsOn": [
+        {
+          "id": "launch-policy-v1",
+          "target": {
+            "projectKey": "streamliner",
+            "workstreamId": "plugin-role-skills",
+            "nodeId": "role-context-v1-gate"
+          },
+          "label": "Plugin Role Skills exports launch-policy-v1",
+          "status": "pending"
+        },
+        {
+          "id": "role-context-v1",
+          "target": {
+            "projectKey": "streamliner",
+            "workstreamId": "plugin-role-skills",
+            "nodeId": "role-context-v1-gate"
+          },
+          "label": "Plugin Role Skills exports role-context-v1",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "id": "policy-trust-approval",
+      "type": "task",
+      "title": "Enforce shared policy trust and approval",
+      "summary": "Bind agent-effective shared records to trusted artifact commits, surface pending or blocked policy changes, and prevent silent activation until repository protection or the accepted approval rule is satisfied.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "branch-protection-history-recovery",
+        "shared-launch-policy-record-resolution"
+      ]
+    },
+    {
+      "id": "sync-health-projection",
+      "type": "task",
+      "title": "Project artifact sync health in Streamliner",
+      "summary": "Expose artifact-root availability, commit, trust, sentry health, pause, conflict, and recovery diagnostics through the local API and dashboard without requiring an attached agent.",
+      "status": "planned",
+      "attention": "watch",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "deterministic-sentry-safety-gate"
+      ]
+    },
+    {
+      "id": "telex-artifact-attention",
+      "type": "task",
+      "title": "Route actionable artifact attention through Telex",
+      "summary": "Emit deduplicated actionable events to durable role addresses with project, workstream, commit, path, and conflict pointers while leaving delivery, liveness, acknowledgement, history, and address semantics to Telex and Actor Fabric.",
+      "status": "planned",
+      "attention": "watch",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "deterministic-sentry-safety-gate"
+      ],
+      "externalDependsOn": [
+        {
+          "id": "telex-addressing-v1",
+          "target": {
+            "projectKey": "streamliner",
+            "workstreamId": "telex-actor-fabric",
+            "nodeId": "actor-contract-gate"
+          },
+          "label": "Telex-backed Actor Fabric exports telex-addressing-v1",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "id": "shared-artifact-operations-gate",
+      "type": "gate",
+      "title": "Shared artifact operations gate",
+      "summary": "Builder validates trusted shared-record resolution, local sync-health projection, and role-addressed Telex attention before the campaign-wide two-builder scenario.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "policy-trust-approval",
+        "sync-health-projection",
+        "telex-artifact-attention"
+      ]
+    },
+    {
+      "id": "campaign-integration-scenario",
+      "type": "task",
+      "title": "Run the Shared Project Operations validation loop",
+      "summary": "With Namra or another cold second builder, repeatedly exercise plugin installation, bootstrap, UI-launched orchestration, shared Telex, replacement, lifecycle traffic, concurrent API change workspaces, direct external edits, conflict disposition, and durable promotion; route findings to owning workstreams, rerun after bounded repairs, and finish with an independent confirming pass or a run-budget/repeated-blocker/scope stop.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "shared-artifact-operations-gate"
+      ],
+      "externalDependsOn": [
+        {
+          "id": "plugin-role-skills-campaign-evidence",
+          "target": {
+            "projectKey": "streamliner",
+            "workstreamId": "plugin-role-skills",
+            "nodeId": "plugin-role-skills-closure-gate"
+          },
+          "label": "Plugin Role Skills provides accepted campaign-gate evidence",
+          "status": "pending"
+        },
+        {
+          "id": "actor-fabric-campaign-evidence",
+          "target": {
+            "projectKey": "streamliner",
+            "workstreamId": "telex-actor-fabric",
+            "nodeId": "actor-fabric-closure-gate"
+          },
+          "label": "Telex-backed Actor Fabric provides accepted lifecycle, replacement, and shared-backend evidence",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "id": "shared-project-operations-campaign-gate",
+      "type": "gate",
+      "title": "Shared Project Operations campaign integration gate",
+      "summary": "Builder accepts the bounded campaign validation evidence and independent confirming run: role context installs, artifact bootstrap is private-knowledge-free, the UI launches and replaces a role-bound orchestrator, lifecycle events flow through shared Telex, conflicts stop safely, repairs rerun cleanly, and dispositions promote durably with Git and Telex provenance.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": [
+        "streamliner"
+      ],
+      "dependsOn": [
+        "campaign-integration-scenario"
+      ]
+    }
+  ],
+  "checkpoints": [
+    {
+      "id": "artifact-root-authoritative",
+      "title": "Artifact root authoritative",
+      "summary": "artifact-root-v1, artifact-operations-v1, convention-first bootstrap, API-mediated mutation, compatibility, snapshots, locking, off-branch operation, and migration rollback establish one usable artifact authority.",
+      "status": "planned",
+      "nodeIds": [
+        "artifact-root-v1-contract",
+        "artifact-operations-v1-contract",
+        "app-artifact-schema-compatibility",
+        "convention-first-bootstrap",
+        "single-commit-launch-snapshots",
+        "local-locking-concurrent-writers",
+        "api-mediated-artifact-mutations",
+        "off-branch-cloud-source-link-compatibility",
+        "migration-authority-cutover-rollback",
+        "artifact-root-authority-gate"
+      ]
+    },
+    {
+      "id": "deterministic-sync-safe",
+      "title": "Deterministic synchronization safe",
+      "summary": "The API-owned sentry classifies state, respects branch protection and history recovery, promotes isolated change workspaces, automates only admitted operations, and stops safely for stale, external, ambiguous, or semantic conflicts.",
+      "status": "planned",
+      "nodeIds": [
+        "deterministic-sentry-classification",
+        "branch-protection-history-recovery",
+        "safe-sync-automation",
+        "isolated-artifact-change-workspaces",
+        "deterministic-sentry-safety-gate"
+      ]
+    },
+    {
+      "id": "shared-artifact-operations-integrated",
+      "title": "Shared artifact operations integrated",
+      "summary": "Trusted shared policy records, local health projection, and Telex attention operate through imported Plugin Role Skills and Actor Fabric contracts.",
+      "status": "planned",
+      "nodeIds": [
+        "shared-launch-policy-record-resolution",
+        "policy-trust-approval",
+        "sync-health-projection",
+        "telex-artifact-attention",
+        "shared-artifact-operations-gate"
+      ]
+    },
+    {
+      "id": "campaign-integration-demonstrated",
+      "title": "Campaign integration demonstrated",
+      "summary": "The cold-second-builder Shared Project Operations scenario has been exercised and accepted as the campaign integration gate.",
+      "status": "planned",
+      "nodeIds": [
+        "campaign-integration-scenario",
+        "shared-project-operations-campaign-gate"
+      ]
+    }
+  ]
+}
