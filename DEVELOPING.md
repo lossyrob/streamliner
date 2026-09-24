@@ -79,8 +79,9 @@ PAW-backed launches:
   trusted session signals.
 - Check that the models named in your local configuration and launch
   instructions are available to your account. The environment template uses
-  `STREAMLINER_CONTEXT_MODEL=claude-sonnet-4.6` for launch-context synthesis;
-  change it if your account needs a different model.
+  `STREAMLINER_CONTEXT_MODEL=claude-sonnet-4.6` for standalone/legacy
+  launch-context synthesis. Combined launch preparation uses the separate
+  [preparation profile](#paw-preparation-profile).
 
 Normal API startup enables the session worker unless
 `STREAMLINER_INTERNAL_DISABLE_SESSION_WORKER=1` is set. It discovers local
@@ -91,6 +92,81 @@ restart the API when you want session observation and summarization.
 Use agent features only with trusted local projects. Launch, relaunch, and
 cleanup actions can execute commands or modify repositories, and model-backed
 features use your configured Copilot account.
+
+### PAW preparation profile
+
+`POST /api/launch-preparations` uses one internal SDK session for context
+assembly and PAW initialization, including for `target: "external-session"`.
+Configure that helper in the **API server's environment** or checkout `.env`,
+not in the request's `configuration.environment` or worker CLI arguments.
+Those request fields configure the later worker, not the preparation helper.
+
+| Variable | Unset behavior | Supported configuration |
+|----------|----------------|-------------------------|
+| `STREAMLINER_PAW_INIT_MODEL` | `gpt-5.5` | Exact model ID available in the selected CLI's authenticated model catalog |
+| `STREAMLINER_PAW_INIT_REASONING_EFFORT` | Omit SDK reasoning override | `low`, `medium`, `high`, `xhigh`; the selected model must advertise the value |
+| `STREAMLINER_PAW_INIT_CONTEXT` | Omit CLI context override | `default` or `long_context`; either requires an explicit preparation CLI path |
+| `STREAMLINER_PAW_INIT_CLI_PATH` | Existing SDK CLI resolution | Absolute path to a native executable or `.js` entry point; shell shims (`.cmd`, `.bat`, `.ps1`) are not supported |
+
+For an Astra/high/long-context preparation helper, set all four:
+
+```powershell
+$env:STREAMLINER_PAW_INIT_MODEL = "gpt-6-astra"
+$env:STREAMLINER_PAW_INIT_REASONING_EFFORT = "high"
+$env:STREAMLINER_PAW_INIT_CONTEXT = "long_context"
+$env:STREAMLINER_PAW_INIT_CLI_PATH = "C:\tools\copilot.exe" # Replace with the verified installed path.
+```
+
+Restart the API in that environment after changing the settings or CLI
+installation. Editing `.env` does not update a running API's environment;
+inherited environment variables also take precedence over `.env`.
+An existing preparation session is not reconfigured. No plugin refresh,
+worker relaunch, or UI change is required.
+
+The profile forwards `model` and `reasoningEffort` to `createSession`, and
+`cliPath` plus `["--context", "long_context"]` to the actual `CopilotClient`
+process. SDK 0.3.0 has no `contextTier` session field; model-capability overrides
+are not context selection. The legacy PAW initializer uses the same profile.
+Standalone context synthesis, summarization, and later workers are unchanged.
+
+Configured values fail closed before session creation: blank/invalid values,
+unusable CLI paths, CLI help without the selected context option, unavailable
+or non-enabled models, unsupported reasoning, and missing long-context catalog
+metadata produce actionable preparation errors. When model policy is present,
+it must be `enabled`; `disabled` and `unconfigured` are rejected. Catalogs that
+omit policy remain supported. Long-context availability is
+read from CLI 1.0.87's `billing.tokenPrices.longContext.contextMax` metadata,
+which SDK 0.3.0 preserves. Missing metadata is an error, not permission to guess
+or fall back. With all four variables absent, no new capability probes or
+overrides are added.
+
+**Version boundary:** the lockfile retains SDK **0.3.0** and its bundled CLI
+**1.0.36**. The bundled CLI lacks `--context`. CLI **1.0.87** (also verified with
+the installed **1.0.87-0** executable) accepts it through the explicit path.
+A global dependency override is unsafe here: SDK 0.3.0's bundled-path resolver
+expects the old `index.js` layout, while the 1.0.87 npm package uses
+`npm-loader.js` and native platform packages. Its default resolution points to
+a nonexistent file. The explicit path avoids that resolver without changing
+other SDK callers. Operators own installation/version pinning of this CLI;
+the repository does not upgrade the user's installation.
+
+Before deployment, inspect the chosen executable without starting a session:
+
+```powershell
+& $env:STREAMLINER_PAW_INIT_CLI_PATH --version
+& $env:STREAMLINER_PAW_INIT_CLI_PATH --help
+```
+
+For a `.js` loader, prefix those commands with `node`. Confirm `--context`
+advertises `default, long_context`. A no-session SDK `start` / `listModels` /
+`stop` probe with that `cliPath` and context argument can check account-specific
+availability; do not call `createSession` for a capability probe. The verified
+Astra catalog reported **1,050,000 tokens**, including its long-context tier,
+not the requested **1.2M**. That is catalog evidence, not a measured live
+session budget or a guarantee for another account. The installed 1.0.87-0
+executable's RPC `getStatus` reported `0.0.1`/protocol 3; use executable
+`--version`, feature help, and the catalog rather than treating that RPC
+version as the installation version.
 
 ## GitHub status authentication
 
