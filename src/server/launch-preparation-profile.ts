@@ -106,8 +106,8 @@ export async function validatePreparationProfile(
     throw new Error(`Could not validate the PAW preparation profile before session creation: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   }
   const model = models.find((entry) => entry.id === modelId);
-  if (!model || model.policy?.state === "disabled") {
-    throw new Error(`STREAMLINER_PAW_INIT_MODEL '${modelId}' is unavailable or disabled in the selected CLI model catalog. Choose an enabled model ID and check CLI authentication.`);
+  if (!model || (model.policy && model.policy.state !== "enabled")) {
+    throw new Error(`STREAMLINER_PAW_INIT_MODEL '${modelId}' is unavailable or not enabled in the selected CLI model catalog. Choose an enabled model ID and check CLI authentication.`);
   }
   if (reasoningEffort !== undefined &&
       (!model.capabilities.supports.reasoningEffort || !model.supportedReasoningEfforts?.includes(reasoningEffort))) {

@@ -132,11 +132,20 @@ describe("PAW preparation profile", () => {
     )).rejects.toThrow("before session creation: authentication required");
   });
 
-  it.each(["missing", "disabled", "reasoning-disabled", "effort-unavailable", "long-context-unavailable"])(
+  it("accepts a supported model when the catalog omits policy", async () => {
+    const model = modelInfo();
+    delete model.policy;
+    await validatePreparationProfile(
+      { listModels: vi.fn(async () => [model]) },
+      readPreparationProfile(configuredEnv()),
+    );
+  });
+
+  it.each(["missing", "disabled", "unconfigured", "reasoning-disabled", "effort-unavailable", "long-context-unavailable"])(
     "rejects unsupported model catalog state %s",
     async (state) => {
       const model = modelInfo();
-      if (state === "disabled") model.policy = { state: "disabled", terms: "" };
+      if (state === "disabled" || state === "unconfigured") model.policy = { state, terms: "" };
       if (state === "reasoning-disabled") model.capabilities.supports.reasoningEffort = false;
       if (state === "effort-unavailable") model.supportedReasoningEfforts = ["low"];
       if (state === "long-context-unavailable") delete model.billing;

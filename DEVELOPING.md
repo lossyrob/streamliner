@@ -131,8 +131,10 @@ Standalone context synthesis, summarization, and later workers are unchanged.
 
 Configured values fail closed before session creation: blank/invalid values,
 unusable CLI paths, CLI help without the selected context option, unavailable
-or disabled models, unsupported reasoning, and missing long-context catalog
-metadata produce actionable preparation errors. Long-context availability is
+or non-enabled models, unsupported reasoning, and missing long-context catalog
+metadata produce actionable preparation errors. When model policy is present,
+it must be `enabled`; `disabled` and `unconfigured` are rejected. Catalogs that
+omit policy remain supported. Long-context availability is
 read from CLI 1.0.87's `billing.tokenPrices.longContext.contextMax` metadata,
 which SDK 0.3.0 preserves. Missing metadata is an error, not permission to guess
 or fall back. With all four variables absent, no new capability probes or

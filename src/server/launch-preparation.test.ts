@@ -584,7 +584,7 @@ describe("production preparation SDK profile", () => {
     expect(sdkMock.listModels).not.toHaveBeenCalled();
   });
 
-  it.each(["invalid", "old-cli", "unsupported-model", "unsupported-effort", "unsupported-context", "catalog-error"])(
+  it.each(["invalid", "old-cli", "unsupported-model", "unconfigured-model", "unsupported-effort", "unsupported-context", "catalog-error"])(
     "fails %s before creating any SDK session",
     async (state) => {
       configureProfile();
@@ -592,16 +592,20 @@ describe("production preparation SDK profile", () => {
       if (state === "old-cli") writeFileSync(cliPath, 'console.log("--model <model>");');
       if (state === "unsupported-model") sdkMock.listModels.mockResolvedValue([]);
       if (state === "unsupported-effort") vi.stubEnv("STREAMLINER_PAW_INIT_REASONING_EFFORT", "xhigh");
-      if (state === "unsupported-effort" || state === "unsupported-context") {
+      if (state === "unsupported-effort" || state === "unsupported-context" || state === "unconfigured-model") {
+        const billing = { multiplier: 1, tokenPrices: { longContext: { contextMax: 1_050_000 } } };
         sdkMock.listModels.mockResolvedValue([{
           id: "gpt-6-astra", name: "GPT-6 Astra",
           capabilities: { supports: { reasoningEffort: true, vision: true }, limits: { max_context_window_tokens: 1_050_000 } },
           supportedReasoningEfforts: ["high"],
+          policy: state === "unconfigured-model" ? { state: "unconfigured", terms: "" } : undefined,
+          billing: state === "unconfigured-model" ? billing : undefined,
         }]);
       }
       if (state === "catalog-error") sdkMock.listModels.mockRejectedValue(new Error("catalog offline"));
       const response = await prepareThroughProductionRoute(500);
       expect(response.body.error).toMatch(/STREAMLINER_PAW_INIT|Could not validate the PAW preparation profile/);
+      if (state === "unconfigured-model") expect(response.body.error).toContain("unavailable or not enabled");
       expect(sdkMock.createSession).not.toHaveBeenCalled();
       if (state === "invalid" || state === "old-cli") expect(sdkMock.start).not.toHaveBeenCalled();
       if (sdkMock.start.mock.calls.length) expect(sdkMock.stop).toHaveBeenCalledTimes(1);
