@@ -7,8 +7,9 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
+import type { CopilotClientOptions, ModelInfo, SessionConfig } from "@github/copilot-sdk";
 import request from "supertest";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LaunchClaimFileStore } from "../session-registry/launch-claim-store";
 import { SessionRegistryFileStore } from "../session-registry/file-store";
@@ -27,6 +28,7 @@ import {
   buildPawInitPrompt,
   buildStreamlinerContextSavePrompt,
   completePawInitToolParameters,
+  defaultPawInitRunner,
   ensureStreamlinerContextAdditionalInput,
   preparePawLaunch,
   resolvePawWorkDirForLaunch,
@@ -37,6 +39,35 @@ import {
   type PawLaunchHandoff,
   type PawLaunchSessionRunnerInput,
 } from "./launch-preparation";
+
+const sdkMock = vi.hoisted(() => {
+  const clientOptions: CopilotClientOptions[] = [];
+  const session = {
+    sessionId: "profile-test-session",
+    workspacePath: undefined,
+    on: vi.fn<(name: string, handler: (event: { data: { content: string } }) => void) => () => void>(),
+    send: vi.fn<(message: { prompt: string }) => Promise<string>>(),
+    sendAndWait: vi.fn(),
+    disconnect: vi.fn(async () => {}),
+  };
+  const createSession = vi.fn<(config: SessionConfig) => Promise<typeof session>>();
+  const listModels = vi.fn<() => Promise<ModelInfo[]>>();
+  const start = vi.fn(async () => {});
+  const stop = vi.fn(async () => []);
+  class MockCopilotClient {
+    constructor(options: CopilotClientOptions) { clientOptions.push(options); }
+    start = start;
+    stop = stop;
+    createSession = createSession;
+    listModels = listModels;
+  }
+  return { clientOptions, session, createSession, listModels, start, stop, MockCopilotClient };
+});
+
+vi.mock("@github/copilot-sdk", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@github/copilot-sdk")>(),
+  CopilotClient: sdkMock.MockCopilotClient,
+}));
 
 const createdRoots: string[] = [];
 const activeApps: StreamlinerApiApp[] = [];
@@ -426,12 +457,178 @@ function fakeTerminalLaunch(handoff: PawLaunchHandoff): NodeTerminalLaunchRespon
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const app of activeApps.splice(0)) {
     app.close();
   }
   for (const root of createdRoots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+describe("production preparation SDK profile", () => {
+  let root: string;
+  let cliPath: string;
+  let graphPath: string;
+  beforeEach(() => {
+    vi.clearAllMocks();
+    sdkMock.clientOptions.length = 0;
+    for (const name of [
+      "STREAMLINER_PAW_INIT_MODEL", "STREAMLINER_PAW_INIT_REASONING_EFFORT",
+      "STREAMLINER_PAW_INIT_CONTEXT", "STREAMLINER_PAW_INIT_CLI_PATH",
+      "STREAMLINER_COPILOT_SDK_STATE_ROOT",
+    ]) vi.stubEnv(name, undefined);
+    root = createRootDir();
+    createGitRepo(root, "https://github.com/lossyrob/streamliner.git");
+    graphPath = writeLaunchPolicyGraph(root);
+    const skills = join(root, "skills");
+    mkdirSync(join(skills, "paw-init"), { recursive: true });
+    writeFileSync(join(skills, "paw-init", "SKILL.md"), "# Mock PAW init");
+    vi.stubEnv("STREAMLINER_PAW_SKILL_DIR", skills);
+    cliPath = join(root, "mock-cli.js");
+    writeFileSync(cliPath, 'console.log("--context <tier> [possible values: default, long_context]");');
+    const billing = { multiplier: 1, tokenPrices: { longContext: { contextMax: 1_050_000 } } };
+    sdkMock.listModels.mockResolvedValue([{
+      id: "gpt-6-astra",
+      name: "GPT-6 Astra",
+      capabilities: {
+        supports: { reasoningEffort: true, vision: true },
+        limits: { max_context_window_tokens: 1_050_000 },
+      },
+      supportedReasoningEfforts: ["low", "medium", "high", "xhigh"],
+      billing,
+    }]);
+    sdkMock.createSession.mockResolvedValue(sdkMock.session);
+    sdkMock.session.sendAndWait.mockRejectedValue(new Error("mock legacy turn stopped"));
+    const handlers = new Map<string, (event: { data: { content: string } }) => void>();
+    sdkMock.session.on.mockImplementation((name, handler) => {
+      handlers.set(name, handler);
+      return () => { handlers.delete(name); };
+    });
+    sdkMock.session.send.mockImplementation(async () => {
+      const config = sdkMock.createSession.mock.calls.at(-1)?.[0];
+      const firstTurn = sdkMock.session.send.mock.calls.length === 1;
+      const toolName = firstTurn ? "save_streamliner_context" : "complete_paw_init";
+      const tool = config?.tools?.find((entry) => entry.name === toolName);
+      if (!tool) throw new Error(`Missing ${toolName} in mock session`);
+      const workDir = join(root, ".paw", "work", "profile-test");
+      if (!firstTurn) {
+        mkdirSync(workDir, { recursive: true });
+        writeFileSync(join(workDir, "WorkflowContext.md"), "# WorkflowContext\nAdditional Inputs: none\n");
+      }
+      await tool.handler(firstTurn
+        ? { content: [
+          "# Launch Context - Launch prompt profiles",
+          "## Layer 0 - Design Context Hints",
+          "## Layer 1 - Worker Mission",
+          "## Layer 2 - Relevant State",
+          "## Layer 3 - Coordination Context",
+        ].join("\n\n") }
+        : { workId: "profile-test", workTitle: "Profile test", targetBranch: "main", pawWorkDir: workDir },
+      { sessionId: "profile-test-session", toolCallId: toolName, toolName, arguments: {} });
+      handlers.get("assistant.message")?.({ data: { content: '{"status":"ready"}' } });
+      handlers.get("session.idle")?.({ data: { content: "" } });
+      return "mock-message";
+    });
+  });
+
+  function configureProfile(): void {
+    vi.stubEnv("STREAMLINER_PAW_INIT_MODEL", "gpt-6-astra");
+    vi.stubEnv("STREAMLINER_PAW_INIT_REASONING_EFFORT", "high");
+    vi.stubEnv("STREAMLINER_PAW_INIT_CONTEXT", "long_context");
+    vi.stubEnv("STREAMLINER_PAW_INIT_CLI_PATH", cliPath);
+  }
+
+  async function prepareThroughProductionRoute(status = 200): Promise<request.Response> {
+    const api = createStreamlinerApiApp({
+      graphPath,
+      store: new SessionRegistryFileStore({ rootDir: join(root, "registry") }),
+      launchPreparationDeps: { cwd: root, stateRoot: join(root, "state") },
+    });
+    activeApps.push(api);
+    const response = await request(api.app).post("/api/launch-preparations").send({
+      nodeId: "launch-prompt-profiles",
+      target: "external-session",
+      configuration: {
+        cliArgs: [],
+        environment: { STREAMLINER_PAW_INIT_MODEL: "handoff-only-must-not-configure-helper" },
+      },
+    });
+    expect(response.status, JSON.stringify(response.body)).toBe(status);
+    return response;
+  }
+
+  it("forwards the explicit profile to the actual combined client/session through the production route", async () => {
+    configureProfile();
+    const response = await prepareThroughProductionRoute();
+    expect(response.body.target).toBe("external-session");
+    expect(sdkMock.clientOptions).toEqual([{
+      cwd: root, logLevel: "error", cliPath, cliArgs: ["--context", "long_context"],
+    }]);
+    expect(sdkMock.createSession).toHaveBeenCalledTimes(1);
+    expect(sdkMock.createSession.mock.calls[0][0]).toMatchObject({
+      clientName: "streamliner-paw-launch-preparation",
+      model: "gpt-6-astra", reasoningEffort: "high",
+    });
+    expect(sdkMock.createSession.mock.calls[0][0]).not.toHaveProperty("contextTier");
+    expect(sdkMock.createSession.mock.calls[0][0]).not.toHaveProperty("modelCapabilities");
+    expect(sdkMock.listModels.mock.invocationCallOrder[0]).toBeLessThan(sdkMock.createSession.mock.invocationCallOrder[0]);
+    expect(sdkMock.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains default combined behavior when the profile is unset, regardless of handoff environment", async () => {
+    await prepareThroughProductionRoute();
+    expect(sdkMock.clientOptions).toEqual([{ cwd: root, logLevel: "error" }]);
+    expect(sdkMock.createSession.mock.calls[0][0]).toMatchObject({ model: "gpt-5.5" });
+    expect(sdkMock.createSession.mock.calls[0][0]).not.toHaveProperty("reasoningEffort");
+    expect(sdkMock.listModels).not.toHaveBeenCalled();
+  });
+
+  it.each(["invalid", "old-cli", "unsupported-model", "unsupported-effort", "unsupported-context", "catalog-error"])(
+    "fails %s before creating any SDK session",
+    async (state) => {
+      configureProfile();
+      if (state === "invalid") vi.stubEnv("STREAMLINER_PAW_INIT_CONTEXT", "1.2M");
+      if (state === "old-cli") writeFileSync(cliPath, 'console.log("--model <model>");');
+      if (state === "unsupported-model") sdkMock.listModels.mockResolvedValue([]);
+      if (state === "unsupported-effort") vi.stubEnv("STREAMLINER_PAW_INIT_REASONING_EFFORT", "xhigh");
+      if (state === "unsupported-effort" || state === "unsupported-context") {
+        sdkMock.listModels.mockResolvedValue([{
+          id: "gpt-6-astra", name: "GPT-6 Astra",
+          capabilities: { supports: { reasoningEffort: true, vision: true }, limits: { max_context_window_tokens: 1_050_000 } },
+          supportedReasoningEfforts: ["high"],
+        }]);
+      }
+      if (state === "catalog-error") sdkMock.listModels.mockRejectedValue(new Error("catalog offline"));
+      const response = await prepareThroughProductionRoute(500);
+      expect(response.body.error).toMatch(/STREAMLINER_PAW_INIT|Could not validate the PAW preparation profile/);
+      expect(sdkMock.createSession).not.toHaveBeenCalled();
+      if (state === "invalid" || state === "old-cli") expect(sdkMock.start).not.toHaveBeenCalled();
+      if (sdkMock.start.mock.calls.length) expect(sdkMock.stop).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([true, false])("keeps the legacy initializer compatible (profile configured: %s)", async (configured) => {
+    if (configured) configureProfile();
+    await expect(defaultPawInitRunner({
+      nodeId: "launch-prompt-profiles", cwd: root, sessionStateRoot: join(root, "state"),
+      issueUrl: undefined, launchNonce: null, existingLaunch: null,
+      stagedContextPackage: fakeContextPackage(root, { nodeId: "launch-prompt-profiles" }),
+      configuration: {
+        cwd: root, cliArgs: [], environment: {}, workflowInstructions: "Use PAW",
+        terminal: { launchMode: "manual", preferredTerminal: "default", title: null, tabColor: null },
+      },
+    })).rejects.toThrow("mock legacy turn stopped");
+    expect(sdkMock.clientOptions[0]).toEqual({
+      cwd: root, logLevel: "error",
+      ...(configured ? { cliPath, cliArgs: ["--context", "long_context"] } : {}),
+    });
+    expect(sdkMock.createSession.mock.calls[0][0]).toMatchObject({
+      clientName: "streamliner-paw-launch-initializer",
+      ...(configured ? { model: "gpt-6-astra", reasoningEffort: "high" } : { model: "gpt-5.5" }),
+    });
+    if (!configured) expect(sdkMock.createSession.mock.calls[0][0]).not.toHaveProperty("reasoningEffort");
+  });
 });
 
 describe("preparePawLaunch", () => {

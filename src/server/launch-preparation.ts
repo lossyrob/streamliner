@@ -37,6 +37,7 @@ import {
   launchPolicyDetails,
 } from "./launch-policy";
 import { getApiLogger } from "./logger";
+import { readPreparationProfile, validatePreparationCli, validatePreparationProfile } from "./launch-preparation-profile";
 import {
   COPILOT_INSTRUCTIONS_RELATIVE_PATH,
   LaunchContextPreparationError,
@@ -53,7 +54,6 @@ import {
   type PreparedLaunchContextPackage,
 } from "./launch-context";
 
-const DEFAULT_PAW_INIT_MODEL = "gpt-5.5";
 const DEFAULT_PAW_INIT_TIMEOUT_MS = 120_000;
 const TERMINAL_LAUNCH_MODES = ["manual"] as const;
 const TERMINAL_PREFERENCES = [
@@ -925,7 +925,7 @@ function pawLaunchTimeoutMs(): number | undefined {
 }
 
 function pawLaunchModel(): string {
-  return process.env.STREAMLINER_PAW_INIT_MODEL ?? DEFAULT_PAW_INIT_MODEL;
+  return readPreparationProfile().session.model;
 }
 
 function pawLaunchSdkStateRoot(input: Pick<PawLaunchSessionRunnerInput, "sessionStateRoot" | "preparedContext">): string {
@@ -1821,12 +1821,15 @@ export function buildPawInitPrompt(input: PawInitRunnerInput): string {
 export async function defaultPawInitRunner(
   input: PawInitRunnerInput,
 ): Promise<PawInitRunnerResult> {
+  const profile = readPreparationProfile();
+  await validatePreparationCli(profile);
   const skillDirectories = pawSkillDirectories();
   if (skillDirectories.length === 0) {
     throw new Error("Could not find the installed paw-init skill. Set STREAMLINER_PAW_SKILL_DIR to the PAW skills directory.");
   }
 
   const client = new CopilotClient({
+    ...profile.client,
     cwd: input.cwd,
     logLevel: "error",
   });
@@ -1838,6 +1841,7 @@ export async function defaultPawInitRunner(
   try {
     await client.start();
     started = true;
+    await validatePreparationProfile(client, profile);
     const completeTool = defineTool<CompletePawInitArgs>(
       "complete_paw_init",
       {
@@ -1915,7 +1919,7 @@ export async function defaultPawInitRunner(
 
     session = await client.createSession({
       clientName: "streamliner-paw-launch-initializer",
-      model: pawLaunchModel(),
+      ...profile.session,
       workingDirectory: input.cwd,
       enableConfigDiscovery: true,
       skillDirectories,
@@ -2114,12 +2118,14 @@ function buildStreamlinerContextSaveFallbackPrompt(
 export async function defaultPawLaunchSessionRunner(
   input: PawLaunchSessionRunnerInput,
 ): Promise<PawLaunchSessionRunnerResult> {
+  const profile = readPreparationProfile();
+  await validatePreparationCli(profile);
   const skillDirectories = pawSkillDirectories();
   if (skillDirectories.length === 0) {
     throw new Error("Could not find the installed paw-init skill. Set STREAMLINER_PAW_SKILL_DIR to the PAW skills directory.");
   }
 
-  const model = pawLaunchModel();
+  const model = profile.session.model;
   const sdkStateRoot = pawLaunchSdkStateRoot(input);
   await mkdir(sdkStateRoot, { recursive: true });
   const launchCwdInitialBranch = await currentGitBranch(input.cwd);
@@ -2131,6 +2137,7 @@ export async function defaultPawLaunchSessionRunner(
   });
 
   const client = new CopilotClient({
+    ...profile.client,
     cwd: input.cwd,
     logLevel: "error",
   });
@@ -2144,6 +2151,7 @@ export async function defaultPawLaunchSessionRunner(
   try {
     await client.start();
     started = true;
+    await validatePreparationProfile(client, profile);
 
     const saveContextTool = defineTool<SaveStreamlinerContextArgs>(
       "save_streamliner_context",
@@ -2272,7 +2280,7 @@ export async function defaultPawLaunchSessionRunner(
 
     session = await client.createSession({
       clientName: "streamliner-paw-launch-preparation",
-      model,
+      ...profile.session,
       workingDirectory: input.cwd,
       configDir: sdkStateRoot,
       enableConfigDiscovery: true,
