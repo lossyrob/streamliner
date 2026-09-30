@@ -1,0 +1,243 @@
+{
+  "schemaVersion": 1,
+  "id": "app-native-portfolio",
+  "title": "App-native Streamliner portfolio",
+  "summary": "Coordinate durable artifacts, App-owned sessions, and the portfolio operator experience through public workstream checkpoints.",
+  "project": {
+    "id": "streamliner",
+    "title": "Streamliner",
+    "owner": "lossyrob",
+    "repository": "lossyrob/streamliner"
+  },
+  "workstreams": [
+    {
+      "id": "artifact-foundation",
+      "path": ".streamliner/workstreams/artifact-foundation",
+      "region": "Durable foundation",
+      "attention": "watch",
+      "risk": "low",
+      "availability": "validated",
+      "waves": [
+        {
+          "id": "artifact-contract",
+          "index": 0,
+          "title": "Artifact contract",
+          "summary": "Define exact-revision portfolio and workstream reads.",
+          "nodeIds": ["artifact-contract"],
+          "publicCheckpoint": {
+            "id": "artifact-snapshot-contract",
+            "title": "Exact artifact snapshot contract",
+            "status": "completed",
+            "availability": "validated",
+            "export": "artifact snapshot provider"
+          }
+        },
+        {
+          "id": "shared-ref",
+          "index": 1,
+          "title": "Shared artifact ref",
+          "summary": "Prepare a replaceable local writer and shared-ref policy.",
+          "nodeIds": ["shared-ref-writer", "artifact-consistency-gate"],
+          "publicCheckpoint": {
+            "id": "shared-ref-policy",
+            "title": "Shared artifact ref policy",
+            "status": "planned",
+            "availability": "proposed",
+            "export": "shared ref lifecycle"
+          }
+        },
+        {
+          "id": "layout-reconciliation",
+          "index": 2,
+          "title": "Layout reconciliation",
+          "summary": "Prove newly reconciled checkpoint nodes inherit the saved workstream anchor.",
+          "nodeIds": ["layout-reconciliation-proof"],
+          "publicCheckpoint": {
+            "id": "layout-reconciliation-proof",
+            "title": "Anchor reconciliation proof",
+            "status": "planned",
+            "availability": "proposed",
+            "export": "anchor reconciliation evidence"
+          }
+        }
+      ]
+    },
+    {
+      "id": "app-native-spike",
+      "path": ".streamliner/workstreams/app-native-spike",
+      "region": "Session runtime",
+      "attention": "focus",
+      "risk": "medium",
+      "availability": "branch-local",
+      "waves": [
+        {
+          "id": "native-boundary",
+          "index": 0,
+          "title": "App ownership boundary",
+          "summary": "Prove the App and Streamliner ownership split.",
+          "nodeIds": ["architecture-research"],
+          "publicCheckpoint": {
+            "id": "app-boundary-contract",
+            "title": "App ownership contract",
+            "status": "completed",
+            "availability": "validated",
+            "export": "session ownership boundary"
+          }
+        },
+        {
+          "id": "native-session-loop",
+          "index": 1,
+          "title": "Native session loop",
+          "summary": "Claim exact context in an App-created child session.",
+          "nodeIds": ["app-native-implementation", "builder-acceptance-gate"],
+          "publicCheckpoint": {
+            "id": "native-session-proof",
+            "title": "App-native launch proof",
+            "status": "completed",
+            "availability": "branch-local",
+            "export": "native launch evidence"
+          }
+        },
+        {
+          "id": "production-boundary",
+          "index": 2,
+          "title": "Production boundary",
+          "summary": "Promote accepted adapters and recovery contracts.",
+          "nodeIds": ["artifact-promotion"],
+          "publicCheckpoint": {
+            "id": "production-adapter-ready",
+            "title": "Production adapter ready",
+            "status": "planned",
+            "availability": "proposed",
+            "export": "production adapter"
+          }
+        },
+        {
+          "id": "plugin-distribution",
+          "index": 3,
+          "title": "Plugin distribution",
+          "summary": "Package and validate the App-native extension, skill, agent, and compatibility contract in a fresh repository session.",
+          "nodeIds": ["plugin-distribution-validation", "plugin-distribution-gate"],
+          "publicCheckpoint": {
+            "id": "plugin-distribution-proof",
+            "title": "Plugin-installed App contract",
+            "status": "ready",
+            "availability": "preview",
+            "export": "plugin distribution evidence"
+          }
+        }
+      ]
+    },
+    {
+      "id": "portfolio-experience",
+      "path": ".streamliner/workstreams/portfolio-experience",
+      "region": "Operator experience",
+      "attention": "focus",
+      "risk": "high",
+      "availability": "preview",
+      "waves": [
+        {
+          "id": "portfolio-model",
+          "index": 0,
+          "title": "Portfolio projection",
+          "summary": "Read multiple workstreams and checkpoint contracts coherently.",
+          "nodeIds": ["portfolio-projection"],
+          "publicCheckpoint": {
+            "id": "portfolio-projection-contract",
+            "title": "Portfolio projection contract",
+            "status": "ready",
+            "availability": "preview",
+            "export": "portfolio projection"
+          }
+        },
+        {
+          "id": "portfolio-interactions",
+          "index": 1,
+          "title": "Portfolio interactions",
+          "summary": "Add semantic zoom, dependency focus, filters, and inspection.",
+          "nodeIds": ["portfolio-canvas", "portfolio-validation-gate"],
+          "publicCheckpoint": {
+            "id": "portfolio-canvas-proof",
+            "title": "Interactive portfolio proof",
+            "status": "planned",
+            "availability": "proposed",
+            "export": "portfolio canvas"
+          }
+        },
+        {
+          "id": "shared-layout-baseline",
+          "index": 2,
+          "title": "Shared layout baseline",
+          "summary": "Define an explicit future promotion path from local operator pins to a reviewed shared layout.",
+          "nodeIds": ["portfolio-layout-publish"],
+          "publicCheckpoint": {
+            "id": "shared-layout-contract",
+            "title": "Shared layout publication contract",
+            "status": "planned",
+            "availability": "proposed",
+            "export": "shared layout baseline"
+          }
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "id": "artifact-contract-to-native-loop",
+      "from": {
+        "workstreamId": "artifact-foundation",
+        "waveId": "artifact-contract",
+        "checkpointId": "artifact-snapshot-contract",
+        "export": "artifact snapshot provider"
+      },
+      "to": {
+        "workstreamId": "app-native-spike",
+        "waveId": "native-session-loop",
+        "checkpointId": "native-session-proof",
+        "import": "coherent launch context"
+      },
+      "label": "exact artifact snapshot",
+      "state": "validated",
+      "risk": "Low: the exact-revision provider is exercised and stable for the spike.",
+      "action": "Keep graph, brief, task, and launch provenance pinned to the same commit."
+    },
+    {
+      "id": "native-proof-to-portfolio",
+      "from": {
+        "workstreamId": "app-native-spike",
+        "waveId": "native-session-loop",
+        "checkpointId": "native-session-proof",
+        "export": "native launch evidence"
+      },
+      "to": {
+        "workstreamId": "portfolio-experience",
+        "waveId": "portfolio-interactions",
+        "checkpointId": "portfolio-canvas-proof",
+        "import": "runtime binding overlay"
+      },
+      "label": "App runtime projection",
+      "state": "branch-local",
+      "risk": "Medium: the runtime binding is proven locally but App project-session correlation is not yet a documented API contract.",
+      "action": "Keep portfolio interactions read-only until session identity correlation is productionized."
+    },
+    {
+      "id": "shared-ref-to-portfolio-model",
+      "from": {
+        "workstreamId": "artifact-foundation",
+        "waveId": "shared-ref",
+        "checkpointId": "shared-ref-policy",
+        "export": "shared ref lifecycle"
+      },
+      "to": {
+        "workstreamId": "portfolio-experience",
+        "waveId": "portfolio-model",
+        "checkpointId": "portfolio-projection-contract",
+        "import": "portfolio artifact discovery"
+      },
+      "label": "shared portfolio discovery",
+      "state": "proposed",
+      "risk": "High: remote synchronization and concurrent artifact writers have no accepted production policy.",
+      "action": "Treat the local artifact ref as spike-only and gate remote rollout on a writer/merge contract."
+    }
+  ]
+}

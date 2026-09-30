@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "launchId": "launch-2171b54e-8925-409e-ab57-9647b9ab864f",
+  "contextId": "ctx-d6f9e9e0-a868-498b-b32d-718a97747d0c",
+  "claimedBySessionId": "86e616e2-c5d8-4e86-9c0d-51cf3aa98676",
+  "artifactRevision": "238ebc9fc48c6e628986e6a934dbb1df7a99d9ff",
+  "artifactDigest": "33d9d79f1319722839e557841130264056fd13e5e69c92fc94ac66f109251e6a",
+  "workstreamId": "app-native-spike",
+  "nodeId": "plugin-distribution-validation",
+  "initializedAt": "2026-08-24T19:10:05.628Z",
+  "appOwnedWorktree": true,
+  "nestedWorktreeCreated": false,
+  "terminalLaunched": false
+}
