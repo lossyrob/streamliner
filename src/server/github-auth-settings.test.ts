@@ -29,6 +29,16 @@ afterEach(() => {
 });
 
 describe("GitHub auth settings", () => {
+  it("scopes mappings to the reference host and rejects credential host mismatches", () => {
+    const settings = {
+      profiles: { public: { user: "personal" }, enterprise: { user: "work", hostname: "msft.ghe.com" } },
+      repositories: { "github.com/*": "public", "msft.ghe.com/*": "enterprise" },
+    };
+    expect(resolveGithubAuthProfile({ ...issueRef(), host: "msft.ghe.com" }, settings)).toEqual(settings.profiles.enterprise);
+    expect(resolveGithubAuthProfile(issueRef(), settings)).toEqual(settings.profiles.public);
+    expect(resolveGithubAuthProfile({ ...issueRef(), host: "github.example.com" }, settings)).toBeNull();
+    expect(() => resolveGithubAuthProfile(issueRef(), { ...settings, repositories: { "github.com/*": "enterprise" } })).toThrow("hostname does not match");
+  });
   it("resolves exact repository profiles before owner wildcards", async () => {
     const path = join(createRoot(), "github-auth.json");
     writeFileSync(

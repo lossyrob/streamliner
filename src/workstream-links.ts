@@ -1,11 +1,12 @@
 import type { WorkstreamIssue, WorkstreamTracker } from "./workstream-schema";
+import { githubReferenceUrl, githubRepositorySlug } from "./github-host";
 
 export function issueLabel(issue?: WorkstreamIssue): string | null {
   if (!issue) {
     return null;
   }
 
-  return `${issue.owner}/${issue.repo}#${issue.number}`;
+  return `${githubRepositorySlug(issue)}#${issue.number}`;
 }
 
 export function issueUrl(issue?: WorkstreamIssue): string | null {
@@ -13,7 +14,7 @@ export function issueUrl(issue?: WorkstreamIssue): string | null {
     return null;
   }
 
-  return `https://github.com/${issue.owner}/${issue.repo}/issues/${issue.number}`;
+  return githubReferenceUrl(issue);
 }
 
 export function trackerLabel(tracker?: WorkstreamTracker): string | null {

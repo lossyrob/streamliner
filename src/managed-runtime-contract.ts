@@ -1,3 +1,4 @@
+import { githubHost, githubReferenceUrl, normalizeGithubHost, parseGithubReferenceUrl, parseGithubRepository } from "./github-host";
 import type {
   SessionRegistryActivityStatus,
   SessionRegistryGithubRef,
@@ -855,10 +856,6 @@ function latestDerivedPullRequest(
     .find((ref) => ref.type === "pr") ?? null;
 }
 
-function isSafeGithubRepoSlug(value: string): boolean {
-  return /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value);
-}
-
 function safeGithubUrl(value: string | null, pathPattern: RegExp): string | null {
   if (!value) {
     return null;
@@ -866,9 +863,10 @@ function safeGithubUrl(value: string | null, pathPattern: RegExp): string | null
   try {
     const parsed = new URL(value);
     if (parsed.protocol === "https:" &&
-      parsed.hostname.toLowerCase() === "github.com" &&
+      normalizeGithubHost(parsed.hostname) &&
+      !parsed.username && !parsed.password && !parsed.port &&
       pathPattern.test(parsed.pathname)) {
-      return `https://github.com${parsed.pathname}`;
+      return `https://${parsed.hostname}${parsed.pathname}`;
     }
   } catch {
     return null;
@@ -884,11 +882,12 @@ function safeGithubCompareUrl(value: string | null): string | null {
   return safeGithubUrl(value, /^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/compare\/[^/?#]+$/);
 }
 
-function githubPullRequestUrl(repo: string | null, number: number | null): string | null {
-  if (!repo || number === null || number < 1 || !isSafeGithubRepoSlug(repo)) {
+function githubPullRequestUrl(repo: string | null, number: number | null, host?: string): string | null {
+  const parsed = parseGithubRepository(repo);
+  if (!parsed || number === null || !Number.isSafeInteger(number) || number < 1) {
     return null;
   }
-  return `https://github.com/${repo}/pull/${number}`;
+  return githubReferenceUrl({ ...parsed, host: host ?? parsed.host, number }, "pr");
 }
 
 function isSafeCompareRef(value: string): boolean {
@@ -899,18 +898,20 @@ function branchToBaseDiffUrl(
   repo: string | null,
   baseBranch: string | null,
   branchName: string | null,
+  host?: string,
 ): string | null {
+  const parsed = parseGithubRepository(repo);
   if (
     !repo ||
     !baseBranch ||
     !branchName ||
-    !isSafeGithubRepoSlug(repo) ||
+    !parsed ||
     !isSafeCompareRef(baseBranch) ||
     !isSafeCompareRef(branchName)
   ) {
     return null;
   }
-  return `https://github.com/${repo}/compare/${
+  return `https://${githubHost(host ?? parsed.host)}/${parsed.owner}/${parsed.repo}/compare/${
     encodeURIComponent(baseBranch)
   }...${encodeURIComponent(branchName)}`;
 }
@@ -941,7 +942,7 @@ function prReadyTrustContext(
   const repo = evidence?.repo ?? derivedPullRequest?.repo ?? context.repo ?? null;
   const number = evidence?.number ?? derivedPullRequest?.number ?? null;
   const url = safeGithubPullRequestUrl(evidence?.url ?? derivedPullRequest?.url ?? null) ??
-    githubPullRequestUrl(repo, number);
+    githubPullRequestUrl(repo, number, derivedPullRequest?.host);
   if (!url && !repo && number === null) {
     return null;
   }
@@ -961,7 +962,7 @@ function prReadyTrustContext(
     "compareUrl",
   ]);
   const diffUrl = safeGithubCompareUrl(explicitDiffUrl) ??
-    branchToBaseDiffUrl(repo, baseBranch, branchName);
+    branchToBaseDiffUrl(repo, baseBranch, branchName, parseGithubReferenceUrl(url)?.host);
   const worktreePath = latestProgressDataString(runtime, ["worktreePath"]) ??
     context.derivedWorktreePath ??
     context.cwd ??

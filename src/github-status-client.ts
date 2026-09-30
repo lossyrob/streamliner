@@ -52,6 +52,7 @@ function trackerStatusRef(tracker?: WorkstreamTracker): GithubStatusRef | null {
   }
   return {
     type: "issue",
+    host: tracker.host,
     owner: repo.owner,
     repo: repo.repo,
     number: tracker.number,
@@ -118,6 +119,7 @@ export function workstreamGithubSnapshotFromStatuses(
   const issues = Array.from(statuses)
     .filter((status) => status.type === "issue")
     .map((status) => ({
+      host: status.ref.host,
       owner: status.ref.owner,
       repo: status.ref.repo,
       number: status.ref.number,
@@ -127,6 +129,7 @@ export function workstreamGithubSnapshotFromStatuses(
       url: status.url,
       linkedPullRequests: status.linkedPullRequests.map(
         (pullRequest): WorkstreamGithubPullRequestSnapshot => ({
+          host: pullRequest.ref.host,
           owner: pullRequest.ref.owner,
           repo: pullRequest.ref.repo,
           number: pullRequest.ref.number,

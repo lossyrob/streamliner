@@ -1,3 +1,4 @@
+import { githubHost, githubRepositorySlug, normalizeGithubHost } from "./github-host";
 import type {
   WorkstreamAttention,
   WorkstreamCheckpoint,
@@ -266,9 +267,17 @@ function asEnumTolerant<T extends string>(
   return fallback;
 }
 
+function parseHost(value: unknown, label: string): string | undefined {
+  if (value === undefined) return undefined;
+  const host = normalizeGithubHost(value);
+  if (!host) throw new Error(`Expected ${label} to be a hostname without a scheme, port, or path.`);
+  return host;
+}
+
 function parseIssue(value: unknown, label: string): WorkstreamIssue {
   const record = asObject(value, label);
   return {
+    host: parseHost(record.host, `${label}.host`),
     owner: asNonEmptyString(record.owner, `${label}.owner`),
     repo: asNonEmptyString(record.repo, `${label}.repo`),
     number: asInteger(record.number, `${label}.number`),
@@ -288,6 +297,14 @@ function parseDesignReference(
 
 function parseTracker(value: unknown, label: string): WorkstreamTracker {
   const record = asObject(value, label);
+  const typeHost = normalizeGithubHost(record.type);
+  if (typeHost) {
+    const issue = parseIssue(record, label);
+    if (issue.host && issue.host !== typeHost) {
+      throw new Error(`Conflicting ${label}.type and ${label}.host.`);
+    }
+    return { ...issue, type: "github", host: typeHost };
+  }
   const type = asEnum<WorkstreamTrackerType>(
     record.type,
     `${label}.type`,
@@ -378,6 +395,7 @@ function parseRepo(value: unknown, label: string): WorkstreamRepo {
   const role = record.role;
 
   return {
+    host: parseHost(record.host, `${label}.host`),
     id: asKebabCaseId(record.id, `${label}.id`),
     owner: asNonEmptyString(record.owner, `${label}.owner`),
     name: asNonEmptyString(record.name, `${label}.name`),
@@ -658,6 +676,25 @@ function parseArray<T>(
 function assertSemanticallyValid(
   workstream: WorkstreamDocument,
 ): WorkstreamDocument {
+  for (const repo of workstream.repos) {
+    repo.host ??= workstream.githubHost;
+  }
+  const resolveIssueHost = (issue: WorkstreamIssue): void => {
+    if (issue.host) return;
+    const matches = workstream.repos.filter((repo) =>
+      repo.owner.toLowerCase() === issue.owner.toLowerCase() &&
+      repo.name.toLowerCase() === issue.repo.toLowerCase(),
+    );
+    const hosts = new Set(matches.map((repo) => githubHost(repo.host)));
+    if (hosts.size > 1) {
+      throw new Error(`Ambiguous GitHub host for '${issue.owner}/${issue.repo}'; specify host on the tracker.`);
+    }
+    issue.host = matches[0]?.host ?? workstream.githubHost;
+  };
+  if (workstream.trackingIssue) resolveIssueHost(workstream.trackingIssue);
+  for (const node of workstream.nodes) {
+    if (node.tracker?.type === "github") resolveIssueHost(node.tracker);
+  }
   const repoIds = new Set<string>();
   for (const repo of workstream.repos) {
     if (repoIds.has(repo.id)) {
@@ -667,12 +704,17 @@ function assertSemanticallyValid(
   }
 
   const knownRepos = new Set(
-    workstream.repos.map((repo) => `${repo.owner}/${repo.name}`.toLowerCase()),
+    workstream.repos.map((repo) => githubRepositorySlug({ ...repo, repo: repo.name }).toLowerCase()),
   );
+  const unscopedRepos = new Set(workstream.repos
+    .filter((repo) => repo.host === undefined)
+    .map((repo) => `${repo.owner}/${repo.name}`.toLowerCase()));
   if (workstream.trackingIssue) {
     const trackingIssueRepo =
-      `${workstream.trackingIssue.owner}/${workstream.trackingIssue.repo}`.toLowerCase();
-    if (!knownRepos.has(trackingIssueRepo)) {
+      githubRepositorySlug(workstream.trackingIssue).toLowerCase();
+    if (!knownRepos.has(trackingIssueRepo) && !unscopedRepos.has(
+      `${workstream.trackingIssue.owner}/${workstream.trackingIssue.repo}`.toLowerCase(),
+    )) {
       throw new Error(
         `Issue repo '${trackingIssueRepo}' is not declared in repos`,
       );
@@ -727,8 +769,10 @@ function assertSemanticallyValid(
 
     if (node.tracker?.type === "github") {
       const trackerRepo =
-        `${node.tracker.owner}/${node.tracker.repo}`.toLowerCase();
-      if (!knownRepos.has(trackerRepo)) {
+        githubRepositorySlug(node.tracker).toLowerCase();
+      if (!knownRepos.has(trackerRepo) && !unscopedRepos.has(
+        `${node.tracker.owner}/${node.tracker.repo}`.toLowerCase(),
+      )) {
         throw new Error(`Tracker repo '${trackerRepo}' is not declared in repos`);
       }
     }
@@ -823,6 +867,7 @@ export function parseWorkstreamDocument(
   );
 
   return assertSemanticallyValid({
+    githubHost: parseHost(record.githubHost, "workstream.githubHost"),
     schemaVersion:
       record.schemaVersion === WORKSTREAM_SCHEMA_VERSION
         ? WORKSTREAM_SCHEMA_VERSION
@@ -922,7 +967,7 @@ export function describeFreshness(
 }
 
 function issueKey(issue: WorkstreamIssue): string {
-  return `${issue.owner}/${issue.repo}#${issue.number}`.toLowerCase();
+  return `${githubRepositorySlug(issue)}#${issue.number}`.toLowerCase();
 }
 
 function githubIssueOf(tracker?: WorkstreamTracker): WorkstreamIssue | undefined {

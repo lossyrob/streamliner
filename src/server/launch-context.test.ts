@@ -374,6 +374,24 @@ function createContextGenerator(
 }
 
 describe("prepareLaunchContextPackage", () => {
+  it("preserves the enterprise host in the tracker resolver and launch manifest", async () => {
+    const root = createRootDir();
+    const { graphPath, stateRoot } = buildFixture(root);
+    const graph = JSON.parse(readFileSync(graphPath, "utf8"));
+    graph.githubHost = "msft.ghe.com";
+    writeText(graphPath, JSON.stringify(graph));
+    const result = await prepareLaunchContextPackage({
+      graphPath, nodeId: "backend-context-assembly", stateRoot,
+      trackerResolver: async (ref) => {
+        expect(ref).toEqual({ host: "msft.ghe.com", owner: "lossyrob", repo: "streamliner", number: 31 });
+        return { content: "Enterprise issue body" };
+      },
+      contextGenerator: createContextGenerator([]),
+    });
+    expect(result.metadata.sourceReferences).toContainEqual(expect.objectContaining({
+      kind: "tracker", url: "https://msft.ghe.com/lossyrob/streamliner/issues/31",
+    }));
+  });
   it("writes one worker-facing context file and returns system metadata", async () => {
     const root = createRootDir();
     const { graphPath, stateRoot } = buildFixture(root);

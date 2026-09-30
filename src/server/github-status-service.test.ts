@@ -82,6 +82,77 @@ afterEach(() => {
 });
 
 describe("GitHub status API", () => {
+  it("routes enterprise issue, timeline and linked PR requests to the same host", async () => {
+    const fetchMock = vi.fn<GithubStatusFetch>(async (url) => {
+      expect(url.startsWith("https://api.msft.ghe.com/repos/")).toBe(true);
+      if (url.includes("/timeline?")) return githubResponse([{
+        event: "connected", source: { issue: {
+          number: 70, repository_url: "https://api.msft.ghe.com/repos/lossyrob/streamliner",
+          pull_request: { url: "https://api.msft.ghe.com/repos/lossyrob/streamliner/pulls/70" },
+        } },
+      }]);
+      return githubResponse({ state: "open", title: "Enterprise", merged: false });
+    });
+    const api = createApi(fetchMock);
+    const response = await request(api.app).get("/api/github/status")
+      .query({ ref: "issue:msft.ghe.com/lossyrob/streamliner#69" }).expect(200);
+    expect(response.body.statuses[0]).toMatchObject({
+      key: "issue:msft.ghe.com/lossyrob/streamliner#69",
+      url: "https://msft.ghe.com/lossyrob/streamliner/issues/69",
+      ref: { host: "msft.ghe.com" },
+      linkedPullRequests: [{
+        key: "pr:msft.ghe.com/lossyrob/streamliner#70",
+        url: "https://msft.ghe.com/lossyrob/streamliner/pull/70",
+        ref: { host: "msft.ghe.com" },
+      }],
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("isolates status and auth caches by host, including GHES endpoints", async () => {
+    const ref = { type: "pr" as const, owner: "org", repo: "repo", number: 42 };
+    const authTokenProvider = vi.fn(async () => null);
+    const fetchMock = vi.fn<GithubStatusFetch>(async () => githubResponse({ state: "open" }));
+    const service = createGithubStatusService({ fetch: fetchMock, authTokenProvider });
+    const refs = [ref, { ...ref, host: "msft.ghe.com" }, { ...ref, host: "github.example.com" }];
+    expect(await service.getStatuses(refs)).toHaveLength(3);
+    await service.getStatuses(refs);
+    expect(authTokenProvider).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "https://api.github.com/repos/org/repo/pulls/42",
+      "https://api.msft.ghe.com/repos/org/repo/pulls/42",
+      "https://github.example.com/api/v3/repos/org/repo/pulls/42",
+    ]);
+  });
+
+  it("requests enterprise CLI credentials for the reference host", async () => {
+    vi.stubEnv("GH_TOKEN", "");
+    vi.stubEnv("GITHUB_TOKEN", "");
+    const ghAuthTokenProvider = vi.fn(async () => null);
+    const service = createGithubStatusService({
+      fetch: async () => githubResponse({}, 404),
+      authSettingsPath: join(createRoot(), "missing.json"),
+      ghAuthTokenProvider,
+    });
+    const ref = { type: "pr" as const, host: "msft.ghe.com", owner: "org", repo: "repo", number: 42 };
+    const [result] = await service.getStatuses([ref]);
+    expect(ghAuthTokenProvider).toHaveBeenCalledWith({ hostname: "msft.ghe.com" }, ref);
+    expect(result.url).toBe("https://msft.ghe.com/org/repo/pull/42");
+  });
+
+  it("does not send public-cloud environment tokens to a GHES host", async () => {
+    vi.stubEnv("GH_TOKEN", "public-test-token");
+    vi.stubEnv("GH_ENTERPRISE_TOKEN", "");
+    vi.stubEnv("GITHUB_ENTERPRISE_TOKEN", "");
+    const fetchMock = vi.fn<GithubStatusFetch>(async () => githubResponse({}, 404));
+    const service = createGithubStatusService({
+      fetch: fetchMock, ghAuthTokenProvider: async () => null,
+      authSettingsPath: join(createRoot(), "missing.json"),
+    });
+    await service.getStatuses([{ type: "pr", host: "github.example.com", owner: "org", repo: "repo", number: 42 }]);
+    expect(fetchMock.mock.calls[0][1]?.headers).not.toHaveProperty("Authorization");
+  });
+
   it("dedupes refs, normalizes issue and PR status, and caches successful results", async () => {
     const fetchMock = vi.fn<GithubStatusFetch>(async (url) => {
       if (url.endsWith("/issues/69")) {

@@ -273,6 +273,7 @@ export interface SessionRegistryGraphBinding {
 }
 
 export interface SessionRegistryGithubRef {
+  host?: string;
   type: SessionRegistryGithubRefType;
   repo: string | null;
   number: number;

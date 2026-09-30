@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { DEFAULT_GITHUB_HOST, githubApiBaseUrl, githubHost, githubReferenceUrl, githubRepositorySlug, isGheCloudHost } from "../github-host";
 
 import {
   type GithubIssueStatusResult,
@@ -75,7 +76,6 @@ const DEFAULT_RATE_LIMIT_TTL_MS = 30_000;
 const DEFAULT_FETCH_CONCURRENCY = 6;
 const DEFAULT_MAX_CACHE_ENTRIES = 1_000;
 const DEFAULT_MAX_AUTH_TOKEN_CACHE_ENTRIES = 256;
-const GITHUB_API_BASE_URL = "https://api.github.com";
 const GH_AUTH_TOKEN_TIMEOUT_MS = 2_000;
 const execFileAsync = promisify(execFile);
 
@@ -130,8 +130,11 @@ function normalizeAuthToken(token: string | null | undefined): string | null {
   return normalized && normalized.length > 0 ? normalized : null;
 }
 
-function authTokenFromEnv(): string | null {
-  return normalizeAuthToken(process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN);
+function authTokenFromEnv(ref: GithubStatusRef): string | null {
+  const host = githubHost(ref.host);
+  return host === DEFAULT_GITHUB_HOST || isGheCloudHost(host)
+    ? normalizeAuthToken(process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN)
+    : normalizeAuthToken(process.env.GH_ENTERPRISE_TOKEN ?? process.env.GITHUB_ENTERPRISE_TOKEN);
 }
 
 async function authTokenFromGhCli(
@@ -185,12 +188,11 @@ function githubUrl(ref: GithubStatusRef): string {
   const owner = encodeURIComponent(ref.owner);
   const repo = encodeURIComponent(ref.repo);
   const segment = ref.type === "pr" ? "pulls" : "issues";
-  return `${GITHUB_API_BASE_URL}/repos/${owner}/${repo}/${segment}/${ref.number}`;
+  return `${githubApiBaseUrl(ref.host)}/repos/${owner}/${repo}/${segment}/${ref.number}`;
 }
 
 function htmlUrl(ref: GithubStatusRef): string {
-  const segment = ref.type === "pr" ? "pull" : "issues";
-  return `https://github.com/${ref.owner}/${ref.repo}/${segment}/${ref.number}`;
+  return githubReferenceUrl(ref, ref.type);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -426,7 +428,7 @@ function normalizePullRequest(
 function timelineUrl(ref: GithubStatusRef): string {
   const owner = encodeURIComponent(ref.owner);
   const repo = encodeURIComponent(ref.repo);
-  return `${GITHUB_API_BASE_URL}/repos/${owner}/${repo}/issues/${ref.number}/timeline?per_page=100`;
+  return `${githubApiBaseUrl(ref.host)}/repos/${owner}/${repo}/issues/${ref.number}/timeline?per_page=100`;
 }
 
 function repoFromRepositoryUrl(value: unknown): { owner: string; repo: string } | null {
@@ -492,6 +494,7 @@ function linkedPullRequestRefsFromTimeline(
     };
     const linkedRef: GithubStatusRef = {
       type: "pr",
+      ...(ref.host ? { host: ref.host } : {}),
       owner: repo.owner,
       repo: repo.repo,
       number,
@@ -538,7 +541,7 @@ export function createGithubStatusService(
   const authTokenProvider: GithubStatusAuthTokenProvider =
     options.authTokenProvider ??
     (async (ref) => {
-      const envToken = authTokenFromEnv();
+      const envToken = authTokenFromEnv(ref);
       if (envToken) {
         return envToken;
       }
@@ -550,7 +553,10 @@ export function createGithubStatusService(
       );
       const settings = await authSettingsPromise;
       const profile = resolveGithubAuthProfile(ref, settings) ?? {};
-      return ghAuthTokenProvider(profile, ref);
+      return ghAuthTokenProvider(
+        ref.host ? { ...profile, hostname: githubHost(ref.host) } : profile,
+        ref,
+      );
     });
   const authTokenPromises = new Map<string, Promise<string | null>>();
 
@@ -562,7 +568,7 @@ export function createGithubStatusService(
     if (explicitToken) {
       return explicitToken;
     }
-    const cacheKey = `${ref.owner}/${ref.repo}`.toLowerCase();
+    const cacheKey = githubRepositorySlug(ref).toLowerCase();
     const cached = authTokenPromises.get(cacheKey);
     if (cached) {
       authTokenPromises.delete(cacheKey);

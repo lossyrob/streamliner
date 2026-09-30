@@ -124,6 +124,28 @@ function cleanupDeps(
 }
 
 describe("managed cleanup guardrails", () => {
+  it("verifies enterprise PRs on their host, not the public repository with the same slug", async () => {
+    const root = createRootDir();
+    const { store, record } = createCleanupRecord(root);
+    record.runtime!.evidence[0].url = "https://msft.ghe.com/lossyrob/streamliner/pull/75";
+    const base = cleanupDeps(root);
+    const validation = await validateManagedCleanup(record, store.listSessions({ includeArchived: false }), {
+      ...base,
+      runGh: (cwd, args) => {
+        expect(args).toContain("msft.ghe.com/lossyrob/streamliner");
+        return base.runGh!(cwd, args);
+      },
+    });
+    expect(validation.ok).toBe(true);
+  });
+
+  it("blocks cleanup when PR URL identity conflicts with the evidence", async () => {
+    const root = createRootDir();
+    const { store, record } = createCleanupRecord(root);
+    record.runtime!.evidence[0].url = "https://msft.ghe.com/other/repo/pull/75";
+    const validation = await validateManagedCleanup(record, store.listSessions({ includeArchived: false }), cleanupDeps(root));
+    expect(validation).toMatchObject({ ok: false, blockers: [expect.objectContaining({ code: "missing-pr-evidence" })] });
+  });
   it("builds a cleanup plan only after merged PR verification", async () => {
     const root = createRootDir();
     const { store, record } = createCleanupRecord(root);

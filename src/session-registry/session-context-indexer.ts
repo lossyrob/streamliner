@@ -7,6 +7,7 @@ import {
   statSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, normalize, resolve } from "node:path";
+import { githubHost, githubRepositoryFromRemote, githubRepositorySlug, normalizeGithubHost, parseGithubReferenceUrl, parseGithubRepository } from "../github-host";
 
 import type { SessionRegistryListItem } from "../session-registry-contract";
 import type { SessionRegistryGithubRef } from "../session-registry-schema";
@@ -108,35 +109,13 @@ function eventTimestamp(event: RawEventLine | null): string | null {
 }
 
 function normalizeRepo(value: string | null | undefined): string | null {
-  const trimmed = value?.trim();
-  return trimmed && /^[\w.-]+\/[\w.-]+$/.test(trimmed) ? trimmed : null;
-}
-
-function normalizeGithubUrl(value: string): string {
-  return value.replace(/\/$/, "");
+  const repo = parseGithubRepository(value);
+  return repo ? githubRepositorySlug(repo) : null;
 }
 
 function repoFromGitRemote(value: string | null): string | null {
-  if (!value) {
-    return null;
-  }
-
-  const trimmed = value.trim().replace(/\.git$/, "");
-  const githubUrlMatch = trimmed.match(
-    /^https?:\/\/(?:[^/@]+@)?github\.com\/([\w.-]+)\/([\w.-]+)$/i,
-  );
-  if (githubUrlMatch) {
-    return normalizeRepo(`${githubUrlMatch[1]}/${githubUrlMatch[2]}`);
-  }
-
-  const githubSshMatch = trimmed.match(
-    /^(?:ssh:\/\/)?git@github\.com(?:-[\w.-]+)?[:/]([\w.-]+)\/([\w.-]+)$/i,
-  );
-  if (githubSshMatch) {
-    return normalizeRepo(`${githubSshMatch[1]}/${githubSshMatch[2]}`);
-  }
-
-  return null;
+  const repo = value ? githubRepositoryFromRemote(value) : null;
+  return repo ? githubRepositorySlug(repo) : null;
 }
 
 function refSource(text: string, event: RawEventLine | null): string {
@@ -149,7 +128,7 @@ function refSource(text: string, event: RawEventLine | null): string {
   if (/\bgh\s+(?:pr|issue)\b/i.test(text)) {
     return "gh";
   }
-  if (/github\.com/i.test(text)) {
+  if (/https:\/\/[^/\s]+\/[\w.-]+\/[\w.-]+\/(?:pull|issues)\//i.test(text)) {
     return "url";
   }
   return event?.type === "user.message" ? "user" : "event";
@@ -162,8 +141,10 @@ function pushRef(
   if (!Number.isInteger(ref.number) || ref.number < 1) {
     return;
   }
+  const host = ref.host ?? parseGithubReferenceUrl(ref.url)?.host ?? parseGithubRepository(ref.repo)?.host;
   refs.push({
     ...ref,
+    ...(host ? { host } : {}),
     source: ref.source ?? "event",
   });
 }
@@ -176,26 +157,41 @@ function extractGithubRefs(
   const refs: SessionRegistryGithubRef[] = [];
   const timestamp = eventTimestamp(event);
   const source = refSource(text, event);
+  const commandRepo = parseGithubRepository(
+    text.match(/(?:--repo(?:=|\s+)|\s-R\s*)["']?([\w./-]+)/)?.[1],
+  );
+  const commandHost = normalizeGithubHost(text.match(/\bGH_HOST\s*=\s*["']?([\w.-]+)/)?.[1]) ?? undefined;
+  const defaultParts = parseGithubRepository(defaultRepo);
+  const ghRepo = commandRepo
+    ? githubRepositorySlug({ ...commandRepo, host: commandRepo.host ?? commandHost ?? defaultParts?.host })
+    : commandHost && defaultParts
+      ? githubRepositorySlug({ ...defaultParts, host: commandHost })
+      : defaultRepo;
 
   for (const match of text.matchAll(
-    /https?:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/(pull|issues)\/(\d+)/gi,
+    /https:\/\/[\w.-]+\/[\w.-]+\/[\w.-]+\/(?:pull|issues)\/\d+/gi,
   )) {
-    const repo = `${match[1]}/${match[2]}`;
+    const parsed = parseGithubReferenceUrl(match[0]);
+    if (!parsed) continue;
+    const repo = `${parsed.owner}/${parsed.repo}`;
     pushRef(refs, {
-      type: match[3].toLowerCase() === "pull" ? "pr" : "issue",
+      type: parsed.type,
+      host: parsed.host,
       repo,
-      number: Number.parseInt(match[4], 10),
-      url: normalizeGithubUrl(match[0]),
+      number: parsed.number,
+      url: parsed.url,
       firstSeenAt: timestamp,
       lastSeenAt: timestamp,
       source,
     });
   }
 
-  for (const match of text.matchAll(/(?<![\w.-])([\w.-]+\/[\w.-]+)#(\d+)\b/g)) {
+  for (const match of text.matchAll(/(?<![\w./-])((?:[\w.-]+\/)?[\w.-]+\/[\w.-]+)#(\d+)\b/g)) {
+    const repo = parseGithubRepository(match[1]);
     pushRef(refs, {
       type: "unknown",
       repo: normalizeRepo(match[1]),
+      host: repo?.host ?? parseGithubRepository(defaultRepo)?.host,
       number: Number.parseInt(match[2], 10),
       url: null,
       firstSeenAt: timestamp,
@@ -207,7 +203,7 @@ function extractGithubRefs(
   for (const match of text.matchAll(/\bgh\s+pr\s+(?:view|checkout|edit|close|merge)\s+(\d+)\b/gi)) {
     pushRef(refs, {
       type: "pr",
-      repo: defaultRepo,
+      repo: ghRepo,
       number: Number.parseInt(match[1], 10),
       url: null,
       firstSeenAt: timestamp,
@@ -219,7 +215,7 @@ function extractGithubRefs(
   for (const match of text.matchAll(/\bgh\s+issue\s+(?:view|develop|edit|close)\s+(\d+)\b/gi)) {
     pushRef(refs, {
       type: "issue",
-      repo: defaultRepo,
+      repo: ghRepo,
       number: Number.parseInt(match[1], 10),
       url: null,
       firstSeenAt: timestamp,
@@ -231,7 +227,7 @@ function extractGithubRefs(
   const looksLikePullRequestTool = /pull_request|pullNumber/i.test(text);
   if (looksLikePullRequestTool) {
     for (const match of text.matchAll(/"pullNumber"\s*:\s*(\d+)/g)) {
-      const repo = repoFromJsonToolText(text) ?? defaultRepo;
+      const repo = repoFromJsonToolText(text, defaultRepo) ?? defaultRepo;
       pushRef(refs, {
         type: "pr",
         repo,
@@ -247,7 +243,7 @@ function extractGithubRefs(
   const looksLikeIssueTool = /issue_read|issue_number/i.test(text);
   if (looksLikeIssueTool) {
     for (const match of text.matchAll(/"issue_number"\s*:\s*(\d+)/g)) {
-      const repo = repoFromJsonToolText(text) ?? defaultRepo;
+      const repo = repoFromJsonToolText(text, defaultRepo) ?? defaultRepo;
       pushRef(refs, {
         type: "issue",
         repo,
@@ -263,10 +259,14 @@ function extractGithubRefs(
   return refs;
 }
 
-function repoFromJsonToolText(text: string): string | null {
+function repoFromJsonToolText(text: string, defaultRepo: string | null): string | null {
   const owner = text.match(/"owner"\s*:\s*"([^"]+)"/)?.[1];
   const repo = text.match(/"repo"\s*:\s*"([^"]+)"/)?.[1];
-  return owner && repo ? normalizeRepo(`${owner}/${repo}`) : null;
+  const parsed = owner && repo ? parseGithubRepository(`${owner}/${repo}`) : null;
+  if (!parsed) return null;
+  const host = normalizeGithubHost(text.match(/"(?:host|hostname)"\s*:\s*"([^"]+)"/)?.[1])
+    ?? parseGithubRepository(defaultRepo)?.host;
+  return githubRepositorySlug({ ...parsed, host });
 }
 
 function extractCandidatePaths(text: string): string[] {
@@ -311,7 +311,9 @@ function extractContextFromLine(
 }
 
 function refKey(ref: SessionRegistryGithubRef): string {
-  return `${ref.type}:${ref.repo ?? ""}:${ref.number}`;
+  const repo = parseGithubRepository(ref.repo);
+  const host = githubHost(ref.host ?? parseGithubReferenceUrl(ref.url)?.host ?? repo?.host);
+  return `${ref.type}:${host}:${repo ? `${repo.owner}/${repo.repo}` : ""}:${ref.number}`.toLowerCase();
 }
 
 function mergeRefs(
@@ -549,12 +551,13 @@ export function indexSessionContext(
   const startOffset =
     session.derivedContextEventsOffset > stat.size ? 0 : session.derivedContextEventsOffset;
   const bytesToRead = Math.min(maxBytes, stat.size - startOffset);
-  const defaultRepo = normalizeRepo(session.repo);
   const refs: SessionRegistryGithubRef[] = [];
   const candidatePaths = [
     ...(session.derivedWorktreePath ? [session.derivedWorktreePath] : []),
     session.cwd,
   ];
+  const initialGitContext = resolveGitContext(candidatePaths);
+  const defaultRepo = initialGitContext?.repo ?? normalizeRepo(session.repo);
   let nextOffset = startOffset;
 
   if (bytesToRead > 0) {
@@ -590,7 +593,7 @@ export function indexSessionContext(
     }
   }
 
-  const gitContext = resolveGitContext(candidatePaths);
+  const gitContext = initialGitContext ?? resolveGitContext(candidatePaths);
   const patch: SessionRegistryDerivedStatePatch = {
     repo: gitContext?.repo ?? session.repo,
     branch: gitContext?.branch ?? session.branch,

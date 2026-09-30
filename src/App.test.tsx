@@ -619,9 +619,9 @@ describe("App sessions route", () => {
     15_000,
   );
 
-  it(
-    "decorates session GitHub refs with live PR status",
-    async () => {
+  it.each(["github.com", "msft.ghe.com"])(
+    "decorates %s session refs with live PR status",
+    async (host) => {
       const session = buildSession({
         id: "review-session",
         title: "Review live status",
@@ -630,7 +630,7 @@ describe("App sessions route", () => {
             type: "pr",
             repo: "lossyrob/streamliner",
             number: 14,
-            url: "https://github.com/lossyrob/streamliner/pull/14",
+            url: `https://${host}/lossyrob/streamliner/pull/14`,
             firstSeenAt: "2026-05-08T11:50:00.000Z",
             lastSeenAt: "2026-05-08T11:55:00.000Z",
             source: "gh",
@@ -646,13 +646,16 @@ describe("App sessions route", () => {
           return jsonResponse({ version: 1, migrationWarnings: [], workstreams: [] });
         }
         if (path.startsWith("/api/github/status?")) {
+          const key = `pr:${host === "github.com" ? "" : `${host}/`}lossyrob/streamliner#14`;
+          expect(new URL(path, "http://localhost").searchParams.get("ref")).toBe(key);
           return jsonResponse({
             generatedAt: "2026-05-08T12:00:00.000Z",
             statuses: [
               {
-                key: "pr:lossyrob/streamliner#14",
+                key,
                 ref: {
                   type: "pr",
+                  host,
                   owner: "lossyrob",
                   repo: "streamliner",
                   number: 14,
@@ -665,7 +668,7 @@ describe("App sessions route", () => {
                 validationState: "passing",
                 validationLabel: "checks passing",
                 title: "Complete implementation",
-                url: "https://github.com/lossyrob/streamliner/pull/14",
+                url: `https://${host}/lossyrob/streamliner/pull/14`,
                 fetchedAt: "2026-05-08T12:00:00.000Z",
                 statusLabel: "PR merged",
               },
@@ -685,6 +688,8 @@ describe("App sessions route", () => {
       const row = findSessionRow(container, "Review live status");
       expect(row.textContent).toContain("PR #14");
       expect(row.textContent).toContain("PR merged");
+      expect(row.querySelector<HTMLAnchorElement>('a[href*="/pull/14"]')?.href)
+        .toBe(`https://${host}/lossyrob/streamliner/pull/14`);
 
       act(() => {
         row.click();

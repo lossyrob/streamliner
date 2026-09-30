@@ -1,9 +1,11 @@
 import type { WorkstreamPullRequestValidationState } from "./workstream-schema";
+import { githubRepositorySlug, parseGithubRepository } from "./github-host";
 
 export const GITHUB_STATUS_REF_TYPES = ["issue", "pr"] as const;
 export type GithubStatusRefType = (typeof GITHUB_STATUS_REF_TYPES)[number];
 
 export interface GithubStatusRef {
+  host?: string;
   type: GithubStatusRefType;
   owner: string;
   repo: string;
@@ -60,14 +62,14 @@ export interface GithubStatusBatchResponse {
 
 export type GithubStatusTone = "accent" | "green" | "amber" | "red" | "muted";
 
-const STATUS_REF_PATTERN = /^(issue|pr):([\w.-]+)\/([\w.-]+)#(\d+)$/i;
+const STATUS_REF_PATTERN = /^(issue|pr):([^#]+)#(\d+)$/i;
 
 export function githubStatusRefKey(ref: GithubStatusRef): string {
-  return `${ref.type}:${ref.owner}/${ref.repo}#${ref.number}`.toLowerCase();
+  return encodeGithubStatusRef(ref).toLowerCase();
 }
 
 export function encodeGithubStatusRef(ref: GithubStatusRef): string {
-  return `${ref.type}:${ref.owner}/${ref.repo}#${ref.number}`;
+  return `${ref.type}:${githubRepositorySlug(ref)}#${ref.number}`;
 }
 
 export function parseGithubStatusRef(value: string): GithubStatusRef | null {
@@ -76,15 +78,15 @@ export function parseGithubStatusRef(value: string): GithubStatusRef | null {
     return null;
   }
 
-  const number = Number.parseInt(match[4], 10);
-  if (!Number.isSafeInteger(number) || number <= 0) {
+  const number = Number.parseInt(match[3], 10);
+  const repo = parseGithubRepository(match[2]);
+  if (!repo || !Number.isSafeInteger(number) || number <= 0) {
     return null;
   }
 
   return {
     type: match[1].toLowerCase() as GithubStatusRefType,
-    owner: match[2],
-    repo: match[3],
+    ...repo,
     number,
   };
 }

@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { SessionRegistryListItem } from "../session-registry-contract";
 import { DEFAULT_SESSION_REGISTRY_ACTIVITY_EVIDENCE } from "../session-registry-schema";
 import { indexSessionContext } from "./session-context-indexer";
+import { SessionRegistryFileStore } from "./file-store";
 
 const createdDirs: string[] = [];
 const NON_RESOLVABLE_TEST_CWD = "C:\\streamliner-test\\missing\\nested\\path\\leaf";
@@ -104,6 +105,59 @@ afterEach(() => {
 });
 
 describe("indexSessionContext", () => {
+  it("preserves enterprise URL hosts and does not merge same-number public references", () => {
+    const eventsPath = join(createRootDir(), "events.jsonl");
+    writeFileSync(eventsPath, JSON.stringify({ type: "user.message", data: {
+      content: "https://github.com/org/repo/issues/42 https://msft.ghe.com/org/repo/issues/42",
+    } }));
+    const patch = indexSessionContext(buildSession(), eventsPath);
+    expect(patch?.derivedGithubRefs).toHaveLength(2);
+    expect(patch?.derivedGithubRefs?.map((ref) => ref.host).sort()).toEqual(["github.com", "msft.ghe.com"]);
+    const storeRoot = createRootDir();
+    const store = new SessionRegistryFileStore({ rootDir: storeRoot });
+    const session = store.upsertSession({ title: "Enterprise", cwd: storeRoot, origin: { kind: "manual" } });
+    store.patchDerivedSessionState(session.id, { derivedGithubRefs: patch?.derivedGithubRefs });
+    const reloaded = new SessionRegistryFileStore({ rootDir: storeRoot });
+    expect(reloaded.getSession(session.id)?.derivedGithubRefs.map((ref) => ref.host).sort())
+      .toEqual(["github.com", "msft.ghe.com"]);
+  });
+
+  it("infers enterprise hosts from remotes for number-only gh commands", () => {
+    const root = createRootDir();
+    mkdirSync(join(root, ".git"));
+    writeFileSync(join(root, ".git", "HEAD"), "ref: refs/heads/main\n");
+    writeFileSync(join(root, ".git", "config"), '[remote "origin"]\n\turl = git@msft.ghe.com:org/repo.git\n');
+    const eventsPath = join(root, "events.jsonl");
+    writeFileSync(eventsPath, JSON.stringify({ data: { command: "gh pr view 42" } }));
+    const patch = indexSessionContext(buildSession({ cwd: root }), eventsPath);
+    expect(patch?.repo).toBe("msft.ghe.com/org/repo");
+    expect(patch?.derivedGithubRefs).toContainEqual(expect.objectContaining({ host: "msft.ghe.com", type: "pr", number: 42 }));
+  });
+
+  it.each([
+    "gh pr view 42 --repo msft.ghe.com/org/repo",
+    "gh pr view 42 -R msft.ghe.com/org/repo",
+    "GH_HOST=msft.ghe.com gh pr view 42 --repo org/repo",
+  ])("reads explicit enterprise routing from %s", (command) => {
+    const eventsPath = join(createRootDir(), "events.jsonl");
+    writeFileSync(eventsPath, JSON.stringify({ data: { command } }));
+    const patch = indexSessionContext(buildSession(), eventsPath);
+    expect(patch?.derivedGithubRefs).toContainEqual(expect.objectContaining({
+      host: "msft.ghe.com", repo: "msft.ghe.com/org/repo", type: "pr", number: 42,
+    }));
+  });
+
+  it("keeps the enterprise host for structured GitHub tool references", () => {
+    const eventsPath = join(createRootDir(), "events.jsonl");
+    writeFileSync(eventsPath, JSON.stringify({
+      tool_start_name: "github-mcp-server-issue_read",
+      arguments_json: '{"owner":"org","repo":"repo","issue_number":42}',
+    }));
+    const patch = indexSessionContext(buildSession({ repo: "msft.ghe.com/org/repo" }), eventsPath);
+    expect(patch?.derivedGithubRefs).toContainEqual(expect.objectContaining({
+      host: "msft.ghe.com", repo: "msft.ghe.com/org/repo", type: "issue", number: 42,
+    }));
+  });
   it("extracts GitHub refs and advances the events cursor incrementally", () => {
     const root = createRootDir();
     const eventsPath = join(root, "events.jsonl");

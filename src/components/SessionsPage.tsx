@@ -86,8 +86,10 @@ import {
 import {
   type GithubStatusRef,
   type GithubStatusResult,
+  githubStatusRefKey,
   githubStatusTone,
 } from "../github-status";
+import { githubHost, parseGithubReferenceUrl, parseGithubRepository } from "../github-host";
 
 const SESSION_POLL_INTERVAL_MS = 15_000;
 const SESSION_EVENT_REFETCH_DEBOUNCE_MS = 150;
@@ -675,44 +677,17 @@ function githubRefRepo(ref: DerivedGithubRef, session: SessionRegistryListItem):
   return ref.repo ?? session.repo;
 }
 
-function githubRepoParts(repo: string | null): { owner: string; repo: string } | null {
-  const trimmed = repo?.trim();
-  if (!trimmed) {
-    return null;
-  }
-  const match = trimmed.match(/^([\w.-]+)\/([\w.-]+)$/);
-  return match ? { owner: match[1], repo: match[2] } : null;
+function githubRepoParts(repo: string | null) {
+  return parseGithubRepository(repo);
 }
 
 function normalizeGithubRepoForUrl(repo: string | null): string | null {
-  const trimmed = repo?.trim();
-  if (!trimmed) {
-    return null;
-  }
-  const match = trimmed.match(/^([\w.-]+)\/([\w.-]+)$/);
-  if (!match) {
-    return null;
-  }
-  return `${encodeURIComponent(match[1])}/${encodeURIComponent(match[2])}`;
+  const parsed = parseGithubRepository(repo);
+  return parsed ? `${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}` : null;
 }
 
 function safeGithubRefUrl(url: string | null): string | null {
-  if (!url) {
-    return null;
-  }
-  try {
-    const parsed = new URL(url);
-    if (
-      (parsed.protocol === "https:" || parsed.protocol === "http:") &&
-      parsed.hostname.toLowerCase() === "github.com" &&
-      /^\/[\w.-]+\/[\w.-]+\/(?:pull|issues)\/\d+\/?$/i.test(parsed.pathname)
-    ) {
-      return parsed.href;
-    }
-  } catch {
-    return null;
-  }
-  return null;
+  return parseGithubReferenceUrl(url)?.url ?? null;
 }
 
 function githubStatusRefForDerivedRef(
@@ -728,6 +703,7 @@ function githubStatusRefForDerivedRef(
   }
   return {
     type: ref.type,
+    host: parseGithubReferenceUrl(ref.url)?.host ?? ref.host ?? repo.host,
     owner: repo.owner,
     repo: repo.repo,
     number: ref.number,
@@ -749,7 +725,7 @@ function githubStatusRefsForSessions(
       if (!statusRef) {
         continue;
       }
-      const key = `${statusRef.type}:${statusRef.owner}/${statusRef.repo}#${statusRef.number}`.toLowerCase();
+      const key = githubStatusRefKey(statusRef);
       if (seen.has(key)) {
         continue;
       }
@@ -773,7 +749,8 @@ function githubRefUrl(ref: DerivedGithubRef, session: SessionRegistryListItem): 
     return null;
   }
   const segment = ref.type === "pr" ? "pull" : "issues";
-  return `https://github.com/${repo}/${segment}/${ref.number}`;
+  const host = githubHost(ref.host ?? githubRepoParts(githubRefRepo(ref, session))?.host);
+  return `https://${host}/${repo}/${segment}/${ref.number}`;
 }
 
 interface GithubRefChipProps {
@@ -2848,7 +2825,7 @@ export function SessionsPage({
                               )}
                               {session.derivedGithubRefs.slice(0, 3).map((ref) => (
                                 <GithubRefChip
-                                  key={`${ref.type}-${ref.repo ?? ""}-${ref.number}`}
+                                  key={`${ref.host ?? ref.url ?? ""}-${ref.type}-${ref.repo ?? ""}-${ref.number}`}
                                   refItem={ref}
                                   session={session}
                                   className="sl-session-row-context-chip important"
@@ -3769,7 +3746,7 @@ function SessionOverview({
                   <div className="sl-session-context-ref-list">
                     {session.derivedGithubRefs.map((ref) => (
                       <GithubRefChip
-                        key={`${ref.type}-${ref.repo ?? ""}-${ref.number}`}
+                        key={`${ref.host ?? ref.url ?? ""}-${ref.type}-${ref.repo ?? ""}-${ref.number}`}
                         refItem={ref}
                         session={session}
                         className="sl-session-context-ref"

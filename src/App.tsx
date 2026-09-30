@@ -113,6 +113,7 @@ import {
   trackerLabel as workstreamTrackerLabel,
   trackerUrl as workstreamTrackerUrl,
 } from "./workstream-links";
+import { githubRepositorySlug } from "./github-host";
 import { renderWorkstreamTerminalTitleTemplate } from "./workstream-launch-templates";
 import { evaluateNodeLaunchPolicy } from "./workstream-launch-policy";
 import { useSessionRegistryList } from "./session-registry-client";
@@ -2775,7 +2776,7 @@ function GraphDashboard({
         ? defaultsNode.tracker.number
         : null,
       githubIssueRepo: defaultsNode.tracker?.type === "github"
-        ? `${defaultsNode.tracker.owner}/${defaultsNode.tracker.repo}`
+        ? githubRepositorySlug(defaultsNode.tracker)
         : null,
       githubIssueLabel: defaultsNode.tracker?.type === "github"
         ? workstreamTrackerLabel(defaultsNode.tracker)

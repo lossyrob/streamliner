@@ -263,6 +263,7 @@ The graph is the structured, machine-readable representation of the workstream's
 | `createdAt` | string | ✓ | ISO 8601 timestamp |
 | `updatedAt` | string | ✓ | ISO 8601 timestamp of the last committed edit. Bump on intentional committed changes only. |
 | `trackingIssue` | object | | Tracker reference anchoring the workstream (see Tracker Reference) |
+| `githubHost` | string | | Default GitHub hostname, such as `"msft.ghe.com"`; defaults to `"github.com"` |
 | `presentation` | object | | Optional compact presentation metadata for dense workstream surfaces and launch defaults (see Presentation). |
 | `launchPolicy` | object | | Optional launch preconditions for this workstream (see Launch Policy). If omitted, graph launches keep the default allow behavior for ready nodes regardless of tracker type. |
 | `launchDefaults` | object | | Optional launch defaults for this workstream (see Launch Defaults). These pre-fill launch UI/API configuration without changing per-launch override behavior. |
@@ -493,6 +494,7 @@ Declares a repository involved in the workstream.
 | `id` | string | ✓ | Kebab-case identifier used in node `repoIds` and `designRefs.repoId` |
 | `owner` | string | ✓ | GitHub repository owner |
 | `name` | string | ✓ | GitHub repository name |
+| `host` | string | | GitHub hostname override; inherits the workstream's `githubHost` |
 | `role` | string | | Optional label (e.g. `"primary"`, `"secondary"`, `"documentation"`) |
 
 ### Tracker Reference
@@ -507,8 +509,23 @@ Each node can have a **tracker** pointing to the node's detailed spec. There is 
 | `owner` | string | ✓ | Repository owner |
 | `repo` | string | ✓ | Repository name |
 | `number` | number | ✓ | Issue number (positive integer) |
+| `host` | string | | GitHub hostname override; otherwise inherits the matching repo's host, then `githubHost`, then `"github.com"` |
 
 The issue body on GitHub is the spec. When a workstream uses GitHub-backed trackers, create a parent issue for the workstream and record it in `trackingIssue`.
+
+Set `"githubHost": "msft.ghe.com"` at the top level of `graph.json` to
+route GitHub links, live status, linked PR discovery, and launch-time issue
+reads to that enterprise. Use `repos[].host`, `tracker.host`, or
+`trackingIssue.host` for mixed-host workstreams. Hostnames must not contain
+a scheme, port, or path. References to a repo declared on multiple hosts
+must specify their host explicitly.
+
+`tracker.type: "msft.ghe.com"` is accepted as shorthand for
+`type: "github", host: "msft.ghe.com"` and normalized during parsing.
+Conflicting type/host values are invalid. The node's own `type` remains
+`task`, `research`, or `gate`. Prefer the explicit `host` field in new
+artifacts. Existing graphs without host settings retain github.com behavior.
+Runtime status and auth caches include the host in reference identity.
 
 #### Local tracker
 

@@ -12,6 +12,7 @@ import {
   resolve,
 } from "node:path";
 import { promisify } from "node:util";
+import { githubHost, githubReferenceUrl } from "../github-host";
 
 import { CopilotClient, type PermissionHandler } from "@github/copilot-sdk";
 
@@ -160,6 +161,7 @@ export interface LaunchContextLoadedSource {
 }
 
 export interface GithubIssueTrackerRequest {
+  host?: string;
   owner: string;
   repo: string;
   number: number;
@@ -948,8 +950,8 @@ async function defaultLaunchContextGenerator(
 async function defaultGithubIssueTrackerResolver(
   request: GithubIssueTrackerRequest,
 ): Promise<TrackerResolution> {
-  const repo = `${request.owner}/${request.repo}`;
-  const url = `https://github.com/${repo}/issues/${request.number}`;
+  const repo = `${githubHost(request.host)}/${request.owner}/${request.repo}`;
+  const url = githubReferenceUrl(request);
   try {
     const { stdout } = await execFileAsync(
       "gh",
@@ -1004,13 +1006,14 @@ async function resolveTrackerSource(options: {
   }
 
   if (options.tracker.type === "github") {
-    const url = `https://github.com/${options.tracker.owner}/${options.tracker.repo}/issues/${options.tracker.number}`;
+    const url = githubReferenceUrl(options.tracker);
     options.sourceReferences.push({
       kind: "tracker",
       role: "selected-node-spec",
       url,
     });
     const resolution = await options.trackerResolver({
+      ...(options.tracker.host ? { host: options.tracker.host } : {}),
       owner: options.tracker.owner,
       repo: options.tracker.repo,
       number: options.tracker.number,

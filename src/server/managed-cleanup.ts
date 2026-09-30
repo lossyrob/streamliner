@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { basename, resolve } from "node:path";
+import { githubHost, parseGithubReferenceUrl, parseGithubRepository } from "../github-host";
 
 import type { SessionRegistryListItem } from "../session-registry-contract";
 import type {
@@ -549,18 +550,30 @@ async function loadPullRequestFacts(
       blocker: blocker("missing-pr-evidence", "Cleanup requires a PR repo and number."),
     };
   }
-  if (!isSafeGitHubRepo(evidence.repo)) {
+  const repo = parseGithubRepository(evidence.repo);
+  if (!repo || !isSafeGitHubRepo(`${repo.owner}/${repo.repo}`)) {
     return {
       ok: false,
       blocker: blocker("missing-pr-evidence", `Cleanup requires a safe GitHub repo slug, got ${evidence.repo}.`),
     };
   }
+  const urlRef = parseGithubReferenceUrl(evidence.url);
+  if (evidence.url && (!urlRef || urlRef.type !== "pr" ||
+    urlRef.number !== evidence.number ||
+    `${urlRef.owner}/${urlRef.repo}`.toLowerCase() !== `${repo.owner}/${repo.repo}`.toLowerCase() ||
+    (repo.host && githubHost(repo.host) !== githubHost(urlRef.host)))) {
+    return {
+      ok: false,
+      blocker: blocker("missing-pr-evidence", "PR URL does not match the cleanup repository and number."),
+    };
+  }
+  const hostname = githubHost(urlRef?.host ?? repo.host);
   const result = await deps.runGh(cwd, [
     "pr",
     "view",
     String(evidence.number),
     "--repo",
-    evidence.repo,
+    `${hostname}/${repo.owner}/${repo.repo}`,
     "--json",
     "state,mergedAt,headRefOid,url",
   ]);

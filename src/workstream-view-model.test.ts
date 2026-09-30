@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { githubStatusRefsForWorkstream, workstreamGithubSnapshotFromStatuses } from "./github-status-client";
+import { trackerUrl, issueUrl } from "./workstream-links";
 
 import {
   buildWorkstreamViewModel,
@@ -30,6 +32,66 @@ function graph(overrides: Record<string, unknown> = {}): string {
     ...overrides,
   });
 }
+
+describe("workstream GitHub hosts", () => {
+  const issue = { owner: "lossyrob", repo: "streamliner", number: 42 };
+  const node = {
+    id: "enterprise-task", type: "task", title: "Enterprise", summary: "Enterprise task",
+    status: "ready", attention: "focus", repoIds: ["streamliner"], dependsOn: [],
+    tracker: { type: "github", ...issue },
+  };
+
+  it("inherits the workstream host for parent, nodes, status requests and snapshots", () => {
+    const doc = parseWorkstreamDocument(graph({
+      githubHost: "MSFT.GHE.COM", trackingIssue: issue, nodes: [node],
+    }));
+    expect(doc.repos[0].host).toBe("msft.ghe.com");
+    expect(issueUrl(doc.trackingIssue)).toBe("https://msft.ghe.com/lossyrob/streamliner/issues/42");
+    expect(trackerUrl(doc.nodes[0].tracker)).toBe(issueUrl(doc.trackingIssue));
+    expect(githubStatusRefsForWorkstream(doc)).toEqual([{ type: "issue", ...issue, host: "msft.ghe.com" }]);
+    const snapshot = workstreamGithubSnapshotFromStatuses([{
+      type: "issue", key: "issue:msft.ghe.com/lossyrob/streamliner#42",
+      ref: { type: "issue", ...issue, host: "msft.ghe.com" },
+      title: "Enterprise", url: issueUrl(doc.trackingIssue)!, fetchedAt: doc.updatedAt,
+      state: "closed", stateReason: "completed", statusLabel: "issue closed", linkedPullRequests: [],
+    }]);
+    expect(snapshot?.issues[0].host).toBe("msft.ghe.com");
+    expect(buildWorkstreamViewModel(doc, snapshot).derivedNodes[0].githubIssue?.host).toBe("msft.ghe.com");
+  });
+
+  it("accepts a hostname tracker type without changing the task node type", () => {
+    const doc = parseWorkstreamDocument(graph({ nodes: [{ ...node, tracker: { ...issue, type: "msft.ghe.com" } }] }));
+    expect(doc.nodes[0].type).toBe("task");
+    expect(doc.nodes[0].tracker).toEqual({ type: "github", ...issue, host: "msft.ghe.com" });
+  });
+
+  it("inherits repository overrides and supports explicit tracker hosts", () => {
+    const doc = parseWorkstreamDocument(graph({
+      githubHost: "msft.ghe.com",
+      repos: [{ id: "streamliner", owner: "lossyrob", name: "streamliner", host: "github.com" }],
+      nodes: [node],
+    }));
+    expect(trackerUrl(doc.nodes[0].tracker)).toBe("https://github.com/lossyrob/streamliner/issues/42");
+    expect(parseWorkstreamDocument(graph({ nodes: [{ ...node, tracker: { ...node.tracker, host: "msft.ghe.com" } }] })).nodes[0].tracker)
+      .toMatchObject({ host: "msft.ghe.com" });
+  });
+
+  it("does not apply public snapshots to enterprise nodes with the same slug and issue number", () => {
+    const doc = parseWorkstreamDocument(graph({ githubHost: "msft.ghe.com", nodes: [node] }));
+    const vm = buildWorkstreamViewModel(doc, { issues: [{
+      ...issue, state: "closed", title: "Public", url: "https://github.com/lossyrob/streamliner/issues/42",
+      linkedPullRequests: [], fetchedAt: doc.updatedAt,
+    }] });
+    expect(vm.derivedNodes[0].githubIssue).toBeUndefined();
+  });
+
+  it("rejects ambiguous and contradictory hosts", () => {
+    const repos = ["github.com", "msft.ghe.com"].map((host, i) => ({ id: `repo-${i}`, owner: "lossyrob", name: "streamliner", host }));
+    expect(() => parseWorkstreamDocument(graph({ repos, trackingIssue: issue }))).toThrow("Ambiguous GitHub host");
+    expect(() => parseWorkstreamDocument(graph({ nodes: [{ ...node, tracker: { ...issue, type: "msft.ghe.com", host: "github.com" } }] }))).toThrow("Conflicting");
+    expect(() => parseWorkstreamDocument(graph({ githubHost: "https://msft.ghe.com/" }))).toThrow("hostname");
+  });
+});
 
 describe("parseWorkstreamDocument launchPolicy", () => {
   it("preserves absent launch policy as default allow behavior", () => {

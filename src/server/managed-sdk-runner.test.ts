@@ -399,11 +399,11 @@ describe("DefaultManagedSdkRunner", () => {
     }));
   });
 
-  it("detects canonical GitHub PR URLs as PR-ready evidence", async () => {
+  it.each(["github.com", "msft.ghe.com", "github.example.com"])("detects canonical %s PR URLs as PR-ready evidence", async (host) => {
     const capture = createCapture();
     sdkMock.session.sendAndWait.mockResolvedValueOnce({
       data: {
-        content: "Created https://github.com/lossyrob/streamliner/pull/987.",
+        content: `Created https://${host}/lossyrob/streamliner/pull/987.`,
       },
     });
 
@@ -416,7 +416,7 @@ describe("DefaultManagedSdkRunner", () => {
         kind: "pr_ready",
         repo: "lossyrob/streamliner",
         number: 987,
-        url: "https://github.com/lossyrob/streamliner/pull/987",
+        url: `https://${host}/lossyrob/streamliner/pull/987`,
       }),
     ]);
     expect(capture.states).toContain("pr_ready");

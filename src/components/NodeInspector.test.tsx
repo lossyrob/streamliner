@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { NodeInspector } from "./NodeInspector";
 import type { WorkstreamDocument } from "../workstream-schema";
-import type { WorkstreamExternalDependencyView } from "../workstream-view-model";
+import { buildWorkstreamViewModel, parseWorkstreamDocument, type WorkstreamExternalDependencyView } from "../workstream-view-model";
 import type { WorkstreamGraphLayoutResult } from "../workstream-graph";
 
 const workstream: WorkstreamDocument = {
@@ -90,6 +90,22 @@ describe("NodeInspector external dependencies", () => {
       root.unmount();
     });
     document.body.innerHTML = "";
+  });
+
+  it("renders the enterprise tracker as a clickable enterprise issue link", () => {
+    const enterprise = parseWorkstreamDocument(JSON.stringify({
+      ...workstream,
+      githubHost: "msft.ghe.com",
+      nodes: [{
+        ...workstream.nodes[0],
+        tracker: { type: "msft.ghe.com", owner: "lossyrob", repo: "streamliner", number: 42 },
+      }],
+    }));
+    act(() => {
+      root.render(<NodeInspector entry={buildWorkstreamViewModel(enterprise).derivedNodes[0]} layout={layout} workstream={enterprise} />);
+    });
+    expect(container.querySelector<HTMLAnchorElement>('a[href="https://msft.ghe.com/lossyrob/streamliner/issues/42"]')).not.toBeNull();
+    expect(container.querySelector('a[href^="https://github.com/"]')).toBeNull();
   });
 
   it("shows selected external ghost details without launch controls", () => {

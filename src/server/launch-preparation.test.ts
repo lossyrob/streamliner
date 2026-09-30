@@ -854,19 +854,20 @@ describe("preparePawLaunch", () => {
     ).not.toThrow();
   });
 
-  it("accepts PAW work dirs in selected target repository checkouts", async () => {
+  it.each(["github.com", "msft.ghe.com"])("accepts PAW work dirs in selected %s repository checkouts", async (host) => {
     const root = createRootDir();
     const targetRoot = createRootDir();
     const launchCwd = join(root, "coordination-repo");
     const targetCheckout = join(targetRoot, "target-repo-worktree");
     createGitRepo(launchCwd, "https://github.com/acme/coordination.git");
-    createGitRepo(targetCheckout, "git@github.com:acme/worker-target.git");
+    createGitRepo(targetCheckout, `git@${host}:acme/worker-target.git`);
 
     const preparedContext = fakePreparedContext(launchCwd);
     preparedContext.generationInput.workstream.repos = [{
       id: "worker-target",
       owner: "acme",
       name: "worker-target",
+      host,
       role: "primary" as const,
     }];
     preparedContext.generationInput.node.repoIds = ["worker-target"];
@@ -900,6 +901,13 @@ describe("preparePawLaunch", () => {
         join(targetCheckout, ".paw", "work", "launch-prompt-profiles"),
       ),
     ).resolves.toBe(join(targetCheckout, ".paw", "work", "launch-prompt-profiles"));
+    if (host !== "github.com") {
+      createGitRepo(join(targetRoot, "wrong-host"), "git@github.com:acme/worker-target.git");
+      await expect(resolvePawWorkDirForLaunch(
+        input, "launch-prompt-profiles",
+        join(targetRoot, "wrong-host", ".paw", "work", "launch-prompt-profiles"),
+      )).rejects.toThrow("selected node target repo");
+    }
   }, 15_000);
 
   it("rejects PAW work dirs in a launch checkout from a different repository than the selected target", async () => {

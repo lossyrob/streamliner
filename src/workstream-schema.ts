@@ -81,6 +81,7 @@ export type WorkstreamExternalDependencyStatus =
   (typeof WORKSTREAM_EXTERNAL_DEPENDENCY_STATUSES)[number];
 
 export interface WorkstreamIssue {
+  host?: string;
   owner: string;
   repo: string;
   number: number;
@@ -105,6 +106,7 @@ export type WorkstreamTracker =
   | WorkstreamLocalTracker;
 
 export interface WorkstreamGithubPullRequestSnapshot {
+  host?: string;
   owner: string;
   repo: string;
   number: number;
@@ -119,6 +121,7 @@ export interface WorkstreamGithubPullRequestSnapshot {
 }
 
 export interface WorkstreamGithubIssueSnapshot {
+  host?: string;
   owner: string;
   repo: string;
   number: number;
@@ -136,6 +139,7 @@ export interface WorkstreamGithubSnapshot {
 }
 
 export interface WorkstreamRepo {
+  host?: string;
   id: string;
   owner: string;
   name: string;
@@ -225,6 +229,7 @@ export interface WorkstreamCheckpoint {
 }
 
 export interface WorkstreamDocument {
+  githubHost?: string;
   schemaVersion: typeof WORKSTREAM_SCHEMA_VERSION;
   id: string;
   projectKey?: string;

@@ -172,9 +172,9 @@ version as the installation version.
 
 Live GitHub issue/PR status does not require storing tokens in Streamliner. The API resolves authentication in this order:
 
-1. `GITHUB_TOKEN` / `GH_TOKEN` for CI or headless environments.
+1. `GH_TOKEN` / `GITHUB_TOKEN` for github.com and `*.ghe.com`, or `GH_ENTERPRISE_TOKEN` / `GITHUB_ENTERPRISE_TOKEN` for GitHub Enterprise Server (first variable takes precedence).
 2. A local repo-specific `gh` profile from `~/.streamliner/state/github-auth.json` or `STREAMLINER_GITHUB_AUTH_CONFIG`.
-3. The active `gh` account for `github.com`.
+3. The active `gh` account for the reference's hostname.
 4. Anonymous GitHub REST, which may be rate-limited.
 
 Use the local auth config when different repositories need different GitHub accounts:
@@ -188,16 +188,34 @@ Use the local auth config when different repositories need different GitHub acco
     },
     "work": {
       "user": "work-user"
+    },
+    "enterprise": {
+      "hostname": "msft.ghe.com",
+      "user": "enterprise-user"
     }
   },
   "repositories": {
     "github.com/lossyrob/streamliner": "personal",
-    "github.com/work-org/*": "work"
+    "github.com/work-org/*": "work",
+    "msft.ghe.com/*": "enterprise"
   }
 }
 ```
 
-`ghConfigDir` sets `GH_CONFIG_DIR` only for that status lookup. `user` is passed to `gh auth token --hostname github.com --user <user>`, so Streamliner does not need to run `gh auth switch` or persist credentials.
+`ghConfigDir` sets `GH_CONFIG_DIR` only for that status lookup. `user` is passed
+to `gh auth token --hostname <reference-host> --user <user>`, so Streamliner does
+not need to run `gh auth switch` or persist credentials. A profile's optional
+`hostname` must match the reference host; it does not redirect API requests.
+Repository mappings are host-scoped, with exact repo, owner wildcard, then
+host wildcard precedence.
+
+Set `githubHost` in `graph.json` to select the workstream's enterprise host,
+or use repo/tracker `host` overrides. REST requests use `https://api.github.com`
+for public GitHub, `https://api.<tenant>.ghe.com` for enterprise cloud, and
+`https://<host>/api/v3` for Enterprise Server. Launch issue reads and managed
+cleanup pass the host-qualified repository to `gh`; those commands use the
+CLI's configured credentials for that host. No tokens belong in workstream
+artifacts.
 
 ## Session launch defaults
 

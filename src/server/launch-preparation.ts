@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
+import { githubRepositoryFromRemote, githubRepositorySlug } from "../github-host";
 
 import {
   approveAll,
@@ -1125,6 +1126,8 @@ function normalizeRepoSlug(value: string): string {
 }
 
 function gitRemoteRepoSlug(remoteUrl: string): string | null {
+  const githubRepo = githubRepositoryFromRemote(remoteUrl);
+  if (githubRepo) return normalizeRepoSlug(githubRepositorySlug(githubRepo));
   const trimmed = remoteUrl.trim();
   const patterns = [
     /^git@[^:]+:(?<owner>[^/]+)\/(?<name>[^/]+?)(?:\.git)?$/i,
@@ -1147,7 +1150,16 @@ function selectedTargetRepoSlugs(input: PawLaunchSessionRunnerInput): string[] {
   const selectedRepoIds = new Set(node.repoIds);
   return workstream.repos
     .filter((repo) => selectedRepoIds.has(repo.id))
-    .map((repo) => normalizeRepoSlug(`${repo.owner}/${repo.name}`));
+    .map((repo) => {
+      const tracker = node.tracker?.type === "github" &&
+        node.tracker.owner.toLowerCase() === repo.owner.toLowerCase() &&
+        node.tracker.repo.toLowerCase() === repo.name.toLowerCase()
+        ? node.tracker
+        : null;
+      return normalizeRepoSlug(githubRepositorySlug({
+        ...repo, repo: repo.name, host: repo.host ?? tracker?.host ?? workstream.githubHost,
+      }));
+    });
 }
 
 async function checkoutRemoteRepoSlug(checkoutRoot: string): Promise<string | null> {

@@ -270,7 +270,7 @@ describe("managed runtime contract", () => {
     });
   });
 
-  it("projects PR-ready trust context from evidence, progress, and session context", () => {
+  it.each(["github.com", "msft.ghe.com", "github.example.com"])("projects %s PR-ready trust context from evidence, progress, and session context", (host) => {
     const projection = managedRuntimeProjectionFromSession({
       runtime: managedRuntime({
         lifecycleState: "pr_ready",
@@ -293,7 +293,7 @@ describe("managed runtime contract", () => {
           kind: "pr_ready",
           source: "test",
           detectedAt: "2026-05-05T12:04:00.000Z",
-          url: "https://github.com/lossyrob/streamliner/pull/85",
+          url: `https://${host}/lossyrob/streamliner/pull/85`,
           repo: "lossyrob/streamliner",
           number: 85,
           sha: "abc123",
@@ -305,14 +305,14 @@ describe("managed runtime contract", () => {
     });
 
     expect(projection?.prReady).toEqual(expect.objectContaining({
-      url: "https://github.com/lossyrob/streamliner/pull/85",
+      url: `https://${host}/lossyrob/streamliner/pull/85`,
       repo: "lossyrob/streamliner",
       number: 85,
       summary: "PR ready.",
       branchName: "feature/managed-session-console",
       baseBranch: "main",
       branchToBaseDiffUrl:
-        "https://github.com/lossyrob/streamliner/compare/main...feature%2Fmanaged-session-console",
+        `https://${host}/lossyrob/streamliner/compare/main...feature%2Fmanaged-session-console`,
       worktreeClean: true,
       prHeadMatchesBranch: true,
     }));

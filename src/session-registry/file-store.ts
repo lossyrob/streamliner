@@ -1,3 +1,4 @@
+import { githubHost } from "../github-host";
 import {
   closeSync,
   existsSync,
@@ -1042,6 +1043,7 @@ function normalizeGithubRef(value: unknown, fieldName: string): SessionRegistryG
   }
   return {
     type,
+    ...(value.host === undefined ? {} : { host: githubHost(ensureString(value.host, `${fieldName}.host`)) }),
     repo: ensureOptionalString(value.repo, `${fieldName}.repo`),
     number,
     url: ensureOptionalString(value.url, `${fieldName}.url`),

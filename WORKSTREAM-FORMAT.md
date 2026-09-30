@@ -600,6 +600,7 @@ The graph is the structured, machine-readable representation of the workstream's
 | `createdAt` | string | ✓ | ISO 8601 timestamp |
 | `updatedAt` | string | ✓ | ISO 8601 timestamp for the last committed edit to this `graph.json`. Bump it on any intentional committed graph change; never bump it for runtime-only overlays that are not written back into the artifact. |
 | `trackingIssue` | object | | Tracker reference anchoring the workstream itself (see Tracker Reference). When using GitHub-backed node trackers, this should typically be a parent GitHub issue for the workstream. |
+| `githubHost` | string | | Default GitHub hostname, such as `"msft.ghe.com"`. Defaults to `"github.com"`. |
 | `repos` | array | ✓ | Repositories involved in this workstream (see Repo) |
 | `designRefs` | array | ✓ | Project-level design docs and decision records relevant to this workstream (see Design Reference). Workers retain access to the broader design layer; this field highlights what to surface first. Use an empty array if none exist yet. |
 | `nodes` | array | ✓ | Work items and gates (see Node) |
@@ -803,6 +804,7 @@ Declares a repository involved in the workstream.
 | `id` | string | ✓ | Kebab-case identifier used in node `repoIds` and `designRefs.repoId` |
 | `owner` | string | ✓ | GitHub repository owner |
 | `name` | string | ✓ | GitHub repository name |
+| `host` | string | | GitHub hostname override; inherits the workstream's `githubHost` when omitted |
 | `role` | string | | Optional label (e.g. `"primary"`, `"secondary"`, `"documentation"`) |
 
 ### Tracker Reference
@@ -828,10 +830,45 @@ The tracker is a discriminated union keyed on `type`:
 | `owner` | string | ✓ | Repository owner |
 | `repo` | string | ✓ | Repository name |
 | `number` | number | ✓ | Issue number (positive integer) |
+| `host` | string | | GitHub hostname override; otherwise inherits the matching repo's host, then `githubHost`, then `"github.com"` |
 
 The issue body on GitHub is the spec. Streamliner reads from and writes to it.
 
 When a workstream uses GitHub-backed node trackers, create a parent GitHub issue for the workstream itself and record it in the top-level `trackingIssue` field. Use that parent issue to group child node issues, typically with a task list or issue references.
+
+#### GitHub Enterprise hosts
+
+For a workstream hosted on GitHub Enterprise, add `"githubHost": "msft.ghe.com"`
+at the top level of `graph.json`. This sets the default for repositories,
+the parent `trackingIssue`, and GitHub node trackers. Existing artifacts
+without host fields continue to use github.com.
+
+For mixed-host workstreams, set `repos[].host` or an individual
+`tracker.host` / `trackingIssue.host`. Use hostnames only, without `https://`,
+a port, or a path. If the same owner/repo is declared on multiple hosts,
+each issue reference must specify its host.
+
+```json
+{
+  "type": "github",
+  "host": "msft.ghe.com",
+  "owner": "example-org",
+  "repo": "example-repo",
+  "number": 42
+}
+```
+
+`tracker.type: "msft.ghe.com"` is also accepted as shorthand for
+`type: "github", host: "msft.ghe.com"`; conflicting type/host values are
+rejected. The node's own `type` remains `task`, `research`, or `gate`.
+Prefer the explicit `host` field for new artifacts.
+
+Host selection applies to issue/PR links, live status and linked-PR
+discovery, launch-time issue reads, session references, and managed PR
+cleanup. Hosts remain part of reference identity, so the same owner/repo
+and issue number on two hosts do not share cached status. Enterprise
+authentication is configured locally, not in graph artifacts; see
+[GitHub status authentication](DEVELOPING.md#github-status-authentication).
 
 #### Local tracker
 

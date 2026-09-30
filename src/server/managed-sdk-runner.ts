@@ -129,7 +129,7 @@ type RuntimeEvidenceLifecycleState = Extract<
 
 const GITHUB_REPO_SEGMENT_PATTERN = String.raw`[A-Za-z0-9](?:[A-Za-z0-9_.-]*[A-Za-z0-9])?`;
 const PR_URL_PATTERN = new RegExp(
-  String.raw`https:\/\/github\.com\/(?<repo>${GITHUB_REPO_SEGMENT_PATTERN}\/${GITHUB_REPO_SEGMENT_PATTERN})\/pull\/(?<number>[1-9]\d*)\b`,
+  String.raw`https:\/\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+\/(?<repo>${GITHUB_REPO_SEGMENT_PATTERN}\/${GITHUB_REPO_SEGMENT_PATTERN})\/pull\/(?<number>[1-9]\d*)\b`,
   "i",
 );
 

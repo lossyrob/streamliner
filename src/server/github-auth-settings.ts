@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 import type { GithubStatusRef } from "../github-status";
+import { githubHost } from "../github-host";
 
 export interface GithubAuthProfile {
   ghConfigDir?: string;
@@ -127,10 +128,11 @@ export async function readGithubAuthSettings(
 function repositoryKeys(ref: GithubStatusRef): string[] {
   const owner = ref.owner.toLowerCase();
   const repo = ref.repo.toLowerCase();
+  const host = githubHost(ref.host);
   return [
-    `github.com/${owner}/${repo}`,
-    `github.com/${owner}/*`,
-    "github.com/*",
+    `${host}/${owner}/${repo}`,
+    `${host}/${owner}/*`,
+    `${host}/*`,
   ];
 }
 
@@ -144,7 +146,15 @@ export function resolveGithubAuthProfile(
       continue;
     }
     if (typeof entry === "string") {
-      return settings.profiles[entry] ?? null;
+      const profile = settings.profiles[entry];
+      if (!profile) return null;
+      if (profile.hostname && githubHost(profile.hostname) !== githubHost(ref.host)) {
+        throw new Error(`GitHub auth profile '${entry}' hostname does not match ${githubHost(ref.host)}.`);
+      }
+      return profile;
+    }
+    if (entry.hostname && githubHost(entry.hostname) !== githubHost(ref.host)) {
+      throw new Error(`GitHub auth profile hostname does not match ${githubHost(ref.host)}.`);
     }
     return entry;
   }
