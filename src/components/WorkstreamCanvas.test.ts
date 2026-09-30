@@ -142,4 +142,55 @@ describe("collectViewportFocusIds", () => {
       new Set(["current-wave", "completed-upstream", "next-wave"]),
     );
   });
+
+  it("keeps future blocked work out of the default current-checkpoint frame", () => {
+    const layout = buildLayout();
+    layout.nodes.push({
+      ...layout.nodes[2],
+      id: "future-blocked",
+      y: 880,
+      entry: {
+        ...layout.nodes[2].entry,
+        node: {
+          ...layout.nodes[2].entry.node,
+          id: "future-blocked",
+          status: "blocked",
+          attention: "focus",
+        },
+        operationalStatus: "blocked",
+      },
+    });
+    layout.checkpointLanes = [
+      {
+        id: "current",
+        title: "Current",
+        subtitle: "Current",
+        nodeIds: ["current-wave"],
+        index: 0,
+        state: "current",
+        x: 0,
+        y: 180,
+        width: 360,
+        height: 240,
+      },
+      {
+        id: "future",
+        title: "Future",
+        subtitle: "Future",
+        nodeIds: ["next-wave", "future-blocked"],
+        index: 1,
+        state: "upcoming",
+        x: 0,
+        y: 420,
+        width: 360,
+        height: 680,
+      },
+    ];
+    layout.dependenciesByNode.set("future-blocked", ["next-wave"]);
+    layout.dependentsByNode.set("next-wave", ["future-blocked"]);
+
+    expect(collectViewportFocusIds(layout, null)).toEqual(
+      new Set(["current-wave", "completed-upstream"]),
+    );
+  });
 });

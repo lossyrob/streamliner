@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useEffect, useRef } from "react";
+import { useMemo, useCallback, useEffect, useRef, useState } from "react";
 import {
   ReactFlow,
   Background,
@@ -40,11 +40,23 @@ const nodeTypes = {
   workstreamSwimlane: WorkstreamSwimlane,
 };
 
+const LANE_PADDING_X = 48;
+const LANE_PADDING_TOP = 88;
+const LANE_PADDING_BOTTOM = 56;
+const MIN_ZOOM = 0.15;
+
+type GraphNodePosition = { x: number; y: number };
+
 function nodePositionFor(
   positions: ReadonlyMap<string, WorkstreamGraphNodePosition>,
+  transientPositions: ReadonlyMap<string, GraphNodePosition>,
   nodeId: string,
   fallback: { x: number; y: number },
 ): { x: number; y: number } {
+  const transient = transientPositions.get(nodeId);
+  if (transient) {
+    return transient;
+  }
   const saved = positions.get(nodeId);
   return saved ? { x: saved.x, y: saved.y } : fallback;
 }
@@ -68,6 +80,12 @@ const CROSS_WORKSTREAM_EDGE_STYLES: Record<string, React.CSSProperties> = {
   descendant: { stroke: "#7c3aed", strokeWidth: 3, strokeDasharray: "7 5" },
   muted: { stroke: "#7c3aed", strokeWidth: 1, strokeDasharray: "7 5", opacity: 0.25 },
   none: { stroke: "#7c3aed", strokeWidth: 2, strokeDasharray: "7 5" },
+};
+
+const COMPLETED_EDGE_STYLE: React.CSSProperties = {
+  strokeWidth: 1,
+  strokeDasharray: "2 6",
+  opacity: 0.22,
 };
 
 function minimapNodeColor(node: Node): string {
@@ -146,28 +164,25 @@ export function WorkstreamCanvas({
 }: WorkstreamCanvasProps) {
   const reactFlow = useReactFlow();
   const fittedKeyRef = useRef<string | null>(null);
-  const laneNodes = useMemo<Node<WorkstreamSwimlaneData>[]>(
-    () =>
-      layout.checkpointLanes.map((lane) => ({
-        id: `lane:${lane.id}`,
-        type: "workstreamSwimlane",
-        position: { x: lane.x, y: lane.y },
-        data: {
-          title: lane.title,
-          subtitle: lane.subtitle,
-          index: lane.index,
-          state: lane.state,
-        },
-        width: lane.width,
-        height: lane.height,
-        style: { width: lane.width, height: lane.height },
-        draggable: false,
-        selectable: false,
-        focusable: false,
-        zIndex: -1,
-      })),
-    [layout.checkpointLanes],
+  const [transientNodePositions, setTransientNodePositions] = useState<
+    ReadonlyMap<string, GraphNodePosition>
+  >(new Map());
+
+  useEffect(() => {
+    setTransientNodePositions(new Map());
+  }, [initialFitKey]);
+
+  const effectiveNodePosition = useCallback(
+    (nodeId: string, fallback: GraphNodePosition) =>
+      nodePositionFor(
+        nodePositions,
+        transientNodePositions,
+        nodeId,
+        fallback,
+      ),
+    [nodePositions, transientNodePositions],
   );
+
   const taskNodes = useMemo<Node<WorkstreamGraphNodeData>[]>(
     () =>
       layout.nodes.map((ln) => {
@@ -176,7 +191,7 @@ export function WorkstreamCanvas({
           id: ln.id,
           type:
             ln.entry.node.type === "gate" ? "workstreamGate" : "workstreamTask",
-          position: nodePositionFor(nodePositions, ln.id, { x: ln.x, y: ln.y }),
+          position: effectiveNodePosition(ln.id, { x: ln.x, y: ln.y }),
           data: {
             entry: ln.entry,
             repoLabel: ln.repoLabel,
@@ -201,13 +216,85 @@ export function WorkstreamCanvas({
       layout.nodes,
       dimCompleted,
       dimPlanned,
-      nodePositions,
+      effectiveNodePosition,
       nodeSessionStatusState,
       nodeSessionStatuses,
       runtimeOverlay,
       launchOperations,
       sessionRouteForNode,
     ],
+  );
+  const effectiveCheckpointLanes = useMemo(
+    () =>
+      layout.checkpointLanes.map((lane) => {
+        const hasPositionOverride = lane.nodeIds.some(
+          (nodeId) =>
+            nodePositions.has(nodeId) || transientNodePositions.has(nodeId),
+        );
+        if (!hasPositionOverride) {
+          return lane;
+        }
+
+        const members = lane.nodeIds
+          .map((nodeId) => layout.nodes.find((node) => node.id === nodeId))
+          .filter(
+            (node): node is WorkstreamGraphLayoutResult["nodes"][number] =>
+              node !== undefined,
+          )
+          .map((node) => ({
+            ...node,
+            ...effectiveNodePosition(node.id, { x: node.x, y: node.y }),
+          }));
+        if (members.length === 0) {
+          return lane;
+        }
+
+        const minX = Math.min(...members.map((member) => member.x));
+        const minY = Math.min(...members.map((member) => member.y));
+        const maxX = Math.max(
+          ...members.map((member) => member.x + member.width),
+        );
+        const maxY = Math.max(
+          ...members.map((member) => member.y + member.height),
+        );
+        return {
+          ...lane,
+          x: minX - LANE_PADDING_X,
+          y: minY - LANE_PADDING_TOP,
+          width: maxX - minX + LANE_PADDING_X * 2,
+          height:
+            maxY - minY + LANE_PADDING_TOP + LANE_PADDING_BOTTOM,
+        };
+      }),
+    [
+      effectiveNodePosition,
+      layout.checkpointLanes,
+      layout.nodes,
+      nodePositions,
+      transientNodePositions,
+    ],
+  );
+  const laneNodes = useMemo<Node<WorkstreamSwimlaneData>[]>(
+    () =>
+      effectiveCheckpointLanes.map((lane) => ({
+        id: `lane:${lane.id}`,
+        type: "workstreamSwimlane",
+        position: { x: lane.x, y: lane.y },
+        data: {
+          title: lane.title,
+          subtitle: lane.subtitle,
+          index: lane.index,
+          state: lane.state,
+        },
+        width: lane.width,
+        height: lane.height,
+        style: { width: lane.width, height: lane.height },
+        draggable: false,
+        selectable: false,
+        focusable: false,
+        zIndex: -1,
+      })),
+    [effectiveCheckpointLanes],
   );
   const externalNodes = useMemo<Node<WorkstreamExternalGraphNodeData>[]>(
     () =>
@@ -216,10 +303,11 @@ export function WorkstreamCanvas({
         return {
           id: ln.id,
           type: "workstreamExternalDependency",
-          position: nodePositionFor(nodePositions, ln.id, { x: ln.x, y: ln.y }),
+          position: effectiveNodePosition(ln.id, { x: ln.x, y: ln.y }),
           data: {
             dependency: ln.dependency,
             highlight: ln.highlight,
+            displayDimmed: dimCompleted && ln.dependency.satisfied,
             onOpenTarget: route?.onOpen ?? null,
           },
           width: ln.width,
@@ -227,7 +315,12 @@ export function WorkstreamCanvas({
           style: { width: ln.width, height: ln.height },
         };
       }),
-    [externalRouteForDependency, layout.externalNodes, nodePositions],
+    [
+      dimCompleted,
+      effectiveNodePosition,
+      externalRouteForDependency,
+      layout.externalNodes,
+    ],
   );
   const nodes = useMemo<Node[]>(
     () => [...laneNodes, ...externalNodes, ...taskNodes],
@@ -238,7 +331,7 @@ export function WorkstreamCanvas({
     [layout, selectedNodeId],
   );
   const framedBounds = useMemo(() => {
-    const currentLane = layout.checkpointLanes.find(
+    const currentLane = effectiveCheckpointLanes.find(
       (lane) => lane.state === "current",
     );
     const focusedGraphBoxes = [...layout.nodes, ...layout.externalNodes].filter((node) =>
@@ -271,7 +364,12 @@ export function WorkstreamCanvas({
       width: maxX - minX,
       height: maxY - minY,
     };
-  }, [layout.checkpointLanes, layout.externalNodes, layout.nodes, viewportFocusIds]);
+  }, [
+    effectiveCheckpointLanes,
+    layout.externalNodes,
+    layout.nodes,
+    viewportFocusIds,
+  ]);
 
   const initialFitPadding = selectedNodeId ? 0.24 : 0.22;
 
@@ -291,24 +389,43 @@ export function WorkstreamCanvas({
   }, [framedBounds, initialFitKey, initialFitPadding, reactFlow]);
 
   const edges = useMemo<Edge[]>(
-    () =>
-      layout.edges.map((le) => {
+    () => {
+      const statusByNodeId = new Map(
+        layout.nodes.map((node) => [node.id, node.entry.operationalStatus]),
+      );
+      const satisfiedExternalNodeIds = new Set(
+        layout.externalNodes
+          .filter((node) => node.dependency.satisfied)
+          .map((node) => node.id),
+      );
+      return layout.edges.map((le) => {
         const styleMap =
           le.kind === "external"
             ? EXTERNAL_EDGE_STYLES
             : le.kind === "cross-workstream"
               ? CROSS_WORKSTREAM_EDGE_STYLES
               : EDGE_HIGHLIGHT_STYLES;
+        const baseStyle =
+          styleMap[le.highlight] ?? EDGE_HIGHLIGHT_STYLES.none;
+        const dimCompletedEdge =
+          dimCompleted &&
+          (statusByNodeId.get(le.sourceId) === "completed" ||
+            satisfiedExternalNodeIds.has(le.sourceId)) &&
+          le.highlight !== "ancestor" &&
+          le.highlight !== "descendant";
         return {
           id: le.id,
           source: le.sourceId,
           target: le.targetId,
-          style: styleMap[le.highlight] ?? EDGE_HIGHLIGHT_STYLES.none,
+          style: dimCompletedEdge
+            ? { ...baseStyle, ...COMPLETED_EDGE_STYLE }
+            : baseStyle,
           animated:
             le.highlight === "ancestor" || le.highlight === "descendant",
         };
-      }),
-    [layout.edges],
+      });
+    },
+    [dimCompleted, layout.edges, layout.externalNodes, layout.nodes],
   );
 
   const handleNodeClick = useCallback(
@@ -334,6 +451,19 @@ export function WorkstreamCanvas({
     },
     [onNodePositionChange],
   );
+  const handleNodeDrag = useCallback(
+    (_event: React.MouseEvent, node: Node) => {
+      if (node.id.startsWith("lane:")) {
+        return;
+      }
+      setTransientNodePositions((current) => {
+        const next = new Map(current);
+        next.set(node.id, node.position);
+        return next;
+      });
+    },
+    [],
+  );
 
   return (
     <div className="sl-canvas">
@@ -342,14 +472,23 @@ export function WorkstreamCanvas({
         edges={edges}
         nodeTypes={nodeTypes}
         onNodeClick={handleNodeClick}
+        onNodeDrag={handleNodeDrag}
         onNodeDragStop={handleNodeDragStop}
         onPaneClick={handlePaneClick}
+        minZoom={MIN_ZOOM}
         nodesConnectable={false}
         nodesDraggable={Boolean(onNodePositionChange)}
         elementsSelectable={false}
       >
         <Background variant={BackgroundVariant.Dots} />
-        <Controls fitViewOptions={{ nodes: taskNodes, padding: 0.28, maxZoom: 0.7 }} />
+        <Controls
+          fitViewOptions={{
+            nodes: taskNodes,
+            padding: 0.28,
+            minZoom: MIN_ZOOM,
+            maxZoom: 0.7,
+          }}
+        />
         <MiniMap
           pannable
           zoomable

@@ -12,21 +12,32 @@ export function collectViewportFocusIds(
     ]);
   }
 
+  const currentLane = layout.checkpointLanes.find(
+    (lane) => lane.state === "current",
+  );
+  const currentLaneIds = currentLane ? new Set(currentLane.nodeIds) : null;
+  const isActive = ({
+    entry,
+  }: WorkstreamGraphLayoutResult["nodes"][number]) =>
+    entry.operationalStatus === "ready" ||
+    entry.operationalStatus === "in-progress" ||
+    entry.operationalStatus === "waiting-for-review" ||
+    entry.operationalStatus === "waiting-for-validation" ||
+    entry.operationalStatus === "blocked";
   const baseIds = new Set(
     layout.nodes
       .filter(
-        ({ entry }) =>
-          entry.node.attention === "focus" ||
-          entry.operationalStatus === "ready" ||
-          entry.operationalStatus === "in-progress" ||
-          entry.operationalStatus === "waiting-for-review" ||
-          entry.operationalStatus === "waiting-for-validation" ||
-          entry.operationalStatus === "blocked",
+        (node) =>
+          isActive(node) &&
+          (!currentLaneIds || currentLaneIds.has(node.id)),
       )
       .map(({ id }) => id),
   );
 
   if (baseIds.size === 0) {
+    if (currentLaneIds) {
+      return currentLaneIds;
+    }
     return new Set(
       [
         ...layout.nodes
@@ -55,6 +66,9 @@ export function collectViewportFocusIds(
     }
 
     for (const dependentId of layout.dependentsByNode.get(current.nodeId) ?? []) {
+      if (currentLaneIds && !currentLaneIds.has(dependentId)) {
+        continue;
+      }
       focusIds.add(dependentId);
       if (queuedIds.has(dependentId)) {
         continue;

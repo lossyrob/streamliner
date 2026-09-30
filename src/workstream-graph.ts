@@ -76,6 +76,7 @@ export interface WorkstreamGraphNodeData extends Record<string, unknown> {
 export interface WorkstreamExternalGraphNodeData extends Record<string, unknown> {
   dependency: WorkstreamExternalDependencyView;
   highlight: WorkstreamGraphNodeHighlight;
+  displayDimmed: boolean;
   onOpenTarget: (() => void | Promise<void>) | null;
 }
 

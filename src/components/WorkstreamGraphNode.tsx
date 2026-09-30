@@ -406,6 +406,7 @@ export function WorkstreamExternalDependencyNode({
     isCrossWorkstream ? "cross-workstream" : "external",
     highlightClassName(data.highlight),
     dependency.satisfied ? "status-green" : "status-red",
+    data.displayDimmed ? "display-dimmed" : "",
   ]
     .filter(Boolean)
     .join(" ");

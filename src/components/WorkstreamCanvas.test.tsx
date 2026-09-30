@@ -22,7 +22,16 @@ const reactFlowProps = vi.hoisted(() => ({
       position: { x: number; y: number };
       data?: Record<string, unknown>;
     }>;
+    edges?: Array<{
+      id: string;
+      style?: Record<string, unknown>;
+    }>;
     nodesDraggable?: boolean;
+    minZoom?: number;
+    onNodeDrag?: (
+      event: MouseEvent,
+      node: { id: string; position: { x: number; y: number } },
+    ) => void;
     onNodeDragStop?: (
       event: MouseEvent,
       node: { id: string; position: { x: number; y: number } },
@@ -39,7 +48,16 @@ vi.mock("@xyflow/react", () => ({
     props: {
       children: ReactNode;
       nodes?: Array<{ id: string; position: { x: number; y: number } }>;
+      edges?: Array<{
+        id: string;
+        style?: Record<string, unknown>;
+      }>;
       nodesDraggable?: boolean;
+      minZoom?: number;
+      onNodeDrag?: (
+        event: MouseEvent,
+        node: { id: string; position: { x: number; y: number } },
+      ) => void;
       onNodeDragStop?: (
         event: MouseEvent,
         node: { id: string; position: { x: number; y: number } },
@@ -109,7 +127,7 @@ function buildLayout(offset = 0): WorkstreamGraphLayoutResult {
   };
 }
 
-function buildExternalNode(): WorkstreamGraphExternalLayoutNode {
+function buildExternalNode(satisfied = false): WorkstreamGraphExternalLayoutNode {
   return {
     id: "external:task-a:upstream-approval",
     x: 96,
@@ -132,7 +150,7 @@ function buildExternalNode(): WorkstreamGraphExternalLayoutNode {
       detail: "Workstream is not registered.",
       statusLabel: "unresolved",
       state: "unresolved",
-      satisfied: false,
+      satisfied,
       target: {
         projectKey: "streamliner",
         workstreamId: "upstream",
@@ -200,6 +218,7 @@ describe("WorkstreamCanvas", () => {
   it("does not refit the viewport for graph refreshes under the same route", () => {
     renderCanvas();
 
+    expect(reactFlowProps.latest?.minZoom).toBe(0.15);
     expect(fitBoundsMock).toHaveBeenCalledTimes(1);
     expect(fitBoundsMock).toHaveBeenLastCalledWith(
       { x: 0, y: 32, width: 440, height: 320 },
@@ -257,6 +276,28 @@ describe("WorkstreamCanvas", () => {
     expect(
       reactFlowProps.latest?.nodes?.find((node) => node.id === "task-a")?.position,
     ).toEqual({ x: 320, y: 480 });
+    expect(
+      reactFlowProps.latest?.nodes?.find((node) => node.id === "lane:current"),
+    ).toMatchObject({
+      position: { x: 272, y: 392 },
+      width: 424,
+      height: 368,
+    });
+
+    act(() => {
+      reactFlowProps.latest?.onNodeDrag?.(
+        {} as MouseEvent,
+        { id: "task-a", position: { x: 360, y: 512 } },
+      );
+    });
+
+    expect(
+      reactFlowProps.latest?.nodes?.find((node) => node.id === "lane:current"),
+    ).toMatchObject({
+      position: { x: 312, y: 424 },
+      width: 424,
+      height: 368,
+    });
 
     act(() => {
       reactFlowProps.latest?.onNodeDragStop?.(
@@ -328,5 +369,100 @@ describe("WorkstreamCanvas", () => {
       reactFlowProps.latest?.nodes?.find((node) => node.id === "planned")?.data
         ?.displayDimmed,
     ).toBe(true);
+  });
+
+  it("dims outgoing completed edges with a dotted stroke", () => {
+    const completed = {
+      ...buildLayout().nodes[0],
+      id: "completed",
+      entry: {
+        ...buildDerivedNode("completed"),
+        node: { ...buildDerivedNode("completed").node, status: "completed" as const },
+        operationalStatus: "completed" as const,
+      },
+    };
+    const planned = {
+      ...buildLayout().nodes[0],
+      id: "planned",
+      entry: buildDerivedNode("planned"),
+    };
+    const layout = {
+      ...buildLayout(),
+      nodes: [completed, planned],
+      edges: [
+        {
+          id: "completed->planned",
+          sourceId: "completed",
+          targetId: "planned",
+          highlight: "none" as const,
+        },
+      ],
+    };
+
+    renderCanvas({ layout, dimCompleted: true });
+
+    expect(reactFlowProps.latest?.edges?.[0]?.style).toMatchObject({
+      strokeDasharray: "2 6",
+      strokeWidth: 1,
+      opacity: 0.22,
+    });
+
+    renderCanvas({
+      layout: {
+        ...layout,
+        edges: [{ ...layout.edges[0], highlight: "ancestor" }],
+      },
+      dimCompleted: true,
+    });
+
+    expect(reactFlowProps.latest?.edges?.[0]?.style).toMatchObject({
+      stroke: "#7c3aed",
+      strokeWidth: 2,
+    });
+    expect(
+      reactFlowProps.latest?.edges?.[0]?.style?.strokeDasharray,
+    ).toBeUndefined();
+  });
+
+  it("dims satisfied blocker nodes and their outgoing connections", () => {
+    const blocker = buildExternalNode(true);
+    const layout = {
+      ...buildLayout(),
+      externalNodes: [blocker],
+      edges: [
+        {
+          id: `${blocker.id}->task-a`,
+          sourceId: blocker.id,
+          targetId: "task-a",
+          kind: "external" as const,
+          highlight: "none" as const,
+        },
+      ],
+    };
+
+    renderCanvas({ layout, dimCompleted: true });
+
+    expect(
+      reactFlowProps.latest?.nodes?.find((node) => node.id === blocker.id)?.data
+        ?.displayDimmed,
+    ).toBe(true);
+    expect(reactFlowProps.latest?.edges?.[0]?.style).toMatchObject({
+      strokeDasharray: "2 6",
+      strokeWidth: 1,
+      opacity: 0.22,
+    });
+
+    renderCanvas({
+      layout: {
+        ...layout,
+        externalNodes: [buildExternalNode(false)],
+      },
+      dimCompleted: true,
+    });
+
+    expect(
+      reactFlowProps.latest?.nodes?.find((node) => node.id === blocker.id)?.data
+        ?.displayDimmed,
+    ).toBe(false);
   });
 });
