@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { loadDotEnvFile } from "./load-env.mjs";
 
 loadDotEnvFile();
@@ -40,6 +43,36 @@ async function fetchWithTimeout(url, timeoutMs) {
   }
 }
 
+function checkApiLockDiagnostic() {
+  const root = resolve(
+    process.env.STREAMLINER_SESSION_REGISTRY_ROOT ??
+      join(homedir(), ".streamliner", "state", "session-registry"),
+  );
+  const lockPath = join(root, "api.lock");
+  try {
+    const raw = readFileSync(lockPath, "utf8");
+    const meta = JSON.parse(raw);
+    const pid = meta.pid;
+    let isAlive = false;
+    if (typeof pid === "number") {
+      try {
+        process.kill(pid, 0);
+        isAlive = true;
+      } catch {
+        isAlive = false;
+      }
+    }
+    return (
+      `\n[Diagnostic] Found api.lock at ${lockPath}:\n` +
+      `  Held by PID: ${pid} (${isAlive ? "process is alive" : "process is dead/stale"})\n` +
+      `  Acquired at: ${meta.acquiredAt ?? "unknown"}\n` +
+      `  Run "npm run api:unlock" to inspect and clear stale lock files.`
+    );
+  } catch {
+    return "";
+  }
+}
+
 async function waitForApi() {
   const host = process.env.STREAMLINER_API_HOST ?? DEFAULT_API_HOST;
   const port = process.env.STREAMLINER_API_PORT ?? DEFAULT_API_PORT;
@@ -76,8 +109,9 @@ async function waitForApi() {
     await delay(Math.min(pollMs, Math.max(0, deadline - Date.now())));
   }
 
+  const lockDiag = checkApiLockDiagnostic();
   throw new Error(
-    `Timed out after ${timeoutMs}ms waiting for Streamliner API at ${healthUrl}. Last error: ${lastError}`,
+    `Timed out after ${timeoutMs}ms waiting for Streamliner API at ${healthUrl}. Last error: ${lastError}${lockDiag}`,
   );
 }
 
