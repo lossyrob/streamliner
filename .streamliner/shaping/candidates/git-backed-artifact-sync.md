@@ -1,348 +1,381 @@
-# Git-backed Artifact Sync
+# Git-backed Artifact Ledger & Sync
 
 ## Status
 
-Seeded
+Promoted to `.streamliner/workstreams/git-backed-artifact-sync/`.
 
 ## Summary
 
-Let Streamliner artifacts live on a dedicated Git branch in the project repository and keep them synchronized across machines and teammates with a deterministic loop-based sentry.
+Let a project's Streamliner artifacts live on a dedicated same-repository branch,
+normally `streamliner-artifacts`, and keep a separate artifact worktree
+synchronized across machines and builders.
 
-This candidate is a near-term bridge between local-only artifact storage and the longer-term distributed control plane vision. It uses GitHub as the shared ledger and transport without requiring a new Streamliner service, hosted UI, or remote database.
+GitHub provides the durable shared ledger and repository permission model. A
+deterministic local sentry handles routine synchronization and classifies
+conflicts. Streamliner shows sync health and artifact attention. Telex carries
+operational notifications to the responsible role.
 
-The source branch stays clean. Streamliner artifacts become shareable. Local sentries keep artifact worktrees warm and surface conflicts, new messages, and sync attention states back into Streamliner.
+This is the near-term multi-builder artifact solution. It reduces manual
+commit/push/pull choreography without requiring a hosted Streamliner service or
+putting Streamliner planning files on every source branch.
 
-## Problem
+## Why It Matters
 
-Streamliner artifacts currently tend to live in one of two places:
+Streamliner artifacts currently tend to live either:
 
-- under `.streamliner` in the same repository as source code;
-- in a separate repository used as a planning/artifact store.
+- under `.streamliner` on a source branch, where they add noise for teammates who
+  are not participating in Streamliner work; or
+- in a separate planning repository, where discovery, permissions, onboarding,
+  and laptop/devbox synchronization become extra ceremony.
 
-Both work, but both have friction.
+The artifacts increasingly matter to more than one session:
 
-When artifacts live on the source branch, they can pollute the main codebase and create noise for teammates who are not participating in Streamliner work.
-
-When artifacts live in a separate repository, discovery, permissions, onboarding, and day-to-day sync become clumsy. Teammates may not know where the workstreams live, and laptop/devbox workflows require constant commit/push/pull choreography.
-
-In practice, Streamliner artifacts are also beginning to carry live coordination state:
-
+- campaign and shaping notes;
 - workstream briefs and graphs;
-- shaping candidates;
-- cross-workstream messages;
-- field reports;
-- reconciliation notes;
-- orchestration handoffs;
-- closeout observations.
+- node specs and attached artifacts;
+- field reports and reconciliation notes;
+- cross-workstream contracts and closeout records.
 
-Git is useful for auditability and sharing, but painful as a manual live database.
+Git is useful for sharing and auditability, but manually operating a second
+checkout is recurring toil. Streamliner should make the dedicated artifact branch
+a product-supported path.
 
-## Thesis
+## Ownership Boundary
 
-Use a dedicated artifact branch in the project repository as a shared Streamliner ledger.
+| Concern | Owner |
+|---|---|
+| Durable Streamliner artifacts and their history | `streamliner-artifacts` Git branch |
+| Repository permissions and branch transport | Git/GitHub |
+| Local artifact-root configuration and sync projection | Streamliner |
+| Deterministic fetch/merge/push classification | Artifact sync sentry |
+| Messages, delivery, liveness, acknowledgement, and message history | Telex |
+| Semantic conflict resolution and consequential project decisions | Responsible orchestrator or builder |
+| Source code and durable product/design documentation | Normal source branches |
 
-Use deterministic loop scripts to keep local artifact worktrees synchronized.
+The artifact branch is not a message queue or live runtime database. It should not
+contain inbox directories, message status files, session heartbeats, or volatile
+watch state.
 
-Use Copilot CLI supervision only when an actionable event needs reasoning.
+## Branch and Worktree Model
 
-This gives Streamliner a low-effort shared coordination layer without building the eventual remote service yet.
-
-## Branch model
-
-A project repository may have a dedicated branch, for example:
+A project repository may designate:
 
 ```text
-streamliner-artifacts
+artifactBranch = streamliner-artifacts
 ```
 
-The branch should contain Streamliner coordination artifacts and little else:
-
-```text
-.streamliner/
-  shaping/
-  workstreams/
-  messages/
-  reports/
-  sync/
-```
-
-Each environment should check out the artifact branch separately from the source checkout, ideally as a Git worktree:
+Each environment checks that branch out separately:
 
 ```text
 project/
 project.streamliner-artifacts/
 ```
 
-Streamliner would be configured with both paths:
+The artifact worktree contains the project's shared Streamliner artifact tree,
+for example:
 
 ```text
-sourceRepoPath = ~/code/project
-artifactRepoPath = ~/code/project.streamliner-artifacts/.streamliner
-artifactBranch = streamliner-artifacts
+.streamliner/
+  shaping/
+  workstreams/
+  reports/
 ```
 
-This keeps source branches clean while making artifacts visible under the same GitHub repository and permission model.
+Exact directories remain governed by Streamliner's artifact formats. Local
+runtime state stays under `~/.streamliner/state`, not on the artifact branch.
 
-## Sentry model
+Streamliner needs a durable project mapping similar to:
 
-The sentry should follow the same broad pattern as existing `lossyrob/skills` loop-based lifecycle skills:
+```text
+projectKey
+sourceRepoPath
+artifactRepoPath
+artifactBranch
+```
 
-- deterministic check scripts perform polling and classification;
-- long watches run through detached loop workers;
-- durable loop state records events and heartbeats;
-- Copilot supervision wakes only for actionable events;
-- stateful checks peek first, act next, and acknowledge only after the action succeeds.
+Secrets and Telex credentials do not belong in this configuration. Telex is
+referenced separately by backend profile name.
 
-The sentry is not primarily an LLM doing `git status` in a loop. It is a deterministic sync loop with a Copilot CLI session supervising meaningful events.
+## Artifact-root Contract
 
-The deterministic layer should detect:
+This workstream exports `artifact-root-v1`, which should let any Streamliner
+surface or plugin role resolve:
 
-- remote artifact-branch changes;
-- local artifact changes;
-- clean sync states;
-- new messages;
-- message status changes;
-- merge conflicts;
-- script or Git errors.
+- the project key;
+- the source repository;
+- the artifact repository/worktree;
+- the artifact branch;
+- whether the artifact root is available and synchronized;
+- the current artifact commit;
+- any blocking sync/conflict state.
 
-The Copilot-supervised layer should reason about:
+Consumers should not assume `.streamliner` lives under the current source
+checkout. The dashboard, workstream loader, role skills, node launch context
+assembly, and future Project surface should all use the same resolver.
 
-- whether conflicts are mechanical or semantic;
-- whether incoming messages need an orchestrator;
-- whether changed artifacts imply workstream alignment work;
-- whether Streamliner should surface an attention event;
-- whether the loop should restart, pause, or hand off to the builder.
+## Sentry Model
 
-## Event classes
+Routine synchronization should be deterministic. The sentry is not an LLM
+running `git status` forever.
 
-Initial sentry event classes might include:
+The deterministic layer should:
+
+- verify the artifact worktree and branch identity;
+- fetch remote changes;
+- classify clean, ahead, behind, diverged, dirty, and error states;
+- apply only explicitly safe mechanical synchronization;
+- commit/push product-authored artifact changes according to the chosen policy;
+- record local health and event state outside the artifact branch;
+- stop and surface semantic or ambiguous conflicts.
+
+Useful initial event classes:
 
 ```text
 remote_changed
 local_changed
 sync_clean
 push_succeeded
-new_message
-message_status_changed
 conflict_detected
 semantic_attention_needed
 script_or_git_error
 ```
 
-A sync wakeup is not a conclusion. It is an event requiring classification.
+The exact write/commit policy should be decided during formation. The first slice
+may support manual commit/push while proving artifact-root behavior before adding
+automatic synchronization.
 
-The sentry should not silently resolve semantic conflicts.
+## Telex Integration
 
-Conflicts in source-of-truth workstream artifacts such as `brief.md`, `graph.json`, checkpoint definitions, gate criteria, or candidate notes should become attention events.
+Telex replaces the candidate's earlier file-backed message proposal.
 
-## Message convention
-
-This candidate should define a minimal file-backed message convention, without trying to build the full session-actor mailbox protocol.
-
-Messages should be easy for agents and humans to write, read, and diff.
-
-A message might be a Markdown file with frontmatter:
-
-```markdown
----
-id: msg-2026-05-18-013400-z7k2
-to: workstream/sdk-managed-worker-runtime/orchestrator
-from: workstream/project-surface/shaping
-status: open
-createdAt: 2026-05-18T01:34:00Z
-priority: normal
----
-
-# Message
-
-Candidate shaping discovered a dependency that may affect Wave 2 closeout.
-
-## Requested action
-
-- Assess whether this changes current Wave 2 scope.
-- If yes, comment on the gate issue.
-- If no, mark handled with a short explanation.
-```
-
-Prefer append-only files and sidecar status records where practical, so senders and receivers do not mutate the same file.
-
-Example shapes to consider during formation:
+The sentry or Streamliner API may send concise events to durable role addresses,
+for example:
 
 ```text
-.streamliner/messages/open/{messageId}.md
-.streamliner/messages/status/{messageId}.handled.md
+project:<projectKey>/role:artifact-sentry
+project:<projectKey>/workstream:<workstreamId>/role:orchestrator
 ```
 
-or scoped per workstream:
+Examples:
 
-```text
-.streamliner/workstreams/{workstreamId}/messages/
-```
+- the artifact branch advanced and a workstream changed;
+- a semantic conflict needs an owner;
+- local changes could not be pushed;
+- an incoming artifact change invalidates a current assumption;
+- the sentry is unhealthy or paused.
 
-The exact layout should be decided during formation.
+Messages should carry pointers to the artifact commit and changed paths. They
+should not contain a second copy of the artifacts. If a message produces a
+durable decision, that result is written back to the appropriate artifact with
+the Telex thread/message ID retained as provenance.
 
-## Local Streamliner integration
+Streamliner may also accept local sentry events through an API so the dashboard
+can show sync state even when no agent is attached. Local projection and Telex
+notification are complementary; neither becomes the artifact source of truth.
 
-A small local Streamliner API can let the sentry report sync events without requiring a remote service.
+## Candidate Scope
 
-Possible endpoint:
+### In Scope
 
-```text
-POST /api/artifact-sync/events
-```
+- Dedicated same-repository artifact branch policy.
+- Separate artifact-worktree setup and discovery.
+- Migration/adoption of existing `.streamliner` artifacts from a source branch
+  or separate planning repository, with one clearly selected authoritative copy.
+- `artifact-root-v1` project configuration and resolver.
+- Loading and writing Streamliner artifacts through the resolved artifact root.
+- Initial manual-sync workflow and diagnostics.
+- Deterministic sentry checks and sync-state classification.
+- Safe fetch/update/push automation with explicit conflict stops.
+- Local Streamliner sync-health/event projection.
+- Telex notification of actionable sync and conflict events.
+- Multi-machine and multi-builder dogfood.
+- Guidance for promoting durable decisions into source-branch design docs when
+  appropriate.
 
-Example payload:
+### Out of Scope
 
-```json
-{
-  "projectKey": "main-project",
-  "artifactBranch": "streamliner-artifacts",
-  "eventType": "new_message",
-  "commit": "abc123",
-  "changedPaths": [
-    ".streamliner/workstreams/sdk-managed-worker-runtime/messages/msg-001.md"
-  ]
-}
-```
+- File-backed messages or inbox/status directories.
+- Replacing Telex with Git commits.
+- Remote Streamliner services or hosted UI.
+- Remote active-session or runtime-state storage.
+- Automatic semantic conflict resolution.
+- Replacing GitHub Issues or source-branch pull requests.
+- Moving all Streamliner state into Git.
+- Designing repository or Telex authorization beyond consuming their existing
+  permission models.
 
-Streamliner can then surface:
+### Deferred
 
-- artifact sync status;
-- new-message badges;
-- workstream attention states;
-- conflict banners;
-- local notifications or toasts;
-- sentry health/status.
+- Cross-repository artifact branches.
+- Rich branch administration UI.
+- Hosted synchronization services.
+- Multi-writer CRDT or database-backed artifact editing.
+- Policy-driven semantic merge automation.
 
-## Scope
+## Wave Intent
 
-In scope:
+Actual formation should decide node boundaries. The likely progression is:
 
-- artifact branch policy;
-- same-repo dedicated artifact branch layout;
-- separate artifact worktree setup;
-- external artifact-root configuration;
-- deterministic sentry scripts/playbook;
-- loop-skill-driven watch flow;
-- event classification and durable event output;
-- local Streamliner sync-event notification;
-- minimal message convention;
-- conflict detection and attention surfacing;
-- teammate/shared-repo visibility.
+### Wave 1: Artifact branch and root contract
 
-Out of scope:
+- Define the branch policy and worktree setup.
+- Move or adopt an existing project's artifact set without leaving two
+  authoritative copies.
+- Implement/configure external artifact-root resolution.
+- Make core workstream loading operate through the resolver.
+- Provide setup, status, and diagnostic guidance.
+- Prove a manual fetch/commit/push workflow before automating it.
 
-- remote Streamliner service;
-- hosted UI;
-- remote active-state database;
-- multi-user auth model beyond GitHub repository permissions;
-- automatic semantic conflict resolution;
-- replacing GitHub Issues;
-- full actor mailbox protocol;
-- distributed actor relay;
-- moving all Streamliner state out of Git.
+**Checkpoint:** Streamliner can open and update a project whose `.streamliner`
+artifacts exist only in a `streamliner-artifacts` worktree.
 
-## Wave intent
+### Wave 2: Deterministic sync sentry
 
-Actual wave formation should determine final wave boundaries and node definitions.
+- Implement branch-state checks and event classification.
+- Add local durable health/watch state.
+- Define safe automatic operations and explicit stop conditions.
+- Surface conflicts without modifying the semantic artifact content.
+- Add dry-run and recovery behavior.
 
-A likely progression is:
+**Checkpoint:** two environments remain synchronized during clean operation and
+stop clearly when human judgment is required.
 
-### Wave 1 intent: artifact branch policy and artifact-root configuration
+### Wave 3: Streamliner and Telex attention
 
-Prove that Streamliner can read and write artifacts from a dedicated artifact worktree associated with a source repository.
+- Project sync health into Streamliner.
+- Route actionable events through `telex-addressing-v1`.
+- Link notifications to commits, paths, projects, and workstreams.
+- Show conflicts, paused sentries, and unavailable artifact roots.
+- Preserve Telex provenance when decisions update artifacts.
 
-Likely areas:
+**Checkpoint:** the responsible role learns about relevant artifact changes
+without polling Git or maintaining a message-file convention.
 
-- artifact branch policy document;
-- branch/worktree setup guidance;
-- project configuration for external artifact roots;
-- initial manual sync expectations;
-- relationship to same-repo source branches.
+### Wave 4: Multi-builder dogfood
 
-### Wave 2 intent: deterministic sentry loop
+- Use one repository and artifact branch from at least two environments/builders.
+- Exercise concurrent clean changes and a semantic conflict.
+- Start a role through the canonical plugin skills and resolve the shared artifact
+  root without personal instructions.
+- Coordinate the conflict/disposition through Telex.
+- Measure the remaining manual Git and setup steps.
 
-Build the first artifact sync sentry using deterministic scripts and existing loop-skill patterns.
+**Gate:** the shared artifact workflow materially reduces setup and synchronization
+toil while leaving an understandable Git history and clear conflict ownership.
 
-Likely areas:
+## Expected Exports
 
-- check script for Git artifact branch state;
-- detached loop usage guidance;
-- event schema;
-- dry-run mode;
-- conflict classification;
-- canonical observed-watch flow;
-- ack/restart guidance for Copilot supervision.
+- `artifact-root-v1`.
+- Artifact branch policy and worktree setup flow.
+- Artifact-root resolver and diagnostics.
+- Deterministic sync-state/event schema.
+- Sentry health and recovery behavior.
+- Local Streamliner sync-event API/projection.
+- Telex artifact-attention message profile.
+- Multi-builder operating guidance.
 
-### Wave 3 intent: Streamliner notifications and message surfacing
+## Dependencies
 
-Make sync events visible inside Streamliner.
+### Imports
 
-Likely areas:
+- Existing project key and tracked-workstream loading behavior.
+- Git worktree and GitHub repository capabilities.
+- `telex-addressing-v1` for role-addressed notifications (Wave 3).
 
-- local sync-event API;
-- artifact sync status projection;
-- workstream message badges;
-- conflict/attention notifications;
-- minimal message discovery;
-- sentry health visibility.
+### Enables
 
-### Wave 4 intent: dogfood shared artifact workflow
+- Plugin skills loading shared project/workstream context on any machine.
+- Project Surface and Orientation using one artifact-root model.
+- Multi-builder workstream design and orchestration.
+- Future remote-control-plane work without requiring it for the first useful
+  solution.
 
-Use the artifact branch across laptop/devbox and at least one teammate clone.
+## Review Criteria
 
-This wave should answer whether the model meaningfully reduces manual push/pull choreography while preserving the benefits of Git auditability.
+This workstream succeeds when:
 
-## Expected exports
-
-Potential exports include:
-
-- artifact branch policy;
-- project artifact-root configuration model;
-- artifact worktree setup flow;
-- sentry loop skill/playbook;
-- sync event schema;
-- local sync event API;
-- message file convention;
-- Streamliner UI sync/message attention surfaces.
-
-## Review criteria
-
-This workstream should be considered valuable if:
-
-- Streamliner artifacts can live in the same GitHub repository without polluting source branches;
-- multiple environments can keep artifact state mostly synchronized with little manual ceremony;
-- teammates can load the artifact branch and understand workstream state;
-- new messages become visible to the relevant workstream/orchestrator;
-- conflicts are surfaced as coordination signals;
-- the sentry is mostly deterministic, with Copilot reasoning only for actionable states;
-- no remote service is required.
+- source branches no longer need to carry Streamliner planning artifacts;
+- migration leaves one clear authoritative artifact root rather than two copies
+  that can drift;
+- a fresh environment can discover and set up the artifact worktree predictably;
+- Streamliner loads the same project/workstream state on multiple machines;
+- clean synchronization needs little or no manual choreography;
+- semantic conflicts stop and reach an accountable role;
+- Telex, not Git files, carries operational messages;
+- volatile runtime/watch state stays out of the artifact branch;
+- a teammate can understand the project state from the artifact history.
 
 ## Risks
 
-- Git conflict noise if artifacts mutate shared files too often.
-- The sentry becomes too smart too early.
-- Notifications become a product rabbit hole.
-- The artifact branch becomes an unstructured junk drawer.
-- Direct commits hide durable decisions that should be promoted elsewhere.
-- The dedicated branch starts acting like a remote service without service semantics.
+- Git conflict noise if shared files are rewritten frequently.
+- Automatic commit/push behavior obscures who changed an artifact.
+- The branch becomes an unstructured junk drawer.
+- A migration leaves source-branch and artifact-branch copies that both appear
+  authoritative.
+- Sync events become noisy.
+- The dedicated branch is treated like a remote service without service
+  semantics.
+- Skills or UI code continue assuming `.streamliner` is under the source root.
 
 Mitigations:
 
-- prefer append-only files where practical;
-- use sidecar status records instead of editing sender-owned files;
-- keep artifact branch policy explicit;
-- treat semantic conflicts as attention events;
-- use local API events instead of a sync database;
-- preserve promotion paths to durable design docs or source-branch PRs when appropriate.
+- preserve clear artifact formats and ownership;
+- prefer small, attributable commits;
+- keep volatile state local;
+- make migration switch authority explicitly and remove or archive the old copy;
+- deduplicate/rate-limit Telex attention events;
+- stop on semantic conflicts;
+- make all consumers use `artifact-root-v1`;
+- retain promotion paths for decisions that belong in source-branch design docs.
 
-## Relationship to other work
+## Open Questions
 
-This candidate is related to, but distinct from:
+- Where should the durable project-to-artifact-root mapping live?
+- What is the safest initial write/commit policy?
+- Which clean sync operations may run automatically?
+- How should two builders avoid repeatedly rewriting the same graph or index?
+- Should Streamliner create the branch/worktree or only adopt an existing one in
+  the first slice?
+- How should artifact-root availability affect node launch and role-skill
+  activation?
+- What sync events deserve Telex messages versus dashboard-only status?
 
-- `DISTRIBUTED-CONTROL-PLANE.md`, which describes the longer-term relay/API vision;
-- Session Actor Control Plane, which focuses on messageable sessions and actor semantics;
-- Project Surface and Issue Launches, which may eventually surface artifact sync and messages;
-- future cross-environment relay work, which should not be required for this near-term Git-backed bridge.
+## Relationship to Other Work
 
-This candidate should remain grounded in the immediate workflow friction: sharing Streamliner artifacts and coordination messages across teammates and environments without building a service yet.
+- **Telex-backed Session Actor Control Plane** owns addresses and message
+  delivery; this workstream emits artifact-attention events through that contract.
+- **Streamliner Plugin Role Skills** consumes artifact-root discovery and should
+  never require a user-specific instruction listing artifact paths.
+- **Project Surface and Orientation** later presents projects and sync state but
+  should consume, not redefine, `artifact-root-v1`.
+- **Distributed Control Plane** remains the longer-term remote-service direction;
+  it is not required for this Git-backed solution.
+
+## Handoff Brief
+
+Form the Git-backed Artifact Ledger & Sync workstream inside the Shared Project
+Operations campaign.
+
+The workstream should make `streamliner-artifacts` a supported same-repository
+branch checked out as a separate worktree, export one `artifact-root-v1` resolver
+used by all Streamliner consumers, prove manual operation before adding a
+deterministic sync sentry, and route actionable sync/conflict events through
+Telex. It must not create file-backed messages or put volatile runtime state on
+the artifact branch.
+
+Wave 1 should deliver the artifact branch/root contract and a usable manual
+workflow. Wave 2 should automate deterministic synchronization. Wave 3 should add
+Streamliner and Telex attention. Wave 4 should prove the complete workflow with
+two builders/environments.
+
+## Promotion
+
+Promoted into `.streamliner/workstreams/git-backed-artifact-sync/`. The formed
+workstream owns convention-first `streamliner-artifacts` bootstrap,
+`artifact-root-v1`, storage-neutral `artifact-operations-v1`, API-mediated
+canonical mutation and synchronization, isolated change workspaces, shared
+policy storage and provenance, and the final Shared Project Operations campaign
+integration gate.
+
+Retain this candidate as the historical shaping record until Streamliner has a
+first-class candidate archive or lifecycle migration.
