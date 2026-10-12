@@ -3,16 +3,20 @@ import { statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { promisify } from "node:util";
 
-import type { CopilotClient, CopilotClientOptions, SessionConfig } from "@github/copilot-sdk";
+import type { CopilotClient } from "@github/copilot-sdk";
+import type { CopilotClient as PreparationClient, SessionConfig } from "@github/copilot-sdk-preparation";
 
 const DEFAULT_MODEL = "gpt-5.5";
 const execFileAsync = promisify(execFile);
 
-interface PreparationProfile {
+export interface PreparationProfile {
   configured: boolean;
   context?: "default" | "long_context";
-  client: Pick<CopilotClientOptions, "cliPath" | "cliArgs">;
-  session: Pick<SessionConfig, "reasoningEffort"> & { model: string };
+  cliPath?: string;
+  session: Pick<SessionConfig, "contextTier"> & {
+    model: string;
+    reasoningEffort?: "low" | "medium" | "high" | "xhigh";
+  };
 }
 
 function configuredValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
@@ -54,13 +58,11 @@ export function readPreparationProfile(env: NodeJS.ProcessEnv = process.env): Pr
   return {
     configured: [model, reasoningEffort, context, cliPath].some((value) => value !== undefined),
     context,
-    client: {
-      ...(cliPath !== undefined ? { cliPath } : {}),
-      ...(context !== undefined ? { cliArgs: ["--context", context] } : {}),
-    },
+    cliPath,
     session: {
       model: model ?? DEFAULT_MODEL,
       ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
+      ...(context !== undefined ? { contextTier: context } : {}),
     },
   };
 }
@@ -70,7 +72,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export async function validatePreparationCli(profile: PreparationProfile): Promise<void> {
-  const cliPath = profile.client.cliPath;
+  const cliPath = profile.cliPath;
   if (cliPath === undefined) {
     return;
   }
@@ -92,14 +94,14 @@ export async function validatePreparationCli(profile: PreparationProfile): Promi
 }
 
 export async function validatePreparationProfile(
-  client: Pick<CopilotClient, "listModels">,
+  client: Pick<CopilotClient, "listModels"> | Pick<PreparationClient, "listModels">,
   profile: PreparationProfile,
 ): Promise<void> {
   if (!profile.configured) {
     return;
   }
   const { model: modelId, reasoningEffort } = profile.session;
-  let models: Awaited<ReturnType<CopilotClient["listModels"]>>;
+  let models: Awaited<ReturnType<typeof client.listModels>>;
   try {
     models = await client.listModels();
   } catch (error) {
@@ -114,8 +116,7 @@ export async function validatePreparationProfile(
     throw new Error(`STREAMLINER_PAW_INIT_REASONING_EFFORT '${reasoningEffort}' is not advertised for '${modelId}'. Supported values: ${model.supportedReasoningEfforts?.join(", ") || "none"}.`);
   }
   if (profile.context === "long_context") {
-    // CLI 1.0.87 advertises long-context availability in billing metadata,
-    // which SDK 0.3.0 preserves but does not yet describe in ModelInfo.
+    // Catalog capacity is an admission check, not evidence of the session's budget.
     const billing: unknown = model.billing;
     const prices = isRecord(billing) ? billing.tokenPrices : undefined;
     const longContext = isRecord(prices) ? prices.longContext : undefined;

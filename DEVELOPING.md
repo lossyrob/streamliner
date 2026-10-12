@@ -105,7 +105,7 @@ Those request fields configure the later worker, not the preparation helper.
 |----------|----------------|-------------------------|
 | `STREAMLINER_PAW_INIT_MODEL` | `gpt-5.5` | Exact model ID available in the selected CLI's authenticated model catalog |
 | `STREAMLINER_PAW_INIT_REASONING_EFFORT` | Omit SDK reasoning override | `low`, `medium`, `high`, `xhigh`; the selected model must advertise the value |
-| `STREAMLINER_PAW_INIT_CONTEXT` | Omit CLI context override | `default` or `long_context`; either requires an explicit preparation CLI path |
+| `STREAMLINER_PAW_INIT_CONTEXT` | Omit session context override | `default` or `long_context`; either requires an explicit preparation CLI path |
 | `STREAMLINER_PAW_INIT_CLI_PATH` | Existing SDK CLI resolution | Absolute path to a native executable or `.js` entry point; shell shims (`.cmd`, `.bat`, `.ps1`) are not supported |
 
 For an Astra/high/long-context preparation helper, set all four:
@@ -123,11 +123,16 @@ inherited environment variables also take precedence over `.env`.
 An existing preparation session is not reconfigured. No plugin refresh,
 worker relaunch, or UI change is required.
 
-The profile forwards `model` and `reasoningEffort` to `createSession`, and
-`cliPath` plus `["--context", "long_context"]` to the actual `CopilotClient`
-process. SDK 0.3.0 has no `contextTier` session field; model-capability overrides
-are not context selection. The legacy PAW initializer uses the same profile.
-Standalone context synthesis, summarization, and later workers are unchanged.
+With an explicit preparation CLI path, the preparation-only
+`@github/copilot-sdk-preparation` alias pins SDK **1.0.18**. Its adapter uses
+`RuntimeConnection.forStdio({ path })` and forwards `model`, `reasoningEffort`,
+and `contextTier` at the **session level** on both create and resume. It does
+not pass `--context` at process startup: that flag did not propagate into the
+SDK 0.3.0 session. Both the combined preparation and legacy PAW initializer
+use the adapter; neither currently resumes a previous helper session.
+The adapter translates the newer SDK's `workingDirectory` client option and
+`configDirectory` session option, and builds tools with the selected SDK's
+types. No model-capability overrides are used.
 
 Configured values fail closed before session creation: blank/invalid values,
 unusable CLI paths, CLI help without the selected context option, unavailable
@@ -135,20 +140,20 @@ or non-enabled models, unsupported reasoning, and missing long-context catalog
 metadata produce actionable preparation errors. When model policy is present,
 it must be `enabled`; `disabled` and `unconfigured` are rejected. Catalogs that
 omit policy remain supported. Long-context availability is
-read from CLI 1.0.87's `billing.tokenPrices.longContext.contextMax` metadata,
-which SDK 0.3.0 preserves. Missing metadata is an error, not permission to guess
-or fall back. With all four variables absent, no new capability probes or
-overrides are added.
+read from CLI 1.0.87's `billing.tokenPrices.longContext.contextMax` metadata.
+Missing metadata is an error, not permission to guess or fall back.
 
-**Version boundary:** the lockfile retains SDK **0.3.0** and its bundled CLI
-**1.0.36**. The bundled CLI lacks `--context`. CLI **1.0.87** (also verified with
-the installed **1.0.87-0** executable) accepts it through the explicit path.
-A global dependency override is unsafe here: SDK 0.3.0's bundled-path resolver
-expects the old `index.js` layout, while the 1.0.87 npm package uses
-`npm-loader.js` and native platform packages. Its default resolution points to
-a nonexistent file. The explicit path avoids that resolver without changing
-other SDK callers. Operators own installation/version pinning of this CLI;
-the repository does not upgrade the user's installation.
+**Version boundary:** without a preparation CLI path, the adapter retains SDK
+**0.3.0**, its existing CLI resolution (including its bundled CLI **1.0.36**),
+and its model/reasoning configuration. With all four variables absent, the
+model remains `gpt-5.5` and no new capability probes or overrides are added.
+Standalone context synthesis, summarization, managed workers, and session
+filesystem integration retain their existing SDK 0.3.0 imports. Do not replace
+the old SDK globally or override its bundled CLI dependency: its old `index.js`
+resolver is incompatible with the 1.0.87 npm loader layout. Operators own
+installation/version pinning of the explicit CLI; the repository does not
+upgrade the user's installation. SDK 1.0.18 requires Node `^20.19.0 || >=22.12.0`
+and supports the protocol-3 transport reported by CLI 1.0.87-0.
 
 Before deployment, inspect the chosen executable without starting a session:
 
@@ -159,14 +164,26 @@ Before deployment, inspect the chosen executable without starting a session:
 
 For a `.js` loader, prefix those commands with `node`. Confirm `--context`
 advertises `default, long_context`. A no-session SDK `start` / `listModels` /
-`stop` probe with that `cliPath` and context argument can check account-specific
-availability; do not call `createSession` for a capability probe. The verified
+`stop` probe using `RuntimeConnection.forStdio({ path })` can check
+account-specific availability; do not call `createSession` for a capability
+probe. The verified
 Astra catalog reported **1,050,000 tokens**, including its long-context tier,
 not the requested **1.2M**. That is catalog evidence, not a measured live
 session budget or a guarantee for another account. The installed 1.0.87-0
 executable's RPC `getStatus` reported `0.0.1`/protocol 3; use executable
 `--version`, feature help, and the catalog rather than treating that RPC
 version as the installation version.
+
+**Effective verification oracle:** mocked protocol tests prove the actual
+`session.create` and `session.resume` payloads contain the requested profile;
+they do not prove live long-context execution. After reviewed deployment, an
+authorized initializer must also persist `session.start` with
+`gpt-6-astra` / `high` / `long_context`, and its runtime request usage must show
+a prompt budget materially above **272,000**, consistent with the enabled long
+tier. Do not infer an exact reserve-adjusted budget from the **1,050,000**
+catalog capacity. Require exactly one successful `save_streamliner_context`
+and `complete_paw_init`, readiness, and routine shutdown. Preserve the old
+default-tier evidence; do not relabel it as long-context execution.
 
 ## GitHub status authentication
 

@@ -54,7 +54,7 @@ describe("PAW preparation profile", () => {
     expect(profile).toEqual({
       configured: false,
       context: undefined,
-      client: {},
+      cliPath: undefined,
       session: { model: "gpt-5.5" },
     });
     await validatePreparationCli(profile);
@@ -62,10 +62,10 @@ describe("PAW preparation profile", () => {
     expect(client.listModels).not.toHaveBeenCalled();
   });
 
-  it("uses SDK-supported fields and exact CLI arguments for the explicit profile", async () => {
+  it("uses SDK-supported session fields for the explicit profile", async () => {
     const profile = readPreparationProfile(configuredEnv());
-    expect(profile.client).toEqual({ cliPath, cliArgs: ["--context", "long_context"] });
-    expect(profile.session).toEqual({ model: "gpt-6-astra", reasoningEffort: "high" });
+    expect(profile.cliPath).toBe(cliPath);
+    expect(profile.session).toEqual({ model: "gpt-6-astra", reasoningEffort: "high", contextTier: "long_context" });
     await validatePreparationCli(profile);
     await validatePreparationProfile({ listModels: vi.fn(async () => [modelInfo()]) }, profile);
   });
@@ -78,7 +78,7 @@ describe("PAW preparation profile", () => {
     const profile = readPreparationProfile({ ...configuredEnv(), STREAMLINER_PAW_INIT_CONTEXT: "default" });
     const model = modelInfo();
     delete model.billing;
-    expect(profile.client.cliArgs).toEqual(["--context", "default"]);
+    expect(profile.session.contextTier).toBe("default");
     await validatePreparationCli(profile);
     await validatePreparationProfile({ listModels: vi.fn(async () => [model]) }, profile);
   });
