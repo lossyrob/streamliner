@@ -6,13 +6,6 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { promisify } from "node:util";
 import { githubRepositoryFromRemote, githubRepositorySlug } from "../github-host";
 
-import {
-  approveAll,
-  CopilotClient,
-  defineTool,
-  type SessionEvent,
-} from "@github/copilot-sdk";
-
 import type {
   NodeBranchLease,
   NodeBranchLeaseCoordinator,
@@ -38,7 +31,13 @@ import {
   launchPolicyDetails,
 } from "./launch-policy";
 import { getApiLogger } from "./logger";
-import { readPreparationProfile, validatePreparationCli, validatePreparationProfile } from "./launch-preparation-profile";
+import { readPreparationProfile } from "./launch-preparation-profile";
+import {
+  createPreparationClient,
+  definePreparationTool,
+  type PreparationEvent,
+  type PreparationSession,
+} from "./launch-preparation-sdk";
 import {
   COPILOT_INSTRUCTIONS_RELATIVE_PATH,
   LaunchContextPreparationError,
@@ -1660,7 +1659,7 @@ export function validatePawWorktreePolicy(input: {
 
 function emitSdkProgressEvent(
   sink: PawLaunchProgressSink | undefined,
-  event: SessionEvent,
+  event: PreparationEvent,
 ): void {
   switch (event.type) {
     case "session.start":
@@ -1703,7 +1702,7 @@ function emitSdkProgressEvent(
 }
 
 async function sendPromptAndWaitForIdle(
-  session: Awaited<ReturnType<CopilotClient["createSession"]>>,
+  session: PreparationSession,
   prompt: string,
   timeoutMs: number | undefined,
 ): Promise<string> {
@@ -1712,14 +1711,14 @@ async function sendPromptAndWaitForIdle(
   const unsubs: Array<() => void> = [];
   try {
     const idlePromise = new Promise<string>((resolvePromise, rejectPromise) => {
-      unsubs.push(session.on("assistant.message", (event) => {
-        lastAssistantContent = event.data.content ?? "";
-      }));
-      unsubs.push(session.on("session.error", (event) => {
-        rejectPromise(new Error(event.data.message || "Copilot SDK session error."));
-      }));
-      unsubs.push(session.on("session.idle", () => {
-        resolvePromise(lastAssistantContent);
+      unsubs.push(session.on((event) => {
+        if (event.type === "assistant.message") {
+          lastAssistantContent = event.data.content ?? "";
+        } else if (event.type === "session.error") {
+          rejectPromise(new Error(event.data.message || "Copilot SDK session error."));
+        } else if (event.type === "session.idle") {
+          resolvePromise(lastAssistantContent);
+        }
       }));
       if (timeoutMs !== undefined) {
         timeout = setTimeout(() => {
@@ -1834,18 +1833,13 @@ export async function defaultPawInitRunner(
   input: PawInitRunnerInput,
 ): Promise<PawInitRunnerResult> {
   const profile = readPreparationProfile();
-  await validatePreparationCli(profile);
+  const client = await createPreparationClient(profile, input.cwd);
   const skillDirectories = pawSkillDirectories();
   if (skillDirectories.length === 0) {
     throw new Error("Could not find the installed paw-init skill. Set STREAMLINER_PAW_SKILL_DIR to the PAW skills directory.");
   }
 
-  const client = new CopilotClient({
-    ...profile.client,
-    cwd: input.cwd,
-    logLevel: "error",
-  });
-  let session: Awaited<ReturnType<CopilotClient["createSession"]>> | undefined;
+  let session: PreparationSession | undefined;
   let toolResult: PawInitRunnerResult | undefined;
   let started = false;
   let cleanupError: Error | undefined;
@@ -1853,8 +1847,7 @@ export async function defaultPawInitRunner(
   try {
     await client.start();
     started = true;
-    await validatePreparationProfile(client, profile);
-    const completeTool = defineTool<CompletePawInitArgs>(
+    const completeTool = definePreparationTool<CompletePawInitArgs>(
       "complete_paw_init",
       {
         description: "Complete PAW initialization for a Streamliner launch after paw-init has written or validated WorkflowContext.md by installing the staged context bundle.",
@@ -1931,12 +1924,10 @@ export async function defaultPawInitRunner(
 
     session = await client.createSession({
       clientName: "streamliner-paw-launch-initializer",
-      ...profile.session,
       workingDirectory: input.cwd,
       enableConfigDiscovery: true,
       skillDirectories,
       tools: [completeTool],
-      onPermissionRequest: approveAll,
       customAgents: [
         {
           name: "streamliner-paw-init",
@@ -2131,7 +2122,7 @@ export async function defaultPawLaunchSessionRunner(
   input: PawLaunchSessionRunnerInput,
 ): Promise<PawLaunchSessionRunnerResult> {
   const profile = readPreparationProfile();
-  await validatePreparationCli(profile);
+  const client = await createPreparationClient(profile, input.cwd);
   const skillDirectories = pawSkillDirectories();
   if (skillDirectories.length === 0) {
     throw new Error("Could not find the installed paw-init skill. Set STREAMLINER_PAW_SKILL_DIR to the PAW skills directory.");
@@ -2148,12 +2139,7 @@ export async function defaultPawLaunchSessionRunner(
     launchManifestPath: normalizeManifestPath(sdkLaunchManifestPath),
   });
 
-  const client = new CopilotClient({
-    ...profile.client,
-    cwd: input.cwd,
-    logLevel: "error",
-  });
-  let session: Awaited<ReturnType<CopilotClient["createSession"]>> | undefined;
+  let session: PreparationSession | undefined;
   let contextPackage: LaunchContextPackage | undefined;
   let toolResult: PawInitRunnerResult | undefined;
   let started = false;
@@ -2163,9 +2149,8 @@ export async function defaultPawLaunchSessionRunner(
   try {
     await client.start();
     started = true;
-    await validatePreparationProfile(client, profile);
 
-    const saveContextTool = defineTool<SaveStreamlinerContextArgs>(
+    const saveContextTool = definePreparationTool<SaveStreamlinerContextArgs>(
       "save_streamliner_context",
       {
         description: "Persist the generated Streamliner worker-facing context.md for this launch.",
@@ -2198,7 +2183,7 @@ export async function defaultPawLaunchSessionRunner(
       },
     );
 
-    const completeTool = defineTool<CompletePawInitArgs>(
+    const completeTool = definePreparationTool<CompletePawInitArgs>(
       "complete_paw_init",
       {
         description: "Complete PAW initialization for a Streamliner launch after paw-init has written or validated WorkflowContext.md by installing the saved Streamliner context bundle.",
@@ -2292,14 +2277,12 @@ export async function defaultPawLaunchSessionRunner(
 
     session = await client.createSession({
       clientName: "streamliner-paw-launch-preparation",
-      ...profile.session,
       workingDirectory: input.cwd,
       configDir: sdkStateRoot,
       enableConfigDiscovery: true,
       streaming: true,
       skillDirectories,
       tools: [saveContextTool, completeTool],
-      onPermissionRequest: approveAll,
       onEvent: (event) => emitSdkProgressEvent(input.onProgress, event),
       customAgents: [
         {

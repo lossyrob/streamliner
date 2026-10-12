@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import type { CopilotClientOptions, ModelInfo, SessionConfig } from "@github/copilot-sdk";
+import type { CopilotClientOptions as PreparationClientOptions, SessionConfig as PreparationSessionConfig } from "@github/copilot-sdk-preparation";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -42,15 +43,17 @@ import {
 
 const sdkMock = vi.hoisted(() => {
   const clientOptions: CopilotClientOptions[] = [];
+  const preparationClientOptions: PreparationClientOptions[] = [];
   const session = {
     sessionId: "profile-test-session",
     workspacePath: undefined,
-    on: vi.fn<(name: string, handler: (event: { data: { content: string } }) => void) => () => void>(),
+    on: vi.fn<(handler: (event: { type: string; data: { content: string } }) => void) => () => void>(),
     send: vi.fn<(message: { prompt: string }) => Promise<string>>(),
     sendAndWait: vi.fn(),
     disconnect: vi.fn(async () => {}),
   };
-  const createSession = vi.fn<(config: SessionConfig) => Promise<typeof session>>();
+  const createSession = vi.fn<(config: SessionConfig | PreparationSessionConfig) => Promise<typeof session>>();
+  const toolCalls = vi.fn<(name: string) => void>();
   const listModels = vi.fn<() => Promise<ModelInfo[]>>();
   const start = vi.fn(async () => {});
   const stop = vi.fn(async () => []);
@@ -61,12 +64,25 @@ const sdkMock = vi.hoisted(() => {
     createSession = createSession;
     listModels = listModels;
   }
-  return { clientOptions, session, createSession, listModels, start, stop, MockCopilotClient };
+  class MockPreparationClient {
+    constructor(options: PreparationClientOptions) {
+      preparationClientOptions.push(options);
+    }
+    start = start;
+    stop = stop;
+    createSession = createSession;
+    listModels = listModels;
+  }
+  return { clientOptions, preparationClientOptions, session, createSession, toolCalls, listModels, start, stop, MockCopilotClient, MockPreparationClient };
 });
 
 vi.mock("@github/copilot-sdk", async (importOriginal) => ({
   ...await importOriginal<typeof import("@github/copilot-sdk")>(),
   CopilotClient: sdkMock.MockCopilotClient,
+}));
+vi.mock("@github/copilot-sdk-preparation", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@github/copilot-sdk-preparation")>(),
+  CopilotClient: sdkMock.MockPreparationClient,
 }));
 
 const createdRoots: string[] = [];
@@ -473,6 +489,7 @@ describe("production preparation SDK profile", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     sdkMock.clientOptions.length = 0;
+    sdkMock.preparationClientOptions.length = 0;
     for (const name of [
       "STREAMLINER_PAW_INIT_MODEL", "STREAMLINER_PAW_INIT_REASONING_EFFORT",
       "STREAMLINER_PAW_INIT_CONTEXT", "STREAMLINER_PAW_INIT_CLI_PATH",
@@ -500,17 +517,17 @@ describe("production preparation SDK profile", () => {
     }]);
     sdkMock.createSession.mockResolvedValue(sdkMock.session);
     sdkMock.session.sendAndWait.mockRejectedValue(new Error("mock legacy turn stopped"));
-    const handlers = new Map<string, (event: { data: { content: string } }) => void>();
-    sdkMock.session.on.mockImplementation((name, handler) => {
-      handlers.set(name, handler);
-      return () => { handlers.delete(name); };
+    const handlers = new Set<(event: { type: string; data: { content: string } }) => void>();
+    sdkMock.session.on.mockImplementation((handler) => {
+      handlers.add(handler);
+      return () => { handlers.delete(handler); };
     });
     sdkMock.session.send.mockImplementation(async () => {
       const config = sdkMock.createSession.mock.calls.at(-1)?.[0];
       const firstTurn = sdkMock.session.send.mock.calls.length === 1;
       const toolName = firstTurn ? "save_streamliner_context" : "complete_paw_init";
       const tool = config?.tools?.find((entry) => entry.name === toolName);
-      if (!tool) throw new Error(`Missing ${toolName} in mock session`);
+      if (!tool?.handler) throw new Error(`Missing ${toolName} in mock session`);
       const workDir = join(root, ".paw", "work", "profile-test");
       if (!firstTurn) {
         mkdirSync(workDir, { recursive: true });
@@ -526,8 +543,11 @@ describe("production preparation SDK profile", () => {
         ].join("\n\n") }
         : { workId: "profile-test", workTitle: "Profile test", targetBranch: "main", pawWorkDir: workDir },
       { sessionId: "profile-test-session", toolCallId: toolName, toolName, arguments: {} });
-      handlers.get("assistant.message")?.({ data: { content: '{"status":"ready"}' } });
-      handlers.get("session.idle")?.({ data: { content: "" } });
+      sdkMock.toolCalls(toolName);
+      for (const handler of handlers) {
+        handler({ type: "assistant.message", data: { content: '{"status":"ready"}' } });
+        handler({ type: "session.idle", data: { content: "" } });
+      }
       return "mock-message";
     });
   });
@@ -562,26 +582,35 @@ describe("production preparation SDK profile", () => {
     configureProfile();
     const response = await prepareThroughProductionRoute();
     expect(response.body.target).toBe("external-session");
-    expect(sdkMock.clientOptions).toEqual([{
-      cwd: root, logLevel: "error", cliPath, cliArgs: ["--context", "long_context"],
+    expect(sdkMock.clientOptions).toEqual([]);
+    expect(sdkMock.preparationClientOptions).toEqual([{
+      workingDirectory: root, logLevel: "error", connection: { kind: "stdio", path: cliPath },
     }]);
     expect(sdkMock.createSession).toHaveBeenCalledTimes(1);
     expect(sdkMock.createSession.mock.calls[0][0]).toMatchObject({
       clientName: "streamliner-paw-launch-preparation",
-      model: "gpt-6-astra", reasoningEffort: "high",
+      model: "gpt-6-astra", reasoningEffort: "high", contextTier: "long_context",
     });
-    expect(sdkMock.createSession.mock.calls[0][0]).not.toHaveProperty("contextTier");
+    expect(sdkMock.createSession.mock.calls[0][0]).toHaveProperty("configDirectory");
+    expect(sdkMock.createSession.mock.calls[0][0]).not.toHaveProperty("configDir");
     expect(sdkMock.createSession.mock.calls[0][0]).not.toHaveProperty("modelCapabilities");
     expect(sdkMock.listModels.mock.invocationCallOrder[0]).toBeLessThan(sdkMock.createSession.mock.invocationCallOrder[0]);
     expect(sdkMock.stop).toHaveBeenCalledTimes(1);
+    expect(sdkMock.session.disconnect).toHaveBeenCalledTimes(1);
+    expect(sdkMock.toolCalls.mock.calls).toEqual([["save_streamliner_context"], ["complete_paw_init"]]);
   });
 
   it("retains default combined behavior when the profile is unset, regardless of handoff environment", async () => {
     await prepareThroughProductionRoute();
     expect(sdkMock.clientOptions).toEqual([{ cwd: root, logLevel: "error" }]);
+    expect(sdkMock.preparationClientOptions).toEqual([]);
     expect(sdkMock.createSession.mock.calls[0][0]).toMatchObject({ model: "gpt-5.5" });
     expect(sdkMock.createSession.mock.calls[0][0]).not.toHaveProperty("reasoningEffort");
+    expect(sdkMock.createSession.mock.calls[0][0]).not.toHaveProperty("contextTier");
     expect(sdkMock.listModels).not.toHaveBeenCalled();
+    expect(sdkMock.toolCalls.mock.calls).toEqual([["save_streamliner_context"], ["complete_paw_init"]]);
+    expect(sdkMock.session.disconnect).toHaveBeenCalledTimes(1);
+    expect(sdkMock.stop).toHaveBeenCalledTimes(1);
   });
 
   it.each(["invalid", "old-cli", "unsupported-model", "unconfigured-model", "unsupported-effort", "unsupported-context", "catalog-error"])(
@@ -623,15 +652,16 @@ describe("production preparation SDK profile", () => {
         terminal: { launchMode: "manual", preferredTerminal: "default", title: null, tabColor: null },
       },
     })).rejects.toThrow("mock legacy turn stopped");
-    expect(sdkMock.clientOptions[0]).toEqual({
-      cwd: root, logLevel: "error",
-      ...(configured ? { cliPath, cliArgs: ["--context", "long_context"] } : {}),
-    });
+    expect(configured ? sdkMock.preparationClientOptions[0] : sdkMock.clientOptions[0]).toEqual(configured
+      ? { workingDirectory: root, logLevel: "error", connection: { kind: "stdio", path: cliPath } }
+      : { cwd: root, logLevel: "error" });
     expect(sdkMock.createSession.mock.calls[0][0]).toMatchObject({
       clientName: "streamliner-paw-launch-initializer",
-      ...(configured ? { model: "gpt-6-astra", reasoningEffort: "high" } : { model: "gpt-5.5" }),
+      ...(configured ? { model: "gpt-6-astra", reasoningEffort: "high", contextTier: "long_context" } : { model: "gpt-5.5" }),
     });
     if (!configured) expect(sdkMock.createSession.mock.calls[0][0]).not.toHaveProperty("reasoningEffort");
+    expect(sdkMock.session.disconnect).toHaveBeenCalledTimes(1);
+    expect(sdkMock.stop).toHaveBeenCalledTimes(1);
   });
 });
 
