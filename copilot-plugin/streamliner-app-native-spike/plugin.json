@@ -1,0 +1,12 @@
+{
+  "name": "streamliner-app-native-spike",
+  "description": "Provides the App-native Streamliner spike extension, Canvases, launch skill, and worker agent.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Streamliner"
+  },
+  "repository": "https://github.com/lossyrob/streamliner",
+  "agents": "agents/",
+  "skills": "skills/",
+  "extensions": "extensions/"
+}

@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "id": "artifact-foundation",
+  "projectKey": "streamliner-spike",
+  "title": "Artifact foundation",
+  "summary": "Provide coherent exact-revision portfolio artifacts and a replaceable shared-ref boundary.",
+  "status": "active",
+  "attention": "watch",
+  "createdAt": "2026-08-21T12:00:00.000Z",
+  "updatedAt": "2026-08-21T12:00:00.000Z",
+  "repos": [{"id": "streamliner", "owner": "lossyrob", "name": "streamliner", "role": "primary"}],
+  "designRefs": [{"repoId": "streamliner", "path": "docs/design/workstream-format.md"}],
+  "nodes": [
+    {
+      "id": "artifact-contract",
+      "type": "research",
+      "title": "Exact artifact contract",
+      "summary": "Resolve one Git commit and read every portfolio source from that immutable snapshot.",
+      "status": "completed",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "tracker": {"type": "local", "path": "tasks/artifact-contract.md"},
+      "dependsOn": []
+    },
+    {
+      "id": "shared-ref-writer",
+      "type": "task",
+      "title": "Shared ref writer boundary",
+      "summary": "Define a narrow writer that can later target a shared artifact branch without source checkout mutation.",
+      "status": "ready",
+      "attention": "watch",
+      "repoIds": ["streamliner"],
+      "tracker": {"type": "local", "path": "tasks/shared-ref-writer.md"},
+      "dependsOn": ["artifact-contract"]
+    },
+    {
+      "id": "artifact-consistency-gate",
+      "type": "gate",
+      "title": "Artifact consistency gate",
+      "summary": "Accept remote synchronization and concurrent-writer behavior before production rollout.",
+      "status": "planned",
+      "attention": "focus",
+      "repoIds": ["streamliner"],
+      "tracker": {"type": "local", "path": "tasks/artifact-consistency-gate.md"},
+      "dependsOn": ["shared-ref-writer"]
+    },
+    {
+      "id": "layout-reconciliation-proof",
+      "type": "task",
+      "title": "Layout reconciliation proof",
+      "summary": "Add a stable checkpoint node after pins exist and verify it inherits the workstream anchor.",
+      "status": "planned",
+      "attention": "watch",
+      "repoIds": ["streamliner"],
+      "tracker": {"type": "local", "path": "tasks/layout-reconciliation-proof.md"},
+      "dependsOn": ["artifact-consistency-gate"]
+    }
+  ],
+  "checkpoints": []
+}
