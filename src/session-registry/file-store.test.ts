@@ -63,6 +63,62 @@ afterEach(() => {
 });
 
 describe("SessionRegistryFileStore", () => {
+  it("initializes a cold registry cooperatively and preserves quarantine and index recovery", async () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const writer = new SessionRegistryFileStore({ rootDir });
+    const template = writer.upsertSession({
+      id: "template",
+      title: "Session",
+      cwd: "C:\\repo",
+      origin: { kind: "manual" },
+    });
+    for (let index = 0; index < 150; index += 1) {
+      const record = { ...template, id: `session-${index}` };
+      writeFileSync(join(rootDir, "entries", `${record.id}.json`), JSON.stringify(record));
+    }
+    writeFileSync(join(rootDir, "entries", "malformed.json"), "{");
+    writeFileSync(join(rootDir, "index.json"), "{");
+    const reader = new SessionRegistryFileStore({ rootDir });
+    let ticks = 0;
+    const timer = setInterval(() => { ticks += 1; }, 1);
+    try {
+      await Promise.all([reader.initialize(), reader.initialize()]);
+    } finally {
+      clearInterval(timer);
+    }
+    expect(ticks).toBeGreaterThan(0);
+    expect(reader.listSessions()).toHaveLength(151);
+    expect(readdirSync(join(rootDir, "quarantine"))).toHaveLength(1);
+    expect(new SessionRegistryFileStore({ rootDir }).listSessions()).toHaveLength(151);
+  });
+
+  it("does not overwrite a synchronous mutation made during initialization", async () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+    const initialization = store.initialize();
+    const record = store.upsertSession({
+      title: "Created during initialization",
+      cwd: "C:\\repo",
+      origin: { kind: "manual" },
+    });
+    await initialization;
+    expect(store.getSession(record.id)).toEqual(record);
+    expect(new SessionRegistryFileStore({ rootDir }).getSession(record.id)).toEqual(record);
+  });
+
+  it("can retry initialization after cancellation", async () => {
+    const rootDir = createRootDir();
+    createdRoots.push(rootDir);
+    const store = new SessionRegistryFileStore({ rootDir });
+    const controller = new AbortController();
+    controller.abort();
+    await expect(store.initialize(controller.signal)).rejects.toBe(controller.signal.reason);
+    await store.initialize();
+    expect(store.listSessions()).toEqual([]);
+  });
+
   it("creates a manual session and persists entry and index files", () => {
     const rootDir = createRootDir();
     createdRoots.push(rootDir);

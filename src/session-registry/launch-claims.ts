@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { resolve } from "node:path";
+import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 
 import {
   LAUNCH_CLAIM_DEFAULT_BINDING_WINDOW_MS,
@@ -422,26 +423,25 @@ export function applyReservedRowCleanup(
  * Should be called by the background worker on startup before the
  * first poll cycle.
  */
-export function reconcileOrphanReservedRows(
+export async function reconcileOrphanReservedRows(
   registryStore: SessionRegistryFileStore,
   claimStore: LaunchClaimStore,
-): {
+  signal?: AbortSignal,
+): Promise<{
   rowsDeleted: number;
   rowsGraphBindingCleared: number;
   rowsGraphBindingRestored: number;
   rowsInspected: number;
-} {
-  const sessions = registryStore.listSessions({ includeArchived: true });
-  const launchedSessions = sessions.filter((session) => session.originKind === "launched");
+}> {
   let rowsDeleted = 0;
   const rowsGraphBindingCleared = 0;
   let rowsGraphBindingRestored = 0;
   let rowsInspected = 0;
-  for (const session of launchedSessions) {
-    rowsInspected += 1;
-    const fullRecord = registryStore.getSession(session.id);
-    if (!fullRecord) continue;
+  for await (const fullRecord of registryStore.readSessionRecords(signal)) {
     if (fullRecord.origin.kind !== "launched") continue;
+    await yieldToEventLoop();
+    signal?.throwIfAborted();
+    rowsInspected += 1;
     const launchClaimId = fullRecord.origin.launchClaimId ?? null;
     if (!launchClaimId) continue;
     const claim = claimStore.getClaim(launchClaimId);

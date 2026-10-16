@@ -1,4 +1,9 @@
-import type { SessionRegistryListItem } from "../session-registry-contract";
+import { setImmediate as yieldToEventLoop } from "node:timers/promises";
+
+import {
+  sessionRegistryRecordToListItem,
+  type SessionRegistryListItem,
+} from "../session-registry-contract";
 import type { SessionRegistryManagedLifecycleState } from "../session-registry-schema";
 import type { SessionRegistryFileStore } from "./file-store";
 import { isManagedRuntimeActive } from "./managed-runtime";
@@ -49,14 +54,15 @@ function managedRuntimeStartupDiagnosticData(
   };
 }
 
-export function reconcileManagedRuntimeStartupRows(
+export async function reconcileManagedRuntimeStartupRows(
   store: SessionRegistryFileStore,
   options: {
     now?: () => Date;
     isOwnerLive?: ManagedRuntimeOwnerVerifier;
     logger?: Pick<Console, "warn">;
+    signal?: AbortSignal;
   } = {},
-): ManagedRuntimeStartupReconciliationResult {
+): Promise<ManagedRuntimeStartupReconciliationResult> {
   const result: ManagedRuntimeStartupReconciliationResult = {
     rowsExamined: 0,
     activeRowsFound: 0,
@@ -69,12 +75,18 @@ export function reconcileManagedRuntimeStartupRows(
 
   const now = options.now?.() ?? new Date();
   const timestamp = now.toISOString();
-  for (const session of store.listSessions({ includeArchived: false })) {
+  for await (const record of store.readSessionRecords(options.signal)) {
+    if (record.lifecycleStatus === "archived") {
+      continue;
+    }
+    const session = sessionRegistryRecordToListItem(record);
     const runtime = session.runtime;
     if (runtime?.runtimeKind !== "managed-sdk" || !runtime.lifecycleState) {
       continue;
     }
     result.rowsExamined += 1;
+    await yieldToEventLoop();
+    options.signal?.throwIfAborted();
 
     if (!isManagedRuntimeActive(runtime)) {
       if (runtime.lifecycleState === "terminal_takeover") {

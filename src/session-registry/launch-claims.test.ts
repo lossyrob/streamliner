@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   LAUNCH_NONCE_MIN_LENGTH,
@@ -474,7 +474,7 @@ describe("reconcileOrphanReservedRows", () => {
     rmSync(claimRoot, { recursive: true, force: true });
   });
 
-  it("deletes orphan launched rows whose claim is missing and copilotSessionId is null", () => {
+  it("deletes orphan launched rows whose claim is missing and copilotSessionId is null", async () => {
     // Manually create a launched row without a corresponding claim.
     registryStore.upsertSession({
       id: "orphan-1",
@@ -493,13 +493,13 @@ describe("reconcileOrphanReservedRows", () => {
       },
     });
 
-    const result = reconcileOrphanReservedRows(registryStore, claimStore);
+    const result = await reconcileOrphanReservedRows(registryStore, claimStore);
     expect(result.rowsInspected).toBe(1);
     expect(result.rowsDeleted).toBe(1);
     expect(registryStore.getSession("orphan-1")).toBeNull();
   });
 
-  it("preserves orphan launched rows that have a copilotSessionId and keeps graphBinding", () => {
+  it("preserves orphan launched rows that have a copilotSessionId and keeps graphBinding", async () => {
     registryStore.upsertSession({
       id: "orphan-with-session",
       title: "Orphan",
@@ -522,10 +522,12 @@ describe("reconcileOrphanReservedRows", () => {
       cwd: "C:/x",
       lastSeenAt: "2026-05-02T01:00:00.000Z",
     });
-    const result = reconcileOrphanReservedRows(registryStore, claimStore);
+    const getSession = vi.spyOn(registryStore, "getSession");
+    const result = await reconcileOrphanReservedRows(registryStore, claimStore);
     expect(result.rowsDeleted).toBe(0);
     expect(result.rowsGraphBindingCleared).toBe(0);
     expect(result.rowsGraphBindingRestored).toBe(0);
+    expect(getSession).not.toHaveBeenCalled();
     const row = registryStore.getSession("orphan-with-session");
     expect(row?.copilotSessionId).toBe("real-session");
     expect(row?.graphBinding).toEqual({
@@ -534,13 +536,13 @@ describe("reconcileOrphanReservedRows", () => {
       launchClaimId: "gone-claim",
     });
 
-    const second = reconcileOrphanReservedRows(registryStore, claimStore);
+    const second = await reconcileOrphanReservedRows(registryStore, claimStore);
     expect(second.rowsDeleted).toBe(0);
     expect(second.rowsGraphBindingCleared).toBe(0);
     expect(second.rowsGraphBindingRestored).toBe(0);
   });
 
-  it("restores graphBinding for older launched rows whose binding was cleared", () => {
+  it("restores graphBinding for older launched rows whose binding was cleared", async () => {
     registryStore.upsertSession({
       id: "cleared-with-session",
       title: "Recovered graph session",
@@ -575,7 +577,7 @@ describe("reconcileOrphanReservedRows", () => {
       }],
     });
 
-    const result = reconcileOrphanReservedRows(registryStore, claimStore);
+    const result = await reconcileOrphanReservedRows(registryStore, claimStore);
     expect(result.rowsDeleted).toBe(0);
     expect(result.rowsGraphBindingCleared).toBe(0);
     expect(result.rowsGraphBindingRestored).toBe(1);
@@ -587,7 +589,7 @@ describe("reconcileOrphanReservedRows", () => {
     });
   });
 
-  it("preserves orphan managed SDK rows without a copilotSessionId and keeps graphBinding", () => {
+  it("preserves orphan managed SDK rows without a copilotSessionId and keeps graphBinding", async () => {
     registryStore.upsertSession({
       id: "orphan-managed-sdk",
       title: "Managed orphan",
@@ -620,7 +622,7 @@ describe("reconcileOrphanReservedRows", () => {
       },
     });
 
-    const result = reconcileOrphanReservedRows(registryStore, claimStore);
+    const result = await reconcileOrphanReservedRows(registryStore, claimStore);
 
     expect(result.rowsDeleted).toBe(0);
     expect(result.rowsGraphBindingCleared).toBe(0);
@@ -635,7 +637,7 @@ describe("reconcileOrphanReservedRows", () => {
     expect(row?.runtime?.lifecycleState).toBe("running");
   });
 
-  it("leaves rows alone when their claim still exists", () => {
+  it("leaves rows alone when their claim still exists", async () => {
     const outcome = createLaunchClaim(
       registryStore,
       claimStore,
@@ -646,7 +648,7 @@ describe("reconcileOrphanReservedRows", () => {
       },
     );
     expect(outcome.ok).toBe(true);
-    const result = reconcileOrphanReservedRows(registryStore, claimStore);
+    const result = await reconcileOrphanReservedRows(registryStore, claimStore);
     expect(result.rowsInspected).toBe(1);
     expect(result.rowsDeleted).toBe(0);
     expect(result.rowsGraphBindingCleared).toBe(0);

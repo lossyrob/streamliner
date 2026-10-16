@@ -298,6 +298,46 @@ function createEventStreamStore(options: {
 }
 
 describe("createStreamlinerApiApp", () => {
+  it("keeps health responsive and holds registry requests until startup recovery finishes", async () => {
+    const root = createRootDir();
+    let finishRecovery!: () => void;
+    const registryReady = new Promise<void>((resolve) => { finishRecovery = resolve; });
+    const store = new SessionRegistryFileStore({ rootDir: join(root, "registry") });
+    const upsert = vi.spyOn(store, "upsertSession");
+    const api = createIsolatedApi(root, { store, registryReady });
+    activeApps.push(api);
+    let sessionsResponded = false;
+    const sessions = request(api.app).get("/api/sessions").then((response) => {
+      sessionsResponded = true;
+      return response;
+    });
+    const create = request(api.app).post("/api/sessions").send({
+      title: "New launch",
+      cwd: "C:\\repo",
+      origin: { kind: "manual" },
+    }).then((response) => response);
+    try {
+      await request(api.app).get("/api/health").timeout(1_000).expect(200, { ok: true });
+      expect(sessionsResponded).toBe(false);
+      expect(upsert).not.toHaveBeenCalled();
+    } finally {
+      finishRecovery();
+    }
+    expect((await sessions).status).toBe(200);
+    expect((await create).status).toBe(200);
+    expect(upsert).toHaveBeenCalledOnce();
+  });
+
+  it("surfaces startup recovery errors without taking down health", async () => {
+    const root = createRootDir();
+    const api = createIsolatedApi(root, {
+      registryReady: Promise.reject(new Error("Registry recovery failed")),
+    });
+    activeApps.push(api);
+    await request(api.app).get("/api/health").expect(200, { ok: true });
+    await request(api.app).get("/api/sessions").expect(500, { error: "Registry recovery failed" });
+  });
+
   it("serves health, graph, recents, and session routes without listening itself", async () => {
     const rootDir = createRootDir();
     const graphPath = join(rootDir, "graph.json");
@@ -1295,11 +1335,20 @@ describe("createStreamlinerApiApp", () => {
 
     const received = await new Promise<string>((resolve, reject) => {
       let body = "";
+      let createdSession = false;
       const timeout = setTimeout(() => reject(new Error("Timed out waiting for SSE")), 5_000);
       const req = httpGet(`http://127.0.0.1:${port}/api/sessions/events`, (res) => {
         res.setEncoding("utf8");
         res.on("data", (chunk: string) => {
           body += chunk;
+          if (body.includes("event: snapshot") && !createdSession) {
+            createdSession = true;
+            store.upsertSession({
+              title: "Streamed session",
+              cwd: "C:\\repo",
+              origin: { kind: "manual" },
+            });
+          }
           if (
             body.includes("event: snapshot") &&
             body.includes("event: session.upserted") &&
@@ -1317,14 +1366,6 @@ describe("createStreamlinerApiApp", () => {
           reject(error);
         }
       });
-
-      setTimeout(() => {
-        store.upsertSession({
-          title: "Streamed session",
-          cwd: "C:\\repo",
-          origin: { kind: "manual" },
-        });
-      }, 100);
     });
 
     expect(received).toContain("event: snapshot");

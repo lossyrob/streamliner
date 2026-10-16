@@ -119,6 +119,20 @@ afterEach(() => {
 });
 
 describe("SessionRegistryBackgroundWorker", () => {
+  it("cancels pending startup recovery before shutdown completes", async () => {
+    const registryRoot = createRootDir("streamliner-session-worker-registry-");
+    const store = new SessionRegistryFileStore({ rootDir: registryRoot });
+    const worker = new SessionRegistryBackgroundWorker(store, {
+      initialDelayMs: 1_000_000,
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    });
+    worker.start();
+    const ready = worker.ready();
+    const rejected = expect(ready).rejects.toMatchObject({ name: "AbortError" });
+    await worker.stop();
+    await rejected;
+  });
+
   it("drains trusted signal spool files before discovery and summarization", async () => {
     const registryRoot = createRootDir("streamliner-session-worker-registry-");
     const sessionRoot = createRootDir("streamliner-session-worker-state-");

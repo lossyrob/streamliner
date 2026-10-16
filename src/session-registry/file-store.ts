@@ -13,8 +13,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { mkdir, readFile, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 
 import {
   type LaunchedSessionRegistryUpsertInput,
@@ -2219,6 +2221,7 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
   private lastSignature = "";
   private lastDiskFingerprint = "";
   private loaded = false;
+  private initialization: Promise<void> | null = null;
 
   /**
    * Per-file (filename → "mtimeMs:size") snapshot of the entries directory.
@@ -2238,6 +2241,96 @@ export class SessionRegistryFileStore implements SessionRegistryStore {
     this.recoveryLockPath = join(resolvedRoot, "registry.lock.recovery");
     this.writeLockWaitTimeoutMs =
       options?.writeLockWaitTimeoutMs ?? WRITE_LOCK_WAIT_TIMEOUT_MS;
+  }
+
+  async initialize(signal?: AbortSignal): Promise<void> {
+    if (this.loaded) {
+      return;
+    }
+    this.initialization ??= this.loadInitialSnapshot(signal).finally(() => {
+      this.initialization = null;
+    });
+    await this.initialization;
+  }
+
+  async *readSessionRecords(signal?: AbortSignal): AsyncGenerator<SessionRegistryRecord> {
+    await this.initialize(signal);
+    const snapshot = [...this.records.values()];
+    for (let index = 0; index < snapshot.length; index += 1) {
+      if (index % 25 === 0) {
+        await yieldToEventLoop();
+      }
+      signal?.throwIfAborted();
+      yield cloneValue(snapshot[index]);
+    }
+  }
+
+  private async loadInitialSnapshot(signal?: AbortSignal): Promise<void> {
+    await mkdir(this.entriesDir, { recursive: true });
+    await mkdir(this.quarantineDir, { recursive: true });
+    const records = new Map<string, StoredSessionRegistryRecord>();
+    const fingerprints = new Map<string, string>();
+    const names = (await readdir(this.entriesDir))
+      .filter((name) => name.endsWith(ENTRY_EXTENSION))
+      .sort();
+    for (let offset = 0; offset < names.length; offset += 25) {
+      signal?.throwIfAborted();
+      const batch = await Promise.all(names.slice(offset, offset + 25).map(async (name) => {
+        const path = join(this.entriesDir, name);
+        try {
+          const metadata = await stat(path);
+          return {
+            name,
+            path,
+            fingerprint: `${metadata.mtimeMs}:${metadata.size}`,
+            contents: await readFile(path, "utf8"),
+          };
+        } catch (error) {
+          if (isErrnoCode(error, "ENOENT")) {
+            return null;
+          }
+          throw error;
+        }
+      }));
+      signal?.throwIfAborted();
+      // A synchronous caller may have populated or mutated the store while
+      // filesystem reads were pending. Never replace that newer snapshot.
+      if (this.loaded) {
+        return;
+      }
+      for (const entry of batch) {
+        if (!entry) {
+          continue;
+        }
+        try {
+          const record = validateStoredRecord(JSON.parse(entry.contents), entry.path);
+          records.set(record.id, record);
+          fingerprints.set(entry.name, entry.fingerprint);
+        } catch {
+          this.quarantineEntry(entry.path);
+        }
+      }
+      await yieldToEventLoop();
+    }
+    signal?.throwIfAborted();
+    if (this.loaded) {
+      return;
+    }
+    const index = this.loadOrRebuildIndex(records);
+    const indexStat = await stat(this.indexPath);
+    if (this.loaded) {
+      return;
+    }
+    this.cachedEntryRecords = records;
+    this.cachedEntryFingerprints = fingerprints;
+    const fingerprint = [...fingerprints]
+      .map(([name, value]) => `${name}:${value}`)
+      .join("|");
+    this.commitSnapshot(
+      records,
+      index,
+      `${fingerprint}|${indexStat.mtimeMs}:${indexStat.size}`,
+    );
   }
 
   listSessions(options: SessionRegistryListOptions = {}): SessionRegistryListItem[] {

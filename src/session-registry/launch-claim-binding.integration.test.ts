@@ -234,7 +234,7 @@ describe("Launch Claim Binding — end-to-end integration", () => {
       nodeId: "launch-claim-binding",
       launchClaimId: "claim-INTEGRATION",
     });
-    const reconcile = reconcileOrphanReservedRows(registryStore, claimStore);
+    const reconcile = await reconcileOrphanReservedRows(registryStore, claimStore);
     expect(reconcile.rowsDeleted).toBe(0);
     expect(reconcile.rowsGraphBindingCleared).toBe(0);
     expect(registryStore.getSession("reg-INTEGRATION")?.graphBinding).toEqual({

@@ -44,7 +44,7 @@ describe("SessionRegistryBackgroundWorker — launch-claim startup recovery", ()
     logger = new ApiLogger({ logDir: logRoot, mirrorConsole: false, purgeOnStart: false });
   });
 
-  it("runs reconcileOrphanReservedRows synchronously when the worker starts", async () => {
+  it("finishes orphan recovery asynchronously before reporting startup ready", async () => {
     // Create an orphan launched row (no matching claim).
     registryStore.upsertSession({
       id: "orphan-startup",
@@ -73,6 +73,8 @@ describe("SessionRegistryBackgroundWorker — launch-claim startup recovery", ()
       logger: { info: () => {}, warn: () => {}, error: () => {} },
     });
     worker.start();
+    expect(registryStore.getSession("orphan-startup")).not.toBeNull();
+    await worker.ready();
     await worker.stop();
     expect(registryStore.getSession("orphan-startup")).toBeNull();
   });

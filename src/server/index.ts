@@ -39,6 +39,13 @@ try {
 }
 const registryStore = getSessionRegistryStore();
 const launchClaimStore = getLaunchClaimStore();
+const worker = process.env.STREAMLINER_INTERNAL_DISABLE_SESSION_WORKER === "1"
+  ? null
+  : ensureSessionRegistryBackgroundWorkerStarted(registryStore, {
+    logger: getApiLogger().withScope("worker"),
+    claimStore: launchClaimStore,
+    claimLogger: getApiLogger(),
+  });
 const api = createStreamlinerApiApp({
   store: registryStore,
   graphPath: config.graphPath,
@@ -47,6 +54,7 @@ const api = createStreamlinerApiApp({
   recentsPath: config.recentsPath,
   readonlyMode: config.previewReadonly,
   launchClaimStore,
+  registryReady: worker?.ready(),
 });
 const server = createServer(api.app);
 
@@ -58,22 +66,15 @@ async function shutdown(exitCode = 0): Promise<void> {
   }
   shuttingDown = true;
   api.close();
-  if (server.listening) {
-    await new Promise<void>((resolve) => {
+  const serverClosed = server.listening
+    ? new Promise<void>((resolve) => {
       server.close(() => resolve());
-    });
-  }
+    })
+    : Promise.resolve();
   await stopSessionRegistryBackgroundWorker();
+  await serverClosed;
   releaseApiLock();
   process.exitCode = exitCode;
-}
-
-if (process.env.STREAMLINER_INTERNAL_DISABLE_SESSION_WORKER !== "1") {
-  ensureSessionRegistryBackgroundWorkerStarted(registryStore, {
-    logger: getApiLogger().withScope("worker"),
-    claimStore: launchClaimStore,
-    claimLogger: getApiLogger(),
-  });
 }
 
 server.on("error", (error: NodeJS.ErrnoException) => {

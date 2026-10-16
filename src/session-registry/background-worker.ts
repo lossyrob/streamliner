@@ -201,6 +201,8 @@ export class SessionRegistryBackgroundWorker {
   private initialTimer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
   private hasReconciledOnStartup = false;
+  private startupReconciliation: Promise<void> | null = null;
+  private readonly startupAbort = new AbortController();
   private indexedSessionCursor = 0;
   private discoveryStartIndex = 0;
 
@@ -245,7 +247,11 @@ export class SessionRegistryBackgroundWorker {
     if (this.timer) {
       return;
     }
-    this.runStartupReconciliation();
+    void this.ready().catch((error: unknown) => {
+      if (!this.startupAbort.signal.aborted) {
+        this.logger.error("[session-worker] startup reconciliation failed", error);
+      }
+    });
     this.initialTimer = setTimeout(() => {
       this.initialTimer = null;
       void this.runCycle();
@@ -255,13 +261,22 @@ export class SessionRegistryBackgroundWorker {
     }, this.pollIntervalMs);
   }
 
-  private runStartupReconciliation(): void {
+  ready(): Promise<void> {
+    this.startupReconciliation ??= this.runStartupReconciliation();
+    return this.startupReconciliation;
+  }
+
+  private async runStartupReconciliation(): Promise<void> {
     if (!this.hasReconciledOnStartup) {
+      const signal = this.startupAbort.signal;
+      await this.store.initialize(signal);
+      signal.throwIfAborted();
       try {
-        const result = reconcileManagedRuntimeStartupRows(this.store, {
+        const result = await reconcileManagedRuntimeStartupRows(this.store, {
           now: this.now,
           isOwnerLive: this.managedRuntimeOwnerVerifier,
           logger: this.logger,
+          signal,
         });
         if (
           result.rowsReconciled > 0 ||
@@ -275,11 +290,13 @@ export class SessionRegistryBackgroundWorker {
           );
         }
       } catch (error) {
+        signal.throwIfAborted();
         this.logger.warn("[session-worker] managed-runtime startup reconciliation failed", error);
+        throw error;
       }
       if (this.claimStore) {
         try {
-          const result = reconcileOrphanReservedRows(this.store, this.claimStore);
+          const result = await reconcileOrphanReservedRows(this.store, this.claimStore, signal);
           if (
             result.rowsDeleted > 0 ||
             result.rowsGraphBindingCleared > 0 ||
@@ -290,7 +307,9 @@ export class SessionRegistryBackgroundWorker {
             );
           }
         } catch (error) {
+          signal.throwIfAborted();
           this.logger.warn("[session-worker] launch-claim startup reconciliation failed", error);
+          throw error;
         }
       }
       this.hasReconciledOnStartup = true;
@@ -298,6 +317,7 @@ export class SessionRegistryBackgroundWorker {
   }
 
   async stop(): Promise<void> {
+    this.startupAbort.abort();
     if (this.initialTimer) {
       clearTimeout(this.initialTimer);
       this.initialTimer = null;
@@ -306,6 +326,11 @@ export class SessionRegistryBackgroundWorker {
       clearInterval(this.timer);
       this.timer = null;
     }
+    await this.startupReconciliation?.catch((error: unknown) => {
+      if (error !== this.startupAbort.signal.reason) {
+        this.logger.error("[session-worker] startup reconciliation failed during shutdown", error);
+      }
+    });
     await shutdownSharedCopilotClient();
   }
 
@@ -315,7 +340,10 @@ export class SessionRegistryBackgroundWorker {
     }
     this.running = true;
     try {
-      this.runStartupReconciliation();
+      await this.ready();
+      if (this.startupAbort.signal.aborted) {
+        return;
+      }
       await yieldToEventLoop();
       try {
         drainTrustedSessionSignalSpool(this.store, {
@@ -394,7 +422,9 @@ export class SessionRegistryBackgroundWorker {
       );
       await Promise.all(candidates.map((candidate) => this.summarizeCandidate(candidate)));
     } catch (error) {
-      this.logger.error("[session-worker] cycle failed", error);
+      if (!this.startupAbort.signal.aborted) {
+        this.logger.error("[session-worker] cycle failed", error);
+      }
     } finally {
       this.running = false;
     }

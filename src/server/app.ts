@@ -71,6 +71,7 @@ function loadRelaunchDefaultCliArgs(settingsPath?: string): string[] {
 
 export interface StreamlinerApiAppOptions {
   store?: SessionRegistryStore;
+  registryReady?: Promise<void>;
   graphPath?: string;
   recentsPath?: string;
   workstreamRegistryPath?: string;
@@ -208,7 +209,6 @@ export function createStreamlinerApiApp(
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true });
   });
-  app.get("/api/workstreams/events", workstreamEventStream.handle);
   if (options.readonlyMode) {
     app.use((req, res, next) => {
       if (READONLY_METHODS.has(req.method)) {
@@ -221,6 +221,26 @@ export function createStreamlinerApiApp(
       });
     });
   }
+  // Health stays available while registry recovery is pending. All other
+  // requests wait so a new launch cannot be mistaken for an abandoned run.
+  let registryError: Error | undefined;
+  const handleRegistryError = (error: unknown) => {
+    registryError = error instanceof Error ? error : new Error(String(error));
+    getApiLogger().withScope("api").error("session registry initialization failed", { err: error });
+  };
+  let registryInitialized = options.registryReady?.catch(handleRegistryError);
+  app.use(async (_req, _res, next) => {
+    registryInitialized ??= (
+      store instanceof SessionRegistryFileStore ? store.initialize() : Promise.resolve()
+    ).catch(handleRegistryError);
+    await registryInitialized;
+    if (registryError !== undefined) {
+      next(registryError);
+      return;
+    }
+    next();
+  });
+  app.get("/api/workstreams/events", workstreamEventStream.handle);
   app.use(
     "/api",
     createWorkstreamsRouter({

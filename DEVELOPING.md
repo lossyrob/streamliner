@@ -89,6 +89,14 @@ Copilot sessions and can send eligible recent user-message excerpts and
 session context to Copilot for summaries. Remove that first-run opt-out and
 restart the API when you want session observation and summarization.
 
+API health becomes available without waiting for session-registry recovery.
+The registry is loaded asynchronously in bounded batches, and startup
+reconciliation yields between records that may need recovery. Other API
+requests wait for recovery so new launches cannot be mistaken for abandoned
+runs. Normal observation begins after recovery and the worker's initial delay.
+Recovery failures are logged and returned to waiting requests; they do not
+silently enable launches against an unrecovered registry.
+
 Use agent features only with trusted local projects. Launch, relaunch, and
 cleanup actions can execute commands or modify repositories, and model-backed
 features use your configured Copilot account.

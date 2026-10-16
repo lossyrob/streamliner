@@ -102,14 +102,14 @@ function upsertManagedSession(
 }
 
 describe("reconcileManagedRuntimeStartupRows", () => {
-  it("marks stale active Streamliner-owned managed SDK rows interrupted with diagnostic data", () => {
+  it("marks stale active Streamliner-owned managed SDK rows interrupted with diagnostic data", async () => {
     const registryRoot = createRoot("managed-runtime-startup-registry-");
     const store = new SessionRegistryFileStore({ rootDir: registryRoot });
     for (const state of RECONCILED_ACTIVE_STATES) {
       upsertManagedSession(store, `stale-${state}`, state);
     }
 
-    const result = reconcileManagedRuntimeStartupRows(store, {
+    const result = await reconcileManagedRuntimeStartupRows(store, {
       now: () => new Date(TEST_TIMESTAMP),
     });
 
@@ -139,13 +139,13 @@ describe("reconcileManagedRuntimeStartupRows", () => {
     }
   });
 
-  it("preserves rows with a verifiably live owner", () => {
+  it("preserves rows with a verifiably live owner", async () => {
     const registryRoot = createRoot("managed-runtime-startup-registry-");
     const store = new SessionRegistryFileStore({ rootDir: registryRoot });
     upsertManagedSession(store, "live-running", "running");
     const isOwnerLive = vi.fn(() => true);
 
-    const result = reconcileManagedRuntimeStartupRows(store, {
+    const result = await reconcileManagedRuntimeStartupRows(store, {
       now: () => new Date(TEST_TIMESTAMP),
       isOwnerLive,
     });
@@ -159,7 +159,7 @@ describe("reconcileManagedRuntimeStartupRows", () => {
     expect(store.getSession("live-running")?.runtime?.progressEvents).toHaveLength(0);
   });
 
-  it("does not clobber terminal managed states, terminal takeover, or archived rows", () => {
+  it("does not clobber terminal managed states, terminal takeover, or archived rows", async () => {
     const registryRoot = createRoot("managed-runtime-startup-registry-");
     const store = new SessionRegistryFileStore({ rootDir: registryRoot });
     for (const state of PRESERVED_TERMINAL_STATES) {
@@ -170,7 +170,7 @@ describe("reconcileManagedRuntimeStartupRows", () => {
     upsertManagedSession(store, "archived-running", "running");
     store.archiveSession("archived-running");
 
-    const result = reconcileManagedRuntimeStartupRows(store, {
+    const result = await reconcileManagedRuntimeStartupRows(store, {
       now: () => new Date(TEST_TIMESTAMP),
     });
 
@@ -201,7 +201,7 @@ describe("reconcileManagedRuntimeStartupRows", () => {
     expect(store.getSession("archived-running")?.runtime?.lifecycleState).toBe("running");
   });
 
-  it("isolates per-row patch failures and continues reconciling remaining rows", () => {
+  it("isolates per-row patch failures and continues reconciling remaining rows", async () => {
     const registryRoot = createRoot("managed-runtime-startup-registry-");
     const store = new SessionRegistryFileStore({ rootDir: registryRoot });
     upsertManagedSession(store, "failing-running", "running");
@@ -215,7 +215,7 @@ describe("reconcileManagedRuntimeStartupRows", () => {
     });
     const logger = { warn: vi.fn() };
 
-    const result = reconcileManagedRuntimeStartupRows(store, {
+    const result = await reconcileManagedRuntimeStartupRows(store, {
       now: () => new Date(TEST_TIMESTAMP),
       logger,
     });
@@ -246,6 +246,8 @@ describe("reconcileManagedRuntimeStartupRows", () => {
     });
 
     worker.start();
+    expect(store.getSession("startup-running")?.runtime?.lifecycleState).toBe("running");
+    await worker.ready();
     await worker.runCycle();
     await worker.stop();
     expect(store.getSession("startup-running")?.runtime?.lifecycleState).toBe(
